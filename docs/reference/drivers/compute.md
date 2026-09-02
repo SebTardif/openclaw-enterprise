@@ -72,11 +72,17 @@ preserves the predecessor's Service selector until fenced activation succeeds.
 
 Drivers that keep one stable Agent-owned runtime across revisions can declare
 `activationOrder: "beforeCommit"`. The worker then activates and verifies the
-candidate before publishing its active revision and does not deactivate an
-already-serving dedicated runtime during initial adoption. Existing Drivers
-retain their default post-commit activation behavior. A Driver's activation
-must remain idempotent and must not report success before its effective
-configuration and authenticated runtime are actually ready.
+candidate during observation and does not deactivate an already-serving
+dedicated runtime during initial adoption. In production, Drivers without that preference use
+the default production cutover path: the queue records an unresolved cutover,
+the Driver publishes the route, and the worker records `activeRevisionId` only
+after the route is confirmed. A Driver's activation must remain idempotent and
+must not report success before its effective configuration and authenticated
+runtime are actually ready. Compensation support is Driver-specific. Bundled Kubernetes restores a dedicated
+predecessor route while its workload remains available. Embedded rollback first
+disables the failed route, then permits replacement only from the exact failed
+gateway revision named by worker recovery. Unconfirmed restoration leaves the
+cutover queued; see [Kubernetes recovery](kubernetes-compute.md#activation-recovery).
 
 ## Optional gateway endpoint resolution
 

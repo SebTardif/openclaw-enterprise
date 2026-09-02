@@ -40,13 +40,13 @@ graph TD
         D --> E["Reload exact resources and current IAM state"]
         E --> F{"Authorized and valid?"}
         F -->|yes| G["Invoke Compute while renewing the claim lease"]
-        F -->|no| H["Persist permanent failure under the live claim"]
+        F -->|no| H["Recover any cutover before terminal failure"]
         G --> I{"Observed result"}
     end
     subgraph Outcome["Claim-protected result and next handoff"]
         I -->|ready| J["Publish lifecycle result and complete work"]
         I -->|pending| K["Defer without spending failure budget"]
-        I -->|temporary failure| L["Retry within the attempt budget"]
+        I -->|temporary failure| L["Retry with backoff; retain unresolved cutover"]
         I -->|invalid or exhausted| H
         K --> D
         L --> D
@@ -105,7 +105,9 @@ Each loop first calls `recoverStale()`, then `claim()`. The
 eligible queued work with `FOR UPDATE SKIP LOCKED`, assigns a fresh claim token
 and lease deadline, and increments the attempt count. Another live claim for
 the same Agent, or the Namespace for Namespace work, prevents concurrent
-ownership of that target.
+ownership of that target. Unresolved cutover also blocks later work for the
+same Agent. A marked operation remains claimable after its ordinary attempt
+limit, so expired-claim recovery can finish activation or compensation.
 
 An empty queue causes a bounded idle delay. After processing or while idle,
 `health()` queries pending work, refreshes readiness through `onHealthy`, and emits
@@ -137,9 +139,11 @@ no Provider client or admin key. The
 [Provider-managed credential delivery flow](service-account-driver-credential-delivery.md) owns these checks.
 
 Revoked actors and denied operations become permanent results before runtime
-creation. A revision older than the current active revision completes as
-superseded; an already-active revision enters finalization or maintenance rather
-than changing the active pointer again.
+creation. An unresolved production cutover must compensate before terminal
+failure. A revision older than the current active revision completes as
+superseded. A committed cutover resumes cleanup and audit without reauthorizing
+a new deployment; ordinary active-runtime maintenance still reauthorizes its
+actor.
 
 ### 5. Invoke Compute while renewing the live claim
 
@@ -180,18 +184,25 @@ the queue item atomically. A failed provisioning target can transition to failed
 incomplete deletion does not publish successful deletion.
 
 Revision activation crosses a separate infrastructure boundary. Once preparation
-is ready, a Driver selecting `activationOrder: beforeCommit` activates before
-the database pointer changes. Otherwise an implemented activation stage runs in both development and
-production after the claim-protected compare-and-set of `Agent.activeRevisionId`; the first dedicated
-revision is staged inactive until that commit. A changed active pointer causes
-`ACTIVE_REVISION_CHANGED` and retry instead of overwriting a concurrent result.
+is ready, default production activation records unresolved cutover metadata on
+the exact queue row while the worker still owns the claim and the Agent still
+points at the expected predecessor. The first dedicated revision is staged
+inactive before this cutover starts. The worker then calls
+`activateRevision()` and writes `Agent.activeRevisionId` only after the Driver
+confirms the route is serving the candidate.
 
-After the pointer commit, the worker finishes required activation and retires
-the predecessor. `completeActivatedRevision()` then rechecks the exact active
-revision and claim, appends activation evidence, and completes work in a second
-transaction. This deliberately does not claim that infrastructure effects and
-database state are one atomic transaction. Interrupted finalization is retried;
-the already-active branch finishes activation and retirement safely.
+Development still invokes an optional activation stage after the pointer commit.
+Drivers selecting `activationOrder: beforeCommit` still activate during the
+observation phase before the active pointer changes. Their activation remains
+idempotent and does not use the queue cutover metadata path.
+
+After the pointer commit, the worker retires the predecessor.
+`completeActivatedRevision()` then rechecks the exact active revision and
+claim, appends activation evidence, clears the cutover metadata, and completes
+work in a second transaction. This deliberately does not claim that
+infrastructure effects and database state are one atomic transaction.
+Interrupted post-CAS finalization is retried without reauthorizing a new
+deployment because the database already names the serving candidate.
 
 ### 7. Defer, retry, or stop and hand off the next iteration
 
@@ -202,7 +213,9 @@ the already-active branch finishes activation and retirement safely.
 Pending convergence returns work to the queue with backoff and restores the
 attempt consumed by the claim. Real dependency failures retain that attempt and
 retry within the configured budget. Permanent failures, exhausted attempts, and
-the convergence deadline produce terminal failure instead. See the
+the convergence deadline produce terminal failure for ordinary work. Unresolved
+production cutover remains claimable even after its attempt limit. It must
+finish activation or compensate before permanent failure. See the
 [controller reference](../reference/controller.md) for the supported outcomes
 and the [settings reference](../reference/settings/operations.md#controller-worker-environment)
 for their timing controls.
@@ -218,6 +231,10 @@ Lease loss is reported as `worker.error` with `CLAIM_LOST` rather than publishin
 stale lifecycle state. On `SIGTERM` or `SIGINT`, shutdown removes readiness,
 aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
 `worker.stopped`. Expired unfinished claims are recoverable by a later worker.
+A recovered production cutover compensates before terminalizing revocation,
+invalid state, or deadline failure. It disables the failed candidate route and
+restores the recorded predecessor, or leaves the first-deployment route disabled.
+Unconfirmed compensation stays queued and blocks later same-Agent work.
 
 ## Debugging and Verification
 

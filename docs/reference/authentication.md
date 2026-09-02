@@ -94,6 +94,15 @@ before password verification or session revocation. A request marked
 an existing session intact. Command-line clients that send neither browser
 header keep the documented sign-in/sign-out flow.
 
+## Sign-in throttling
+
+`POST /api/auth/sign-in/email` runs through Better Auth's HTTP handler, including
+origin, form-CSRF, and sign-in rate-limit checks before password verification.
+The limit is three requests per 10-second window; a fourth request returns
+`429 TOO_MANY_REQUESTS`. The controller uses the server-observed Fastify socket
+address for the internal rate-limit IP header and ignores caller-supplied
+forwarded-IP headers. Better Auth's rate-limit response headers are preserved.
+
 ## Session lifecycle
 
 | Operation                      | Supported behavior                                                                                                                                          |
@@ -160,9 +169,14 @@ headers and bearer credentials are not authorization evidence.
 | Condition                                                      | Result                                                                             |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Missing or invalid session or service key on a protected route | `401 UNAUTHENTICATED`.                                                             |
+| Sign-in request exceeds the rate limit                         | `429 TOO_MANY_REQUESTS`.                                                           |
 | Valid credential without the required IAM grant                | `403 FORBIDDEN`.                                                                   |
 | Duplicate account during provisioning                          | `409 RESOURCE_CONFLICT`.                                                           |
 | Authentication or IAM dependency unavailable                   | The request fails closed; dependency failures return `503 DEPENDENCY_UNAVAILABLE`. |
+
+Server-error responses from Better Auth's HTTP handler are normalized to
+`503 DEPENDENCY_UNAVAILABLE`; intended client-error statuses, including `429`,
+and response headers are preserved.
 
 The optional session-inspection route is not a protected resource operation:
 anonymous inspection returns `200` with `data: null`.

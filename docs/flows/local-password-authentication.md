@@ -121,9 +121,16 @@ retains its non-secret IDs. Lost output does not trigger regeneration; normal
 
 `apps/controller/src/auth/index.ts:createControllerAuth` configures Better Auth
 email/password authentication, protected session cookies, and durable PostgreSQL
-storage. Sign-in returns only `{ authenticated: true }`; the session token stays
-in its HttpOnly cookie and is omitted from session-inspection responses. Sign-out
-revokes the session, and public signup is disabled.
+storage. `POST /api/auth/sign-in/email` enters Better Auth through its HTTP
+handler, so origin and form-CSRF middleware and the sign-in rate limit run
+before password verification. The controller rewrites only the internal
+rate-limit IP header from the Fastify socket address; forwarded-IP headers from
+the caller are not trusted. The fourth sign-in request in the 10-second window
+returns `429`. The wrapper preserves rate-limit headers and maps Better Auth
+server-error responses to `503 DEPENDENCY_UNAVAILABLE`. Successful sign-in returns only `{ authenticated: true }`; the
+session token stays in its HttpOnly cookie and is omitted from
+session-inspection responses. Sign-out revokes the session, and public signup is
+disabled.
 
 ### 4. Admit and authorize protected API calls
 
@@ -153,6 +160,8 @@ implicit permissions.
   `OCC_TEST_DATABASE_URL` covers account provisioning and transactional rollback.
   Its fresh development bootstrap case additionally verifies the service identity,
   protected output, and key access; it skips when an Installation already exists.
+- [Local authentication coverage](../testing/local.md#authentication-and-authorization-coverage)
+  includes the real console HTTP sign-in and failure paths.
 - `node --test tests/integration/bootstrap-output.test.mjs` covers exclusive
   output and rejected unsafe paths. Failed writes retain any created file.
   Database cases require the [disposable PostgreSQL setup](../testing/postgresql.md#postgresql-test-environment);
@@ -189,6 +198,8 @@ implicit permissions.
 ## Changelog
 
 - 2026-09-01 19:09: Update links to consolidated runtime flows. (01a05f95-dd80-7011-990f-d1c46b5bb3cc - aa366c49c44834d59f74994c5fd37fb8096f169f)
+- 2026-09-01 17:55: Trace Better Auth HTTP sign-in rate limiting and socket-address keying. (01a05f92-29ff-7b60-88c2-84d60c451c2c - b02a07f)
+
 - 2026-08-31 22:29: Remove automatic bootstrap recovery; preserve artifacts after any error and require manual repair. (01a05a3d-526f-7553-8cd8-070bd1847acb - 94a5440898bf331987148d7733f0075506af64a6)
 
 - 2026-08-31 20:33: Trace the shared installation initializer, startup ordering, and initializer-owned credential delivery. (01a05a3d-526f-7553-8cd8-070bd1847acb - b6f213cbcee11ba3dd69886c936c7e5abe233eb3)

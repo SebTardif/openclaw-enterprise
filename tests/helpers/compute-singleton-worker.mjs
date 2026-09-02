@@ -23,32 +23,41 @@ async function setup(context) {
     { createControllerWorker },
     { createDevelopmentComputeDriver },
     { createAuthPrincipalSeed, NativeIAMDriver },
-    { PRODUCTION_HARNESS_DESCRIPTOR },
+    { DEVELOPMENT_HARNESS_DESCRIPTOR, PRODUCTION_HARNESS_DESCRIPTOR },
     { PostgresPlatformState },
+    { PostgresWorkQueue },
     { createTestConfigurationDriver },
+    { createHarnessConfiguration },
     { createInstallationDriverConfiguration },
     { createTestSecretDriver },
     { createDevelopmentIAMState },
   ] = await Promise.all([
     import("pg"),
     import("../../apps/controller/src/worker.ts"),
-    import("../helpers/development.mjs"),
+    import("./development.mjs"),
     import("../../packages/iam/src/index.ts"),
     import("../../apps/controller/src/composition/production-harness.ts"),
     import("../../packages/occ/src/state/postgres-state.ts"),
-    import("../helpers/configuration-driver.mjs"),
-    import("../helpers/installation-driver-configuration.mjs"),
-    import("../helpers/secret-driver.mjs"),
-    import("../helpers/development-iam-state.mjs"),
+    import("../../packages/occ/src/state/postgres-work-queue.ts"),
+    import("./configuration-driver.mjs"),
+    import("./harness-configuration.mjs"),
+    import("./installation-driver-configuration.mjs"),
+    import("./secret-driver.mjs"),
+    import("./development-iam-state.mjs"),
   ]);
 
   const observerPool = new Pool({ connectionString: databaseUrl, max: 8 });
-  const workerPool = new Pool({ connectionString: databaseUrl, max: 8 });
   const state = new PostgresPlatformState(observerPool);
   let worker;
+
+  async function stop() {
+    const current = worker;
+    worker = undefined;
+    if (current !== undefined) await current.stop();
+  }
+
   context.after(async () => {
-    if (worker === undefined) await workerPool.end();
-    else await worker.stop();
+    await stop();
     await observerPool.end();
   });
 
@@ -102,15 +111,17 @@ async function setup(context) {
   await state.transact((unit) => unit.namespaces.createNamespace(namespace));
   const compute = createDevelopmentComputeDriver();
 
-  async function agent() {
+  async function agent(executionMode = "dedicated") {
     const id = `agt_${randomUUID()}`;
     const configurationId = `cfg_${randomUUID()}`;
+    const harnessId = executionMode === "dedicated" ? "codex" : "openclaw";
     return state.transact(async (unit) => {
       await unit.configurations.createConfiguration({
         id: configurationId,
         namespaceId: namespace.id,
         kind: "agent",
         generation: 1,
+        values: createHarnessConfiguration(harnessId, "gpt-4.1"),
         createdAt: new Date().toISOString(),
       });
       return unit.agents.createAgent({
@@ -119,7 +130,7 @@ async function setup(context) {
         name: `singleton-runtime-${randomUUID()}`,
         configurationId,
         providerId: null,
-        executionMode: "dedicated",
+        executionMode,
         servicePrincipalId: `service-agent-${id}`,
         createdAt: new Date().toISOString(),
       });
@@ -127,17 +138,21 @@ async function setup(context) {
   }
 
   async function revision(owner, number) {
+    const harness =
+      owner.executionMode === "dedicated"
+        ? { ...PRODUCTION_HARNESS_DESCRIPTOR, mode: "dedicated" }
+        : { ...DEVELOPMENT_HARNESS_DESCRIPTOR, mode: "embedded" };
     const candidate = {
       id: `rev_${randomUUID()}`,
       namespaceId: namespace.id,
       agentId: owner.id,
       revision: number,
-      configuration: { revision: String(number) },
+      configuration: createHarnessConfiguration(harness.id, "gpt-4.1"),
       configurationId: owner.configurationId,
       configurationKind: "agent",
       configurationGeneration: 1,
       providerId: null,
-      harness: { ...PRODUCTION_HARNESS_DESCRIPTOR, mode: "dedicated" },
+      harness,
       compute: { id: compute.id, implementation: compute.implementation },
       servicePrincipalId: owner.servicePrincipalId,
       createdAt: new Date().toISOString(),
@@ -166,25 +181,32 @@ async function setup(context) {
     return current.rows[0].active_revision_id;
   }
 
-  async function work(candidate, expected = "succeeded") {
-    return waitFor(`revision ${candidate.id} to become ${expected}`, async () => {
-      const current = await observerPool.query(
-        "SELECT state, attempt_count FROM occ.controller_work WHERE idempotency_key = $1",
-        [candidate.idempotencyKey],
-      );
-      return current.rows[0]?.state === expected ? current.rows[0] : undefined;
-    });
+  async function work(candidate, expected = "succeeded", timeoutMs = 10_000) {
+    return waitFor(
+      `revision ${candidate.id} to become ${expected}`,
+      async () => {
+        const current = await observerPool.query(
+          `SELECT state, attempt_count, cutover_started_at,
+                cutover_expected_active_revision_id
+         FROM occ.controller_work WHERE idempotency_key = $1`,
+          [candidate.idempotencyKey],
+        );
+        return current.rows[0]?.state === expected ? current.rows[0] : undefined;
+      },
+      timeoutMs,
+    );
   }
 
-  function start(
+  function createWorker(
     computeDriver,
     leaseDurationMs = 30_000,
     convergenceTimeoutMs = 900_000,
     mode = "production",
   ) {
     const configuration = createInstallationDriverConfiguration();
+    const workerPool = new Pool({ connectionString: databaseUrl, max: 8 });
     configuration.drivers.compute.id = computeDriver.id;
-    worker = createControllerWorker({
+    return createControllerWorker({
       pool: workerPool,
       mode,
       drivers: {
@@ -209,6 +231,16 @@ async function setup(context) {
       maxAttempts: 5,
       emit() {},
     });
+  }
+
+  function start(
+    computeDriver,
+    leaseDurationMs = 30_000,
+    convergenceTimeoutMs = 900_000,
+    mode = "production",
+  ) {
+    assert.equal(worker, undefined, "the previous worker must be stopped before restart");
+    worker = createWorker(computeDriver, leaseDurationMs, convergenceTimeoutMs, mode);
     return worker.start();
   }
 
@@ -216,15 +248,15 @@ async function setup(context) {
     observerPool,
     namespace,
     actor,
+    PostgresWorkQueue,
     compute,
     agent,
     revision,
     activeRevision,
     work,
+    createWorker,
     start,
-    async stop() {
-      await worker.stop();
-    },
+    stop,
   };
 }
 

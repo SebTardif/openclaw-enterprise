@@ -670,6 +670,8 @@ export const controllerWork = occSchema.table(
     claimToken: uuid("claim_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    cutoverStartedAt: timestamp("cutover_started_at", { withTimezone: true }),
+    cutoverExpectedActiveRevisionId: text("cutover_expected_active_revision_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -684,6 +686,13 @@ export const controllerWork = occSchema.table(
     foreignKey({
       name: "controller_work_revision_owner",
       columns: [table.namespaceId, table.agentId, table.revisionId],
+      foreignColumns: [agentRevisions.namespaceId, agentRevisions.agentId, agentRevisions.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
+      name: "controller_work_cutover_expected_revision_owner",
+      columns: [table.namespaceId, table.agentId, table.cutoverExpectedActiveRevisionId],
       foreignColumns: [agentRevisions.namespaceId, agentRevisions.agentId, agentRevisions.id],
     })
       .onUpdate("restrict")
@@ -726,6 +735,17 @@ export const controllerWork = occSchema.table(
         (${table.state} IN ('succeeded', 'failed_permanent')
           AND ${table.completedAt} IS NOT NULL)
         OR (${table.state} NOT IN ('succeeded', 'failed_permanent')
+          AND ${table.completedAt} IS NULL)
+      )`,
+    ),
+    check(
+      "controller_work_cutover_revision_state",
+      sql`(
+        (${table.cutoverStartedAt} IS NULL AND ${table.cutoverExpectedActiveRevisionId} IS NULL)
+        OR (${table.cutoverStartedAt} IS NOT NULL
+          AND ${table.state} IN ('queued', 'claimed')
+          AND ${table.revisionId} IS NOT NULL
+          AND ${table.agentId} IS NOT NULL
           AND ${table.completedAt} IS NULL)
       )`,
     ),
