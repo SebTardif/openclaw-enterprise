@@ -110,20 +110,101 @@ drivers:
                 protocol: tcp
 ```
 
-The OpenShell gateway must be installed separately before this driver's
-`ensureNamespace` runs. The bundled driver does not install the gateway; the
-real integration test uses an operator-owned Helm wrapper to install it before
-delegating to the driver.
+### Configuration options
 
-`gateway.networkPolicyResources` accepts namespace-scoped Kubernetes resource
-objects for provider networking. They are applied into the OpenClaw Namespace
-during `ensureNamespace`. Do not include Secrets in this array; the driver
-rejects Secret resources because OpenShell credentials must not be embedded in
-startup YAML.
+These tables describe the bundled Enterprise adapter's configuration, including
+options omitted from the example. Paths are relative to
+`drivers.sandbox.configuration` unless stated otherwise. Required means required
+when this driver is selected; nested fields are required only when their optional
+parent is supplied. **None** means the adapter supplies no default. Example names,
+paths, UID/GID values, and policy destinations are not defaults.
 
-`kubernetes.sandboxDataMount` must match exactly one approved dedicated Harness
-workspace mount. It may not mount the PVC root, may not use `..`, and must mount
-under `/sandbox/`.
+The [driver schema and validation](../../../apps/controller/src/drivers/sandbox/openshell.ts),
+[gateway client](../../../apps/controller/src/drivers/sandbox/openshell-gateway-client.ts),
+and [Installation selection](../../../apps/controller/src/composition/installation-config.ts)
+define these requirements and defaults. Values forwarded without a default still
+depend on the deployed OpenShell implementation; this table does not establish
+upstream compatibility or enforcement beyond the preconditions below.
+
+| Option                            | What it does                                                                                                       | Required               | Default when omitted       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------- | -------------------------- |
+| `drivers.sandbox`                 | Selects a SandboxDriver for this Installation.                                                                     | No                     | No SandboxDriver selected. |
+| `drivers.sandbox.id`              | Names the selected driver instance; revisions retain this ID for provisioning and cleanup.                         | Yes                    | None.                      |
+| `drivers.sandbox.configuration`   | Supplies the bundled OpenShell adapter's settings.                                                                 | Yes                    | None.                      |
+| `gateway`, `kubernetes`, `policy` | Group gateway connection, Harness Pod construction, and sandbox policy settings.                                   | Yes, all three objects | None.                      |
+| `sandboxNamePrefix`               | Prefixes the stable Sandbox name derived from the revision ID; at most two characters.                             | No                     | `sb`                       |
+| `logLevel`                        | Sets the OpenShell Sandbox log level.                                                                              | No                     | `info`                     |
+| `providers`                       | Supplies OpenShell provider names in the Sandbox specification; separate from OCC Installation Provider selection. | No                     | `[]`                       |
+
+#### OpenShell gateway
+
+This gateway is OpenShell's control service, separate from the per-Agent OpenClaw
+gateway. Install it before `ensureNamespace` runs; the adapter does not install
+it. The real integration test uses an operator-owned Helm wrapper for setup.
+
+| Option                           | What it does                                                                                                                               | Required                                                          | Default when omitted                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `gateway.endpoint`               | Explicit gRPC endpoint URL; overrides Service-name, port, and scheme derivation.                                                           | No, if a Service name is available below                          | Derived as `<scheme>://<service>.<backing-namespace>.svc:<port>`; a Service name containing `.` is used as the host directly. |
+| `gateway.serviceName`            | Kubernetes Service name used to derive the OpenShell endpoint.                                                                             | Yes if neither `endpoint` nor `readiness.serviceName` is supplied | `gateway.readiness.serviceName`, when supplied.                                                                               |
+| `gateway.port`                   | Port for the derived endpoint; an integer from 1 through 65535.                                                                            | No                                                                | `50051`                                                                                                                       |
+| `gateway.scheme`                 | Selects `http` or `https` for the derived gRPC endpoint.                                                                                   | No                                                                | `https` when `rootCertificatePath` is supplied; otherwise `http`.                                                             |
+| `gateway.workspace`              | OpenShell workspace identifier used for Sandbox creation and deletion; separate from the Agent's filesystem workspace.                     | No                                                                | `default`                                                                                                                     |
+| `gateway.auth.mode`              | Chooses `unauthenticated` or `bearerTokenFile` authentication for gateway RPCs.                                                            | Yes if `gateway.auth` is supplied                                 | With no `auth` object, no authorization metadata is sent.                                                                     |
+| `gateway.auth.path`              | Absolute path to a file containing the bearer token, read for each RPC.                                                                    | Yes for `bearerTokenFile`                                         | None.                                                                                                                         |
+| `gateway.rootCertificatePath`    | Absolute path to the CA certificate file used for TLS connections.                                                                         | No                                                                | gRPC's default trust roots when the endpoint uses HTTPS.                                                                      |
+| `gateway.requestTimeoutMs`       | Per-RPC deadline in milliseconds; must be an integer of at least 1000.                                                                     | No                                                                | `10000`                                                                                                                       |
+| `gateway.readiness`              | Enables Kubernetes Service and Pod checks during Namespace setup. OpenShell's health RPC is still checked when this object is omitted.     | No                                                                | No Kubernetes readiness check.                                                                                                |
+| `gateway.readiness.serviceName`  | Service whose existence is checked in the backing namespace.                                                                               | Yes if `readiness` is supplied                                    | None.                                                                                                                         |
+| `gateway.readiness.podSelector`  | Label map selecting gateway Pods; at least one matching Pod must report `Ready=True`.                                                      | Yes if `readiness` is supplied                                    | None; the example's `app.kubernetes.io/name: openshell` must match the installation.                                          |
+| `gateway.networkPolicyResources` | Namespace-scoped Kubernetes networking manifests applied during Namespace setup and removed during cleanup. Secret manifests are rejected. | No                                                                | No additional resources. Compute's baseline NetworkPolicies still apply.                                                      |
+
+#### Kubernetes Harness settings
+
+| Option                                  | What it does                                                                                                                                                                                                  | Required | Default when omitted                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
+| `kubernetes.runtimeClassName`           | Names the operator-installed RuntimeClass requested for the Sandbox Pod; does not create it.                                                                                                                  | Yes      | None.                                                                                  |
+| `kubernetes.serviceAccount.mode`        | `driverConfig` passes Compute's approved per-Agent Kubernetes ServiceAccount name to OpenShell. `gatewayConfigured` omits that override and requires OpenShell's configuration to select the correct account. | Yes      | None.                                                                                  |
+| `kubernetes.sandboxDataMount.claimName` | Selects the existing approved workspace PVC for the data mount.                                                                                                                                               | No       | Derived from approved Harness mounts matching `subPath`; exactly one claim must match. |
+| `kubernetes.sandboxDataMount.subPath`   | Selects an approved subdirectory of that PVC; rejects the PVC root, absolute paths, and `..`.                                                                                                                 | Yes      | None.                                                                                  |
+| `kubernetes.sandboxDataMount.mountPath` | Container path exposing the approved PVC subdirectory; must be under `/sandbox/`.                                                                                                                             | Yes      | None.                                                                                  |
+| `kubernetes.sandboxDataMount.readOnly`  | Sets the mount's read-only flag and corresponding filesystem policy; cannot make an approved read-only mount writable.                                                                                        | Yes      | None; `false` must be explicit.                                                        |
+| `kubernetes.agentResources`             | Forwards resource settings for OpenShell's agent container through Kubernetes driver configuration.                                                                                                           | No       | `{}`; the adapter supplies no resource settings.                                       |
+| `kubernetes.userNamespaces`             | Forwards the OpenShell Sandbox template's user-namespace setting.                                                                                                                                             | No       | Omitted; OpenShell determines behavior.                                                |
+
+`sandboxDataMount` and `serviceAccount` are required objects. The data mount
+reuses an approved Agent workspace PVC; it does not allocate a separate volume.
+Approved Harness workspace mounts and the read-only projected identity-token
+mount are also included in the Sandbox specification.
+
+#### Sandbox policy
+
+These network rules are sent to OpenShell, whereas
+`gateway.networkPolicyResources` contains Kubernetes manifests. The adapter
+converts each policy entry to a map keyed by its `name`.
+
+| Option                                             | What it does                                                                                                           | Required                | Default when omitted                                                 |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------- |
+| `policy.process.runAsUser`                         | Sets the sandboxed process's Unix user/UID as a string; separate from its Kubernetes ServiceAccount and OCC Principal. | Yes                     | None.                                                                |
+| `policy.process.runAsGroup`                        | Sets the sandboxed process's Unix group/GID as a string.                                                               | Yes                     | None.                                                                |
+| `policy.filesystem.includeWorkdir`                 | Requests inclusion of the working directory in OpenShell's filesystem policy.                                          | No                      | `true`                                                               |
+| `policy.filesystem.readOnly`                       | Adds read-only filesystem paths; each must be an absolute, non-root path.                                              | No                      | `[]` additional paths; approved read-only mounts are still included. |
+| `policy.filesystem.readWrite`                      | Adds writable filesystem paths; cannot grant write access to an approved read-only mount.                              | No                      | `[]` additional paths; approved writable mounts are still included.  |
+| `policy.landlockCompatibility`                     | Forwards OpenShell's Landlock compatibility mode.                                                                      | No                      | `best_effort`                                                        |
+| `policy.networkPolicies`                           | Lists sandbox network policy entries.                                                                                  | Yes; at least one entry | None.                                                                |
+| `policy.networkPolicies[].name`                    | Names the policy entry, such as `model-egress`; does not select a model or supply credentials.                         | Yes                     | None.                                                                |
+| `policy.networkPolicies[].endpoints`               | Lists destination entries for the policy.                                                                              | Yes                     | None.                                                                |
+| `policy.networkPolicies[].endpoints[].host`        | Destination hostname sent to OpenShell, such as `api.openai.com`.                                                      | Yes                     | None.                                                                |
+| `policy.networkPolicies[].endpoints[].ports`       | Destination port list; each port must be an integer from 1 through 65535.                                              | Yes                     | None.                                                                |
+| `policy.networkPolicies[].endpoints[].protocol`    | Forwards the endpoint protocol, such as `tcp`, for OpenShell to interpret.                                             | No                      | Omitted; no adapter default.                                         |
+| `policy.networkPolicies[].endpoints[].tls`         | Forwards the endpoint's TLS handling setting.                                                                          | No                      | Omitted; no adapter default.                                         |
+| `policy.networkPolicies[].endpoints[].enforcement` | Forwards the endpoint's enforcement setting.                                                                           | No                      | Omitted; no adapter default.                                         |
+| `policy.networkPolicies[].endpoints[].access`      | Forwards the endpoint's access setting.                                                                                | No                      | Omitted; no adapter default.                                         |
+
+`policy.process` is required; `policy.filesystem` is optional. The adapter derives
+filesystem permissions from the approved workspace and identity mounts in
+addition to the configured path lists.
+
+### Effective Codex configuration
 
 OpenShell's `configureAgent` hook contributes the effective Codex configuration
 before OCC validates and freezes the revision, disabling the inner Codex
@@ -240,4 +321,5 @@ Common fail-closed errors include:
 
 ## Changelog
 
+- Documented OpenShell configuration option behavior, required fields, conditional requirements, and adapter defaults.
 - Removed the unused `gateway.bootstrapResources` manifest option. Gateway installation remains external to the bundled driver. (NOT_IN_SPEC)
