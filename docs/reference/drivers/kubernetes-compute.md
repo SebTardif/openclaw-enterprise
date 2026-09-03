@@ -8,6 +8,9 @@ owns namespace, gateway, ServiceAccount, PVC, routing, and revision lifecycle,
 but delegates the dedicated Codex Harness Pod to the OpenShell Sandbox
 controller.
 
+For the complete call sequence, see the
+[Kubernetes and OpenShell Agent workload lifecycle](../../flows/kubernetes-openshell-agent-lifecycle.md).
+
 ## Requirements
 
 - A Kubernetes cluster dedicated to one OpenClaw Enterprise Installation.

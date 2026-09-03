@@ -11,6 +11,9 @@ OpenShell support is limited to dedicated Codex Harness revisions. Embedded
 OpenClaw Agents fail closed when OpenShell is selected because embedded mode
 would require OpenShell to own the Agent gateway workload too.
 
+For the complete call sequence, see the
+[Kubernetes and OpenShell Agent workload lifecycle](../../flows/kubernetes-openshell-agent-lifecycle.md).
+
 ## Ownership model
 
 The Kubernetes Compute Driver remains the orchestration owner:
