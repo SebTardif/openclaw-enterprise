@@ -42,6 +42,10 @@ OpenClaw Enterprise is the open platform for managing agents.
 
 ## Understand the code
 
+- [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
+  and replay classification, before authorization or durable admission.
+- [Upstream headless consumption probe](reference/upstream-consumption.md): verify
+  the pinned source kernel and understand the remaining package and adapter gaps.
 - [Docker Compose development](flows/docker-compose-development.md),
   [production startup](flows/production-startup.md),
   [production TUI attachment](flows/production-tui.md), and
