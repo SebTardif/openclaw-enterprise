@@ -52,6 +52,15 @@ async function fixture(t, developmentEnabled) {
     configurationDriver: createTestConfigurationDriver(),
     computeDriver: createDevelopmentComputeDriver(),
     resolveHarness: resolveApprovedHarness,
+    async provisionAuthAccount(accountSeed, auditEvent) {
+      // Persist the actual IAM seed in this fixture's native policy store.
+      // Authorization continues through NativeIAMDriver, not this callback.
+      for (const binding of accountSeed.bindings)
+        assert.ok(policy.roles.some((role) => role.id === binding.roleId));
+      policy.identities.push(accountSeed.principal);
+      policy.bindings.push(...accountSeed.bindings);
+      await auditSink.append(auditEvent);
+    },
     createController(installation) {
       controller = new OpenClawController(installation, { state });
       return controller;
@@ -131,6 +140,7 @@ async function fixture(t, developmentEnabled) {
     state,
     policy,
     namespace,
+    configuration,
     credentials,
     options,
     get controller() {
@@ -229,6 +239,14 @@ for (const developmentEnabled of [false, true]) {
     await t.test(
       "account and key mutations reject cookie requests before their effects",
       async () => {
+        const alternate = await f.request(
+          "POST",
+          `/namespaces/${f.namespace.id}/configurations`,
+          undefined,
+          { kind: "agent", values: {} },
+        );
+        assert.equal(alternate.statusCode, 201, alternate.body);
+        const updateBody = { configurationId: alternate.json().data.id };
         const before = await f.recorded();
         const headers = { cookie: f.session.cookie };
         const accountBody = {
@@ -248,7 +266,7 @@ for (const developmentEnabled of [false, true]) {
             },
           ],
           ["DELETE", `/api/auth/service-keys/${f.key.id}`],
-          ["PATCH", f.path, { name: "denied" }],
+          ["PATCH", f.path, updateBody],
         ])
           assert.equal((await f.request(method, url, headers, body)).statusCode, 403);
         assert.deepEqual(await f.recorded(), before);
@@ -256,7 +274,35 @@ for (const developmentEnabled of [false, true]) {
           await f.credentials.auth.getServiceKey(f.key.id),
           "denied revoke must retain the key",
         );
-        assert.equal((await f.request("GET", f.path, headers)).json().data.name, "intent-test");
+        assert.equal(
+          (await f.request("GET", f.path, headers)).json().data.configurationId,
+          f.configuration.id,
+        );
+        // Positive controls use the same valid payloads and real mutation paths.
+        const updated = await f.request("PATCH", f.path, undefined, updateBody);
+        assert.equal(updated.statusCode, 200, updated.body);
+        assert.equal(updated.json().data.configurationId, updateBody.configurationId);
+        const createdAccount = await f.request(
+          "POST",
+          "/api/auth/accounts",
+          undefined,
+          accountBody,
+        );
+        assert.equal(createdAccount.statusCode, 201, createdAccount.body);
+        assert.equal((await f.recorded()).accounts, before.accounts + 1);
+        const issued = await f.request("POST", "/api/auth/service-keys", undefined, {
+          servicePrincipalId: f.key.servicePrincipalId,
+          namespaceId: f.namespace.id,
+          name: "positive-control",
+        });
+        assert.equal(issued.statusCode, 201, issued.body);
+        assert.equal((await f.recorded()).keys, before.keys + 1);
+        const revoked = await f.request(
+          "DELETE",
+          `/api/auth/service-keys/${issued.json().data.id}`,
+        );
+        assert.equal(revoked.statusCode, 200, revoked.body);
+        assert.equal(await f.credentials.auth.getServiceKey(issued.json().data.id), undefined);
       },
     );
     await t.test("ordinary reads and existing credential/proxy guards remain intact", async () => {
