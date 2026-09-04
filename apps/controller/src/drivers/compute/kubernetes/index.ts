@@ -2196,10 +2196,17 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       if (
         metadata.namespace !== namespace ||
-        deletedAt !== undefined ||
         podLabels?.["openclaw.dev/agent"] !== revision.agentId ||
         podLabels?.["openclaw.dev/revision"] !== revision.id ||
         podLabels?.["openclaw.dev/workload-role"] !== "agent"
+      ) {
+        continue;
+      }
+      if (
+        deletedAt !== undefined &&
+        (requiredRuntimeClass === undefined ||
+          status?.phase === "Succeeded" ||
+          status?.phase === "Failed")
       ) {
         continue;
       }
@@ -2213,6 +2220,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
         }
         ready = ready && status?.phase === "Running";
       }
+      // Deletion intent is not termination: verify a nonterminal Pod's runtime
+      // above before excluding it from readiness, since it may still write shared data.
+      if (deletedAt !== undefined) continue;
       if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
         if (requiredRuntimeClass === undefined) throw invalidObservation();
         // Inspect the remaining candidates before reporting label drift so an

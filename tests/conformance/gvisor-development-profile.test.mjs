@@ -790,6 +790,147 @@ test("gVisor contains a Running Pod using another or missing runtime during prep
   }
 });
 
+test("gVisor contains a deleting unsafe Running Pod alongside a safe Ready Pod in either list order", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const runtimeClassName of ["runc", undefined]) {
+      for (const deletionTimestamp of [
+        "2026-09-04T00:00:00.000Z",
+        new Date("2026-09-04T00:00:00.000Z"),
+      ]) {
+        for (const deletingPodFirst of [true, false]) {
+          const current = runtimeFixture();
+          const ready = current.pod("safe-ready");
+          const deleting = current.pod("unsafe-deleting");
+          deleting.metadata.deletionTimestamp = deletionTimestamp;
+          if (runtimeClassName === undefined) delete deleting.spec.runtimeClassName;
+          else deleting.spec.runtimeClassName = runtimeClassName;
+          current.setObservation({
+            items: deletingPodFirst ? [deleting, ready] : [ready, deleting],
+          });
+
+          // Kubernetes can report a Running, Ready Pod after deletion is requested.
+          // A safe replacement cannot hide that still-running Pod's isolation violation.
+          await assert.rejects(current[operation](), /required RuntimeClass; refusing fallback/);
+          assert.deepEqual(current.containment, expectedContainment(current));
+          if (operation === "activate") assert.equal(current.writes.length, 0);
+        }
+      }
+    }
+  }
+});
+
+test("gVisor contains deleting unsafe Pods whose phase does not establish termination", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const phase of [undefined, "Unknown", "Pending"]) {
+      for (const runtimeClassName of ["runc", undefined]) {
+        const current = runtimeFixture();
+        const deleting = current.pod("unsafe-deleting-without-terminal-phase");
+        deleting.metadata.deletionTimestamp = "2026-09-04T00:00:00.000Z";
+        deleting.status.conditions = [];
+        if (phase === undefined) delete deleting.status.phase;
+        else deleting.status.phase = phase;
+        if (runtimeClassName === undefined) delete deleting.spec.runtimeClassName;
+        else deleting.spec.runtimeClassName = runtimeClassName;
+        current.setObservation({ items: [current.pod("safe-ready"), deleting] });
+
+        // Absent or inconclusive lifecycle observations cannot prove the unsafe Pod stopped.
+        await assert.rejects(current[operation](), /required RuntimeClass; refusing fallback/);
+        assert.deepEqual(current.containment, expectedContainment(current));
+        if (operation === "activate") assert.equal(current.writes.length, 0);
+      }
+    }
+  }
+});
+
+test("gVisor excludes safe deleting Pods from readiness and does not contain them", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const deletionTimestamp of [
+      "2026-09-04T00:00:00.000Z",
+      new Date("2026-09-04T00:00:00.000Z"),
+    ]) {
+      const current = runtimeFixture();
+      const deleting = current.pod("safe-deleting");
+      deleting.metadata.deletionTimestamp = deletionTimestamp;
+      current.setObservation({ items: [deleting] });
+
+      // A safe deleting Pod cannot itself satisfy readiness, despite its stale Ready condition.
+      if (operation === "prepare") assert.equal((await current.prepare()).ready, false);
+      else await assert.rejects(current.activate(), /workload is not ready/);
+      assert.deepEqual(current.containment, []);
+
+      const ready = current.pod("safe-ready");
+      for (const items of [
+        [ready, deleting],
+        [deleting, ready],
+      ]) {
+        current.setObservation({ items });
+        // The terminating Pod must not count as a second live readiness candidate either.
+        if (operation === "prepare") assert.equal((await current.prepare()).ready, true);
+        else await current.activate();
+        assert.deepEqual(current.containment, []);
+      }
+    }
+  }
+});
+
+test("gVisor ignores deleting unsafe Pods only after a terminal phase is observed", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const phase of ["Succeeded", "Failed"]) {
+      for (const runtimeClassName of ["runc", undefined]) {
+        const current = runtimeFixture();
+        const terminal = current.pod("terminated-deleting");
+        terminal.metadata.deletionTimestamp = "2026-09-04T00:00:00.000Z";
+        terminal.status = { phase, conditions: [{ type: "Ready", status: "False" }] };
+        if (runtimeClassName === undefined) delete terminal.spec.runtimeClassName;
+        else terminal.spec.runtimeClassName = runtimeClassName;
+        const ready = current.pod("safe-ready");
+
+        // Succeeded and Failed establish termination, so this Pod neither violates current
+        // execution isolation nor competes with the replacement's readiness observation.
+        for (const items of [
+          [ready, terminal],
+          [terminal, ready],
+        ]) {
+          current.setObservation({ items });
+          if (operation === "prepare") assert.equal((await current.prepare()).ready, true);
+          else await current.activate();
+          assert.deepEqual(current.containment, []);
+        }
+      }
+    }
+  }
+});
+
+test("gVisor does not contain deleting unsafe Pods outside the exact revision identity", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const foreignField of [
+      "namespace",
+      "openclaw.dev/agent",
+      "openclaw.dev/revision",
+      "openclaw.dev/workload-role",
+    ]) {
+      const current = runtimeFixture();
+      const foreign = current.pod("foreign-unsafe-deleting");
+      foreign.metadata.deletionTimestamp = "2026-09-04T00:00:00.000Z";
+      foreign.spec.runtimeClassName = "runc";
+      if (foreignField === "namespace") foreign.metadata.namespace = "another-namespace";
+      else foreign.metadata.labels[foreignField] = "another-identity";
+      const ready = current.pod("safe-ready");
+
+      // Unexpected transport results cannot extend containment to another workload identity.
+      for (const items of [
+        [ready, foreign],
+        [foreign, ready],
+      ]) {
+        current.setObservation({ items });
+        if (operation === "prepare") assert.equal((await current.prepare()).ready, true);
+        else await current.activate();
+        assert.deepEqual(current.containment, []);
+      }
+    }
+  }
+});
+
 test("gVisor contains a matching unsafe Pod even when its service-principal label is missing or contradictory", async () => {
   for (const operation of ["prepare", "activate"]) {
     for (const runtimeClassName of ["runc", undefined, GVISOR_RUNTIME_CLASS]) {
