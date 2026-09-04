@@ -350,7 +350,10 @@ OCC state repositories expose `runtimeAssignments` for immutable per-Agent inten
 history and unbound runtime allocations. The current intent head advances by
 expected-generation compare-and-set. Allocations require a ready Namespace,
 an exact current running intent and an admitted AgentRevision; their gateway and
-harness generations advance independently under an Agent lock. PostgreSQL
+harness generations advance independently under an Agent lock. Runtime mutations
+within one unit of work also execute serially, including calls awaited together
+with `Promise.allSettled`; stale generations conflict against the preceding
+mutation’s state. PostgreSQL
 constraints and triggers preserve ownership, immutable history and monotonic
 sequences. The in-memory adapter preserves the same observable transaction
 behavior within one process.

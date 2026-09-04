@@ -405,5 +405,131 @@ export async function verifyRuntimeAssignmentStore(store) {
   await assert.rejects(
     write((r) => r.allocateUnboundRuntime(retiredScope, 1, "gateway", 0, randomUUID(), profiles)),
   );
+  await verifyConcurrentRuntimeMutations(store);
   return { owner, intent, allocation };
+}
+
+async function verifyConcurrentRuntimeMutations(store) {
+  const { scope, revision } = await seedRuntimeOwner(store);
+  const next = { desiredMode: "running", revisionId: revision.id };
+  function oneWinner(outcomes) {
+    assert.equal(outcomes.filter((result) => result.status === "fulfilled").length, 1);
+    const failure = outcomes.find((result) => result.status === "rejected");
+    assert.equal(failure?.reason.name, "ResourceConflictError");
+    return outcomes.find((result) => result.status === "fulfilled").value;
+  }
+  // Concurrent calls in one callback share a unit of work; the outer transaction
+  // queue cannot protect the read/check/write intervals between these operations.
+  const initialRefs = [randomUUID(), randomUUID()];
+  const initial = oneWinner(
+    await store.transact((s) =>
+      Promise.allSettled(
+        initialRefs.map((ref) =>
+          s.runtimeAssignments.initializeRuntimeIntent(scope, revision.id, ref, attribution),
+        ),
+      ),
+    ),
+  );
+  assert.equal(initial.generation, 1);
+  for (const ref of initialRefs) {
+    const saved = await store.read((s) => s.runtimeAssignments.findRuntimeIntent(scope, ref));
+    assert.deepEqual(saved, ref === initial.transitionRef ? initial : undefined);
+  }
+  const advanceRefs = [randomUUID(), randomUUID()];
+  const advanced = oneWinner(
+    await store.transact((s) =>
+      Promise.allSettled(
+        advanceRefs.map((ref) =>
+          s.runtimeAssignments.advanceRuntimeIntent(scope, 1, next, ref, attribution),
+        ),
+      ),
+    ),
+  );
+  assert.equal(advanced.generation, 2);
+  assert.deepEqual(
+    await store.read((s) => s.runtimeAssignments.findRuntimeIntentHead(scope)),
+    advanced,
+  );
+  for (const ref of advanceRefs) {
+    const saved = await store.read((s) => s.runtimeAssignments.findRuntimeIntent(scope, ref));
+    assert.deepEqual(saved, ref === advanced.transitionRef ? advanced : undefined);
+  }
+  const effects = [randomUUID(), randomUUID()];
+  const allocation = oneWinner(
+    await store.transact((s) =>
+      Promise.allSettled(
+        effects.map((effect) =>
+          s.runtimeAssignments.allocateUnboundRuntime(scope, 2, "gateway", 0, effect, profiles),
+        ),
+      ),
+    ),
+  );
+  assert.equal(allocation.runtimeGeneration, 1);
+  for (const effect of effects) {
+    const saved = await store.read((s) =>
+      s.runtimeAssignments.findRuntimeAllocation(scope, { createEffectRef: effect }),
+    );
+    assert.deepEqual(saved, effect === allocation.createEffectRef ? allocation : undefined);
+  }
+  const sharedEffect = randomUUID();
+  const replays = await store.transact((s) =>
+    Promise.all([
+      s.runtimeAssignments.allocateUnboundRuntime(scope, 2, "gateway", 1, sharedEffect, profiles),
+      s.runtimeAssignments.allocateUnboundRuntime(scope, 2, "gateway", 1, sharedEffect, profiles),
+    ]),
+  );
+  assert.deepEqual(replays[0], replays[1]);
+  assert.equal(replays[0].runtimeGeneration, 2);
+  const conflictingEffect = randomUUID();
+  const sameEffect = oneWinner(
+    await store.transact((s) =>
+      Promise.allSettled([
+        s.runtimeAssignments.allocateUnboundRuntime(
+          scope,
+          2,
+          "gateway",
+          2,
+          conflictingEffect,
+          profiles,
+        ),
+        s.runtimeAssignments.allocateUnboundRuntime(
+          scope,
+          2,
+          "gateway",
+          3,
+          conflictingEffect,
+          profiles,
+        ),
+      ]),
+    ),
+  );
+  assert.equal(sameEffect.runtimeGeneration, 3);
+  assert.deepEqual(
+    await store.read((s) =>
+      s.runtimeAssignments.findRuntimeAllocation(scope, { createEffectRef: conflictingEffect }),
+    ),
+    sameEffect,
+  );
+  // A head change must be visible to an allocation invoked after it, even when
+  // both promises are awaited together rather than sequentially by the caller.
+  const blockedEffect = randomUUID();
+  const stopped = await store.transact((s) =>
+    Promise.allSettled([
+      s.runtimeAssignments.advanceRuntimeIntent(
+        scope,
+        2,
+        { ...next, desiredMode: "stopped" },
+        randomUUID(),
+        attribution,
+      ),
+      s.runtimeAssignments.allocateUnboundRuntime(scope, 2, "gateway", 3, blockedEffect, profiles),
+    ]),
+  );
+  assert.equal(oneWinner(stopped).desiredMode, "stopped");
+  assert.equal(
+    await store.read((s) =>
+      s.runtimeAssignments.findRuntimeAllocation(scope, { createEffectRef: blockedEffect }),
+    ),
+    undefined,
+  );
 }

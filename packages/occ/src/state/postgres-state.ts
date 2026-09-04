@@ -28,6 +28,7 @@ import {
   ResourceConflictError,
   ScopeViolationError,
 } from "../errors.ts";
+import { serializeRuntimeAssignmentMutations } from "./platform-state.ts";
 import type {
   RuntimeAssignmentRepository,
   RuntimeIntent,
@@ -1862,7 +1863,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
 
     return {
-      runtimeAssignments,
+      runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
       installations,
       namespaces,
       configurations,

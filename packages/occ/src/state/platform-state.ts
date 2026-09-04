@@ -360,6 +360,29 @@ export interface RuntimeAssignmentRepository extends RuntimeAssignmentReadReposi
   ): Promise<Readonly<RuntimeAllocation>>;
 }
 
+/** Serialize runtime mutations inside one unit of work, in addition to store/SQL locks. */
+export function serializeRuntimeAssignmentMutations(
+  repository: RuntimeAssignmentRepository,
+): RuntimeAssignmentRepository {
+  let pending: Promise<void> = Promise.resolve();
+  function mutate<T>(work: () => Promise<T>): Promise<T> {
+    const result = pending.then(work);
+    // A rejected CAS remains the caller's error; it must not prevent subsequent
+    // independently awaited operations from examining the current stored state.
+    pending = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+  return {
+    ...repository,
+    initializeRuntimeIntent: (...args) => mutate(() => repository.initializeRuntimeIntent(...args)),
+    advanceRuntimeIntent: (...args) => mutate(() => repository.advanceRuntimeIntent(...args)),
+    allocateUnboundRuntime: (...args) => mutate(() => repository.allocateUnboundRuntime(...args)),
+  };
+}
+
 export interface PlatformReadView {
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
   readonly installations: InstallationReadRepository;
@@ -1281,7 +1304,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
   }
 
   return {
-    runtimeAssignments,
+    runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
     installations,
     namespaces,
     configurations,
