@@ -30,17 +30,18 @@ override that selection behavior.
 
 Each linked section contains the setup requirements and commands for that suite.
 
-| Suite                    | What it verifies                                                                                                                      | Setup and commands                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Local API and lifecycle  | HTTP routes, authentication, startup, worker behavior, Driver packages, and local process boundaries.                                 | [Local checks](#local-checks)                                             |
-| PostgreSQL               | Real persistence, constraints, authentication, API keys, Secret metadata, queue claims, recovery, and production bootstrap.           | [PostgreSQL](#postgresql)                                                 |
-| Images and Helm          | Built controller modules, runtime startup, and rendered production packaging.                                                         | [Images and Helm](#images-and-helm)                                       |
-| Docker Compose           | Real PostgreSQL, API, worker, isolated containers, and embedded OpenClaw plus dedicated Codex model turns.                            | [Docker Compose model turns](#docker-compose-model-turns)                 |
-| Kubernetes HTTP fixture  | Real Kubernetes API, RBAC, ownership, revision routing, namespace preservation, and enforced NetworkPolicies.                         | [Kubernetes HTTP fixture](#kubernetes-http-fixture)                       |
-| Kubernetes real runtimes | Dedicated Codex, embedded OpenClaw, shared workspace, Secret API delivery, rotation, authorization, and focused workspace-file proof. | [Kubernetes model turns and Secrets](#kubernetes-model-turns-and-secrets) |
-| Slack                    | Actual Socket Mode ingress and a gateway-authored reply through dedicated Codex.                                                      | [Slack](#slack)                                                           |
-| ChatGPT service accounts | Actual provider account creation, credential issuance, exact Agent delivery, and a model turn.                                        | [ChatGPT service accounts](#chatgpt-service-accounts)                     |
-| OpenShell Sandbox        | Provider-owned dedicated Harness execution and filesystem/network enforcement through real tools.                                     | [OpenShell Sandbox](#openshell-sandbox)                                   |
+| Suite                     | What it verifies                                                                                                                      | Setup and commands                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Local API and lifecycle   | HTTP routes, authentication, startup, worker behavior, Driver packages, and local process boundaries.                                 | [Local checks](#local-checks)                                             |
+| PostgreSQL                | Real persistence, constraints, authentication, API keys, Secret metadata, queue claims, recovery, and production bootstrap.           | [PostgreSQL](#postgresql)                                                 |
+| Images and Helm           | Built controller modules, runtime startup, and rendered production packaging.                                                         | [Images and Helm](#images-and-helm)                                       |
+| Docker Compose            | Real PostgreSQL, API, worker, isolated containers, and embedded OpenClaw plus dedicated Codex model turns.                            | [Docker Compose model turns](#docker-compose-model-turns)                 |
+| Kubernetes HTTP fixture   | Real Kubernetes API, RBAC, ownership, revision routing, namespace preservation, and enforced NetworkPolicies.                         | [Kubernetes HTTP fixture](#kubernetes-http-fixture)                       |
+| gVisor Alpha HTTP fixture | Actual gVisor execution, scoped Compute lifecycle, shared workspace retention, and unsafe-placement containment.                      | [gVisor Alpha HTTP fixture](#gvisor-alpha-http-fixture)                   |
+| Kubernetes real runtimes  | Dedicated Codex, embedded OpenClaw, shared workspace, Secret API delivery, rotation, authorization, and focused workspace-file proof. | [Kubernetes model turns and Secrets](#kubernetes-model-turns-and-secrets) |
+| Slack                     | Actual Socket Mode ingress and a gateway-authored reply through dedicated Codex.                                                      | [Slack](#slack)                                                           |
+| ChatGPT service accounts  | Actual provider account creation, credential issuance, exact Agent delivery, and a model turn.                                        | [ChatGPT service accounts](#chatgpt-service-accounts)                     |
+| OpenShell Sandbox         | Provider-owned dedicated Harness execution and filesystem/network enforcement through real tools.                                     | [OpenShell Sandbox](#openshell-sandbox)                                   |
 
 ## Console browser checks
 
@@ -332,6 +333,53 @@ The tests require an explicit loopback `k3d-*` context and enforcing
 NetworkPolicies. They create scoped RBAC and resources, and configure the
 selected cluster's local-path provisioner for shared filesystem tests. Because
 that changes cluster-wide storage configuration, use a disposable cluster.
+
+## gVisor Alpha HTTP fixture
+
+Prepare a separate disposable k3d cluster with an explicit loopback API and
+home-directory kubeconfig. Preserve the default kubeconfig and context.
+Install the complete verified runtime bundle using the
+[gVisor preparation helper](reference/drivers/gvisor.md#offline-runtime-preparation),
+then configure the node's containerd handler and exact `oce-gvisor-systrap`
+RuntimeClass with systrap and strict sidecar usage. Keep runc as the ordinary
+runtime, restricted Pod security, and the enforcing NetworkPolicy controller.
+The suite never installs or changes that operator-owned runtime configuration.
+
+Build and import `tests/fixtures/kubernetes` as above. Prepare shared local-path
+storage only in this disposable cluster, then run the opt-in suite with all
+selectors scoped to the test process:
+
+```sh
+OCC_TEST_KUBERNETES_KUBECONFIG="$HOME/.cache/oce-gvisor-cluster/kubeconfig" \
+OCC_TEST_KUBERNETES_CONTEXT=k3d-oce-gvisor-alpha \
+node --input-type=module - <<'JS'
+import { configureExistingK3dLocalPathSharedFileSystem } from './tests/helpers/kubernetes-real.mjs';
+await configureExistingK3dLocalPathSharedFileSystem({
+  kubeconfigPath: process.env.OCC_TEST_KUBERNETES_KUBECONFIG,
+  kubernetesContext: process.env.OCC_TEST_KUBERNETES_CONTEXT,
+});
+JS
+
+OCC_TEST_GVISOR_K3D_REAL=1 \
+OCC_TEST_KUBERNETES_KUBECONFIG="$HOME/.cache/oce-gvisor-cluster/kubeconfig" \
+OCC_TEST_KUBERNETES_CONTEXT=k3d-oce-gvisor-alpha \
+OCC_TEST_KUBERNETES_IMAGE=oce-fixture:local \
+  node --test tests/integration/gvisor-kubernetes-real.test.mjs
+```
+
+This suite needs no PostgreSQL database or model credential. It exercises the
+actual Compute Driver with scoped Kubernetes credentials, preparation of two
+real gVisor fixture revisions, default-deny networking, retained workspace bytes, and
+confirmed Pod removal after unsafe-placement containment. It removes its own
+namespaces and RBAC while preserving the RuntimeClass. Retain node-side binary
+hashes, runtime flags, image digests, and process evidence with the test output;
+a RuntimeClass label alone does not establish which runtime ran.
+
+No opt-in explicitly skips this separate suite. Once opted in, missing setup or
+a failed live check fails the test. Without real runtime configuration,
+activation leaves routing inactive. The HTTP fixture does not establish real
+activation/cutover, gateway, Codex, model, or external credential behavior. Run those acceptance
+checks separately for the selected Alpha deployment.
 
 ## Kubernetes model turns and Secrets
 

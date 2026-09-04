@@ -98,8 +98,10 @@ for candidate rules and the limits of this observation.
 The optional [gVisor profile (Alpha)](../reference/drivers/gvisor.md)
 uses Compute's own dedicated Deployment path with a fixed RuntimeClass in
 both development and production. It retains a distinct Compute implementation
-in admitted revisions and checks observed Pod placement after Deployment
-readiness. It does not invoke OpenShell or change credential placement;
+in admitted revisions and checks observed Pod placement during rollout and
+after Deployment readiness. Matching nonterminal Pods remain subject to the
+runtime check even when deletion has been requested; safely placed deleting
+Pods do not count toward readiness. It does not invoke OpenShell or change credential placement;
 node-side runsc/platform proof and live lifecycle/tool qualification remain
 separate requirements.
 

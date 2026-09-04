@@ -57,14 +57,17 @@ The [gVisor profile](../reference/drivers/gvisor.md) is available in
 both development and production through explicit Kubernetes Compute
 `isolationProfile: gvisor-systrap` configuration. It requests a separately
 registered RuntimeClass with `runsc --platform=systrap` for dedicated Harnesses.
-The offline preparation helper verifies operator-supplied artifacts without
+The offline preparation helper verifies the complete operator-supplied release
+bundle, including adjacent sidecar programs, without
 changing shared Docker/containerd defaults or restarting services.
 
-Use a disposable cluster for local qualification. Missing artifacts fail
-locally; obtain them through an authorized supply path. Alpha support does not
-establish live containment, model/tool compatibility, credential mediation, or
-OpenShell/Kata/SPIRE equivalence. The reference page distinguishes required
-runtime evidence from configuration and fixture tests.
+Use a disposable cluster for the [gVisor HTTP fixture verification](../testing.md#gvisor-alpha-http-fixture).
+Configure the verified binary with explicit systrap and strict sidecar usage.
+Missing artifacts fail locally; obtain them through an authorized supply path.
+The fixture exercises actual gVisor execution and Compute lifecycle behavior;
+model/tool compatibility, credential mediation, and OpenShell/Kata/SPIRE
+reference acceptance require their own evidence. Alpha status does not prevent
+explicit production selection.
 
 ## Production
 

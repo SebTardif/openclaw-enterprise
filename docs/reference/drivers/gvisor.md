@@ -4,8 +4,10 @@ The bundled Kubernetes Compute Driver accepts an explicit
 `isolationProfile: gvisor-systrap` selection in both development and production.
 **Support is Alpha.** The Agent workload requests the separately installed
 `oce-gvisor-systrap` RuntimeClass; its trusted gateway retains the existing
-runtime selection. Live gVisor containment and application compatibility have
-not yet been qualified by this implementation.
+runtime selection. The optional real-cluster suite exercises the HTTP fixture
+through gVisor, revision preparation and replacement, retained workspace data, and containment
+of observed unsafe placement. Full gateway/Codex and model compatibility require
+separate qualification.
 
 gVisor implements a userspace kernel, not a VM boundary.
 `runsc --platform=systrap` can operate without `/dev/kvm`. See the upstream
@@ -73,8 +75,11 @@ app-server and does not establish model, GitHub or channel behavior.
 `scripts/gvisor-development-setup.mjs` prepares a new private prefix from
 operator-supplied local artifacts. It never downloads files, contacts a
 cluster, edits shared daemon configuration, changes a default runtime, or
-restarts a service. Provide independently verified, immutable `runsc` and
-`containerd-shim-runsc-v1` artifacts and their checksums. A checksum supplied
+restarts a service. Provide an independently verified immutable release bundle:
+`runsc`, `containerd-shim-runsc-v1`, and all four adjacent `gvisor-bin/`
+programs. Current releases require this complete layout; see the upstream
+[installation instructions](https://gvisor.dev/docs/user_guide/install/).
+A checksum supplied
 alongside an untrusted artifact is not an independent authenticity guarantee.
 
 Run the helper's `--help` for the exact manifest schema, then:
@@ -85,17 +90,27 @@ node scripts/gvisor-development-setup.mjs \
   --prefix /private/oce-development/gvisor
 ```
 
-The helper verifies both files before executing bounded version probes and
-refuses an existing destination. Preserve the resulting receipt with the
-artifact provenance. Missing artifacts, a checksum mismatch, or a version
-mismatch are failures; there is no download or runc fallback. A generated
-configuration or successful version probe is not a sandbox smoke test.
+The canonical manifest uses `schemaVersion: 2`, a pinned `releaseVersion`, and
+six artifact entries. The two entrypoint programs include exact version-probe
+expectations; each sidecar includes its local path and SHA-256. The helper
+verifies every file before executing bounded version probes, rechecks hashes
+after each probe, and refuses an existing destination. Its `bin/` directory
+preserves the sidecar layout and execution permissions needed after runsc drops
+privileges. The `runsc-systrap` wrapper fixes `platform=systrap` and
+`sidecar-usage-policy=STRICT`, rejecting caller overrides.
+
+Preserve the resulting receipt with the artifact provenance. Missing artifacts,
+a checksum mismatch, or a version mismatch are failures; there is no download
+or runc fallback. A successful preparation receipt is not a sandbox smoke test.
 
 For local qualification, install the prepared runtime in a disposable cluster
 or isolated containerd instance. Keep the current default runtime and shared services.
 Register the exact RuntimeClass name `oce-gvisor-systrap` against a handler
 whose inspected configuration invokes the verified runsc binary with
-`platform=systrap`. Do not grant an unrestricted Pod Security exemption:
+`platform=systrap` and `sidecar-usage-policy=STRICT`. Keep its complete `bin/`
+layout together when mounting it into a node. The wrapper contains its prepared
+host path; a node mounted at a different path must configure its local runsc
+path and both flags explicitly. Do not grant an unrestricted Pod Security exemption:
 Harness Pods retain restricted security settings. Distribution and
 containerd configuration must be verified against the installed versions.
 
@@ -115,7 +130,10 @@ Compute checks Pod placement during rollout as well as after the Deployment
 reports readiness. Readiness requires exactly one live Pod with its exact
 ownership labels, namespace, `Running` phase, `Ready=True`, and the same
 RuntimeClass. Missing, duplicated, or unready Pods prevent readiness; a removed
-or substituted RuntimeClass fails explicitly.
+or substituted RuntimeClass fails explicitly. A matching Pod with a deletion
+timestamp is still checked for runtime violations until its phase is
+`Succeeded` or `Failed`; deletion intent does not establish that its process
+has stopped. A safely placed deleting Pod never contributes to readiness.
 
 A positively observed isolation violation during preparation or activation
 also requests containment: an atomic selector/UID/resourceVersion check
@@ -142,7 +160,26 @@ These tests exercise the real configuration/Compute code against transport
 fixtures and the offline artifact helper against labeled executable fixtures.
 They make no cluster or gVisor runtime claim.
 
-## Required live qualification
+## Live fixture verification
+
+`tests/integration/gvisor-kubernetes-real.test.mjs` requires explicit opt-in and
+a disposable loopback k3d cluster with an installed handler, RuntimeClass,
+imported HTTP fixture image, enforcing NetworkPolicies, and prepared shared
+local-path storage. It uses the actual Compute Driver and scoped controller
+credentials. It checks gVisor kernel output, allowed DNS and denied traffic,
+revision preparation and replacement, retained workspace bytes, and observed
+Pod removal after exact-revision containment. The fixture has no real runtime
+configuration, so activation deliberately leaves routing inactive; production
+activation and route cutover require the real-runtime suite. The suite preserves the
+operator-owned RuntimeClass and removes its own namespaces and RBAC.
+See [the test procedure](../../testing.md#gvisor-alpha-http-fixture).
+
+The workload is an HTTP fixture. These checks do not establish genuine
+OpenClaw gateway, authenticated Codex transport, provider model turns, or a
+general sandbox security certification. Node-side binary and platform evidence
+must accompany a live result.
+
+## Deployment qualification
 
 No live qualification is implied by the conformance tests. On a prepared
 isolated host, retain evidence for all of the following:
@@ -165,6 +202,13 @@ isolated host, retain evidence for all of the following:
    and Git exchange with an allowed test remote; gh version/help plus any
    separately authorized API matrix. Local commands do not establish GitHub
    authentication, scoped issuance, refresh, revocation, or mediated access.
+
+CPU and memory configuration does not establish a process-count limit. The
+Compute profile does not configure the kubelet's Pod PID limit; operators must
+set and verify that node policy separately. See
+[Kubernetes PID limits](https://kubernetes.io/docs/concepts/policy/pid-limiting/)
+and the [gVisor resource model](https://gvisor.dev/docs/architecture_guide/resources/).
+Measure host sandbox limits separately from process accounting inside gVisor.
 
 Full gateway/Codex model execution must be measured separately on this Alpha
 profile; unit tests and HTTP fixtures are not that evidence. The intended
