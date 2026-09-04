@@ -916,3 +916,7 @@ The platform preserves:
 - Production Installation-wide administration and access-gateway admission.
 - Audit export, retention, and operational integrations.
 - Additional primitives: Budges, Routers
+
+## Repository access profiles
+
+The repository-access proposal distinguishes native scoped-token Git/gh, mediated credentials with local history, and an optional history-isolated snapshot/service boundary. Long-lived platform credentials remain trusted-side; native mode permits scoped ephemeral GitHub tokens. See [repository access modes](../specs/20-repository-access-modes.md) for authority, revoke, history and compatibility contracts. These are implementation targets, not changes to currently supported runtime behavior.
