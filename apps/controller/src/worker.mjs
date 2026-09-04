@@ -2,6 +2,7 @@ import { unlink, writeFile } from "node:fs/promises";
 import pg from "pg";
 import { loadInstallationConfiguration } from "./composition/installation-config.ts";
 import { createControllerWorker } from "./worker.ts";
+import { startupDiagnostic } from "./startup-diagnostics.ts";
 
 function positiveEnvironment(name, fallback) {
   const raw = process.env[name];
@@ -92,12 +93,7 @@ try {
 } catch (error) {
   if (readinessPath !== undefined) await unlink(readinessPath).catch(() => {});
   if (worker !== undefined) await worker.stop().catch(() => {});
-  else if (pool !== undefined) await pool.end();
-  process.stderr.write(
-    `${JSON.stringify({
-      event: "worker.startup-error",
-      error: error instanceof Error ? error.message : "The controller worker could not start.",
-    })}\n`,
-  );
+  else if (pool !== undefined) await pool.end().catch(() => {});
+  process.stderr.write(`${JSON.stringify(startupDiagnostic("worker", error))}\n`);
   process.exitCode = 1;
 }

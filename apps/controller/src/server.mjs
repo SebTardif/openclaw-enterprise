@@ -4,13 +4,14 @@ import { isAbsolute } from "node:path";
 import { loadInstallationConfiguration } from "./composition/installation-config.ts";
 import { composeProduction } from "./composition/production.ts";
 import { validateWorkspaceFilesApiKeyPath } from "./composition/workspace-files.ts";
+import { startupDiagnostic } from "./startup-diagnostics.ts";
 
 const loopbackHosts = new Set(["127.0.0.1", "::1", "[::1]"]);
 const developmentBindHosts = new Set(["127.0.0.1", "::1", "0.0.0.0"]);
 const DEFAULT_BETTER_AUTH_BASE_URL = "http://127.0.0.1:3000";
 
-function startupFailure(message) {
-  process.stderr.write(`${JSON.stringify({ event: "startup-error", error: message })}\n`);
+function startupFailure(error) {
+  process.stderr.write(`${JSON.stringify(startupDiagnostic("api", error))}\n`);
   process.exitCode = 1;
 }
 
@@ -242,7 +243,7 @@ async function start() {
   try {
     await app.listen({ host: settings.host, port: settings.port });
   } catch (error) {
-    await app.close();
+    await app.close().catch(() => {});
     throw error;
   }
   process.stdout.write(
@@ -253,5 +254,5 @@ async function start() {
 try {
   await start();
 } catch (error) {
-  startupFailure(error instanceof Error ? error.message : "The OCC server could not start.");
+  startupFailure(error);
 }

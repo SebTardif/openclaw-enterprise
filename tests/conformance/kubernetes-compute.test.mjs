@@ -1528,10 +1528,11 @@ test("production drivers reject injected clients and fail closed without their k
     }),
   );
 
+  // A missing explicit kubeconfig is now a normalized configuration validation failure.
   assert.deepEqual(await driver.ensureNamespace(tenant), {
     namespaceId: tenant.id,
     namespaceReady: false,
-    failure: "retryable",
+    failure: "permanent",
   });
 });
 

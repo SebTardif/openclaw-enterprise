@@ -4,6 +4,7 @@ import type {
   ResponseContext,
 } from "@kubernetes/client-node";
 import { currentComputeAbortSignal } from "../compute/operation-context.ts";
+import { markKubernetesConfigurationFailure } from "../../startup-diagnostics.ts";
 
 type KubernetesAuthentication =
   | { readonly mode: "inCluster" }
@@ -19,12 +20,14 @@ type ValidationFailure = (message: string) => Error;
 
 export async function createKubernetesClientConfiguration(
   authentication: KubernetesAuthentication,
-  validationFailure: ValidationFailure,
+  createValidationFailure: ValidationFailure,
 ): Promise<{
   readonly sdk: KubernetesSdk;
   readonly clientConfiguration: KubernetesClientConfiguration;
   readonly kubeConfig: import("@kubernetes/client-node").KubeConfig;
 }> {
+  const validationFailure = (message: string) =>
+    markKubernetesConfigurationFailure(createValidationFailure(message));
   let sdk: KubernetesSdk;
   try {
     sdk = await import("@kubernetes/client-node");
@@ -33,10 +36,16 @@ export async function createKubernetesClientConfiguration(
   }
 
   const configuration = new sdk.KubeConfig();
-  if (authentication.mode === "inCluster") {
-    configuration.loadFromCluster();
-  } else {
-    configuration.loadFromFile(authentication.kubeconfigPath);
+  try {
+    if (authentication.mode === "inCluster") {
+      configuration.loadFromCluster();
+    } else {
+      configuration.loadFromFile(authentication.kubeconfigPath);
+    }
+  } catch {
+    throw validationFailure("The Kubernetes client configuration could not be loaded.");
+  }
+  if (authentication.mode === "kubeconfig") {
     const contexts = configuration
       .getContexts()
       .filter((context) => context.name === authentication.context);

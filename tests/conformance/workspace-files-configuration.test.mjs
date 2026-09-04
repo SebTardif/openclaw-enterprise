@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   createWorkspaceFilesAccess,
   readWorkspaceFilesApiKey,
@@ -14,6 +16,40 @@ import { createInstallationDriverConfiguration as installation } from "../helper
 
 const namespaceId = "ns_00000000-0000-4000-8000-000000000001";
 const agentId = "agt_00000000-0000-4000-8000-000000000001";
+
+async function databaseConnectionProbe(t) {
+  let connections = 0;
+  // This observes connection attempts only; it does not emulate PostgreSQL.
+  const listener = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => listener.close(resolve)));
+  return {
+    url: `postgresql://127.0.0.1:${listener.address().port}/occ`,
+    connections: () => connections,
+  };
+}
+
+async function failedStartup(env) {
+  try {
+    await promisify(execFile)(process.execPath, ["apps/controller/src/server.mjs"], {
+      cwd: process.cwd(),
+      env,
+      timeout: 10_000,
+    });
+    assert.fail("Invalid startup must fail.");
+  } catch (error) {
+    assert.equal(error.code, 1);
+    assert.equal(error.signal, null);
+    assert.deepEqual(JSON.parse(error.stderr), {
+      event: "startup-error",
+      code: "STARTUP_FAILED",
+      error: "Controller startup failed. Check the configured startup prerequisites.",
+    });
+  }
+}
 
 async function tempPath(t, basename, contents) {
   const directory = await mkdtemp(join(tmpdir(), "occ-gateway-api-key-"));
@@ -195,49 +231,45 @@ test("workspace-files server startup validates API-only key configuration before
   const gatewayApiKeyPath = await tempPath(t, "gateway-api-key", " ");
   const installationPath = await tempPath(t, "installation.yaml", JSON.stringify(installation()));
 
-  const server = spawnSync(process.execPath, ["apps/controller/src/server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      PATH: process.env.PATH,
-      NODE_ENV: "production",
-      OCC_CONFIG_PATH: installationPath,
-      OCC_HOST: "192.0.2.10",
-      OCC_PORT: "8080",
-      OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
-      OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
-      OCC_DATABASE_URL: "postgresql://127.0.0.1:1/occ",
-      OCC_GATEWAY_API_KEY_PATH: gatewayApiKeyPath,
-    },
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-
-  assert.equal(server.status, 1);
-  assert.match(server.stderr, /gateway API key/i);
-  assert.doesNotMatch(server.stderr, /ECONNREFUSED|PostgreSQL|database/i);
+  const database = await databaseConnectionProbe(t);
+  const env = {
+    PATH: process.env.PATH,
+    NODE_ENV: "production",
+    OCC_CONFIG_PATH: installationPath,
+    OCC_HOST: "192.0.2.10",
+    OCC_PORT: "8080",
+    OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
+    OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
+    OCC_DATABASE_URL: database.url,
+    OCC_GATEWAY_API_KEY_PATH: gatewayApiKeyPath,
+  };
+  await failedStartup(env);
+  assert.equal(database.connections(), 0);
+  // Correcting only the key advances the real startup to its database connection.
+  await writeFile(gatewayApiKeyPath, "benign-unused-gateway-key");
+  await failedStartup(env);
+  assert.equal(database.connections(), 1);
 });
 
 test("workspace-files server startup rejects the removed endpoint-map environment", async (t) => {
   const installationPath = await tempPath(t, "installation.yaml", JSON.stringify(installation()));
 
-  const server = spawnSync(process.execPath, ["apps/controller/src/server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      PATH: process.env.PATH,
-      NODE_ENV: "production",
-      OCC_CONFIG_PATH: installationPath,
-      OCC_HOST: "192.0.2.10",
-      OCC_PORT: "8080",
-      OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
-      OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
-      OCC_DATABASE_URL: "postgresql://127.0.0.1:1/occ",
-      OCC_WORKSPACE_FILES_CONFIG_PATH: "/etc/openclaw/workspace-files/workspace-files.yaml",
-    },
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-
-  assert.equal(server.status, 1);
-  assert.match(server.stderr, /OCC_WORKSPACE_FILES_CONFIG_PATH|removed/i);
-  assert.doesNotMatch(server.stderr, /ECONNREFUSED|PostgreSQL|database/i);
+  const database = await databaseConnectionProbe(t);
+  const env = {
+    PATH: process.env.PATH,
+    NODE_ENV: "production",
+    OCC_CONFIG_PATH: installationPath,
+    OCC_HOST: "192.0.2.10",
+    OCC_PORT: "8080",
+    OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
+    OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
+    OCC_DATABASE_URL: database.url,
+    OCC_WORKSPACE_FILES_CONFIG_PATH: "/etc/openclaw/workspace-files/workspace-files.yaml",
+  };
+  await failedStartup(env);
+  assert.equal(database.connections(), 0);
+  // Removing only the obsolete setting advances startup to its database connection.
+  delete env.OCC_WORKSPACE_FILES_CONFIG_PATH;
+  await failedStartup(env);
+  assert.equal(database.connections(), 1);
 });

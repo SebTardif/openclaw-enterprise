@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createServer } from "node:net";
+import { promisify } from "node:util";
 import test from "node:test";
 import pg from "pg";
 import { loadInstallationConfiguration } from "../../apps/controller/src/composition/installation-config.ts";
@@ -398,94 +400,108 @@ test("production requires one YAML while development may start without a Configu
   );
 });
 
+async function startupConnectionProbe(t) {
+  let connections = 0;
+  // This observes real startup connection attempts and does not emulate PostgreSQL.
+  const listener = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => listener.close(resolve)));
+  return {
+    url: `postgresql://127.0.0.1:${listener.address().port}/occ`,
+    connections: () => connections,
+  };
+}
+
+async function failedStartup(component, env) {
+  try {
+    await promisify(execFile)(process.execPath, [`apps/controller/src/${component}.mjs`], {
+      cwd: process.cwd(),
+      env,
+      timeout: 10_000,
+    });
+    assert.fail("Startup must fail at the selected boundary.");
+  } catch (error) {
+    assert.equal(error.code, 1);
+    assert.equal(error.signal, null);
+    assert.deepEqual(JSON.parse(error.stderr), {
+      event: component === "server" ? "startup-error" : "worker.startup-error",
+      code: "STARTUP_FAILED",
+      error: "Controller startup failed. Check the configured startup prerequisites.",
+    });
+  }
+}
+
 test("production server and worker resolve singleton startup without an Installation ID", async (t) => {
   const path = await fixture(t);
+  const database = await startupConnectionProbe(t);
   const shared = {
     PATH: process.env.PATH,
     NODE_ENV: "production",
     OCC_CONFIG_PATH: path,
-    OCC_DATABASE_URL: "postgresql://127.0.0.1:1/occ",
+    OCC_DATABASE_URL: database.url,
   };
+  const api = { ...shared, OCC_HOST: "192.0.2.10", OCC_PORT: "8080" };
+  await failedStartup("server", api);
+  assert.equal(database.connections(), 0);
 
-  // The actual server gets beyond singleton/Driver startup and fails only at missing session auth.
-  const server = spawnSync(process.execPath, ["apps/controller/src/server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      ...shared,
-      OCC_HOST: "192.0.2.10",
-      OCC_PORT: "8080",
-    },
-    encoding: "utf8",
-    timeout: 10_000,
+  // Completing only auth configuration advances the actual server to persistence.
+  await failedStartup("server", {
+    ...api,
+    OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
+    OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
   });
-  assert.equal(server.status, 1);
-  assert.match(server.stderr, /OCC_AUTH_BASE_URL|OCC_AUTH_SECRET/);
-  assert.doesNotMatch(server.stderr, /OCC_INSTALLATION_ID/);
-
-  // The real worker likewise reaches PostgreSQL; no test-owned database or driver is substituted.
-  const worker = spawnSync(process.execPath, ["apps/controller/src/worker.mjs"], {
-    cwd: process.cwd(),
-    env: shared,
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  assert.equal(worker.status, 1);
-  assert.match(worker.stderr, /worker\.startup-error/);
-  assert.doesNotMatch(worker.stderr, /OCC_INSTALLATION_ID|explicit Installation/);
+  assert.equal(database.connections(), 1);
+  await failedStartup("worker", shared);
+  assert.equal(database.connections(), 2);
 });
 
 test("only the actual API process reads ChatGPT admin credentials and provider accounts require PostgreSQL", async (t) => {
-  const path = await fixture(t, chatgptInstallation());
+  const configuration = chatgptInstallation();
+  const path = await fixture(t, configuration);
+  const keyPath = join(dirname(path), "admin-key");
+  configuration.provider[0].configuration.apiKeyPath = keyPath;
+  await writeFile(path, JSON.stringify(configuration));
+  const database = await startupConnectionProbe(t);
   const shared = {
     PATH: process.env.PATH,
     NODE_ENV: "production",
     OCC_CONFIG_PATH: path,
-    OCC_DATABASE_URL: "postgresql://127.0.0.1:1/occ",
+    OCC_DATABASE_URL: database.url,
+  };
+  const api = {
+    ...shared,
+    OCC_HOST: "192.0.2.10",
+    OCC_PORT: "8080",
+    OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
+    OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
   };
 
-  // API startup fails on its missing mounted admin key before opening the configured database.
-  const server = spawnSync(process.execPath, ["apps/controller/src/server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      ...shared,
-      OCC_HOST: "192.0.2.10",
-      OCC_PORT: "8080",
-      OCC_AUTH_SECRET: "production-auth-secret-with-at-least-32-characters",
-      OCC_AUTH_BASE_URL: "http://192.0.2.10:8080",
-    },
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  assert.equal(server.status, 1);
-  assert.match(server.stderr, /ChatGPT admin-key Secret is unavailable/);
+  // With the API-only key missing, only the worker can reach persistence.
+  await failedStartup("server", api);
+  assert.equal(database.connections(), 0);
+  await failedStartup("worker", shared);
+  assert.equal(database.connections(), 1);
+  // Creating only the key advances the API. No provider request can run: the
+  // PostgreSQL connection is closed before any state or account initialization.
+  await writeFile(keyPath, "benign-unused-admin-key", { mode: 0o600 });
+  await failedStartup("server", api);
+  assert.equal(database.connections(), 2);
 
-  // The same configured worker cannot read that mount and fails only when PostgreSQL is unavailable.
-  const worker = spawnSync(process.execPath, ["apps/controller/src/worker.mjs"], {
-    cwd: process.cwd(),
-    env: shared,
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  assert.equal(worker.status, 1);
-  assert.match(worker.stderr, /worker\.startup-error/);
-  assert.doesNotMatch(worker.stderr, /ChatGPT|admin-key|ServiceAccount Driver/);
-
-  // Driver-private provider bindings cannot silently fall back to ephemeral in-memory persistence.
-  const inMemory = spawnSync(process.execPath, ["apps/controller/src/server.mjs"], {
-    cwd: process.cwd(),
-    env: {
-      PATH: process.env.PATH,
-      NODE_ENV: "development",
-      OCC_CONFIG_PATH: path,
-      OCC_HOST: "127.0.0.1",
-      OCC_PORT: "8080",
-    },
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  assert.equal(inMemory.status, 1);
-  assert.match(inMemory.stderr, /ServiceAccounts require PostgreSQL persistence/);
-  assert.doesNotMatch(inMemory.stderr, /ChatGPT admin-key Secret/);
+  const development = {
+    PATH: process.env.PATH,
+    NODE_ENV: "development",
+    OCC_CONFIG_PATH: path,
+    OCC_HOST: "127.0.0.1",
+    OCC_PORT: "8080",
+  };
+  await failedStartup("server", development);
+  assert.equal(database.connections(), 2);
+  // Provider bindings cannot silently use memory: supplying persistence advances startup.
+  await failedStartup("server", { ...development, OCC_DATABASE_URL: database.url });
+  assert.equal(database.connections(), 3);
 });
 
 test("startup rejects caller-selected Installation IDs and obsolete Driver selectors", async (t) => {

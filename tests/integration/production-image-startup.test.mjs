@@ -138,10 +138,6 @@ async function runDocker(args, options = {}) {
   });
 }
 
-function imageFailureOutput(error) {
-  return `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
-}
-
 function assertNoPackagingFailure(output) {
   assert.doesNotMatch(output, /ERR_MODULE_NOT_FOUND|Cannot find module|Cannot find package/);
   assert.doesNotMatch(output, /ENOENT: no such file or directory/);
@@ -150,12 +146,61 @@ function assertNoPackagingFailure(output) {
   assert.doesNotMatch(output, /OpenShell gRPC service was not found in the proto/);
 }
 
-function assertPersistenceBoundary(output, event) {
-  assert.match(
-    output,
-    new RegExp(
-      `"event":"${event}","error":"The platform persistence repository is unavailable\\."`,
-    ),
+// The observer runs inside the image's isolated network namespace. It closes
+// connections immediately: this is startup-stage evidence, not a fake database.
+const startupConnectionProbe = String.raw`
+  import assert from "node:assert/strict";
+  import { execFile } from "node:child_process";
+  import { createServer } from "node:net";
+  import { promisify } from "node:util";
+  const component = process.argv[1];
+  assert.ok(component === "server" || component === "worker");
+  let connections = 0;
+  const listener = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const env = {
+    ...process.env,
+    OCC_DATABASE_URL: "postgresql://127.0.0.1:" + listener.address().port + "/openclaw_enterprise",
+  };
+  async function launch(environment) {
+    try {
+      await promisify(execFile)(process.execPath, ["apps/controller/src/" + component + ".mjs"], {
+        env: environment, timeout: 8000,
+      });
+      assert.fail("Startup unexpectedly succeeded.");
+    } catch (error) {
+      assert.equal(error.code, 1);
+      assert.equal(error.signal, null);
+      assert.equal(error.stderr, JSON.stringify({
+        event: component === "server" ? "startup-error" : "worker.startup-error",
+        code: "STARTUP_FAILED",
+        error: "Controller startup failed. Check the configured startup prerequisites.",
+      }) + "\n");
+    }
+  }
+  try {
+    await launch({ ...env, OCC_CONFIG_PATH: env.OCC_CONFIG_PATH + ".missing" });
+    assert.equal(connections, 0);
+    // Correcting only the config path must advance this actual launcher to persistence.
+    await launch(env);
+    assert.equal(connections, 1);
+    process.stdout.write(JSON.stringify({ event: "startup.persistence-connection-observed", component }) + "\n");
+  } finally {
+    await new Promise((resolve) => listener.close(resolve));
+  }
+`;
+
+function assertPersistenceConnection(result, component) {
+  assert.equal(result.stderr, "");
+  assert.equal(
+    result.stdout,
+    `${JSON.stringify({
+      event: "startup.persistence-connection-observed",
+      component,
+    })}\n`,
   );
 }
 
@@ -177,46 +222,68 @@ async function productionFixture(t) {
   return fixture;
 }
 
+test("startup connection observer checks both real source launchers", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-startup-connection-observer-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const key = join(directory, "admin-key");
+  const configuration = join(directory, "installation.json");
+  await writeFile(key, "benign-unused-image-probe-key", { mode: 0o600 });
+  await writeFile(configuration, JSON.stringify(productionInstallation(key)));
+  for (const component of ["server", "worker"]) {
+    const result = await execute(
+      process.execPath,
+      ["--input-type=module", "--eval", startupConnectionProbe, component],
+      {
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: "production",
+          OCC_HOST: "192.0.2.10",
+          OCC_PORT: "3000",
+          OCC_AUTH_SECRET: "production-image-probe-auth-secret-at-least-32-bytes",
+          OCC_AUTH_BASE_URL: "https://occ.example.invalid",
+          OCC_CONFIG_PATH: configuration,
+        },
+        timeout: 20_000,
+      },
+    );
+    assertPersistenceConnection(result, component);
+  }
+});
+
 test(
   "production image server startup loads bundled Kubernetes, OpenShell, and ChatGPT modules",
   imageTestOptions,
   async (t) => {
     const fixture = await productionFixture(t);
 
-    let failure;
-    try {
-      await runDocker([
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--mount",
-        `type=bind,src=${fixture},dst=/tmp/oce-production-image,readonly`,
-        "-e",
-        "NODE_ENV=production",
-        "-e",
-        "OCC_HOST=10.0.0.5",
-        "-e",
-        "OCC_PORT=3000",
-        "-e",
-        "OCC_CONFIG_PATH=/tmp/oce-production-image/installation.json",
-        "-e",
-        "OCC_AUTH_SECRET=openclaw-production-image-smoke-secret",
-        "-e",
-        "OCC_AUTH_BASE_URL=https://occ.example.invalid",
-        "-e",
-        "OCC_DATABASE_URL=postgresql://127.0.0.1:1/openclaw_enterprise",
-        image,
-      ]);
-    } catch (error) {
-      failure = error;
-    }
-
-    assert.ok(failure, "the smoke intentionally stops at the unavailable database boundary");
-    assert.equal(failure.code, 1);
-    const output = imageFailureOutput(failure);
-    assertPersistenceBoundary(output, "startup-error");
-    assertNoPackagingFailure(output);
+    const result = await runDocker([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--mount",
+      `type=bind,src=${fixture},dst=/tmp/oce-production-image,readonly`,
+      "-e",
+      "NODE_ENV=production",
+      "-e",
+      "OCC_HOST=10.0.0.5",
+      "-e",
+      "OCC_PORT=3000",
+      "-e",
+      "OCC_CONFIG_PATH=/tmp/oce-production-image/installation.json",
+      "-e",
+      "OCC_AUTH_SECRET=openclaw-production-image-smoke-secret",
+      "-e",
+      "OCC_AUTH_BASE_URL=https://occ.example.invalid",
+      "-e",
+      "OCC_DATABASE_URL=postgresql://127.0.0.1:1/openclaw_enterprise",
+      image,
+      "--input-type=module",
+      "--eval",
+      startupConnectionProbe,
+      "server",
+    ]);
+    assertPersistenceConnection(result, "server");
   },
 );
 
@@ -226,33 +293,26 @@ test(
   async (t) => {
     const fixture = await productionFixture(t);
 
-    let failure;
-    try {
-      await runDocker([
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--mount",
-        `type=bind,src=${fixture},dst=/tmp/oce-production-image,readonly`,
-        "-e",
-        "NODE_ENV=production",
-        "-e",
-        "OCC_CONFIG_PATH=/tmp/oce-production-image/installation.json",
-        "-e",
-        "OCC_DATABASE_URL=postgresql://127.0.0.1:1/openclaw_enterprise",
-        image,
-        "apps/controller/src/worker.mjs",
-      ]);
-    } catch (error) {
-      failure = error;
-    }
-
-    assert.ok(failure, "the worker smoke intentionally stops at the database boundary");
-    assert.equal(failure.code, 1);
-    const output = imageFailureOutput(failure);
-    assertPersistenceBoundary(output, "worker\\.startup-error");
-    assertNoPackagingFailure(output);
+    const result = await runDocker([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--mount",
+      `type=bind,src=${fixture},dst=/tmp/oce-production-image,readonly`,
+      "-e",
+      "NODE_ENV=production",
+      "-e",
+      "OCC_CONFIG_PATH=/tmp/oce-production-image/installation.json",
+      "-e",
+      "OCC_DATABASE_URL=postgresql://127.0.0.1:1/openclaw_enterprise",
+      image,
+      "--input-type=module",
+      "--eval",
+      startupConnectionProbe,
+      "worker",
+    ]);
+    assertPersistenceConnection(result, "worker");
   },
 );
 
