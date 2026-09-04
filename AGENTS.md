@@ -284,3 +284,7 @@ establishes real-runtime outcomes.
   verification; use dependency-independent Node tests if manifests changed.
 - Check root workspace isolation with `pnpm check:workspace`.
 - Never run `npm run precommit`.
+
+## Repository access implementation direction
+
+Read [repository access modes](specs/20-repository-access-modes.md) before changing repository credentials, Git/gh integration or related egress. Native scoped-token Git/gh is the primary target; optional mediated and history-isolated modes have separate guarantees and acceptance. This is implementation direction, not proof of supported features. Preserve current reference truth until the corresponding code and verification exist.
