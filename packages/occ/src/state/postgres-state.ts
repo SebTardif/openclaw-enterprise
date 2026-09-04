@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AccessBinding,
   Agent,
@@ -28,6 +29,11 @@ import {
   ScopeViolationError,
 } from "../errors.ts";
 import type {
+  RuntimeAssignmentRepository,
+  RuntimeIntent,
+  RuntimeAllocation,
+  RuntimeScope,
+  RuntimeIntentAttribution,
   AgentRepository,
   AgentRevisionRepository,
   ConfigurationOwnership,
@@ -52,7 +58,9 @@ import {
 type PostgresRow = Record<string, unknown>;
 
 export interface PostgresClient extends PostgresQueryClient {
-  release(): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  removeListener?(event: "error", listener: (error: Error) => void): unknown;
+  release(destroy?: boolean): void;
 }
 
 export interface PostgresPool {
@@ -107,6 +115,55 @@ const SECRET_IDENTIFIER =
   /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const NAMESPACE_IDENTIFIER =
   /^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function runtimeGeneration(row: PostgresRow, key: string): number {
+  const value = Number(row[key]);
+  if (!Number.isSafeInteger(value) || value < 1)
+    throw new DependencyUnavailableError("The stored runtime generation is invalid.");
+  return value;
+}
+function runtimeIntentFromRow(row: PostgresRow): Readonly<RuntimeIntent> {
+  const desiredMode = text(row, "desired_mode");
+  if (desiredMode !== "running" && desiredMode !== "disabled" && desiredMode !== "stopped")
+    throw new DependencyUnavailableError("The stored runtime intent mode is invalid.");
+  return immutableCopy({
+    namespaceId: text(row, "namespace_id"),
+    agentId: text(row, "agent_id"),
+    installationId: text(row, "installation_id"),
+    transitionRef: text(row, "transition_ref"),
+    generation: runtimeGeneration(row, "generation"),
+    desiredMode,
+    revisionId: text(row, "revision_id"),
+    actorId: text(row, "actor_id"),
+    requestId: text(row, "request_id"),
+    createdAt: timestamp(row, "created_at"),
+  });
+}
+function runtimeAllocationFromRow(row: PostgresRow): Readonly<RuntimeAllocation> {
+  const component = text(row, "component");
+  if (
+    (component !== "gateway" && component !== "harness") ||
+    text(row, "binding_condition") !== "unbound"
+  )
+    throw new DependencyUnavailableError("The stored runtime allocation is invalid.");
+  return immutableCopy({
+    namespaceId: text(row, "namespace_id"),
+    agentId: text(row, "agent_id"),
+    installationId: text(row, "installation_id"),
+    assignmentRef: text(row, "assignment_ref"),
+    createEffectRef: text(row, "create_effect_ref"),
+    revisionId: text(row, "revision_id"),
+    servicePrincipalId: text(row, "service_principal_id"),
+    lifecycleGeneration: runtimeGeneration(row, "lifecycle_generation"),
+    component,
+    runtimeGeneration: runtimeGeneration(row, "runtime_generation"),
+    providerProfileRef: text(row, "provider_profile_ref"),
+    runtimeProfileRef: text(row, "runtime_profile_ref"),
+    identityProfileRef: text(row, "identity_profile_ref"),
+    bindingCondition: "unbound",
+    createdAt: timestamp(row, "created_at"),
+  });
+}
 
 function rows(value: unknown[]): PostgresRow[] {
   return value.map((row) => {
@@ -771,6 +828,13 @@ export class PostgresPlatformState implements PlatformStateStore {
 
     let started = false;
     let committing = false;
+    let discardClient = false;
+    // pg emits transport errors on checked-out clients as well as rejecting the
+    // query. Keep that event from escaping the transaction's unknown-outcome path.
+    const onTransportError = () => {
+      discardClient = true;
+    };
+    client.on?.("error", onTransportError);
     let unit: PlatformUnitOfWork | undefined;
     try {
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
@@ -796,12 +860,13 @@ export class PostgresPlatformState implements PlatformStateStore {
           // The failed client is still returned to the pool below.
         }
       }
-      throw committing && commitOutcomeUnknown(error)
-        ? new PostgresCommitOutcomeUnknownError()
-        : databaseError(error);
+      const unknownCommit = committing && commitOutcomeUnknown(error);
+      discardClient ||= unknownCommit;
+      throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release();
+      client.release(discardClient);
+      client.removeListener?.("error", onTransportError);
     }
   }
 
@@ -1589,7 +1654,215 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
 
+    const runtimeOwner = async (scope: RuntimeScope, writing = false) => {
+      const installation = await this.currentInstallation(context);
+      const namespace = writing
+        ? await namespaces.lockNamespace(scope.namespaceId)
+        : await namespaces.findNamespace(scope.namespaceId);
+      const agent = writing
+        ? await agents.lockAgent(scope.namespaceId, scope.agentId)
+        : await agents.findAgent(scope.namespaceId, scope.agentId);
+      if (
+        installation === undefined ||
+        namespace === undefined ||
+        agent === undefined ||
+        (writing && namespace.status !== "ready")
+      )
+        return undefined;
+      return { installation, agent };
+    };
+    const runtimeAssignments: RuntimeAssignmentRepository = {
+      findRuntimeIntent: async (scope, transitionRef) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        const found = rows(
+          (
+            await client.query(
+              "SELECT * FROM occ.agent_runtime_intents WHERE namespace_id = $1 AND agent_id = $2 AND transition_ref = $3",
+              [scope.namespaceId, scope.agentId, transitionRef],
+            )
+          ).rows,
+        )[0];
+        return found === undefined ? undefined : runtimeIntentFromRow(found);
+      },
+      findRuntimeIntentHead: async (scope) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        const found = rows(
+          (
+            await client.query(
+              "SELECT intent.* FROM occ.agent_runtime_intents intent JOIN occ.agent_runtime_intent_heads head USING (namespace_id, agent_id, generation, transition_ref) WHERE head.namespace_id = $1 AND head.agent_id = $2",
+              [scope.namespaceId, scope.agentId],
+            )
+          ).rows,
+        )[0];
+        return found === undefined ? undefined : runtimeIntentFromRow(found);
+      },
+      findRuntimeAllocation: async (scope, locator) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        const found = rows(
+          (
+            await client.query(
+              `SELECT * FROM occ.runtime_assignment_allocations WHERE namespace_id = $1 AND agent_id = $2 AND ${locator.assignmentRef !== undefined ? "assignment_ref" : "create_effect_ref"} = $3`,
+              [scope.namespaceId, scope.agentId, locator.assignmentRef ?? locator.createEffectRef],
+            )
+          ).rows,
+        )[0];
+        return found === undefined ? undefined : runtimeAllocationFromRow(found);
+      },
+      initializeRuntimeIntent: async (scope, revisionId, transitionRef, attribution) =>
+        saveRuntimeIntent(
+          scope,
+          0,
+          { desiredMode: "running", revisionId },
+          transitionRef,
+          attribution,
+        ),
+      advanceRuntimeIntent: async (scope, expectedGeneration, next, transitionRef, attribution) => {
+        if (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 1)
+          throw new ResourceConflictError("The runtime intent generation is invalid.");
+        return saveRuntimeIntent(scope, expectedGeneration, next, transitionRef, attribution);
+      },
+      allocateUnboundRuntime: async (
+        scope,
+        expectedLifecycleGeneration,
+        component,
+        expectedRuntimeGeneration,
+        createEffectRef,
+        profileRefs,
+      ) => {
+        if (
+          profileRefs === null ||
+          typeof profileRefs !== "object" ||
+          Object.keys(profileRefs).sort().join(",") !==
+            "identityProfileRef,providerProfileRef,runtimeProfileRef"
+        )
+          throw new ScopeViolationError("The runtime profile reference shape is invalid.");
+        const owner = await runtimeOwner(scope, true);
+        if (owner === undefined) throw new ScopeViolationError("The runtime owner is unavailable.");
+        const existing = rows(
+          (
+            await client.query(
+              "SELECT * FROM occ.runtime_assignment_allocations WHERE create_effect_ref = $1",
+              [createEffectRef],
+            )
+          ).rows,
+        )[0];
+        if (existing !== undefined) {
+          const saved = runtimeAllocationFromRow(existing);
+          if (
+            saved.namespaceId !== scope.namespaceId ||
+            saved.agentId !== scope.agentId ||
+            saved.lifecycleGeneration !== expectedLifecycleGeneration ||
+            saved.component !== component ||
+            saved.runtimeGeneration !== expectedRuntimeGeneration + 1 ||
+            saved.providerProfileRef !== profileRefs.providerProfileRef ||
+            saved.runtimeProfileRef !== profileRefs.runtimeProfileRef ||
+            saved.identityProfileRef !== profileRefs.identityProfileRef
+          )
+            throw new ResourceConflictError(
+              "The runtime create effect conflicts with its stored allocation.",
+            );
+          return saved;
+        }
+        const head = await runtimeAssignments.findRuntimeIntentHead(scope);
+        if (
+          head === undefined ||
+          head.generation !== expectedLifecycleGeneration ||
+          head.desiredMode !== "running"
+        )
+          throw new ResourceConflictError("The running runtime intent does not match.");
+        // Every allocator holds the same Agent lock before reading its component sequence.
+        const latest = rows(
+          (
+            await client.query(
+              "SELECT runtime_generation FROM occ.runtime_assignment_allocations WHERE namespace_id = $1 AND agent_id = $2 AND component = $3 ORDER BY runtime_generation DESC LIMIT 1",
+              [scope.namespaceId, scope.agentId, component],
+            )
+          ).rows,
+        )[0];
+        const prior = latest === undefined ? 0 : runtimeGeneration(latest, "runtime_generation");
+        if (prior !== expectedRuntimeGeneration || !Number.isSafeInteger(prior + 1))
+          throw new ResourceConflictError("The runtime allocation generation does not match.");
+        const found = rows(
+          (
+            await client.query(
+              `INSERT INTO occ.runtime_assignment_allocations
+          (assignment_ref, create_effect_ref, installation_id, namespace_id, agent_id, revision_id, service_principal_id, lifecycle_generation, component, runtime_generation, provider_profile_ref, runtime_profile_ref, identity_profile_ref, binding_condition, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'unbound',clock_timestamp()) RETURNING *`,
+              [
+                randomUUID(),
+                createEffectRef,
+                owner.installation.id,
+                scope.namespaceId,
+                scope.agentId,
+                head.revisionId,
+                owner.agent.servicePrincipalId,
+                head.generation,
+                component,
+                prior + 1,
+                profileRefs.providerProfileRef,
+                profileRefs.runtimeProfileRef,
+                profileRefs.identityProfileRef,
+              ],
+            )
+          ).rows,
+        )[0];
+        return runtimeAllocationFromRow(found!);
+      },
+    };
+    async function saveRuntimeIntent(
+      scope: RuntimeScope,
+      expected: number,
+      next: Pick<RuntimeIntent, "desiredMode" | "revisionId">,
+      transitionRef: string,
+      attribution: RuntimeIntentAttribution,
+    ): Promise<Readonly<RuntimeIntent>> {
+      const owner = await runtimeOwner(scope, true);
+      if (
+        owner === undefined ||
+        !(await revisions.findRevision(scope.namespaceId, scope.agentId, next.revisionId))
+      )
+        throw new ScopeViolationError("The runtime owner or revision is unavailable.");
+      const head = await runtimeAssignments.findRuntimeIntentHead(scope);
+      if ((head?.generation ?? 0) !== expected || !Number.isSafeInteger(expected + 1))
+        throw new ResourceConflictError("The runtime intent transition conflicts.");
+      const found = rows(
+        (
+          await client.query(
+            `INSERT INTO occ.agent_runtime_intents
+        (transition_ref,installation_id,namespace_id,agent_id,generation,desired_mode,revision_id,actor_id,request_id,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()) RETURNING *`,
+            [
+              transitionRef,
+              owner.installation.id,
+              scope.namespaceId,
+              scope.agentId,
+              expected + 1,
+              next.desiredMode,
+              next.revisionId,
+              attribution.actorId,
+              attribution.requestId,
+            ],
+          )
+        ).rows,
+      )[0];
+      if (expected === 0) {
+        await client.query(
+          "INSERT INTO occ.agent_runtime_intent_heads (namespace_id,agent_id,generation,transition_ref) VALUES ($1,$2,1,$3)",
+          [scope.namespaceId, scope.agentId, transitionRef],
+        );
+      } else {
+        const updated = await client.query(
+          "UPDATE occ.agent_runtime_intent_heads SET generation = $3, transition_ref = $4 WHERE namespace_id = $1 AND agent_id = $2 AND generation = $5 RETURNING agent_id",
+          [scope.namespaceId, scope.agentId, expected + 1, transitionRef, expected],
+        );
+        if (updated.rows.length !== 1)
+          throw new ResourceConflictError("The runtime intent transition conflicts.");
+      }
+      return runtimeIntentFromRow(found!);
+    }
+
     return {
+      runtimeAssignments,
       installations,
       namespaces,
       configurations,

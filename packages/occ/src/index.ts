@@ -58,6 +58,14 @@ import {
 } from "./providers.ts";
 import {
   InMemoryPlatformState,
+  type RuntimeScope,
+  type RuntimeIntentAttribution,
+  type RuntimeIntent,
+  type RuntimeProfileRefs,
+  type RuntimeAllocation,
+  type RuntimeAllocationLocator,
+  type RuntimeAssignmentReadRepository,
+  type RuntimeAssignmentRepository,
   type PlatformReadView,
   type PlatformOperation,
   type PlatformStateStore,

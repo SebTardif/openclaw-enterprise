@@ -343,3 +343,37 @@ without processing work. The worker does not expose an HTTP health endpoint.
 - [Kubernetes Compute Driver and local-cluster verification](drivers/kubernetes-compute.md)
 - [Identity and access management](authorization.md)
 - [Implementation architecture](../ARCHITECTURE.md)
+
+## Internal runtime intent and allocation records
+
+OCC state repositories expose `runtimeAssignments` for immutable per-Agent intent
+history and unbound runtime allocations. The current intent head advances by
+expected-generation compare-and-set. Allocations require a ready Namespace,
+an exact current running intent and an admitted AgentRevision; their gateway and
+harness generations advance independently under an Agent lock. PostgreSQL
+constraints and triggers preserve ownership, immutable history and monotonic
+sequences. The in-memory adapter preserves the same observable transaction
+behavior within one process.
+
+These records have no production lifecycle caller yet. They do not change deploy,
+stop or disable behavior, select runtime policy, invoke Drivers, bind identities,
+or establish execution authority. An existing Agent has no intent until a trusted
+internal caller explicitly initializes one. Profile references identify stored
+values only; persistence does not approve a runtime profile or attest a guest.
+
+Before opening a transaction, the trusted caller retains a fresh UUID-v4
+`transitionRef` or `createEffectRef`. After `PostgresCommitOutcomeUnknownError`,
+read the exact locator under the same Namespace/Agent scope before deciding any
+next action. Intent locator reuse conflicts. Exact allocation effect replay
+returns the original immutable record, including after head advancement; changed
+component, generation or profile inputs conflict. Historical readback grants no
+current runtime authority. Actor and diagnostic request references are retained
+independently of identity revocation; they are bounded reference strings, not
+credentials or implicit idempotency keys. Attribution and profile references
+contain 1–200 ASCII letters, digits, dots, underscores, colons, slashes or hyphens.
+
+Verify with `node --test tests/conformance/runtime-assignment-memory.test.mjs`
+and, with the existing PostgreSQL application-role test configuration,
+`node --test tests/integration/postgres-runtime-assignment-state.test.mjs`.
+The database suite verifies real constraints, concurrent transactions and lost
+COMMIT acknowledgement. It explicitly skips when its database URL is absent.
