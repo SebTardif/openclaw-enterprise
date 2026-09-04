@@ -29,9 +29,9 @@ Use isolated worktrees with exclusive file ownership for concurrent implementati
 Keep active worktrees in persistent home or workspace storage, not `/tmp` or
 `/var/tmp`, where they can be wiped. Preserve existing worktrees and their contents.
 
-Integrate task changes into the shared `dev` branch, which lives parallel to
+Integrate task changes into the shared `integration/dev` branch, which lives parallel to
 `main`. Do not open a pull request for each task. The coordinator serializes
-reviewed integration into `dev`; review the accumulated dev branch before landing
+reviewed integration into `integration/dev`; review the accumulated integration branch before landing
 it to `main`. Required correctness, security and exact outgoing-content reviews
 still apply before publishing changes. Workers must not independently push main.
 
