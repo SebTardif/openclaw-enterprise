@@ -1,5 +1,6 @@
 import {
   asRecord,
+  immutableCopy,
   isNonEmptyString,
   numericErrorStatus,
   sha256Hex,
@@ -98,7 +99,11 @@ interface KubernetesApiClients {
   readonly objects: KubernetesObjectApi;
 }
 
+export const GVISOR_RUNTIME_CLASS = "oce-gvisor-systrap";
+export const GVISOR_IMPLEMENTATION = "occ/kubernetes-gvisor";
+
 export interface KubernetesComputeDriverOptions {
+  readonly isolationProfile?: "gvisor-systrap";
   readonly authentication:
     | { readonly mode: "inCluster" }
     | { readonly mode: "kubeconfig"; readonly kubeconfigPath: string; readonly context: string };
@@ -451,6 +456,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     required: ["authentication", "images", "resources", "network", "servicePrincipalCredentials"],
     additionalProperties: false,
     properties: {
+      isolationProfile: { enum: ["gvisor-systrap"] },
       authentication: {
         type: "object",
         required: ["mode"],
@@ -567,6 +573,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
     }
     const options = candidate as unknown as KubernetesComputeDriverOptions;
+    if (options.isolationProfile !== undefined) {
+      if (options.isolationProfile !== "gvisor-systrap") {
+        throw new ConfigurationFailure("Unsupported isolation profile.");
+      }
+    }
     const authentication = options.authentication;
     if (asRecord(authentication) === undefined) {
       throw new ConfigurationFailure(
@@ -728,11 +739,18 @@ export class KubernetesComputeDriver implements ComputeDriver {
   ) {
     KubernetesComputeDriver.validateConfiguration(options);
     this.id = required(selection.id ?? "compute-kubernetes-local", "Kubernetes Compute Driver ID");
+    const gvisor = options.isolationProfile === "gvisor-systrap";
     this.implementation = required(
-      selection.implementation ?? "kubernetes-local",
+      selection.implementation ?? (gvisor ? GVISOR_IMPLEMENTATION : "kubernetes-local"),
       "Kubernetes Compute Driver implementation",
     );
-    this.options = options;
+    if (gvisor !== (this.implementation === GVISOR_IMPLEMENTATION)) {
+      throw new ConfigurationFailure("gVisor Alpha requires its distinct Compute implementation.");
+    }
+    if (gvisor && selection.sandboxDriver !== undefined) {
+      throw new ConfigurationFailure("gVisor Alpha cannot be combined with a SandboxDriver.");
+    }
+    this.options = immutableCopy(options);
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
   }
@@ -745,6 +763,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async preflight(): Promise<void> {
+    await this.verifyIsolationProfile();
     const clients = await this.clients();
     const namespaces = await this.request(() =>
       clients.core.listNamespace({
@@ -1028,6 +1047,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ) {
       throw new ConfigurationFailure("AgentRevision Harness execution topology is unsupported.");
     }
+    if (
+      this.options.isolationProfile !== undefined &&
+      (embedded || revision.sandboxDriverId !== undefined)
+    ) {
+      throw new ConfigurationFailure(
+        "gVisor Alpha requires a dedicated Harness without a SandboxDriver.",
+      );
+    }
+    await this.verifyIsolationProfile();
     const sandboxDriver = this.sandboxDriverForRevision(revision);
     if (sandboxDriver !== undefined && embedded) {
       throw new ConfigurationFailure("SandboxDriver support is limited to dedicated Harnesses.");
@@ -1309,7 +1337,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         await this.lifecycle.beforeWorkloadStop(revision, { cleanup: true });
         return result;
       }
-      return { ...result, ready: this.deploymentReady(deployment) };
+      return { ...result, ready: await this.dedicatedDeploymentReady(deployment, namespace) };
     } catch (error) {
       const failures = [error];
       if (launchPrepared) {
@@ -1327,6 +1355,20 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+    if (
+      revision.compute.id !== this.id ||
+      revision.compute.implementation !== this.implementation
+    ) {
+      throw new ConfigurationFailure("AgentRevision is pinned to another Compute implementation.");
+    }
+    if (
+      this.options.isolationProfile !== undefined &&
+      (revision.harness.mode !== "dedicated" || revision.sandboxDriverId !== undefined)
+    ) {
+      throw new ConfigurationFailure(
+        "gVisor Alpha requires a dedicated Harness without a SandboxDriver.",
+      );
+    }
     if (this.options.runtime === undefined) return;
     this.verifyGatewayRoutingConfiguration(revision);
     const channels = this.enabledChannels(revision);
@@ -1432,7 +1474,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
         ...ownership,
         revisionId: revision.id,
       });
-      if (deployment === undefined || !this.deploymentReady(deployment)) {
+      if (
+        deployment === undefined ||
+        !(await this.dedicatedDeploymentReady(deployment, namespace))
+      ) {
         throw new Error("The exact AgentRevision workload is not ready.");
       }
     } else {
@@ -2039,9 +2084,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async providerHarnessReady(
-    revision: AgentRevision,
+    revision: Pick<AgentRevision, "agentId" | "id">,
     namespace: string,
     labels: Readonly<Record<string, string>>,
+    requiredRuntimeClass?: string,
   ): Promise<boolean> {
     const clients = await this.clients();
     const pods = asRecord(
@@ -2139,6 +2185,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
         throw invalidObservation();
+      }
+      if (requiredRuntimeClass !== undefined) {
+        if (asRecord(pod.spec)?.runtimeClassName !== requiredRuntimeClass) {
+          throw new ConfigurationFailure(
+            "gVisor Alpha Pod lost its required RuntimeClass; refusing fallback.",
+          );
+        }
+        ready = ready && status?.phase === "Running";
       }
       candidates += 1;
       candidateReady = ready;
@@ -2368,6 +2422,65 @@ export class KubernetesComputeDriver implements ComputeDriver {
         )
       );
     });
+  }
+
+  private async verifyIsolationProfile(): Promise<void> {
+    if (this.options.isolationProfile === undefined) return;
+    const clients = await this.clients();
+    const runtimeClass = asRecord(
+      await this.request(() =>
+        clients.objects.read({
+          apiVersion: "node.k8s.io/v1",
+          kind: "RuntimeClass",
+          metadata: { name: GVISOR_RUNTIME_CLASS },
+        }),
+      ),
+    );
+    const metadata = asRecord(runtimeClass?.metadata);
+    if (
+      runtimeClass?.apiVersion !== "node.k8s.io/v1" ||
+      runtimeClass.kind !== "RuntimeClass" ||
+      metadata?.name !== GVISOR_RUNTIME_CLASS ||
+      metadata.namespace !== undefined ||
+      metadata.deletionTimestamp !== undefined ||
+      runtimeClass.handler !== GVISOR_RUNTIME_CLASS
+    ) {
+      throw new ConfigurationFailure(
+        "gVisor Alpha requires the exact oce-gvisor-systrap RuntimeClass and handler; refusing fallback.",
+      );
+    }
+  }
+
+  private async dedicatedDeploymentReady(
+    deployment: ManagedKubernetesObject,
+    namespace: string,
+  ): Promise<boolean> {
+    if (this.options.isolationProfile === undefined) return this.deploymentReady(deployment);
+    await this.verifyIsolationProfile();
+    const template = asRecord(deployment.spec?.template);
+    const spec = asRecord(template?.spec);
+    if (spec?.runtimeClassName !== GVISOR_RUNTIME_CLASS) {
+      throw new ConfigurationFailure("gVisor Alpha workload lost its required RuntimeClass.");
+    }
+    if (!this.deploymentReady(deployment)) return false;
+    const labels: Record<string, string> = {
+      ...deployment.metadata.labels,
+      "app.kubernetes.io/name": deployment.metadata.name,
+      "openclaw.dev/workload-role": "agent",
+    };
+    const templateLabels = asRecord(asRecord(template?.metadata)?.labels);
+    if (Object.entries(labels).some(([key, value]) => templateLabels?.[key] !== value)) {
+      throw new ConfigurationFailure("gVisor Alpha workload labels do not match its ownership.");
+    }
+    return this.providerHarnessReady(
+      {
+        agentId: required(labels["openclaw.dev/agent"], "gVisor workload Agent ID"),
+        id: required(labels["openclaw.dev/revision"], "gVisor workload revision ID"),
+      },
+      namespace,
+      labels,
+      GVISOR_RUNTIME_CLASS,
+    );
   }
 
   private deploymentReady(deployment: ManagedKubernetesObject): boolean {
@@ -3414,6 +3527,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
             labels: { ...workloadMetadata.labels, ...selector, "openclaw.dev/workload-role": role },
           },
           spec: {
+            ...(role === "agent" && this.options.isolationProfile !== undefined
+              ? { runtimeClassName: GVISOR_RUNTIME_CLASS }
+              : {}),
             serviceAccountName,
             automountServiceAccountToken: false,
             ...(volumes.length === 0 ? {} : { volumes }),

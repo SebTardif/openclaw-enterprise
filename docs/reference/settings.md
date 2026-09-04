@@ -64,6 +64,15 @@ when paired with an installed Compute Driver. OpenShell-selected Agents must use
 dedicated Codex execution; embedded OpenClaw remains unsupported for this
 SandboxDriver.
 
+The bundled Kubernetes Compute configuration also accepts
+`isolationProfile: gvisor-systrap` in development and production. This Alpha
+profile selects the fixed `oce-gvisor-systrap` RuntimeClass for dedicated
+Harnesses and rejects `drivers.sandbox` composition and embedded execution.
+Omission preserves normal runtime selection. Production image, identity and
+runtime requirements remain unchanged. See
+[gVisor isolation](drivers/gvisor.md) for the complete boundary and
+outstanding live evidence.
+
 ## Deployment and startup
 
 The [quickstart](../guides/quickstart.md) owns the default local

@@ -95,6 +95,14 @@ cleanup path. `activateRevision` repeats this check before changing routing.
 See the [Kubernetes readiness contract](../reference/drivers/kubernetes-compute.md)
 for candidate rules and the limits of this observation.
 
+The optional [gVisor profile (Alpha)](../reference/drivers/gvisor.md)
+uses Compute's own dedicated Deployment path with a fixed RuntimeClass in
+both development and production. It retains a distinct Compute implementation
+in admitted revisions and checks observed Pod placement after Deployment
+readiness. It does not invoke OpenShell or change credential placement;
+node-side runsc/platform proof and live lifecycle/tool qualification remain
+separate requirements.
+
 ### 3. Publish safely and complete activation once
 
 `apps/controller/src/worker.ts:ControllerWorker`

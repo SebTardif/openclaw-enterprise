@@ -318,6 +318,23 @@ test(
         assert.ok(!rule.verbs.includes("*"));
       }
 
+    // Runtime selection needs only one fixed cluster-scoped read, never handler mutation authority.
+    for (const role of roles.filter(({ metadata }) =>
+      /-openclaw-namespace-(observer|worker)$/.test(metadata.name),
+    )) {
+      assert.deepEqual(
+        role.rules.filter(({ resources }) => resources.includes("runtimeclasses")),
+        [
+          {
+            apiGroups: ["node.k8s.io"],
+            resources: ["runtimeclasses"],
+            resourceNames: ["oce-gvisor-systrap"],
+            verbs: ["get"],
+          },
+        ],
+      );
+    }
+
     // Real rendered workloads retain restricted execution and mount credentials only by Secret reference.
     for (const component of ["api", "worker"]) {
       const pod = selected("Deployment", component).spec.template.spec;

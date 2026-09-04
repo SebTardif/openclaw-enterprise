@@ -51,6 +51,21 @@ inspection, supported channel draft edits, and error recovery. Deployment,
 rollback, Agent deletion, Configuration listing, and live gateway health remain
 API or operator procedures outside the console.
 
+### Optional gVisor isolation (Alpha)
+
+The [gVisor profile](../reference/drivers/gvisor.md) is available in
+both development and production through explicit Kubernetes Compute
+`isolationProfile: gvisor-systrap` configuration. It requests a separately
+registered RuntimeClass with `runsc --platform=systrap` for dedicated Harnesses.
+The offline preparation helper verifies operator-supplied artifacts without
+changing shared Docker/containerd defaults or restarting services.
+
+Use a disposable cluster for local qualification. Missing artifacts fail
+locally; obtain them through an authorized supply path. Alpha support does not
+establish live containment, model/tool compatibility, credential mediation, or
+OpenShell/Kata/SPIRE equivalence. The reference page distinguishes required
+runtime evidence from configuration and fixture tests.
+
 ## Production
 
 ### Production prerequisites

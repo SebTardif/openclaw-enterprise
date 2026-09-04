@@ -23,6 +23,7 @@ import {
 import { Check } from "typebox/value";
 import {
   KubernetesComputeDriver,
+  GVISOR_IMPLEMENTATION,
   type KubernetesComputeDriverOptions,
 } from "../drivers/compute/kubernetes/index.ts";
 import { currentComputeAbortSignal } from "../drivers/compute/operation-context.ts";
@@ -483,7 +484,10 @@ export async function loadInstallationConfiguration(options: {
   const compute = selected(
     computeSelection,
     "compute",
-    computePackage?.implementation ?? "occ/kubernetes",
+    computePackage?.implementation ??
+      (asRecord(computeSelection.configuration)?.isolationProfile === "gvisor-systrap"
+        ? GVISOR_IMPLEMENTATION
+        : "occ/kubernetes"),
     computePackage?.module ?? KubernetesComputeDriver,
   );
   const secret = selected(
@@ -503,6 +507,10 @@ export async function loadInstallationConfiguration(options: {
         );
   if (sandbox !== undefined && computePackage !== undefined) {
     throw new Error("drivers.sandbox requires the bundled Kubernetes Compute Driver.");
+  }
+  if (computePackage === undefined && compute.configuration.isolationProfile !== undefined) {
+    if (sandbox !== undefined)
+      throw new Error("gVisor Alpha cannot be combined with drivers.sandbox.");
   }
   if (options.mode === "production" && computePackage === undefined) {
     const kubernetes = compute.configuration as unknown as KubernetesComputeDriverOptions;

@@ -129,6 +129,17 @@ Choose exactly one Kubernetes authentication mode:
 The driver does not fall back to the ambient kubeconfig or current context.
 Kubernetes API certificates must be verified in either mode.
 
+### Optional gVisor isolation (Alpha)
+
+Both development and production startup may select
+`isolationProfile: gvisor-systrap`. This uses the distinct
+`occ/kubernetes-gvisor` implementation and the fixed `oce-gvisor-systrap`
+RuntimeClass only for dedicated Harnesses. Embedded execution and combination
+with OpenShell are rejected. All ordinary production image, identity and
+runtime requirements remain. See [gVisor isolation](gvisor.md)
+for offline preparation, readiness checks, credential boundaries and the
+outstanding live qualification.
+
 ### Images and resources
 
 Configure separate gateway and Agent images, CPU and memory requests and limits,
