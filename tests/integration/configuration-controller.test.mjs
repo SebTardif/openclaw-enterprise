@@ -97,6 +97,7 @@ async function fixture({
       principalId: principal.id,
       installationId: authFixture.installationId,
     },
+    publicOrigin: "http://127.0.0.1",
     auth: authFixture.auth,
   });
   app.defaultSession = await signInToControllerApp(app, authFixture);

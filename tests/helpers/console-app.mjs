@@ -112,6 +112,7 @@ export async function createConsoleAppFixture(t, options = {}) {
   let controller;
   const appOptions = {
     auth,
+    publicOrigin: origin,
     iamDriver,
     auditSink,
     development: options.development ?? { enabled: true, installationId },
@@ -181,7 +182,7 @@ export async function createConsoleAppFixture(t, options = {}) {
 
   async function request(method, path, { session = adminSession, headers = {}, body } = {}) {
     const result = await rawRequest(method, path, {
-      headers: session === null ? headers : authenticatedHeaders(session, headers),
+      headers: session === null ? headers : authenticatedHeaders(session, { origin, ...headers }),
       body,
     });
     const payload = parseJson(result);

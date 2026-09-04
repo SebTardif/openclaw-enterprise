@@ -71,7 +71,9 @@ export function authenticatedHeaders(session, headers = {}) {
   const cookie = typeof session === "string" ? session : session.cookie;
   assert.equal(typeof cookie, "string", "a session cookie header is required");
   assert.ok(cookie.length > 0, "a session cookie header is required");
+  // Authenticated fixture requests model intent from their configured loopback app.
   return {
+    origin: "http://127.0.0.1",
     ...headers,
     cookie,
   };

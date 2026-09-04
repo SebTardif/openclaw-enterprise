@@ -124,6 +124,24 @@ Protected requests resolve the current stored session with cookie caching
 disabled. A missing, expired, revoked, or forged session is rejected. Supplying
 an `Authorization` header is rejected even if a session cookie is also present.
 
+## Browser intent for protected mutations
+
+Every unsafe cookie-authenticated resource, account, or service-key mutation
+requires an `Origin` header exactly matching the controller's configured public
+origin. This includes bodyless deployment requests and applies in development
+and production. Missing or different origins return `403 FORBIDDEN`; missing
+public-origin configuration fails closed with `503 DEPENDENCY_UNAVAILABLE`.
+Same-site Fetch Metadata does not substitute for Origin, and cross-site Fetch
+Metadata is rejected. Cookie-based command-line clients must send that exact
+Origin too. There is no alternative anti-CSRF token mechanism.
+
+Credential verification happens before this check. Only a successfully verified
+explicit `x-api-key` credential can use the automation path without Origin;
+its exact IAM and Installation/Namespace bounds still apply. An invalid supplied
+key cannot fall back to a valid cookie. Ordinary protected reads do not require
+Origin; workspace reads retain their additional cross-site guard. Public sign-in,
+sign-out and session inspection retain their separate wrapper policies.
+
 ## Account provisioning
 
 `POST /api/auth/accounts` requires a human session and `administer` on the singleton Installation.

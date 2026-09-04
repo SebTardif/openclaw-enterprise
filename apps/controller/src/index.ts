@@ -825,7 +825,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   }
 
-  function requireWorkspaceFileCsrf(request: FastifyRequest, requireOrigin: boolean): void {
+  function requireBrowserIntent(request: FastifyRequest, requireOrigin: boolean): void {
     const admitted = admissions.get(request);
     if (admitted?.method === "api_key") return;
     const fetchSite = request.headers["sec-fetch-site"];
@@ -1130,6 +1130,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     }
 
     admissions.set(request, admitted);
+    // Only verified explicit service keys can bypass browser intent. A cookie
+    // mutation requires the configured exact Origin even for a bodyless POST.
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) requireBrowserIntent(request, true);
   }
 
   async function resolveIdentity(request: FastifyRequest, operation: OccApiRoute): Promise<void> {
@@ -1724,7 +1727,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       const signal = workspaceFileSignal.signal;
       const deadline = new Date(Date.now() + deadlineMs);
       try {
-        requireWorkspaceFileCsrf(request, operation.operationId === "putAgentWorkspaceFile");
+        requireBrowserIntent(request, operation.operationId === "putAgentWorkspaceFile");
         if (options.workspaceFilesAccess === undefined) throw dependencyUnavailable();
         const filename = params.name;
         if (filename === undefined || !isAllowedWorkspaceFileName(filename))

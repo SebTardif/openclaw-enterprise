@@ -206,6 +206,7 @@ async function authenticatedApplication(t, drivers) {
       enabled: false,
       installationId,
     },
+    publicOrigin: "http://127.0.0.1",
     auth: authFixture.auth,
   });
   t.after(async () => app.close());
@@ -246,6 +247,7 @@ async function request(fixture, method, url, payload) {
     url,
     headers: {
       cookie: fixture.config.cookie,
+      origin: "http://127.0.0.1",
       host: "127.0.0.1",
     },
     ...(payload === undefined ? {} : { payload }),

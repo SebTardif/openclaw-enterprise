@@ -383,6 +383,7 @@ async function createInjectedFixture(options = {}) {
         enabled: true,
         installationId,
       },
+      publicOrigin: "http://127.0.0.1",
       auth: authFixture.auth,
       ...(options.provisionAuthAccount === undefined
         ? {}

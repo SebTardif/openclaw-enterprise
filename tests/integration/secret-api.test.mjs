@@ -114,6 +114,7 @@ async function createFixture(options = {}) {
       resolveHarness: resolveApprovedDevelopmentHarness,
       auditSink,
       development: { enabled: true, installationId },
+      publicOrigin: "http://127.0.0.1",
       auth: authFixture.auth,
     });
     app.defaultSession = sessionsByPrincipalId.get(identity.id);

@@ -172,7 +172,7 @@ async function createFixture(options = {}) {
       ...(overrides.gatewayRequestTimeoutMs === undefined
         ? {}
         : { gatewayRequestTimeoutMs: overrides.gatewayRequestTimeoutMs }),
-      ...(overrides.publicOrigin === undefined ? {} : { publicOrigin: overrides.publicOrigin }),
+      publicOrigin: overrides.publicOrigin ?? "http://127.0.0.1",
     });
     app.defaultSession = sessions.get(principal.id);
     return app;
