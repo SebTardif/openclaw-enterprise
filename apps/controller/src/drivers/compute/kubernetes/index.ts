@@ -2143,6 +2143,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     let candidates = 0;
     let candidateReady = false;
+    let conflictingLabels = false;
     // Validate the whole observation before trusting uniqueness, including entries after a Ready Pod.
     for (const item of pods.items) {
       const pod = asRecord(item);
@@ -2213,11 +2214,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
         ready = ready && status?.phase === "Running";
       }
       if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
-        throw invalidObservation();
+        if (requiredRuntimeClass === undefined) throw invalidObservation();
+        // Inspect the remaining candidates before reporting label drift so an
+        // earlier conflict cannot mask a later Pod's explicit runtime violation.
+        conflictingLabels = true;
       }
       candidates += 1;
       candidateReady = ready;
     }
+    if (conflictingLabels) throw invalidObservation();
     return candidates === 1 && candidateReady;
   }
 

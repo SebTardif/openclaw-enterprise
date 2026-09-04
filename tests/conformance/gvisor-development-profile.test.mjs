@@ -818,6 +818,39 @@ test("gVisor contains a matching unsafe Pod even when its service-principal labe
   }
 });
 
+test("gVisor observes runtime violations across multiple Pods before rejecting extra ownership labels", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const runtimeClassName of ["runc", undefined, GVISOR_RUNTIME_CLASS]) {
+      for (const servicePrincipalId of [undefined, "another-service-principal"]) {
+        for (const conflictingPodFirst of [true, false]) {
+          const current = runtimeFixture();
+          const conflicting = current.pod("correct-runtime-label-conflict");
+          if (servicePrincipalId === undefined)
+            delete conflicting.metadata.labels["openclaw.dev/service-principal"];
+          else conflicting.metadata.labels["openclaw.dev/service-principal"] = servicePrincipalId;
+          const owned = current.pod("exactly-owned-runtime-observation");
+          if (runtimeClassName === undefined) delete owned.spec.runtimeClassName;
+          else owned.spec.runtimeClassName = runtimeClassName;
+          current.setObservation({
+            items: conflictingPodFirst ? [conflicting, owned] : [owned, conflicting],
+          });
+
+          // Both Pods are structurally valid and match the active revision's route.
+          // List ordering must not let a generic label conflict hide a runtime violation.
+          if (runtimeClassName === GVISOR_RUNTIME_CLASS) {
+            await assert.rejects(current[operation](), /invalid or incomplete/);
+            assert.deepEqual(current.containment, []);
+          } else {
+            await assert.rejects(current[operation](), /required RuntimeClass; refusing fallback/);
+            assert.deepEqual(current.containment, expectedContainment(current));
+          }
+          if (operation === "activate") assert.equal(current.writes.length, 0);
+        }
+      }
+    }
+  }
+});
+
 test("gVisor contains an active revision when its selected RuntimeClass disappears or loses its handler", async () => {
   for (const operation of ["prepare", "activate"]) {
     for (const runtimeClass of [
