@@ -178,6 +178,7 @@ interface GatewayConfigurationSnapshot {
 
 class OwnershipFailure extends Error {}
 class ConfigurationFailure extends Error {}
+class IsolationFailure extends ConfigurationFailure {}
 
 const MANAGER = "openclaw-enterprise";
 const FIELD_MANAGER = "openclaw-enterprise-compute";
@@ -1013,6 +1014,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
     revision: AgentRevision,
     context?: ComputeRevisionContext,
   ): Promise<ComputeReadiness> {
+    return this.withIsolationContainment(revision, () =>
+      this.prepareIsolatedRevision(revision, context),
+    );
+  }
+
+  private async prepareIsolatedRevision(
+    revision: AgentRevision,
+    context?: ComputeRevisionContext,
+  ): Promise<ComputeReadiness> {
     this.lifecycleStarted = true;
     const result = {
       namespaceId: revision.namespaceId,
@@ -1340,7 +1350,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       return { ...result, ready: await this.dedicatedDeploymentReady(deployment, namespace) };
     } catch (error) {
       const failures = [error];
-      if (launchPrepared) {
+      if (launchPrepared && !(error instanceof IsolationFailure)) {
         try {
           await this.lifecycle.beforeWorkloadStop(revision, { cleanup: true });
         } catch (cleanupError) {
@@ -1355,6 +1365,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+    return this.withIsolationContainment(revision, () =>
+      this.activateIsolatedRevision(revision, context),
+    );
+  }
+
+  private async activateIsolatedRevision(
+    revision: AgentRevision,
+    context?: ComputeRevisionContext,
+  ): Promise<void> {
     if (
       revision.compute.id !== this.id ||
       revision.compute.implementation !== this.implementation
@@ -2188,7 +2207,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       if (requiredRuntimeClass !== undefined) {
         if (asRecord(pod.spec)?.runtimeClassName !== requiredRuntimeClass) {
-          throw new ConfigurationFailure(
+          throw new IsolationFailure(
             "gVisor Alpha Pod lost its required RuntimeClass; refusing fallback.",
           );
         }
@@ -2424,18 +2443,147 @@ export class KubernetesComputeDriver implements ComputeDriver {
     });
   }
 
+  private async withIsolationContainment<T>(
+    revision: AgentRevision,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      const isolationFailed =
+        error instanceof IsolationFailure ||
+        (error instanceof AggregateError &&
+          error.errors.some((failure) => failure instanceof IsolationFailure));
+      if (
+        this.options.isolationProfile !== undefined &&
+        isolationFailed &&
+        revision.compute.id === this.id &&
+        revision.compute.implementation === this.implementation &&
+        revision.harness.mode === "dedicated" &&
+        revision.sandboxDriverId === undefined
+      ) {
+        try {
+          await this.containIsolationViolation(revision);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "gVisor isolation failed and containment could not be confirmed.",
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async containIsolationViolation(revision: AgentRevision): Promise<void> {
+    const { name: namespace, external } = await this.resolveNamespace(revision.namespaceId);
+    const observedNamespace = await this.get("Namespace", namespace);
+    if (observedNamespace === undefined) return;
+    this.verifyNamespaceOwnership(
+      observedNamespace,
+      { namespaceId: revision.namespaceId },
+      external,
+    );
+    const clients = await this.clients();
+    const agentName = `agent-${sha256Hex(revision.agentId, 12)}`;
+    const ownership = {
+      namespaceId: revision.namespaceId,
+      agentId: revision.agentId,
+      servicePrincipalId: revision.servicePrincipalId,
+    };
+    const failures: unknown[] = [];
+    try {
+      const service = await this.getOwned("Service", agentName, namespace, ownership);
+      const selector = asRecord(service?.spec?.selector);
+      if (
+        service !== undefined &&
+        selector?.["openclaw.dev/revision"] === revision.id &&
+        selector["openclaw.dev/agent"] === revision.agentId
+      ) {
+        const uid = required(service.metadata.uid, "Isolation containment Service UID");
+        const resourceVersion = required(
+          service.metadata.resourceVersion,
+          "Isolation containment Service resourceVersion",
+        );
+        const sdk = await import("@kubernetes/client-node");
+        // Atomic tests prevent a stale observation from disabling a replacement revision's route.
+        await this.request(
+          () =>
+            clients.core.patchNamespacedService(
+              {
+                name: agentName,
+                namespace,
+                body: [
+                  { op: "test", path: "/metadata/uid", value: uid },
+                  { op: "test", path: "/metadata/resourceVersion", value: resourceVersion },
+                  { op: "test", path: "/spec/selector", value: selector },
+                  {
+                    op: "replace",
+                    path: "/spec/selector",
+                    value: { "app.kubernetes.io/name": `${agentName}-inactive` },
+                  },
+                ],
+              },
+              sdk.setHeaderOptions("Content-Type", "application/json-patch+json"),
+            ),
+          { mutating: true },
+        );
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await this.lifecycle.beforeWorkloadStop(revision, { cleanup: true });
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      const name = `${agentName}-rev-${sha256Hex(revision.id, 12)}`;
+      const deployment = await this.getOwned("Deployment", name, namespace, {
+        ...ownership,
+        revisionId: revision.id,
+      });
+      if (deployment !== undefined) {
+        const uid = required(deployment.metadata.uid, "Isolation containment Deployment UID");
+        // Request termination without deleting the shared workspace, gateway, or another revision.
+        // Kubernetes deletion is asynchronous; retain the original failure instead of claiming a stopped workload.
+        await this.request(
+          () =>
+            clients.apps.deleteNamespacedDeployment({
+              name,
+              namespace,
+              body: { preconditions: { uid }, propagationPolicy: "Foreground" },
+            }),
+          { mutating: true },
+        );
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "gVisor isolation containment requests failed.");
+  }
+
   private async verifyIsolationProfile(): Promise<void> {
     if (this.options.isolationProfile === undefined) return;
     const clients = await this.clients();
-    const runtimeClass = asRecord(
-      await this.request(() =>
-        clients.objects.read({
-          apiVersion: "node.k8s.io/v1",
-          kind: "RuntimeClass",
-          metadata: { name: GVISOR_RUNTIME_CLASS },
-        }),
-      ),
-    );
+    let runtimeClass: KubernetesRecord | undefined;
+    try {
+      runtimeClass = asRecord(
+        await this.request(() =>
+          clients.objects.read({
+            apiVersion: "node.k8s.io/v1",
+            kind: "RuntimeClass",
+            metadata: { name: GVISOR_RUNTIME_CLASS },
+          }),
+        ),
+      );
+    } catch (error) {
+      if (numericErrorStatus(error) === 404) {
+        throw new IsolationFailure("gVisor Alpha RuntimeClass is missing; refusing fallback.");
+      }
+      throw error;
+    }
     const metadata = asRecord(runtimeClass?.metadata);
     if (
       runtimeClass?.apiVersion !== "node.k8s.io/v1" ||
@@ -2445,7 +2593,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       metadata.deletionTimestamp !== undefined ||
       runtimeClass.handler !== GVISOR_RUNTIME_CLASS
     ) {
-      throw new ConfigurationFailure(
+      throw new IsolationFailure(
         "gVisor Alpha requires the exact oce-gvisor-systrap RuntimeClass and handler; refusing fallback.",
       );
     }
@@ -2460,9 +2608,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const template = asRecord(deployment.spec?.template);
     const spec = asRecord(template?.spec);
     if (spec?.runtimeClassName !== GVISOR_RUNTIME_CLASS) {
-      throw new ConfigurationFailure("gVisor Alpha workload lost its required RuntimeClass.");
+      throw new IsolationFailure("gVisor Alpha workload lost its required RuntimeClass.");
     }
-    if (!this.deploymentReady(deployment)) return false;
     const labels: Record<string, string> = {
       ...deployment.metadata.labels,
       "app.kubernetes.io/name": deployment.metadata.name,
@@ -2470,9 +2617,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
     };
     const templateLabels = asRecord(asRecord(template?.metadata)?.labels);
     if (Object.entries(labels).some(([key, value]) => templateLabels?.[key] !== value)) {
-      throw new ConfigurationFailure("gVisor Alpha workload labels do not match its ownership.");
+      throw new IsolationFailure("gVisor Alpha workload labels do not match its ownership.");
     }
-    return this.providerHarnessReady(
+    // Inspect placement even during a rollout: an unready Deployment can still have a live unsafe Pod.
+    const podsReady = await this.providerHarnessReady(
       {
         agentId: required(labels["openclaw.dev/agent"], "gVisor workload Agent ID"),
         id: required(labels["openclaw.dev/revision"], "gVisor workload revision ID"),
@@ -2481,6 +2629,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       labels,
       GVISOR_RUNTIME_CLASS,
     );
+    return this.deploymentReady(deployment) && podsReady;
   }
 
   private deploymentReady(deployment: ManagedKubernetesObject): boolean {

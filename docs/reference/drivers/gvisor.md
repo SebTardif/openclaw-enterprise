@@ -111,10 +111,21 @@ No runtime registration or mutation permission is granted.
 The desired Agent Deployment always sets
 `spec.template.spec.runtimeClassName: oce-gvisor-systrap`. A missing handler
 prevents Kubernetes from starting the Pod; OCE never retries without the class.
-Once the Deployment reports readiness, Compute requires exactly one live Pod
-with its exact ownership labels, namespace, `Running` phase, `Ready=True`, and
-the same RuntimeClass. Missing, duplicated, or unready Pods prevent readiness;
-a removed or substituted RuntimeClass fails explicitly.
+Compute checks Pod placement during rollout as well as after the Deployment
+reports readiness. Readiness requires exactly one live Pod with its exact
+ownership labels, namespace, `Running` phase, `Ready=True`, and the same
+RuntimeClass. Missing, duplicated, or unready Pods prevent readiness; a removed
+or substituted RuntimeClass fails explicitly.
+
+A positively observed isolation violation during preparation or activation
+also requests containment: an atomic selector/UID/resourceVersion check
+removes routing only while the Service still selects that exact revision,
+cleanup hooks run, and a UID-guarded foreground deletion targets its dedicated
+Deployment. These requests preserve the gateway, workspace PVCs and other
+revisions. An unsuccessful cleanup remains an error. Deletion is asynchronous;
+neither a request nor a rejected readiness result proves that processes have
+stopped. Ordinary pending readiness and transient API failures do not trigger
+this destructive path.
 
 These checks establish requested placement and observed Kubernetes state.
 A RuntimeClass name is not proof of the runtime executable or platform that

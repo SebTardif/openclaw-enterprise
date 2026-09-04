@@ -77,7 +77,12 @@ function installation() {
   return configured;
 }
 
-function fixture({ driver = new KubernetesComputeDriver(options()), revision, mutateAgent } = {}) {
+function fixture({
+  driver = new KubernetesComputeDriver(options()),
+  revision,
+  mutateAgent,
+  active = false,
+} = {}) {
   revision ??= revisionFor(driver);
   const gatewayName = `gateway-${hash(revision.agentId)}`;
   const agentName = `agent-${hash(revision.agentId)}`;
@@ -86,7 +91,11 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
   const agentOwnership = { ...gatewayOwnership, servicePrincipalId: revision.servicePrincipalId };
   const objects = new Map();
   const key = (kind, name) => `${kind}:${name}`;
-  const save = (object) => objects.set(key(object.kind, object.metadata.name), object);
+  const save = (object) => {
+    object.metadata.uid = `uid-${object.metadata.name}`;
+    object.metadata.resourceVersion = "17";
+    objects.set(key(object.kind, object.metadata.name), object);
+  };
   const observedNamespace = {
     ...driver.manifest("v1", "Namespace", namespace, { namespaceId }),
     status: { phase: "Active" },
@@ -118,20 +127,33 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
     save(deployment);
   }
   mutateAgent?.(agent);
-  save(
-    driver.service(gatewayName, gatewayOwnership, namespace, {
-      "app.kubernetes.io/name": gatewayName,
-    }),
+  const gatewayService = driver.service(gatewayName, gatewayOwnership, namespace, {
+    "app.kubernetes.io/name": gatewayName,
+  });
+  save(gatewayService);
+  const agentService = driver.service(
+    agentName,
+    agentOwnership,
+    namespace,
+    active
+      ? {
+          "openclaw.dev/agent": revision.agentId,
+          "openclaw.dev/revision": revision.id,
+          "openclaw.dev/workload-role": "agent",
+          "app.kubernetes.io/name": revisionName,
+        }
+      : { "app.kubernetes.io/name": `${agentName}-inactive` },
   );
-  save(
-    driver.service(agentName, agentOwnership, namespace, {
-      "app.kubernetes.io/name": `${agentName}-inactive`,
-    }),
-  );
+  save(agentService);
   const writes = [];
   const podRequests = [];
+  const containment = [];
   let observation = { items: [] };
   let patchError;
+  let routePatchError;
+  let deleteError;
+  let runtimeClassError;
+  let podError;
   let runtimeClass = {
     apiVersion: "node.k8s.io/v1",
     kind: "RuntimeClass",
@@ -156,6 +178,7 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
           request.labelSelector,
           `openclaw.dev/agent=${revision.agentId},openclaw.dev/revision=${revision.id},openclaw.dev/workload-role=agent`,
         );
+        if (podError) throw podError;
         return structuredClone(observation);
       },
     },
@@ -167,12 +190,18 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
           kind: "RuntimeClass",
           metadata: { name: GVISOR_RUNTIME_CLASS },
         });
+        if (runtimeClassError) throw runtimeClassError;
         if (runtimeClass === undefined)
           throw Object.assign(new Error("RuntimeClass not found"), { statusCode: 404 });
         return structuredClone(runtimeClass);
       },
     },
-    apps: {},
+    apps: {
+      async deleteNamespacedDeployment(request) {
+        containment.push({ kind: "Deployment", request: structuredClone(request) });
+        if (deleteError) throw deleteError;
+      },
+    },
     networking: {},
     discovery: {
       async listNamespacedEndpointSlice({ namespace: requestedNamespace, labelSelector }) {
@@ -181,7 +210,12 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
         return {
           items: [
             {
-              metadata: { labels: { "kubernetes.io/service-name": gatewayName } },
+              metadata: {
+                labels: { "kubernetes.io/service-name": gatewayName },
+                ownerReferences: [
+                  { kind: "Service", name: gatewayName, uid: gatewayService.metadata.uid },
+                ],
+              },
               endpoints: [{ conditions: { ready: true } }],
             },
           ],
@@ -201,8 +235,15 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
         if (object === undefined) throw Object.assign(new Error("not found"), { statusCode: 404 });
         return structuredClone(object);
       };
-      api[`patchNamespaced${kind}`] = async ({ body, namespace: requestedNamespace }) => {
+      api[`patchNamespaced${kind}`] = async (request) => {
+        const { body, namespace: requestedNamespace } = request;
         assert.equal(requestedNamespace, namespace);
+        if (Array.isArray(body)) {
+          assert.equal(kind, "Service");
+          containment.push({ kind, request: structuredClone(request) });
+          if (routePatchError) throw routePatchError;
+          return;
+        }
         writes.push(structuredClone(body));
         if (body.kind === "Deployment" && body.metadata.name === revisionName && patchError)
           throw patchError;
@@ -215,7 +256,9 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
     revision,
     gateway,
     agent,
+    agentService,
     writes,
+    containment,
     podRequests,
     runtimeClassRequests,
     setRuntimeClass(value) {
@@ -226,6 +269,18 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
     },
     setPatchError(value) {
       patchError = value;
+    },
+    setRoutePatchError(value) {
+      routePatchError = value;
+    },
+    setDeleteError(value) {
+      deleteError = value;
+    },
+    setRuntimeClassError(value) {
+      runtimeClassError = value;
+    },
+    setPodError(value) {
+      podError = value;
     },
     pod(name = "gvisor-harness-ready") {
       return {
@@ -238,6 +293,9 @@ function fixture({ driver = new KubernetesComputeDriver(options()), revision, mu
     },
     prepare() {
       return driver.prepareRevision(revision);
+    },
+    activate() {
+      return driver.activateRevision(revision);
     },
   };
 }
@@ -435,11 +493,15 @@ test("gVisor Agent manifests preserve projected identity, mounts, resource limit
   const ordinary = fixture({ driver: new KubernetesComputeDriver(ordinaryOptions) });
   const expectedAgent = structuredClone(ordinary.agent);
   delete expectedAgent.metadata.generation;
+  delete expectedAgent.metadata.uid;
+  delete expectedAgent.metadata.resourceVersion;
   delete expectedAgent.status;
   expectedAgent.spec.template.spec.runtimeClassName = GVISOR_RUNTIME_CLASS;
   assert.deepEqual(agent, expectedAgent);
   const expectedGateway = structuredClone(ordinary.gateway);
   delete expectedGateway.metadata.generation;
+  delete expectedGateway.metadata.uid;
+  delete expectedGateway.metadata.resourceVersion;
   delete expectedGateway.status;
   assert.deepEqual(gateway, expectedGateway);
   assert.equal(gateway.spec.template.spec.runtimeClassName, undefined);
@@ -478,8 +540,8 @@ test("gVisor preparation requires one Running Ready Pod and current Deployment r
   assert.equal((await current.prepare()).ready, false);
   assert.equal(
     current.podRequests.length,
-    calls,
-    "Pod readiness cannot override an unready Deployment",
+    calls + 2,
+    "an unready Deployment still requires observation of potentially unsafe live Pods",
   );
 });
 
@@ -639,6 +701,7 @@ test("gVisor preparation verifies the exact RuntimeClass handler before workload
     assert.equal(current.writes.length, 0);
     assert.equal(current.runtimeClassRequests.length, 1);
     assert.equal(current.podRequests.length, 0);
+    assert.deepEqual(current.containment, [deploymentDeletion(current)]);
   }
   const current = fixture();
   current.setObservation({ items: [current.pod()] });
@@ -648,4 +711,306 @@ test("gVisor preparation verifies the exact RuntimeClass handler before workload
     2,
     "preparation and readiness each verify the selected RuntimeClass",
   );
+});
+
+function runtimeFixture({ isolationProfile = true, lifecycleDrivers = [], ...overrides } = {}) {
+  const configured = options({
+    runtime: createInstallationDriverConfiguration().drivers.compute.configuration.runtime,
+  });
+  if (!isolationProfile) delete configured.isolationProfile;
+  return fixture({
+    driver: new KubernetesComputeDriver(configured, { lifecycleDrivers }),
+    active: true,
+    ...overrides,
+  });
+}
+
+function deploymentDeletion(current) {
+  return {
+    kind: "Deployment",
+    request: {
+      name: current.agent.metadata.name,
+      namespace,
+      body: {
+        preconditions: { uid: current.agent.metadata.uid },
+        propagationPolicy: "Foreground",
+      },
+    },
+  };
+}
+
+function expectedContainment(current) {
+  const service = current.agentService;
+  return [
+    {
+      kind: "Service",
+      request: {
+        name: service.metadata.name,
+        namespace,
+        body: [
+          { op: "test", path: "/metadata/uid", value: service.metadata.uid },
+          {
+            op: "test",
+            path: "/metadata/resourceVersion",
+            value: service.metadata.resourceVersion,
+          },
+          { op: "test", path: "/spec/selector", value: service.spec.selector },
+          {
+            op: "replace",
+            path: "/spec/selector",
+            value: { "app.kubernetes.io/name": `${service.metadata.name}-inactive` },
+          },
+        ],
+      },
+    },
+    deploymentDeletion(current),
+  ];
+}
+
+function errorLeaves(error) {
+  return error instanceof AggregateError ? error.errors.flatMap(errorLeaves) : [error];
+}
+
+test("gVisor contains a Running Pod using another or missing runtime during preparation and activation", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const runtimeClassName of ["runc", undefined]) {
+      for (const deploymentReady of [true, false]) {
+        const current = runtimeFixture();
+        if (!deploymentReady) current.agent.status.readyReplicas = 0;
+        const pod = current.pod();
+        pod.spec.runtimeClassName = runtimeClassName;
+        current.setObservation({ items: [pod] });
+        // The production-runtime path sees an already active selector and an observed Running Pod.
+        // A successful delete response records only a termination request, never a stopped result.
+        await assert.rejects(current[operation](), /required RuntimeClass; refusing fallback/);
+        assert.deepEqual(current.containment, expectedContainment(current));
+        if (operation === "activate") assert.equal(current.writes.length, 0);
+      }
+    }
+  }
+});
+
+test("gVisor contains an active revision when its selected RuntimeClass disappears or loses its handler", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const runtimeClass of [
+      undefined,
+      {
+        apiVersion: "node.k8s.io/v1",
+        kind: "RuntimeClass",
+        metadata: { name: GVISOR_RUNTIME_CLASS },
+        handler: "runc",
+      },
+      {
+        apiVersion: "node.k8s.io/v1",
+        kind: "RuntimeClass",
+        metadata: { name: GVISOR_RUNTIME_CLASS, deletionTimestamp: "2026-09-04T00:00:00.000Z" },
+        handler: GVISOR_RUNTIME_CLASS,
+      },
+    ]) {
+      const current = runtimeFixture();
+      current.setRuntimeClass(runtimeClass);
+      await assert.rejects(current[operation](), /RuntimeClass/);
+      assert.deepEqual(current.containment, expectedContainment(current));
+      assert.equal(
+        current.writes.length,
+        0,
+        "containment cannot first recreate or update the workload",
+      );
+    }
+  }
+});
+
+test("gVisor containment preserves another active revision and refuses foreign Deployment ownership", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    const current = runtimeFixture();
+    current.agentService.spec.selector["openclaw.dev/revision"] = "another-active-revision";
+    current.setRuntimeClass(undefined);
+    await assert.rejects(current[operation](), /RuntimeClass/);
+    assert.deepEqual(current.containment, [deploymentDeletion(current)]);
+    assert.equal(current.writes.length, 0);
+
+    const foreign = runtimeFixture({
+      mutateAgent(agent) {
+        agent.metadata.annotations["openclaw.dev/revision-id"] = "another-revision";
+      },
+    });
+    foreign.setRuntimeClass(undefined);
+    if (operation === "activate") {
+      // Activation checks Deployment ownership before observing isolation. It cannot claim
+      // an isolation violation or delete that foreign workload from its name alone.
+      await assert.rejects(foreign.activate(), /Refusing unowned Kubernetes Deployment/);
+      assert.deepEqual(foreign.containment, []);
+      continue;
+    }
+    await assert.rejects(foreign[operation](), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(errorLeaves(error).some((leaf) => /RuntimeClass/.test(leaf.message)));
+      assert.ok(
+        errorLeaves(error).some((leaf) =>
+          /Refusing unowned Kubernetes Deployment/.test(leaf.message),
+        ),
+      );
+      return true;
+    });
+    assert.deepEqual(foreign.containment, [expectedContainment(foreign)[0]]);
+  }
+});
+
+test("gVisor containment attempts exact Deployment deletion after guarded route failure and reports cleanup failures", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    const current = runtimeFixture();
+    current.setRuntimeClass(undefined);
+    const routeConflict = Object.assign(new Error("Service resourceVersion test failed"), {
+      statusCode: 409,
+    });
+    const deleteDenied = Object.assign(new Error("Deployment deletion denied"), {
+      statusCode: 403,
+    });
+    current.setRoutePatchError(routeConflict);
+    current.setDeleteError(deleteDenied);
+    await assert.rejects(current[operation](), (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.match(error.message, /containment could not be confirmed/);
+      const failures = errorLeaves(error);
+      assert.ok(failures.some((leaf) => /RuntimeClass/.test(leaf.message)));
+      assert.ok(failures.includes(routeConflict));
+      assert.ok(failures.includes(deleteDenied));
+      return true;
+    });
+    assert.deepEqual(current.containment, expectedContainment(current));
+    assert.equal(current.writes.length, 0);
+  }
+});
+
+test("gVisor containment requires Service mutation preconditions and still requests owned Deployment deletion", async () => {
+  for (const field of ["uid", "resourceVersion"]) {
+    const current = runtimeFixture();
+    delete current.agentService.metadata[field];
+    current.setRuntimeClass(undefined);
+    await assert.rejects(current.prepare(), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(
+        errorLeaves(error).some((leaf) => /Isolation containment Service/.test(leaf.message)),
+      );
+      return true;
+    });
+    assert.deepEqual(current.containment, [deploymentDeletion(current)]);
+  }
+});
+
+test("gVisor containment preserves foreign Service ownership while requesting exact owned Deployment deletion", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    const current = runtimeFixture();
+    current.agentService.metadata.labels["openclaw.dev/agent"] = "another-agent";
+    current.setRuntimeClass(undefined);
+    await assert.rejects(current[operation](), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(
+        errorLeaves(error).some((leaf) => /Refusing unowned Kubernetes Service/.test(leaf.message)),
+      );
+      return true;
+    });
+    assert.deepEqual(current.containment, [deploymentDeletion(current)]);
+    assert.equal(current.writes.length, 0);
+  }
+});
+
+test("gVisor containment refuses missing Deployment UID and never retries a UID conflict without preconditions", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    const missing = runtimeFixture();
+    delete missing.agent.metadata.uid;
+    missing.setRuntimeClass(undefined);
+    await assert.rejects(missing[operation](), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(
+        errorLeaves(error).some((leaf) =>
+          /Isolation containment Deployment UID/.test(leaf.message),
+        ),
+      );
+      return true;
+    });
+    assert.deepEqual(missing.containment, [expectedContainment(missing)[0]]);
+
+    const conflict = runtimeFixture();
+    conflict.setRuntimeClass(undefined);
+    const uidConflict = Object.assign(new Error("Deployment UID precondition failed"), {
+      statusCode: 409,
+    });
+    conflict.setDeleteError(uidConflict);
+    await assert.rejects(conflict[operation](), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(errorLeaves(error).includes(uidConflict));
+      return true;
+    });
+    assert.deepEqual(conflict.containment, expectedContainment(conflict));
+    assert.equal(conflict.containment.filter(({ kind }) => kind === "Deployment").length, 1);
+  }
+});
+
+test("gVisor containment runs lifecycle cleanup once and preserves hook failure alongside termination requests", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    let stops = 0;
+    const current = runtimeFixture({
+      lifecycleDrivers: [
+        {
+          id: "configuration-cleanup",
+          capability: "configuration",
+          implementation: "conformance-fixture",
+          computeLifecycleHooks: {
+            async beforeWorkloadStop() {
+              stops += 1;
+              throw new Error("cleanup unavailable");
+            },
+          },
+        },
+      ],
+    });
+    const pod = current.pod();
+    pod.spec.runtimeClassName = "runc";
+    current.setObservation({ items: [pod] });
+    await assert.rejects(current[operation](), (error) => {
+      assert.match(error.message, /containment could not be confirmed/);
+      assert.ok(errorLeaves(error).some((leaf) => /RuntimeClass/.test(leaf.message)));
+      assert.ok(errorLeaves(error).some((leaf) => /beforeWorkloadStop/.test(leaf.message)));
+      return true;
+    });
+    assert.equal(stops, 1);
+    assert.deepEqual(current.containment, expectedContainment(current));
+  }
+});
+
+test("gVisor ordinary unready states and transient observation errors do not request containment", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    const unready = runtimeFixture();
+    const pod = unready.pod();
+    pod.status.conditions[0].status = "False";
+    unready.setObservation({ items: [pod] });
+    if (operation === "prepare") assert.equal((await unready.prepare()).ready, false);
+    else await assert.rejects(unready.activate(), /workload is not ready/);
+    assert.deepEqual(unready.containment, []);
+
+    for (const source of ["setRuntimeClassError", "setPodError"]) {
+      const current = runtimeFixture();
+      const unavailable = Object.assign(
+        new Error("Kubernetes observation temporarily unavailable"),
+        { statusCode: 503 },
+      );
+      current[source](unavailable);
+      await assert.rejects(current[operation](), (error) => error === unavailable);
+      assert.deepEqual(current.containment, []);
+    }
+  }
+});
+
+test("ordinary Kubernetes never applies gVisor containment or requires its RuntimeClass", async () => {
+  const current = runtimeFixture({ isolationProfile: false });
+  current.setRuntimeClass(undefined);
+  const pod = current.pod();
+  pod.spec.runtimeClassName = "runc";
+  current.setObservation({ items: [pod] });
+  assert.equal((await current.prepare()).ready, true);
+  await current.activate();
+  assert.deepEqual(current.runtimeClassRequests, []);
+  assert.deepEqual(current.podRequests, []);
+  assert.deepEqual(current.containment, []);
 });
