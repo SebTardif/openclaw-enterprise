@@ -2202,16 +2202,18 @@ export class KubernetesComputeDriver implements ComputeDriver {
       ) {
         continue;
       }
-      if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
-        throw invalidObservation();
-      }
       if (requiredRuntimeClass !== undefined) {
+        // A Pod selected by this revision's route must be contained on a runtime
+        // violation even when its additional ownership labels also contradict expectations.
         if (asRecord(pod.spec)?.runtimeClassName !== requiredRuntimeClass) {
           throw new IsolationFailure(
             "gVisor Alpha Pod lost its required RuntimeClass; refusing fallback.",
           );
         }
         ready = ready && status?.phase === "Running";
+      }
+      if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
+        throw invalidObservation();
       }
       candidates += 1;
       candidateReady = ready;

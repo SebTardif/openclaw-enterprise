@@ -790,6 +790,34 @@ test("gVisor contains a Running Pod using another or missing runtime during prep
   }
 });
 
+test("gVisor contains a matching unsafe Pod even when its service-principal label is missing or contradictory", async () => {
+  for (const operation of ["prepare", "activate"]) {
+    for (const runtimeClassName of ["runc", undefined, GVISOR_RUNTIME_CLASS]) {
+      for (const servicePrincipalId of [undefined, "another-service-principal"]) {
+        const current = runtimeFixture();
+        const pod = current.pod();
+        if (runtimeClassName === undefined) delete pod.spec.runtimeClassName;
+        else pod.spec.runtimeClassName = runtimeClassName;
+        if (servicePrincipalId === undefined)
+          delete pod.metadata.labels["openclaw.dev/service-principal"];
+        else pod.metadata.labels["openclaw.dev/service-principal"] = servicePrincipalId;
+        current.setObservation({ items: [pod] });
+
+        // Exact namespace, Agent, revision, role, and app labels still match the active route.
+        // An additional ownership-label error must not hide a confirmed runtime violation.
+        if (runtimeClassName === GVISOR_RUNTIME_CLASS) {
+          await assert.rejects(current[operation](), /invalid or incomplete/);
+          assert.deepEqual(current.containment, []);
+        } else {
+          await assert.rejects(current[operation](), /required RuntimeClass; refusing fallback/);
+          assert.deepEqual(current.containment, expectedContainment(current));
+        }
+        if (operation === "activate") assert.equal(current.writes.length, 0);
+      }
+    }
+  }
+});
+
 test("gVisor contains an active revision when its selected RuntimeClass disappears or loses its handler", async () => {
   for (const operation of ["prepare", "activate"]) {
     for (const runtimeClass of [
