@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -13,11 +23,20 @@ import {
 } from "../../scripts/gvisor-development-setup.mjs";
 
 const executeFile = promisify(execFile);
-const names = ["runsc", "containerd-shim-runsc-v1"];
+const executableNames = ["runsc", "containerd-shim-runsc-v1"];
+const sidecarNames = [
+  "gvisor-bin/checkpointgofer",
+  "gvisor-bin/gvisor-sentry-prewarmer",
+  "gvisor-bin/gvisor_sentry",
+  "gvisor-bin/runsc-metric-server",
+];
+const names = [...executableNames, ...sidecarNames];
 
 async function fixture(context) {
   const directory = await mkdtemp(join(tmpdir(), "oce-offline-helper-test-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
+  await chmod(directory, 0o755);
+  await mkdir(join(directory, "gvisor-bin"));
   const artifacts = {};
   for (const name of names) {
     // These benign shell programs exercise verified-copy/probe/wrapper semantics only.
@@ -35,12 +54,12 @@ fi
     artifacts[name] = {
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
-      version: "setup-fixture-1.0.0",
-      versionFlag: "--version",
-      versionOutput,
+      ...(executableNames.includes(name)
+        ? { version: "setup-fixture-1.0.0", versionFlag: "--version", versionOutput }
+        : {}),
     };
   }
-  const manifest = { schemaVersion: 1, artifacts };
+  const manifest = { schemaVersion: 2, releaseVersion: "setup-fixture-1.0.0", artifacts };
   const manifestPath = join(directory, "manifest.json");
   const prefix = join(directory, "prefix");
   async function saveManifest() {
@@ -61,7 +80,7 @@ test("offline setup requires explicit local artifact paths, immutable versions, 
     [
       "schemaVersion",
       (copy) => {
-        copy.schemaVersion = 2;
+        copy.schemaVersion = 1;
       },
     ],
     [
@@ -74,6 +93,24 @@ test("offline setup requires explicit local artifact paths, immutable versions, 
       "exactly",
       (copy) => {
         delete copy.artifacts["containerd-shim-runsc-v1"];
+      },
+    ],
+    [
+      "exactly",
+      (copy) => {
+        delete copy.artifacts["gvisor-bin/gvisor_sentry"];
+      },
+    ],
+    [
+      "exactly",
+      (copy) => {
+        copy.artifacts["../gvisor_sentry"] = copy.artifacts["gvisor-bin/gvisor_sentry"];
+      },
+    ],
+    [
+      "releaseVersion",
+      (copy) => {
+        copy.releaseVersion = "unprobed-release-2.0";
       },
     ],
     [
@@ -222,12 +259,13 @@ test("offline setup refuses existing prefixes and symbolic-link parent paths", a
   );
 });
 
-test("offline setup stages verified fixture bytes privately and labels its result prepared-only", async (context) => {
+test("offline setup stages the complete verified fixture distribution for dropped runtime identities and labels its result prepared-only", async (context) => {
   const input = await fixture(context);
   const receipt = await prepareDevelopmentRuntime(input);
   assert.equal(receipt.status, "prepared-only");
   assert.equal(receipt.runtimeVerified, false);
   assert.equal(receipt.runtimeHandlerConfigured, false);
+  assert.equal(receipt.sidecarUsagePolicy, "STRICT");
   assert.equal(receipt.runtimeClassName, "oce-gvisor-systrap");
   assert.match(receipt.requiredOperatorStep, /preserving the existing runc default/u);
   for (const name of names) {
@@ -235,12 +273,18 @@ test("offline setup stages verified fixture bytes privately and labels its resul
       await readFile(join(input.prefix, "bin", name)),
       await readFile(input.manifest.artifacts[name].path),
     );
-    assert.equal((await lstat(join(input.prefix, "bin", name))).mode & 0o777, 0o500);
+    assert.equal((await lstat(join(input.prefix, "bin", name))).mode & 0o777, 0o555);
     assert.equal((await lstat(input.manifest.artifacts[name].path)).mode & 0o777, 0o600);
   }
-  assert.equal((await lstat(input.prefix)).mode & 0o777, 0o700);
+  assert.equal((await lstat(input.prefix)).mode & 0o777, 0o755);
   const saved = JSON.parse(await readFile(join(input.prefix, "verification.json"), "utf8"));
   assert.equal(saved.runtimeVerified, false);
+  assert.equal(saved.releaseVersion, "setup-fixture-1.0.0");
+  assert.deepEqual(saved.artifacts["gvisor-bin/gvisor_sentry"], {
+    sha256: input.manifest.artifacts["gvisor-bin/gvisor_sentry"].sha256,
+  });
+  assert.equal((await lstat(join(input.prefix, "bin", "gvisor-bin"))).mode & 0o777, 0o755);
+  assert.equal((await lstat(join(input.prefix, "verification.json"))).mode & 0o777, 0o444);
   assert.deepEqual(await readdir(join(input.prefix, "config")), ["runtimeclass.yaml"]);
   assert.match(
     await readFile(join(input.prefix, "config", "runtimeclass.yaml"), "utf8"),
@@ -257,7 +301,10 @@ test("generated OCI wrapper fixes systrap, rejects platform overrides, and safel
   // Executing the real generated shell wrapper against an argument-echo fixture proves
   // its quoting/flag behavior only. No container operation or gVisor execution occurs.
   const result = await executeFile(wrapper, ["--root=/tmp/example space", "state", "fixture-id"]);
-  assert.equal(result.stdout, "--platform=systrap\n--root=/tmp/example space\nstate\nfixture-id\n");
+  assert.equal(
+    result.stdout,
+    "--platform=systrap\n--sidecar-usage-policy=STRICT\n--root=/tmp/example space\nstate\nfixture-id\n",
+  );
   for (const flags of [
     ["--platform=kvm"],
     ["--platform", "ptrace"],
@@ -269,8 +316,122 @@ test("generated OCI wrapper fixes systrap, rejects platform overrides, and safel
       (error) => error.code === 64 && /platform overrides are rejected/u.test(error.stderr),
     );
   }
+  for (const flags of [
+    ["--sidecar-usage-policy=DEFAULT"],
+    ["--sidecar-usage-policy", "DEFAULT"],
+    ["-sidecar-usage-policy=DEFAULT"],
+    ["-sidecar-usage-policy", "DEFAULT"],
+  ]) {
+    await assert.rejects(
+      executeFile(wrapper, flags),
+      (error) => error.code === 64 && /sidecar policy overrides are rejected/u.test(error.stderr),
+    );
+  }
   assert.deepEqual(Object.keys(renderConfiguration(prefix)).sort(), [
     "runsc-systrap",
     "runtimeclass.yaml",
   ]);
+});
+
+test("offline setup rejects any unverified companion before executing runsc", async (context) => {
+  const input = await fixture(context);
+  const marker = join(input.directory, "must-not-execute");
+  const bytes = `#!/bin/sh\nprintf '%s' invoked > '${marker}'\n`;
+  await writeFile(input.manifest.artifacts.runsc.path, bytes);
+  input.manifest.artifacts.runsc.sha256 = createHash("sha256").update(bytes).digest("hex");
+  input.manifest.artifacts["gvisor-bin/runsc-metric-server"].sha256 = "0".repeat(64);
+  await input.saveManifest();
+  await assert.rejects(prepareDevelopmentRuntime(input), /runsc-metric-server SHA256 mismatch/u);
+  await assertAbsent(marker);
+  await assertAbsent(input.prefix);
+});
+
+test("offline setup rechecks unprobed companions after version probes", async (context) => {
+  const input = await fixture(context);
+  // A supplied executable can change another member despite initially matching its pin.
+  // Such probe-time changes must never reach the published distribution.
+  const bytes = `#!/bin/sh
+chmod u+w gvisor-bin/gvisor_sentry
+printf '%s' changed > gvisor-bin/gvisor_sentry
+printf '%s\\n' 'runsc setup-fixture-1.0.0'
+`;
+  await writeFile(input.manifest.artifacts.runsc.path, bytes);
+  input.manifest.artifacts.runsc.sha256 = createHash("sha256").update(bytes).digest("hex");
+  await input.saveManifest();
+  await assert.rejects(
+    prepareDevelopmentRuntime(input),
+    /gvisor_sentry changed during distribution version probes/u,
+  );
+  await assertAbsent(input.prefix);
+});
+
+test("offline setup rejects output ancestors inaccessible to dropped runtime identities", async (context) => {
+  const input = await fixture(context);
+  const inaccessible = join(input.directory, "inaccessible");
+  await mkdir(inaccessible, { mode: 0o700 });
+  const prefix = join(inaccessible, "prefix");
+  await assert.rejects(
+    prepareDevelopmentRuntime({ ...input, prefix }),
+    /Prefix ancestors must be traversable/u,
+  );
+  await assertAbsent(prefix);
+});
+
+test("offline setup records the shim's actual distinct build version", async (context) => {
+  const input = await fixture(context);
+  // Upstream's shim prints its containerd build version, not the runsc release stamp.
+  const shim = input.manifest.artifacts["containerd-shim-runsc-v1"];
+  const bytes =
+    "#!/bin/sh\nprintf '%s\\n' 'containerd-shim-runsc-v1:' '  Version:  2.1.5+unknown'\n";
+  await writeFile(shim.path, bytes);
+  Object.assign(shim, {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    version: "2.1.5+unknown",
+    versionFlag: "-v",
+    versionOutput: "containerd-shim-runsc-v1:\n  Version:  2.1.5+unknown",
+  });
+  await input.saveManifest();
+  const receipt = await prepareDevelopmentRuntime(input);
+  assert.equal(receipt.releaseVersion, "setup-fixture-1.0.0");
+  assert.equal(receipt.artifacts["containerd-shim-runsc-v1"].version, "2.1.5+unknown");
+});
+
+test("offline setup preserves dropped-identity access under a restrictive operator umask", async (context) => {
+  const input = await fixture(context);
+  const oldMask = process.umask(0o077);
+  try {
+    await prepareDevelopmentRuntime(input);
+  } finally {
+    process.umask(oldMask);
+  }
+  for (const path of ["bin/runsc-systrap", ...names.map((name) => `bin/${name}`)]) {
+    assert.equal((await lstat(join(input.prefix, path))).mode & 0o777, 0o555);
+  }
+  for (const path of ["verification.json", "config/runtimeclass.yaml"]) {
+    assert.equal((await lstat(join(input.prefix, path))).mode & 0o777, 0o444);
+  }
+});
+
+test("offline setup never executes a shim rewritten by the runsc probe", async (context) => {
+  const input = await fixture(context);
+  const marker = join(input.directory, "rewritten-shim-must-not-execute");
+  // Initial hash verification is insufficient if the first probe rewrites the second.
+  const bytes = `#!/bin/sh
+chmod u+w containerd-shim-runsc-v1
+cat > containerd-shim-runsc-v1 <<'SHIM'
+#!/bin/sh
+printf '%s' invoked > '${marker}'
+printf '%s\\n' 'containerd-shim-runsc-v1 setup-fixture-1.0.0'
+SHIM
+printf '%s\\n' 'runsc setup-fixture-1.0.0'
+`;
+  await writeFile(input.manifest.artifacts.runsc.path, bytes);
+  input.manifest.artifacts.runsc.sha256 = createHash("sha256").update(bytes).digest("hex");
+  await input.saveManifest();
+  await assert.rejects(
+    prepareDevelopmentRuntime(input),
+    /containerd-shim-runsc-v1 changed during distribution version probes/u,
+  );
+  await assertAbsent(marker);
+  await assertAbsent(input.prefix);
 });
