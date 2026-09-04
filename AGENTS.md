@@ -23,6 +23,18 @@ The authoritative architecture is the repository's
 [platform design](docs/design.md).
 Do not create a competing architecture specification in this checkout.
 
+## Development integration
+
+Use isolated worktrees with exclusive file ownership for concurrent implementation.
+Keep active worktrees in persistent home or workspace storage, not `/tmp` or
+`/var/tmp`, where they can be wiped. Preserve existing worktrees and their contents.
+
+Integrate task changes into the shared `dev` branch, which lives parallel to
+`main`. Do not open a pull request for each task. The coordinator serializes
+reviewed integration into `dev`; review the accumulated dev branch before landing
+it to `main`. Required correctness, security and exact outgoing-content reviews
+still apply before publishing changes. Workers must not independently push main.
+
 ## User-facing documentation
 
 Use the [documentation map](docs/README.md) and keep these ownership boundaries:
@@ -71,7 +83,7 @@ retroactively update the earlier spec to match the later implementation;
 preserve its original design decisions and implementation details.
 
 Use stable feature names in `docs/reference/` and retain existing numbered
-implementation-spec paths under `specs/`. A behavior-changing implementation PR
+implementation-spec paths under `specs/`. A behavior-changing implementation
 updates its affected reference, guides, and flows together. Record completion
 and the owning current reference when a specification ships.
 Keep Manual Notes unchanged. Link maintenance after document moves is permitted
