@@ -187,16 +187,9 @@ test("the CLI rejects unsupported targets without invoking build tools", async (
   );
 });
 
-test("invalid image inputs fail before prerequisite commands run", async () => {
-  // With no tools on PATH, configuration must still be the first diagnostic;
-  // this invokes the actual CLI without providing a simulated Docker command.
-  const child = spawn(process.execPath, [script, "image-egress"], {
-    env: {
-      ...process.env,
-      PATH: "",
-      OCC_BUILD_EGRESS_TAG: "example:latest",
-      OCC_BUILD_EGRESS_BASE_IMAGE: "",
-    },
+async function captureCli(target, environment) {
+  const child = spawn(process.execPath, [script, target], {
+    env: { ...process.env, PATH: "", ...environment },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -211,7 +204,29 @@ test("invalid image inputs fail before prerequisite commands run", async () => {
     child.once("error", reject);
     child.once("close", (code) => resolve(code));
   });
-  assert.equal(status, 1);
-  assert.equal(output, "");
-  assert.match(errors, /OCC_BUILD_EGRESS_TAG must select a tag other than latest/);
+  return { status, output, errors };
+}
+
+test("invalid image inputs fail before prerequisite commands run", async () => {
+  // With no tools on PATH, configuration must still be the first diagnostic;
+  // this invokes the actual CLI without providing a simulated Docker command.
+  const result = await captureCli("image-egress", {
+    OCC_BUILD_EGRESS_TAG: "example:latest",
+    OCC_BUILD_EGRESS_BASE_IMAGE: "",
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.output, "");
+  assert.match(result.errors, /OCC_BUILD_EGRESS_TAG must select a tag other than latest/);
 });
+
+test(
+  "native preparation rejects an ambient system zstd override before running tools",
+  { skip: process.platform !== "linux" || !["x64", "arm64"].includes(process.arch) },
+  async () => {
+    // zstd-sys tests presence of this variable, so even "0" selects the system
+    // library path. The actual CLI must reject it without any compiler on PATH.
+    const result = await captureCli("native", { ZSTD_SYS_USE_PKG_CONFIG: "0" });
+    assert.equal(result.status, 1);
+    assert.match(result.errors, /Unset ZSTD_SYS_USE_PKG_CONFIG/);
+  },
+);

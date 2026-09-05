@@ -46,8 +46,12 @@ TypeScript workspace. Its projects are `utils`, `contracts`, `occ`, `iam`,
 artifacts. The controller image continues to package and execute the existing
 TypeScript source and `.mjs` entrypoints.
 
-Native builds require a Linux amd64 or arm64 host and explicitly select its
-GNU Rust target. Cross-compilation is outside this command's supported boundary.
+Native builds require a Linux amd64 or arm64 host, its native C compiler and
+build tools, and CMake for the selected native library dependencies. They
+explicitly select the host GNU Rust target. Cross-compilation is outside this
+command's supported boundary. `ZSTD_SYS_USE_PKG_CONFIG` must be unset: that
+override selects an ambient system zstd instead of the locked bundled source,
+and the build rejects it even when its value is `0`.
 Cargo receives `--locked --offline`; `RUSTUP_AUTO_INSTALL=0` prevents a missing
 toolchain from being downloaded. The command resolves Cargo and rustc from the
 selected installed rustup toolchain, explicitly selects that compiler, and
