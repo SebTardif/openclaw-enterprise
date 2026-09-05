@@ -62,18 +62,6 @@
       "bindings": ["value:AGENT_READINESS_ENTRYPOINT", "value:AGENT_RUNTIME_ENTRYPOINT"]
     },
     {
-      "rule": "http-to-provider",
-      "from": "apps/controller/src/index.ts",
-      "to": "apps/controller/src/drivers/configuration/kubernetes/index.ts",
-      "specifier": "./drivers/configuration/kubernetes/index.ts",
-      "kind": "import",
-      "typeOnly": false,
-      "owner": "HTTP configuration boundary",
-      "removeWhen": "Move semantic Configuration errors into the neutral contract and update the HTTP importer.",
-      "reason": "HTTP currently imports semantic Configuration errors from the selected Kubernetes implementation.",
-      "bindings": ["value:ConfigurationOwnershipError", "value:ConfigurationValidationError"]
-    },
-    {
       "rule": "internal-root-barrel",
       "from": "packages/iam/src/channel-administration.ts",
       "to": "packages/iam/src/index.ts",
