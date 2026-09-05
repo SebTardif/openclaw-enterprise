@@ -152,11 +152,6 @@ let nativeEnvironment;
 let nativeCargo;
 async function checkNative() {
   hostPlatform();
-  if (process.env.ZSTD_SYS_USE_PKG_CONFIG !== undefined) {
-    throw new Error(
-      "Unset ZSTD_SYS_USE_PKG_CONFIG; native builds require the locked bundled zstd source.",
-    );
-  }
   for (const name of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]) {
     await verifyFile(join(nativeRoot, name));
   }

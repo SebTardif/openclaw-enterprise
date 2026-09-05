@@ -218,15 +218,3 @@ test("invalid image inputs fail before prerequisite commands run", async () => {
   assert.equal(result.output, "");
   assert.match(result.errors, /OCC_BUILD_EGRESS_TAG must select a tag other than latest/);
 });
-
-test(
-  "native preparation rejects an ambient system zstd override before running tools",
-  { skip: process.platform !== "linux" || !["x64", "arm64"].includes(process.arch) },
-  async () => {
-    // zstd-sys tests presence of this variable, so even "0" selects the system
-    // library path. The actual CLI must reject it without any compiler on PATH.
-    const result = await captureCli("native", { ZSTD_SYS_USE_PKG_CONFIG: "0" });
-    assert.equal(result.status, 1);
-    assert.match(result.errors, /Unset ZSTD_SYS_USE_PKG_CONFIG/);
-  },
-);
