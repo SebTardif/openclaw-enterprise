@@ -10,6 +10,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Observability](guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
+- [Build graph](reference/build.md): inspect explicit TypeScript, Rust, and image dependencies; prepare inputs separately from offline source builds.
 
 ## Architecture
 
@@ -47,6 +48,10 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
+- [Delegated authority library](reference/delegation.md): root grant constraints,
+  request binding, and required owner interfaces; executable authority is not yet wired.
+- [External model egress packaging](reference/egress.md): isolated DNS and
+  credential-service packaging, local preflight, and outstanding runtime requirements.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Docker Compose development](flows/docker-compose-development.md),
