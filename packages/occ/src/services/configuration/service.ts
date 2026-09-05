@@ -26,9 +26,39 @@ import type {
 } from "./port.ts";
 
 export function configurationValues(value: unknown): Readonly<OpenClawConfigurationDocument> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new ScopeViolationError("Configuration values must be a JSON object.");
-  return immutableCopy(value as OpenClawConfigurationDocument);
+  const ancestors = new Set<object>();
+  function isJson(input: unknown): boolean {
+    if (input === null || typeof input === "boolean" || typeof input === "string") return true;
+    if (typeof input === "number") return Number.isFinite(input);
+    if (typeof input !== "object" || ancestors.has(input)) return false;
+    const array = Array.isArray(input);
+    const prototype = Object.getPrototypeOf(input);
+    if (
+      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+    )
+      return false;
+    const keys = Reflect.ownKeys(input);
+    if (array && keys.length !== input.length + 1) return false;
+    ancestors.add(input);
+    for (const key of keys) {
+      if (array && key === "length") continue;
+      if (typeof key !== "string") return false;
+      if (array && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= input.length)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor?.enumerable || !("value" in descriptor) || !isJson(descriptor.value))
+        return false;
+    }
+    ancestors.delete(input);
+    return true;
+  }
+  try {
+    // Validate before cloning so accessors and non-JSON values cannot be coerced or dropped.
+    if (value && typeof value === "object" && !Array.isArray(value) && isJson(value))
+      return immutableCopy(value as OpenClawConfigurationDocument);
+  } catch {
+    // Inspection and cloning failures have the same input-error identity as invalid JSON.
+  }
+  throw new ScopeViolationError("Configuration values must be a JSON object.");
 }
 
 export function configurationBindings(input: unknown): SecretBindings {
