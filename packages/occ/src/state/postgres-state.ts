@@ -1,3 +1,5 @@
+import { createRuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
+import { parseRuntimeServiceTrustRecord } from "../runtime-authority/service-trust-schema.ts";
 import {
   createRuntimeAuthorityRepository,
   RuntimeAuthorityTransactionGuard,
@@ -66,7 +68,9 @@ import type {
   PlatformAuditSink,
   PlatformOperation,
   PlatformReadView,
+  PlatformAuditRepository,
   PlatformStateStore,
+  PlatformReadOptions,
   PlatformUnitOfWork,
   SecretRepository,
   ServiceAccountRepository,
@@ -86,6 +90,14 @@ export interface PostgresClient extends PostgresQueryClient {
 }
 
 export interface PostgresPool {
+  readonly options?: {
+    readonly connectionTimeoutMillis?: number | undefined;
+    readonly max?: number | undefined;
+    readonly pipeline?: boolean;
+    readonly onConnect?: unknown;
+    readonly verify?: unknown;
+    readonly Client?: unknown;
+  };
   connect(): Promise<PostgresClient>;
   end(): Promise<void>;
 }
@@ -876,8 +888,11 @@ export class PostgresPlatformState implements PlatformStateStore {
     await this.pool.end();
   }
 
-  async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.execute(true, async (state) => work(state));
+  async read<T>(
+    work: (state: PlatformReadView) => Promise<T>,
+    options?: PlatformReadOptions,
+  ): Promise<T> {
+    return this.execute(true, async (state) => work(state), options);
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -907,28 +922,110 @@ export class PostgresPlatformState implements PlatformStateStore {
   private async execute<T>(
     readOnly: boolean,
     work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
+    options?: PlatformReadOptions,
   ): Promise<T> {
-    let client: PostgresClient;
-    try {
-      client = await this.pool.connect();
-    } catch (error) {
-      throw databaseError(error);
+    // pg exposes no per-checkout cancellation. Its configured timeout actually removes
+    // the waiter; join that bounded checkout before returning an interrupted read.
+    const acquisitionTimeout = this.pool.options?.connectionTimeoutMillis;
+    if (
+      options !== undefined &&
+      (options.signal.aborted ||
+        !Number.isFinite(options.timeoutMs) ||
+        options.timeoutMs <= 0 ||
+        options.timeoutMs > 3000 ||
+        acquisitionTimeout === undefined ||
+        acquisitionTimeout <= 0 ||
+        acquisitionTimeout > 250 ||
+        !Number.isFinite(acquisitionTimeout) ||
+        this.pool.options?.pipeline === true ||
+        this.pool.options?.onConnect !== undefined ||
+        this.pool.options?.verify !== undefined ||
+        this.pool.options?.Client !== undefined)
+    )
+      throw new DependencyUnavailableError(
+        "Bounded platform reads require a bounded PostgreSQL pool.",
+      );
+    const readBegan = performance.now();
+    let expired = false;
+    let closed = false;
+    let released = false;
+    let raw: PostgresClient | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectAbort: ((error: Error) => void) | undefined;
+    const pending = new Set<Promise<unknown>>();
+    const abortFailure = () => new DependencyUnavailableError("The platform read expired.");
+    const release = (destroy: boolean) => {
+      if (raw !== undefined && !released) {
+        released = true;
+        raw.release(destroy);
+      }
+    };
+    const abort = () => {
+      expired = true;
+      closed = true;
+      release(true);
+      rejectAbort?.(abortFailure());
+    };
+    const cancelled =
+      options === undefined
+        ? undefined
+        : new Promise<never>((_resolve, reject) => {
+            rejectAbort = reject;
+          });
+    // Rejection can precede acquisition settlement; attach a handler immediately.
+    void cancelled?.catch(() => {});
+    if (options !== undefined) {
+      options.signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(abort, Math.ceil(options.timeoutMs));
     }
-
+    let client: PostgresClient | undefined;
     let started = false;
     let committing = false;
     let discardClient = false;
-    // pg emits transport errors on checked-out clients as well as rejecting the
-    // query. Keep that event from escaping the transaction's unknown-outcome path.
+    let unit: PlatformUnitOfWork | undefined;
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const onTransportError = () => {
       discardClient = true;
     };
-    client.on?.("error", onTransportError);
-    let unit: PlatformUnitOfWork | undefined;
-    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     try {
+      raw = await this.pool.connect();
+      raw.on?.("error", onTransportError);
+      if (expired || options?.signal.aborted) {
+        release(true);
+        throw abortFailure();
+      }
+      const underlying = raw;
+      client =
+        options === undefined
+          ? raw
+          : {
+              query: async (statement, parameters) => {
+                if (closed || options.signal.aborted) throw abortFailure();
+                const query = underlying.query(statement, parameters);
+                pending.add(query);
+                try {
+                  return await query;
+                } finally {
+                  pending.delete(query);
+                }
+              },
+              release: (destroy) => release(destroy ?? false),
+            };
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
+      if (options !== undefined) {
+        // PostgreSQL also detects a disappeared client during a blocked query. The
+        // server statement limit independently bounds resource lifetime on transport loss.
+        const remaining = Math.max(
+          1,
+          Math.floor(options.timeoutMs - (performance.now() - readBegan)),
+        );
+        await client.query(
+          "SELECT set_config('statement_timeout',$1,true), set_config('transaction_timeout',$1,true), set_config('idle_in_transaction_session_timeout',$1,true)",
+          [`${remaining}ms`],
+        );
+        await client.query("SET LOCAL client_connection_check_interval = '100ms'");
+      }
       const context: TransactionContext = {
         authorityGuard,
         client,
@@ -937,39 +1034,44 @@ export class PostgresPlatformState implements PlatformStateStore {
       };
       unit = this.repositories(context);
       this.contexts.set(unit, context);
-      const result = await work(unit, context);
-      await context.authorityGuard.finish();
+      const running = Promise.resolve().then(() => work(unit!, context));
+      const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      await authorityGuard.finish();
+      if (expired || options?.signal.aborted) throw abortFailure();
       committing = true;
       const acknowledgement = await client.query("COMMIT");
       committing = false;
       started = false;
-      // PostgreSQL answers COMMIT with ROLLBACK after a caught statement failure.
-      // A callback result must never acknowledge writes the database discarded.
       if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
         throw new DependencyUnavailableError("The database transaction did not commit.");
+      if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
-      // Drain already-started authority work before rollback/client release, including
-      // a callback that throws while one of its admissions is still pending.
       try {
         await authorityGuard.finish();
       } catch {
         /* Preserve the original failure. */
       }
-      if (started) {
+      if (started && !released && client !== undefined) {
         try {
           await client.query("ROLLBACK");
         } catch {
-          // The failed client is still returned to the pool below.
+          discardClient = true;
         }
       }
-      const unknownCommit = committing && commitOutcomeUnknown(error);
-      discardClient ||= unknownCommit;
+      const unknownCommit = committing && !readOnly && commitOutcomeUnknown(error);
+      discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      closed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      options?.signal.removeEventListener("abort", abort);
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release(discardClient);
-      client.removeListener?.("error", onTransportError);
+      release(discardClient || expired);
+      // Destroying an active pg client rejects active/queued queries. Join their rejection
+      // before reporting cancellation, and forbid any later callback from reusing it.
+      await Promise.allSettled([...pending]);
+      raw?.removeListener?.("error", onTransportError);
     }
   }
 
@@ -2278,6 +2380,100 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw new DependencyUnavailableError("The runtime authority record is invalid.");
       return immutableCopy({ canonicalPayload: row.canonical_payload, receipt: result.receipt });
     }
+    const audit: PlatformAuditRepository = {
+      append: async (event) => {
+        await this.requireInstallation(context, event.installationId);
+        if (event.resource.namespaceId !== event.namespaceId)
+          throw new ScopeViolationError("The audit event and resource scopes do not match.");
+        const details = auditDetails(event);
+        await client.query(
+          `INSERT INTO occ.audit_events
+             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
+              outcome, details)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+          [
+            event.id,
+            event.occurredAt,
+            event.kind,
+            event.actorId,
+            event.action,
+            event.namespaceId ?? null,
+            event.resource.kind,
+            event.resource.id,
+            event.outcome,
+            details === undefined ? null : JSON.stringify(details),
+          ],
+        );
+      },
+      list: async () => {
+        const installation = await this.currentInstallation(context);
+        if (installation === undefined) return Object.freeze([]);
+        const found = rows(
+          (
+            await client.query(
+              `SELECT id, occurred_at, kind, actor_id, action, namespace_id, resource_kind,
+                        resource_id, outcome, details
+                 FROM occ.audit_events ORDER BY occurred_at, id`,
+            )
+          ).rows,
+        );
+        return Object.freeze(found.map((row) => auditFromRow(row, installation.id)));
+      },
+    };
+    const runtimeServiceTrust = createRuntimeServiceTrustRepository(
+      {
+        lockOperation: async (operationRef) => {
+          await client.query("SET LOCAL lock_timeout = '3000ms'");
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-service-trust-operation:' || $1,0))",
+            [operationRef],
+          );
+        },
+        lockSubject: async (installationId, kind, subjectRef) => {
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-service-trust-subject:' || $1 || ':' || $2 || ':' || $3,0))",
+            [installationId, kind, subjectRef],
+          );
+        },
+        operation: async (operationRef) => {
+          const result = await client.query(
+            "SELECT record FROM occ.runtime_service_trust_records WHERE operation_ref=$1",
+            [operationRef],
+          );
+          const row = rows(result.rows)[0];
+          return row === undefined ? undefined : parseRuntimeServiceTrustRecord(row.record);
+        },
+        latest: async (installationId, kind, subjectRef) => {
+          const result = await client.query(
+            "SELECT record FROM occ.runtime_service_trust_records WHERE installation_id=$1 AND subject_kind=$2 AND subject_ref=$3 ORDER BY record_version DESC LIMIT 1",
+            [installationId, kind, subjectRef],
+          );
+          const row = rows(result.rows)[0];
+          return row === undefined ? undefined : parseRuntimeServiceTrustRecord(row.record);
+        },
+        insert: async (record, event) => {
+          await audit.append(event);
+          await client.query(
+            "INSERT INTO occ.runtime_service_trust_records (installation_id,subject_kind,subject_ref,record_version,operation_ref,actor_id,audit_id,canonical_request,request_digest,committed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
+            [
+              record.installationId,
+              record.subjectKind,
+              record.subjectRef,
+              record.recordVersion,
+              record.operationRef,
+              record.actorId,
+              record.auditId,
+              record.canonicalRequest,
+              record.requestDigest,
+              record.committedAt,
+              JSON.stringify(record),
+            ],
+          );
+        },
+      },
+      { installations, agents, namespaces },
+      context.authorityGuard,
+    );
     const runtimeAuthority = createRuntimeAuthorityRepository(
       {
         lockOperation: async (operationRef) => {
@@ -2349,6 +2545,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     );
     return {
       runtimeAuthority,
+      runtimeServiceTrust,
       channelBindings: serializeChannelBindingMutations(channelBindings),
       runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
       runtimeAdmissions,
@@ -2359,46 +2556,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       serviceAccounts,
       agents,
       revisions,
-      audit: {
-        append: async (event) => {
-          await this.requireInstallation(context, event.installationId);
-          if (event.resource.namespaceId !== event.namespaceId)
-            throw new ScopeViolationError("The audit event and resource scopes do not match.");
-          const details = auditDetails(event);
-          await client.query(
-            `INSERT INTO occ.audit_events
-             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
-              outcome, details)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
-            [
-              event.id,
-              event.occurredAt,
-              event.kind,
-              event.actorId,
-              event.action,
-              event.namespaceId ?? null,
-              event.resource.kind,
-              event.resource.id,
-              event.outcome,
-              details === undefined ? null : JSON.stringify(details),
-            ],
-          );
-        },
-        list: async () => {
-          const installation = await this.currentInstallation(context);
-          if (installation === undefined) return Object.freeze([]);
-          const found = rows(
-            (
-              await client.query(
-                `SELECT id, occurred_at, kind, actor_id, action, namespace_id, resource_kind,
-                        resource_id, outcome, details
-                 FROM occ.audit_events ORDER BY occurred_at, id`,
-              )
-            ).rows,
-          );
-          return Object.freeze(found.map((row) => auditFromRow(row, installation.id)));
-        },
-      },
+      audit,
       operations: {
         append: async (operation) => {
           await this.requireInitialized(context);

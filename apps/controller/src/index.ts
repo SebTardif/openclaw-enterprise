@@ -1,3 +1,10 @@
+import {
+  runtimeServiceTrustOperations,
+  RuntimeServiceTrustRecordSchema,
+  RuntimeServiceTrustRequestSchema,
+  runtimeServiceTrustOperatorContext,
+  parseRuntimeServiceTrustHttpBody,
+} from "./admission/runtime-service-trust.ts";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import Fastify, {
@@ -55,6 +62,7 @@ import {
   PostgresCommitOutcomeUnknownError,
   ResourceConflictError,
   ScopeViolationError,
+  type RuntimeServiceTrustService,
   type HarnessResolver,
   type DeployAgentAdmissionContext,
   type OpenClawController,
@@ -89,6 +97,7 @@ export interface DevelopmentAdmission {
 }
 
 export interface ControllerAppOptions {
+  readonly runtimeServiceTrust?: RuntimeServiceTrustService;
   readonly controller?: OpenClawController;
   readonly createController?: (installation: Installation) => OpenClawController;
   readonly iamDriver: IAMDriver;
@@ -2039,6 +2048,123 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         principalId: { type: "string" },
       },
     };
+
+    void routes.register(async (trustRoutes) => {
+      // Encapsulated parser applies only to these closed counter-bearing operations.
+      trustRoutes.addContentTypeParser(
+        "application/json",
+        { parseAs: "string" },
+        (_request, body, done) => {
+          try {
+            done(null, parseRuntimeServiceTrustHttpBody(String(body)));
+          } catch {
+            done(
+              failure(400, "INVALID_REQUEST", "The request does not match the operation contract."),
+            );
+          }
+        },
+      );
+      for (const operation of runtimeServiceTrustOperations) {
+        const writing = operation.method === "POST";
+        const recordSchema = { ...RuntimeServiceTrustRecordSchema };
+        const writeSchema = {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["result", "record"],
+              properties: { result: { enum: ["applied", "exact-replay"] }, record: recordSchema },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["result", "operationRef", "nextAction"],
+              properties: {
+                result: { const: "commit-unknown" },
+                operationRef: { type: "string" },
+                nextAction: { const: "exact-readback-only" },
+              },
+            },
+          ],
+        };
+        trustRoutes.route({
+          method: operation.method as HTTPMethods,
+          url: operation.path,
+          schema: {
+            operationId: operation.operationId,
+            summary: operation.summary,
+            description:
+              "Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.",
+            tags: operation.tags,
+            security: [{ sessionCookie: [] }],
+            "x-openclaw-permissions": [
+              { action: "administer", resourceKind: "installation", scope: "installation" },
+            ],
+            ...(writing
+              ? { body: RuntimeServiceTrustRequestSchema }
+              : {
+                  params: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["operationRef"],
+                    properties: {
+                      operationRef: {
+                        type: "string",
+                        pattern:
+                          "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                      },
+                    },
+                  },
+                }),
+            response: {
+              ...responses(writing ? writeSchema : recordSchema),
+              400: { description: "Bad Request", ...error },
+              403: { description: "Forbidden", ...error },
+              404: { description: "Not Found", ...error },
+              409: { description: "Conflict", ...error },
+            },
+          } as DocumentedFastifySchema,
+          onRequest: async (request) => admit(request, operation),
+          preValidation: async (request) => {
+            await resolveIdentity(request, operation);
+            const admitted = admissions.get(request);
+            const context = contexts.get(request);
+            if (admitted?.method !== "session" || !context) {
+              await denial(operation, request, "authorization_denial", context);
+              throw failure(403, "FORBIDDEN", "A current human administrator session is required.");
+            }
+          },
+          handler: async (request, reply) => {
+            const context = contexts.get(request);
+            if (!context) throw dependencyUnavailable();
+            await requireInstallationAdmin(request, operation, context);
+            if (!options.runtimeServiceTrust) throw dependencyUnavailable();
+            if (!writing && request.body !== undefined)
+              throw failure(
+                400,
+                "INVALID_REQUEST",
+                "The request does not match the operation contract.",
+              );
+            const bounded = workspaceFileRequestSignal(request, reply, 3000);
+            try {
+              const actor = runtimeServiceTrustOperatorContext(context, request.id);
+              const data = writing
+                ? await options.runtimeServiceTrust.apply(request.body, actor, bounded.signal)
+                : await options.runtimeServiceTrust.recover(
+                    (request.params as { operationRef: string }).operationRef,
+                    actor,
+                    bounded.signal,
+                  );
+              if (data === undefined)
+                throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+              reply.send({ data, meta: { requestId: request.id } });
+            } finally {
+              bounded.dispose();
+            }
+          },
+        });
+      }
+    });
 
     for (const operation of serviceKeyOperations) {
       const creating = operation.method === "POST";

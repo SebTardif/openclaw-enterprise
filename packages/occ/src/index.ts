@@ -1,3 +1,5 @@
+export * from "./runtime-authority/service-trust.ts";
+export * from "./runtime-authority/service-trust-schema.ts";
 export * from "./runtime-authority/service.ts";
 export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";

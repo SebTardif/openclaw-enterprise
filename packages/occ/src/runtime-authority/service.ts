@@ -105,21 +105,36 @@ function sameConfiguration(
  * Stored binding/evidence is never sufficient for a positive purpose result. */
 export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
   private readonly options: RuntimeAuthorityServiceOptions;
+  private readonly pendingReadbacks = new Set<Promise<unknown>>();
+  /** Native accepting-path cleanup owns these actual store reads after public cancellation.
+   * It never waits for arbitrary external inspector/current-reader promises. */
+  async joinPendingReadbacks(): Promise<void> {
+    while (this.pendingReadbacks.size > 0) await Promise.allSettled([...this.pendingReadbacks]);
+  }
   constructor(options: RuntimeAuthorityServiceOptions) {
     this.options = options;
   }
-  private async bounded<T>(call: AuthorityCallV1, work: () => Promise<T>): Promise<T> {
+  private async bounded<T>(
+    call: AuthorityCallV1,
+    work: (boundedCall: AuthorityCallV1) => Promise<T>,
+  ): Promise<T> {
     const timeout = Math.min(3000, Date.parse(call.deadline) - this.options.clock.now().getTime());
     if (!Number.isFinite(timeout) || timeout <= 0 || call.signal.aborted)
       throw new Error("Runtime authority call expired.");
     const began = this.options.clock.monotonicMilliseconds();
+    const cancellation = new AbortController();
+    const boundedCall = { ...call, signal: AbortSignal.any([call.signal, cancellation.signal]) };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancel: (() => void) | undefined;
+    const running = Promise.resolve().then(() => work(boundedCall));
     try {
       const result = await Promise.race([
-        Promise.resolve().then(work),
+        running,
         new Promise<never>((_resolve, reject) => {
-          cancel = () => reject(new Error("Runtime authority call unavailable."));
+          cancel = () => {
+            cancellation.abort();
+            reject(new Error("Runtime authority call unavailable."));
+          };
           timer = setTimeout(cancel, timeout);
           call.signal.addEventListener("abort", cancel, { once: true });
         }),
@@ -137,6 +152,9 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       if (cancel) call.signal.removeEventListener("abort", cancel);
+      cancellation.abort();
+      // The canonical store/transport join their own bounded resource cleanup. An
+      // arbitrary dependency that ignores cancellation must not delay this deadline.
     }
   }
   private async caller(
@@ -203,7 +221,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
   ): Promise<RuntimeMutationResultV1> {
     try {
       const request = parseRuntimeAuthorityV1("mutation", input);
-      const verified = await this.bounded(call, () => this.caller(call));
+      const verified = await this.bounded(call, (boundedCall) => this.caller(boundedCall));
       if (
         !verified ||
         request.requestRef !== call.requestRef ||
@@ -256,7 +274,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
     const evaluatedAt = this.options.clock.now().toISOString();
     try {
       const request = parseRuntimeAuthorityV1("resolveRequest", input);
-      const verified = await this.bounded(call, () => this.caller(call));
+      const verified = await this.bounded(call, (boundedCall) => this.caller(boundedCall));
       if (
         !verified ||
         request.requestRef !== call.requestRef ||
@@ -297,9 +315,9 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
     call: AuthorityCallV1,
   ): Promise<AuthorityOperationStateV1> {
     try {
-      return await this.bounded<AuthorityOperationStateV1>(call, async () => {
+      return await this.bounded<AuthorityOperationStateV1>(call, async (boundedCall) => {
         const request = parseRuntimeAuthorityV1("exactOperation", input);
-        const verified = await this.caller(call);
+        const verified = await this.caller(boundedCall);
         if (
           !verified ||
           request.requestRef !== call.requestRef ||
@@ -308,12 +326,30 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
             "original-service"
         )
           return { schemaVersion: 1, result: "not-visible", reasonCode: "scope-hidden" };
-        const stored = await this.options.store.read(async (unit) => {
-          if ((await unit.installations.getInstallation())?.id !== this.options.installationId)
-            return undefined;
-          return unit.runtimeAuthority.findOperation(request, request.operationRef);
-        });
-        const rechecked = await this.caller(call);
+        if (boundedCall.signal.aborted)
+          return { schemaVersion: 1, result: "unavailable", nextAction: "exact-readback-only" };
+        const reading = this.options.store.read(
+          async (unit) => {
+            if ((await unit.installations.getInstallation())?.id !== this.options.installationId)
+              return undefined;
+            return unit.runtimeAuthority.findOperation(request, request.operationRef);
+          },
+          {
+            signal: boundedCall.signal,
+            timeoutMs: Math.min(
+              3000,
+              Date.parse(boundedCall.deadline) - this.options.clock.now().getTime(),
+            ),
+          },
+        );
+        this.pendingReadbacks.add(reading);
+        let stored;
+        try {
+          stored = await reading;
+        } finally {
+          this.pendingReadbacks.delete(reading);
+        }
+        const rechecked = await this.caller(boundedCall);
         if (
           !rechecked ||
           rechecked.transportBinding !== verified.transportBinding ||

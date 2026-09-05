@@ -1123,3 +1123,48 @@ transport, or establish guest attestation or runtime readiness. See
 [workload identity](../reference/workload-identity.md) for the source API, limits
 and troubleshooting, and [OpenShell](../reference/drivers/openshell-sandbox.md)
 for the remaining launch requirements.
+
+## Optional authenticated runtime history readback
+
+Configure this path only for an independent service that needs its own exact
+retained runtime operation outcomes. It does not enable runtime mutation, model
+access, workload enrollment or positive lifecycle eligibility. The regular
+controller deployment route retains its current behavior.
+
+1. Install the protected native `oce-runtime-authority` executable and configure
+   its immutable digest, existing Workload API socket, own/recipient SPIFFE ID,
+   exact trust bundle and fixed transport limits in a `runtimeAuthoritySources`
+   entry. Protect those files and their parent directories using the deployment's
+   existing operator custody. Set `OCC_RUNTIME_AUTHORITY_BINARY_PATH` when using a
+   path other than the packaged executable. Keep at least two controller database
+   pool connections available for the operator path.
+2. Use a current human Installation-administrator session to POST a `source-admit`
+   operation to `/v1/runtime-service-trust/operations`. Supply a retained UUID
+   operation reference, the configured source reference and `expectedVersion:
+null` for the first admission. Startup configuration alone admits nothing.
+3. Through the same session-protected route, submit `service-admit` with a new
+   retained operation UUID, `expectedVersion: null`, `serviceIdentityRef: null`,
+   that source reference, the existing exact Namespace/Agent IDs and the intended
+   independent peer SPIFFE ID. Retain the returned service identity and version.
+   The actual native syntax validator runs before this record commits; the
+   registry does not issue the peer's certificate.
+4. Select that admitted service in the protected readback JSON and set
+   `OCC_RUNTIME_AUTHORITY_READBACK_CONFIG_PATH`. A fresh controller incarnation
+   loads current database state before starting the owned native child/listener.
+   The binary path and recipient must match the admitted technical source.
+5. Withdraw a source or service through the same operator route using its exact
+   current version. Source replacement also invalidates previous linked service
+   admissions. Re-admission is explicit and advances the retained version.
+
+Every request uses current registry and native transport checks. A lost COMMIT
+acknowledgement supplies an exact recovery locator; recover it through
+`GET /v1/runtime-service-trust/operations/:operationRef` with the original human
+administrator identity before deciding what to do next. A historical replay does
+not reactivate a withdrawn admission. Service keys cannot perform these operator
+operations.
+
+The [runtime authority reference](../reference/runtime-authority.md) specifies
+closed request/result fields, and the [transport reference](../reference/runtime-service-transport.md)
+describes native TLS, cancellation, restart and cleanup. Local fixture tests
+exercise real cryptography and PostgreSQL but do not qualify production enrollment,
+network policy, guest identity or timing for a deployed installation.

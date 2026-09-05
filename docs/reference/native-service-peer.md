@@ -145,3 +145,12 @@ configuration or restore the owning source; do not switch identities, trust
 domains or authentication modes as a fallback. A retired source must be replaced
 by its owner according to the source lifecycle. A closed connection cannot be
 reopened; obtain a new connection and perform a new handshake.
+
+## Controller historical-read consumer
+
+The separate [authenticated runtime operation readback](runtime-service-transport.md)
+consumer now owns a dedicated native child, original parent pipes and one-request
+TLS exchanges. It uses this package's actual connection inspections together
+with the controller's current protected service registry. That consumer does not
+turn the `Peer` diagnostic struct into a transferable proof, and it leaves this
+package's borrowed-source API and runtime-authorization limits unchanged.

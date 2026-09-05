@@ -1,7 +1,8 @@
 # Runtime security components
 
 This Go module implements the OpenShell gateway client and the SPIFFE Workload
-API identity source. The existing OCE controller invokes the compiled executable
+API identity source, native service-peer transport, and authenticated runtime
+operation readback bridge. The existing OCE controller invokes the compiled executables
 through a small TypeScript process adapter. Gateway protocol interpretation,
 TLS credentials, launch-record checks and workload identity handling run in Go.
 
@@ -11,6 +12,8 @@ Use the Go version declared in `go.mod` or a compatible newer toolchain:
 
 ```sh
 go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+go -C components/runtime-security build -o ./bin/oce-runtime-authority ./cmd/oce-runtime-authority
+chmod 0555 components/runtime-security/bin/oce-runtime-authority
 go -C components/runtime-security test -race ./...
 go -C components/runtime-security vet ./...
 ```
@@ -66,3 +69,15 @@ configuration, lifecycle, error behavior and the separate production gates:
 The Go wire suites, real SPIRE tests and compiled-binary controller tests are the
 verification for this implementation. Earlier TypeScript test receipts do not
 qualify the Go components.
+
+## Runtime operation readback
+
+`oce-runtime-authority` is a separate dedicated command for the controller-owned
+historical readback listener. Its pure `validate-profile` mode is used during
+protected service admission; `serve` owns the actual Source, mutual TLS listener,
+one-request connections and bounded parent pipes. It grants no runtime mutation.
+The existing OpenShell command and identity diagnostic are separate consumers.
+
+See [authenticated runtime operation readback](../../docs/reference/runtime-service-transport.md)
+for the exact admitted source/profile, independent validator binary selection,
+listener startup file, framing, repeated current checks and real tests.

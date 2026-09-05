@@ -17,6 +17,8 @@ import type {
 import { NativeIAMDriver, type NativeIAMStateStore } from "@openclaw-enterprise/iam";
 import {
   validateProviderDefinitions,
+  parseRuntimeAuthoritySource,
+  type RuntimeAuthoritySource,
   type OpenClawController,
   type PostgresPlatformState,
 } from "@openclaw-enterprise/occ";
@@ -55,6 +57,7 @@ export interface InstallationStartupConfiguration {
   readonly occ: { readonly cluster: string };
   readonly logging: LoggingConfiguration;
   readonly provider: readonly ProviderDefinition[];
+  readonly runtimeAuthoritySources?: readonly RuntimeAuthoritySource[];
   readonly drivers: {
     readonly configuration: SelectedDriverConfiguration;
     readonly iam: SelectedDriverConfiguration<ConfigurationRecord>;
@@ -121,7 +124,7 @@ async function startupConfiguration(
   }
   closed(
     configuration,
-    ["occ", "drivers", "provider", "logging"],
+    ["occ", "drivers", "provider", "logging", "runtimeAuthoritySources"],
     "Installation startup configuration",
   );
   return configuration;
@@ -439,7 +442,8 @@ export async function loadInstallationConfiguration(options: {
     options.mode === "development" &&
     configuration.occ === undefined &&
     configuration.drivers === undefined &&
-    configuration.provider === undefined
+    configuration.provider === undefined &&
+    configuration.runtimeAuthoritySources === undefined
   ) {
     return undefined;
   }
@@ -465,6 +469,15 @@ export async function loadInstallationConfiguration(options: {
     serviceAccount = Object.freeze({ id: nonempty(selection.id, "drivers.service_account.id") });
   }
   const providers = providerConfiguration(configuration.provider, serviceAccount);
+  const rawSources = configuration.runtimeAuthoritySources ?? [];
+  if (!Array.isArray(rawSources) || rawSources.length > 32)
+    throw new Error("runtimeAuthoritySources must contain at most 32 protected technical sources.");
+  const runtimeAuthoritySources = Object.freeze(rawSources.map(parseRuntimeAuthoritySource));
+  if (
+    new Set(runtimeAuthoritySources.map((source) => source.sourceRef)).size !==
+    runtimeAuthoritySources.length
+  )
+    throw new Error("runtimeAuthoritySources refs must be unique.");
 
   const configurationSelection = object(drivers.configuration, "drivers.configuration");
   const iamSelection = object(drivers.iam, "drivers.iam");
@@ -582,6 +595,7 @@ export async function loadInstallationConfiguration(options: {
     occ: Object.freeze({ cluster }),
     logging,
     provider: providers,
+    runtimeAuthoritySources,
     drivers: Object.freeze({
       configuration: configured,
       iam,

@@ -1,4 +1,14 @@
 import {
+  createRuntimeServiceTrustRepository,
+  runtimeServiceTrustAuditMatches,
+  type RuntimeServiceTrustReadRepository,
+  type RuntimeServiceTrustRepository,
+} from "../runtime-authority/service-trust.ts";
+import {
+  parseRuntimeServiceTrustRecord,
+  type RuntimeServiceTrustRecord,
+} from "../runtime-authority/service-trust-schema.ts";
+import {
   createRuntimeAuthorityRepository,
   RuntimeAuthorityTransactionGuard,
   type RuntimeAuthorityReadRepository,
@@ -526,6 +536,7 @@ export interface PlatformReadView {
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
   readonly runtimeAdmissions: RuntimeAdmissionReadRepository;
   readonly runtimeAuthority: RuntimeAuthorityReadRepository;
+  readonly runtimeServiceTrust: RuntimeServiceTrustReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
   readonly configurations: ConfigurationReadRepository;
@@ -540,6 +551,7 @@ export interface PlatformUnitOfWork extends PlatformReadView {
   readonly runtimeAssignments: RuntimeAssignmentRepository;
   readonly runtimeAdmissions: RuntimeAdmissionRepository;
   readonly runtimeAuthority: RuntimeAuthorityRepository;
+  readonly runtimeServiceTrust: RuntimeServiceTrustRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
   readonly configurations: ConfigurationRepository;
@@ -551,8 +563,13 @@ export interface PlatformUnitOfWork extends PlatformReadView {
   readonly operations: PlatformOperationRepository;
 }
 
+export interface PlatformReadOptions {
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+}
+
 export interface PlatformStateStore {
-  read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T>;
+  read<T>(work: (state: PlatformReadView) => Promise<T>, options?: PlatformReadOptions): Promise<T>;
   transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T>;
 }
 
@@ -582,6 +599,7 @@ interface PlatformSnapshot {
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
   readonly runtimeAdmissions: Map<string, Readonly<RevisionRuntimeAdmission>>;
   readonly runtimeAuthorityOperations: Map<string, StoredRuntimeAuthorityOperation>;
+  readonly runtimeServiceTrustRecords: Map<string, Readonly<RuntimeServiceTrustRecord>>;
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
   readonly configurations: Map<string, Readonly<ConfigurationOwnership>>;
@@ -607,6 +625,7 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimeAllocations: new Map(snapshot.runtimeAllocations),
     runtimeAdmissions: new Map(snapshot.runtimeAdmissions),
     runtimeAuthorityOperations: new Map(snapshot.runtimeAuthorityOperations),
+    runtimeServiceTrustRecords: new Map(snapshot.runtimeServiceTrustRecords),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
     namespaces: new Map(
@@ -1800,7 +1819,49 @@ function repositories(
     runtimeAssignments,
     authorityGuard,
   );
+  const audit: PlatformAuditRepository = {
+    async append(event) {
+      if (event.installationId !== snapshot.installation?.id)
+        throw new ScopeViolationError("The audit event belongs to another Installation.");
+      if (event.resource.namespaceId !== event.namespaceId)
+        throw new ScopeViolationError("The audit event belongs to another Namespace.");
+      if (snapshot.audit.some((existing) => existing.id === event.id))
+        throw new ResourceConflictError("The audit event identity already exists.");
+      snapshot.audit.push(immutableCopy(event));
+    },
+    list: async () => Object.freeze(snapshot.audit.map((event) => immutableCopy(event))),
+  };
+  const runtimeServiceTrust = createRuntimeServiceTrustRepository(
+    {
+      lockOperation: async () => {},
+      lockSubject: async () => {},
+      operation: async (operationRef) => snapshot.runtimeServiceTrustRecords.get(operationRef),
+      latest: async (installationId, kind, subjectRef) =>
+        [...snapshot.runtimeServiceTrustRecords.values()]
+          .filter(
+            (record) =>
+              record.installationId === installationId &&
+              record.subjectKind === kind &&
+              record.subjectRef === subjectRef,
+          )
+          .sort((a, b) => b.recordVersion - a.recordVersion)[0],
+      insert: async (value, event) => {
+        const record = parseRuntimeServiceTrustRecord(value);
+        if (
+          snapshot.runtimeServiceTrustRecords.has(record.operationRef) ||
+          !runtimeServiceTrustAuditMatches(record, event)
+        )
+          throw new ResourceConflictError("The service trust admission conflicts.");
+        await audit.append(event);
+        snapshot.runtimeServiceTrustRecords.set(record.operationRef, immutableCopy(record));
+      },
+    },
+    { installations, agents, namespaces },
+    authorityGuard,
+  );
+
   return {
+    runtimeServiceTrust,
     runtimeAuthority,
     channelBindings: serializeChannelBindingMutations(channelBindings),
     runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
@@ -1812,18 +1873,7 @@ function repositories(
     serviceAccounts,
     agents,
     revisions,
-    audit: {
-      async append(event) {
-        if (event.installationId !== snapshot.installation?.id)
-          throw new ScopeViolationError("The audit event belongs to another Installation.");
-        if (event.resource.namespaceId !== event.namespaceId)
-          throw new ScopeViolationError("The audit event belongs to another Namespace.");
-        if (snapshot.audit.some((existing) => existing.id === event.id))
-          throw new ResourceConflictError("The audit event identity already exists.");
-        snapshot.audit.push(immutableCopy(event));
-      },
-      list: async () => Object.freeze(snapshot.audit.map((event) => immutableCopy(event))),
-    },
+    audit,
     operations: {
       append: async (operation) => {
         assertInitialized(snapshot);
@@ -1908,6 +1958,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimeAllocations: new Map(),
     runtimeAdmissions: new Map(),
     runtimeAuthorityOperations: new Map(),
+    runtimeServiceTrustRecords: new Map(),
     installation: undefined,
     namespaces: new Map(),
     configurations: new Map(),
@@ -1929,9 +1980,43 @@ export class InMemoryPlatformState implements PlatformStateStore {
     return Object.freeze(this.snapshot.operations.map((operation) => immutableCopy(operation)));
   }
 
-  async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    await this.pending;
-    return work(repositories(cloneSnapshot(this.snapshot)));
+  async read<T>(
+    work: (state: PlatformReadView) => Promise<T>,
+    options?: PlatformReadOptions,
+  ): Promise<T> {
+    if (options === undefined) {
+      await this.pending;
+      return work(repositories(cloneSnapshot(this.snapshot)));
+    }
+    if (
+      options.signal.aborted ||
+      !Number.isFinite(options.timeoutMs) ||
+      options.timeoutMs <= 0 ||
+      options.timeoutMs > 3000
+    )
+      throw new DependencyUnavailableError("The platform read expired.");
+    const signal = AbortSignal.any([
+      options.signal,
+      AbortSignal.timeout(Math.ceil(options.timeoutMs)),
+    ]);
+    let cancel: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        (async () => {
+          await this.pending;
+          if (signal.aborted) throw new DependencyUnavailableError();
+          const result = await work(repositories(cloneSnapshot(this.snapshot)));
+          if (signal.aborted) throw new DependencyUnavailableError();
+          return result;
+        })(),
+        new Promise<never>((_resolve, reject) => {
+          cancel = () => reject(new DependencyUnavailableError("The platform read expired."));
+          signal.addEventListener("abort", cancel, { once: true });
+        }),
+      ]);
+    } finally {
+      if (cancel) signal.removeEventListener("abort", cancel);
+    }
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {

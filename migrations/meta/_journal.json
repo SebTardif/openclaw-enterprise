@@ -141,6 +141,13 @@
       "when": 1787000000019,
       "tag": "0019_runtime_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1787000000020,
+      "tag": "0020_runtime_service_trust",
+      "breakpoints": true
     }
   ]
 }

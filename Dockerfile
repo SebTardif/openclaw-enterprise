@@ -9,6 +9,8 @@ COPY components/runtime-security/go.mod components/runtime-security/go.sum ./
 RUN go mod download
 COPY components/runtime-security/ ./
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-security ./cmd/oce-runtime-security
+RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-authority ./cmd/oce-runtime-authority
+RUN chmod 0555 /out/oce-runtime-authority
 RUN sh licenses/collect.sh /out/licenses
 
 FROM ${NODE_BASE_IMAGE} AS dependencies
@@ -27,6 +29,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
 
 FROM dependencies AS development
 COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
+COPY --from=native-build /out/oce-runtime-authority /usr/local/bin/oce-runtime-authority
 COPY --from=native-build /out/licenses /usr/share/licenses/oce-runtime-security
 ENV NODE_ENV=development
 WORKDIR /app
@@ -47,6 +50,7 @@ CMD ["apps/controller/src/server.mjs"]
 
 FROM ${NODE_BASE_IMAGE} AS runtime
 COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
+COPY --from=native-build /out/oce-runtime-authority /usr/local/bin/oce-runtime-authority
 COPY --from=native-build /out/licenses /usr/share/licenses/oce-runtime-security
 ENV NODE_ENV=production
 WORKDIR /app

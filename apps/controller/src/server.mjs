@@ -99,12 +99,24 @@ function configuration() {
     throw new Error("OCC_DATABASE_POOL_MAX must be a positive integer.");
   }
 
+  const runtimeAuthorityBinaryPath = process.env.OCC_RUNTIME_AUTHORITY_BINARY_PATH;
+  const runtimeAuthorityReadbackConfigPath = process.env.OCC_RUNTIME_AUTHORITY_READBACK_CONFIG_PATH;
+  for (const path of [runtimeAuthorityBinaryPath, runtimeAuthorityReadbackConfigPath]) {
+    if (path !== undefined && (path.length === 0 || !isAbsolute(path)))
+      throw new Error("Runtime authority paths must identify absolute protected files.");
+  }
+  if (runtimeAuthorityReadbackConfigPath !== undefined && databaseUrl === undefined)
+    throw new Error("Runtime authority readback requires PostgreSQL persistence.");
   const settings = {
     mode,
     host,
     port,
     ...(databaseUrl === undefined ? {} : { databaseUrl }),
     ...(poolMax === undefined ? {} : { poolMax }),
+    ...(runtimeAuthorityBinaryPath === undefined ? {} : { runtimeAuthorityBinaryPath }),
+    ...(runtimeAuthorityReadbackConfigPath === undefined
+      ? {}
+      : { runtimeAuthorityReadbackConfigPath }),
   };
 
   if (process.env.OCC_WORKSPACE_FILES_CONFIG_PATH !== undefined) {

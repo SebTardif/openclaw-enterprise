@@ -1427,3 +1427,79 @@ export const runtimeAuthorityOperations = occSchema.table(
     check("runtime_authority_receipt_object", sql`jsonb_typeof(${table.receipt}) = 'object'`),
   ],
 );
+
+export const runtimeServiceTrustRecords = occSchema.table(
+  "runtime_service_trust_records",
+  {
+    installationId: text("installation_id")
+      .notNull()
+      .references(() => installation.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    subjectKind: text("subject_kind").notNull(),
+    subjectRef: text("subject_ref").notNull(),
+    recordVersion: bigint("record_version", { mode: "number" }).notNull(),
+    operationRef: text("operation_ref").primaryKey(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => iamIdentities.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    auditId: text("audit_id")
+      .notNull()
+      .unique()
+      .references(() => auditEvents.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    canonicalRequest: text("canonical_request").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+    record: jsonb("record")
+      .$type<import("../runtime-authority/service-trust-schema.ts").RuntimeServiceTrustRecord>()
+      .notNull(),
+    sourceOperationRef: text("source_operation_ref").generatedAlwaysAs(
+      sql`record->>'sourceOperationRef'`,
+    ),
+    namespaceId: text("namespace_id").generatedAlwaysAs(
+      sql`record#>>'{configuration,allowedScope,namespaceId}'`,
+    ),
+    agentId: text("agent_id").generatedAlwaysAs(
+      sql`record#>>'{configuration,allowedScope,agentId}'`,
+    ),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    unique("runtime_service_trust_version").on(
+      table.installationId,
+      table.subjectKind,
+      table.subjectRef,
+      table.recordVersion,
+    ),
+    uniqueIndex("runtime_service_trust_profile_identity")
+      .on(sql`${table.record}#>>'{configuration,serviceTrustProfileRef}'`)
+      .where(sql`${table.record}->>'kind'='service-admit'`),
+    foreignKey({
+      name: "runtime_service_trust_source",
+      columns: [table.sourceOperationRef],
+      foreignColumns: [runtimeServiceTrustRecords.operationRef],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
+      name: "runtime_service_trust_agent",
+      columns: [table.namespaceId, table.agentId],
+      foreignColumns: [agents.namespaceId, agents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "runtime_service_trust_records_subject_kind_check",
+      sql`${table.subjectKind} IN ('source','service')`,
+    ),
+    check(
+      "runtime_service_trust_records_record_version_check",
+      sql`${table.recordVersion} BETWEEN 1 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_service_trust_records_canonical_request_check",
+      sql`octet_length(${table.canonicalRequest}) BETWEEN 1 AND 8192`,
+    ),
+    check(
+      "runtime_service_trust_records_record_check",
+      sql`jsonb_typeof(${table.record})='object'`,
+    ),
+  ],
+);

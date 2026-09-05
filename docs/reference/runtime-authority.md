@@ -9,8 +9,9 @@ OCC now persists immutable runtime binding, separately versioned evidence,
 retirement and exact operation receipts in its existing memory and PostgreSQL
 state adapters. The local service boundary denies mutations and positive purpose
 resolution until its trusted transport, observation and acceptance dependencies
-are integrated. There is no installed transport-context producer or runtime
-effect implementation behind this boundary. Current controller deployment
+are integrated. An optional controller-owned native transport supports authenticated
+exact historical readback after explicit human operator admission. It does not
+implement runtime effects. Current controller deployment
 behavior is described in [Controller reconciliation](controller.md).
 
 ## Current persistence and service boundary
@@ -62,7 +63,8 @@ Internal scoped readback exposes the retained record without asserting currentne
 `RuntimeAuthorityService` implements the local interface and requires explicit
 server Installation, recipient and trusted clock configuration. Its optional
 context-factory and current service-registry dependencies have no default trusted
-implementation: an absent dependency denies. Ordinary JSON, service-key admission
+grant: an absent dependency denies. The configured native readback composition
+supplies the actual protected child context and current PostgreSQL registry. Ordinary JSON, service-key admission
 and claimed role fields cannot supply a trusted runtime context. It enforces the
 interface's role ceiling and exact scope before a potential operation read, and
 rechecks current context/registry state before returning an original-service
@@ -78,6 +80,91 @@ cleanup responsibility reader. Retained internal storage remains readable after
 retirement, while service disclosure stays denied until that narrow guard exists.
 There is no provider allocation, route selection, registrar write, runtime start,
 credential issuance, context restore or physical teardown in this component.
+
+## Operator-admitted service trust
+
+`RuntimeServiceTrustService` owns one append-only registry in the existing OCC
+store. `runtimeAuthoritySources` in the Installation configuration contains
+protected technical source descriptions; loading this file admits no service.
+A current human session, resolved human Principal and selected IAM `administer`
+permission on the exact Installation are required for both management routes:
+
+| Route                                                    | Result                                                                           |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `POST /v1/runtime-service-trust/operations`              | Admit or withdraw one exact source or service subject with its expected version. |
+| `GET /v1/runtime-service-trust/operations/:operationRef` | Recover the original operator's exact retained operation.                        |
+
+Service API keys cannot use these routes, including keys whose IAM role otherwise
+permits Installation administration. Requests use the existing session and browser
+intent protections. Bodies never select an Installation, actor, role, socket,
+executable, roots, verifier or transport limits. Every newly committed record
+has a matching durable mutation audit with the original human identity and actual
+selected IAM decision. A failed admission poisons its enclosing unit even if its
+caller catches the error.
+
+The four request kinds are `source-admit`, `source-withdraw`, `service-admit` and
+`service-withdraw`. Each supplies `schemaVersion: 1`, a preknown UUID
+`operationRef`, and `expectedVersion`. First admissions use `null`; subsequent
+changes use the exact current version. Source requests name a configured
+`sourceRef`. A first service admission also supplies `serviceIdentityRef: null`,
+exact `namespaceId` and `agentId`, and the intended `peerSPIFFEId`. The server
+allocates the service identity and immutable profile references. Re-admission
+names the existing service identity and advances its retained version.
+
+The first profile permits only `lifecycle-authority` within one exact Agent and
+only the native `read-operation-only-v1` transport policy. It does not create an
+IAM Principal, enroll a workload, or grant runtime mutation or purpose resolution.
+The real native validator checks the resolved source/profile syntax before
+service admission; the later real TLS handshake proves peer possession. Full
+transport configuration and executable custody are described in
+[Runtime service transport](runtime-service-transport.md).
+
+New operator results return `{result: "applied", record}`; exact retries return
+`{result: "exact-replay", record}` inside the normal `data`/`meta` HTTP envelope.
+The exact canonical operator request and original actor are checked before new
+identity generation or source resolution. A retry of an old admission therefore
+retains its original result after withdrawal or source replacement and cannot
+reactivate the current subject. A lost database COMMIT acknowledgement returns
+`{result: "commit-unknown", operationRef, nextAction: "exact-readback-only"}`.
+Use the exact recovery GET and retain that locator; never replace it with a new
+operation ID to guess whether the write committed.
+
+Current reads use fresh transactions with no positive cache. The service record
+must still be its subject's latest admission; its exact referenced source
+admission must also remain current and match the loaded deployment configuration.
+Source replacement invalidates all bindings to the prior source admission, even
+when an old configuration's bytes later reappear. Withdrawal, missing state,
+corruption, an unavailable database or a mismatched loaded source denies new use.
+A controller restart constructs new child/context incarnations from fresh state;
+retained receipts and startup files cannot restore a prior live context.
+
+Bounded reads require a PostgreSQL pool with a positive connection timeout no
+larger than 250 ms and ordinary non-pipelined clients without asynchronous
+connection hooks. Registry-enabled controller composition requires at least two
+pool connections for current IAM reads during an operator transaction. The
+PostgreSQL 18 read path sets server timeouts from the remaining request budget,
+checks client disconnection, destroys cancelled clients and joins issued queries.
+An interrupted pool checkout is drained before completion; cleanup may take up
+to its 250 ms checkout limit after the public response deadline. Native request
+ownership separately joins the service's actual pending history reads and its
+current-registry reads before accepting a replacement request or finishing close.
+It never waits indefinitely for an arbitrary external inspector to honor abort.
+These bounds are tested local behavior, not deployment-qualified latency claims.
+
+The application role can select and insert registry history; it cannot update or
+delete records. Database constraints preserve exact owner/source/profile/version,
+canonical request and human audit attribution. This uses the existing trusted
+controller database role, which already writes IAM and audit records; it does not
+isolate code that has obtained that role's credential. Native children and TLS
+peers receive no database credential or registry writer.
+
+Run the dedicated `runtime-service-trust` memory, API and PostgreSQL suites with
+the actual native validator selected by `OCC_RUNTIME_AUTHORITY_TEST_BINARY`.
+The PostgreSQL cases additionally use `OCC_RUNTIME_SERVICE_TRUST_DATABASE_URL`
+for the limited role and `OCC_RUNTIME_SERVICE_TRUST_MIGRATOR_DATABASE_URL` for
+reversible lock/constraint verification in the same disposable database. The
+native accepting-path suite exercises actual local certificates and Workload API
+fixtures; it does not establish production SPIRE enrollment or guest identity.
 
 ## Imported surface
 

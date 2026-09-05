@@ -1009,3 +1009,49 @@ component opens those files and handles TLS and gRPC.
 The Docker Compose real integration also requires `GO_BASE_IMAGE`, since it
 builds the development controller image. The production image startup check
 verifies that the packaged native executable can run.
+
+## Runtime service trust and authenticated readback
+
+The optional `runtimeAuthoritySources` array in the Installation startup YAML
+contains at most 32 uniquely named protected technical sources. It creates no
+service admission. Each source is a closed object with `schemaVersion: 1`,
+`sourceRef`, `workloadApiSocketPath`, `ownSPIFFEId`, `recipientRef`,
+`recipientSPIFFEId`, `trustDomain`, `trustRootsRef`, `trustBundleSha256`,
+`verifierProfileRef`, `nativeExecutableSha256`, `transportProfileRef`, and `limits`.
+The socket is an absolute ASCII path of at most 103 bytes. The exact recipient
+SPIFFE ID equals the native server's own SPIFFE ID in the selected trust domain.
+Digest values use `sha256:` followed by 64 lowercase hexadecimal characters.
+
+`transportProfileRef` is `owned-child-stdio-readback-v1`. The closed `limits`
+object selects `handshakeTimeoutMs: 3000`, `recheckIntervalMs: 1000`,
+`maxConnectionAgeMs: 30000`, `maxConnections: 1`, and `requestTimeoutMs: 3000`.
+The intended peer identity and exact Agent scope enter through the human
+operator admission route, not the startup file. Only the existing
+`lifecycle-authority` role and exact Agent scope are currently admitted.
+
+| Variable                                          | Meaning                                                                                                                                                                                                                          |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OCC_RUNTIME_AUTHORITY_BINARY_PATH`               | Independent absolute path to the protected native validator/server executable. Source-enabled composition defaults to `/usr/local/bin/oce-runtime-authority`; the first service can be admitted before a listener is configured. |
+| `OCC_RUNTIME_AUTHORITY_READBACK_CONFIG_PATH`      | Optional protected JSON selecting one admitted service and listener. Absence starts no readback listener.                                                                                                                        |
+| `OCC_RUNTIME_AUTHORITY_TEST_BINARY`               | Actual built native binary for local registry/transport integration tests. It must satisfy the executable custody checks.                                                                                                        |
+| `OCC_RUNTIME_SERVICE_TRUST_DATABASE_URL`          | Disposable PostgreSQL 18 test database accessed with the limited application role.                                                                                                                                               |
+| `OCC_RUNTIME_SERVICE_TRUST_MIGRATOR_DATABASE_URL` | Same disposable test database's migrator role, used only for explicit reversible test locks and constraint checks.                                                                                                               |
+
+The readback JSON has exactly `schemaVersion: 1`, `binaryPath`, `listenAddress`,
+`recipientRef`, and `serviceIdentityRef`. Its binary path must equal the separately
+selected validator path; all other technical/profile fields come from the current
+admitted database record. Protect the configuration, executable and parent
+directories from replacement by runtime peers or untrusted workloads. Executable
+hash checks do not prevent privileged concurrent replacement.
+
+`trustBundleSha256` hashes the concatenated current own-domain Workload API bundle
+DER bytes in their supplied order. Bundle changes deny the old profile until
+explicit source replacement and service re-admission. Certificate renewal under
+the same admitted bundle can establish a new connection; it does not preserve an
+old connection's authority. Missing or unavailable selected inputs fail startup
+or deny the affected request; no cached grant or service API key substitutes.
+
+See [Runtime authority](runtime-authority.md#operator-admitted-service-trust) for
+operator requests, exact recovery, currentness and permission boundaries, and
+[Runtime service transport](runtime-service-transport.md) for native process and
+connection custody.

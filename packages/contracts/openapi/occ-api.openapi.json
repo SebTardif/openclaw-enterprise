@@ -8350,6 +8350,1880 @@
           { "action": "administer", "resourceKind": "installation", "scope": "requested" }
         ]
       }
+    },
+    "/v1/runtime-service-trust/operations": {
+      "post": {
+        "description": "Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.",
+        "operationId": "mutateRuntimeServiceTrust",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedVersion": {
+                        "anyOf": [
+                          { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                          { "type": "null" }
+                        ]
+                      },
+                      "kind": { "const": "source-admit", "type": "string" },
+                      "operationRef": {
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "schemaVersion": { "const": 1, "type": "integer" },
+                      "sourceRef": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z0-9._:/-]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "operationRef",
+                      "expectedVersion",
+                      "kind",
+                      "sourceRef"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedVersion": {
+                        "anyOf": [
+                          { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                          { "type": "null" }
+                        ]
+                      },
+                      "kind": { "const": "source-withdraw", "type": "string" },
+                      "operationRef": {
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "schemaVersion": { "const": 1, "type": "integer" },
+                      "sourceRef": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z0-9._:/-]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "operationRef",
+                      "expectedVersion",
+                      "kind",
+                      "sourceRef"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agentId": {
+                        "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "expectedVersion": {
+                        "anyOf": [
+                          { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                          { "type": "null" }
+                        ]
+                      },
+                      "kind": { "const": "service-admit", "type": "string" },
+                      "namespaceId": {
+                        "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "operationRef": {
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "peerSPIFFEId": {
+                        "maxLength": 200,
+                        "minLength": 10,
+                        "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                        "type": "string"
+                      },
+                      "schemaVersion": { "const": 1, "type": "integer" },
+                      "serviceIdentityRef": {
+                        "anyOf": [
+                          {
+                            "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          { "type": "null" }
+                        ]
+                      },
+                      "sourceRef": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z0-9._:/-]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "operationRef",
+                      "expectedVersion",
+                      "kind",
+                      "serviceIdentityRef",
+                      "sourceRef",
+                      "namespaceId",
+                      "agentId",
+                      "peerSPIFFEId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expectedVersion": {
+                        "anyOf": [
+                          { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                          { "type": "null" }
+                        ]
+                      },
+                      "kind": { "const": "service-withdraw", "type": "string" },
+                      "operationRef": {
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "schemaVersion": { "const": 1, "type": "integer" },
+                      "serviceIdentityRef": {
+                        "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "operationRef",
+                      "expectedVersion",
+                      "kind",
+                      "serviceIdentityRef"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "OK",
+                  "properties": {
+                    "data": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "record": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "actorId": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "auditId": {
+                                      "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "canonicalRequest": {
+                                      "maxLength": 8192,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "committedAt": {
+                                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                                      "type": "string"
+                                    },
+                                    "installationId": {
+                                      "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "kind": { "const": "source-admit", "type": "string" },
+                                    "operationRef": {
+                                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "recordVersion": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "requestDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "source": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "limits": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "handshakeTimeoutMs": {
+                                              "const": 3000,
+                                              "type": "integer"
+                                            },
+                                            "maxConnectionAgeMs": {
+                                              "const": 30000,
+                                              "type": "integer"
+                                            },
+                                            "maxConnections": { "const": 1, "type": "integer" },
+                                            "recheckIntervalMs": {
+                                              "const": 1000,
+                                              "type": "integer"
+                                            },
+                                            "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                          },
+                                          "required": [
+                                            "handshakeTimeoutMs",
+                                            "recheckIntervalMs",
+                                            "maxConnectionAgeMs",
+                                            "maxConnections",
+                                            "requestTimeoutMs"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "nativeExecutableSha256": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "ownSPIFFEId": {
+                                          "maxLength": 200,
+                                          "minLength": 10,
+                                          "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        },
+                                        "recipientRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "recipientSPIFFEId": {
+                                          "maxLength": 200,
+                                          "minLength": 10,
+                                          "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        },
+                                        "schemaVersion": { "const": 1, "type": "integer" },
+                                        "sourceRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "transportProfileRef": {
+                                          "const": "owned-child-stdio-readback-v1",
+                                          "type": "string"
+                                        },
+                                        "trustBundleSha256": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "trustDomain": {
+                                          "maxLength": 128,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9._-]+$",
+                                          "type": "string"
+                                        },
+                                        "trustRootsRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "verifierProfileRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "workloadApiSocketPath": {
+                                          "maxLength": 103,
+                                          "minLength": 2,
+                                          "pattern": "^/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "schemaVersion",
+                                        "sourceRef",
+                                        "workloadApiSocketPath",
+                                        "ownSPIFFEId",
+                                        "recipientRef",
+                                        "recipientSPIFFEId",
+                                        "trustDomain",
+                                        "trustRootsRef",
+                                        "trustBundleSha256",
+                                        "verifierProfileRef",
+                                        "nativeExecutableSha256",
+                                        "transportProfileRef",
+                                        "limits"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "sourceConfigurationDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "subjectKind": { "const": "source", "type": "string" },
+                                    "subjectRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "installationId",
+                                    "operationRef",
+                                    "recordVersion",
+                                    "canonicalRequest",
+                                    "requestDigest",
+                                    "actorId",
+                                    "auditId",
+                                    "committedAt",
+                                    "kind",
+                                    "subjectKind",
+                                    "subjectRef",
+                                    "source",
+                                    "sourceConfigurationDigest"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "actorId": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "auditId": {
+                                      "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "canonicalRequest": {
+                                      "maxLength": 8192,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "committedAt": {
+                                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                                      "type": "string"
+                                    },
+                                    "installationId": {
+                                      "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "kind": { "const": "source-withdraw", "type": "string" },
+                                    "operationRef": {
+                                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "recordVersion": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "requestDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "subjectKind": { "const": "source", "type": "string" },
+                                    "subjectRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "installationId",
+                                    "operationRef",
+                                    "recordVersion",
+                                    "canonicalRequest",
+                                    "requestDigest",
+                                    "actorId",
+                                    "auditId",
+                                    "committedAt",
+                                    "kind",
+                                    "subjectKind",
+                                    "subjectRef"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "actorId": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "auditId": {
+                                      "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "canonicalRequest": {
+                                      "maxLength": 8192,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "committedAt": {
+                                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                                      "type": "string"
+                                    },
+                                    "configuration": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "allowedScope": {
+                                          "anyOf": [
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "installationId": {
+                                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "kind": {
+                                                  "const": "installation",
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": ["kind", "installationId"],
+                                              "type": "object"
+                                            },
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "agentId": {
+                                                  "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "installationId": {
+                                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                },
+                                                "kind": { "const": "agent", "type": "string" },
+                                                "namespaceId": {
+                                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind",
+                                                "installationId",
+                                                "namespaceId",
+                                                "agentId"
+                                              ],
+                                              "type": "object"
+                                            }
+                                          ]
+                                        },
+                                        "configurationVersion": {
+                                          "maximum": 9007199254740991,
+                                          "minimum": 1,
+                                          "type": "integer"
+                                        },
+                                        "installationId": {
+                                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                          "type": "string"
+                                        },
+                                        "permittedRecipientRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "role": {
+                                          "enum": [
+                                            "compute-observer",
+                                            "identity-verifier",
+                                            "registrar",
+                                            "lifecycle-authority",
+                                            "readiness-prober",
+                                            "runtime-transport",
+                                            "model-mediator",
+                                            "repository-issuer",
+                                            "cleanup",
+                                            "restore-preparer",
+                                            "restore-receiver"
+                                          ]
+                                        },
+                                        "schemaVersion": { "const": 1, "type": "number" },
+                                        "serviceIdentityRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "serviceTrustProfileDigest": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "serviceTrustProfileRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "trustRootsRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "verifierProfileRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "schemaVersion",
+                                        "installationId",
+                                        "configurationVersion",
+                                        "serviceIdentityRef",
+                                        "serviceTrustProfileRef",
+                                        "serviceTrustProfileDigest",
+                                        "trustRootsRef",
+                                        "verifierProfileRef",
+                                        "permittedRecipientRef",
+                                        "role",
+                                        "allowedScope"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "installationId": {
+                                      "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "kind": { "const": "service-admit", "type": "string" },
+                                    "operationRef": {
+                                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "profile": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "limits": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "handshakeTimeoutMs": {
+                                              "const": 3000,
+                                              "type": "integer"
+                                            },
+                                            "maxConnectionAgeMs": {
+                                              "const": 30000,
+                                              "type": "integer"
+                                            },
+                                            "maxConnections": { "const": 1, "type": "integer" },
+                                            "recheckIntervalMs": {
+                                              "const": 1000,
+                                              "type": "integer"
+                                            },
+                                            "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                          },
+                                          "required": [
+                                            "handshakeTimeoutMs",
+                                            "recheckIntervalMs",
+                                            "maxConnectionAgeMs",
+                                            "maxConnections",
+                                            "requestTimeoutMs"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "nativeExecutableSha256": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "operationPolicy": {
+                                          "const": "read-operation-only-v1",
+                                          "type": "string"
+                                        },
+                                        "ownSPIFFEId": {
+                                          "maxLength": 200,
+                                          "minLength": 10,
+                                          "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        },
+                                        "peerSPIFFEId": {
+                                          "maxLength": 200,
+                                          "minLength": 10,
+                                          "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        },
+                                        "recipientRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "recipientSPIFFEId": {
+                                          "maxLength": 200,
+                                          "minLength": 10,
+                                          "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        },
+                                        "schemaVersion": { "const": 1, "type": "integer" },
+                                        "sourceConfigurationDigest": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "sourceRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "transportProfileRef": {
+                                          "const": "owned-child-stdio-readback-v1",
+                                          "type": "string"
+                                        },
+                                        "trustBundleSha256": {
+                                          "pattern": "^sha256:[0-9a-f]{64}$",
+                                          "type": "string"
+                                        },
+                                        "trustDomain": {
+                                          "maxLength": 128,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9._-]+$",
+                                          "type": "string"
+                                        },
+                                        "trustRootsRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "verifierProfileRef": {
+                                          "maxLength": 200,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9._:/-]+$",
+                                          "type": "string"
+                                        },
+                                        "workloadApiSocketPath": {
+                                          "maxLength": 103,
+                                          "minLength": 2,
+                                          "pattern": "^/[A-Za-z0-9._/-]+$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "schemaVersion",
+                                        "sourceRef",
+                                        "workloadApiSocketPath",
+                                        "ownSPIFFEId",
+                                        "recipientRef",
+                                        "recipientSPIFFEId",
+                                        "trustDomain",
+                                        "trustRootsRef",
+                                        "trustBundleSha256",
+                                        "verifierProfileRef",
+                                        "nativeExecutableSha256",
+                                        "transportProfileRef",
+                                        "limits",
+                                        "operationPolicy",
+                                        "sourceConfigurationDigest",
+                                        "peerSPIFFEId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "recordVersion": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "requestDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "sourceOperationRef": {
+                                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "sourceRecordVersion": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "subjectKind": { "const": "service", "type": "string" },
+                                    "subjectRef": {
+                                      "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "installationId",
+                                    "operationRef",
+                                    "recordVersion",
+                                    "canonicalRequest",
+                                    "requestDigest",
+                                    "actorId",
+                                    "auditId",
+                                    "committedAt",
+                                    "kind",
+                                    "subjectKind",
+                                    "subjectRef",
+                                    "sourceOperationRef",
+                                    "sourceRecordVersion",
+                                    "profile",
+                                    "configuration"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "actorId": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "auditId": {
+                                      "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "canonicalRequest": {
+                                      "maxLength": 8192,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "committedAt": {
+                                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                                      "type": "string"
+                                    },
+                                    "installationId": {
+                                      "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "kind": { "const": "service-withdraw", "type": "string" },
+                                    "operationRef": {
+                                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    },
+                                    "recordVersion": {
+                                      "maximum": 9007199254740991,
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    },
+                                    "requestDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "subjectKind": { "const": "service", "type": "string" },
+                                    "subjectRef": {
+                                      "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "installationId",
+                                    "operationRef",
+                                    "recordVersion",
+                                    "canonicalRequest",
+                                    "requestDigest",
+                                    "actorId",
+                                    "auditId",
+                                    "committedAt",
+                                    "kind",
+                                    "subjectKind",
+                                    "subjectRef"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "result": { "enum": ["applied", "exact-replay"] }
+                          },
+                          "required": ["result", "record"],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "nextAction": { "const": "exact-readback-only" },
+                            "operationRef": { "type": "string" },
+                            "result": { "const": "commit-unknown" }
+                          },
+                          "required": ["result", "operationRef", "nextAction"],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Bad Request",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Unauthorized",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Forbidden",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Not Found",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Conflict",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Service Unavailable",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Admit or withdraw an exact runtime service trust record",
+        "tags": ["Runtime service trust"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "installation" }
+        ]
+      }
+    },
+    "/v1/runtime-service-trust/operations/{operationRef}": {
+      "get": {
+        "description": "Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.",
+        "operationId": "recoverRuntimeServiceTrust",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operationRef",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "OK",
+                  "properties": {
+                    "data": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "actorId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            },
+                            "auditId": {
+                              "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "canonicalRequest": {
+                              "maxLength": 8192,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "committedAt": {
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                              "type": "string"
+                            },
+                            "installationId": {
+                              "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "kind": { "const": "source-admit", "type": "string" },
+                            "operationRef": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "recordVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "requestDigest": {
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "schemaVersion": { "const": 1, "type": "integer" },
+                            "source": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "limits": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "handshakeTimeoutMs": { "const": 3000, "type": "integer" },
+                                    "maxConnectionAgeMs": { "const": 30000, "type": "integer" },
+                                    "maxConnections": { "const": 1, "type": "integer" },
+                                    "recheckIntervalMs": { "const": 1000, "type": "integer" },
+                                    "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                  },
+                                  "required": [
+                                    "handshakeTimeoutMs",
+                                    "recheckIntervalMs",
+                                    "maxConnectionAgeMs",
+                                    "maxConnections",
+                                    "requestTimeoutMs"
+                                  ],
+                                  "type": "object"
+                                },
+                                "nativeExecutableSha256": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "ownSPIFFEId": {
+                                  "maxLength": 200,
+                                  "minLength": 10,
+                                  "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                },
+                                "recipientRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "recipientSPIFFEId": {
+                                  "maxLength": 200,
+                                  "minLength": 10,
+                                  "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                },
+                                "schemaVersion": { "const": 1, "type": "integer" },
+                                "sourceRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "transportProfileRef": {
+                                  "const": "owned-child-stdio-readback-v1",
+                                  "type": "string"
+                                },
+                                "trustBundleSha256": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "trustDomain": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9._-]+$",
+                                  "type": "string"
+                                },
+                                "trustRootsRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "verifierProfileRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "workloadApiSocketPath": {
+                                  "maxLength": 103,
+                                  "minLength": 2,
+                                  "pattern": "^/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "sourceRef",
+                                "workloadApiSocketPath",
+                                "ownSPIFFEId",
+                                "recipientRef",
+                                "recipientSPIFFEId",
+                                "trustDomain",
+                                "trustRootsRef",
+                                "trustBundleSha256",
+                                "verifierProfileRef",
+                                "nativeExecutableSha256",
+                                "transportProfileRef",
+                                "limits"
+                              ],
+                              "type": "object"
+                            },
+                            "sourceConfigurationDigest": {
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "subjectKind": { "const": "source", "type": "string" },
+                            "subjectRef": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "installationId",
+                            "operationRef",
+                            "recordVersion",
+                            "canonicalRequest",
+                            "requestDigest",
+                            "actorId",
+                            "auditId",
+                            "committedAt",
+                            "kind",
+                            "subjectKind",
+                            "subjectRef",
+                            "source",
+                            "sourceConfigurationDigest"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "actorId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            },
+                            "auditId": {
+                              "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "canonicalRequest": {
+                              "maxLength": 8192,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "committedAt": {
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                              "type": "string"
+                            },
+                            "installationId": {
+                              "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "kind": { "const": "source-withdraw", "type": "string" },
+                            "operationRef": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "recordVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "requestDigest": {
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "schemaVersion": { "const": 1, "type": "integer" },
+                            "subjectKind": { "const": "source", "type": "string" },
+                            "subjectRef": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "installationId",
+                            "operationRef",
+                            "recordVersion",
+                            "canonicalRequest",
+                            "requestDigest",
+                            "actorId",
+                            "auditId",
+                            "committedAt",
+                            "kind",
+                            "subjectKind",
+                            "subjectRef"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "actorId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            },
+                            "auditId": {
+                              "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "canonicalRequest": {
+                              "maxLength": 8192,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "committedAt": {
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                              "type": "string"
+                            },
+                            "configuration": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "allowedScope": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "installationId": {
+                                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                          "type": "string"
+                                        },
+                                        "kind": { "const": "installation", "type": "string" }
+                                      },
+                                      "required": ["kind", "installationId"],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "agentId": {
+                                          "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                          "type": "string"
+                                        },
+                                        "installationId": {
+                                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                          "type": "string"
+                                        },
+                                        "kind": { "const": "agent", "type": "string" },
+                                        "namespaceId": {
+                                          "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "installationId",
+                                        "namespaceId",
+                                        "agentId"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "configurationVersion": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "installationId": {
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "permittedRecipientRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "role": {
+                                  "enum": [
+                                    "compute-observer",
+                                    "identity-verifier",
+                                    "registrar",
+                                    "lifecycle-authority",
+                                    "readiness-prober",
+                                    "runtime-transport",
+                                    "model-mediator",
+                                    "repository-issuer",
+                                    "cleanup",
+                                    "restore-preparer",
+                                    "restore-receiver"
+                                  ]
+                                },
+                                "schemaVersion": { "const": 1, "type": "number" },
+                                "serviceIdentityRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "serviceTrustProfileDigest": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "serviceTrustProfileRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "trustRootsRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "verifierProfileRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "installationId",
+                                "configurationVersion",
+                                "serviceIdentityRef",
+                                "serviceTrustProfileRef",
+                                "serviceTrustProfileDigest",
+                                "trustRootsRef",
+                                "verifierProfileRef",
+                                "permittedRecipientRef",
+                                "role",
+                                "allowedScope"
+                              ],
+                              "type": "object"
+                            },
+                            "installationId": {
+                              "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "kind": { "const": "service-admit", "type": "string" },
+                            "operationRef": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "profile": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "limits": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "handshakeTimeoutMs": { "const": 3000, "type": "integer" },
+                                    "maxConnectionAgeMs": { "const": 30000, "type": "integer" },
+                                    "maxConnections": { "const": 1, "type": "integer" },
+                                    "recheckIntervalMs": { "const": 1000, "type": "integer" },
+                                    "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                  },
+                                  "required": [
+                                    "handshakeTimeoutMs",
+                                    "recheckIntervalMs",
+                                    "maxConnectionAgeMs",
+                                    "maxConnections",
+                                    "requestTimeoutMs"
+                                  ],
+                                  "type": "object"
+                                },
+                                "nativeExecutableSha256": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "operationPolicy": {
+                                  "const": "read-operation-only-v1",
+                                  "type": "string"
+                                },
+                                "ownSPIFFEId": {
+                                  "maxLength": 200,
+                                  "minLength": 10,
+                                  "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                },
+                                "peerSPIFFEId": {
+                                  "maxLength": 200,
+                                  "minLength": 10,
+                                  "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                },
+                                "recipientRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "recipientSPIFFEId": {
+                                  "maxLength": 200,
+                                  "minLength": 10,
+                                  "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                },
+                                "schemaVersion": { "const": 1, "type": "integer" },
+                                "sourceConfigurationDigest": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "sourceRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "transportProfileRef": {
+                                  "const": "owned-child-stdio-readback-v1",
+                                  "type": "string"
+                                },
+                                "trustBundleSha256": {
+                                  "pattern": "^sha256:[0-9a-f]{64}$",
+                                  "type": "string"
+                                },
+                                "trustDomain": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9._-]+$",
+                                  "type": "string"
+                                },
+                                "trustRootsRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "verifierProfileRef": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$",
+                                  "type": "string"
+                                },
+                                "workloadApiSocketPath": {
+                                  "maxLength": 103,
+                                  "minLength": 2,
+                                  "pattern": "^/[A-Za-z0-9._/-]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "sourceRef",
+                                "workloadApiSocketPath",
+                                "ownSPIFFEId",
+                                "recipientRef",
+                                "recipientSPIFFEId",
+                                "trustDomain",
+                                "trustRootsRef",
+                                "trustBundleSha256",
+                                "verifierProfileRef",
+                                "nativeExecutableSha256",
+                                "transportProfileRef",
+                                "limits",
+                                "operationPolicy",
+                                "sourceConfigurationDigest",
+                                "peerSPIFFEId"
+                              ],
+                              "type": "object"
+                            },
+                            "recordVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "requestDigest": {
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "schemaVersion": { "const": 1, "type": "integer" },
+                            "sourceOperationRef": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "sourceRecordVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "subjectKind": { "const": "service", "type": "string" },
+                            "subjectRef": {
+                              "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "installationId",
+                            "operationRef",
+                            "recordVersion",
+                            "canonicalRequest",
+                            "requestDigest",
+                            "actorId",
+                            "auditId",
+                            "committedAt",
+                            "kind",
+                            "subjectKind",
+                            "subjectRef",
+                            "sourceOperationRef",
+                            "sourceRecordVersion",
+                            "profile",
+                            "configuration"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "actorId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                              "type": "string"
+                            },
+                            "auditId": {
+                              "pattern": "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "canonicalRequest": {
+                              "maxLength": 8192,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "committedAt": {
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+                              "type": "string"
+                            },
+                            "installationId": {
+                              "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "kind": { "const": "service-withdraw", "type": "string" },
+                            "operationRef": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "recordVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "requestDigest": {
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "schemaVersion": { "const": 1, "type": "integer" },
+                            "subjectKind": { "const": "service", "type": "string" },
+                            "subjectRef": {
+                              "pattern": "^runtime-service/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "installationId",
+                            "operationRef",
+                            "recordVersion",
+                            "canonicalRequest",
+                            "requestDigest",
+                            "actorId",
+                            "auditId",
+                            "committedAt",
+                            "kind",
+                            "subjectKind",
+                            "subjectRef"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Bad Request",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Unauthorized",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Forbidden",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Not Found",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Conflict",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Service Unavailable",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Recover an exact operator service trust operation",
+        "tags": ["Runtime service trust"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "installation" }
+        ]
+      }
     }
   },
   "security": [{ "sessionCookie": [] }, { "serviceApiKey": [] }]

@@ -2498,6 +2498,86 @@ List configured Providers
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
+## Runtime service trust
+
+### `POST /v1/runtime-service-trust/operations`
+
+Admit or withdraw an exact runtime service trust record
+
+**Operation ID:** `mutateRuntimeServiceTrust`
+
+**Permissions:** Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `installation` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+Schema: `object or object or object or object`.
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | — |
+
+### `GET /v1/runtime-service-trust/operations/{operationRef}`
+
+Recover an exact operator service trust operation
+
+**Operation ID:** `recoverRuntimeServiceTrust`
+
+**Permissions:** Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `installation` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `operationRef` | path | `string` | Yes | pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object or object or object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | — |
+
 ## Shared schemas
 
 ### `SafeJsonValue`

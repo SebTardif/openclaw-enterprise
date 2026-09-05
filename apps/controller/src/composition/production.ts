@@ -5,7 +5,11 @@ import {
   validatePersistedNativeIAMState,
   type AuthPrincipalSeed,
 } from "@openclaw-enterprise/iam";
-import { OpenClawController, PostgresPlatformState } from "@openclaw-enterprise/occ";
+import {
+  OpenClawController,
+  PostgresPlatformState,
+  RuntimeServiceTrustService,
+} from "@openclaw-enterprise/occ";
 import { createPostgresControllerAuth } from "../auth/index.ts";
 import { createFastifyApp } from "../index.ts";
 import type {
@@ -17,6 +21,12 @@ import type { OccLogger } from "../logging.ts";
 import { resolveApprovedProductionHarness } from "./production-harness.ts";
 import type { ControllerWorkspaceFilesAccess } from "../gateway/contracts.ts";
 import { createWorkspaceFilesAccess, validateWorkspaceFilesApiKeyPath } from "./workspace-files.ts";
+
+import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
+import {
+  DEFAULT_RUNTIME_AUTHORITY_BINARY_PATH,
+  startRuntimeAuthorityReadback,
+} from "./runtime-authority-readback.ts";
 
 export interface ProductionConfig {
   readonly mode: "production";
@@ -30,6 +40,8 @@ export interface ProductionConfig {
   readonly serviceAccountDriverFactory?: ServiceAccountDriverFactory;
   readonly workspaceFilesAccess?: ControllerWorkspaceFilesAccess;
   readonly gatewayApiKeyPath?: string;
+  readonly runtimeAuthorityBinaryPath?: string;
+  readonly runtimeAuthorityReadbackConfigPath?: string;
 }
 
 export async function composeProduction(config: ProductionConfig) {
@@ -52,9 +64,19 @@ export async function composeProduction(config: ProductionConfig) {
     );
   }
 
+  const sources = installation.runtimeAuthoritySources ?? [];
+  if (
+    (sources.length > 0 || config.runtimeAuthorityReadbackConfigPath !== undefined) &&
+    config.poolMax === 1
+  )
+    throw new Error("Runtime service trust requires at least two PostgreSQL connections.");
+  const binaryPath = config.runtimeAuthorityBinaryPath ?? DEFAULT_RUNTIME_AUTHORITY_BINARY_PATH;
+  let runtimeReadback: Awaited<ReturnType<typeof startRuntimeAuthorityReadback>> | undefined;
+  let readbackLive = true;
   const driverId = installation.drivers.iam.id;
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
+    connectionTimeoutMillis: 250,
     ...(config.poolMax === undefined ? {} : { max: config.poolMax }),
   });
 
@@ -150,7 +172,16 @@ export async function composeProduction(config: ProductionConfig) {
       workspaceFilesAccess = createWorkspaceFilesAccess(computeDriver, gatewayApiKeyPath);
     }
 
+    const runtimeServiceTrust = new RuntimeServiceTrustService({
+      installationId: persistedInstallation.id,
+      state,
+      iam: () => controller.selectedDriver("iam"),
+      sources,
+      validateProfile: (profile, signal) =>
+        validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
+    });
     const app = createFastifyApp({
+      runtimeServiceTrust,
       controller,
       iamDriver,
       computeDriver,
@@ -171,15 +202,43 @@ export async function composeProduction(config: ProductionConfig) {
       maxBodyBytes: 64 * 1024,
       ...(workspaceFilesAccess === undefined ? {} : { workspaceFilesAccess }),
     });
+    if (config.runtimeAuthorityReadbackConfigPath !== undefined) {
+      runtimeReadback = await startRuntimeAuthorityReadback({
+        state,
+        installationId: persistedInstallation.id,
+        trust: runtimeServiceTrust,
+        configPath: config.runtimeAuthorityReadbackConfigPath,
+        binaryPath,
+      });
+      runtimeReadback.closed.then(
+        () => {
+          readbackLive = false;
+        },
+        () => {
+          readbackLive = false;
+        },
+      );
+    }
     app.get("/healthz", async () => ({ status: "ok" }));
     app.get("/readyz", async () => {
+      if (!readbackLive) throw new Error("Native runtime readback unavailable.");
       await pool.query("SELECT 1");
       return { status: "ready" };
     });
-    app.addHook("onClose", async () => state.close());
+    app.addHook("onClose", async () => {
+      try {
+        await runtimeReadback?.close();
+      } finally {
+        await state.close();
+      }
+    });
     return app;
   } catch (error) {
-    await pool.end();
+    try {
+      await runtimeReadback?.close();
+    } finally {
+      await pool.end();
+    }
     throw error;
   }
 }

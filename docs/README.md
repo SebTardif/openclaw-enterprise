@@ -16,6 +16,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 
 - [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
 - [Native service peer transport](reference/native-service-peer.md): authenticate and own in-process mutual TLS connections; service roles and runtime authority remain separate.
+- [Runtime service transport](reference/runtime-service-transport.md): configure admitted services and the native mutual TLS listener for exact historical operation readback.
 
 ## Architecture
 
