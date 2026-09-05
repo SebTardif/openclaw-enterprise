@@ -7,6 +7,9 @@ export type {
   RuntimeAllocationLocator,
 } from "./runtime-assignment.ts";
 export * from "./runtime-authority-v1.ts";
+export * from "./completed-state-v1.ts";
+export * from "./workspace-reservation-v1.ts";
+export * from "./runtime-effects-v1.ts";
 
 import { immutableCopy } from "@openclaw-enterprise/utils";
 
