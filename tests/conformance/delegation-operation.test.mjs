@@ -34,6 +34,25 @@ const request = {
 const now = Date.parse(acceptedAt);
 const result = (value, input = request, time = now) => evaluateOperationUse(value, input, time);
 
+test("operation references preserve the frozen 32-byte lowercase-hex reservation spelling", () => {
+  const operationRef = "0123456789abcdef".repeat(4);
+  assert.equal(parseGrantOperationV1({ ...operation, operationRef }).operationRef, operationRef);
+  for (const invalid of [
+    "",
+    "x",
+    "a".repeat(63),
+    "a".repeat(65),
+    "A".repeat(64),
+    "g".repeat(64),
+    `${operationRef}\n`,
+  ]) {
+    const changed = { ...operation, operationRef: invalid };
+    assert.equal(parseGrantOperationV1(changed), undefined);
+    assert.equal(result(changed, { ...request, operationRef: invalid }).reason, "invalid-input");
+  }
+  // Syntax does not prove randomness or authorize reuse; the accepting service owns generation.
+});
+
 test("dispatch constraints bind stable reservation/digest and immutable first-dispatch window", () => {
   assert.equal(result(operation).result, "constraints-satisfied");
   for (const field of ["operationRef", "grantRef", "requestDigest"])

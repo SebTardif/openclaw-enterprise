@@ -204,6 +204,44 @@ test("resource references, media and unsupported alternate tool/control paths fa
     assert.equal(parse(body({ input: [item] })).result, "rejected");
 });
 
+test("all admitted schema sites reject external recursive references and retain local fragments", () => {
+  const requestsWithSchema = (schema) => [
+    body({ tools: [{ ...fn(), parameters: schema }] }),
+    body({
+      tools: [
+        { type: "tool_search", execution: "client", description: "Find tools", parameters: schema },
+      ],
+    }),
+    body({
+      text: { format: { type: "json_schema", strict: true, name: "answer", schema } },
+    }),
+  ];
+  for (const keyword of ["$ref", "$dynamicRef", "$recursiveRef"]) {
+    for (const target of [
+      "https://remote.example/schema",
+      "//remote.example/schema",
+      "other.json",
+      "#anchor",
+      null,
+      1,
+    ]) {
+      // The nested property makes every shared schema entry point exercise the recursive guard.
+      const schema = { type: "object", properties: { next: { [keyword]: target } } };
+      for (const request of requestsWithSchema(schema))
+        assert.deepEqual(parse(request), { result: "rejected", reason: "profile" });
+    }
+    for (const target of ["#", "#/$defs/node"]) {
+      const schema = {
+        type: "object",
+        $defs: { node: { type: "string" } },
+        properties: { next: { [keyword]: target } },
+      };
+      for (const request of requestsWithSchema(schema))
+        assert.equal(parse(request).result, "model-request");
+    }
+  }
+});
+
 test("duplicate keys and missing context cannot be hidden by profile parsing", () => {
   const valid = JSON.stringify(body());
   assert.equal(

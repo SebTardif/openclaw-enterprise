@@ -67,8 +67,10 @@ lists have at most 32 unique entries. Validity and budget are explicit inputs;
 there is no default grant lifetime, wildcard, implicit permission hierarchy or
 parent/child support. These parser bounds are not throughput or revocation SLAs.
 
-The storage port requires a stable random reservation reference and exact request
-digest before admission. Its separate atomic dispatch transition records the
+The storage port requires a stable random reservation reference encoded as exactly
+64 lowercase hexadecimal characters and an exact request digest before admission.
+The operation parser enforces this spelling; generation remains the accepting
+service's responsibility. Its separate atomic dispatch transition records the
 first consumption under the grant lock. Only an acknowledged first transition
 permits sending provider bytes. An ambiguous dispatch result or readback of a
 consumed reservation cannot authorize sending again; there is no provider retry.
@@ -116,6 +118,11 @@ background work, `previous_response_id`, conversation linkage, access programs,
 remote provider tools, media and external resource references. It checks nested
 namespace and tool-search definitions so remote tools cannot enter through those
 paths. The result exposes only the model ID and untrusted context.
+
+Function parameters, client tool-search parameters and structured-output schemas
+apply the same recursive reference restriction: `$ref`, `$dynamicRef` and
+`$recursiveRef` may contain only `#` or a fragment beginning `#/`. External,
+relative-document and named-anchor references are outside this selected profile.
 
 Client-tool definitions describe tools dispatched by Codex; they can include
 functions backed by client-side MCP. This profile does not authorize those tool

@@ -42,12 +42,12 @@ const optional = (value: RecordValue, key: string, validate: Validator): boolean
 const list = (value: unknown, validate: Validator, limit = 4096): boolean =>
   Array.isArray(value) && value.length <= limit && value.every(validate);
 
-// Schemas are data, but this profile does not admit external schema references.
+// Selected schema reference keywords must use same-document fragments.
 function localSchema(value: unknown): boolean {
   if (Array.isArray(value)) return value.every(localSchema);
   if (!record(value)) return true;
   return Object.entries(value).every(([key, child]) =>
-    key === "$ref" || key === "$dynamicRef"
+    key === "$ref" || key === "$dynamicRef" || key === "$recursiveRef"
       ? typeof child === "string" && (child === "#" || child.startsWith("#/"))
       : localSchema(child),
   );

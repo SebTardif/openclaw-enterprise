@@ -2,7 +2,7 @@ import { parseModelOperationV1, type ModelOperationV1 } from "./grant-contract.t
 import { dataRecord, reference, timestamp } from "./validation.ts";
 
 export interface GrantOperationV1 {
-  /** Stable random reservation reference chosen before admission, never replaced after uncertainty. */
+  /** Stable 32-byte lowercase-hex reservation chosen before admission, never replaced after uncertainty. */
   readonly operationRef: string;
   readonly grantRef: string;
   readonly operation: ModelOperationV1;
@@ -35,7 +35,8 @@ export function parseGrantOperationV1(input: unknown): GrantOperationV1 | undefi
   const operation = parseModelOperationV1(value.operation);
   if (
     !operation ||
-    !reference(value.operationRef) ||
+    typeof value.operationRef !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.operationRef) ||
     !reference(value.grantRef) ||
     !reference(value.decisionRef) ||
     typeof value.requestDigest !== "string" ||
