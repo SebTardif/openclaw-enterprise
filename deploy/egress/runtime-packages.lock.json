@@ -1,0 +1,499 @@
+{
+  "schemaVersion": 1,
+  "architecture": "amd64",
+  "baseImage": "node:24-trixie-slim@sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0",
+  "packages": [
+    {
+      "filename": "ca-certificates_20250419_all.deb",
+      "sha256": "ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184",
+      "bytes": 161704,
+      "url": "https://deb.debian.org/debian/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb",
+      "package": "ca-certificates",
+      "version": "20250419",
+      "architecture": "all"
+    },
+    {
+      "filename": "conntrack_1.4.8-2_amd64.deb",
+      "sha256": "bfbb6d02ba2ba162da1a9caa0f0c280034b8f189799542bd39ca5b1bcaf768e0",
+      "bytes": 35636,
+      "url": "https://deb.debian.org/debian/pool/main/c/conntrack-tools/conntrack_1.4.8-2_amd64.deb",
+      "package": "conntrack",
+      "version": "1:1.4.8-2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "debconf_1.5.91_all.deb",
+      "sha256": "1ddc7e6c5925f748eefb7ca811d98e049f18c158bb21fbc7e122262ce6011e49",
+      "bytes": 121088,
+      "url": "https://deb.debian.org/debian/pool/main/d/debconf/debconf_1.5.91_all.deb",
+      "package": "debconf",
+      "version": "1.5.91",
+      "architecture": "all"
+    },
+    {
+      "filename": "gcc-14-base_14.2.0-19_amd64.deb",
+      "sha256": "5b6825de4263824b78c4c51f6476414f3b4e89c2ab63e81dc8b9b5501e867cf6",
+      "bytes": 49432,
+      "url": "https://deb.debian.org/debian/pool/main/g/gcc-14/gcc-14-base_14.2.0-19_amd64.deb",
+      "package": "gcc-14-base",
+      "version": "14.2.0-19",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libbsd0_0.12.2-2_amd64.deb",
+      "sha256": "e5a85986fa6bec3307ab1bc860736b478b331882bc45e17675a7bdf88eecb43a",
+      "bytes": 130968,
+      "url": "https://deb.debian.org/debian/pool/main/libb/libbsd/libbsd0_0.12.2-2_amd64.deb",
+      "package": "libbsd0",
+      "version": "0.12.2-2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libc6_2.41-12+deb13u3_amd64.deb",
+      "sha256": "8ffd13165b9ee3f067e2ee670df718e48c1bdaa18676ac93d1de761dbbb3913c",
+      "bytes": 2849576,
+      "url": "https://deb.debian.org/debian/pool/main/g/glibc/libc6_2.41-12+deb13u3_amd64.deb",
+      "package": "libc6",
+      "version": "2.41-12+deb13u3",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libedit2_3.1-20250104-1_amd64.deb",
+      "sha256": "b002ea172b9c1e34a67bc497c523c67bb74c3f0a4e98113cb083990a1f1d3bfe",
+      "bytes": 93832,
+      "url": "https://deb.debian.org/debian/pool/main/libe/libedit/libedit2_3.1-20250104-1_amd64.deb",
+      "package": "libedit2",
+      "version": "3.1-20250104-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libgcc-s1_14.2.0-19_amd64.deb",
+      "sha256": "3c71917b490d1a17aed43196a2787a256ecf060526cdb20216a74bedc061b150",
+      "bytes": 72772,
+      "url": "https://deb.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_amd64.deb",
+      "package": "libgcc-s1",
+      "version": "14.2.0-19",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libgmp10_6.3.0+dfsg-3_amd64.deb",
+      "sha256": "d0d0265eb01770f17afd0f7c8c0622f80479dcfbbe13653a0debeec61464e622",
+      "bytes": 560220,
+      "url": "https://deb.debian.org/debian/pool/main/g/gmp/libgmp10_6.3.0+dfsg-3_amd64.deb",
+      "package": "libgmp10",
+      "version": "2:6.3.0+dfsg-3",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libjansson4_2.14-2+b3_amd64.deb",
+      "sha256": "60707a62fe6c1228c3389b12a13ca4efd76defc5532473e547a29e99cf7d2a6e",
+      "bytes": 39792,
+      "url": "https://deb.debian.org/debian/pool/main/j/jansson/libjansson4_2.14-2+b3_amd64.deb",
+      "package": "libjansson4",
+      "version": "2.14-2+b3",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libmd0_1.1.0-2+b1_amd64.deb",
+      "sha256": "7244ec3839b61fac0c1884fe08aaa040f26e8f1f35f1f5d3482eacefd30d1b44",
+      "bytes": 36272,
+      "url": "https://deb.debian.org/debian/pool/main/libm/libmd/libmd0_1.1.0-2+b1_amd64.deb",
+      "package": "libmd0",
+      "version": "1.1.0-2+b1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libmnl0_1.0.5-3_amd64.deb",
+      "sha256": "4ec9c1096e0b954e3bdb03a62314ee7f49999045d3d55be3e4ded520ffc9baf5",
+      "bytes": 11928,
+      "url": "https://deb.debian.org/debian/pool/main/libm/libmnl/libmnl0_1.0.5-3_amd64.deb",
+      "package": "libmnl0",
+      "version": "1.0.5-3",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libnetfilter-conntrack3_1.1.0-1_amd64.deb",
+      "sha256": "ffbac5d06fbe432d5171f2eb5b2504968377f27be133f72c81e71250a9957506",
+      "bytes": 42064,
+      "url": "https://deb.debian.org/debian/pool/main/libn/libnetfilter-conntrack/libnetfilter-conntrack3_1.1.0-1_amd64.deb",
+      "package": "libnetfilter-conntrack3",
+      "version": "1.1.0-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libnfnetlink0_1.0.2-3_amd64.deb",
+      "sha256": "5e4c3c40a04ffdb4139e4bef1136585e151a8eb8c71efa6c7250b636b3c0d1b1",
+      "bytes": 14416,
+      "url": "https://deb.debian.org/debian/pool/main/libn/libnfnetlink/libnfnetlink0_1.0.2-3_amd64.deb",
+      "package": "libnfnetlink0",
+      "version": "1.0.2-3",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libnftables1_1.1.3-1_amd64.deb",
+      "sha256": "c7cbee3dce8452ae5c3c4269f6f52e96b896d36a46ea3c490e0e11e8ff359896",
+      "bytes": 332448,
+      "url": "https://deb.debian.org/debian/pool/main/n/nftables/libnftables1_1.1.3-1_amd64.deb",
+      "package": "libnftables1",
+      "version": "1.1.3-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libnftnl11_1.2.9-1_amd64.deb",
+      "sha256": "1b3eae46bfb9c6ab44e404797fb45278045f926d73974a84097ad47a3e27d983",
+      "bytes": 65012,
+      "url": "https://deb.debian.org/debian/pool/main/libn/libnftnl/libnftnl11_1.2.9-1_amd64.deb",
+      "package": "libnftnl11",
+      "version": "1.2.9-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libssl3t64_3.5.6-1~deb13u2_amd64.deb",
+      "sha256": "b2dab3fe29c1fcb82ef58c2db0ff4bd830a442cf37b9a8b730b7b6ce87181349",
+      "bytes": 2447924,
+      "url": "https://deb.debian.org/debian/pool/main/o/openssl/libssl3t64_3.5.6-1~deb13u2_amd64.deb",
+      "package": "libssl3t64",
+      "version": "3.5.6-1~deb13u2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libtinfo6_6.5+20250216-2_amd64.deb",
+      "sha256": "8b9f6a7983e9418564e48a627518de4c03917b56efe68d7f3e93bd8fffa1cc10",
+      "bytes": 348380,
+      "url": "https://deb.debian.org/debian/pool/main/n/ncurses/libtinfo6_6.5+20250216-2_amd64.deb",
+      "package": "libtinfo6",
+      "version": "6.5+20250216-2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libxtables12_1.8.11-2_amd64.deb",
+      "sha256": "4de5aa59faef5e98d6ba9f5f521a915be5641f224f597862f8d29e8319e8db16",
+      "bytes": 31896,
+      "url": "https://deb.debian.org/debian/pool/main/i/iptables/libxtables12_1.8.11-2_amd64.deb",
+      "package": "libxtables12",
+      "version": "1.8.11-2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "libzstd1_1.5.7+dfsg-1_amd64.deb",
+      "sha256": "2f6a2aeacfc925eba8b00ac9139bc4bfccf8cacb09eb93de067074b26948eef9",
+      "bytes": 303836,
+      "url": "https://deb.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-1_amd64.deb",
+      "package": "libzstd1",
+      "version": "1.5.7+dfsg-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "nftables_1.1.3-1_amd64.deb",
+      "sha256": "2ddfa61baaf3a76e2c499db9e521ba6affb226f85af0b6fef739f346ac5f0c39",
+      "bytes": 75864,
+      "url": "https://deb.debian.org/debian/pool/main/n/nftables/nftables_1.1.3-1_amd64.deb",
+      "package": "nftables",
+      "version": "1.1.3-1",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "openssl_3.5.6-1~deb13u2_amd64.deb",
+      "sha256": "7b4270966255f0bad468ac889f4b090a6e10eb6ccbc2be0fa418560b24bdef5a",
+      "bytes": 1502560,
+      "url": "https://deb.debian.org/debian/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb",
+      "package": "openssl",
+      "version": "3.5.6-1~deb13u2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "openssl-provider-legacy_3.5.6-1~deb13u2_amd64.deb",
+      "sha256": "feac35e2e79f70ca54abe3ffe3d7eeb51af5e56789d3b668df1ea4e6644db0a4",
+      "bytes": 312688,
+      "url": "https://deb.debian.org/debian/pool/main/o/openssl/openssl-provider-legacy_3.5.6-1~deb13u2_amd64.deb",
+      "package": "openssl-provider-legacy",
+      "version": "3.5.6-1~deb13u2",
+      "architecture": "amd64"
+    },
+    {
+      "filename": "zlib1g_1.3.dfsg+really1.3.1-1+b1_amd64.deb",
+      "sha256": "015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d",
+      "bytes": 88892,
+      "url": "https://deb.debian.org/debian/pool/main/z/zlib/zlib1g_1.3.dfsg+really1.3.1-1+b1_amd64.deb",
+      "package": "zlib1g",
+      "version": "1:1.3.dfsg+really1.3.1-1+b1",
+      "architecture": "amd64"
+    }
+  ],
+  "metadata": {
+    "sourceIndex": {
+      "url": "https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz",
+      "sha256": "3ab4e811cf4f3e5a335d382c58cc19d85f1abe7a4ef4689160ca1f637fa0e9b3"
+    },
+    "requestedPackages": ["nftables", "conntrack", "ca-certificates"],
+    "resolution": "Full declared Depends and Pre-Depends closure from this index; first satisfiable real-package alternative selected. No installed-base subtraction.",
+    "baseImageVerification": "Installed package inventory and dpkg installation in the pinned base image have not been verified. Debian Essential packages are assumed supplied by the base.",
+    "authentication": "Official Debian HTTPS index; package size and SHA256 checked against index. Release signature has not been separately verified.",
+    "dependencyEdges": [
+      {
+        "package": "nftables",
+        "field": "Depends",
+        "requirement": "libnftables1 (= 1.1.3-1)",
+        "selected": "libnftables1"
+      },
+      {
+        "package": "nftables",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "nftables",
+        "field": "Depends",
+        "requirement": "libedit2 (>= 3.1-20130611-0)",
+        "selected": "libedit2"
+      },
+      {
+        "package": "conntrack",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "conntrack",
+        "field": "Depends",
+        "requirement": "libmnl0 (>= 1.0.3-4~)",
+        "selected": "libmnl0"
+      },
+      {
+        "package": "conntrack",
+        "field": "Depends",
+        "requirement": "libnetfilter-conntrack3 (>= 1.0.9)",
+        "selected": "libnetfilter-conntrack3"
+      },
+      {
+        "package": "ca-certificates",
+        "field": "Depends",
+        "requirement": "openssl (>= 1.1.1)",
+        "selected": "openssl"
+      },
+      {
+        "package": "ca-certificates",
+        "field": "Depends",
+        "requirement": "debconf (>= 0.5) | debconf-2.0",
+        "selected": "debconf"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libgmp10 (>= 2:6.3.0+dfsg)",
+        "selected": "libgmp10"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libjansson4 (>= 2.14)",
+        "selected": "libjansson4"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libmnl0 (>= 1.0.3-4~)",
+        "selected": "libmnl0"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libnftnl11 (>= 1.2.9)",
+        "selected": "libnftnl11"
+      },
+      {
+        "package": "libnftables1",
+        "field": "Depends",
+        "requirement": "libxtables12 (>= 1.6.0+snapshot20161117)",
+        "selected": "libxtables12"
+      },
+      {
+        "package": "libc6",
+        "field": "Depends",
+        "requirement": "libgcc-s1",
+        "selected": "libgcc-s1"
+      },
+      {
+        "package": "libedit2",
+        "field": "Depends",
+        "requirement": "libbsd0 (>= 0.1.3)",
+        "selected": "libbsd0"
+      },
+      {
+        "package": "libedit2",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libedit2",
+        "field": "Depends",
+        "requirement": "libtinfo6 (>= 6)",
+        "selected": "libtinfo6"
+      },
+      {
+        "package": "libmnl0",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.14)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnetfilter-conntrack3",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.14)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnetfilter-conntrack3",
+        "field": "Depends",
+        "requirement": "libmnl0 (>= 1.0.3-4~)",
+        "selected": "libmnl0"
+      },
+      {
+        "package": "libnetfilter-conntrack3",
+        "field": "Depends",
+        "requirement": "libnfnetlink0 (>= 1.0.2)",
+        "selected": "libnfnetlink0"
+      },
+      {
+        "package": "openssl",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "openssl",
+        "field": "Depends",
+        "requirement": "libssl3t64 (>= 3.5.0)",
+        "selected": "libssl3t64"
+      },
+      {
+        "package": "libgmp10",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libjansson4",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnftnl11",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnftnl11",
+        "field": "Depends",
+        "requirement": "libmnl0 (>= 1.0.3-4~)",
+        "selected": "libmnl0"
+      },
+      {
+        "package": "libxtables12",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libgcc-s1",
+        "field": "Depends",
+        "requirement": "gcc-14-base (= 14.2.0-19)",
+        "selected": "gcc-14-base"
+      },
+      {
+        "package": "libgcc-s1",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.35)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libbsd0",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libbsd0",
+        "field": "Depends",
+        "requirement": "libmd0 (>= 1.0.3-2)",
+        "selected": "libmd0"
+      },
+      {
+        "package": "libtinfo6",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libnfnetlink0",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.14)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libssl3t64",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.38)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libssl3t64",
+        "field": "Depends",
+        "requirement": "libzstd1 (>= 1.5.5)",
+        "selected": "libzstd1"
+      },
+      {
+        "package": "libssl3t64",
+        "field": "Depends",
+        "requirement": "zlib1g (>= 1:1.1.4)",
+        "selected": "zlib1g"
+      },
+      {
+        "package": "libssl3t64",
+        "field": "Depends",
+        "requirement": "openssl-provider-legacy",
+        "selected": "openssl-provider-legacy"
+      },
+      {
+        "package": "libmd0",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.33)",
+        "selected": "libc6"
+      },
+      {
+        "package": "libzstd1",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.34)",
+        "selected": "libc6"
+      },
+      {
+        "package": "zlib1g",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.14)",
+        "selected": "libc6"
+      },
+      {
+        "package": "openssl-provider-legacy",
+        "field": "Depends",
+        "requirement": "libc6 (>= 2.14)",
+        "selected": "libc6"
+      },
+      {
+        "package": "openssl-provider-legacy",
+        "field": "Depends",
+        "requirement": "libssl3t64 (>= 3.0.3)",
+        "selected": "libssl3t64"
+      }
+    ]
+  }
+}
