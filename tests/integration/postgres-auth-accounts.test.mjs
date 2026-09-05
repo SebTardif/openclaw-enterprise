@@ -198,10 +198,24 @@ test(
     });
     assert.equal(authorized.statusCode, 200, authorized.body);
     assert.equal(authorized.json().data.id, installation.id);
-    const queuedWork = await observerPool.query(
-      "SELECT count(*)::integer AS count FROM occ.controller_work",
-    );
-    assert.equal(queuedWork.rows[0].count, 0);
+    // Fresh bootstrap creates the default Namespace and queues its asynchronous
+    // provisioning; authenticating the service administrator must not consume it.
+    const queuedWork = await observerPool.query(`
+      SELECT n.name, n.status AS namespace_status, w.namespace_target, w.state,
+        w.actor_id, w.agent_id, w.revision_id
+      FROM occ.controller_work w JOIN occ.namespaces n ON n.id = w.namespace_id
+    `);
+    assert.deepEqual(queuedWork.rows, [
+      {
+        name: "default",
+        namespace_status: "provisioning",
+        namespace_target: "ready",
+        state: "queued",
+        actor_id: human.id,
+        agent_id: null,
+        revision_id: null,
+      },
+    ]);
 
     const session = await signInWithEmailPassword({
       fetch: (request) => fetchFromInjectedApp(app, request),
