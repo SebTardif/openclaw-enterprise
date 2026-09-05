@@ -134,7 +134,16 @@ Compute preflight when present; bundled Kubernetes Compute must provide one.
 It registers IAM, Compute, Configuration, and any selected API-only
 ServiceAccount Driver with OCC before
 [`createFastifyApp`](../../apps/controller/src/index.ts) installs authenticated,
-exact-resource-authorized API routes.
+exact-resource-authorized API routes. Its
+[protected registrar](../../apps/controller/src/http/register.ts) binds the full
+ordinary operation catalog to an exhaustive handler map and installs the shared
+[admission](../../apps/controller/src/http/admission.ts) and
+[identity](../../apps/controller/src/http/identity.ts) checks. Authentication,
+bootstrap, and runtime-service routes retain their explicit profiles. This
+composition adds no settings. Verify the real HTTP boundary and operation
+coverage with `node --test tests/integration/http-admission.test.mjs
+tests/integration/route-coverage.test.mjs`; verify generated schemas with
+`node scripts/generate-occ-openapi.mjs --check`.
 
 Development with `OCC_DATABASE_URL` instead calls
 [`composePostgresDevelopment`](../../apps/controller/src/composition/development-postgres.ts)
