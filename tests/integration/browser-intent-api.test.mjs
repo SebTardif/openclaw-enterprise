@@ -349,7 +349,15 @@ for (const developmentEnabled of [false, true]) {
       "missing configured public origin fails closed for cookies but leaves reads available",
       async () => {
         const { publicOrigin: unused, createController: unusedFactory, ...rest } = f.options;
-        const app = createFastifyApp({ ...rest, controller: f.controller });
+        // Each Fastify app owns its request-custody verifier. Share the actual
+        // Installation state and selected Drivers through a fresh Controller.
+        const appController = new OpenClawController(f.controller.installation, { state: f.state });
+        for (const capability of ["iam", "compute", "configuration"]) {
+          const driver = f.controller.selectedDriver(capability);
+          appController.registerDriver(driver);
+          appController.selectDriver(capability, driver.id);
+        }
+        const app = createFastifyApp({ ...rest, controller: appController });
         try {
           const before = await f.recorded();
           const result = await app.inject({
