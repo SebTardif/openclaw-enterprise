@@ -52,6 +52,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   request binding, and required owner interfaces; executable authority is not yet wired.
 - [External model egress packaging](reference/egress.md): isolated DNS and
   credential-service packaging, local preflight, and outstanding runtime requirements.
+- [External model egress flow](flows/external-model-egress.md): exact request,
+  connection, dispatch, and cancellation ownership in the adapter components.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Docker Compose development](flows/docker-compose-development.md),

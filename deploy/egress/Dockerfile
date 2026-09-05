@@ -20,8 +20,13 @@ RUN node --input-type=module -e 'import {readFile} from "node:fs/promises"; impo
 COPY --chmod=0555 .build/mvp/native/oce-dnsgate /usr/local/bin/oce-dnsgate
 COPY --chmod=0555 .build/mvp/native/oce-egress /usr/local/bin/oce-egress
 COPY --chmod=0555 deploy/egress/start-tls.sh /usr/local/bin/oce-start-tls
+COPY dataplane/LICENSE dataplane/NOTICE dataplane/SOURCE_MANIFEST.json /usr/share/doc/oce-egress/
+COPY dataplane/third-party-notices/ /usr/share/doc/oce-egress/third-party-notices/
 RUN test "$(/usr/local/bin/oce-dnsgate --version | cut -d ' ' -f 1)" = oce-dnsgate \
     && test "$(/usr/local/bin/oce-egress --version | cut -d ' ' -f 1)" = oce-egress \
+    && test -s /usr/share/doc/oce-egress/LICENSE \
+    && test -s /usr/share/doc/oce-egress/NOTICE \
+    && test -s /usr/share/doc/oce-egress/third-party-notices/INDEX.json \
     && groupadd --gid 10002 oce-tls \
     && groupadd --gid 10003 oce-authority \
     && useradd --uid 10002 --gid 10002 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin oce-tls \

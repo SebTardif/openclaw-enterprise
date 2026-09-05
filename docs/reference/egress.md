@@ -1,5 +1,8 @@
 # External model egress packaging
 
+See the [adapter flow](../flows/external-model-egress.md) for the implemented
+request sequence and the required canonical authority boundary.
+
 This component packages the selected DS-derived DNS admission and TLS custody
 adapters as `oce-dnsgate` and `oce-egress`. The adapters run outside the untrusted
 Agent. The DNS process owns narrowly scoped namespace firewall enforcement; the
@@ -49,6 +52,21 @@ share provider file mounts.
 
 ## Image build
 
+The selected source and its attribution are in
+[dataplane](../../dataplane/README.md). Prepare dependencies separately from
+verification. On Linux `amd64`, install the pinned toolchain and fetch the locked
+Cargo inputs through the configured registry:
+
+```sh
+rustup toolchain install 1.95.0 --profile minimal
+cargo +1.95.0 fetch --manifest-path dataplane/Cargo.toml --locked --target x86_64-unknown-linux-gnu
+node scripts/build-mvp.mjs native
+```
+
+The native build itself is offline and locked. It requires an installed C compiler
+and assembler for Ring. It does not install or reconcile dependencies. TypeScript
+workspace preparation remains covered by the [quickstart](../guides/quickstart.md).
+
 The image recipe is [deploy/egress/Dockerfile](../../deploy/egress/Dockerfile). It
 accepts only the base recorded by
 [runtime-packages.lock.json](../../deploy/egress/runtime-packages.lock.json):
@@ -69,8 +87,10 @@ The native build must produce exactly
 `.build/mvp/native/oce-dnsgate` and `.build/mvp/native/oce-egress`, using the selected
 eight-member Rust workspace and the repository's pinned Rust toolchain. The image
 does not include the stock DS executables, mint, host/tap tooling, or a fallback
-binary. Preserve the selected source and dependency license notices when
-distributing the final image.
+binary. The recipe copies the source license, attribution, source manifest, and
+Cargo/Rust library notices into `/usr/share/doc/oce-egress/`. OS package notices
+remain separate. Verify those contents in an actual built image before
+distribution; the recipe alone does not establish delivery.
 
 Run the repository's `image-egress` build target with
 `OCC_BUILD_EGRESS_BASE_IMAGE` set to the pinned reference above and
@@ -193,9 +213,14 @@ node deploy/egress/local.mjs down oce-egress-local
 ```
 
 DNS shutdown keeps the namespace's deny floor; an existing table is not treated
-as reconstructed current authority on restart. Recreate the whole local project
-with `down` followed by `up`, rather than independently restarting DNS while TLS
-still uses its old network namespace. The local TLS service uses Docker's
+as reconstructed current authority on restart. The candidate also retains at most
+4096 operation fences for its process lifetime and refuses new operations when
+that capacity is exhausted. Replacing the namespace requires a fresh canonical
+authority incarnation until durable recovery is implemented. The helper cannot
+restart or authenticate that separately supplied authority on the operator's
+behalf. Once that prerequisite is satisfied, recreate the whole local project
+with `down` followed by `up`; independently restarting DNS while TLS still uses
+its old namespace is unsupported. The local TLS service uses Docker's
 unprivileged init process to forward SIGTERM to the native process, which closes
 its sockets;
 it has no graceful stream-drain protocol. An interrupted provider operation
