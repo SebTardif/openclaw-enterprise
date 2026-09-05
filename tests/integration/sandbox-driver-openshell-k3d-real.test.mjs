@@ -561,6 +561,9 @@ function createIntegrationSandboxDriverFactory(
     function optionsFor(requirements, namespaceName, endpoint) {
       const options = structuredClone(selection.configuration);
       options.gateway.endpoint = endpoint;
+      // Every lifecycle phase must exercise the selected native build, including cleanup.
+      options.gateway.binaryPath =
+        process.env.OCC_RUNTIME_SECURITY_BINARY ?? options.gateway.binaryPath;
       options.gateway.readiness = {
         ...options.gateway.readiness,
         serviceName: `openshell-${hash(namespaceName, 10)}`,
