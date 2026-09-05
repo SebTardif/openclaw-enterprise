@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./ports/platform-read-view": "./src/ports/platform-read-view.ts",
     "./ports/platform-unit-of-work": "./src/ports/platform-unit-of-work.ts",
+    "./ports/provider-account-links": "./src/ports/provider-account-links.ts",
     "./ports/repositories/agent": "./src/ports/repositories/agent.ts",
     "./ports/repositories/audit": "./src/ports/repositories/audit.ts",
     "./ports/repositories/channel-bindings": "./src/ports/repositories/channel-bindings.ts",

@@ -1,4 +1,12 @@
-import type { ProviderDefinition, ProviderSummary } from "@openclaw-enterprise/contracts";
+import type {
+  ProviderDefinition,
+  ProviderSummary,
+  ServiceAccountDriver,
+} from "@openclaw-enterprise/contracts";
+import type {
+  ProviderAccountLinksAccess,
+  ProviderAccountLinkCompensation,
+} from "@openclaw-enterprise/occ/ports/provider-account-links";
 import {
   validateProviderDefinitions,
   type OpenClawController,
@@ -12,9 +20,28 @@ import {
 } from "../startup-config/schema.ts";
 
 export type ServiceAccountDriverFactory = (
+  dependencies: ProviderAccountLinkCompensation & {
+    readonly providerAccountLinks: ProviderAccountLinksAccess;
+  },
+) => ServiceAccountDriver;
+
+export function initializeServiceAccountDriver(
+  factory: ServiceAccountDriverFactory,
   controller: OpenClawController,
   state: PostgresPlatformState,
-) => void;
+): void {
+  const driver = factory({
+    providerAccountLinks: {
+      run: (work) =>
+        controller.transact((unit) => work(state.providerAccountLinksInTransaction(unit))),
+    },
+    registerRollback: (rollback) => controller.registerRollback(rollback),
+  });
+  controller.registerDriver(driver);
+  if (controller.selectDriver("service_account", driver.id) !== driver) {
+    throw new Error("The configured ServiceAccount Driver was not selected correctly.");
+  }
+}
 
 export function selectedServiceAccountConfiguration(
   value: unknown,

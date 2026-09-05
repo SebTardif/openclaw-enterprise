@@ -25,7 +25,8 @@ provider internals, and future broker substitution are outside this flow.
   Agent deployment action: authorized exact Secret references, same-Namespace
   bindings, exact Agent assignment authority, and an approved Harness/Compute
   selection.
-- Source: [HTTP handlers](../../apps/controller/src/index.ts),
+- Source: [Secret HTTP handlers](../../apps/controller/src/routes/secret.ts),
+  [SecretService](../../packages/occ/src/services/secret/service.ts),
   [OpenClawController](../../packages/occ/src/index.ts), and
   [KubernetesSecretDriver](../../apps/controller/src/drivers/secret/kubernetes/index.ts).
 
@@ -56,15 +57,19 @@ graph TD
 
 ### 1. Authorize storage without requiring a gateway
 
-`packages/occ/src/index.ts:OpenClawController.createSecret`
+`packages/occ/src/services/secret/service.ts:SecretService.createSecret`
 
-[OpenClawController.createSecret](../../packages/occ/src/index.ts) validates
+[SecretService.createSecret](../../packages/occ/src/services/secret/service.ts) validates
 bounded, nonempty UTF-8 input and locks the Namespace. The caller needs `create`
 on the Namespace's Secret collection. The Namespace must already be ready; an
 Agent record does not need to exist. OCC selects the
 Installation SecretDriver, generates the Secret identity, and prevents the
 caller from choosing Kubernetes backend identity. The value stays in protected
 request/driver memory, never in the reconciliation queue or resource metadata.
+
+The controller composes the service with the shared mutation owner, exact
+authorization, and selected Driver. Its error sanitizer remains in composition;
+backend errors cannot disclose Secret values through the service response.
 
 ### 2. Store material and commit safe identity
 
@@ -142,9 +147,9 @@ trust boundary.
 
 ### 5. Update, restart, or remove
 
-`packages/occ/src/index.ts:OpenClawController.updateSecret`
+`packages/occ/src/services/secret/service.ts:SecretService.updateSecret`
 
-[updateSecret](../../packages/occ/src/index.ts) serializes the write and uses
+[SecretService.updateSecret](../../packages/occ/src/services/secret/service.ts) serializes the write and uses
 Kubernetes concurrency/ownership checks. It changes only the stored value; the
 response retains the same ref. No revision, binding, or running environment is
 updated, and no controller automatically restarts the gateway. A successful update
@@ -156,7 +161,7 @@ older admitted revision also reads the current value; failed cutover does not
 restore old secret bytes. Revoking `operate` blocks new OCC admission, not
 kubelet process starts or already delivered bytes.
 
-[deleteSecret](../../packages/occ/src/index.ts) rejects current Configuration,
+[SecretService.deleteSecret](../../packages/occ/src/services/secret/service.ts) rejects current Configuration,
 active revision, and pending-work dependencies under the same serialization
 boundary. Once unreferenced, it deletes only the exact Namespace-owned backend and metadata.
 A partial delete can be retried; missing or foreign objects never become an

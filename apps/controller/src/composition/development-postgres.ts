@@ -27,6 +27,7 @@ import type {
   ServiceAccountDriverFactory,
 } from "./installation-config.ts";
 import { providerSummariesFromDefinitions } from "./installation-config.ts";
+import { initializeServiceAccountDriver } from "./driver-factories/service-account.ts";
 import type { LoggingConfiguration, OccLogger } from "../logging.ts";
 import { resolveApprovedHarness } from "./production-harness.ts";
 import type { ControllerWorkspaceFilesAccess } from "../gateway/contracts.ts";
@@ -170,7 +171,8 @@ export async function composePostgresDevelopment(
         throw new Error("The selected Secret Driver was not selected correctly.");
       }
     }
-    serviceAccountDriverFactory?.(controller, state);
+    if (serviceAccountDriverFactory !== undefined)
+      initializeServiceAccountDriver(serviceAccountDriverFactory, controller, state);
     await controller.validateProviderConfiguration();
 
     let workspaceFilesAccess = config.workspaceFilesAccess;
