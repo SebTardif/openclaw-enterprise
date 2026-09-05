@@ -15,6 +15,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Build graph](reference/build.md): inspect explicit TypeScript, Rust, and image dependencies; prepare inputs separately from offline source builds.
 
 - [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
+- [Native service peer transport](reference/native-service-peer.md): authenticate and own in-process mutual TLS connections; service roles and runtime authority remain separate.
 
 ## Architecture
 
