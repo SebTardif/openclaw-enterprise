@@ -16,8 +16,9 @@ model tests require the setup below. Run commands from the repository root.
 include skipped infrastructure tests; it is not proof that every integration
 ran. Run prepared infrastructure suites by exact filename, one suite at a time.
 The `pnpm test`, `pnpm test:conformance`, `pnpm test:integration`, and
-`pnpm test:postgres` scripts run `scripts/verify-workspace-boundary.mjs` before
-the Node.js test runner.
+`pnpm test:postgres` scripts run `scripts/verify-workspace-boundary.mjs` and
+`scripts/verify-module-boundaries.mjs` before the Node.js test runner.
+`pnpm check:workspace` runs both checks without selecting tests.
 
 Keep their variables scoped to a subshell or one test process. In particular,
 the OpenShell suite detects **any** configured test database, Kubernetes context,
@@ -25,6 +26,36 @@ or runtime image as selection, then requires its explicit opt-in and full setup.
 Running `pnpm test:integration` after exporting only `OCC_TEST_DATABASE_URL` can
 therefore fail in OpenShell. Setting `OCC_TEST_OPENSHELL_K3D_REAL=0` does not
 override that selection behavior.
+
+## Module boundaries
+
+The module checker reads active application and package source with the existing
+TypeScript parser. It checks imports, re-exports, known constant dynamic paths,
+source URLs, and dependency anchors without executing application modules.
+Package manifests define supported root and subpath exports. New contract,
+service, worker, provider, and console leaves join the graph automatically.
+
+Run `node scripts/verify-module-boundaries.mjs` after dependencies are installed;
+the checker never installs them. Add `--json` for the complete graph and
+untruncated diagnostics. Runtime cycles are reported separately from cycle
+groups that require erased type edges. The broader type-involving groups can
+also contain a runtime cycle. Inline `import { type T }` and `export { type T }`
+retain runtime module evaluation and count as runtime edges.
+
+The policy is in `scripts/module-boundaries/policy.json`. Existing violations
+are explicitly recorded in `exceptions.json` with the exact path, import form,
+imported symbols, capability owner, and removal condition. An exception does
+not claim its dependency is fixed: remove it when the import is corrected, or
+the stale-exception check fails. The configured installed Driver loader has an
+exact exception because its validated runtime target cannot be enumerated
+statically. Unresolved local or dynamic imports fail. Package import aliases
+and unsupported export-map forms also fail for review; the checker does not
+analyze external dependency internals or code embedded in runtime-script strings.
+
+The focused checker cases run with
+`node --test tests/conformance/module-boundaries.test.mjs`. Keep conformance,
+integration, and browser tests flat under their existing runner directories;
+PostgreSQL suites also retain the `postgres-*.test.mjs` name for focused discovery.
 
 ## Integration Tests
 
