@@ -4,6 +4,19 @@ import { check, LIMITS, summarize } from "./evidence.mjs";
 import { collect, exportCandidate, loadAttempt, readJson } from "./collector.mjs";
 
 const readArgument = (path) => readJson(dirname(resolve(path)), basename(path), LIMITS.bundleBytes);
+// Stream errors arrive asynchronously, outside the command's try/catch. Emit
+// one fixed fallback, never a raw stack/path or another write to failed stdout.
+let outputFailed = false;
+process.stderr.on("error", () => {
+  process.exitCode = 1;
+});
+process.stdout.on("error", () => {
+  process.exitCode = 1;
+  if (!outputFailed) {
+    outputFailed = true;
+    process.stderr.write('{"status":"failure","reasonCode":"output-unavailable"}\n');
+  }
+});
 const output = (value) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 try {
   const [command, ...args] = process.argv.slice(2);

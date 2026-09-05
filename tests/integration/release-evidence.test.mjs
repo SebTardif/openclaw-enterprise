@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { watch } from "node:fs";
+import { closeSync, openSync, watch } from "node:fs";
 import {
   chmod,
   link,
@@ -14,27 +14,21 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import {
-  registry,
-  validateRegistry,
-  REGISTRY_DIGEST,
-} from "../../scripts/release-evidence/registry.mjs";
+import { registry, validateRegistry } from "../../scripts/release-evidence/registry.mjs";
 import {
   assertionCounts,
   digest,
   resultOutcome,
   summarize,
   validateAttempt,
-  validateMetadata,
 } from "../../scripts/release-evidence/evidence.mjs";
 import {
   collect,
   exportCandidate,
   loadAttempt,
-  projectObservations,
   readBounded,
 } from "../../scripts/release-evidence/collector.mjs";
 import { fixture, inputs } from "../fixtures/release-evidence/fixture.mjs";
@@ -583,4 +577,50 @@ test("expired retention blocks current coverage while preserving original failur
   const future = structuredClone(attempt);
   future.metadata.endedAt = "2099-01-01T00:00:00.000Z";
   assert.throws(() => validateAttempt(future, inputs), /collection-before-execution/);
+});
+
+test("future-dated imported collection cannot bypass current age validation", async (t) => {
+  const { attempt, request } = await collected(t);
+  attempt.collection.collectedAt = "2099-01-01T00:00:00.000Z";
+  attempt.collection.retention.expiresAt = "2099-01-02T00:00:00.000Z";
+  assert.throws(() => validateAttempt(attempt, inputs), /future-collection/);
+  assert.throws(() => summarize([attempt], inputs), /future-collection/);
+  await writeFile(join(request.outputDirectory, "manifest.json"), JSON.stringify(attempt));
+  await assert.rejects(loadAttempt(request.outputDirectory, inputs), /future-collection/);
+});
+
+test("noncanonical output through a symlink never creates a directory outside the selected parent", async (t) => {
+  const { request, root } = await setup(t);
+  const intended = join(root, "intended");
+  const outside = join(root, "outside");
+  await mkdir(intended);
+  await mkdir(outside);
+  await mkdir(join(outside, "nested"));
+  await symlink(join(outside, "nested"), join(intended, "alias"));
+  request.outputDirectory = `${intended}/alias/../escaped`;
+  assert.equal((await collect(request)).status, "failure");
+  await assert.rejects(lstat(join(outside, "escaped")));
+  await assert.rejects(lstat(join(intended, "escaped")));
+});
+
+test("CLI handles real ENOSPC stdout with fixed diagnostics and no raw stack", (t) => {
+  if (process.platform !== "linux") {
+    t.skip("requires Linux /dev/full");
+    return;
+  }
+  const descriptor = openSync("/dev/full", "w");
+  try {
+    const result = spawnSync(process.execPath, [cli, "registry"], {
+      stdio: ["ignore", descriptor, "pipe"],
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, '{"status":"failure","reasonCode":"output-unavailable"}\n');
+    const bothFailed = spawnSync(process.execPath, [cli, "registry"], {
+      stdio: ["ignore", descriptor, descriptor],
+    });
+    assert.equal(bothFailed.status, 1);
+  } finally {
+    closeSync(descriptor);
+  }
 });

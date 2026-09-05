@@ -37,7 +37,8 @@ node scripts/release-evidence/cli.mjs report inputs.json /absolute/path/to/first
 
 Collection takes a private request file with `sourceRoot`, `outputDirectory`,
 `metadata`, `sources`, `retention` and optional `canaries`. Supply absolute existing
-source/parent directories and a **new** output directory. Input filenames must
+source/parent directories and a **new** output directory. Directory paths must be
+canonical absolute paths without `.`/`..` components or symlink ancestors. Input filenames must
 contain only letters, digits, hyphens, underscores and the `.json` suffix; nested
 source directories use the same restricted names. The output directory is created
 with mode `0700`, files with `0600`. Existing output directories are rejected.
@@ -92,7 +93,7 @@ mediated or history-isolated repository profiles are not added to this denominat
 
 The JavaScript validators are the executable schema. All envelope fields are
 closed: unknown keys, unsupported versions, duplicate identities, missing values,
-invalid timestamps and inconsistent counts are rejected.
+invalid/future collection timestamps and inconsistent counts are rejected.
 
 `inputs.json` has these fields:
 
@@ -277,7 +278,7 @@ The focused tests exercise the real registry, projection, filesystem collector,
 validator, rerun aggregation and CLI. They include adversarial synthetic records,
 unknown termination, missing events, partial channels/provider coverage, canaries,
 path/symlink/hardlink denial, unreadable/oversized/missing inputs, interrupted
-collection and unavailable output storage. They do not execute a live component
+collection, unavailable output storage and real Linux `/dev/full` stdout failure. They do not execute a live component
 fixture or claim Kata, SPIRE, Slack, Teams, model, native GitHub, PostgreSQL or
-release qualification. Full-disk hardware behavior and hard process termination
+release qualification. Artifact-filesystem ENOSPC behavior and hard process termination
 are not simulated as successful collection evidence.

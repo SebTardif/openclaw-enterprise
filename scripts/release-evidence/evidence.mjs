@@ -223,7 +223,8 @@ export function validateMetadata(value) {
     );
   return fixture;
 }
-export function validateAttempt(attempt, expectedInputs) {
+export function validateAttempt(attempt, expectedInputs, now = new Date().toISOString()) {
+  timestamp(now);
   exact(attempt, ["metadata", "artifacts", "collection", "counts", "outcome", "provenance"]);
   screen(attempt);
   const fixture = validateMetadata(attempt.metadata);
@@ -236,6 +237,7 @@ export function validateAttempt(attempt, expectedInputs) {
   timestamp(attempt.collection.retention.expiresAt);
   check(attempt.collection.retention.access === "owner-only", "invalid-access-policy");
   timestamp(attempt.collection.collectedAt);
+  check(attempt.collection.collectedAt <= now, "future-collection");
   check(attempt.metadata.endedAt <= attempt.collection.collectedAt, "collection-before-execution");
   check(
     attempt.collection.collectedAt < attempt.collection.retention.expiresAt &&
@@ -309,7 +311,7 @@ export function summarize(attempts, expectedInputs, now = new Date().toISOString
   const history = [];
   for (const attempt of attempts) {
     // A changed candidate invalidates old attempts, but does not delete them.
-    validateAttempt(attempt, attempt.metadata.inputs);
+    validateAttempt(attempt, attempt.metadata.inputs, now);
     const { runId, caseId, supersedes, executionClass } = attempt.metadata;
     if (seen.has(runId)) {
       check(isDeepStrictEqual(seen.get(runId), attempt), "conflicting-import");

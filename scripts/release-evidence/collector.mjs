@@ -23,6 +23,7 @@ const OBSERVATIONS_VERSION = "release-observations/v1";
 export async function safeDirectory(path) {
   check(isAbsolute(path), "absolute-directory-required");
   const normalized = resolve(path);
+  check(path === normalized, "canonical-directory-required");
   let cursor = parse(normalized).root;
   for (const part of normalized.slice(cursor.length).split("/").filter(Boolean)) {
     cursor = join(cursor, part);
@@ -75,9 +76,11 @@ export async function readJson(root, path, limit) {
 }
 async function createOutput(path) {
   check(isAbsolute(path), "absolute-directory-required");
-  await safeDirectory(dirname(resolve(path)));
-  await mkdir(path, { mode: 0o700 });
-  return safeDirectory(path);
+  const normalized = resolve(path);
+  check(path === normalized, "canonical-directory-required");
+  await safeDirectory(dirname(normalized));
+  await mkdir(normalized, { mode: 0o700 });
+  return safeDirectory(normalized);
 }
 async function writeExclusive(root, name, bytes) {
   relativeSource(name);
