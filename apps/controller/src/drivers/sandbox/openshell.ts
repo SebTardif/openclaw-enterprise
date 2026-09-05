@@ -16,7 +16,6 @@ import {
   GrpcOpenShellGatewayClient,
   type OpenShellGatewayClient,
   type OpenShellGatewayClientOptions,
-  OpenShellSandboxAlreadyExistsError,
   toProtobufStruct,
 } from "./openshell-gateway-client.ts";
 
@@ -384,7 +383,11 @@ function gatewayEndpoint(options: OpenShellSandboxDriverOptions, namespace: stri
     optionalPort(options.gateway.port, "OpenShell gateway port") ?? DEFAULT_GATEWAY_PORT;
   const scheme =
     options.gateway.scheme ??
-    (options.gateway.rootCertificatePath === undefined ? "http" : "https");
+    (options.gateway.rootCertificatePath !== undefined ||
+    options.gateway.clientCertificatePath !== undefined ||
+    options.gateway.auth?.mode === "bearerTokenFile"
+      ? "https"
+      : "http");
   const host = serviceName.includes(".") ? serviceName : `${serviceName}.${namespace}.svc`;
   return `${scheme}://${host}:${servicePort}`;
 }
@@ -402,6 +405,12 @@ function gatewayClientOptions(
     ...(options.gateway.rootCertificatePath === undefined
       ? {}
       : { rootCertificatePath: options.gateway.rootCertificatePath }),
+    ...(options.gateway.clientCertificatePath === undefined
+      ? {}
+      : { clientCertificatePath: options.gateway.clientCertificatePath }),
+    ...(options.gateway.clientPrivateKeyPath === undefined
+      ? {}
+      : { clientPrivateKeyPath: options.gateway.clientPrivateKeyPath }),
   };
 }
 
@@ -695,6 +704,8 @@ function validateOptions(options: OpenShellSandboxDriverOptions): void {
   optionalPort(options.gateway.port, "OpenShell gateway port");
   if (options.gateway.workspace !== undefined)
     nonempty(options.gateway.workspace, "OpenShell workspace");
+  // Validate transport configuration during startup without opening a channel.
+  new GrpcOpenShellGatewayClient(gatewayClientOptions(options, "validation"));
   if (options.gateway.readiness !== undefined) {
     nonempty(options.gateway.readiness.serviceName, "OpenShell gateway Service name");
     labels(options.gateway.readiness.podSelector, "OpenShell gateway Pod selector");
@@ -841,6 +852,11 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   }
 
   async provisionHarness(context: SandboxHarnessContext): Promise<SandboxResourceRef> {
+    if (context.revision.namespaceId !== context.namespace.id) {
+      throw new OpenShellSandboxConfigurationFailure(
+        "Refusing an AgentRevision outside its selected Namespace.",
+      );
+    }
     if (context.revision.harness.mode !== "dedicated" || context.revision.harness.id !== "codex") {
       throw new OpenShellSandboxConfigurationFailure(
         "OpenShell SandboxDriver only supports dedicated Codex Harness revisions.",
@@ -856,28 +872,20 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     }
     labels(context.requirements.labels, "Harness workload labels");
     const sandbox = this.sandboxRef(context);
-    let created;
-    try {
-      created = await this.gatewayClientForNamespace(sandbox.namespaceName).createSandbox(
-        {
-          name: sandbox.resourceName,
-          workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
-          labels: context.requirements.labels,
-          annotations: {
-            "openclaw.dev/namespace-id": context.revision.namespaceId,
-            "openclaw.dev/agent-id": context.revision.agentId,
-            "openclaw.dev/revision-id": context.revision.id,
-          },
-          spec: sandboxSpec(this.options, context.requirements),
+    const created = await this.gatewayClientForNamespace(sandbox.namespaceName).createSandbox(
+      {
+        name: sandbox.resourceName,
+        workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
+        labels: context.requirements.labels,
+        annotations: {
+          "openclaw.dev/namespace-id": context.revision.namespaceId,
+          "openclaw.dev/agent-id": context.revision.agentId,
+          "openclaw.dev/revision-id": context.revision.id,
         },
-        context.signal,
-      );
-    } catch (error) {
-      if (error instanceof OpenShellSandboxAlreadyExistsError) {
-        return Object.freeze(sandbox);
-      }
-      throw error;
-    }
+        spec: sandboxSpec(this.options, context.requirements),
+      },
+      context.signal,
+    );
     if (created.name !== sandbox.resourceName) {
       throw new OpenShellSandboxConfigurationFailure(
         "OpenShell returned a different Sandbox name than requested.",

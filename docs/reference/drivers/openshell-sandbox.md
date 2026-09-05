@@ -34,8 +34,9 @@ The OpenShell SandboxDriver owns only the provider sandboxing delegation:
   and checks gateway health. These operations are idempotent so multiple
   workers converge on one gateway.
 - `provisionHarness` asks the OpenShell gateway to create one OpenShell Sandbox
-  for the dedicated Codex Harness and returns the stable Sandbox reference
-  directly.
+  for the dedicated Codex Harness. It checks the returned identity and launch
+  specification against the request, then uses `GetSandbox` to verify the
+  gateway's persisted record before returning the stable Sandbox reference.
 - OpenShell's controller creates and owns the provider Harness Pod behind that
   Sandbox.
 - `cleanup` receives the immutable Agent revision and derives the stable
@@ -121,6 +122,87 @@ during `ensureNamespace`. Do not include Secrets in this array; the driver
 rejects Secret resources because OpenShell credentials must not be embedded in
 startup YAML.
 
+### Gateway transport and authentication
+
+Use an HTTPS endpoint with the gateway's trusted CA and the user authentication
+configured by its operator. Bearer credentials and TLS certificates are read
+from absolute file paths; they must not be embedded in startup YAML:
+
+```yaml
+gateway:
+  endpoint: https://openshell-gateway.example.internal:50051
+  workspace: default
+  rootCertificatePath: /run/openshell/ca.crt
+  clientCertificatePath: /run/openshell/client.crt
+  clientPrivateKeyPath: /run/openshell/client.key
+  auth:
+    mode: bearerTokenFile
+    path: /run/openshell/access-token
+  requestTimeoutMs: 10000
+```
+
+The client certificate and private key are optional as a pair; configure them
+when the gateway requires mutual TLS. Server certificate validation remains
+enabled. TLS files are loaded when the client channel is created; recreate the
+driver or restart the worker after rotating them. The bearer token file is read
+for each RPC, so an operator can replace an expiring token between requests.
+An omitted root certificate uses the platform trust store.
+
+For OpenShell's Kubernetes driver, mutual TLS authenticates the transport;
+the gateway also requires user authentication through OIDC bearer credentials
+or an operator-configured trusted access proxy. A client certificate alone
+does not establish workspace authorization. The caller needs the relevant
+workspace role and `sandbox:write` for create/delete plus `sandbox:read` for
+lookup. Gateway health is an unauthenticated upstream RPC and does not prove
+these permissions. See the upstream
+[gateway authentication architecture](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/architecture/gateway.md)
+and [RPC authorization declarations](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/proto/openshell.proto).
+
+Explicit `http://` and bare host/port endpoints remain available for
+unauthenticated local verification. The driver rejects bearer credentials or
+TLS files on these endpoints. When using `serviceName`, configuring a bearer
+token or TLS trust/client certificate selects HTTPS unless `scheme` is
+explicit; an explicit HTTP scheme with credentials fails startup.
+
+### Lifecycle correspondence checks
+
+The client checks both a successful create response and an authoritative
+`GetSandbox` response for the exact requested name, workspace, ownership labels,
+ownership annotations, and complete launch specification. It normalizes
+protobuf defaults before comparing the specification, retaining optional-field
+presence and nested driver configuration. Gateway-added metadata is allowed;
+requested metadata must match. A successful create followed by a different
+provider ID or a Sandbox being deleted fails reconciliation.
+
+`ALREADY_EXISTS`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, and `UNKNOWN` create
+statuses trigger one lookup. Only a matching persisted record permits success.
+Missing records, mismatching requests, malformed success responses, and denied
+reads remain failures. Cancellation prevents recovery and is rechecked after
+asynchronous client and credential initialization, before sending an RPC.
+It cannot roll back a request already accepted by the gateway. Gateway error
+details, credential contents, and local credential paths are excluded from
+surfaced RPC and credential-loading errors.
+
+These checks establish correspondence with the gateway's stored launch intent.
+They do not establish Pod readiness, physical Pod identity, or the policy
+currently enforced by the supervisor. OpenShell can layer or update runtime
+policy independently. The public API does not return an authoritative Pod UID
+or accept an immutable identity precondition on `DeleteSandbox`; name reuse
+between a lookup and deletion remains an upstream lifecycle limitation. A
+missing gateway record does not establish physical workload absence. Delete
+requires `deleted: true` or `NOT_FOUND`; it does not independently verify that
+the provider has removed every workload.
+
+The local wire schema includes all reachable launch fields from OpenShell
+`v0.0.113` and `v0.0.116`, including network credential and inspection policy
+fields. This allows drift in those fields to fail the comparison even when
+the bundled driver's configuration does not expose them. Its `NetworkBinary`
+field 2 matches upstream's deprecated boolean `harness` field. It provides no
+binary SHA-256 field. Source schemas are pinned to the official
+[OpenShell lifecycle proto](https://github.com/NVIDIA/OpenShell/blob/455883905a7ace88e6e69834dc0685bfc799ad44/proto/openshell.proto),
+[metadata proto](https://github.com/NVIDIA/OpenShell/blob/455883905a7ace88e6e69834dc0685bfc799ad44/proto/datamodel.proto),
+and [sandbox policy proto](https://github.com/NVIDIA/OpenShell/blob/455883905a7ace88e6e69834dc0685bfc799ad44/proto/sandbox.proto).
+
 `kubernetes.sandboxDataMount` must match exactly one approved dedicated Harness
 workspace mount. It may not mount the PVC root, may not use `..`, and must mount
 under `/sandbox/`.
@@ -184,7 +266,7 @@ depends on upstream/provider behavior matching this contract:
   creates for the Harness.
 - OpenShell must preserve the Harness's exact audience-bound, short-lived
   projected ServiceAccount token and read-only mount. Its gateway bootstrap
-  token is not a substitute. Stock OpenShell `v0.0.113` does not support
+  token is not a substitute. Stock OpenShell `v0.0.113` and `v0.0.116` do not support
   projected volumes in gateway driver configuration; the real k3d integration
   uses a test-only, operator-owned Sandbox Pod-template patch until upstream
   projected-volume support exists.
@@ -192,7 +274,7 @@ depends on upstream/provider behavior matching this contract:
   without falling back to its default workspace claim or mounting the PVC root.
 - OpenShell must support exact environment entries backed by Kubernetes
   `secretKeyRef`, including the startup app-server token Secret. Stock
-  OpenShell `v0.0.113` cannot receive those entries through the current gateway
+  OpenShell `v0.0.113` and `v0.0.116` cannot receive those entries through the current gateway
   API; the real k3d integration uses a test-only credential bridge until
   upstream secret support exists.
 - OpenShell gateway authentication must be bound to the trusted caller and the
@@ -203,6 +285,16 @@ fail closed instead of launching an unsandboxed or incorrectly credentialed
 Harness.
 
 ## Verification evidence
+
+[Gateway protocol integration](../../../tests/integration/openshell-gateway-protocol.test.mjs)
+uses actual local gRPC servers and generated TLS certificates to exercise wire
+encoding, create/readback correspondence, ambiguous status handling, cancellation,
+authenticated transport, certificate rejection, and sanitized failures. Run it
+with `node --test tests/integration/openshell-gateway-protocol.test.mjs` using the
+installed workspace dependencies, OpenSSL, and POSIX `mkfifo` for cancellation
+during a real credential-file read. It verifies the client transport
+and validation behavior; it does not run an upstream gateway or a Kubernetes
+provider.
 
 [Sandbox startup integration](../../../tests/integration/sandbox-driver-startup.test.mjs),
 [controller lifecycle integration](../../../tests/integration/controller-lifecycle.test.mjs),
