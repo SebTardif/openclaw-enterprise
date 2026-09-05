@@ -6,6 +6,12 @@ channel intake, admission, or dispatch. No configuration or service startup is
 required. Import its functions directly from
 `apps/controller/src/channels/shared-turn-receipt.ts`.
 
+The [manual binding resolver](channel-bindings.md#internal-candidate-mapping)
+consumes this identity for mapping-only checks. That connection does not add
+authenticated intake, durable history, or dispatch. See
+[Channels and delivery](channels.md) for the current boundaries and the
+[source flow](../flows/channel-delivery.md) for their separation.
+
 ## Normalized identity
 
 `parseReceiptIdentityV1(input)` accepts unknown input and returns either a frozen

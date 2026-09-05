@@ -195,6 +195,30 @@ sequenceDiagram
 See [Agent management](reference/agents.md) and the
 [Harness execution topology](flows/harness-execution-topology.md).
 
+## Channels and delivery state
+
+The Kubernetes channel profile runs native Slack and Teams configuration in
+each Agent's dedicated gateway, with gateway-only channel credentials and private
+runtime state. PostgreSQL
+owns controller resources, audit, and infrastructure work; it is not a gateway
+runtime database or a channel event inbox. The separate same-Agent workspace
+does not expose the private gateway claim to the dedicated Harness.
+
+Authenticated manual app, human, and Agent binding APIs now persist exact
+ownership and versioned status. Their internal resolver is mapping-only: it
+does not verify received events or the complete audience, admit a turn, or grant
+runtime authority. Receipt identity/classification helpers likewise perform no
+durable intake. These are separate from native plugin delivery and from the
+proposed independent inbox or shared-app outbound broker.
+
+Only Slack has documented live channel coverage; Teams still requires the
+separately reviewed public webhook and end-to-end verification. Retained gateway
+storage and ordinary readiness do not certify complete shared-Agent collaboration,
+safe cross-version rollback, host-loss recovery, or exactly-once external effects.
+See [channels](reference/channels.md), [manual bindings](reference/channel-bindings.md),
+the [source flow](flows/channel-delivery.md), and the proposal-only
+[channel roadmap](../specs/22-channel-hosting-roadmap.md).
+
 ## Security boundaries
 
 - Controller API access uses authenticated sessions; IAM authorizes each

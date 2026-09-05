@@ -37,6 +37,8 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Harness execution](reference/harness-execution.md) and
   [Controller reconciliation](reference/controller.md): runtime topology, deployment,
   and revision activation.
+- [Channels and delivery](reference/channels.md): current direct-channel topology,
+  binding versus admission, state ownership, and Slack/Teams verification limits.
 - [Security controls](reference/security.md), [settings](reference/settings.md),
   and [HTTP API](reference/api.md): access controls, deployment configuration, operational logging, and request schemas.
 - [Drivers](reference/README.md#drivers): select and configure compute, configuration,
@@ -54,6 +56,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   [production TUI attachment](flows/production-tui.md), and
   [shared platform startup](flows/platform-startup.md).
 - [Platform console requests](flows/platform-console.md).
+- [Channel configuration, mapping, and delivery](flows/channel-delivery.md):
+  follow the current source without treating proposed intake/brokerage as implemented.
 - [Controller worker](flows/controller-worker.md),
   [Harness execution and shared storage](flows/harness-execution-topology.md), and
   [common operational logging](flows/common-logging.md).
@@ -71,3 +75,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 ## Implementation history
 
 [Spec archive](../specs/README.md): proposals, delivery records, and recorded statuses.
+
+[Channel-hosting roadmap](../specs/22-channel-hosting-roadmap.md): proposed stages
+from direct gateways to durable intake, shared-app brokerage, and optional
+stronger availability; not current feature or release acceptance.

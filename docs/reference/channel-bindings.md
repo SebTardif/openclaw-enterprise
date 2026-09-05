@@ -11,6 +11,12 @@ bot, verify a sender or channel audience, admit a turn, or start an Agent. The
 controller has no public receipt-resolution or channel-ingress endpoint for this
 feature. See the [API reference](api.md) for generated request and response schemas.
 
+For direct native runtime behavior, see [Channels and delivery](channels.md)
+and the [source flow](../flows/channel-delivery.md). The
+[channel-hosting roadmap](../../specs/22-channel-hosting-roadmap.md) builds on
+these existing records; its durable inbox, conversation custody, and shared-app
+broker are proposals, not extra fields or authority in this API.
+
 ## Authority and prerequisites
 
 Every create, read, list, and status operation requires the selected IAM driver's

@@ -326,6 +326,11 @@ substitution, value history, and automatic rotation remain unimplemented.
 
 ### Native channel configuration
 
+See [Channels and delivery](channels.md) for topology, state ownership, and
+verification boundaries. Manual app/human/Agent mappings have their own
+[binding API](channel-bindings.md); saving either configuration surface does
+not establish verified provider delivery or durable turn admission.
+
 Configure channels directly in the Agent's complete native OpenClaw
 Configuration. The Kubernetes Compute Driver currently supports enabled
 `slack` and `msteams` providers; unknown enabled providers fail closed.

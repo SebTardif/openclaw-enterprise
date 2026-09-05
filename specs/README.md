@@ -40,9 +40,15 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+The [channel-hosting roadmap](22-channel-hosting-roadmap.md) is **Proposed**:
+direct-channel acceptance, independent durable intake, shared-app brokerage,
+and optional availability improvements. Its owning current reference is
+[Channels and delivery](../docs/reference/channels.md); integrating the proposal
+does not complete any implementation or release gate.
+
 | Implementation record                                                            | Recorded status                                                                                                                                                                            | Current reference                                                                                                                                         |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Common OpenTelemetry logging](20-common-otel-logging.md) | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md) |
+| [Common OpenTelemetry logging](20-common-otel-logging.md)                        | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable                                                                                            | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md)                                                    |
 | [Provider and related Drivers](17-provider-driver-abstraction.md)                | Implemented and locally verified in PR #8; live Provider proof pending                                                                                                                     | [Providers](../docs/reference/providers.md), [Agents](../docs/reference/agents.md), [ServiceAccount Driver](../docs/reference/drivers/service-account.md) |
 | [Development end-to-end guide](15-development-end-to-end-guide.md)               | Completed                                                                                                                                                                                  | [Development TUI guide](../docs/guides/deploy.md#development-end-to-end-tui); verified in `c208e48`                                                       |
 | [Feature Spec: Production interactive TUI](16-production-tui-end-to-end.md)      | Completed                                                                                                                                                                                  | [Deployment guide](../docs/guides/deploy.md#attach-with-the-openclaw-tui), [production TUI flow](../docs/flows/production-tui.md)                         |
