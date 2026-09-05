@@ -1,5 +1,15 @@
 # Operators must select an approved, immutable Node 24 base image explicitly.
 ARG NODE_BASE_IMAGE
+# Operators must also select an approved, immutable Go 1.26 build image.
+ARG GO_BASE_IMAGE
+FROM ${GO_BASE_IMAGE} AS native-build
+ENV GOTOOLCHAIN=local
+WORKDIR /src
+COPY components/runtime-security/go.mod components/runtime-security/go.sum ./
+RUN go mod download
+COPY components/runtime-security/ ./
+RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-security ./cmd/oce-runtime-security
+
 FROM ${NODE_BASE_IMAGE} AS dependencies
 
 WORKDIR /app
@@ -15,6 +25,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     corepack pnpm install --frozen-lockfile --prod --ignore-scripts
 
 FROM dependencies AS development
+COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
 ENV NODE_ENV=development
 WORKDIR /app
 
@@ -33,6 +44,7 @@ ENTRYPOINT ["node"]
 CMD ["apps/controller/src/server.mjs"]
 
 FROM ${NODE_BASE_IMAGE} AS runtime
+COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
 ENV NODE_ENV=production
 WORKDIR /app
 
@@ -54,7 +66,6 @@ COPY --chown=node:node migrations/meta/_journal.json migrations/meta/_journal.js
 COPY --chown=node:node scripts/migrate-production.mjs scripts/migrate-production.mjs
 COPY --chown=node:node scripts/bootstrap-installation.mjs scripts/bootstrap-installation.mjs
 COPY --chown=node:node scripts/production-healthcheck.mjs scripts/production-healthcheck.mjs
-COPY --chown=node:node scripts/check-workload-identity.mjs scripts/check-workload-identity.mjs
 
 USER node
 ENTRYPOINT ["node"]

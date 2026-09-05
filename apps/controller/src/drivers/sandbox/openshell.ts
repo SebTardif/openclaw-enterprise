@@ -13,10 +13,9 @@ import type {
   SandboxResourceRef,
 } from "@openclaw-enterprise/contracts";
 import {
-  GrpcOpenShellGatewayClient,
+  GoOpenShellGatewayClient,
   type OpenShellGatewayClient,
   type OpenShellGatewayClientOptions,
-  toProtobufStruct,
 } from "./openshell-gateway-client.ts";
 
 type ConfigurationRecord = Readonly<Record<string, unknown>>;
@@ -398,6 +397,7 @@ function gatewayClientOptions(
 ): OpenShellGatewayClientOptions {
   return {
     endpoint: gatewayEndpoint(options, namespace),
+    ...(options.gateway.binaryPath === undefined ? {} : { binaryPath: options.gateway.binaryPath }),
     ...(options.gateway.auth === undefined ? {} : { auth: options.gateway.auth }),
     ...(options.gateway.requestTimeoutMs === undefined
       ? {}
@@ -654,7 +654,7 @@ function sandboxSpec(
       runtime_class_name: options.kubernetes.runtimeClassName,
       labels: { ...requirements.labels },
       annotations: {},
-      driver_config: { fields: toProtobufStruct({ kubernetes: driverConfig }) },
+      driver_config: { kubernetes: driverConfig },
       ...(options.kubernetes.userNamespaces === undefined
         ? {}
         : { user_namespaces: options.kubernetes.userNamespaces }),
@@ -704,8 +704,8 @@ function validateOptions(options: OpenShellSandboxDriverOptions): void {
   optionalPort(options.gateway.port, "OpenShell gateway port");
   if (options.gateway.workspace !== undefined)
     nonempty(options.gateway.workspace, "OpenShell workspace");
-  // Validate transport configuration during startup without opening a channel.
-  new GrpcOpenShellGatewayClient(gatewayClientOptions(options, "validation"));
+  // Validate the configured native executable path without spawning a process.
+  new GoOpenShellGatewayClient(gatewayClientOptions(options, "validation"));
   if (options.gateway.readiness !== undefined) {
     nonempty(options.gateway.readiness.serviceName, "OpenShell gateway Service name");
     labels(options.gateway.readiness.podSelector, "OpenShell gateway Pod selector");
@@ -939,7 +939,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     const options = gatewayClientOptions(this.options, namespace);
     const existing = this.gatewayClients.get(options.endpoint);
     if (existing !== undefined) return existing;
-    const created = new GrpcOpenShellGatewayClient(options);
+    const created = new GoOpenShellGatewayClient(options);
     this.gatewayClients.set(options.endpoint, created);
     return created;
   }
