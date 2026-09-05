@@ -20,9 +20,14 @@ broker are proposals, not extra fields or authority in this API.
 ## Authority and prerequisites
 
 Every create, read, list, and status operation requires the selected IAM driver's
-`administer` permission on the server-owned singleton Installation. Existing human
-sessions and admitted Installation-scoped service principals can administer these
-records. Namespace-scoped keys and Agent-owned service principals cannot do so.
+`administer` permission on the server-owned singleton Installation. The eight
+operations on channel installations and human bindings additionally require an
+authenticated human session and a current explicit Installation-administrator
+mapping on a granting AccessBinding. An admitted service principal cannot perform
+those operations. See [Channel administration](channel-administration.md) for the
+mapping, request custody, and currentness boundaries. The four Agent-binding
+operations retain their existing human or Installation-scoped service admission;
+Namespace-scoped keys and Agent-owned service principals cannot administer them.
 Cookie-authenticated mutations use the controller's same-origin protection;
 invalid supplied service keys do not fall back to a session cookie.
 

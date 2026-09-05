@@ -32,6 +32,7 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  decodeChannelAdministrationMappingV1,
   isChannelBindingReference,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
@@ -690,7 +691,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         (
           await context.client.query(
             `SELECT id, namespace_id, identity_subject_id, group_subject_id, role_id,
-                    resource_kind, resource_id
+                    resource_kind, resource_id, channel_administration
              FROM occ.iam_access_bindings ORDER BY id`,
           )
         ).rows,
@@ -771,6 +772,12 @@ export class PostgresPlatformState implements PlatformStateStore {
         const groupSubjectId = optionalText(row, "group_subject_id");
         if ((identitySubjectId === undefined) === (groupSubjectId === undefined))
           throw new DependencyUnavailableError("Persisted IAM binding has an ambiguous subject.");
+        const mapping =
+          row.channel_administration === null || row.channel_administration === undefined
+            ? undefined
+            : decodeChannelAdministrationMappingV1(row.channel_administration);
+        if (mapping?.kind === "invalid")
+          throw new DependencyUnavailableError("Persisted IAM channel administration is invalid.");
         return immutableCopy({
           id: text(row, "id"),
           ...(namespaceId === undefined ? {} : { namespaceId }),
@@ -781,6 +788,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             ? {}
             : { resourceKind: resourceKind as NonNullable<AccessBinding["resourceKind"]> }),
           ...(resourceId === undefined ? {} : { resourceId }),
+          ...(mapping === undefined ? {} : { channelAdministration: mapping.value }),
         });
       });
 
@@ -863,11 +871,17 @@ export class PostgresPlatformState implements PlatformStateStore {
         ],
       );
       for (const binding of seed.bindings) {
+        const mapping =
+          binding.channelAdministration === undefined
+            ? undefined
+            : decodeChannelAdministrationMappingV1(binding.channelAdministration);
+        if (mapping?.kind === "invalid")
+          throw new DependencyUnavailableError("IAM channel administration is invalid.");
         await context.client.query(
           `INSERT INTO occ.iam_access_bindings
            (id, namespace_id, identity_subject_id, group_subject_id, role_id,
-            resource_kind, resource_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            resource_kind, resource_id, channel_administration)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
           [
             binding.id,
             null,
@@ -876,6 +890,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             binding.roleId,
             binding.resourceKind,
             binding.resourceId,
+            mapping === undefined ? null : JSON.stringify(mapping.value),
           ],
         );
       }
@@ -2776,11 +2791,17 @@ export class PostgresPlatformState implements PlatformStateStore {
       );
     }
     for (const binding of state.bindings) {
+      const mapping =
+        binding.channelAdministration === undefined
+          ? undefined
+          : decodeChannelAdministrationMappingV1(binding.channelAdministration);
+      if (mapping?.kind === "invalid")
+        throw new DependencyUnavailableError("IAM channel administration is invalid.");
       await context.client.query(
         `INSERT INTO occ.iam_access_bindings
          (id, namespace_id, identity_subject_id, group_subject_id, role_id,
-          resource_kind, resource_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          resource_kind, resource_id, channel_administration)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
         [
           binding.id,
           binding.namespaceId ?? null,
@@ -2789,6 +2810,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           binding.roleId,
           binding.resourceKind ?? null,
           binding.resourceId ?? null,
+          mapping === undefined ? null : JSON.stringify(mapping.value),
         ],
       );
     }

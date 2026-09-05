@@ -288,52 +288,63 @@ test(
     );
     await t.test(
       "service rejects an audit preimage from before an uncommitted app status change",
-      async () => {
-        const [{ ChannelBindingService }, { NativeIAMDriver }] = await Promise.all([
-          import("../../packages/occ/src/channel-bindings.ts"),
+      async (context) => {
+        const [
+          { createFastifyApp },
+          { OpenClawController },
+          { NativeIAMDriver },
+          { createTestAuthPrincipal, createAuthenticatedControllerRequest },
+        ] = await Promise.all([
+          import("../../apps/controller/src/index.ts"),
+          import("../../packages/occ/src/index.ts"),
           import("../../packages/iam/src/index.ts"),
+          import("../helpers/auth-session.mjs"),
         ]);
-        const admin = {
-          kind: "principal",
-          id: `prn_${randomUUID()}`,
-          issuer: "test-directory",
-          subject: randomUUID(),
-        };
-        const roleId = `rol_${randomUUID()}`;
-        // Preprovisioned native policy authorizes the actual service, without a
-        // test replacement for its authorization or transaction implementation.
-        const policy = {
-          identities: [admin],
+        const { auth, seed, email, password } = await createTestAuthPrincipal({
+          installationId: owner.installation.id,
+        });
+        const admin = seed.principal;
+        // The real IAM seed persists its explicit administrator registration.
+        // Better Auth remains an in-memory credential fixture; the real Fastify
+        // session and request path supply original human invocation custody.
+        await store.seedNativeIAM({
+          identities: [seed.principal],
           groups: [],
           memberships: [],
           restrictions: [],
-          roles: [
-            { id: roleId, permissions: [{ action: "administer", resourceKind: "installation" }] },
-          ],
-          bindings: [
-            {
-              id: `bnd_${randomUUID()}`,
-              subjectKind: "identity",
-              subjectId: admin.id,
-              roleId,
-              resourceKind: "installation",
-              resourceId: owner.installation.id,
-            },
-          ],
-        };
-        const iam = new NativeIAMDriver({ loadNativeIAMState: async () => policy });
-        const service = new ChannelBindingService({
-          state: store,
-          installationId: owner.installation.id,
-          iam: () => iam,
+          roles: seed.roles,
+          bindings: seed.bindings,
         });
-        const context = { actorId: admin.id, requestId: `test/${randomUUID()}` };
-        const app = await service.createInstallation(context, {
+        const iam = new NativeIAMDriver(store);
+        const controller = new OpenClawController(owner.installation, {
+          state: store,
+          recordOperations: false,
+        });
+        controller.registerDriver(iam);
+        controller.selectDriver("iam", iam.id);
+        const httpApp = createFastifyApp({
+          controller,
+          auth,
+          iamDriver: iam,
+          auditSink: store.auditSink,
+          publicOrigin: "http://127.0.0.1",
+          development: { enabled: true, installationId: owner.installation.id },
+        });
+        context.after(() => httpApp.close());
+        await httpApp.ready();
+        const request = await createAuthenticatedControllerRequest(httpApp, { email, password });
+        const created = await request("POST", "/api/channel-installations", {
           platform: "slack",
           providerTenantRef: `audit-race-${randomUUID()}`,
           recipientAppRef: "test-app",
         });
-        const auditsBefore = await store.transact((s) => s.audit.list());
+        assert.equal(created.status, 201, JSON.stringify(created));
+        const app = created.data;
+        const successfulAudits = async () =>
+          (await store.transact((s) => s.audit.list())).filter(
+            (event) => event.outcome === "success",
+          );
+        const auditsBefore = await successfulAudits();
         const locked = deferred(),
           release = deferred();
         const competing = store.transact(async (s) => {
@@ -351,12 +362,10 @@ test(
         await locked.promise;
         // READ COMMITTED sees version 1 while another transaction holds version 2
         // uncommitted. Expected version 2 cannot legitimize that older audit image.
-        const observed = service
-          .setInstallationStatus(context, app.id, { expectedVersion: 2, status: "enabled" })
-          .then(
-            (value) => ({ kind: "fulfilled", value }),
-            (error) => ({ kind: "rejected", error }),
-          );
+        const observed = request("PATCH", `/api/channel-installations/${app.id}`, {
+          expectedVersion: 2,
+          status: "enabled",
+        }).then((response) => ({ kind: "response", response }));
         let timer;
         try {
           const result = await Promise.race([
@@ -367,10 +376,11 @@ test(
           ]);
           assert.equal(
             result.kind,
-            "rejected",
+            "response",
             "the service must reject the older preimage before waiting for a future row version",
           );
-          assert.ok(result.error instanceof ResourceConflictError);
+          assert.equal(result.response.status, 409, JSON.stringify(result.response));
+          assert.equal(result.response.error.code, "RESOURCE_CONFLICT");
         } finally {
           clearTimeout(timer);
           release.resolve();
@@ -381,9 +391,9 @@ test(
         assert.equal(stored.status, "disabled");
         assert.equal(stored.version, 2, "the rejected request must not create version 3");
         assert.deepEqual(
-          await store.transact((s) => s.audit.list()),
+          await successfulAudits(),
           auditsBefore,
-          "the rejected request must not append an audit with a stale previous version",
+          "the rejected request must not append a successful mutation audit with a stale previous version",
         );
       },
     );
@@ -493,6 +503,14 @@ test(
           roleId: adminRole,
           resourceKind: "installation",
           resourceId: installationId,
+          channelAdministration: {
+            schemaVersion: 1,
+            version: 1,
+            status: "enabled",
+            installationId,
+            roleId: adminRole,
+            semanticClass: "installation-administrator",
+          },
         },
         ...[admin, ...humans].map((principal) => ({
           id: `bnd_${randomUUID()}`,

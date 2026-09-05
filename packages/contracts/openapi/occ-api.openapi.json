@@ -5718,7 +5718,7 @@
     },
     "/namespaces/{namespaceId}/agents/{agentId}/revisions/{revisionId}": {
       "get": {
-        "description": "Requires read permission on the requested AgentRevision.",
+        "description": "Requires read permission on the requested Agent. Requires read permission on the requested AgentRevision.",
         "operationId": "getAgentRevision",
         "parameters": [
           {
@@ -5983,6 +5983,7 @@
         "summary": "Get an exact authorized immutable Agent revision",
         "tags": ["Agent revisions"],
         "x-openclaw-permissions": [
+          { "action": "read", "resourceKind": "agent", "scope": "requested" },
           { "action": "read", "resourceKind": "agent_revision", "scope": "requested" }
         ]
       }
