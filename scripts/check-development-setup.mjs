@@ -47,6 +47,10 @@ function workspacePaths(text) {
   let packages = false;
   for (const line of text.split("\n")) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
+    if (line === "verifyDepsBeforeRun: error") {
+      packages = false;
+      continue;
+    }
     if (line === "packages:") {
       packages = true;
       continue;

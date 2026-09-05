@@ -149,6 +149,18 @@ test("unrecognized workspace syntax cannot produce a prepared report", (t) => {
   assert.equal(check(checkDevelopmentSetup(root), "dependencies").status, "incomplete");
 });
 
+test("the reviewed pnpm preparation policy preserves complete workspace checks", (t) => {
+  const root = fixture(t);
+  const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+  put(root, "pnpm-workspace.yaml", `verifyDepsBeforeRun: error\n\n${workspace}`);
+  const report = checkDevelopmentSetup(root);
+  assert.equal(check(report, "lock-importers").status, "ok");
+  assert.equal(check(report, "packages/consumer:pino").status, "ok");
+  // A different setting must not silently broaden the doctor's supported YAML.
+  put(root, "pnpm-workspace.yaml", `verifyDepsBeforeRun: install\n\n${workspace}`);
+  assert.equal(check(checkDevelopmentSetup(root), "dependencies").status, "incomplete");
+});
+
 test("SDK dependency links must retain the identities in the preparation receipt", (t) => {
   const root = fixture(t);
   const target = join(root, "external-dependency");
