@@ -977,17 +977,35 @@ example files and Helm installation.
 
 ### SPIFFE Workload API test environment
 
-These variables select only
-[`spiffe-workload-real.test.mjs`](../../tests/integration/spiffe-workload-real.test.mjs).
+These variables select only the Go identity package's real-provider tests.
 They do not change controller authentication or runtime Driver selection.
 
-| Variable                      | Meaning                                                               |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `OCC_TEST_SPIFFE_SOCKET_PATH` | Absolute protected Unix socket path of the real local SPIRE Agent.    |
-| `OCC_TEST_SPIFFE_ID`          | Exact SPIFFE workload ID registered for the actual Node test process. |
-| `OCC_TEST_SPIFFE_AUDIENCE`    | Explicit JWT audience used for issuance and validation.               |
+| Variable                      | Meaning                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `OCC_TEST_SPIFFE_SOCKET_PATH` | Absolute protected Unix socket path of the real local SPIRE Agent.  |
+| `OCC_TEST_SPIFFE_ID`          | Exact SPIFFE workload ID registered for the actual Go test process. |
+| `OCC_TEST_SPIFFE_AUDIENCE`    | Explicit JWT audience used for issuance and validation.             |
 
 Providing any one selects the test and requires all three. An unconfigured test
-skips. See [workload identity](workload-identity.md) for supported path/ID bounds,
-the programmatic client and the metadata-only diagnostic. Runtime components
-do not discover or consume these test settings automatically.
+skips. See [workload identity](workload-identity.md) and the
+[Go module](../../components/runtime-security/README.md) for the client,
+metadata-only native diagnostic and test commands.
+
+## Native runtime-security build and execution
+
+The controller image includes `/usr/local/bin/oce-runtime-security`, built from
+[`components/runtime-security`](../../components/runtime-security/README.md).
+Both production and development image targets require `GO_BASE_IMAGE` to name
+an approved digest-pinned Go 1.26 or newer builder. Compose passes this build
+argument through; a blank value fails image building. Native local development
+uses `pnpm build:native` with an installed Go toolchain.
+
+An OpenShell `gateway.binaryPath` override must be an absolute path to a trusted
+Go executable. The default is `/usr/local/bin/oce-runtime-security`. The
+controller invokes it directly, without a shell or inherited environment, and
+passes credentials by configured file paths in bounded stdin JSON. The Go
+component opens those files and handles TLS and gRPC.
+
+The Docker Compose real integration also requires `GO_BASE_IMAGE`, since it
+builds the development controller image. The production image startup check
+verifies that the packaged native executable can run.

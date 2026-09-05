@@ -1,207 +1,154 @@
 # SPIFFE Workload API source
 
-The controller package contains a standalone SPIFFE Workload API credential
-source for verification against an operator-provisioned local SPIRE Agent.
-It obtains the local caller's X.509-SVID and JWT-SVID and delegates JWT
-signature and audience validation to that same Agent. It is not wired into
-controller startup, request authentication, IAM authorization, Sandbox Drivers,
-or workload activation.
+The Go package `components/runtime-security/identity` obtains the local caller's
+X.509-SVID and JWT-SVID from an operator-provisioned SPIRE Agent. It uses the
+maintained `github.com/spiffe/go-spiffe/v2` Workload API client and identity
+parsers. JWT signature and audience validation is delegated to SPIRE.
 
-This source proves identity only for the process attested by the selected
-SPIRE Agent. A host-side probe does not establish the identity of an OpenShell
-sandbox guest. An SVID does not by itself prove the current Installation,
-Namespace, Agent, immutable revision, runtime assignment, or authorized
-operation. Those bindings remain separate platform responsibilities under the
-[platform design](../design.md).
+The source is available to explicit Go consumers and the native operator
+command. Controller authentication, IAM authorization, sandbox activation and
+remote workload transport do not automatically use it. An SVID alone does not
+establish a current Installation, Namespace, Agent, revision, runtime assignment
+or operation grant. See the [platform design](../design.md).
 
-## Trusted local endpoint
+## Trust and configuration
 
-The caller must provide both an absolute filesystem Unix socket path and one
-exact expected workload SPIFFE ID. The source has no automatic endpoint
-discovery or environment fallback. It rejects network URLs, Unix URI strings,
-relative or noncanonical paths, control characters, and paths exceeding 103
-bytes. The endpoint must already exist as a Unix socket; a socket symlink is
-rejected. Its parent directories and mount must be protected from replacement
-by untrusted processes. The filesystem check does not authenticate the server
-or eliminate races; provisioning and protecting the local SPIRE endpoint is
-the operator's responsibility.
+Supply an absolute, protected local Unix socket path and one exact expected
+SPIFFE identity. There is no environment discovery or fallback identity.
+The operator must protect the socket and its parent directories from replacement
+by untrusted processes. A pathname check does not authenticate an endpoint or
+prove that it belongs to a particular guest.
 
-SPIFFE IDs must use the lowercase `spiffe` scheme and a lowercase trust domain,
-with a non-root path composed of ASCII letters, digits, `.`, `_`, `-`, or `~`.
-Empty, dot, and dot-dot path segments, ports, user information, percent escapes,
-queries, and fragments are rejected. The source accepts a maximum of 2048
-characters and compares accepted IDs exactly, without normalization or prefix
-matching.
+The upstream Go parser handles SPIFFE identity syntax and X.509-SVID structure;
+OCE compares the selected identity to the configured expectation. The Go source
+uses the upstream certificate profile rather than interpreting Node's rendered
+SAN strings. This does not turn material acquisition into remote-peer
+certificate-path verification or current application authorization.
 
-All RPCs send the required `workload.spiffe.io: true` metadata. Transport uses
-local gRPC over the configured Unix socket. Workload and node attestation,
-registration policy, SVID issuance, and trust distribution are owned by SPIRE.
-There is no SPIRE administrative API client or automated server/Agent deployment
-in this component.
+SPIRE owns node/workload attestation, registration, issuance and trust-bundle
+delivery. This package exposes no administrative registration API and installs
+no SPIRE Server or Agent. A local host check cannot establish the identity of
+an OpenShell/Kata guest or separation between processes sharing a Unix UID.
 
-## X.509 source lifecycle
+## Source lifecycle
 
-`start()` opens `FetchX509SVID` and waits for the first acceptable response.
-The configured ID must appear exactly once. Other identities are never a
-fallback. Every message is a complete replacement: its selected SVID,
-certificate chain, private key, local bundle, global CRLs, and federated bundles
-replace the previous snapshot together.
+`identity.NewSource(identity.Options{...})` creates a source. `Start(ctx)` waits
+for its first acceptable X.509 update; the context controls the complete source
+lifetime. The exact configured identity must be present without ambiguity.
+Updates replace the selected certificate, key and bundle material together.
+Missing identity, invalid material, expiry, stream failure, cancellation or
+`Close()` withdraws availability. The previous snapshot cannot remain healthy
+after a failed update.
 
-The supported leaf profile has exactly one URI SAN and no other SAN entries:
-Node's certificate representation must equal `URI:<expected SPIFFE ID>`.
-This restricted profile matches the SPIRE default used by this integration.
-The SPIFFE specification permits additional SAN types; this component rejects
-them. This exact consistency check avoids interpreting ambiguous rendered SAN
-strings. Node/OpenSSL parses the DER certificates and unencrypted PKCS#8 key,
-checks that the leaf and key match, and checks certificate-chain validity
-times. The earliest chain expiry bounds source validity.
+The source is single-use after terminal failure. A consumer must construct a new
+source under its own bounded recovery policy. The wrapper cancels upstream
+watch/retry behavior when the source fails; reconnecting the provider cannot
+silently revive a retired source.
 
-These checks establish local credential consistency. They are **not** an
-RFC 5280 path validator, X.509 peer authenticator, revocation checker, TLS
-transport, or proof that a certificate issuer may represent a particular
-platform resource. CRLs and federated bundles are carried as source material;
-this component does not apply them to peer authentication.
+`Metadata()` returns identity, expiry and certificate counts. `Snapshot()`
+returns independent credential copies. Consumers must protect those copies,
+respect expiry and stop using retained credentials when the source fails.
+Closing a source cannot revoke already issued tokens or erase copies held by
+another component. Prefer metadata for diagnostics.
 
-The source discards its snapshot on a missing or duplicate expected ID,
-malformed replacement, expired certificate, stream error/end/close, lifetime
-signal cancellation, or explicit `close()`. It never serves the previous
-snapshot after a failed replacement. There is no automatic reconnect: callers
-must create and start a new source after terminal failure. The first startup
-signal controls the whole source lifetime; repeated `start()` calls share the
-original startup operation and its signal.
-
-`getX509IdentityMetadata()` returns only the SPIFFE ID, expiry, and certificate
-counts. `getX509Identity()` returns independent copies of credential buffers.
-The source overwrites its retained private-key buffer when replacing or
-discarding a snapshot, but cannot revoke or erase copies already handed to a
-caller or internal cryptographic-library allocations. Consumers must protect
-private keys, honor expiry, and stop using cached credentials when the source
-fails. Prefer the metadata getter for diagnostics.
+```go
+source, err := identity.NewSource(identity.Options{
+    SocketPath: "/run/spire/agent.sock",
+    ExpectedSPIFFEID: "spiffe://example.org/controller",
+    Timeout: 10 * time.Second,
+})
+if err != nil {
+    return err
+}
+defer source.Close()
+if err := source.Start(ctx); err != nil {
+    return err
+}
+metadata, err := source.Metadata()
+```
 
 ## JWT operations
 
-`fetchJwtSvid({ audience })` requests only the configured SPIFFE ID and a single
-explicit audience, requires one exact identity match, then calls
-`ValidateJWTSVID` for the returned token. Fetching and validating share one
-operation deadline. It returns `{ spiffeId, expiresAt, token }` only after the
-local Agent accepts the token and its validated claims agree with the expected
-identity and audience.
+`FetchJWTSVID(ctx, audience)` requests the configured source identity for an
+explicit audience and returns a token only after the trusted local provider
+accepts it. `ValidateJWTSVID(ctx, token, audience, expectedPeerID)` requires
+provider validation, the exact expected subject and audience, and unexpired
+claims. The expected peer is independently configured by the trusted consumer;
+it must not come from unverified token contents.
 
-`validateJwtSvid({ token, audience, expectedSpiffeId })` asks SPIRE to validate
-the token for that exact audience. It then requires the response identity and
-`sub` claim to equal the independently configured expected peer ID, requires
-the audience array to contain the exact requested value, and requires an
-unexpired integer `exp`. It returns only `{ spiffeId, expiresAt }`. No
-unverified token payload is decoded or treated as identity. Multiple audience
-values in a validated token are supported; matching is exact membership, not
-wildcard or prefix matching.
+Successful validation supplies identity information. It does not authorize a
+resource operation or establish that a workload assignment remains current.
+The source does not log tokens, keys, raw certificates or provider exceptions.
+Operations require a live source and honor context cancellation and bounded
+request deadlines.
 
-JWT operations require a live, unexpired X.509 source and accept per-operation
-abort signals. The component does not cache JWTs or validated claims, and it
-does not log tokens, keys, or raw RPC errors. Successfully validated JWTs still
-need resource authorization and a current workload binding before any future
-runtime consumer may accept them.
+## Build and run
 
-## Running the diagnostic
-
-With Node 24 and an already provisioned SPIRE Agent, run from the repository
-root:
+Build the native component using the module's declared Go toolchain:
 
 ```sh
-node scripts/check-workload-identity.mjs \
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+./components/runtime-security/bin/oce-runtime-security identity check \
   --socket-path /run/spire/agent.sock \
   --spiffe-id spiffe://example.org/controller \
   --audience oce-local-diagnostic \
   --timeout-ms 10000
 ```
 
-The diagnostic prints a safe JSON summary; `--audience` additionally exercises
-JWT issuance and validation. It does not print credentials or change
-controller configuration. The socket and registered selectors must attest the
-actual diagnostic process; the ID in this example is not automatically
-registered.
+The diagnostic is implemented in Go and prints a versioned JSON metadata
+summary. The optional audience adds JWT issuance and validation. It exits
+nonzero for unavailable, mismatched or invalid identity. It changes neither
+controller configuration nor registration policy. The example ID must already
+be registered for the actual process.
 
-The programmatic entrypoint is
-`apps/controller/src/identity/index.ts`:
+The [module README](../../components/runtime-security/README.md) describes
+build, packaging and the controller process boundary. The production image
+contains `/usr/local/bin/oce-runtime-security`.
 
-```ts
-const source = createSpiffeWorkloadIdentitySource({
-  socketPath: "/run/spire/agent.sock",
-  expectedSpiffeId: "spiffe://example.org/controller",
-  timeoutMs: 10_000,
-});
-try {
-  await source.start({ signal });
-  const metadata = source.getX509IdentityMetadata();
-} finally {
-  source.close();
-}
-```
-
-The initial response and each complete JWT operation are bounded by a timeout
-of 1000–60000 ms, defaulting to 10000 ms. The persistent stream itself lasts
-until close, failure, cancellation, or credential expiry. gRPC receive messages
-are limited to 4 MiB. Each SVID list, certificate collection, CRL list, and
-federated bundle map has a maximum of 64 entries. JWTs are limited to 64 KiB,
-audiences to 2048 characters, and concurrent unary RPCs to 16. Exceeding these
-bounds fails the operation; oversized or invalid stream responses terminate
-the source.
-
-## Verification and troubleshooting
-
-Run the configuration and protocol tests with:
+## Verification
 
 ```sh
-node --test tests/conformance/spiffe-workload-configuration.test.mjs
-node --test tests/integration/spiffe-workload-api.test.mjs
+go -C components/runtime-security test -race ./...
+go -C components/runtime-security vet ./...
 ```
 
-The protocol suite exercises the actual component through gRPC over a local
-Unix socket, using the pinned public protocol and temporary, test-generated
-certificates. Its controlled server proves serialization, selection,
-replacement, bounded waits, cancellation, and failure behavior. It does not
-prove SPIRE attestation, cryptographic JWT validation by SPIRE, deployment
-isolation, or sandbox guest identity.
+The native protocol tests exercise actual local gRPC sockets, upstream generated
+messages and temporary test certificates. Controlled endpoints prove component
+behavior and error handling; they do not prove SPIRE attestation or production
+guest isolation.
 
-A separate test requires a real, explicitly provisioned SPIRE Agent and
-registration for the Node test process:
+Select a real SPIRE test only after provisioning an Agent and registration for
+the actual Go test process:
 
 ```sh
 OCC_TEST_SPIFFE_SOCKET_PATH=/run/spire/agent.sock \
 OCC_TEST_SPIFFE_ID=spiffe://example.org/controller \
 OCC_TEST_SPIFFE_AUDIENCE=oce-local-test \
-node --test tests/integration/spiffe-workload-real.test.mjs
+go -C components/runtime-security test ./identity -run TestRealSPIRE -count=1
 ```
 
-With none of these settings, the real test explicitly skips. Providing any
-setting selects the test and requires all three. This test exercises genuine
-local identity issuance and JWT validation, including denial of a wrong
-audience and rejection of a mismatched expected peer. It does not provision
-SPIRE or establish guest identity or platform authorization.
+With no real-provider settings, the test skips explicitly. Providing any selects
+the test and requires all three. Local issuance, rotation, denial and outage
+results must name the actual Go implementation and provider version. Earlier
+TypeScript checkpoint receipts are not Go implementation evidence.
 
-Errors use fixed, safe `SpiffeWorkloadIdentityError.code` values:
+## Troubleshooting
 
-| Code                    | Meaning and next action                                                                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `INVALID_CONFIGURATION` | Check explicit path, ID, audience, and timeout bounds.                                                                                                                               |
-| `UNAVAILABLE`           | Check the protected socket, Agent health, workload registration, and Agent-side validation diagnostics. Raw Agent details are deliberately omitted.                                  |
-| `IDENTITY_MISMATCH`     | The configured identity, supported sole-URI leaf, or validated audience/subject does not match. Correct registration or configuration; do not select another identity as a fallback. |
-| `INVALID_RESPONSE`      | Required credential or claim structure is invalid or exceeds a bound. Inspect the trusted Agent and supported profile.                                                               |
-| `EXPIRED`               | The source credential or JWT expired. Restore renewal and create a new source if its stream terminated.                                                                              |
-| `TIMEOUT`               | The first response or JWT operation exceeded the configured deadline.                                                                                                                |
-| `ABORTED`               | The operation or source lifetime signal was canceled.                                                                                                                                |
-| `CLOSED`                | This source was explicitly closed; create a new instance.                                                                                                                            |
-| `BUSY`                  | Sixteen unary RPCs are already in flight; bound caller concurrency.                                                                                                                  |
+- Verify that the configured socket exists and is protected, and that SPIRE's
+  registration attests the actual executable process.
+- Correct an identity mismatch through trusted registration or configuration;
+  do not select another returned identity as a fallback.
+- After expiry or lost provider availability, restore issuance and construct a
+  new source. A closed source remains closed.
+- Use the fixed source error code and bounded provider-side diagnostics.
+  Do not print SVID material or arbitrary provider exception text.
+- Keep unavailable guest attestation, remote mTLS and current assignment
+  authorization as explicit integration requirements.
 
-## Protocol sources
+## Upstream sources
 
-The unmodified public Workload API proto and its Apache-2.0 license are pinned
-under `apps/controller/src/identity/proto/`; its revision and SHA-256 are
-recorded in `NOTICE.md`. Only `FetchX509SVID`, `FetchJWTSVID`, and
-`ValidateJWTSVID` are used. The other methods retained in the complete upstream
-proto are not implemented by this source.
-
-Protocol behavior follows the public
-[SPIFFE Workload API](https://github.com/spiffe/spiffe/blob/99470b9abc825f14aa364dfa2c3b53b02ba5db5b/standards/SPIFFE_Workload_API.md),
-[X.509-SVID profile](https://github.com/spiffe/spiffe/blob/99470b9abc825f14aa364dfa2c3b53b02ba5db5b/standards/X509-SVID.md),
-and [JWT-SVID profile](https://github.com/spiffe/spiffe/blob/99470b9abc825f14aa364dfa2c3b53b02ba5db5b/standards/JWT-SVID.md).
+The module pins `github.com/spiffe/go-spiffe/v2` in `go.mod` and records dependency
+checksums in `go.sum`. It consumes that project's generated Workload API protocol
+and parsers. See the official [Go SPIFFE library](https://github.com/spiffe/go-spiffe),
+[Workload API specification](https://github.com/spiffe/spiffe/blob/99470b9abc825f14aa364dfa2c3b53b02ba5db5b/standards/SPIFFE_Workload_API.md),
+and [SPIRE 1.15.3](https://github.com/spiffe/spire/releases/tag/v1.15.3).

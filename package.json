@@ -36,7 +36,9 @@
     "test:conformance": "node scripts/verify-workspace-boundary.mjs && node --test tests/conformance/*.test.mjs",
     "test:integration": "node scripts/verify-workspace-boundary.mjs && node --test tests/integration/*.test.mjs",
     "test:console-browser": "node --test tests/browser/*.test.mjs",
-    "test:postgres": "node scripts/verify-workspace-boundary.mjs && node --test --test-concurrency=1 tests/integration/postgres-*.test.mjs"
+    "test:postgres": "node scripts/verify-workspace-boundary.mjs && node --test --test-concurrency=1 tests/integration/postgres-*.test.mjs",
+    "build:native": "go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security",
+    "test:native": "go -C components/runtime-security test -race ./... && go -C components/runtime-security vet ./..."
   },
   "devDependencies": {
     "@types/node": "24.13.3",

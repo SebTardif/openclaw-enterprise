@@ -182,7 +182,8 @@ Compute ownership. Docker dispatch continues in the
 [Docker Compose development flow](docker-compose-development.md).
 
 The bundled [OpenShell Sandbox Driver](../reference/drivers/openshell-sandbox.md)
-uses its gateway client to verify the create response and then read back the
+invokes the Go `oce-runtime-security` executable through a bounded subprocess
+adapter. The native gateway client verifies the create response and then reads back the
 Sandbox with `GetSandbox`. The name, workspace, caller-owned metadata and
 normalized launch specification must match, and the provider ID must stay
 stable across successful create/readback. A duplicate or uncertain create

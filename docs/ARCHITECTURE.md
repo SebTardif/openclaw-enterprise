@@ -291,9 +291,18 @@ current implementation.
 - [Kubernetes Compute Driver](reference/drivers/kubernetes-compute.md)
 - [Production Kubernetes deployment](guides/deploy.md)
 
-## Local workload identity provider
+## Native runtime-security components
 
-The controller source includes a [SPIFFE Workload API component](reference/workload-identity.md)
+The [`components/runtime-security` Go module](../components/runtime-security/README.md)
+implements OpenShell gateway operations and SPIFFE identity consumption.
+The controller invokes OpenShell operations through a versioned JSON subprocess
+boundary; the Go executable owns protocol, TLS, credential loading and exact
+readback checks. Both controller image targets include the executable built
+from the selected Go builder image.
+
+### Local workload identity provider
+
+The Go module includes a [SPIFFE Workload API component](reference/workload-identity.md)
 that receives X.509 material and fetches or validates audience-bound JWT-SVIDs
 from a configured trusted local Unix socket. It selects one exact identity and
 withdraws access when its stream or credential validity is lost. The operator

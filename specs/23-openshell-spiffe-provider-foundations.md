@@ -1,6 +1,6 @@
 # OpenShell and SPIFFE provider foundations
 
-Status: implemented for the provider protocol and local identity source scope.
+Status: Go implementation in verification for the provider protocol and local identity source scope.
 Full OpenShell/Kata launch and guest identity remain unqualified. Current behavior belongs to the
 [OpenShell reference](../docs/reference/drivers/openshell-sandbox.md) and
 [workload identity reference](../docs/reference/workload-identity.md).
@@ -34,6 +34,21 @@ authority.
   standalone local verification candidate. Local Unix workload attestation does
   not demonstrate identity delivery or caller binding inside a virtual machine.
 
+## Native implementation boundary
+
+The actual provider implementations are in the Go module
+`components/runtime-security`. Its `openshell` package uses generated bindings
+from the pinned upstream protobuf schema. Its `identity` package uses the
+maintained [go-spiffe/v2 SDK](https://github.com/spiffe/go-spiffe/releases/tag/v2.8.1)
+for Workload API and identity parsing. Its `cmd/oce-runtime-security` executable
+supplies both the operator identity diagnostic and a bounded, versioned
+OpenShell request/response protocol.
+
+The TypeScript controller keeps a thin process adapter for executable selection,
+framing, safe errors and cancellation. Protocol, identity, cryptography and
+credential handling execute in Go. The controller image builds and includes the
+native executable from an explicitly selected Go builder image.
+
 ## Implementation and acceptance
 
 | Component              | Required behavior                                                                                                                                                                  | Evidence                                                                                                                         |
@@ -66,19 +81,12 @@ increment.
 
 ## Completion evidence
 
-The OpenShell protocol suite passed 40 tests over actual local gRPC/TLS; its
-startup integration passed two additional cases. The SPIFFE configuration
-suite passed 19 cases and its Unix gRPC wire suite passed 37. The operator
-diagnostic's three tests passed after integrating the real source.
+Acceptance requires Go race tests and vet, actual local gRPC/TLS and Unix socket
+wire tests, a fresh real SPIRE 1.15.3 run against the Go source and diagnostic,
+and controller integration that invokes the compiled Go executable. TypeScript
+build and formatting checks cover the remaining controller process adapter.
 
-Native SPIRE 1.15.3 passed the checked-in real integration test without skips.
-A separate bounded fixture exercised 17 additional issue, renewal, denial,
-registration-removal, recovery and outage checks; actual diagnostic invocations
-also passed success and wrong-identity failure cases. The fixture used
-join-token node enrollment and Unix UID workload attestation. Those results do
-not prove separation between same-UID processes or the production guest path.
-
-TypeScript, formatting and workspace boundary checks passed for the worker
-implementations. Source and protocol files in the integrated tree match the
-tested worker revisions byte-for-byte. The listed suites ran separately. The
-remaining integration requirements above stay open.
+The prior TypeScript implementation and its live SPIRE receipts are historical
+checkpoint evidence. They do not qualify the Go implementation. Final native
+results belong in the accompanying verification record after those checks run.
+The remaining integration requirements above stay open.

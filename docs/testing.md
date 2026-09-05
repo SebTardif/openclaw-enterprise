@@ -597,35 +597,34 @@ remain; provider-account cleanup failures require explicit follow-up.
 - [Runtime image recipe](../deploy/runtime/README.md)
 - [Contributor integration boundaries](../AGENTS.md#running-integration-tests)
 
-## SPIFFE Workload API
+## OpenShell and SPIFFE Go components
 
-The [workload identity reference](reference/workload-identity.md) describes the
-local credential source and its exact trust boundary. Run its configuration,
-Unix gRPC wire, and operator command checks with:
+Build and check the native implementation before exercising the controller
+adapter:
 
 ```sh
-node --test tests/conformance/spiffe-workload-configuration.test.mjs \
-  tests/integration/spiffe-workload-api.test.mjs \
-  tests/integration/workload-identity-diagnostic.test.mjs
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+go -C components/runtime-security test -race ./...
+go -C components/runtime-security vet ./...
 ```
 
-The wire suite creates real local gRPC sockets and temporary certificates. It
-uses a controlled provider to test the source's protocol and lifecycle; it does
-not prove SPIRE attestation or JWT signature enforcement. `openssl` and local
-Unix socket creation must be available.
+Native wire tests require local socket creation. The controller adapter's tests
+must invoke the actual compiled executable. The [module README](../components/runtime-security/README.md)
+and [identity reference](reference/workload-identity.md) explain the native
+command and local identity boundary.
 
-For genuine provider interoperability, provision a real SPIRE Agent and a
-registration that attests the Node test process, then explicitly select:
+For genuine provider interoperability, provision SPIRE and a registration for
+the actual Go test process, then select:
 
 ```sh
 OCC_TEST_SPIFFE_SOCKET_PATH=/run/spire/agent.sock \
 OCC_TEST_SPIFFE_ID=spiffe://example.org/controller \
 OCC_TEST_SPIFFE_AUDIENCE=oce-local-test \
-node --test tests/integration/spiffe-workload-real.test.mjs
+go -C components/runtime-security test ./identity -run TestRealSPIRE -count=1
 ```
 
-Any of these settings selects the test and requires all three. Without them it
-skips explicitly. The test exercises actual issuance, JWT validation and wrong
-audience/peer refusal. Registration, server installation and guest attestation
-are outside this test. Keep local host evidence separate from an actual
-OpenShell/Kata deployment and from current runtime authorization.
+Any of these settings selects the real test and requires all three. Without
+them it skips explicitly. Keep native local SPIRE proof separate from actual
+Kubernetes/OpenShell/Kata guest attestation and current runtime authorization.
+The earlier TypeScript implementation's tests are historical checkpoint
+receipts, not validation of the native components.

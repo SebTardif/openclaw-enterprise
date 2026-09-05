@@ -124,6 +124,14 @@ startup YAML.
 
 ### Gateway transport and authentication
 
+The native [`openshell` Go package](../../../components/runtime-security/openshell/)
+implements the protocol, credentials, TLS, cancellation, and readback checks.
+The controller invokes `oce-runtime-security` through a bounded JSON subprocess
+adapter. Images include `/usr/local/bin/oce-runtime-security`; host development
+can set `gateway.binaryPath` to the absolute path of a locally compiled binary.
+This path is trusted operator configuration. See the
+[native build instructions](../../../components/runtime-security/README.md).
+
 Use an HTTPS endpoint with the gateway's trusted CA and the user authentication
 configured by its operator. Bearer credentials and TLS certificates are read
 from absolute file paths; they must not be embedded in startup YAML:
@@ -143,8 +151,8 @@ gateway:
 
 The client certificate and private key are optional as a pair; configure them
 when the gateway requires mutual TLS. Server certificate validation remains
-enabled. TLS files are loaded when the client channel is created; recreate the
-driver or restart the worker after rotating them. The bearer token file is read
+enabled. TLS files are loaded for each operation, so replacement credentials
+are picked up by the next operation. The bearer token file is read
 for each RPC, so an operator can replace an expiring token between requests.
 An omitted root certificate uses the platform trust store.
 
@@ -286,15 +294,18 @@ Harness.
 
 ## Verification evidence
 
-[Gateway protocol integration](../../../tests/integration/openshell-gateway-protocol.test.mjs)
-uses actual local gRPC servers and generated TLS certificates to exercise wire
-encoding, create/readback correspondence, ambiguous status handling, cancellation,
-authenticated transport, certificate rejection, and sanitized failures. Run it
-with `node --test tests/integration/openshell-gateway-protocol.test.mjs` using the
-installed workspace dependencies, OpenSSL, and POSIX `mkfifo` for cancellation
-during a real credential-file read. It verifies the client transport
-and validation behavior; it does not run an upstream gateway or a Kubernetes
-provider.
+The [native OpenShell package tests](../../../components/runtime-security/openshell/)
+use actual local gRPC servers and TLS certificates to exercise the generated
+wire encoding, create/readback correspondence, ambiguous statuses, cancellation,
+transport authentication, certificate rejection, and sanitized failures. Run
+`go -C components/runtime-security test -race ./openshell/...` with Go 1.26 or
+newer. These exercise the provider protocol, without running an upstream gateway
+or a Kubernetes provider.
+
+The [controller process integration](../../../tests/integration/openshell-native-bridge.test.mjs)
+executes the compiled Go binary and checks the controller's framing, errors and
+cancellation boundary. Build the native executable first. The earlier JavaScript
+protocol suite is superseded; its results are historical only.
 
 [Sandbox startup integration](../../../tests/integration/sandbox-driver-startup.test.mjs),
 [controller lifecycle integration](../../../tests/integration/controller-lifecycle.test.mjs),
