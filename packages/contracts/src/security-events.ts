@@ -484,26 +484,35 @@ function parse(input: unknown): SecurityEventV1 {
   if (event.reasonCode === "Stopped" && (event.action !== "stop" || event.result !== "completed"))
     reject();
   if (
+    event.reasonCode === "Disabled" &&
+    (event.category !== "lifecycle" || event.action !== "disable" || event.result !== "completed")
+  )
+    reject();
+  if (
     event.reasonCode === "StopUnconfirmed" &&
     (event.action !== "stop" || event.phase !== "unknown")
   )
     reject();
-  if (event.result === "revoked" && event.action !== "revoke") reject();
+  if (event.reasonCode === "ProviderConfirmed" && event.result !== "revoked") reject();
+  if (event.reasonCode === "Expired" && event.result !== "expired") reject();
   if (event.action === "revoke" && event.result === "completed") reject();
   if (event.credential?.destination === "model" && event.credential.mode !== "mediated") reject();
   if (
-    event.action === "revoke" &&
     event.result === "revoked" &&
-    (event.reasonCode !== "ProviderConfirmed" ||
+    (event.category !== "credential" ||
+      event.action !== "revoke" ||
+      event.reasonCode !== "ProviderConfirmed" ||
       event.observation?.source !== "credential_provider")
   )
     reject();
   if (
-    event.action === "revoke" &&
     event.result === "expired" &&
-    (event.reasonCode !== "Expired" ||
+    (event.category !== "credential" ||
+      !["expire", "revoke"].includes(event.action) ||
+      event.reasonCode !== "Expired" ||
       event.credential?.expiresAt === undefined ||
-      Date.parse(event.credential.expiresAt) > Date.parse(event.observation?.observedAt ?? ""))
+      event.observation === undefined ||
+      Date.parse(event.credential.expiresAt) > Date.parse(event.observation.observedAt))
   )
     reject();
   if (
@@ -587,6 +596,7 @@ export function projectSecurityEvent(
       if (
         typeof value !== "string" ||
         value.length === 0 ||
+        value.length > SECURITY_EVENT_POLICY.maxReferenceInputBytes ||
         new TextEncoder().encode(value).byteLength > SECURITY_EVENT_POLICY.maxReferenceInputBytes
       )
         reject();

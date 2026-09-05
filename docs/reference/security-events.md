@@ -164,7 +164,11 @@ stop cannot use a completed reason. `StopUnconfirmed` is an unknown stop result;
 runtime unreachability never establishes shutdown or deletion. Native token
 revocation uses `revoked` only with `ProviderConfirmed` from
 `credential_provider`; lack of confirmation is `unknown`. Observed expiry uses
-`expired` with reason `Expired` and an expiry timestamp no later than observation.
+credential action `expire` or `revoke`, result `expired`, reason `Expired`, and a
+required expiry timestamp no later than observation. Both actions reject an
+absent or future expiry timestamp. The reasons `Expired` and `ProviderConfirmed`
+require their corresponding terminal results; they cannot describe a failed
+operation. `Disabled` requires a completed lifecycle `disable` action.
 Expiry records cessation of token validity, not cancellation of earlier effects
 or provider-confirmed revocation. There is no unconditional off-sandbox
 revocation deadline in this contract.

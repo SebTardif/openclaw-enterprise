@@ -114,6 +114,7 @@ test("trusted reference resolution never exports arbitrary labels, URLs or crede
     "https://user:pass@example.invalid/path?token=value",
     "00000000-0000-4000-8000-ffffffffffff",
     "x".repeat(257),
+    "x".repeat(1024 * 1024),
   ]) {
     const { audit, context } = fixture();
     audit.requestId = value;
@@ -611,4 +612,48 @@ test("synthetic delivery: duplicate identity is scoped to its Installation", () 
   assert.equal(sink.disk.size, 2);
   sink.exportBatch();
   assert.equal(sink.exported.size, 2);
+});
+
+test("credential expiry requires an elapsed deadline for both expire and revoke", () => {
+  const prototype = structuredClone(
+    project(scenarios.find((s) => s.id === "revoke-expiry").context),
+  );
+  for (const action of ["expire", "revoke"]) {
+    for (const expiresAt of ["2025-12-31T23:59:59.000Z", prototype.observation.observedAt]) {
+      const event = { ...prototype, action, credential: { ...prototype.credential, expiresAt } };
+      assert.equal(parseSecurityEvent(event).result, "expired");
+    }
+    const future = {
+      ...prototype,
+      action,
+      credential: { ...prototype.credential, expiresAt: "2027-01-01T00:00:00.000Z" },
+    };
+    rejected(() => parseSecurityEvent(future));
+    const missing = { ...prototype, action, credential: { destination: "github", mode: "native" } };
+    rejected(() => parseSecurityEvent(missing));
+    rejected(() => parseSecurityEvent({ ...prototype, action, reasonCode: "ProviderConfirmed" }));
+  }
+  rejected(() => parseSecurityEvent({ ...prototype, action: "use" }));
+});
+
+test("completed credential and disable reasons reject contradictory action and result tuples", () => {
+  const confirmation = structuredClone(
+    project(scenarios.find((s) => s.id === "revoke-confirmed").context),
+  );
+  rejected(() => parseSecurityEvent({ ...confirmation, result: "failed" }));
+  rejected(() =>
+    parseSecurityEvent({
+      ...confirmation,
+      result: "failed",
+      observation: { ...confirmation.observation, source: "gateway" },
+    }),
+  );
+  const disabled = structuredClone(
+    project(scenarios.find((s) => s.id === "disable-observed").context),
+  );
+  rejected(() => parseSecurityEvent({ ...disabled, action: "read" }));
+  rejected(() => parseSecurityEvent({ ...disabled, result: "failed" }));
+  rejected(() => parseSecurityEvent({ ...disabled, category: "access" }));
+  const expired = structuredClone(project(scenarios.find((s) => s.id === "revoke-expiry").context));
+  rejected(() => parseSecurityEvent({ ...expired, result: "failed" }));
 });
