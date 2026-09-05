@@ -949,21 +949,28 @@ Use human sign-in for key recovery, human-issued keys, or account-only APIs:
 set -o pipefail
 umask 077
 export OCC_URL='https://<internal-occ-host>'
+export OCC_AUTH_BASE_URL='https://<configured-auth-origin>'
 export OCC_ADMIN_EMAIL='<first-admin@example.com>'
 export OCC_ADMIN_PASSWORD_FILE='/secure/occ/initial-admin-password'
 OCC_SESSION_DIRECTORY="$(mktemp -d)"
 export OCC_SESSION_COOKIE_JAR="$OCC_SESSION_DIRECTORY/cookies"
 python3 -c 'import json, os, pathlib, sys; json.dump({"email": os.environ["OCC_ADMIN_EMAIL"], "password": pathlib.Path(os.environ["OCC_ADMIN_PASSWORD_FILE"]).read_text().rstrip("\n")}, sys.stdout)' |
-  curl --fail-with-body --silent --show-error --cookie-jar "$OCC_SESSION_COOKIE_JAR" "$OCC_URL/api/auth/sign-in/email" -H 'Content-Type: application/json' --data-binary @- --output /dev/null
+  curl --fail-with-body --silent --show-error --cookie-jar "$OCC_SESSION_COOKIE_JAR" \
+    -H "Origin: $OCC_AUTH_BASE_URL" -H 'Content-Type: application/json' \
+    "$OCC_URL/api/auth/sign-in/email" --data-binary @- --output /dev/null
 curl --fail-with-body --silent --show-error --cookie "$OCC_SESSION_COOKIE_JAR" "$OCC_URL/installation"
 ```
 
 Development may use `OCC_URL="http://$(docker compose port controller 3000)"`
 with the configured development administrator credentials. Sign out when done:
+`Origin` must be the exact configured browser origin from `OCC_AUTH_BASE_URL`;
+`OCC_URL` is only the connection URL used by curl and may differ when operators
+reach the controller through a loopback port, proxy, or private network endpoint.
 
 ```bash
 curl --fail-with-body --silent --show-error \
   --cookie "$OCC_SESSION_COOKIE_JAR" --cookie-jar "$OCC_SESSION_COOKIE_JAR" \
+  -H "Origin: $OCC_AUTH_BASE_URL" \
   --request POST "$OCC_URL/api/auth/sign-out" --output /dev/null
 rm -- "$OCC_SESSION_COOKIE_JAR"
 rmdir -- "$OCC_SESSION_DIRECTORY"
@@ -980,7 +987,8 @@ export OCC_SERVICE_KEY_DIRECTORY='/secure/occ/service-keys'
 install -d -m 700 "$OCC_SERVICE_KEY_DIRECTORY"
 export OCC_SERVICE_KEY_FILE="$(mktemp "$OCC_SERVICE_KEY_DIRECTORY/key.XXXXXX")"
 curl --fail --silent --show-error --cookie "$OCC_SESSION_COOKIE_JAR" \
-  "$OCC_URL/api/auth/service-keys" -H 'Content-Type: application/json' \
+  -H "Origin: $OCC_AUTH_BASE_URL" -H 'Content-Type: application/json' \
+  "$OCC_URL/api/auth/service-keys" \
   --data '{"servicePrincipalId":"<service-principal-id>","namespaceId":"<namespace-id>","name":"nightly-reader","expiresIn":2592000}' \
   --output "$OCC_SERVICE_KEY_FILE"
 ```
@@ -1003,6 +1011,7 @@ and `403` for authenticated principals missing exact IAM permission.
 ```bash
 OCC_SERVICE_KEY_ID="$(python3 -c 'import json, os, pathlib; print(json.loads(pathlib.Path(os.environ["OCC_SERVICE_KEY_FILE"]).read_text())["data"]["id"])')"
 curl --fail --silent --show-error --cookie "$OCC_SESSION_COOKIE_JAR" \
+  -H "Origin: $OCC_AUTH_BASE_URL" \
   --request DELETE "$OCC_URL/api/auth/service-keys/$OCC_SERVICE_KEY_ID"
 ```
 
