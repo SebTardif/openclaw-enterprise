@@ -136,12 +136,15 @@ export const createMemoryChannelBindingRepository: RepositoryFactory<
       record.version !== expectedVersion ||
       (status !== "enabled" && status !== "disabled") ||
       !isChannelBindingReference(actorId) ||
-      !Number.isFinite(Date.parse(updatedAt)) ||
-      Date.parse(updatedAt) < Date.parse(record.createdAt)
+      !Number.isFinite(Date.parse(updatedAt))
     )
       channelConflict();
     if (record.status === status) return immutableCopy(record);
-    if (record.version === Number.MAX_SAFE_INTEGER) channelConflict();
+    if (
+      record.version === Number.MAX_SAFE_INTEGER ||
+      Date.parse(updatedAt) < Date.parse(record.createdAt)
+    )
+      channelConflict();
     const updated = immutableCopy({
       ...record,
       status,
