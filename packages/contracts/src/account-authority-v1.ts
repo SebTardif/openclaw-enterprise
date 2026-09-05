@@ -1,7 +1,9 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { immutableCopy } from "@openclaw-enterprise/utils";
-import type { AuthorizationRequest, Identity, PermissionAction, ResourceRef } from "./index.ts";
+import type { AuthorizationRequest, PermissionAction } from "./identity/authorization.ts";
+import type { Identity } from "./identity/identity.ts";
+import type { ResourceRef } from "./resources/scope.ts";
 import {
   AgentId,
   ConfigurationId,
