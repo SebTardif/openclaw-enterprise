@@ -39,7 +39,7 @@
     },
     {
       "rule": "unresolved-dynamic-import",
-      "from": "apps/controller/src/composition/installation-config.ts",
+      "from": "apps/controller/src/composition/driver-packages/loader.ts",
       "to": "",
       "specifier": "pathToFileURL(entryPath).href",
       "kind": "dynamic-import",
