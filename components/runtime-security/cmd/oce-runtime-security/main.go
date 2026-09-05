@@ -73,6 +73,8 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	stdout = boundedWriter{ctx: ctx, writer: stdout}
+	stderr = boundedWriter{ctx: ctx, writer: stderr}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help") {
 		_, err := io.WriteString(stdout, help)
 		if err != nil {
@@ -88,6 +90,39 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	_, _ = io.WriteString(stderr, "Invalid arguments. Use --help for supported commands.\n")
 	return 2
+}
+
+// A standalone caller may stop draining a pipe. Bound output as well as input,
+// allowing a short final diagnostic drain after cancellation without hanging.
+type boundedWriter struct {
+	ctx    context.Context
+	writer io.Writer
+}
+
+func (writer boundedWriter) Write(data []byte) (int, error) {
+	type writeResult struct {
+		count int
+		err   error
+	}
+	result := make(chan writeResult, 1)
+	go func() { count, err := writer.writer.Write(data); result <- writeResult{count, err} }()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case value := <-result:
+		return value.count, value.err
+	case <-timer.C:
+		return 0, context.DeadlineExceeded
+	case <-writer.ctx.Done():
+		drain := time.NewTimer(250 * time.Millisecond)
+		defer drain.Stop()
+		select {
+		case value := <-result:
+			return value.count, value.err
+		case <-drain.C:
+			return 0, writer.ctx.Err()
+		}
+	}
 }
 
 // Reject duplicate keys and excessive nesting before decoding typed fields;

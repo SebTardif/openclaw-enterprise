@@ -331,8 +331,19 @@ test(
 test("production image executes the Go OpenShell component", imageTestOptions, async () => {
   const probe = String.raw`
     import assert from "node:assert/strict";
+    import { readFile } from "node:fs/promises";
     import { GoOpenShellGatewayClient } from "./apps/controller/src/drivers/sandbox/openshell-gateway-client.ts";
 
+    const licenses = "/usr/share/licenses/oce-runtime-security";
+    const modules = await readFile(licenses + "/modules.tsv", "utf8");
+    assert.match(modules, /github.com\/spiffe\/go-spiffe\/v2\tv2\.8\.1/);
+    assert.match(modules, /google.golang.org\/grpc\tv1\.79\.3/);
+    assert.match(modules, /google.golang.org\/protobuf\tv1\.36\.11/);
+    for (const file of ["openshell/LICENSE", "openshell/NOTICE.md", "go/LICENSE",
+      "modules/github.com/spiffe/go-spiffe/v2/LICENSE", "modules/google.golang.org/grpc/NOTICE.txt",
+      "modules/github.com/go-jose/go-jose/v4/json/LICENSE", "modules/google.golang.org/protobuf/LICENSE"]) {
+      assert.ok((await readFile(licenses + "/" + file, "utf8")).length > 0);
+    }
     const client = new GoOpenShellGatewayClient({
       endpoint: "127.0.0.1:9",
       auth: { mode: "unauthenticated" },

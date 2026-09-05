@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openclaw/openclaw-enterprise/components/runtime-security/openshell"
 )
@@ -90,5 +93,40 @@ func TestIdentityFailurePrintsNoSocketOrSPIFFEInput(t *testing.T) {
 	code := run(context.Background(), []string{"identity", "check", "--socket-path", "/not-present-must-not-echo/agent.sock", "--spiffe-id", "spiffe://example.test/must-not-echo", "--timeout-ms", "1000"}, strings.NewReader(""), &out, &diagnostic)
 	if code != 1 || out.Len() != 0 || strings.Contains(diagnostic.String(), "must-not-echo") || !strings.Contains(diagnostic.String(), "unavailable") {
 		t.Fatalf("unsafe identity failure: %d %s", code, diagnostic.String())
+	}
+}
+
+func TestNativeOutputPipeBackpressureIsBounded(t *testing.T) {
+	for _, cancelled := range []bool{true, false} {
+		name := "deadline"
+		if cancelled {
+			name = "cancelled"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			defer writer.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelled {
+				timer := time.AfterFunc(100*time.Millisecond, cancel)
+				defer timer.Stop()
+			}
+			start := time.Now()
+			// The real OS pipe is deliberately unread. Its finite capacity forces
+			// the production writer to exercise cancellation/output deadlines.
+			_, err = (boundedWriter{ctx: ctx, writer: writer}).Write(bytes.Repeat([]byte("x"), maxWireBytes))
+			expected, limit := context.DeadlineExceeded, 7*time.Second
+			if cancelled {
+				expected, limit = context.Canceled, time.Second
+			}
+			if !errors.Is(err, expected) || time.Since(start) > limit {
+				t.Fatalf("output remained blocked: %v", err)
+			}
+		})
 	}
 }
