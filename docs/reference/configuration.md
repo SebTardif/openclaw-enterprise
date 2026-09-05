@@ -60,7 +60,7 @@ after the referenced Namespace-owned Secrets exist.
 OCC generates the `cfg_` identifier and derives ownership from the exact route
 Namespace; callers cannot select either field. GET, PATCH, and DELETE operate
 on `/namespaces/:namespaceId/configurations/:configurationId`. A PATCH body
-contains only the replacement `values`, for example:
+contains a replacement `values` document, for example:
 
 ```json
 {
@@ -77,6 +77,18 @@ PATCH preserves the existing bindings; send `{}` to clear them. PATCH cannot
 change or accept `kind`, `generation`, or ownership fields. Successful DELETE
 returns HTTP `204` with no body.
 
+To protect an edit from overwriting a newer version, include the optional
+`expectedGeneration` in PATCH using the `generation` returned by GET. It must be
+a positive safe integer. OCC compares it with the persisted generation while
+holding the Namespace and Configuration locks, after authorization and exact
+ownership checks. A mismatch returns `409 RESOURCE_CONFLICT` before reading or
+writing Driver storage, changing bindings, or advancing the generation. Reload
+the Configuration and review the newer document before submitting another edit.
+A matching precondition proceeds with the normal replacement and generation
+increment; omitting it retains the existing update behavior. Malformed
+preconditions return `400`. The server-managed `generation` field remains
+unavailable as an input.
+
 Creation requires `kind: "agent"`; missing or unsupported kinds are rejected.
 Additional consumer kinds are reserved for future approved resources and are
 not accepted. `values` must be a JSON object. It can contain the nested objects,
@@ -89,6 +101,31 @@ exact parent Namespace. Reads, updates, and deletes require the corresponding
 permission for the exact Configuration. Authentication failures return `401`,
 malformed inputs `400`, denied operations `403`, missing resources `404`,
 dependency conflicts `409`, and unavailable authorization or storage `503`.
+
+The [Configuration service](../../packages/occ/src/services/configuration/service.ts)
+implements the named
+[command and query port](../../packages/occ/src/services/configuration/port.ts).
+Controller composition supplies its required repository methods, exact
+authorization, selected Configuration Driver, Secret Driver ownership check, and
+server-owned identifiers and timestamps. Service mutations join the controller's
+ambient transaction: each HTTP mutation and its audit append share one outcome,
+and definite rollback compensates completed Driver effects in reverse order.
+The existing [controller mutation boundary](controller.md) retains its
+unknown-commit behavior. The
+[Configuration HTTP adapter](../../apps/controller/src/routes/configuration.ts)
+resolves the current service when a request runs, including after Installation
+bootstrap; protected registration retains authentication, admission, and schema
+validation.
+
+After preparing development dependencies, run the focused service and HTTP
+checks with `node --test tests/conformance/configuration-service.test.mjs tests/integration/configuration-http.test.mjs`.
+For real PostgreSQL coverage, select a fresh, migrated disposable database with
+the non-superuser `occ_app` role in `OCC_CONFIGURATION_SERVICE_DATABASE_URL`, then
+run `node --test tests/integration/postgres-configuration-service.test.mjs`.
+That suite checks lazy Installation persistence, ownership, concurrent generation
+updates and conditional edits, and mutation/audit atomicity. An absent database selector is a skip,
+not PostgreSQL evidence. These checks use the existing Configuration storage
+fixture; they do not establish live Kubernetes ConfigMap or RBAC proof.
 
 ## Secret bindings
 
@@ -410,6 +447,9 @@ that webhook and end-to-end Teams verification are outside this milestone.
   selected Kubernetes identity's namespaced ConfigMap Role separately.
 - **Configuration operation returns `404`:** Confirm the Configuration ID
   belongs to the Namespace in the request path.
+- **Configuration update with stale `expectedGeneration` returns `409`:** GET
+  the current Configuration and review the changes before retrying with its
+  generation; the rejected edit does not replace values or bindings.
 - **Configuration deletion returns `409`:** An Agent still references that
   Configuration. Its reference must be reassigned before deletion; the current
   API has no Agent deletion endpoint.
@@ -432,7 +472,12 @@ schema, controller, and SDK-fixture coverage is not live-cluster evidence.
 - [Agent Configuration, revisions, and deployment](agents.md)
 - [Kubernetes Compute Driver](drivers/kubernetes-compute.md)
 - [Identity and access management](authorization.md)
-- [Configuration lifecycle implementation](../../packages/occ/src/index.ts)
+- [Configuration command and query port](../../packages/occ/src/services/configuration/port.ts)
+- [Configuration lifecycle implementation](../../packages/occ/src/services/configuration/service.ts)
+- [Configuration HTTP adapter](../../apps/controller/src/routes/configuration.ts)
+- [Configuration service conformance coverage](../../tests/conformance/configuration-service.test.mjs)
+- [Configuration HTTP coverage](../../tests/integration/configuration-http.test.mjs)
+- [Configuration PostgreSQL coverage](../../tests/integration/postgres-configuration-service.test.mjs)
 - [Configuration integration coverage](../../tests/integration/configuration-controller.test.mjs)
 
 ## Manual Notes

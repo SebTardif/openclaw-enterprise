@@ -179,20 +179,6 @@ export const UpdateSecretBody = Type.Object(
   { additionalProperties: false },
 );
 
-export const CreateConfigurationBody = Type.Object(
-  {
-    kind: ConfigurationKindSchema,
-    values: ConfigurationValues,
-    secretBindings: Type.Optional(SecretBindings),
-  },
-  { additionalProperties: false },
-);
-
-export const UpdateConfigurationBody = Type.Object(
-  { values: ConfigurationValues, secretBindings: Type.Optional(SecretBindings) },
-  { additionalProperties: false },
-);
-
 export const ServiceAccountCredentialSchema = Type.Object(
   {
     kind: Type.Union([
@@ -365,8 +351,6 @@ export type WorkspaceFileParams = Type.Static<typeof WorkspaceFileParams>;
 export type ConfigurationValues = Type.Static<typeof ConfigurationValues>;
 export type CreateSecretBody = Type.Static<typeof CreateSecretBody>;
 export type UpdateSecretBody = Type.Static<typeof UpdateSecretBody>;
-export type CreateConfigurationBody = Type.Static<typeof CreateConfigurationBody>;
-export type UpdateConfigurationBody = Type.Static<typeof UpdateConfigurationBody>;
 export type CreateServiceAccountBody = Type.Static<typeof CreateServiceAccountBody>;
 export type CreateServiceAccountCredentialBody = Type.Static<
   typeof CreateServiceAccountCredentialBody

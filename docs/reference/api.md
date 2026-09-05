@@ -1924,6 +1924,7 @@ Replace values and increment an exact Namespace-owned Configuration generation
 
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
+| `expectedGeneration` | `integer` | No | minimum: 1; maximum: 9007199254740991 |
 | `secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
 | `values` | `object<string, SafeJsonValue>` | Yes | A native OpenClaw configuration document. |
 

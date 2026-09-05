@@ -6761,6 +6761,11 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "expectedGeneration": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
                   "secretBindings": {
                     "additionalProperties": {
                       "additionalProperties": false,

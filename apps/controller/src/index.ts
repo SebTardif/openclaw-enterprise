@@ -27,6 +27,7 @@ import {
   type DocumentedFastifySchema,
 } from "./http/operation-registry.ts";
 import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
+import { createConfigurationOperationHandlers } from "./routes/configuration.ts";
 export type { DevelopmentAdmission } from "./http/admission.ts";
 export type { ControllerApp } from "./http/transport.ts";
 import {
@@ -61,14 +62,12 @@ import {
   type IAMDriver,
   type Installation,
   type OccApiRoute,
-  type OpenClawConfigurationDocument,
   type PermissionAction,
   type ProviderSummary,
   type ResourceKind,
   type ResourceRef,
   type SandboxDriver,
   type SecretDriver,
-  type SecretBindings,
   type SecretMetadata,
   type ServiceAccount,
   type ServiceAccountCredential,
@@ -865,91 +864,6 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         return deleting;
       });
       reply.status(202).send({ data: namespace, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "createConfiguration") {
-      const configuration = await controller.transact(async (unit) => {
-        const created = await controller!.createConfiguration(context.actorId, {
-          namespaceId,
-          kind: body?.kind as "agent",
-          values: body?.values as OpenClawConfigurationDocument,
-          ...(body?.secretBindings === undefined
-            ? {}
-            : { secretBindings: body.secretBindings as SecretBindings }),
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "configuration", id: created.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return created;
-      });
-      reply.status(201).send({ data: configuration, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "getConfiguration") {
-      const configuration = await controller.getConfiguration(
-        context.actorId,
-        namespaceId,
-        params.configurationId as string,
-      );
-      reply.send({ data: configuration, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "updateConfiguration") {
-      const configuration = await controller.transact(async (unit) => {
-        const updated = await controller!.updateConfiguration(context.actorId, {
-          namespaceId,
-          configurationId: params.configurationId as string,
-          values: body?.values as OpenClawConfigurationDocument,
-          ...(body?.secretBindings === undefined
-            ? {}
-            : { secretBindings: body.secretBindings as SecretBindings }),
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "configuration", id: updated.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return updated;
-      });
-      reply.send({ data: configuration, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "deleteConfiguration") {
-      await controller.transact(async (unit) => {
-        await controller!.deleteConfiguration(
-          context.actorId,
-          namespaceId,
-          params.configurationId as string,
-        );
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            {
-              kind: "configuration",
-              id: params.configurationId as string,
-              namespaceId,
-            },
-            "mutation",
-            context,
-          ),
-        );
-      });
-      reply.status(204).send();
       return;
     }
 
@@ -2056,6 +1970,33 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   void app.register(async (routes) => {
     routes.addSchema(ErrorResponse);
     routes.addSchema(SecretResponse);
+    const configurationHandlers = createConfigurationOperationHandlers({
+      resolveConfigurationService: () => {
+        if (!controller)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return controller.configuration;
+      },
+      requestContext: (request) => {
+        const context = contexts.get(request);
+        if (!context)
+          throw failure(
+            503,
+            "DEPENDENCY_UNAVAILABLE",
+            "A required platform dependency is unavailable.",
+          );
+        return context;
+      },
+      runConfigurationMutation: async (request, operation, context, mutate, resource) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
+          return result;
+        });
+      },
+    });
     const handlers = {
       createChannelInstallation: perform,
       listChannelInstallations: perform,
@@ -2075,10 +2016,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       listNamespaces: perform,
       getNamespace: perform,
       deleteNamespace: perform,
-      createConfiguration: perform,
-      getConfiguration: perform,
-      updateConfiguration: perform,
-      deleteConfiguration: perform,
+      createConfiguration: configurationHandlers.createConfiguration,
+      getConfiguration: configurationHandlers.getConfiguration,
+      updateConfiguration: configurationHandlers.updateConfiguration,
+      deleteConfiguration: configurationHandlers.deleteConfiguration,
       createSecret: perform,
       getSecret: perform,
       updateSecret: perform,

@@ -1,4 +1,11 @@
 import { Type } from "typebox";
+export {
+  ConfigurationSchema,
+  ConfigurationResponse,
+  CreateConfigurationBody,
+  UpdateConfigurationBody,
+  type ConfigurationWire,
+} from "./configuration/resources.ts";
 
 import {
   AgentId,
@@ -59,19 +66,6 @@ export const AgentSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const ConfigurationSchema = Type.Object(
-  {
-    id: ConfigurationId,
-    namespaceId: NamespaceId,
-    kind: ConfigurationKindSchema,
-    generation: ConfigurationGeneration,
-    values: ConfigurationValues,
-    secretBindings: Type.Optional(SecretBindings),
-    createdAt: Timestamp,
-  },
-  { additionalProperties: false },
-);
-
 export const SecretSchema = Type.Object(
   {
     id: SecretId,
@@ -109,11 +103,6 @@ export const NamespaceResponse = Type.Object(
 
 export const NamespaceListResponse = Type.Object(
   { data: Type.Array(NamespaceSchema), meta: Meta },
-  { additionalProperties: false },
-);
-
-export const ConfigurationResponse = Type.Object(
-  { data: ConfigurationSchema, meta: Meta },
   { additionalProperties: false },
 );
 
@@ -235,7 +224,6 @@ export const WorkspaceFileUpdateResponse = Type.Object(
 
 export type InstallationWire = Type.Static<typeof InstallationSchema>;
 export type NamespaceWire = Type.Static<typeof NamespaceSchema>;
-export type ConfigurationWire = Type.Static<typeof ConfigurationSchema>;
 export type SecretWire = Type.Static<typeof SecretSchema>;
 export type ServiceAccountWire = Type.Static<typeof ServiceAccountSchema>;
 export type ProviderSummaryWire = Type.Static<typeof ProviderSummarySchema>;
@@ -244,7 +232,6 @@ export type AgentRevisionWire = Type.Static<typeof AgentRevisionSchema>;
 export type InstallationResponse = Type.Static<typeof InstallationResponse>;
 export type NamespaceResponse = Type.Static<typeof NamespaceResponse>;
 export type NamespaceListResponse = Type.Static<typeof NamespaceListResponse>;
-export type ConfigurationResponse = Type.Static<typeof ConfigurationResponse>;
 export type SecretResponse = Type.Static<typeof SecretResponse>;
 export type ServiceAccountResponse = Type.Static<typeof ServiceAccountResponse>;
 export type ServiceAccountListResponse = Type.Static<typeof ServiceAccountListResponse>;

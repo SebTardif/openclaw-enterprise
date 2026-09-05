@@ -7,6 +7,26 @@ export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
 import { MutationRunner } from "./application/mutation-runner.ts";
+import {
+  CONFIGURATION_REPOSITORIES,
+  type ConfigurationServicePort,
+  type CreateConfigurationInput,
+  type UpdateConfigurationInput,
+} from "./services/configuration/port.ts";
+import {
+  ConfigurationService,
+  authorizeConfigurationBindings,
+  configurationBindings,
+  configurationValues,
+  exactConfiguration,
+} from "./services/configuration/service.ts";
+export type {
+  ConfigurationCommands,
+  ConfigurationQueries,
+  ConfigurationServicePort,
+  CreateConfigurationInput,
+  UpdateConfigurationInput,
+} from "./services/configuration/port.ts";
 import type {
   Agent,
   AgentRevision,
@@ -42,11 +62,7 @@ import type {
   ServiceAccountDriver,
   ServiceAccountRevision,
 } from "@openclaw-enterprise/contracts";
-import {
-  admitLoggingConfiguration,
-  normalizeLoggingLevel,
-  normalizeSecretBindings,
-} from "@openclaw-enterprise/contracts";
+import { admitLoggingConfiguration, normalizeLoggingLevel } from "@openclaw-enterprise/contracts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   AuthorizationDeniedError,
@@ -208,20 +224,6 @@ export interface UpdateSecretInput {
   readonly value: string;
 }
 
-export interface CreateConfigurationInput {
-  readonly namespaceId: string;
-  readonly kind: Configuration["kind"];
-  readonly values: Readonly<OpenClawConfigurationDocument>;
-  readonly secretBindings?: SecretBindings;
-}
-
-export interface UpdateConfigurationInput {
-  readonly namespaceId: string;
-  readonly configurationId: string;
-  readonly values: Readonly<OpenClawConfigurationDocument>;
-  readonly secretBindings?: SecretBindings;
-}
-
 export interface DeployAgentInput {
   readonly namespaceId: string;
   readonly agentId: string;
@@ -282,9 +284,7 @@ function frozenRevision(revision: AgentRevision): Readonly<AgentRevision> {
 }
 
 function frozenValues(value: unknown): Readonly<OpenClawConfigurationDocument> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new ScopeViolationError("Configuration values must be a JSON object.");
-  return immutableCopy(value as OpenClawConfigurationDocument);
+  return configurationValues(value);
 }
 
 function configuredRuntime(value: unknown): string | undefined {
@@ -472,6 +472,7 @@ function validExecutionMode(value: unknown): value is HarnessExecutionMode {
 
 export class OpenClawController {
   readonly channelBindings: ChannelBindingService;
+  readonly configuration: ConfigurationServicePort;
   readonly installation: Readonly<Installation>;
 
   private readonly authorization: ExactAuthorization;
@@ -506,6 +507,18 @@ export class OpenClawController {
     this.identifier = options.createId;
     this.state = options.state ?? new InMemoryPlatformState();
     this.mutations = new MutationRunner(this.installation, this.state);
+    this.configuration = new ConfigurationService({
+      repositories: this.mutations.forRepositories(CONFIGURATION_REPOSITORIES),
+      authorization: {
+        authorize: (principalId, action, resource) => this.authorize(principalId, action, resource),
+      },
+      configurationDriver: () => this.configurationDriver(),
+      assertSecretDriverOwner: (expectedId) => {
+        this.secretDriver(expectedId);
+      },
+      createId: () => this.nextIdentifier("configuration"),
+      now: () => this.timestamp(),
+    });
     this.channelBindings = new ChannelBindingService({
       installationId: this.installation.id,
       state: this.state,
@@ -914,50 +927,12 @@ export class OpenClawController {
     });
   }
 
+  // TODO: Remove Configuration facade forwarders once remaining callers use the service port.
   async createConfiguration(
     principalId: string,
     input: CreateConfigurationInput,
   ): Promise<Readonly<Configuration>> {
-    if (input.kind !== "agent")
-      throw new ScopeViolationError("The Configuration kind must identify an Agent.");
-    const values = frozenValues(input.values);
-    return this.mutate(async (state) => {
-      const namespace = await this.lockNamespace(state, input.namespaceId);
-      if (namespace.status !== "provisioning" && namespace.status !== "ready")
-        throw new ResourceConflictError("The Namespace does not accept new Configurations.");
-      await this.authorize(principalId, "create", {
-        kind: "configuration",
-        id: namespace.id,
-        namespaceId: namespace.id,
-      });
-      if (namespace.existingNamespace !== undefined && namespace.status !== "ready")
-        throw new NamespaceNotReadyError();
-      const secretBindings = this.bindings(input.secretBindings);
-      await this.authorizeBindings(state, principalId, namespace.id, secretBindings);
-      const driver = this.configurationDriver();
-      const configuration: Configuration = Object.freeze({
-        id: this.nextIdentifier("configuration"),
-        namespaceId: namespace.id,
-        kind: input.kind,
-        generation: 1,
-        values,
-        createdAt: this.timestamp(),
-      });
-      await driver.validate(configuration);
-      const metadata = await state.configurations.createConfiguration({
-        id: configuration.id,
-        namespaceId: namespace.id,
-        kind: configuration.kind,
-        generation: configuration.generation,
-        ...(Object.keys(secretBindings).length === 0 ? {} : { secretBindings }),
-        createdAt: configuration.createdAt,
-      });
-      const result = await this.driverOperation(() => driver.create(configuration));
-      this.registerRollback(async () =>
-        driver.delete({ id: configuration.id, namespaceId: configuration.namespaceId }),
-      );
-      return this.exactConfiguration(result, metadata);
-    });
+    return this.configuration.createConfiguration(principalId, input);
   }
 
   async createServiceAccount(
@@ -1102,80 +1077,14 @@ export class OpenClawController {
     namespaceId: string,
     configurationId: string,
   ): Promise<Readonly<Configuration>> {
-    this.configurationIdentity(namespaceId, configurationId);
-    await this.authorize(principalId, "read", {
-      kind: "configuration",
-      id: configurationId,
-      namespaceId,
-    });
-    const driver = this.configurationDriver();
-    return this.read(async (state) => {
-      const namespace = await this.exactNamespace(state, namespaceId);
-      const metadata = await state.configurations.findConfiguration(namespace.id, configurationId);
-      if (!metadata)
-        throw new ScopeViolationError("The Configuration does not belong to the exact Namespace.");
-      const configuration = await this.driverOperation(() =>
-        driver.read({ id: metadata.id, namespaceId: namespace.id }),
-      );
-      return this.exactConfiguration(configuration, metadata);
-    });
+    return this.configuration.getConfiguration(principalId, namespaceId, configurationId);
   }
 
   async updateConfiguration(
     principalId: string,
     input: UpdateConfigurationInput,
   ): Promise<Readonly<Configuration>> {
-    this.configurationIdentity(input.namespaceId, input.configurationId);
-    if (Object.hasOwn(input, "kind"))
-      throw new ScopeViolationError("The Configuration kind cannot be changed.");
-    const values = frozenValues(input.values);
-    return this.mutate(async (state) => {
-      const namespace = await this.lockNamespace(state, input.namespaceId);
-      await this.authorize(principalId, "update", {
-        kind: "configuration",
-        id: input.configurationId,
-        namespaceId: namespace.id,
-      });
-      const driver = this.configurationDriver();
-      const metadata = await state.configurations.lockConfiguration(
-        namespace.id,
-        input.configurationId,
-      );
-      if (!metadata)
-        throw new ScopeViolationError("The Configuration does not belong to the exact Namespace.");
-      const previous = this.exactConfiguration(
-        await this.driverOperation(() =>
-          driver.read({ id: metadata.id, namespaceId: namespace.id }),
-        ),
-        metadata,
-      );
-      const secretBindings = this.bindings(
-        input.secretBindings === undefined ? metadata.secretBindings : input.secretBindings,
-      );
-      await this.authorizeBindings(state, principalId, namespace.id, secretBindings);
-      const advanced = await state.configurations.advanceConfigurationGeneration(
-        namespace.id,
-        metadata.id,
-        metadata.generation,
-        secretBindings,
-      );
-      if (!advanced)
-        throw new ResourceConflictError("The Configuration generation changed during its update.");
-      const configuration: Configuration = Object.freeze({
-        id: advanced.id,
-        namespaceId: advanced.namespaceId,
-        kind: advanced.kind,
-        generation: advanced.generation,
-        values,
-        createdAt: advanced.createdAt,
-      });
-      await driver.validate(configuration);
-      const updated = await this.driverOperation(() => driver.update(configuration));
-      this.registerRollback(async () => {
-        await driver.update(previous);
-      });
-      return this.exactConfiguration(updated, advanced);
-    });
+    return this.configuration.updateConfiguration(principalId, input);
   }
 
   async deleteConfiguration(
@@ -1183,39 +1092,7 @@ export class OpenClawController {
     namespaceId: string,
     configurationId: string,
   ): Promise<void> {
-    this.configurationIdentity(namespaceId, configurationId);
-    return this.mutate(async (state) => {
-      const namespace = await this.lockNamespace(state, namespaceId);
-      await this.authorize(principalId, "delete", {
-        kind: "configuration",
-        id: configurationId,
-        namespaceId: namespace.id,
-      });
-      const driver = this.configurationDriver();
-      const configuration = await state.configurations.lockConfiguration(
-        namespace.id,
-        configurationId,
-      );
-      if (!configuration)
-        throw new ScopeViolationError("The Configuration does not belong to the exact Namespace.");
-      const agents = await state.agents.listAgents(namespace.id);
-      if (agents.some((agent) => agent.configurationId === configuration.id))
-        throw new ResourceConflictError("An Agent still references the exact Configuration.");
-      const previous = this.exactConfiguration(
-        await this.driverOperation(() =>
-          driver.read({ id: configuration.id, namespaceId: namespace.id }),
-        ),
-        configuration,
-      );
-      await this.driverOperation(() =>
-        driver.delete({ id: configuration.id, namespaceId: namespace.id }),
-      );
-      this.registerRollback(async () => {
-        await driver.create(previous);
-      });
-      if (!(await state.configurations.deleteConfiguration(namespace.id, configuration.id)))
-        throw new ResourceConflictError("The Configuration changed during deletion.");
-    });
+    return this.configuration.deleteConfiguration(principalId, namespaceId, configurationId);
   }
 
   async createAgent(principalId: string, input: CreateAgentInput): Promise<Readonly<Agent>> {
@@ -1878,13 +1755,7 @@ export class OpenClawController {
   }
 
   private bindings(input: unknown): SecretBindings {
-    try {
-      return normalizeSecretBindings(input);
-    } catch {
-      throw new ScopeViolationError(
-        "Secret bindings require supported exact sources and non-reserved environment destinations.",
-      );
-    }
+    return configurationBindings(input);
   }
 
   /** Called under the Namespace lock, also taken by deletion and assignment. */
@@ -1894,18 +1765,18 @@ export class OpenClawController {
     namespaceId: string,
     bindings: SecretBindings,
   ): Promise<readonly Secret[]> {
-    const secrets = new Map<string, Secret>();
-    for (const { source } of Object.values(bindings)) {
-      if (source.namespaceId !== namespaceId)
-        throw new ScopeViolationError("Secret references cannot cross Namespaces.");
-      await this.authorize(principalId, "operate", source);
-      const secret = await state.secrets.lockSecret(namespaceId, source.id);
-      if (!secret)
-        throw new ScopeViolationError("The Secret does not belong to the exact Namespace.");
-      this.secretDriver(secret.driverId);
-      secrets.set(secret.id, secret);
-    }
-    return Object.freeze([...secrets.values()]);
+    return authorizeConfigurationBindings(
+      state,
+      principalId,
+      namespaceId,
+      bindings,
+      {
+        authorize: (actorId, action, resource) => this.authorize(actorId, action, resource),
+      },
+      (expectedId) => {
+        this.secretDriver(expectedId);
+      },
+    );
   }
 
   private validateModelBinding(
@@ -1965,13 +1836,6 @@ export class OpenClawController {
     }
   }
 
-  private configurationIdentity(namespaceId: string, configurationId: string): void {
-    if (!isNonEmptyString(namespaceId))
-      throw new ScopeViolationError("The exact Namespace identity is missing.");
-    if (!isNonEmptyString(configurationId))
-      throw new ScopeViolationError("The exact Configuration identity is missing.");
-  }
-
   private serviceAccountIdentity(namespaceId: string, serviceAccountId: string): void {
     if (!isNonEmptyString(namespaceId))
       throw new ScopeViolationError("The exact Namespace identity is missing.");
@@ -2026,28 +1890,7 @@ export class OpenClawController {
       "id" | "namespaceId" | "kind" | "generation" | "createdAt" | "secretBindings"
     >,
   ): Readonly<Configuration> {
-    if (
-      !configuration ||
-      configuration.id !== expected.id ||
-      configuration.namespaceId !== expected.namespaceId ||
-      configuration.kind !== expected.kind ||
-      configuration.generation !== expected.generation ||
-      configuration.createdAt !== expected.createdAt
-    )
-      throw new DependencyUnavailableError(
-        "The Configuration Driver returned a resource outside its exact ownership scope.",
-      );
-    return Object.freeze({
-      id: expected.id,
-      namespaceId: expected.namespaceId,
-      kind: expected.kind,
-      generation: expected.generation,
-      values: frozenValues(configuration.values),
-      ...(expected.secretBindings === undefined
-        ? {}
-        : { secretBindings: this.bindings(expected.secretBindings) }),
-      createdAt: expected.createdAt,
-    });
+    return exactConfiguration(configuration, expected);
   }
 
   private nextIdentifier(kind: ResourceKind): string {
