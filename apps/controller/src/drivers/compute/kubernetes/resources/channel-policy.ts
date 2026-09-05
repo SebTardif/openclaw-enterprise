@@ -38,10 +38,18 @@ export function channelProxy(value: unknown): { address: string; port: number } 
     );
   }
   const address = parsed.hostname.replace(/^\[|\]$/g, "");
+  let port = parsed.port;
+  if (!port) {
+    // URL removes explicit default ports; recover only an exact literal-IP endpoint.
+    const endpoint = /^https?:\/\/(\[[^\]]+\]|[^:/?#\\]+):([0-9]+)\/?$/i.exec(raw);
+    if (endpoint && endpoint[0] === raw && isIP(endpoint[1]!.replace(/^\[|\]$/g, "")) !== 0) {
+      port = endpoint[2]!;
+    }
+  }
   if (
     !["http:", "https:"].includes(parsed.protocol) ||
     isIP(address) === 0 ||
-    !parsed.port ||
+    !port ||
     parsed.username ||
     parsed.password ||
     parsed.pathname !== "/" ||
@@ -52,7 +60,7 @@ export function channelProxy(value: unknown): { address: string; port: number } 
       "Channel proxy URL must identify one credential-free HTTP(S) IP endpoint.",
     );
   }
-  return { address, port: Number(parsed.port) };
+  return { address, port: Number(port) };
 }
 
 export function enabledChannels(
