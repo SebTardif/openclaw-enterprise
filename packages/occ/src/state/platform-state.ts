@@ -1,4 +1,6 @@
-import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { RepositoryTransactionLifetime, type RepositoryTransaction } from "../ports/transaction.ts";
+import { createMemoryChannelBindingRepository } from "./memory/channel-bindings.ts";
+export { validateChannelBindingList } from "./channel-binding-validation.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import type {
@@ -136,8 +138,6 @@ import type {
   ChannelInstallation,
   ChannelHumanBinding,
   ChannelAgentBinding,
-  ChannelBindingMetadata,
-  ChannelBindingStatus,
   AuditEvent,
   HarnessExecutionMode,
   Installation,
@@ -148,7 +148,7 @@ import type {
   ServiceAccount,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
-import { isChannelBindingReference, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
+import { normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   DependencyUnavailableError,
@@ -244,15 +244,6 @@ function assertAdmittedAgentRevision(revision: AgentRevision): void {
   }
 }
 
-export function validateChannelBindingList(options: ChannelBindingListOptions): void {
-  if (
-    !Number.isSafeInteger(options.limit) ||
-    options.limit < 1 ||
-    options.limit > 101 ||
-    (options.afterId !== undefined && !/^(chi|chh|cha)_[0-9a-f-]{36}$/.test(options.afterId))
-  )
-    throw new ResourceConflictError("The channel binding list bounds are invalid.");
-}
 /** Also serialize mutations sharing a single transaction callback and SQL connection. */
 export function serializeChannelBindingMutations(
   repository: ChannelBindingRepository,
@@ -514,6 +505,7 @@ function validRuntimeReference(value: unknown): value is string {
 
 function repositories(
   snapshot: PlatformSnapshot,
+  transaction: RepositoryTransaction,
   authorityGuard = new RuntimeAuthorityTransactionGuard(),
 ): PlatformUnitOfWork {
   const installations: InstallationRepository = {
@@ -1065,231 +1057,24 @@ function repositories(
       return undefined;
     return agent;
   };
-  function channelConflict(): never {
-    throw new ResourceConflictError(
-      "The channel binding conflicts with retained identity, ownership or state.",
-    );
-  }
-  function validateChannelMetadata(record: ChannelBindingMetadata, prefix: string): void {
-    const pattern = new RegExp(
-      `^${prefix}_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
-    );
-    if (
-      !snapshot.installation ||
-      record.installationId !== snapshot.installation.id ||
-      !pattern.test(record.id) ||
-      record.version !== 1 ||
-      record.status !== "enabled" ||
-      !isChannelBindingReference(record.createdBy) ||
-      !isChannelBindingReference(record.updatedBy) ||
-      !Number.isFinite(Date.parse(record.createdAt)) ||
-      !Number.isFinite(Date.parse(record.updatedAt)) ||
-      record.updatedAt !== record.createdAt ||
-      record.updatedBy !== record.createdBy
-    )
-      channelConflict();
-  }
-  function channelParent(parentId: string): Readonly<ChannelInstallation> | undefined {
-    const parent = snapshot.channelInstallations.get(parentId);
-    return parent?.installationId === snapshot.installation?.id ? parent : undefined;
-  }
-  function childFind<T extends ChannelBindingMetadata & { channelInstallationId: string }>(
-    map: Map<string, Readonly<T>>,
-    parentId: string,
-    id: string,
-  ): Readonly<T> | undefined {
-    const record = map.get(id);
-    return channelParent(parentId) && record?.channelInstallationId === parentId
-      ? immutableCopy(record)
-      : undefined;
-  }
-  function channelList<T extends ChannelBindingMetadata>(
-    values: Iterable<Readonly<T>>,
-    options: ChannelBindingListOptions,
-  ): readonly Readonly<T>[] {
-    validateChannelBindingList(options);
-    return Object.freeze(
-      [...values]
-        .filter(
-          (r) =>
-            r.installationId === snapshot.installation?.id &&
-            (options.afterId === undefined || r.id > options.afterId),
-        )
-        .sort((a, b) => {
-          if (a.id === b.id) return 0;
-          return a.id < b.id ? -1 : 1;
-        })
-        .slice(0, options.limit)
-        .map((r) => immutableCopy(r)),
-    );
-  }
-  function requireChannelParent(
-    record: ChannelHumanBinding | ChannelAgentBinding,
-  ): Readonly<ChannelInstallation> {
-    const parent = channelParent(record.channelInstallationId);
-    if (!parent || parent.status !== "enabled" || parent.installationId !== record.installationId)
-      channelConflict();
-    return parent;
-  }
-  function requireChannelAgent(record: ChannelAgentBinding, parent: ChannelInstallation): void {
-    const namespace = snapshot.namespaces.get(record.namespaceId);
-    const agent = snapshot.agents.get(agentKey(record.namespaceId, record.agentId));
-    if (
-      !namespace ||
-      namespace.status !== "ready" ||
-      namespace.deletedAt !== undefined ||
-      !agent ||
-      (parent.platform === "slack"
-        ? record.scopeKind !== "slack-private-channel"
-        : record.scopeKind !== "msteams-standard-channel")
-    )
-      channelConflict();
-  }
-  function changeChannelStatus<T extends ChannelBindingMetadata>(
-    map: Map<string, Readonly<T>>,
-    record: Readonly<T> | undefined,
-    expectedVersion: number,
-    status: ChannelBindingStatus,
-    actorId: string,
-    updatedAt: string,
-  ): Readonly<T> | undefined {
-    if (!record) return undefined;
-    if (
-      !Number.isSafeInteger(expectedVersion) ||
-      expectedVersion < 1 ||
-      record.version !== expectedVersion ||
-      (status !== "enabled" && status !== "disabled") ||
-      !isChannelBindingReference(actorId) ||
-      !Number.isFinite(Date.parse(updatedAt)) ||
-      Date.parse(updatedAt) < Date.parse(record.createdAt)
-    )
-      channelConflict();
-    if (record.status === status) return immutableCopy(record);
-    if (record.version === Number.MAX_SAFE_INTEGER) channelConflict();
-    const updated = immutableCopy({
-      ...record,
-      status,
-      version: record.version + 1,
-      updatedBy: actorId,
-      updatedAt,
-    });
-    map.set(record.id, updated);
-    return immutableCopy(updated);
-  }
-  const channelBindings: ChannelBindingRepository = {
-    findChannelInstallation: async (id) => {
-      const parent = channelParent(id);
-      return parent && immutableCopy(parent);
+  const channelBindings = createMemoryChannelBindingRepository({
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    listChannelInstallations: async (options) =>
-      channelList(snapshot.channelInstallations.values(), options),
-    findHumanBinding: async (parentId, id) => childFind(snapshot.channelHumans, parentId, id),
-    findHumanBindingBySubject: async (parentId, subject) => {
-      const found = [...snapshot.channelHumans.values()].find(
-        (r) => r.channelInstallationId === parentId && r.providerSubjectRef === subject,
-      );
-      return found && childFind(snapshot.channelHumans, parentId, found.id);
+    snapshot: {
+      get installation() {
+        return snapshot.installation;
+      },
+      channelInstallations: snapshot.channelInstallations,
+      channelHumans: snapshot.channelHumans,
+      channelAgents: snapshot.channelAgents,
+      namespaces: snapshot.namespaces,
+      agents: snapshot.agents,
     },
-    listHumanBindings: async (parentId, options) =>
-      channelList(
-        [...snapshot.channelHumans.values()].filter(
-          (r) => !!channelParent(parentId) && r.channelInstallationId === parentId,
-        ),
-        options,
-      ),
-    findAgentBinding: async (parentId, id) => childFind(snapshot.channelAgents, parentId, id),
-    findAgentBindingByChannel: async (parentId, channelRef) => {
-      const found = [...snapshot.channelAgents.values()].find(
-        (r) => r.channelInstallationId === parentId && r.channelRef === channelRef,
-      );
-      return found && childFind(snapshot.channelAgents, parentId, found.id);
-    },
-    listAgentBindings: async (parentId, options) =>
-      channelList(
-        [...snapshot.channelAgents.values()].filter(
-          (r) => !!channelParent(parentId) && r.channelInstallationId === parentId,
-        ),
-        options,
-      ),
-    createChannelInstallation: async (record) => {
-      validateChannelMetadata(record, "chi");
-      if (
-        (record.platform !== "slack" && record.platform !== "msteams") ||
-        !isChannelBindingReference(record.providerTenantRef) ||
-        !isChannelBindingReference(record.recipientAppRef) ||
-        snapshot.channelInstallations.has(record.id) ||
-        [...snapshot.channelInstallations.values()].some(
-          (r) =>
-            r.installationId === record.installationId &&
-            r.platform === record.platform &&
-            r.providerTenantRef === record.providerTenantRef &&
-            r.recipientAppRef === record.recipientAppRef,
-        )
-      )
-        channelConflict();
-      snapshot.channelInstallations.set(record.id, immutableCopy(record));
-      return immutableCopy(record);
-    },
-    createHumanBinding: async (record) => {
-      validateChannelMetadata(record, "chh");
-      requireChannelParent(record);
-      if (
-        ![
-          record.providerSubjectRef,
-          record.iamDriverId,
-          record.principalId,
-          record.principalIssuer,
-          record.principalSubject,
-        ].every(isChannelBindingReference) ||
-        snapshot.channelHumans.has(record.id) ||
-        [...snapshot.channelHumans.values()].some(
-          (r) =>
-            r.channelInstallationId === record.channelInstallationId &&
-            r.providerSubjectRef === record.providerSubjectRef,
-        )
-      )
-        channelConflict();
-      snapshot.channelHumans.set(record.id, immutableCopy(record));
-      return immutableCopy(record);
-    },
-    createAgentBinding: async (record) => {
-      validateChannelMetadata(record, "cha");
-      const parent = requireChannelParent(record);
-      requireChannelAgent(record, parent);
-      if (
-        !isChannelBindingReference(record.channelRef) ||
-        snapshot.channelAgents.has(record.id) ||
-        [...snapshot.channelAgents.values()].some(
-          (r) =>
-            r.channelInstallationId === record.channelInstallationId &&
-            r.channelRef === record.channelRef,
-        )
-      )
-        channelConflict();
-      snapshot.channelAgents.set(record.id, immutableCopy(record));
-      return immutableCopy(record);
-    },
-    setChannelInstallationStatus: async (id, version, status, actor, at) =>
-      changeChannelStatus(
-        snapshot.channelInstallations,
-        channelParent(id),
-        version,
-        status,
-        actor,
-        at,
-      ),
-    setHumanBindingStatus: async (parentId, id, version, status, actor, at) => {
-      const record = childFind(snapshot.channelHumans, parentId, id);
-      if (record && status === "enabled" && record.status !== status) requireChannelParent(record);
-      return changeChannelStatus(snapshot.channelHumans, record, version, status, actor, at);
-    },
-    setAgentBindingStatus: async (parentId, id, version, status, actor, at) => {
-      const record = childFind(snapshot.channelAgents, parentId, id);
-      if (record && status === "enabled" && record.status !== status)
-        requireChannelAgent(record, requireChannelParent(record));
-      return changeChannelStatus(snapshot.channelAgents, record, version, status, actor, at);
-    },
-  };
+  });
 
   const runtimeAssignments: RuntimeAssignmentRepository = {
     findRuntimeIntent: async (scope, transitionRef) => {
@@ -1732,7 +1517,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
       if (options === undefined) {
         await this.pending;
         return await work(
-          createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime),
+          createPlatformReadView(repositories(cloneSnapshot(this.snapshot), lifetime), lifetime),
         );
       }
       if (
@@ -1749,7 +1534,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
           await this.pending;
           if (boundedSignal.aborted) throw new DependencyUnavailableError();
           const result = await work(
-            createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime),
+            createPlatformReadView(repositories(cloneSnapshot(this.snapshot), lifetime), lifetime),
           );
           if (boundedSignal.aborted) throw new DependencyUnavailableError();
           return result;
@@ -1781,7 +1566,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
       const result = await work(
-        bindPlatformUnitOfWork(repositories(working, authorityGuard), lifetime),
+        bindPlatformUnitOfWork(repositories(working, lifetime, authorityGuard), lifetime),
       );
       await lifetime.finish();
       await authorityGuard.finish();

@@ -23,6 +23,15 @@ export interface TransactionQuery {
 }
 
 export interface RepositoryFactoryContext<Scope extends RepositoryScope = RepositoryScope> {
+  /**
+   * Exact scope from the owning transaction or working snapshot. A live owner
+   * accessor may throw while the owner's current Installation is unavailable.
+   * Factories that support pre-bootstrap use must defer access to their methods.
+   * Those methods resolve the owner's optional current Installation first and
+   * preserve existing absent-Installation reads/errors without accessing scope.
+   * Once present, the Installation identity is fixed for this transaction; no
+   * placeholder or caller-supplied identity may stand in for it.
+   */
   readonly scope: Readonly<Scope>;
   readonly transaction: RepositoryTransaction;
 }

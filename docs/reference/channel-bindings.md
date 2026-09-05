@@ -173,15 +173,24 @@ and reread current permissions. A manual sender list never proves the full audie
 
 ## Verification
 
+The memory and PostgreSQL channel repositories borrow the platform transaction's
+working snapshot or guarded database client. Their factories resolve the current
+Installation when operations run, so bootstrap and channel writes share one unit
+of work. The platform owner serializes channel mutations, drains admitted operations
+before commit, and closes escaped repository methods after completion.
+
 Run the focused conformance and API tests with the repository's supported toolchain:
 
 ```sh
-node --test tests/conformance/channel-binding-memory.test.mjs tests/conformance/channel-principal-resolution.test.mjs tests/integration/channel-bindings-api.test.mjs
-node --test --test-concurrency=1 tests/integration/postgres-channel-bindings.test.mjs
+node --test tests/conformance/channel-binding-memory.test.mjs tests/conformance/channel-repository-memory.test.mjs tests/conformance/channel-principal-resolution.test.mjs tests/integration/channel-bindings-api.test.mjs
+node --test --test-concurrency=1 tests/integration/postgres-channel-bindings.test.mjs tests/integration/postgres-channel-repository.test.mjs
 ```
 
 The PostgreSQL suite requires `OCC_TEST_DATABASE_URL` for an isolated, initialized
-test database. Without it, the PostgreSQL cases are skipped and persistence,
+test database. The repository bootstrap case additionally uses
+`OCC_PRODUCTION_WIREUP_DATABASE_URL` for a separately migrated empty disposable
+database and rolls its changes back. Missing selectors skip their associated
+cases. Without the main database selector, persistence,
 concurrency, privileges, and restart behavior have not been verified. Tests exercise
 real adapters and the selected IAM boundary; they do not verify live Slack/Teams
 transport or audience membership.
