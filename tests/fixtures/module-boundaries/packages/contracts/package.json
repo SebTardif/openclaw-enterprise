@@ -1,0 +1,13 @@
+{
+  "name": "@openclaw-enterprise/contracts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./resources/*": "./src/resources/*.ts",
+    "./scope": {
+      "types": "./src/resources/scope.ts",
+      "import": "./src/resources/scope.ts"
+    },
+    "./blocked": null
+  }
+}

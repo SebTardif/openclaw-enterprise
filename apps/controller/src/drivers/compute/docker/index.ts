@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { request as httpRequest } from "node:http";
 import type {
   AgentRevision,
   ComputeDriver,
@@ -11,13 +10,57 @@ import type {
   LoggingLevel,
 } from "@openclaw-enterprise/contracts";
 import { admittedLoggingLevel } from "@openclaw-enterprise/contracts";
-import { asRecord, immutableCopy, isNonEmptyString, sha256Hex } from "@openclaw-enterprise/utils";
+import { immutableCopy, sha256Hex } from "@openclaw-enterprise/utils";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
-import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
 import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
 } from "../kubernetes/runtime-entrypoints.ts";
+import {
+  dockerRequest,
+  image,
+  network,
+  removeNetwork,
+  container,
+  removeContainer,
+  statusCode,
+} from "./client.ts";
+import type { DockerContainerInspect, DockerNetworkInspect } from "./client.ts";
+import {
+  OwnershipFailure,
+  REVISION_LABEL,
+  ownershipMetadata,
+  gatewayOwnership,
+  agentOwnership,
+  verifyOwnership,
+  networkName,
+  gatewayContainerName,
+  agentContainerName,
+  containerIdsForNamespace,
+} from "./ownership.ts";
+import type { Ownership } from "./ownership.ts";
+import {
+  ConfigurationFailure,
+  required,
+  optionalEnvironment,
+  dockerLoggingAddress,
+  runtimeContainerPayload,
+  providerEnvironment,
+  gatewayEnvironment,
+  gatewayUsesTrustedProxy,
+  agentEnvironment,
+  GATEWAY_PORT,
+  AGENT_TRANSPORT_PORT,
+} from "./container-plan.ts";
+import type { RuntimeContainerInput } from "./container-plan.ts";
+import {
+  healthy,
+  validTopology,
+  gatewayRevisionDisposition,
+  REVISION_NUMBER_LABEL,
+  CONFIGURATION_HASH_LABEL,
+  HARNESS_VERSION_LABEL,
+} from "./revisions.ts";
 
 export interface DockerComputeDriverOptions {
   readonly images: {
@@ -27,76 +70,9 @@ export interface DockerComputeDriverOptions {
   readonly loggingAddress?: string;
 }
 
-interface DockerContainerInspect {
-  readonly Config?: {
-    readonly Labels?: Readonly<Record<string, string>>;
-  };
-  readonly State?: {
-    readonly Running?: boolean;
-    readonly Health?: {
-      readonly Status?: string;
-    };
-  };
-}
-
-interface DockerNetworkInspect {
-  readonly Labels?: Readonly<Record<string, string>>;
-}
-
-interface Ownership {
-  readonly namespaceId: string;
-  readonly agentId?: string;
-  readonly revisionId?: string;
-}
-
-interface RuntimeContainerInput {
-  readonly name: string;
-  readonly image: string;
-  readonly network: string;
-  readonly ownership: Ownership;
-  readonly role: "agent" | "gateway";
-  readonly environment: Readonly<Record<string, string>>;
-  readonly command: string;
-  readonly healthcheckScript: string;
-  readonly exposedPort: number;
-  readonly labels?: Readonly<Record<string, string>>;
-  readonly portBindings?: Readonly<
-    Record<string, readonly { readonly HostIp: string; readonly HostPort: string }[]>
-  >;
-}
-
-class DockerApiError extends Error {
-  readonly statusCode: number;
-
-  constructor(statusCode: number, message: string) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-
-class OwnershipFailure extends Error {}
-class ConfigurationFailure extends Error {}
-
-const MANAGED_VALUE = "true";
 const DRIVER_ID = "compute-docker-development";
 const DRIVER_IMPLEMENTATION = "docker-local";
-const MANAGED_LABEL = "org.openclaw.enterprise.managed";
-const COMPUTE_DRIVER_LABEL = "org.openclaw.enterprise.compute-driver";
-const NAMESPACE_LABEL = "org.openclaw.enterprise.namespace-id";
-const AGENT_LABEL = "org.openclaw.enterprise.agent-id";
-const REVISION_LABEL = "org.openclaw.enterprise.revision-id";
-const REVISION_NUMBER_LABEL = "org.openclaw.enterprise.revision-number";
-const ROLE_LABEL = "org.openclaw.enterprise.role";
-const CONFIGURATION_HASH_LABEL = "org.openclaw.enterprise.configuration-hash";
-const HARNESS_VERSION_LABEL = "org.openclaw.enterprise.harness-version";
-const VERSION_LABEL = "org.openclaw.enterprise.version";
-const SOCKET_PATH = "/var/run/docker.sock";
-const REQUEST_TIMEOUT_MS = 10_000;
 const STARTUP_TIMEOUT_MS = 120_000;
-const GATEWAY_PORT = 8080;
-const AGENT_TRANSPORT_PORT = 18_790;
-const MODEL_API_KEY = "OPENAI_API_KEY";
-const CONFIGURATION_DOCUMENT = "/home/node/.openclaw/openclaw.json";
 
 const GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
 const { mkdirSync, writeFileSync } = require("node:fs");
@@ -128,80 +104,12 @@ forwardTermination(child);
 child.on("exit", (code, signal) => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1)));
 `;
 
-function required(value: unknown, description: string): string {
-  if (!isNonEmptyString(value)) {
-    throw new ConfigurationFailure(`${description} must be explicitly configured.`);
-  }
-  return value;
-}
-
-function slug(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 32) || "namespace"
-  );
-}
-
 function failure(error: unknown): "retryable" | "permanent" {
   return error instanceof OwnershipFailure ||
     error instanceof ConfigurationFailure ||
     [400, 401, 403, 404, 409, 422].includes(statusCode(error) ?? 0)
     ? "permanent"
     : "retryable";
-}
-
-function statusCode(error: unknown): number | undefined {
-  return error instanceof DockerApiError ? error.statusCode : undefined;
-}
-
-function healthy(inspect: DockerContainerInspect): boolean {
-  return inspect.State?.Running === true && inspect.State.Health?.Status === "healthy";
-}
-
-function validTopology(revision: AgentRevision): boolean {
-  return (
-    (revision.harness.id === "openclaw" && revision.harness.mode === "embedded") ||
-    (revision.harness.id === "codex" && revision.harness.mode === "dedicated")
-  );
-}
-
-function optionalEnvironment(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-function loopbackHost(host: string): boolean {
-  if (host === "localhost" || host === "::1") return true;
-  const parts = host.split(".");
-  return (
-    parts.length === 4 &&
-    parts[0] === "127" &&
-    parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
-  );
-}
-
-function dockerLoggingAddress(value: string | undefined): string | undefined {
-  const trimmed = optionalEnvironment(value);
-  if (trimmed === undefined) return undefined;
-  const bracketed = /^\[([^\]]+)\]:(\d+)$/.exec(trimmed);
-  const plain = bracketed === null ? /^([^:]+):(\d+)$/.exec(trimmed) : null;
-  const host = bracketed?.[1] ?? plain?.[1];
-  const portText = bracketed?.[2] ?? plain?.[2];
-  const port = Number(portText);
-  if (
-    host === undefined ||
-    portText === undefined ||
-    !loopbackHost(host) ||
-    !Number.isSafeInteger(port) ||
-    port < 1 ||
-    port > 65_535
-  ) {
-    throw new ConfigurationFailure("Docker logging address must be a loopback host:port.");
-  }
-  return host === "::1" ? `[::1]:${port}` : `${host}:${port}`;
 }
 
 export class DockerComputeDriver implements ComputeDriver {
@@ -431,26 +339,15 @@ export class DockerComputeDriver implements ComputeDriver {
     const configurationHash = sha256Hex(configuration, 32);
     if (existing !== undefined) {
       this.verifyOwnership(existing.Config?.Labels, ownership, `container ${containerName}`);
-      const currentRevision = Number(existing.Config?.Labels?.[REVISION_NUMBER_LABEL]);
-      const currentRevisionId = existing.Config?.Labels?.[REVISION_LABEL];
-      if (!Number.isSafeInteger(currentRevision) || currentRevision < 1 || !currentRevisionId) {
-        throw new OwnershipFailure(`Refusing invalid Agent gateway ${containerName}.`);
-      }
-      if (currentRevision > revision.revision) {
-        return { containerName, created: false, ready: false };
-      }
-      if (currentRevision === revision.revision && currentRevisionId === revision.id) {
-        if (existing.Config?.Labels?.[CONFIGURATION_HASH_LABEL] !== configurationHash) {
-          throw new ConfigurationFailure(
-            "Immutable AgentRevision gateway configuration cannot change.",
-          );
-        }
-        if (healthy(existing)) return { containerName, created: false, ready: true };
-        await this.removeContainer(containerName, true);
-      }
-      if (currentRevision !== revision.revision || currentRevisionId !== revision.id) {
-        await this.removeContainer(containerName, true);
-      }
+      const disposition = gatewayRevisionDisposition(
+        existing,
+        revision,
+        configurationHash,
+        containerName,
+      );
+      if (disposition === "stale") return { containerName, created: false, ready: false };
+      if (disposition === "ready") return { containerName, created: false, ready: true };
+      await this.removeContainer(containerName, true);
     }
 
     const inspect = await this.createRuntimeContainer({
@@ -459,18 +356,14 @@ export class DockerComputeDriver implements ComputeDriver {
       network,
       ownership,
       role: "gateway",
-      environment: {
-        ...environment,
-        OPENCLAW_CONFIG_JSON: configuration,
-        OPENCLAW_CONFIG_PATH: CONFIGURATION_DOCUMENT,
-        OPENCLAW_GATEWAY_PORT: String(GATEWAY_PORT),
+      environment: gatewayEnvironment(
+        configuration,
+        environment,
         // Native trusted-proxy authentication rejects a simultaneously configured shared token.
-        ...(asRecord(asRecord(revision.configuration.gateway)?.auth)?.mode === "trusted-proxy"
-          ? {}
-          : { OPENCLAW_GATEWAY_TOKEN: randomBytes(32).toString("hex") }),
-        OPENCLAW_STATE_DIR: "/home/node/.openclaw",
-        HOME: "/home/node",
-      },
+        gatewayUsesTrustedProxy(revision.configuration)
+          ? undefined
+          : randomBytes(32).toString("hex"),
+      ),
       command: GATEWAY_RUNTIME_ENTRYPOINT,
       healthcheckScript: `fetch("http://127.0.0.1:${GATEWAY_PORT}/readyz").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));`,
       exposedPort: GATEWAY_PORT,
@@ -517,16 +410,7 @@ export class DockerComputeDriver implements ComputeDriver {
       network,
       ownership,
       role: "agent",
-      environment: {
-        ...environment,
-        APP_SERVER_PORT: String(AGENT_TRANSPORT_PORT),
-        APP_SERVER_TOKEN: appServerToken,
-        CODEX_HOME: "/home/node/.codex",
-        LOG_FORMAT: "json",
-        RUST_LOG: `${loggingLevel},codex_otel=off`,
-        HOME: "/home/node",
-        PATH: "/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      },
+      environment: agentEnvironment(environment, appServerToken, loggingLevel),
       command: AGENT_RUNTIME_ENTRYPOINT,
       healthcheckScript: AGENT_READINESS_ENTRYPOINT,
       exposedPort: AGENT_TRANSPORT_PORT,
@@ -542,49 +426,10 @@ export class DockerComputeDriver implements ComputeDriver {
   private async createRuntimeContainer(
     input: RuntimeContainerInput,
   ): Promise<DockerContainerInspect> {
-    const labels = {
-      ...this.ownershipMetadata(input.ownership),
-      [ROLE_LABEL]: input.role,
-      ...input.labels,
-      [VERSION_LABEL]: input.image,
-    };
     await this.request(
       "POST",
       `/containers/create?name=${encodeURIComponent(input.name)}`,
-      {
-        Image: input.image,
-        User: "1000:1000",
-        Env: Object.entries(input.environment).map(([name, value]) => `${name}=${value}`),
-        Entrypoint: ["node"],
-        Cmd: ["-e", input.command],
-        Labels: labels,
-        ExposedPorts: { [`${input.exposedPort}/tcp`]: {} },
-        Healthcheck: {
-          Test: ["CMD", "node", "-e", input.healthcheckScript],
-          Interval: 2_000_000_000,
-          Timeout: 2_000_000_000,
-          Retries: 15,
-        },
-        HostConfig: {
-          NetworkMode: input.network,
-          ReadonlyRootfs: true,
-          CapDrop: ["ALL"],
-          SecurityOpt: ["no-new-privileges"],
-          Tmpfs: {
-            "/home/node": "size=1024m,uid=1000,gid=1000,mode=700",
-            "/tmp": "size=64m,uid=1000,gid=1000,mode=1777",
-          },
-          ...(input.portBindings === undefined ? {} : { PortBindings: input.portBindings }),
-          ...(this.options.loggingAddress === undefined
-            ? {}
-            : { LogConfig: this.logConfig(labels) }),
-        },
-        NetworkingConfig: {
-          EndpointsConfig: {
-            [input.network]: { Aliases: [input.name] },
-          },
-        },
-      },
+      runtimeContainerPayload(input, this.options.loggingAddress),
       [201],
     );
     try {
@@ -601,67 +446,20 @@ export class DockerComputeDriver implements ComputeDriver {
     }
   }
 
-  private logConfig(labels: Readonly<Record<string, string>>): {
-    readonly Type: "fluentd";
-    readonly Config: Readonly<Record<string, string>>;
-  } {
-    const exportedLabels = Object.keys(labels)
-      .filter((name) => name.startsWith("org.openclaw.enterprise."))
-      .sort()
-      .join(",");
-    return {
-      Type: "fluentd",
-      Config: {
-        "fluentd-address": required(this.options.loggingAddress, "Docker logging address"),
-        "fluentd-async": "true",
-        "fluentd-buffer-limit": "1024",
-        "fluentd-write-timeout": "1s",
-        mode: "non-blocking",
-        "max-buffer-size": "1m",
-        "cache-disabled": "false",
-        "cache-max-size": "10m",
-        "cache-max-file": "2",
-        "cache-compress": "true",
-        labels: exportedLabels,
-      },
-    };
-  }
-
   private providerEnvironment(): Readonly<Record<string, string>> {
-    const credential = process.env.OPENAI_API_KEY;
-    if (credential === undefined || credential.trim().length === 0) {
-      throw new ConfigurationFailure(
-        "OPENAI_API_KEY must be present for Docker runtime execution.",
-      );
-    }
-    return { [MODEL_API_KEY]: credential };
+    return providerEnvironment(process.env.OPENAI_API_KEY);
   }
 
   private ownershipMetadata(ownership: Ownership): Record<string, string> {
-    const labels: Record<string, string> = {
-      [MANAGED_LABEL]: MANAGED_VALUE,
-      [COMPUTE_DRIVER_LABEL]: "docker",
-      [NAMESPACE_LABEL]: ownership.namespaceId,
-    };
-    if (ownership.agentId !== undefined) {
-      labels[AGENT_LABEL] = ownership.agentId;
-    }
-    if (ownership.revisionId !== undefined) {
-      labels[REVISION_LABEL] = ownership.revisionId;
-    }
-    return labels;
+    return ownershipMetadata(ownership);
   }
 
   private gatewayOwnership(revision: Readonly<AgentRevision>): Ownership {
-    return { namespaceId: revision.namespaceId, agentId: revision.agentId };
+    return gatewayOwnership(revision);
   }
 
   private agentOwnership(revision: Readonly<AgentRevision>): Ownership {
-    return {
-      namespaceId: revision.namespaceId,
-      agentId: revision.agentId,
-      revisionId: revision.id,
-    };
+    return agentOwnership(revision);
   }
 
   private verifyOwnership(
@@ -669,97 +467,47 @@ export class DockerComputeDriver implements ComputeDriver {
     ownership: Ownership,
     description: string,
   ): void {
-    const expected = this.ownershipMetadata(ownership);
-    for (const [key, value] of Object.entries(expected)) {
-      if (labels?.[key] !== value) {
-        throw new OwnershipFailure(`Refusing unowned Docker ${description}.`);
-      }
-    }
+    return verifyOwnership(labels, ownership, description);
   }
 
   private networkName(namespaceId: string): string {
-    return `oce-${slug(namespaceId)}-${sha256Hex(namespaceId, 12)}`;
+    return networkName(namespaceId);
   }
 
   private gatewayContainerName(namespaceId: string, agentId: string): string {
-    return `oce-${sha256Hex(namespaceId, 12)}-gateway-${sha256Hex(agentId, 12)}`;
+    return gatewayContainerName(namespaceId, agentId);
   }
 
   private agentContainerName(namespaceId: string, agentId: string, revisionId: string): string {
-    return `oce-${sha256Hex(namespaceId, 12)}-agent-${sha256Hex(agentId, 12)}-rev-${sha256Hex(revisionId, 12)}`;
+    return agentContainerName(namespaceId, agentId, revisionId);
   }
 
   private async image(ref: string): Promise<void> {
-    await this.request("GET", `/images/${encodeURIComponent(ref)}/json`, undefined, [200]);
+    return image(this.request.bind(this), ref);
   }
 
   private async network(name: string): Promise<DockerNetworkInspect | undefined> {
-    try {
-      return (await this.request(
-        "GET",
-        `/networks/${encodeURIComponent(name)}`,
-        undefined,
-        [200],
-      )) as DockerNetworkInspect;
-    } catch (error) {
-      if (statusCode(error) === 404) return undefined;
-      throw error;
-    }
+    return network(this.request.bind(this), name);
   }
 
   private async removeNetwork(name: string): Promise<void> {
-    await this.request("DELETE", `/networks/${encodeURIComponent(name)}`, undefined, [204]);
+    return removeNetwork(this.request.bind(this), name);
   }
 
   private async container(name: string): Promise<DockerContainerInspect | undefined> {
-    try {
-      return (await this.request(
-        "GET",
-        `/containers/${encodeURIComponent(name)}/json`,
-        undefined,
-        [200],
-      )) as DockerContainerInspect;
-    } catch (error) {
-      if (statusCode(error) === 404) return undefined;
-      throw error;
-    }
+    return container(this.request.bind(this), name);
   }
 
   private async containerIdsForNamespace(namespaceId: string): Promise<readonly string[]> {
-    const filters = encodeURIComponent(
-      JSON.stringify({
-        label: [
-          `${MANAGED_LABEL}=${MANAGED_VALUE}`,
-          `${COMPUTE_DRIVER_LABEL}=docker`,
-          `${NAMESPACE_LABEL}=${namespaceId}`,
-        ],
-      }),
+    return containerIdsForNamespace(
+      this.request.bind(this),
+      this.container.bind(this),
+      namespaceId,
     );
-    const listed = (await this.request(
-      "GET",
-      `/containers/json?all=true&filters=${filters}`,
-      undefined,
-      [200],
-    )) as readonly { readonly Id?: string }[];
-    const containerIds: string[] = [];
-    for (const container of listed) {
-      if (container.Id === undefined) continue;
-      const current = await this.container(container.Id);
-      if (current === undefined) continue;
-      this.verifyOwnership(current.Config?.Labels, { namespaceId }, `container ${container.Id}`);
-      containerIds.push(container.Id);
-    }
-    return containerIds;
   }
 
   private async removeContainer(name: string, force: boolean): Promise<void> {
-    const suffix = force ? "?force=true&v=true" : "?v=true";
-    await this.request(
-      "DELETE",
-      `/containers/${encodeURIComponent(name)}${suffix}`,
-      undefined,
-      [204, 404],
-    );
+    return removeContainer(this.request.bind(this), name, force);
   }
 
   private async waitForHealthyContainer(name: string): Promise<DockerContainerInspect> {
@@ -782,62 +530,7 @@ export class DockerComputeDriver implements ComputeDriver {
     body: unknown,
     expected: readonly number[],
   ): Promise<unknown> {
-    const ownerSignal = currentComputeAbortSignal();
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const signal = ownerSignal === undefined ? timeout : AbortSignal.any([ownerSignal, timeout]);
-    return withComputeAbortSignal(
-      signal,
-      () =>
-        new Promise<unknown>((resolve, reject) => {
-          const payload = body === undefined ? undefined : JSON.stringify(body);
-          const request = httpRequest(
-            {
-              socketPath: SOCKET_PATH,
-              method,
-              path,
-              signal,
-              headers:
-                payload === undefined
-                  ? undefined
-                  : {
-                      "content-type": "application/json",
-                      "content-length": Buffer.byteLength(payload),
-                    },
-            },
-            (response) => {
-              const chunks: Buffer[] = [];
-              response.on("data", (chunk: Buffer | string) =>
-                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-              );
-              response.on("end", () => {
-                const status = response.statusCode ?? 0;
-                const text = Buffer.concat(chunks).toString("utf8");
-                if (!expected.includes(status)) {
-                  reject(new DockerApiError(status, text || `Docker API returned HTTP ${status}.`));
-                  return;
-                }
-                const contentType = response.headers["content-type"];
-                if (
-                  typeof contentType === "string" &&
-                  contentType.includes("application/json") &&
-                  text.length > 0
-                ) {
-                  try {
-                    resolve(JSON.parse(text));
-                  } catch {
-                    reject(new Error("Docker API returned invalid JSON."));
-                  }
-                  return;
-                }
-                resolve(text);
-              });
-            },
-          );
-          request.once("error", reject);
-          if (payload !== undefined) request.write(payload);
-          request.end();
-        }),
-    );
+    return dockerRequest(method, path, body, expected);
   }
 }
 
