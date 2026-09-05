@@ -1,0 +1,94 @@
+# Modified for OpenClaw Enterprise.
+[package]
+name = "ds-tlsproxy"
+autobins = false
+autoexamples = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# Existing reviewed TLS primitives and the narrow OCE adapter. Legacy main.rs is
+# excluded by autobins=false; it is not a product compatibility target.
+path = "src/lib.rs"
+
+[[bin]]
+name = "oce-egress"
+path = "src/oce_egress_main.rs"
+
+[dependencies]
+# Retained reviewed library primitives. OCE transport does not invoke legacy
+# transparent-connect, mark, interception-CA or shared-memory authority paths.
+ds-contracts = { path = "../../crates/ds-contracts" }
+# ds-admission-shm: the D131 Candidate-A survivable DNS-2b admission map (seqlock over a
+#   real POSIX-shm MAP_SHARED segment). ds-tlsproxy is the READER side: behind DS_TLS1_LIVE
+#   the FORWARD admission gate (`acquire_admission_map`) attaches a read-only
+#   `ShmAdmissionReader` to the host-wide named segment ds-dnsgate writes, by the SAME name
+#   single-sourced through `ds_contracts::dns_admission::admission_shm_name`. The crate's only
+#   deps are ds-contracts (already in this graph) + libc, so this path edge adds ZERO vendored
+#   crate; framework-agnostic, no pingora/hickory type crosses it (D40/D67). The lookup flows
+#   through the FROZEN `ds_contracts::dns_admission::AdmissionMap` trait via a thin read-only
+#   adapter, never the concrete reader type in the consumer mechanics.
+ds-admission-shm = { path = "../../crates/ds-admission-shm" }
+# policy-core: THE single shared evaluator (D63/POL-3). The TLS-2 explicit path
+#   (src/explicit.rs) routes the client-declared host through
+#   `consumer::tls_connect_decision` — the SAME engine verdict the transparent
+#   path's SNI check and the DNS admission reach (no consumer reimplements a rule).
+policy-core = { path = "../../crates/policy-core" }
+# ds-telemetry: the LOG-1 emitter CONVENTIONS crate (doc 14 §6). The lib target
+#   consumes its `QuicRejectCounter` — the D70 per-session udp/443 reject counter
+#   (doc 12 §7) — that `src/telemetry_quic.rs` instruments into the LOG-1
+#   `FlowRecord` reject path. Already a workspace member in the locked set, so this
+#   path-dep edge adds NO new Cargo.lock package; framework-agnostic (no pingora/
+#   hickory type crosses it, D40/D67).
+ds-telemetry = { path = "../../crates/ds-telemetry" }
+socket2 = { version = "0.6", features = ["all"] }
+
+# ---- TLS-3 leaf/CA crypto (lib target: src/ca.rs) ----------------------------
+# The per-session interception CA + per-origin leaf authority (D17/D82, doc 12
+# §3/§13.2) and the building blocks for strict-WebPKI re-origination. RING backend
+# (see [workspace.dependencies]) — NO aws-lc-rs cmake path. These are pingora-FREE
+# (D40 / doc 12 §13.1): src/ca.rs declares NO pingora type. Versions are pinned at
+# workspace level so they can never skew.
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-webpki = { workspace = true }
+rustls-pki-types = { workspace = true }
+
+# ---- TLS-5 credential-swap (lib target: src/swap.rs) -------------------------
+# zeroize: the presented short-lived credential the swap executor touches lives in
+# a `Zeroizing<Vec<u8>>` wiped on drop (never-hold-the-secret, D73). Already in the
+# locked set as a rustls/ring transitive, so this direct edge adds NO new
+# Cargo.lock package; pure-Rust, no build script, builds offline with --locked.
+# pingora-FREE (D40): src/swap.rs declares no pingora type. Pinned at workspace.
+zeroize = { workspace = true }
+
+# Legacy library parser tests retain the existing Tokio dependency. The stock
+# main.rs binary is deliberately not an enabled target of this candidate.
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "signal"] }
+
+# Narrow OCE adapter: strict duplicate-aware JSON RPC and exact request digest.
+# These packages already exist in the locked graph; these are direct edges only.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ring = "0.17"
+# Existing locked nix provides safe SO_PEERCRED access; no hand-written unsafe FFI.
+nix = { version = "0.24", default-features = false, features = ["socket", "user"] }
+
+# Maintained HTTP/1 framing on explicitly dialed sockets only. No pool, connector,
+# redirects, HTTP/2, HTTP/3, TLS AWS-LC backend, or legacy proxy service.
+hyper = { version = "=1.11.1", default-features = false, features = ["http1", "client", "server"] }
+hyper-util = { version = "=0.1.20", default-features = false, features = ["tokio"] }
+http-body-util = { version = "=0.1.3", default-features = false }
+tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring", "tls12"] }
+http = "1"
+
+[features]
+# test-ca: exposes src/ca.rs's self-mint interception-CA harness
+# (SessionCa::new_self_signed_for_test) outside #[cfg(test)] so LATER TLS-3 units
+# in OTHER modules of this crate (and integration tests) can construct a throwaway
+# per-session CA WITHOUT the orchestrator/Identity — the dependency-inversion seam
+# mirroring boundary CAMinter. Additive + off by default; ca.rs's own #[cfg(test)]
+# tests do not require it (they compile under plain `cargo test`).
+test-ca = []

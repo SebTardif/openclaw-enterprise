@@ -1,0 +1,8 @@
+Source notices for nix-0.24.3 / test/test_kmod/hello_mod/hello.c
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-3:
+/*
+ *  SPDX-License-Identifier: GPL-2.0+ or MIT
+ */
+

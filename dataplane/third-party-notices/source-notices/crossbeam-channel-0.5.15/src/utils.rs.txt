@@ -1,0 +1,9 @@
+Source attribution for crossbeam-channel-0.5.15 / src/utils.rs
+Conservative source-inclusive collection; no assertion of binary linkage.
+
+Lines 33-36:
+            // This is a fast alternative to `let j = x % n`.
+            //
+            // Author: Daniel Lemire
+            // Source: https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+

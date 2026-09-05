@@ -1,0 +1,11 @@
+Source notices for hickory-proto-0.26.1 / src/dnssec/ec_public_key.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-6:
+// Copyright 2017 Brian Smith <brian@briansmith.org>
+//
+// Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
+// https://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
+// https://opensource.org/licenses/MIT>, at your option. This file may not be
+// copied, modified, or distributed except according to those terms.
+

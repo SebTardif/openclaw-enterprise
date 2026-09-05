@@ -1,0 +1,7 @@
+Source notices for zerocopy-derive-0.8.52 / src/derive/try_from_bytes.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-2:
+// SPDX-License-Identifier: BSD-2-Clause OR Apache-2.0 OR MIT
+//
+

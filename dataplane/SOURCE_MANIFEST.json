@@ -1,0 +1,997 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/freeqaz/ds",
+    "public_baseline": "dccf15c760e219ab7bf284c7c2b52b62b9d925ef",
+    "license": "Apache-2.0"
+  },
+  "scope": "Selected source inputs; upstream bytes may include subsequent OCE adaptations. No upstream Git history is included.",
+  "products": [
+    "oce-dnsgate",
+    "oce-egress"
+  ],
+  "source_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "0efa957a573d1e336152214b74f151857a7044cf6a9240cba6585aa0de71ed2f",
+      "modified_source_notice": false
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "d16ee94abfac414ad1386a9d1c292507c00347dcbabb0c62c8210fbd90e4edd9",
+      "modified_source_notice": true
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "5a95f35739058f0afd13e6d719f7cf635fedd8e4f980a203aab873868d2b3712",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/nft/nft-1-bootstrap.nft",
+      "sha256": "e396d888aa4d926496aa164873633cecdaca059461f6dc8d4738b92914e38d7d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/nft/nft-2b-spike.nft",
+      "sha256": "da545bd308692f77099d36efe3489666277a8a7ef943bfd9f3f6a518cca66774",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/nft/nft-3b-output.nft",
+      "sha256": "4bad91a34a09e5ee292a484986dddee58f2ead854293b2e3add957cc17f796a2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/nft/nft-4-resolver-closure.nft",
+      "sha256": "18aaf9fe0c6314cd1011a2e229191b78022dc62d364e35d04e7fb68088008e49",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/nft/nft-5-flowtag.nft",
+      "sha256": "099132893c93af39456ffc0e114fafe7adb731dfdefdc36dbb7217433c0099ff",
+      "modified_source_notice": false
+    },
+    {
+      "path": "artifacts/policy-packs/pol2-system-baseline.pol1.yaml",
+      "sha256": "cf4072fb85cdb9a9971c06900ff0794b0085717407f3710a91e588167edaa74a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-admission-shm/Cargo.toml",
+      "sha256": "f7fe77ab9dd5159b3dceddf83cbc434c0ffaf5b764ac2138ea568e68dfdc085a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-admission-shm/src/layout.rs",
+      "sha256": "f804064185c533cde58bd64bca5f0f370338f3ab0342b3139b28ec4befa5c77a",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-admission-shm/src/lib.rs",
+      "sha256": "597186015783f8995710792729ae1ebde8b7ca6859fe0e4edb27954e1bad71f2",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-admission-shm/src/revindex.rs",
+      "sha256": "fb809a7b42f6f0b92ab49231501961719b539fcafc6c03f8b5843ec487d3e478",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-admission-shm/src/segment.rs",
+      "sha256": "d31eae2a0447ae27865378fe7f44dfe4f645d75cf9046cc47c469d8e7b241515",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-admission-shm/src/seqlock.rs",
+      "sha256": "cf03639eead9ccd330cf624e3cc780d9d695bb3ee5eb72c61f58f9230c9f536e",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-admission-shm/src/tests.rs",
+      "sha256": "789562fbb12880566f3973eee7751bc61399dd16e5b59b60a279280c5a0e5c94",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-contracts/Cargo.toml",
+      "sha256": "cd62607a9dd4445669171b2875073105dbd3fa058bed2d54ef0c07d98c66673a",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-contracts/src/conn_origin.rs",
+      "sha256": "d6630ba69ac4d5f31e3be8bf6a652a568718fee6e2592de11ce3432547c64ce3",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/consumer.rs",
+      "sha256": "f0a63e3d10148e43ec28ef8cef58f018675eae11dafc7e8bd3572a0dbf98a65a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/dns_admission.rs",
+      "sha256": "7cfd0ab977c8c9811afc0d485a893d91ad3587e555b99e2f8dcc3e63f1a41ee8",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-contracts/src/dns_soa.rs",
+      "sha256": "bc539fe5436c7f4f225a0682302c7a87ca2229551ee688f02da989b2e62c6bf2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/flow.rs",
+      "sha256": "e0af6c1ab2f8adc99ac5e3f25474434547b9a1a5779e1b872230cf5a3dd501d9",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/flush.rs",
+      "sha256": "c5c52bfe5ebe2e343840a401158f93950aabc096f2793ce6434ac7e245117262",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/lib.rs",
+      "sha256": "7118694880432115d63c3b32c704a6c566b4a8ef429fcb5a5bef0657ba410d40",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/mark.rs",
+      "sha256": "d1f7cc87be6f965cb5d40ba0dec4245ee983b1f6a26180e98752a687ced571c7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/nft_lint.rs",
+      "sha256": "41ed4779250bf24364fdbebf95997e4a4994234d482765e250e8e4eac2af52da",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/pol1.rs",
+      "sha256": "1739befd7f3177bf1a9035f49329efccc77d948932852754e30e19c85d14c2f1",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/pol1/tests.rs",
+      "sha256": "552f8238f466bfe33095cd87725fd95a246e1e91f8070608d4f6a46da126ed27",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/reject.rs",
+      "sha256": "334f2f14453e3aa26bb84491f694bb49623a38d8784b00813831d1a0422590c2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/scopes.rs",
+      "sha256": "94c986a807e844919e51982397fa252c8b76627c63d9940fef637556fe139756",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/session.rs",
+      "sha256": "5dad9dcef5fe73bf07b81ba620deb3b87ecadab606d48d1f25d15438bbbe66d3",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/src/snapshot_verify.rs",
+      "sha256": "d2ce0b503264c4a945317f626059cf12bf7f64b1c98403003877358739bb7650",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/testdata/snapshot-goldens.json",
+      "sha256": "4609d8dfbfc83188c560ee37ea51666e203d9ba9c8b9bb0becb51965375732e7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/tests/allow_set_name_conformance.rs",
+      "sha256": "99ad06eb866961e958101c3c65c1754a7aee522fcc462491e7ac38f07f70f245",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/tests/nft_composition_lint.rs",
+      "sha256": "ec113dea5e24f5ace37ab0ac4c54eb1c7b26295e498ada1ed2b6cb98eda05e38",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/tests/nft_mark_lint.rs",
+      "sha256": "d80a96825ade724cdf25edc9dd14788c8afe7cea7d53cf2fa3028ec77705ea7d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-contracts/tests/snapshot_goldens.rs",
+      "sha256": "515ad0b6ca19de77392bb2f2b2bb4210095d76259d5de625654a8d22c6cb34fa",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/Cargo.toml",
+      "sha256": "f0e4362b21323511295a6e670535eb68913a71cfecca610b9622562782d0f896",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/examples/disposable_nft_probe.rs",
+      "sha256": "3c95b8f55b63d82c4bd2fec1e13d7a1c017b55be3329243dbaafb0af61d0ca83",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/include/ds_nft.h",
+      "sha256": "3048f3da737c5b872d09f36f2abf475cf3d403d2c94b8084daf8e9fff35e8484",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/alarm.rs",
+      "sha256": "05aa4848b359ec0dcac4efb6c4044daf9860c7d16f5ffb856abe7dd712783be6",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/apply.rs",
+      "sha256": "50582c96e382b961d89e5a7123d06819ddc95ee2fe60844d485eda2482f05eb8",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/backend.rs",
+      "sha256": "0337edd72f316e32397e23e52fd431a5748423d9678285b62b1d875fd027bbd0",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/src/dot853.rs",
+      "sha256": "8b5c57a697ea930c970f0b451fb105638a7cee94835a1c9af162c5af09600438",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/ffi.rs",
+      "sha256": "5e131a98098350b8e798f98129a7ab8ed445b99ab32bd7928fbd33e846a7633a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/flowtag.rs",
+      "sha256": "990275540ee3b82acc1e5773327d4fbf1fea8f50a7212e5559e1458a6efa5e6e",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/flush.rs",
+      "sha256": "5d8a4c9c3da1559fb91ae6d590a3c9c9b2dd50abfb592a9b07dd0412440572ab",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/lib.rs",
+      "sha256": "11b30225ac84e7e978ce7b8c64aa71dba9c661a3dcc7f123dcccb4db7f2593e5",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/mark_match.rs",
+      "sha256": "9660c69add7495594386ddf4156f04a180208fa143c25b4bdad50b3327e8bfb0",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/outcome.rs",
+      "sha256": "399dd3d058e4ac3fdbf58c977f61a586b3f1bdb2989f0b9c4956d75bbaa11943",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/precondition.rs",
+      "sha256": "0987b078db7086d48cddc248d16f4438e40ff7c18dec09c5dfa9737d035311ce",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/quic_reject.rs",
+      "sha256": "6b417348c61bcdff131b39f9ef754e89c753339204942b672f5d6c339c7c99a3",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/redirect.rs",
+      "sha256": "51cefbccee18a85ca9e0d49ce538eb9775547e9c3b45f5ba04525de100b0f609",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/src/refresh.rs",
+      "sha256": "904b13ad56b982e4d1e91abe3f10b6bd822d26fa28aa1c9d5c9bd190fa942cbb",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/src/session.rs",
+      "sha256": "cfb3dc38a04ab8f2f5b847b177a869d622cfbfb4b3d54334d7ebf8bacbe934a0",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/tests/dual_refresh_paths.rs",
+      "sha256": "4b1b00b54d6688c53ab95283eca3284c27f6fe54eccc9720dc183b604be4deb6",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-nft/tests/nft2_redirect.rs",
+      "sha256": "b76898e1a43b5a3c626ad15901df9665f26d5350fc739d1aa7a03214df90fe45",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/tests/nft2_spoofing_netns.rs",
+      "sha256": "69cc206bec974d485a93841b929a9704ce8201db7baac3e1795826e716630cf6",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/tests/nft4_quic_reject.rs",
+      "sha256": "b3d3d3cce2ac88ba292a34b5c4c2758ff29b6896180b09711d5f824b3a1342e2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/tests/nft5_flowtag_netns.rs",
+      "sha256": "45d78d791ddd640dbb2ab67bb64e4bb1f6fd38351ac4ab80ac64eb0036aec8f9",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-nft/tests/nft_tap_lifecycle_netns.rs",
+      "sha256": "501eeb29470952e6819917e9656191c0730dfe486cf0cd1ae738d66508d55dc7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-policy-snapshot/Cargo.toml",
+      "sha256": "a56a0fe010029f20f88ce17c8d23d899de60de25b309c4448c45497a5a09f66c",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-policy-snapshot/src/lib.rs",
+      "sha256": "42d39c370e9583a07ae3ccddf9d67e9e563324bd5d8c3d535e7956552887c869",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-policy-snapshot/testdata/ds.fleet_revocation.v1.golden",
+      "sha256": "3ffc746c4a5f81eedfe7d3d8be3063f3027be13769eefe120fcbccbf4635aca0",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-telemetry/Cargo.toml",
+      "sha256": "c9e0f01ac43098e5557dee99231c3fc5d73bd221d873cbc287cd1b30bad51624",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-telemetry/src/event.rs",
+      "sha256": "f7828b8bf0d88cc9cb4d6bcef945faca68d6be72c9f21862c4c6a5a54e583b23",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-telemetry/src/flow.rs",
+      "sha256": "1fae47933fcb1de1bced9002165eadd968d9b2fa7da9f54207352d13510b5244",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-telemetry/src/lib.rs",
+      "sha256": "e3b7818588c9fca3009e41c1044a95148c0eabdf18c656dec769ea54010048aa",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-telemetry/src/provenance.rs",
+      "sha256": "c5dd8062a6814f8c8d116d5fbdf28fc295d57570b7f42965d4fdc647add2f7ee",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-telemetry/src/quic_reject_counter.rs",
+      "sha256": "78a561d8617a152ce965c71fc021bfd5226e33f20612bc28bd43d4e0ef080255",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-telemetry/src/scrub.rs",
+      "sha256": "803c888b1e1faf288fe4347ed227069a5224d608aaaca45b36109e4dc8c7eaed",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-telemetry/src/spool.rs",
+      "sha256": "9c0c7626f584ea25f0d1bd052c190730ac0d6625ec44ea99a867929ecf7f2b5f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/ds-telemetry/tests/flow_spool.rs",
+      "sha256": "cb49f9c2e9144f9e4cc5ffa2a8a0e3e637ffcf147a1f2e34d7d90d76c32de777",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/ds-telemetry/tests/spool_failures.rs",
+      "sha256": "561e74e15974a7fccc156a644ea2bbda5c7ac542f92c2dc2beef21d901b39630",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/policy-core/Cargo.toml",
+      "sha256": "95052cf70674d0c80a67629f5135f181c4f6df1264b5ac8cfa174e3144dad142",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/consumer.rs",
+      "sha256": "b3c08072ce3fbc34fb95f13882e3531857c1a7a8acb1d7a38b4c36a9aff5c28d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/consumer/tests.rs",
+      "sha256": "fde593fc6520501f581e9bc8ed624476b4938c4d178402371476ac7b0c992583",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/dns_gate.rs",
+      "sha256": "7628618a99a80844c07962defaeb90deccd2e368ca8632e91688df3e01e9ea60",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/dns_gate/tests.rs",
+      "sha256": "f0841c7b871d269140a157913c3125ee9e088acbb3c28244951e773bc83666a9",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/lib.rs",
+      "sha256": "c6c958fa8d85b4479e7ff5f1e13c7e281b588a533e3b709ffd65b6d07d4edc9a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/pol1_eval.rs",
+      "sha256": "804595ea675df084b016e61a8919904da123e7a7408195368612271f4b3d0b7d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/pol1_eval/tests.rs",
+      "sha256": "51e6fa5831afe71e08dab2fd12a43e25ec4a52b407139b7ca1e318d3536d76b6",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/role.rs",
+      "sha256": "f1f1bf613affc1a17d454311cafa05c6dbf2393aea470806b298256d74b66093",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/src/secret_matcher.rs",
+      "sha256": "d11efea8d8a73d9edb7eefe2c30c8b0f77251ea58b5dda46bba81e1d6457902a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/testdata/roles/default.yaml",
+      "sha256": "7f4a2e53ad09111a77f0f9f2ac325bccf5c68383d58e5f0215529f8866db164b",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/testdata/roles/developer.yaml",
+      "sha256": "fc86b8c0db0d781ab1da30b3824d1d29b131471118c4cffe1282392d0edbd29b",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/testdata/roles/researcher.yaml",
+      "sha256": "2fbbbd8b0e0a3a59fac157aebd0293bac6de0668a6c4184613cba0503779ec72",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/testdata/roles/security-engineer.yaml",
+      "sha256": "42a0dfc159ba79ed1948293916b5f0f825694a2572751d747446253d36820c5b",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/tests/pack_drift_corpus.rs",
+      "sha256": "08aa8ef80cc49319b91aaad9307ecc7258513fb16c320ac5ee746392d7485409",
+      "modified_source_notice": true
+    },
+    {
+      "path": "crates/policy-core/tests/pol2_baseline.rs",
+      "sha256": "3b56cae3bcca12b572e4ca4a47ddf3bc8d2b549796b43db6876a88beae63d4c6",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/tests/resolver_lock_tls1.rs",
+      "sha256": "55c1616def38822f86e70db14b2f5fbb696692baac4c9a273ad323db8e98c4aa",
+      "modified_source_notice": false
+    },
+    {
+      "path": "crates/policy-core/tests/role_validation.rs",
+      "sha256": "46b999773ec99c02960a103e1f7384c102a333cf3a10cf7fcbb6dcc1573e487f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "def57f8bd109061f85f1e5b66a8f947b901b9d053a1ec7e8fdd4e7d225429c6d",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/Cargo.toml",
+      "sha256": "26d03af7b752f1cadcc25f50d6eb05b560b9ea40a8674c6dd8fdc9392ccdcbaa",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/apply.rs",
+      "sha256": "c4a1a3cf041d9736cf70842f356255987915945b66279cfac1ef01383d8331e3",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/ask.rs",
+      "sha256": "cdaf1e0edfe71cb16eb8ca371934d497ba7ea80c3e4c4f5b7882867273cbea4a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/src/attrib.rs",
+      "sha256": "f94f7b6b70319e4da85426ca6b8eeda35fb826aeceb51ac20cbacdf936c1a8ac",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/src/bin/oce-dnsgate.rs",
+      "sha256": "a0a2996267da58cda4a9db3d0ecd3e7d83383d1e0431676cb09c2497a3cef0aa",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/event.rs",
+      "sha256": "aef2af606ffaa3c8b1570f1e16332355b59291d524ba34a728b327610c60b7c4",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/src/handler.rs",
+      "sha256": "78eb2f98e1d416cf4c2702d0c164e59381e7eb44b372c53284178629871f419f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/lib.rs",
+      "sha256": "1527d00fa06e7f76a876cd1e84785bf632e35784d123022e7ad1eaca14a4dca7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/src/oce/kernel.rs",
+      "sha256": "3e7d7fd02e9089c9c2639d4420b410c08fd45705b21ee60c7cb52cd3304c024f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/oce/mod.rs",
+      "sha256": "ce3439deb4b0caf2948e811e1362028f513bacdb637fcd8d8e26b4b055256b10",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/oce/protocol.rs",
+      "sha256": "c4ddcb95e6dc90cf9953dd1c1317f1d107ebeccc1c39945e3d5cfac75a89b5ca",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/policy.rs",
+      "sha256": "f03408e38260871b078338bc9c78eebd19b3197c6bb9dc7388dc1fb0e227132e",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/reresolve.rs",
+      "sha256": "b019c65e392693f2e2113b02666318ef793e80f6b8b5cdc65c710030f6e16fd0",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/server.rs",
+      "sha256": "14f4c6e73cb236e5fd7a2a4deddbd03e4471e7142aecbdbfa888b57b553bea56",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/sweep.rs",
+      "sha256": "bb99ee1b86168e515df0b8f33ea7a91ac3a7b6c38c3b3de06e2139d0f1b4f35f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/txn.rs",
+      "sha256": "1093cb3887ad05503e01c57eba547519fbba9bb4f8beaca25ce1b39b117ca91f",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/src/warm_restart.rs",
+      "sha256": "ed43d44603224099f37f0ca9669ef9ba8f0e79ab004ab3b68f7cb54909d88908",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/src/warm_restart_live.rs",
+      "sha256": "23ec4f79352b14ff676ffa2efd3391053b96f69c8682a5307f4cc5eda322820d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/admission_shm_e2e.rs",
+      "sha256": "a399b759e241f1c169e5aea00b3af71cd7451bdc2783b109d8c2781922962225",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/canonical_sweep_paths.rs",
+      "sha256": "d8b40b188a822be6d9c4ce28cce34601fb32e6f1c3939e588cabe2b53e46339b",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/tests/event_surface.rs",
+      "sha256": "80f7b8647d7d1cb95faa3b9fc94c0df70ca4b3681ce37f0ed5e2940a118efca4",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/event_surface/forward_only_drop.rs",
+      "sha256": "358056b07b376dd792bde5a5b0f34e20f699bdc8a83ce8467f3e7786d989d31c",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/event_surface/revocation_sweep.rs",
+      "sha256": "625ba79ee95c024ef0e88fcc30f71cbba60d88f6e0248692ca75c13d4a465a3a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/event_surface/snapshot_reload_wiring.rs",
+      "sha256": "6cadc2b6a48688a88caeb23bdb86dbb2e6125b5eab715f29d817bf22aafe23e7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/event_surface/verify_only_nack.rs",
+      "sha256": "d5a38f99f082796d2067744bb9decaac81a04211767f982aa373e05225e15562",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/framework_validation.rs",
+      "sha256": "f59b8f8a33536426447c5f31c60c865f2fa27a48cd80a3ef41ef53f930794a65",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/oce/state_cases.rs",
+      "sha256": "384fef642eacd0ea03ae250d7f54ff5787563a8e3cf938eccaa5a49feb3fdd56",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/tests/oce_adapter.rs",
+      "sha256": "e0fd3a6ba025f775f46627a233c028fd9f0872438d4d76c4636e20653080c8f9",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/tests/policy_admission_race.rs",
+      "sha256": "8eb80fb6673df9232e9fd0689d12d64bed9471e9f0e7a6de132e69a4bcfc7764",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/tests/policy_seam.rs",
+      "sha256": "3f139f8b3ffbc13612c981eaf4d458d08fc8c21fa2e62d58e14eff24d9396588",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/policy_verdict.rs",
+      "sha256": "aa44ba72216451deebe6719576e6d1ba93d6d7471044666ff6bef8df3272f293",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/querypath_guardrails.rs",
+      "sha256": "15c1532d5b7cea5540d2c0a2e8d6b70d2bca50162d0ac66016ec7823383f7e10",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/suppression_shapes.rs",
+      "sha256": "6725708928e43187081a0f51b7e0dfdf99b2b4b1e86b2aede604fef8e3cbf4ab",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-dnsgate/tests/sweep.rs",
+      "sha256": "9e032e47ae89222ffc0613107fd938b14ce6a461ca34d476d0ac7383e3be43c7",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-dnsgate/tests/warm_restart_live_netns.rs",
+      "sha256": "abd87c27c913ad3b70c993e8277bf51194d62b2dc2b4ee14fa94c69052dfbda4",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/Cargo.toml",
+      "sha256": "1453e091172bdeeec357e9e99e6793fb51c1210d79798da90e66468880f5df0a",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/apply.rs",
+      "sha256": "4ea18c5643822c2ae453efcc676b751c7389cdc8f7aa09a12fa003a7aa20d9e0",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/ca.rs",
+      "sha256": "22e0758da99d051d06549725c2da4626e48e7a828cf90810950bfb018cb1666b",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/cap_monitor.rs",
+      "sha256": "f2ae8e40e6ea7d767366fb23af1df9bb86d5981280c1fe0323efda866e712f0f",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/explicit.rs",
+      "sha256": "fc628a8bae9ee1a27966f4c525096be4dd5e0ffbf00c4e532a385d67a3ccbef3",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/hold.rs",
+      "sha256": "5317cc26da11213e0b23b01cdee3887329e5881f6077e7ab801e412a42c9a09c",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/http_policy.rs",
+      "sha256": "7c955ff1ae344fd551dbbb8bc7166336f9a3aa97d30618a1257dc21165a765d3",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/lib.rs",
+      "sha256": "2cd9195f886efc448599bf60efc46c1232d03ac9eb2aca1fb32b0d6df8eefa89",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/engine.rs",
+      "sha256": "27b79e16d29e78c9402f746028821bf61dd4a94a39d308f5e0af76f42ad81c03",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/http.rs",
+      "sha256": "54681b26100380e6a3a6b7f5e5813ee62234a4c5c31f0a3a8c72a0ab9bb420ac",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/json.rs",
+      "sha256": "cdfb6e1ece3695298c60537f12f665100ef47fe694b48cd354e338a8e7d4a7e2",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/mod.rs",
+      "sha256": "c0810e078354cb99a107d3133025a5ac62e93e40d6473f8ebfe1d5e269e201b7",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/rpc.rs",
+      "sha256": "862e3643a59e5e7f5e21851812bb42ec9eb16c6a8915d6c0d8ab61e0b6ba0dfd",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/sse.rs",
+      "sha256": "94fb20f7a9fdd9b24ae125adf5a85cb69a2a4ab277e19c0de63e98cf72d5f8f1",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress/tests.rs",
+      "sha256": "a3db4f7398aa2871cfaab992f4a47ce4a3462a0705635d8e0da3af2f6ee58009",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/oce_egress_main.rs",
+      "sha256": "b22406fd8a67eced83c8f0b27b4dff5861ad2de370af65a99c617b836d91d72d",
+      "modified_source_notice": true
+    },
+    {
+      "path": "services/ds-tlsproxy/src/rate_limit.rs",
+      "sha256": "8bc355261a81c74dbc3b64a12cc417873486c62a7869771aba5f76a86332f904",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/reoriginate.rs",
+      "sha256": "d71b11cccaae542f3578093f8a852e2bc2d87ea487687241c5ac9343f849ef44",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/scan.rs",
+      "sha256": "6d0f0043253a2c4af79a3de2ecae55e395e4d50964a9b3430c4d7b78018c047a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/snapshot_feed.rs",
+      "sha256": "9dc2f7cdfc987e486f6f500db176a95b9c839d579999db93b480ce4b31276630",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/swap.rs",
+      "sha256": "e94cedc7f5fccfaba36f720c40144ec81490060369d9577d0a3692ef62bf137d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/sweep.rs",
+      "sha256": "0880b8df2e488a29fd09bcae9a50e5a7ea28e84ad9075b050392e37f12b2fc00",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/telemetry_http.rs",
+      "sha256": "233be6b546e83fbc6cc737d1411a89f663d0e25615c931ffb2a9515f88fae743",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/telemetry_quic.rs",
+      "sha256": "be8f45379c47c43c7b0e8ebe47e996684690d0d8f20574427766c85b46deeb63",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/tls1_admission.rs",
+      "sha256": "c593612ebd10607984bcf150ed560107ab20704ccea064522933cbdb5900b2e1",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/transparent.rs",
+      "sha256": "c82839cf2d388f447d4e83c92e4916c09bcc706340f53d28da3a460faf43bf8f",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/src/validate_client.rs",
+      "sha256": "ce6f01f0d98572051c7f52560e91b2229f7aa1228d48cfbc4fb018c2e9868af2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/clienthello_fragment_live.rs",
+      "sha256": "62de53426051c8601cadfff13405fc13e1ef8356627eee3f0eb352bf6e4e5abb",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/commit_fault_apply.rs",
+      "sha256": "6da3a5597ad834ea22a63eae9d5e198ba7f833be1ad7f2e93fd21d0b2d1fa5f8",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/e2e_forward_armed.rs",
+      "sha256": "9311929ef6dc0d6d143f86ac9d19d282c7edee4266f759edf2da740aa6a25a8f",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/e2e_live_redirect.rs",
+      "sha256": "8d73f7ea9c4fc8afb3e0f7d1cc5b4887219d0aef9762e731c8f9a94a0c10c105",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/e2e_transparent_forward.rs",
+      "sha256": "b283ac49193ebc8046730d2c57ab0705589f64e9f03deebb9b2fb1c517d5aeb6",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/passthrough_tunnel.rs",
+      "sha256": "fb5e480dc745ecba92255d05f0823f543f424753c1578ccb6162c5af5df07c8a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/priv_so_mark.rs",
+      "sha256": "b5a1ba59faea3f0a4be3cfe1daa373954cadb1bc4ef12ae0b2b941cd93e471c8",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/redirect_getsockname_live.rs",
+      "sha256": "ee25234bb4eb8a958080ac4b10bf1d43c9cba98a503d683257ee401cf6fa36d9",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/redirect_iifname_live.rs",
+      "sha256": "b1fa71e49ac9a5518d47b483f91ca7b23d330432dc575fccdf48228ac8379fa0",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/shm_live_path_smoke.rs",
+      "sha256": "52b38fea27bad0608452c53f2aee009a4271b0c4a24fbdad6075030408f4114c",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/sweep.rs",
+      "sha256": "7e0d5f4a9254966528f9adea94139958be81aebf29c110ff6e0205c583be8091",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/telemetry_quic_test.rs",
+      "sha256": "ff42cf2c904f0d1d3b56bd7e14784f39c7b669c57879d6e5bb4b800dde279071",
+      "modified_source_notice": false
+    },
+    {
+      "path": "services/ds-tlsproxy/tests/tls3_inspect.rs",
+      "sha256": "5dae0d13ad4ff641d8bcd4b4ab09a10b4775cfee73f4168015f47c921e717dbe",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/00-good-baseline.pol1.yaml",
+      "sha256": "253dafecb386eb9b72ac38989535cfbe23ee5a8e25c287fa59e2e1030d811f99",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/01-missing-blocklist.pol1.yaml",
+      "sha256": "93b6bcd79d9c51adaa909d6bc494310f95291c09dc488f70e55c806b41c4d70d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/02-empty-blocklist.pol1.yaml",
+      "sha256": "22d11fe07f31844136523eee1900c12f4795a001458a61525829049d3146e902",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/03-wildcard-fqdn.pol1.yaml",
+      "sha256": "dc0c2bcb1ed737bf2fe33f994b4bca856f70abe13f1d5c49df78934e2d2b4af1",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/04-uppercase-fqdn.pol1.yaml",
+      "sha256": "5d6c040d3c144be2fd22c8ab9d53a14619c5aac19a108152a38371ad281f1f08",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/05-entry-missing-rung.pol1.yaml",
+      "sha256": "1b15e88698431b64850382c445b6226e29f893e03d6946c39cb7fcc3aa3d3eb2",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/06-entry-missing-reason.pol1.yaml",
+      "sha256": "8a48dd8fa29136a21e80c182cc2b98a05a515eb8634637b765e5ffba1eaad6e9",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/07-flow-blocklist.pol1.yaml",
+      "sha256": "6f4fccece124b83df34582edc7ce5f48c46313947c1588e1639324fae5ff9e79",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/08-quoted-keys.pol1.yaml",
+      "sha256": "46a4df4b8294cd072bdab467bd2c24a8580009fe54109a2f19a6c22a05eb536f",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/09-anchor-alias-families.pol1.yaml",
+      "sha256": "0267904cf4e60a6bdec714de6828bfa98cfb47ac90787f036db2acfe00ce595d",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/10-unknown-tier.pol1.yaml",
+      "sha256": "6446dff95209450942afa0e1050d5b4bd2cad144ffca1fdff4418570e9078267",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/11-empty-family-tier.pol1.yaml",
+      "sha256": "87d26769f17328aaceed278e009dc6137f43e8593872fd36935a3afe1b7f5de5",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/12-entry-missing-provenance.pol1.yaml",
+      "sha256": "52a356dd8c526eb0f6281a7ccdf31da5a320c82dd8b60fe9013981ec2c357b19",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/13-missing-rung-guardrail.pol1.yaml",
+      "sha256": "ac89dbe3e033d3c7e634bdfa80b436e92120d21b8977e1872429966028aa5b31",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/14-bad-rung-token.pol1.yaml",
+      "sha256": "46cb043620366e711bbb11feb557a52fbc740687b9840e9372107a3eacc961fa",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/15-multi-document.pol1.yaml",
+      "sha256": "eda1149e9ace492cf4dab9a0738bc6e38b03689625a62812f8999293d3793ab1",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/16-tab-indent.pol1.yaml",
+      "sha256": "289c77dab347847743498ca8d5d4b6c75cac08f1a50be99d60ecc310d4a299d7",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/17-duplicate-fqdn.pol1.yaml",
+      "sha256": "491bf16431cce5c4d49c3f1b55b4b9534dfff33f38fd6e383b391600feaa3013",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/18-reordered-families.pol1.yaml",
+      "sha256": "9792e285c3ba7a52391a28916f8ce3776468e2da56d9bf7c82797b78ca1e6f14",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/19-comment-only-families.pol1.yaml",
+      "sha256": "3195746c7d32ca6aad3a6eb7cd4e8c4192dfc3bdf6adb980b1ad8173e1485bd4",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/20-quoted-key-unknown-tier.pol1.yaml",
+      "sha256": "3904c64e0e7196eec463e371105d6b356023a340eb14e9f65fcd7c5fd3ab806a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/21-flow-blocklist-bad-guardrail-rung.pol1.yaml",
+      "sha256": "e446bb09b180f0030ac375890db48e7dbd9f63687d165788153e06c51dd7ebdf",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/22-entry-missing-reason-missing-provenance.pol1.yaml",
+      "sha256": "72dc7881c0a98cfde7fa52ef99c7aa614529fca5e78d0df234a0aa031b19187e",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/23-uppercase-fqdn-missing-guardrail-rung.pol1.yaml",
+      "sha256": "2a6d928bdb6f68a00f64bab8d89a2f61dd9c891acdc433c27d4911601b52fd66",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/24-duplicate-fqdn-provenanced-entry.pol1.yaml",
+      "sha256": "20b01d6f7a64015f89d37b197b37ab3e69a34c47abe3f3fcc25ea42133fb5e14",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/25-reordered-families-guardrail-rung.pol1.yaml",
+      "sha256": "d352ac2f7a303795517fafff1537ee2829560485b9484c9cc65cdf670f71858a",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/26-comment-only-guardrails-enabled-tier.pol1.yaml",
+      "sha256": "e261b91f1da69734d5bd838e75a68bff45b89a5d8eeeb9bb599a5458e7732d40",
+      "modified_source_notice": false
+    },
+    {
+      "path": "testdata/policy-drift-corpus/27-uppercase-fqdn-unknown-tier-missing-provenance.pol1.yaml",
+      "sha256": "500627c6b6e4469b5cc52debeec1588ec0be81a0dc4c151fd1ae7c851ca2c79c",
+      "modified_source_notice": false
+    }
+  ],
+  "cargo_lock_sha256": "0efa957a573d1e336152214b74f151857a7044cf6a9240cba6585aa0de71ed2f",
+  "dependency_notices": "third-party-notices/INDEX.json"
+}

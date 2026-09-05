@@ -1,0 +1,17 @@
+Source notices for moka-0.12.15 / src/common/frequency_sketch.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-12:
+// License and Copyright Notice:
+//
+// Some of the code and doc comments in this module were ported or copied from
+// a Java class `com.github.benmanes.caffeine.cache.FrequencySketch` of Caffeine.
+// https://github.com/ben-manes/caffeine/blob/master/caffeine/src/main/java/com/github/benmanes/caffeine/cache/FrequencySketch.java
+//
+// The original code/comments from Caffeine are licensed under the Apache License,
+// Version 2.0 <https://github.com/ben-manes/caffeine/blob/master/LICENSE>
+//
+// Copyrights of the original code/comments are retained by their contributors.
+// For full authorship information, see the version control history of
+// https://github.com/ben-manes/caffeine/
+
