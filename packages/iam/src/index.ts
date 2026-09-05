@@ -1,24 +1,30 @@
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import {
-  RESOURCE_KINDS,
-  type AccessBinding,
-  type AuthorizationDecision,
-  type AuthorizationEvidence,
-  type AuthorizationRequest,
-  type Group,
-  type GroupMembership,
-  type IAMDriver,
-  type Identity,
-  type IdentityLookup,
-  type JSONSchema,
-  type PermissionAction,
-  type Principal,
-  type ResourceRef,
-  type Restriction,
-  type Role,
-  type ServicePrincipal,
-} from "@openclaw-enterprise/contracts";
+  ChannelAdministrationStateError,
+  validateChannelAdministrationMappings,
+  withChannelAdministrationEvidence,
+} from "./channel-administration.ts";
+import { RESOURCE_KINDS, type ResourceRef } from "@openclaw-enterprise/contracts/resources/scope";
+import type {
+  AccessBinding,
+  AuthorizationDecision,
+  AuthorizationEvidence,
+  AuthorizationRequest,
+  PermissionAction,
+  Restriction,
+  Role,
+} from "@openclaw-enterprise/contracts/identity/authorization";
+import type {
+  Group,
+  GroupMembership,
+  Identity,
+  IdentityLookup,
+  Principal,
+  ServicePrincipal,
+} from "@openclaw-enterprise/contracts/identity/identity";
+import type { IAMDriver } from "@openclaw-enterprise/contracts/drivers/iam";
+import type { JSONSchema } from "@openclaw-enterprise/contracts/drivers/base";
 
 export interface NativeIAMState {
   readonly identities: readonly Identity[];
@@ -140,6 +146,18 @@ export function createAuthPrincipalSeed(
         subjectKind: "identity",
         subjectId: principal.id,
         roleId,
+        ...(existingRoleId === undefined
+          ? {
+              channelAdministration: {
+                schemaVersion: 1 as const,
+                version: 1,
+                status: "enabled" as const,
+                installationId,
+                roleId,
+                semanticClass: "installation-administrator" as const,
+              },
+            }
+          : {}),
         ...(existingRoleId === undefined
           ? {}
           : { resourceKind: "installation", resourceId: installationId }),
@@ -409,6 +427,8 @@ export function validateNativeIAMState(state: NativeIAMState): void {
         `AccessBinding ${binding.id} and subject cross a Namespace`,
       );
   }
+
+  validateChannelAdministrationMappings(state);
 
   for (const restriction of state.restrictions) {
     assertScope(restriction, "restrictions");
@@ -698,7 +718,8 @@ export class NativeIAMDriver implements IAMDriver {
     const state = await this.state.loadNativeIAMState();
     try {
       validateNativeIAMState(state);
-    } catch {
+    } catch (error) {
+      if (error instanceof ChannelAdministrationStateError) throw error;
       return undefined;
     }
 
@@ -719,10 +740,12 @@ export class NativeIAMDriver implements IAMDriver {
     const state = await this.state.loadNativeIAMState();
     try {
       validateNativeIAMState(state);
-    } catch {
+    } catch (error) {
+      if (error instanceof ChannelAdministrationStateError) throw error;
       return decision(this.id, false, "The native IAM policy is invalid.");
     }
-    return evaluateValidatedAuthorization(request, state, this.id);
+    const result = evaluateValidatedAuthorization(request, state, this.id);
+    return withChannelAdministrationEvidence(state, request, result);
   }
 }
 

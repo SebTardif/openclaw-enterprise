@@ -16,8 +16,9 @@ model tests require the setup below. Run commands from the repository root.
 include skipped infrastructure tests; it is not proof that every integration
 ran. Run prepared infrastructure suites by exact filename, one suite at a time.
 The `pnpm test`, `pnpm test:conformance`, `pnpm test:integration`, and
-`pnpm test:postgres` scripts run `scripts/verify-workspace-boundary.mjs` before
-the Node.js test runner.
+`pnpm test:postgres` scripts run `scripts/verify-workspace-boundary.mjs` and
+`scripts/verify-module-boundaries.mjs` before the Node.js test runner.
+`pnpm check:workspace` runs both checks without selecting tests.
 
 Keep their variables scoped to a subshell or one test process. In particular,
 the OpenShell suite detects **any** configured test database, Kubernetes context,
@@ -25,6 +26,36 @@ or runtime image as selection, then requires its explicit opt-in and full setup.
 Running `pnpm test:integration` after exporting only `OCC_TEST_DATABASE_URL` can
 therefore fail in OpenShell. Setting `OCC_TEST_OPENSHELL_K3D_REAL=0` does not
 override that selection behavior.
+
+## Module boundaries
+
+The module checker reads active application and package source with the existing
+TypeScript parser. It checks imports, re-exports, known constant dynamic paths,
+source URLs, and dependency anchors without executing application modules.
+Package manifests define supported root and subpath exports. New contract,
+service, worker, provider, and console leaves join the graph automatically.
+
+Run `node scripts/verify-module-boundaries.mjs` after dependencies are installed;
+the checker never installs them. Add `--json` for the complete graph and
+untruncated diagnostics. Runtime cycles are reported separately from cycle
+groups that require erased type edges. The broader type-involving groups can
+also contain a runtime cycle. Inline `import { type T }` and `export { type T }`
+retain runtime module evaluation and count as runtime edges.
+
+The policy is in `scripts/module-boundaries/policy.json`. Existing violations
+are explicitly recorded in `exceptions.json` with the exact path, import form,
+imported symbols, capability owner, and removal condition. An exception does
+not claim its dependency is fixed: remove it when the import is corrected, or
+the stale-exception check fails. The configured installed Driver loader has an
+exact exception because its validated runtime target cannot be enumerated
+statically. Unresolved local or dynamic imports fail. Package import aliases
+and unsupported export-map forms also fail for review; the checker does not
+analyze external dependency internals or code embedded in runtime-script strings.
+
+The focused checker cases run with
+`node --test tests/conformance/module-boundaries.test.mjs`. Keep conformance,
+integration, and browser tests flat under their existing runner directories;
+PostgreSQL suites also retain the `postgres-*.test.mjs` name for focused discovery.
 
 ## Integration Tests
 
@@ -235,20 +266,33 @@ change its URL. Keep the general and bootstrap databases separate.
 
 ## Images and Helm
 
-Build the [runtime image](../deploy/runtime/README.md), then run its startup smoke:
+Prepare the five-package context using the [runtime image recipe](../deploy/runtime/README.md)
+and set `OCC_RUNTIME_BUILD_CONTEXT` to its absolute task-owned directory. It uses
+already built core, AI, Slack, Microsoft Teams, and Codex plugin artifacts plus
+frozen dependency policy; it does not rebuild the SDK. Verify that context,
+build the image, then run its startup smoke against the resulting local image ID:
 
 ```sh
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker build -f deploy/runtime/Dockerfile \
-  --tag openclaw-enterprise-runtime:test deploy/runtime
-OCC_TEST_RUNTIME_IMAGE=openclaw-enterprise-runtime:test \
+  --tag openclaw-enterprise-runtime:test "$OCC_RUNTIME_BUILD_CONTEXT"
+OCC_TEST_RUNTIME_IMAGE="$(docker image inspect --format '{{.Id}}' openclaw-enterprise-runtime:test)" \
   node --test tests/integration/runtime-image-startup.test.mjs
 ```
 
-This checks gateway readiness and bundled Codex/Slack plugin loading from a
+This checks gateway readiness and bundled Codex, Slack, and Microsoft Teams plugin loading from a
 fresh runtime home, then initializes the image's real Codex app-server through
 the installed plugin's version guard. The smoke runs offline without provider
-credentials. It does not make a model call or establish a Slack connection;
-run the [live Slack test](#slack) for channel delivery proof.
+or channel credentials. Native Codex CLI is pinned to `0.153.0`. This does not
+make a model call, establish authenticated WebSocket operation, or prove live
+Slack/Teams delivery, Kubernetes behavior, or gVisor qualification; run the
+[live Slack test](#slack) for Slack delivery proof. Source-artifact acceptance
+remains a separate gate: successful local packaging and offline smoke do not
+qualify provisional artifacts for shared integration or deployment.
+
+The local Docker image ID binds this smoke to the built image without a registry
+push. It is not a registry manifest digest and must not be substituted into a
+Kubernetes `repository@sha256:...` reference.
 
 Build the controller image using the [production prerequisites](guides/deploy.md#production-prerequisites),
 then set `OCC_TEST_PRODUCTION_IMAGE` to the local tag you built:
@@ -596,3 +640,47 @@ remain; provider-account cleanup failures require explicit follow-up.
 - [Deployment guide](guides/deploy.md)
 - [Runtime image recipe](../deploy/runtime/README.md)
 - [Contributor integration boundaries](../AGENTS.md#running-integration-tests)
+
+## OpenShell and SPIFFE Go components
+
+Build and check the native implementation before exercising the controller
+adapter:
+
+```sh
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+go -C components/runtime-security test -race ./...
+go -C components/runtime-security vet ./...
+```
+
+Native wire tests require local socket creation. The controller adapter's tests
+must invoke the actual compiled executable. The [module README](../components/runtime-security/README.md)
+and [identity reference](reference/workload-identity.md) explain the native
+command and local identity boundary.
+
+For genuine provider interoperability, provision SPIRE and a registration for
+the actual Go test process, then select:
+
+```sh
+OCC_TEST_SPIFFE_SOCKET_PATH=/run/spire/agent.sock \
+OCC_TEST_SPIFFE_ID=spiffe://example.org/controller \
+OCC_TEST_SPIFFE_AUDIENCE=oce-local-test \
+go -C components/runtime-security test ./identity -run TestRealSPIRE -count=1
+```
+
+Any of these settings selects the real test and requires all three. Without
+them it skips explicitly. Keep native local SPIRE proof separate from actual
+Kubernetes/OpenShell/Kata guest attestation and current runtime authorization.
+The earlier TypeScript implementation's tests are historical checkpoint
+receipts, not validation of the native components.
+
+Run the native controller process tests from the repository root:
+
+```sh
+node --test tests/integration/openshell-native-bridge.test.mjs tests/integration/sandbox-driver-startup.test.mjs
+```
+
+The process suite compiles the Go executable into a temporary directory by
+default. To verify an existing build, set `OCC_RUNTIME_SECURITY_BINARY` to its
+absolute path. The actual native command runs in both cases; local socket
+permissions are required. Production image checks additionally inspect the
+packaged executable and its third-party license/version records.

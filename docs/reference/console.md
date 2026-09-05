@@ -5,6 +5,9 @@ Sign in, select a Namespace, inspect accessible Agents, Providers, and
 Namespaces, create Agents with editable Configuration JSON, and edit selected channel
 settings on an Agent's saved Configuration draft. Agent deployment, rollback,
 live runtime health, and Agent deletion are unavailable in the console.
+The [operator workflow](../flows/operator-workflow.md) connects the supported
+management API commands and runtime checks, including current lifecycle and
+retention limits. Browser chat is not exposed by this console.
 
 ## Start and sign in
 
@@ -75,6 +78,10 @@ selected execution mode and associations. If the Configuration saves but Agent
 creation fails, its ID remains visible and the saved JSON and execution mode are fixed.
 Correct the name or associations and retry to reuse that Configuration. These are separate
 API writes; failure does not remove the saved Configuration or retry automatically.
+If a write’s reply is interrupted or unavailable, its outcome is unknown. The
+form disables further creation until you leave or refresh it. Inspect the Agent
+and Configuration collections before starting again; a lost response can follow
+a successful write.
 Successful creation opens the Agent detail page at
 `/console/agents/:agentId?...&revision=draft`. It does not
 admit an AgentRevision, deploy a workload, or prove runtime health.
@@ -83,15 +90,21 @@ admit an AgentRevision, deploy a workload, or prove runtime health.
 
 An Agent detail page has two views: the saved draft and immutable
 AgentRevisions. The saved draft reads the Agent's current Configuration and is
-editable only through the supported channel editor. Historical and active
-AgentRevisions are read-only admitted snapshots. The active revision badge points
-to the Agent's current activeRevisionId, but the newest revision in history is
-not necessarily active. The URL `revision=<id>` selects a specific revision; use
-**Return to active revision** to inspect the active snapshot when one is present.
+editable only through the supported channel editor. All AgentRevisions are
+read-only admitted snapshots. **Selected revision** displays the Agent's current
+`activeRevisionId`; neither the newest admitted revision nor the snapshot being
+viewed must match it. The URL `revision=<id>` chooses a snapshot to inspect. Use
+**View selected revision** to return to the Agent's selected snapshot.
 
 Read-only AgentRevision snapshots cannot be edited, rolled back, redeployed, or
 used as a live-health check. Activation means the revision was admitted and
-selected by OCC; the console has no live gateway health API.
+selected by OCC; the console has no live gateway health API. Detail pages
+explicitly show **Serving status unavailable**, including when a revision is
+selected. There is no observation time, generation, serving revision, failed
+activation, or shutdown outcome in the current Agent API response. The console
+does not infer these from selection or admission. Follow the
+[operator checks](../flows/operator-workflow.md#inspect-selection-and-runtime)
+for the installed runtime.
 
 The Channels tab edits Slack and Microsoft Teams settings on the saved
 Configuration draft. Saving a channel change patches only `values` on the
@@ -106,6 +119,11 @@ Before saving, the browser rereads the Agent and Configuration and checks that
 the Agent still references the same Configuration and its generation is unchanged. That detects common
 stale-editor cases, but it is not atomic lost-update protection; the API accepts
 the last valid writer. Refresh before retrying a conflict or uncertain save.
+An unconfirmed PATCH shows **Outcome unknown**, closes the editor, and disables
+channel writes until Refresh loads current saved state. The write may have
+succeeded; there is no automatic replay. **Disable Slack** and **Disable
+Microsoft Teams** edit only the draft. They do not disable access, stop execution,
+or change an admitted revision.
 
 Slack editing preserves existing per-channel user restrictions. **Allowed user IDs**
 controls the direct-message allowlist. Editing supports Socket Mode settings with fixed unresolved environment
@@ -131,6 +149,11 @@ unavailable dependencies, missing resources, and network failures clear affected
 rows and offer the relevant recovery action. Include a displayed request ID when
 reporting an API failure. Provider discovery shows configured IDs and types only;
 see [Providers](providers.md#read-configured-providers) for its limits.
+Backend error text is not rendered. Failure messages use local reason classes,
+and request IDs are restricted to the server’s bounded `req_` identifier format.
+A current protected `401` immediately clears all private content and closes an
+open channel editor, even when a sibling read remains pending. Earlier page
+responses cannot restore the view or expire a newer session.
 
 Logout immediately hides private content and stops pending reads. The console
 returns to login after sign-out succeeds or a session check confirms that the

@@ -5,6 +5,7 @@ x-development-build: &development-build
   target: development
   args:
     NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:24-bookworm}
+    GO_BASE_IMAGE: ${GO_BASE_IMAGE:-}
 
 services:
   postgres:

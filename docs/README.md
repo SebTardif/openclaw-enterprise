@@ -9,7 +9,14 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Deploy](guides/deploy.md): configure Docker Compose or Kubernetes, verify your deployment, run the development end-to-end TUI proof, and troubleshoot startup.
 - [Observability](guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
+- [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
+- [Security events](reference/security-events.md): versioned projection, audit access, and retention contracts; production emitters and durable sinks remain unimplemented.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
+- [Build graph](reference/build.md): inspect explicit TypeScript, Rust, and image dependencies; prepare inputs separately from offline source builds.
+
+- [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
+- [Native service peer transport](reference/native-service-peer.md): authenticate and own in-process mutual TLS connections; service roles and runtime authority remain separate.
+- [Runtime service transport](reference/runtime-service-transport.md): configure admitted services and the native mutual TLS listener for exact historical operation readback.
 
 ## Architecture
 
@@ -37,6 +44,10 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Harness execution](reference/harness-execution.md) and
   [Controller reconciliation](reference/controller.md): runtime topology, deployment,
   and revision activation.
+- [Runtime authority interfaces](reference/runtime-authority.md): immutable bindings,
+  purpose-specific results, trusted-context requirements, and contract verification.
+- [Channels and delivery](reference/channels.md): current direct-channel topology,
+  binding versus admission, state ownership, and Slack/Teams verification limits.
 - [Security controls](reference/security.md), [settings](reference/settings.md),
   and [HTTP API](reference/api.md): access controls, deployment configuration, operational logging, and request schemas.
 - [Drivers](reference/README.md#drivers): select and configure compute, configuration,
@@ -45,8 +56,15 @@ OpenClaw Enterprise is the open platform for managing agents.
 ## Understand the code
 
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
+- [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
+- [Delegated authority library](reference/delegation.md): root grant constraints,
+  request binding, and required owner interfaces; executable authority is not yet wired.
+- [External model egress packaging](reference/egress.md): isolated DNS and
+  credential-service packaging, local preflight, and outstanding runtime requirements.
+- [External model egress flow](flows/external-model-egress.md): exact request,
+  connection, dispatch, and cancellation ownership in the adapter components.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Docker Compose development](flows/docker-compose-development.md),
@@ -54,6 +72,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   [production TUI attachment](flows/production-tui.md), and
   [shared platform startup](flows/platform-startup.md).
 - [Platform console requests](flows/platform-console.md).
+- [Channel configuration, mapping, and delivery](flows/channel-delivery.md):
+  follow the current source without treating proposed intake/brokerage as implemented.
 - [Controller worker](flows/controller-worker.md),
   [Harness execution and shared storage](flows/harness-execution-topology.md), and
   [common operational logging](flows/common-logging.md).
@@ -71,3 +91,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 ## Implementation history
 
 [Spec archive](../specs/README.md): proposals, delivery records, and recorded statuses.
+
+[Channel-hosting roadmap](../specs/22-channel-hosting-roadmap.md): proposed stages
+from direct gateways to durable intake, shared-app brokerage, and optional
+stronger availability; not current feature or release acceptance.

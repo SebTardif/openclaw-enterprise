@@ -1,0 +1,18 @@
+Source notices for moka-0.12.15 / src/common/deque.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-13:
+// License and Copyright Notice:
+//
+// Some of the code and doc comments in this module were copied from
+// `std::collections::LinkedList` in the Rust standard library.
+// https://github.com/rust-lang/rust/blob/master/src/liballoc/collections/linked_list.rs
+//
+// The original code/comments from LinkedList are dual-licensed under
+// the Apache License, Version 2.0 <https://github.com/rust-lang/rust/blob/master/LICENSE-APACHE>
+// or the MIT license <https://github.com/rust-lang/rust/blob/master/LICENSE-MIT>
+//
+// Copyrights of the original code/comments are retained by their contributors.
+// For full authorship information, see the version control history of
+// https://github.com/rust-lang/rust/ or https://thanks.rust-lang.org
+

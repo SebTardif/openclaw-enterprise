@@ -1,4 +1,5 @@
 import type {
+  ChannelAdministrationMappingV1,
   HarnessExecutionMode,
   SecretBindings,
   ServiceAccountCredential,
@@ -576,6 +577,7 @@ export const iamAccessBindings = occSchema.table(
       .references(() => iamRoles.id, { onDelete: "restrict", onUpdate: "restrict" }),
     resourceKind: text("resource_kind"),
     resourceId: text("resource_id"),
+    channelAdministration: jsonb("channel_administration").$type<ChannelAdministrationMappingV1>(),
   },
   (table) => [
     check(
@@ -585,6 +587,10 @@ export const iamAccessBindings = occSchema.table(
     check(
       "iam_access_bindings_resource_pair",
       sql`(${table.resourceKind} IS NULL) = (${table.resourceId} IS NULL)`,
+    ),
+    check(
+      "iam_access_bindings_channel_administration_valid",
+      sql`${table.channelAdministration} IS NULL OR occ.channel_administration_mapping_valid(${table.channelAdministration})`,
     ),
   ],
 );
@@ -654,6 +660,8 @@ export const controllerWork = occSchema.table(
     revisionId: text("revision_id"),
     actorId: text("actor_id").notNull(),
     namespaceTarget: text("namespace_target"),
+    runtimeTransitionRef: text("runtime_transition_ref"),
+    lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }),
     state: text("state").notNull().default("queued"),
     availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
@@ -663,7 +671,7 @@ export const controllerWork = occSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
-  (table) => [
+  (table): PgTableExtraConfigValue[] => [
     foreignKey({
       name: "controller_work_agent_owner",
       columns: [table.namespaceId, table.agentId],
@@ -671,6 +679,34 @@ export const controllerWork = occSchema.table(
     })
       .onUpdate("restrict")
       .onDelete("restrict"),
+    foreignKey({
+      name: "controller_work_runtime_admission_owner",
+      columns: [
+        table.namespaceId,
+        table.agentId,
+        table.revisionId,
+        table.runtimeTransitionRef,
+        table.lifecycleGeneration,
+      ],
+      foreignColumns: [
+        agentRevisionRuntimeAdmissions.namespaceId,
+        agentRevisionRuntimeAdmissions.agentId,
+        agentRevisionRuntimeAdmissions.revisionId,
+        agentRevisionRuntimeAdmissions.runtimeTransitionRef,
+        agentRevisionRuntimeAdmissions.lifecycleGeneration,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "controller_work_runtime_pair_valid",
+      sql`(${table.runtimeTransitionRef} IS NULL AND ${table.lifecycleGeneration} IS NULL)
+        OR (${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
+          AND ${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
+          AND ${table.namespaceTarget} IS NULL
+          AND ${table.runtimeTransitionRef} ~ ${runtimeReferencePattern}
+          AND ${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991)`,
+    ),
     foreignKey({
       name: "controller_work_revision_owner",
       columns: [table.namespaceId, table.agentId, table.revisionId],
@@ -902,6 +938,13 @@ export const agentRuntimeIntents = occSchema.table(
       table.generation,
       table.revisionId,
     ),
+    unique("runtime_intents_admission_identity_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.revisionId,
+      table.transitionRef,
+      table.generation,
+    ),
     foreignKey({
       name: "runtime_intents_agent_owner",
       columns: [table.namespaceId, table.agentId],
@@ -937,6 +980,59 @@ export const agentRuntimeIntents = occSchema.table(
       sql`char_length(${table.requestId}) BETWEEN 1 AND 200 AND ${table.requestId} ~ '^[A-Za-z0-9._:/-]+$'`,
     ),
     check("runtime_intents_created_at_finite", sql`isfinite(${table.createdAt})`),
+  ],
+);
+
+// Migration triggers bind the exact success audit and original work at commit,
+// and preserve both admission and work identity independently of queue state.
+export const agentRevisionRuntimeAdmissions = occSchema.table(
+  "agent_revision_runtime_admissions",
+  {
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    revisionId: text("revision_id").primaryKey(),
+    runtimeTransitionRef: text("runtime_transition_ref")
+      .notNull()
+      .unique("agent_revision_runtime_admissions_runtime_transition_ref_key"),
+    lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }).notNull(),
+    auditEventId: text("audit_event_id")
+      .notNull()
+      .unique("agent_revision_runtime_admissions_audit_event_id_key"),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    foreignKey({
+      name: "agent_revision_runtime_admissions_audit_event_id_fkey",
+      columns: [table.auditEventId],
+      foreignColumns: [auditEvents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("revision_runtime_admissions_work_identity_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.revisionId,
+      table.runtimeTransitionRef,
+      table.lifecycleGeneration,
+    ),
+    foreignKey({
+      name: "revision_runtime_admissions_intent_owner",
+      columns: [
+        table.namespaceId,
+        table.agentId,
+        table.revisionId,
+        table.runtimeTransitionRef,
+        table.lifecycleGeneration,
+      ],
+      foreignColumns: [
+        agentRuntimeIntents.namespaceId,
+        agentRuntimeIntents.agentId,
+        agentRuntimeIntents.revisionId,
+        agentRuntimeIntents.transitionRef,
+        agentRuntimeIntents.generation,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
   ],
 );
 
@@ -993,6 +1089,12 @@ export const runtimeAssignmentAllocations = occSchema.table(
   },
   (table): PgTableExtraConfigValue[] => [
     unique("runtime_allocations_create_effect_unique").on(table.createEffectRef),
+    unique("runtime_allocations_authority_owner").on(
+      table.installationId,
+      table.namespaceId,
+      table.agentId,
+      table.assignmentRef,
+    ),
     unique("runtime_allocations_component_generation_unique").on(
       table.namespaceId,
       table.agentId,
@@ -1264,6 +1366,146 @@ export const channelAgentBindings = occSchema.table(
     check(
       "channel_agent_bindings_scope_kind_valid",
       sql`${table.scopeKind} IN ('slack-private-channel', 'msteams-standard-channel')`,
+    ),
+  ],
+);
+
+export const signInQuotaSlots = occSchema.table(
+  "sign_in_quota_slots",
+  {
+    slot: integer("slot").primaryKey(),
+    nextAtMs: bigint("next_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    check("sign_in_quota_slot_bounded", sql`${table.slot} >= 0 AND ${table.slot} < 20480`),
+    check("sign_in_quota_timestamp_valid", sql`${table.nextAtMs} BETWEEN 0 AND 9007199254740991`),
+  ],
+);
+
+/** Append-only binding/evidence/retirement records; SQL triggers enforce the transition,
+ * immutable receipt and payload association under the existing Agent owner lock. */
+export const runtimeAuthorityOperations = occSchema.table(
+  "runtime_authority_operations",
+  {
+    operationRef: text("operation_ref").primaryKey(),
+    installationId: text("installation_id").notNull(),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    assignmentRef: text("assignment_ref").notNull(),
+    assignmentRecordVersion: bigint("assignment_record_version", { mode: "number" }).notNull(),
+    operationKind: text("operation_kind").notNull(),
+    canonicalPayload: text("canonical_payload").notNull(),
+    receipt: jsonb("receipt").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "runtime_authority_allocation_owner",
+      columns: [table.installationId, table.namespaceId, table.agentId, table.assignmentRef],
+      foreignColumns: [
+        runtimeAssignmentAllocations.installationId,
+        runtimeAssignmentAllocations.namespaceId,
+        runtimeAssignmentAllocations.agentId,
+        runtimeAssignmentAllocations.assignmentRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("runtime_authority_assignment_version").on(
+      table.assignmentRef,
+      table.assignmentRecordVersion,
+    ),
+    check(
+      "runtime_authority_operation_ref",
+      sql`${table.operationRef} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      "runtime_authority_version",
+      sql`${table.assignmentRecordVersion} BETWEEN 2 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_authority_kind",
+      sql`${table.operationKind} IN ('bind', 'record-evidence', 'retire')`,
+    ),
+    check(
+      "runtime_authority_payload_size",
+      sql`octet_length(${table.canonicalPayload}) BETWEEN 1 AND 262144`,
+    ),
+    check("runtime_authority_receipt_object", sql`jsonb_typeof(${table.receipt}) = 'object'`),
+  ],
+);
+
+export const runtimeServiceTrustRecords = occSchema.table(
+  "runtime_service_trust_records",
+  {
+    installationId: text("installation_id")
+      .notNull()
+      .references(() => installation.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    subjectKind: text("subject_kind").notNull(),
+    subjectRef: text("subject_ref").notNull(),
+    recordVersion: bigint("record_version", { mode: "number" }).notNull(),
+    operationRef: text("operation_ref").primaryKey(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => iamIdentities.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    auditId: text("audit_id")
+      .notNull()
+      .unique()
+      .references(() => auditEvents.id, { onUpdate: "restrict", onDelete: "restrict" }),
+    canonicalRequest: text("canonical_request").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+    record: jsonb("record")
+      .$type<import("../runtime-authority/service-trust-schema.ts").RuntimeServiceTrustRecord>()
+      .notNull(),
+    sourceOperationRef: text("source_operation_ref").generatedAlwaysAs(
+      sql`record->>'sourceOperationRef'`,
+    ),
+    namespaceId: text("namespace_id").generatedAlwaysAs(
+      sql`record#>>'{configuration,allowedScope,namespaceId}'`,
+    ),
+    agentId: text("agent_id").generatedAlwaysAs(
+      sql`record#>>'{configuration,allowedScope,agentId}'`,
+    ),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    unique("runtime_service_trust_version").on(
+      table.installationId,
+      table.subjectKind,
+      table.subjectRef,
+      table.recordVersion,
+    ),
+    uniqueIndex("runtime_service_trust_profile_identity")
+      .on(sql`${table.record}#>>'{configuration,serviceTrustProfileRef}'`)
+      .where(sql`${table.record}->>'kind'='service-admit'`),
+    foreignKey({
+      name: "runtime_service_trust_source",
+      columns: [table.sourceOperationRef],
+      foreignColumns: [runtimeServiceTrustRecords.operationRef],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
+      name: "runtime_service_trust_agent",
+      columns: [table.namespaceId, table.agentId],
+      foreignColumns: [agents.namespaceId, agents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "runtime_service_trust_records_subject_kind_check",
+      sql`${table.subjectKind} IN ('source','service')`,
+    ),
+    check(
+      "runtime_service_trust_records_record_version_check",
+      sql`${table.recordVersion} BETWEEN 1 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_service_trust_records_canonical_request_check",
+      sql`octet_length(${table.canonicalRequest}) BETWEEN 1 AND 8192`,
+    ),
+    check(
+      "runtime_service_trust_records_record_check",
+      sql`jsonb_typeof(${table.record})='object'`,
     ),
   ],
 );

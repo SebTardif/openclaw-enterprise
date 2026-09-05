@@ -3,10 +3,14 @@ import type {
   AuditEvent,
   AuditEventKind,
   AuditOutcome,
-  AuthorizationRequest,
-} from "@openclaw-enterprise/contracts";
+} from "@openclaw-enterprise/contracts/identity/audit";
+import type { AuthorizationRequest } from "@openclaw-enterprise/contracts/identity/authorization";
 
-export type { AuditEvent, AuditEventKind, AuditOutcome } from "@openclaw-enterprise/contracts";
+export type {
+  AuditEvent,
+  AuditEventKind,
+  AuditOutcome,
+} from "@openclaw-enterprise/contracts/identity/audit";
 
 export type AuditEventInput = Omit<AuditEvent, "id" | "occurredAt" | "kind" | "outcome">;
 

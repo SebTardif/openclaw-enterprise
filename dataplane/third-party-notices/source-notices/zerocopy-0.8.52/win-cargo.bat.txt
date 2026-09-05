@@ -1,0 +1,13 @@
+Source notices for zerocopy-0.8.52 / win-cargo.bat
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-1:
+@rem Copyright 2024 The Fuchsia Authors
+
+Lines 3-7:
+@rem Licensed under a BSD-style license <LICENSE-BSD>, Apache License, Version 2.0
+@rem <LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0>, or the MIT
+@rem license <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your option.
+@rem This file may not be copied, modified, or distributed except according to
+@rem those terms.
+

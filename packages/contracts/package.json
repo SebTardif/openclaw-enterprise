@@ -5,7 +5,36 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./resources/scope": "./src/resources/scope.ts",
+    "./resources/installation": "./src/resources/installation.ts",
+    "./resources/namespace": "./src/resources/namespace.ts",
+    "./resources/configuration": "./src/resources/configuration.ts",
+    "./resources/agent": "./src/resources/agent.ts",
+    "./resources/secret": "./src/resources/secret.ts",
+    "./resources/service-account": "./src/resources/service-account.ts",
+    "./identity/identity": "./src/identity/identity.ts",
+    "./identity/authorization": "./src/identity/authorization.ts",
+    "./identity/audit": "./src/identity/audit.ts",
+    "./drivers/base": "./src/drivers/base.ts",
+    "./drivers/provider": "./src/drivers/provider.ts",
+    "./drivers/compute": "./src/drivers/compute.ts",
+    "./drivers/configuration": "./src/drivers/configuration.ts",
+    "./drivers/secret": "./src/drivers/secret.ts",
+    "./drivers/iam": "./src/drivers/iam.ts",
+    "./drivers/sandbox": "./src/drivers/sandbox.ts",
+    "./drivers/service-account": "./src/drivers/service-account.ts",
+    "./logging": "./src/logging.ts",
+    "./secret-bindings": "./src/secret-bindings.ts",
+    "./security-events": "./src/security-events.ts",
+    "./account-authority-v1": "./src/account-authority-v1.ts",
+    "./runtime-assignment": "./src/runtime-assignment.ts",
+    "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
+    "./channel-bindings": "./src/channel-bindings.ts",
+    "./api/common": "./src/api/common.ts",
+    "./api/resources": "./src/api/resources.ts",
+    "./api/routes": "./src/api/routes.ts",
+    "./api/channel-bindings": "./src/api/channel-bindings.ts"
   },
   "types": "./src/index.ts",
   "files": [
@@ -13,6 +42,7 @@
   ],
   "dependencies": {
     "@openclaw-enterprise/utils": "workspace:*",
+    "openclaw": "link:../../.build/upstream-sdk/openclaw",
     "typebox": "1.3.6"
   },
   "scripts": {

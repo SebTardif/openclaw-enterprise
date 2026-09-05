@@ -1,0 +1,17 @@
+Source notices for moka-0.12.15 / src/common/concurrent/arc.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-12:
+// This module's source code was written by us, the `moka` developers, referring to
+// the following book and code:
+//
+// - Chapter 6. Building Our Own "Arc" of the Rust Atomics and Locks book.
+//     - Rust Atomics and Locks by Mara Bos (O’Reilly). Copyright 2023 Mara Bos,
+//       ISBN: 978-1-098-11944-7
+//     - https://marabos.nl/atomics/
+// - The `triomphe` crate v0.1.13 and v0.1.11 by Manish Goregaokar (Manishearth)
+//     - MIT or Apache-2.0 License
+//     - https://github.com/Manishearth/triomphe
+// - `std::sync::Arc` in the Rust Standard Library (1.81.0).
+//     -  MIT or Apache-2.0 License
+

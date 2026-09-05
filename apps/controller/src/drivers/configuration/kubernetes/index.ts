@@ -3,10 +3,10 @@ import { isAbsolute } from "node:path";
 import type { CoreV1Api, V1ConfigMap } from "@kubernetes/client-node";
 import type {
   Configuration,
-  ConfigurationDriver,
   ConfigurationReference,
-  JSONSchema,
-} from "@openclaw-enterprise/contracts";
+} from "@openclaw-enterprise/contracts/resources/configuration";
+import type { ConfigurationDriver } from "@openclaw-enterprise/contracts/drivers/configuration";
+import type { JSONSchema } from "@openclaw-enterprise/contracts/drivers/base";
 import { resolveKubernetesNamespace } from "../../compute/kubernetes/index.ts";
 
 type KubernetesAuthentication =

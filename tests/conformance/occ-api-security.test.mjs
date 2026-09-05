@@ -94,10 +94,8 @@ async function createFixture(options = {}) {
     ].filter(({ subjectId }) => identityIds.has(subjectId)),
     restrictions: options.restrictions ?? [],
   };
-  const iamDriver = new NativeIAMDriver(
-    { loadNativeIAMState: async () => state },
-    { id: "iam-security" },
-  );
+  const iamStateStore = { loadNativeIAMState: async () => state };
+  const iamDriver = new NativeIAMDriver(iamStateStore, { id: "iam-security" });
   const computeDriver = {
     id: "compute-security",
     capability: "compute",
@@ -125,35 +123,50 @@ async function createFixture(options = {}) {
     async retireRevision() {},
   };
   const auditSink = new InMemoryAuditSink();
+  const platformState = new InMemoryPlatformState({ auditSink });
   const configurationDriver = createTestConfigurationDriver({ id: "configuration-security" });
   const sessions = new Map();
   let controller;
   let sequence = 0;
   let configurationSequence = 0;
 
+  function createOwnedController(installation) {
+    return new OpenClawController(installation, {
+      state: platformState,
+      recordOperations: false,
+      createId(kind) {
+        if (kind === "configuration") {
+          configurationSequence += 1;
+          return `cfg_10000000-0000-4000-8000-${String(configurationSequence).padStart(12, "0")}`;
+        }
+        sequence += 1;
+        const prefix = {
+          namespace: "ns",
+          agent: "agt",
+          agent_revision: "rev",
+        }[kind];
+        return `${prefix}_00000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
+      },
+    });
+  }
+
   function createApp(principal = administrator, overrides = {}, factory = createControllerApp) {
+    // Each app owns one sealed admission verifier; controllers share only the owned platform state.
+    let appController;
+    if (controller) {
+      appController = createOwnedController(controller.installation);
+      for (const capability of ["iam", "compute", "configuration"]) {
+        const selected = controller.selectedDriver(capability);
+        appController.registerDriver(selected);
+        appController.selectDriver(capability, selected.id);
+      }
+    }
     const app = factory({
-      ...(controller
-        ? { controller }
+      ...(appController
+        ? { controller: appController }
         : {
             createController(installation) {
-              controller = new OpenClawController(installation, {
-                state: new InMemoryPlatformState({ auditSink }),
-                recordOperations: false,
-                createId(kind) {
-                  if (kind === "configuration") {
-                    configurationSequence += 1;
-                    return `cfg_10000000-0000-4000-8000-${String(configurationSequence).padStart(12, "0")}`;
-                  }
-                  sequence += 1;
-                  const prefix = {
-                    namespace: "ns",
-                    agent: "agt",
-                    agent_revision: "rev",
-                  }[kind];
-                  return `${prefix}_00000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
-                },
-              });
+              controller = createOwnedController(installation);
               return controller;
             },
           }),
@@ -194,6 +207,7 @@ async function createFixture(options = {}) {
     createApp,
     auth: adminAuth.auth,
     iamDriver,
+    iamStateStore,
     state,
     get controller() {
       return controller;
@@ -298,6 +312,283 @@ async function deploy(fixture, namespace, agent) {
   assert.equal(result.payload.error.code, "NAMESPACE_NOT_READY");
   return result;
 }
+
+async function createRevisionFixture() {
+  const fixture = await createFixture();
+  await bootstrap(fixture);
+  const namespaceA = await createNamespace(fixture, "Revision tenant A");
+  const namespaceB = await createNamespace(fixture, "Revision tenant B");
+  const agentA = await createAgent(fixture, namespaceA, "Readable revision Agent");
+  const siblingAgent = await createAgent(fixture, namespaceA, "Sibling revision Agent");
+  const agentB = await createAgent(fixture, namespaceB, "Foreign revision Agent");
+
+  // Admit actual revisions only after the real Namespace lifecycle accepts readiness.
+  for (const namespace of [namespaceA, namespaceB]) {
+    await fixture.controller.handleNamespaceLifecycle(
+      fixture.administrator.id,
+      namespace.id,
+      "ready",
+    );
+  }
+  const revisions = [];
+  for (const [namespace, agent] of [
+    [namespaceA, agentA],
+    [namespaceB, agentB],
+  ]) {
+    const deployed = await request(
+      fixture.app,
+      `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
+      { method: "POST" },
+    );
+    assert.equal(deployed.response.status, 202);
+    revisions.push(deployed.payload.data);
+  }
+  const [revisionA, revisionB] = revisions;
+  fixture.state.roles.push({
+    id: "role-exact-revision-reader",
+    permissions: [
+      { action: "read", resourceKind: "agent" },
+      { action: "read", resourceKind: "agent_revision" },
+    ],
+  });
+  return {
+    ...fixture,
+    namespaceA,
+    namespaceB,
+    agentA,
+    siblingAgent,
+    agentB,
+    revisionA,
+    revisionB,
+    readerApp: fixture.createApp(fixture.tenantAReader),
+  };
+}
+
+function setExactRevisionReaderGrants(fixture, resources) {
+  fixture.state.bindings = fixture.state.bindings.filter(
+    ({ subjectId }) => subjectId !== fixture.tenantAReader.id,
+  );
+  fixture.state.bindings.push(
+    ...resources.map(({ kind, id, namespaceId }, index) => ({
+      id: `binding-exact-revision-reader-${index}`,
+      subjectKind: "identity",
+      subjectId: fixture.tenantAReader.id,
+      roleId: "role-exact-revision-reader",
+      namespaceId,
+      resourceKind: kind,
+      resourceId: id,
+    })),
+  );
+}
+
+function assertRevisionReadFailure(result, status, code, message) {
+  assert.equal(result.response.status, status);
+  const normalized = {
+    ...result.payload,
+    meta: { ...result.payload.meta, requestId: "normalized-request-id" },
+  };
+  // Check the complete closed response, including absence of partial revision/configuration fields.
+  assert.deepEqual(normalized, {
+    error: { code, message },
+    meta: { requestId: "normalized-request-id" },
+  });
+  return normalized;
+}
+
+test("single revision API reads require both exact native IAM grants", async (t) => {
+  const fixture = await createRevisionFixture();
+  const { namespaceA, namespaceB, agentA, agentB, siblingAgent, revisionA } = fixture;
+  const agentGrant = { kind: "agent", id: agentA.id, namespaceId: namespaceA.id };
+  const revisionGrant = { kind: "agent_revision", id: revisionA.id, namespaceId: namespaceA.id };
+  const pathname = `/namespaces/${namespaceA.id}/agents/${agentA.id}/revisions/${revisionA.id}`;
+  const operationCount = fixture.controller.pendingOperations().length;
+  const successes = fixture.auditSink.events.filter((event) => event.outcome === "success");
+
+  for (const [name, grants, deniedKind] of [
+    ["revision read alone cannot disclose the revision", [revisionGrant], "agent"],
+    ["Agent read alone cannot disclose the revision", [agentGrant], "agent_revision"],
+    [
+      "another Agent read cannot replace the exact parent read",
+      [{ kind: "agent", id: siblingAgent.id, namespaceId: namespaceA.id }, revisionGrant],
+      "agent",
+    ],
+    [
+      "another Namespace's Agent read cannot replace the exact parent read",
+      [{ kind: "agent", id: agentB.id, namespaceId: namespaceB.id }, revisionGrant],
+      "agent",
+    ],
+  ]) {
+    await t.test(name, async () => {
+      setExactRevisionReaderGrants(fixture, grants);
+      const denied = await request(fixture.readerApp, pathname);
+      assertRevisionReadFailure(
+        denied,
+        403,
+        "FORBIDDEN",
+        "The exact platform operation was not authorized.",
+      );
+      const event = fixture.auditSink.events.at(-1);
+      assert.equal(event.kind, "authorization_denial");
+      assert.equal(event.actorId, fixture.tenantAReader.id);
+      assert.equal(event.iamDriverId, fixture.iamDriver.id);
+      assert.deepEqual(event.authorization, {
+        principalId: fixture.tenantAReader.id,
+        action: "read",
+        resource: deniedKind === "agent" ? agentGrant : revisionGrant,
+      });
+      assert.deepEqual(event.details.iamEvidence.bindingIds, []);
+    });
+  }
+
+  await t.test("both exact reads succeed without Namespace read", async () => {
+    setExactRevisionReaderGrants(fixture, [agentGrant, revisionGrant]);
+    const visible = await request(fixture.readerApp, pathname);
+    assert.equal(visible.response.status, 200);
+    assert.deepEqual(visible.payload.data, revisionA);
+    const namespace = await request(fixture.readerApp, `/namespaces/${namespaceA.id}`);
+    assert.equal(namespace.response.status, 403);
+  });
+
+  await t.test(
+    "an invalid explicit service key cannot fall back to the authorized reader cookie",
+    async () => {
+      setExactRevisionReaderGrants(fixture, [agentGrant, revisionGrant]);
+      assertRevisionReadFailure(
+        await request(fixture.readerApp, pathname, {
+          headers: { "x-api-key": "invalid-service-key" },
+        }),
+        401,
+        "UNAUTHENTICATED",
+        "The caller did not provide valid admission evidence.",
+      );
+    },
+  );
+
+  assert.equal(fixture.controller.pendingOperations().length, operationCount);
+  assert.deepEqual(
+    fixture.auditSink.events.filter((event) => event.outcome === "success"),
+    successes,
+  );
+});
+
+test("single revision API denial does not expose whether an unreadable parent exists", async () => {
+  const fixture = await createRevisionFixture();
+  const { namespaceA, namespaceB, agentA, agentB, siblingAgent, revisionA } = fixture;
+  setExactRevisionReaderGrants(fixture, [
+    { kind: "agent_revision", id: revisionA.id, namespaceId: namespaceA.id },
+  ]);
+  const envelopes = [];
+  for (const [namespaceId, agentId] of [
+    [namespaceA.id, agentA.id],
+    [namespaceA.id, siblingAgent.id],
+    [namespaceA.id, "agt_00000000-0000-4000-8000-000000009999"],
+    [namespaceA.id, agentB.id],
+    [namespaceB.id, agentB.id],
+    ["ns_00000000-0000-4000-8000-000000009999", agentA.id],
+  ]) {
+    envelopes.push(
+      assertRevisionReadFailure(
+        await request(
+          fixture.readerApp,
+          `/namespaces/${namespaceId}/agents/${agentId}/revisions/${revisionA.id}`,
+        ),
+        403,
+        "FORBIDDEN",
+        "The exact platform operation was not authorized.",
+      ),
+    );
+  }
+  for (const envelope of envelopes) assert.deepEqual(envelope, envelopes[0]);
+});
+
+test("single revision API hides foreign and missing resources with one fixed envelope", async () => {
+  const fixture = await createRevisionFixture();
+  const { namespaceA, namespaceB, agentA, agentB, siblingAgent, revisionA, revisionB } = fixture;
+  const envelopes = [];
+
+  // This actor retains the same broad read grants throughout; authorization cannot repair ownership.
+  for (const [namespaceId, agentId, revisionId] of [
+    [namespaceA.id, siblingAgent.id, revisionA.id],
+    [namespaceA.id, agentA.id, revisionB.id],
+    [namespaceB.id, agentA.id, revisionA.id],
+    [namespaceA.id, agentB.id, revisionB.id],
+    [namespaceA.id, agentA.id, missingRevisionId],
+    [namespaceA.id, "agt_00000000-0000-4000-8000-000000009999", revisionA.id],
+    ["ns_00000000-0000-4000-8000-000000009999", agentA.id, revisionA.id],
+  ]) {
+    envelopes.push(
+      assertRevisionReadFailure(
+        await request(
+          fixture.app,
+          `/namespaces/${namespaceId}/agents/${agentId}/revisions/${revisionId}`,
+        ),
+        404,
+        "NOT_FOUND",
+        "The requested platform resource was not found.",
+      ),
+    );
+  }
+  for (const envelope of envelopes) assert.deepEqual(envelope, envelopes[0]);
+});
+
+test("single revision API reads honor either native Restriction and sanitize an IAM store outage", async () => {
+  const fixture = await createRevisionFixture();
+  const { namespaceA, agentA, revisionA } = fixture;
+  const resources = [
+    { kind: "agent", id: agentA.id, namespaceId: namespaceA.id },
+    { kind: "agent_revision", id: revisionA.id, namespaceId: namespaceA.id },
+  ];
+  setExactRevisionReaderGrants(fixture, resources);
+  const pathname = `/namespaces/${namespaceA.id}/agents/${agentA.id}/revisions/${revisionA.id}`;
+  const operationCount = fixture.controller.pendingOperations().length;
+  const successes = fixture.auditSink.events.filter((event) => event.outcome === "success");
+  for (const resource of resources) {
+    const restriction = {
+      id: `restriction-single-revision-${resource.kind}`,
+      namespaceId: resource.namespaceId,
+      resourceKind: resource.kind,
+      resourceId: resource.id,
+      action: "read",
+      effect: "deny",
+    };
+    fixture.state.restrictions.push(restriction);
+    assertRevisionReadFailure(
+      await request(fixture.readerApp, pathname),
+      403,
+      "FORBIDDEN",
+      "The exact platform operation was not authorized.",
+    );
+    const event = fixture.auditSink.events.at(-1);
+    assert.equal(event.kind, "authorization_denial");
+    assert.deepEqual(event.authorization, {
+      principalId: fixture.tenantAReader.id,
+      action: "read",
+      resource,
+    });
+    assert.deepEqual(event.details.iamEvidence.restrictionIds, [restriction.id]);
+    fixture.state.restrictions.pop();
+    const recovered = await request(fixture.readerApp, pathname);
+    assert.equal(recovered.response.status, 200);
+    assert.deepEqual(recovered.payload.data, revisionA);
+  }
+
+  const providerDetail = "private-native-policy-store-connection-detail";
+  fixture.iamStateStore.loadNativeIAMState = async () => {
+    throw new Error(providerDetail);
+  };
+  assertRevisionReadFailure(
+    await request(fixture.readerApp, pathname),
+    503,
+    "DEPENDENCY_UNAVAILABLE",
+    "A required platform dependency is unavailable.",
+  );
+  assert.equal(JSON.stringify(fixture.auditSink.events).includes(providerDetail), false);
+  assert.equal(fixture.controller.pendingOperations().length, operationCount);
+  assert.deepEqual(
+    fixture.auditSink.events.filter((event) => event.outcome === "success"),
+    successes,
+  );
+});
 
 test("existing namespace adoption requires installation administration and waits for provisioning", async () => {
   const fixture = await createFixture();

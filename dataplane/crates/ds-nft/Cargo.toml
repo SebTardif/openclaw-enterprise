@@ -1,0 +1,27 @@
+# Modified for OpenClaw Enterprise.
+[package]
+name = "ds-nft"
+autoexamples = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# OCE selects the Rust library. No host-agent C ABI archive is built or packaged.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# The ONLY dependency (doc 14 §6, D67/D40): ds-contracts supplies the mark
+# constants, DS_MARK_MASK, and the `flush_session` signature this crate
+# implements against. The netlink mechanism is FREE (doc 11 §4); under the
+# workspace offline / stdlib-only constraint this crate emits `nft -f` batch
+# text + `conntrack -D` argv and pulls in NO external crate. The boundary
+# framework crates and the async runtime are a frozen non-edge here (doc 14 §6);
+# the dataplane/ READMEs name the pinned dependency choices.
+ds-contracts = { path = "../ds-contracts" }
+
+# Explicit verification tool; never selected by the product build.
+[[example]]
+name = "disposable_nft_probe"
+path = "examples/disposable_nft_probe.rs"

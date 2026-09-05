@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -26,7 +27,7 @@ async function request(origin, session, method, path, body) {
   const response = await fetch(`${origin}${path}`, {
     method,
     headers: {
-      ...authenticatedHeaders(session),
+      ...authenticatedHeaders(session, { origin }),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -117,7 +118,7 @@ test(
     const namespace = await request(origin, session, "POST", "/namespaces", {
       name: `provider-repair-${randomUUID()}`,
     });
-    assert.equal(namespace.response.status, 201);
+    assert.equal(namespace.response.status, 201, JSON.stringify(namespace.payload));
     fixture.track(namespace.payload.data);
     await fixture.state.transact((unit) =>
       unit.namespaces.transitionNamespaceStatus(namespace.payload.data.id, "provisioning", "ready"),
@@ -280,6 +281,7 @@ test(
       fixture.actor.id,
       { namespaceId: exactNamespace.id, agentId: dedicated.id },
       resolveApprovedHarness,
+      createRuntimeAdmissionContext(fixture.installation.id, fixture.actor.id),
     );
     assert.equal(admitted.providerId, providerId);
     assert.deepEqual(admitted.serviceAccount, {
@@ -323,6 +325,7 @@ test(
           fixture.actor.id,
           { namespaceId: exactNamespace.id, agentId: embedded.id },
           resolveApprovedHarness,
+          createRuntimeAdmissionContext(fixture.installation.id, fixture.actor.id),
         ),
       /dedicated Codex Harness/,
     );
@@ -366,6 +369,7 @@ test(
       fixture.actor.id,
       { namespaceId: exactNamespace.id, agentId: dedicated.id },
       resolveApprovedHarness,
+      createRuntimeAdmissionContext(fixture.installation.id, fixture.actor.id),
     );
     assert.equal(replacement.providerId, null);
     assert.equal(replacement.serviceAccount, undefined);
@@ -447,6 +451,7 @@ test(
             fixture.actor.id,
             { namespaceId: namespace.id, agentId: agent.id },
             resolveApprovedHarness,
+            createRuntimeAdmissionContext(fixture.installation.id, fixture.actor.id),
           ),
         scenario.message,
       );

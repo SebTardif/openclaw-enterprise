@@ -1,3 +1,11 @@
+import { createRuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
+import { parseRuntimeServiceTrustRecord } from "../runtime-authority/service-trust-schema.ts";
+import {
+  createRuntimeAuthorityRepository,
+  RuntimeAuthorityTransactionGuard,
+  type StoredRuntimeAuthorityOperation,
+} from "../runtime-authority/repository.ts";
+import { parseRuntimeAuthorityV1 } from "@openclaw-enterprise/contracts";
 import { randomUUID } from "node:crypto";
 import type {
   AccessBinding,
@@ -24,6 +32,7 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  decodeChannelAdministrationMappingV1,
   isChannelBindingReference,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
@@ -38,11 +47,14 @@ import {
   serializeChannelBindingMutations,
   validateChannelBindingList,
   serializeRuntimeAssignmentMutations,
+  isRuntimeAdmissionAudit,
 } from "./platform-state.ts";
 import type {
   ChannelBindingRepository,
   ChannelBindingListOptions,
   RuntimeAssignmentRepository,
+  RuntimeAdmissionRepository,
+  RevisionRuntimeAdmission,
   RuntimeIntent,
   RuntimeAllocation,
   RuntimeScope,
@@ -57,7 +69,9 @@ import type {
   PlatformAuditSink,
   PlatformOperation,
   PlatformReadView,
+  PlatformAuditRepository,
   PlatformStateStore,
+  PlatformReadOptions,
   PlatformUnitOfWork,
   SecretRepository,
   ServiceAccountRepository,
@@ -77,6 +91,14 @@ export interface PostgresClient extends PostgresQueryClient {
 }
 
 export interface PostgresPool {
+  readonly options?: {
+    readonly connectionTimeoutMillis?: number | undefined;
+    readonly max?: number | undefined;
+    readonly pipeline?: boolean;
+    readonly onConnect?: unknown;
+    readonly verify?: unknown;
+    readonly Client?: unknown;
+  };
   connect(): Promise<PostgresClient>;
   end(): Promise<void>;
 }
@@ -108,6 +130,7 @@ export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableErro
 }
 
 interface TransactionContext {
+  readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -206,6 +229,16 @@ function runtimeIntentFromRow(row: PostgresRow): Readonly<RuntimeIntent> {
     actorId: text(row, "actor_id"),
     requestId: text(row, "request_id"),
     createdAt: timestamp(row, "created_at"),
+  });
+}
+function revisionAdmissionFromRow(row: PostgresRow): Readonly<RevisionRuntimeAdmission> {
+  return immutableCopy({
+    namespaceId: text(row, "namespace_id"),
+    agentId: text(row, "agent_id"),
+    revisionId: text(row, "revision_id"),
+    runtimeTransitionRef: text(row, "runtime_transition_ref"),
+    lifecycleGeneration: runtimeGeneration(row, "lifecycle_generation"),
+    auditEventId: text(row, "audit_event_id"),
   });
 }
 function runtimeAllocationFromRow(row: PostgresRow): Readonly<RuntimeAllocation> {
@@ -658,7 +691,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         (
           await context.client.query(
             `SELECT id, namespace_id, identity_subject_id, group_subject_id, role_id,
-                    resource_kind, resource_id
+                    resource_kind, resource_id, channel_administration
              FROM occ.iam_access_bindings ORDER BY id`,
           )
         ).rows,
@@ -739,6 +772,12 @@ export class PostgresPlatformState implements PlatformStateStore {
         const groupSubjectId = optionalText(row, "group_subject_id");
         if ((identitySubjectId === undefined) === (groupSubjectId === undefined))
           throw new DependencyUnavailableError("Persisted IAM binding has an ambiguous subject.");
+        const mapping =
+          row.channel_administration === null || row.channel_administration === undefined
+            ? undefined
+            : decodeChannelAdministrationMappingV1(row.channel_administration);
+        if (mapping?.kind === "invalid")
+          throw new DependencyUnavailableError("Persisted IAM channel administration is invalid.");
         return immutableCopy({
           id: text(row, "id"),
           ...(namespaceId === undefined ? {} : { namespaceId }),
@@ -749,6 +788,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             ? {}
             : { resourceKind: resourceKind as NonNullable<AccessBinding["resourceKind"]> }),
           ...(resourceId === undefined ? {} : { resourceId }),
+          ...(mapping === undefined ? {} : { channelAdministration: mapping.value }),
         });
       });
 
@@ -831,11 +871,17 @@ export class PostgresPlatformState implements PlatformStateStore {
         ],
       );
       for (const binding of seed.bindings) {
+        const mapping =
+          binding.channelAdministration === undefined
+            ? undefined
+            : decodeChannelAdministrationMappingV1(binding.channelAdministration);
+        if (mapping?.kind === "invalid")
+          throw new DependencyUnavailableError("IAM channel administration is invalid.");
         await context.client.query(
           `INSERT INTO occ.iam_access_bindings
            (id, namespace_id, identity_subject_id, group_subject_id, role_id,
-            resource_kind, resource_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            resource_kind, resource_id, channel_administration)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
           [
             binding.id,
             null,
@@ -844,6 +890,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             binding.roleId,
             binding.resourceKind,
             binding.resourceId,
+            mapping === undefined ? null : JSON.stringify(mapping.value),
           ],
         );
       }
@@ -856,8 +903,11 @@ export class PostgresPlatformState implements PlatformStateStore {
     await this.pool.end();
   }
 
-  async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.execute(true, async (state) => work(state));
+  async read<T>(
+    work: (state: PlatformReadView) => Promise<T>,
+    options?: PlatformReadOptions,
+  ): Promise<T> {
+    return this.execute(true, async (state) => work(state), options);
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -887,59 +937,156 @@ export class PostgresPlatformState implements PlatformStateStore {
   private async execute<T>(
     readOnly: boolean,
     work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
+    options?: PlatformReadOptions,
   ): Promise<T> {
-    let client: PostgresClient;
-    try {
-      client = await this.pool.connect();
-    } catch (error) {
-      throw databaseError(error);
+    // pg exposes no per-checkout cancellation. Its configured timeout actually removes
+    // the waiter; join that bounded checkout before returning an interrupted read.
+    const acquisitionTimeout = this.pool.options?.connectionTimeoutMillis;
+    if (
+      options !== undefined &&
+      (options.signal.aborted ||
+        !Number.isFinite(options.timeoutMs) ||
+        options.timeoutMs <= 0 ||
+        options.timeoutMs > 3000 ||
+        acquisitionTimeout === undefined ||
+        acquisitionTimeout <= 0 ||
+        acquisitionTimeout > 250 ||
+        !Number.isFinite(acquisitionTimeout) ||
+        this.pool.options?.pipeline === true ||
+        this.pool.options?.onConnect !== undefined ||
+        this.pool.options?.verify !== undefined ||
+        this.pool.options?.Client !== undefined)
+    )
+      throw new DependencyUnavailableError(
+        "Bounded platform reads require a bounded PostgreSQL pool.",
+      );
+    const readBegan = performance.now();
+    let expired = false;
+    let closed = false;
+    let released = false;
+    let raw: PostgresClient | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectAbort: ((error: Error) => void) | undefined;
+    const pending = new Set<Promise<unknown>>();
+    const abortFailure = () => new DependencyUnavailableError("The platform read expired.");
+    const release = (destroy: boolean) => {
+      if (raw !== undefined && !released) {
+        released = true;
+        raw.release(destroy);
+      }
+    };
+    const abort = () => {
+      expired = true;
+      closed = true;
+      release(true);
+      rejectAbort?.(abortFailure());
+    };
+    const cancelled =
+      options === undefined
+        ? undefined
+        : new Promise<never>((_resolve, reject) => {
+            rejectAbort = reject;
+          });
+    // Rejection can precede acquisition settlement; attach a handler immediately.
+    void cancelled?.catch(() => {});
+    if (options !== undefined) {
+      options.signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(abort, Math.ceil(options.timeoutMs));
     }
-
+    let client: PostgresClient | undefined;
     let started = false;
     let committing = false;
     let discardClient = false;
-    // pg emits transport errors on checked-out clients as well as rejecting the
-    // query. Keep that event from escaping the transaction's unknown-outcome path.
+    let unit: PlatformUnitOfWork | undefined;
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const onTransportError = () => {
       discardClient = true;
     };
-    client.on?.("error", onTransportError);
-    let unit: PlatformUnitOfWork | undefined;
     try {
+      raw = await this.pool.connect();
+      raw.on?.("error", onTransportError);
+      if (expired || options?.signal.aborted) {
+        release(true);
+        throw abortFailure();
+      }
+      const underlying = raw;
+      client =
+        options === undefined
+          ? raw
+          : {
+              query: async (statement, parameters) => {
+                if (closed || options.signal.aborted) throw abortFailure();
+                const query = underlying.query(statement, parameters);
+                pending.add(query);
+                try {
+                  return await query;
+                } finally {
+                  pending.delete(query);
+                }
+              },
+              release: (destroy) => release(destroy ?? false),
+            };
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
+      if (options !== undefined) {
+        // PostgreSQL also detects a disappeared client during a blocked query. The
+        // server statement limit independently bounds resource lifetime on transport loss.
+        const remaining = Math.max(
+          1,
+          Math.floor(options.timeoutMs - (performance.now() - readBegan)),
+        );
+        await client.query(
+          "SELECT set_config('statement_timeout',$1,true), set_config('transaction_timeout',$1,true), set_config('idle_in_transaction_session_timeout',$1,true)",
+          [`${remaining}ms`],
+        );
+        await client.query("SET LOCAL client_connection_check_interval = '100ms'");
+      }
       const context: TransactionContext = {
+        authorityGuard,
         client,
         installation: undefined,
         installationLoaded: false,
       };
       unit = this.repositories(context);
       this.contexts.set(unit, context);
-      const result = await work(unit, context);
+      const running = Promise.resolve().then(() => work(unit!, context));
+      const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      await authorityGuard.finish();
+      if (expired || options?.signal.aborted) throw abortFailure();
       committing = true;
       const acknowledgement = await client.query("COMMIT");
       committing = false;
       started = false;
-      // PostgreSQL answers COMMIT with ROLLBACK after a caught statement failure.
-      // A callback result must never acknowledge writes the database discarded.
       if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
         throw new DependencyUnavailableError("The database transaction did not commit.");
+      if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
-      if (started) {
+      try {
+        await authorityGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
+      if (started && !released && client !== undefined) {
         try {
           await client.query("ROLLBACK");
         } catch {
-          // The failed client is still returned to the pool below.
+          discardClient = true;
         }
       }
-      const unknownCommit = committing && commitOutcomeUnknown(error);
-      discardClient ||= unknownCommit;
+      const unknownCommit = committing && !readOnly && commitOutcomeUnknown(error);
+      discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      closed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      options?.signal.removeEventListener("abort", abort);
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release(discardClient);
-      client.removeListener?.("error", onTransportError);
+      release(discardClient || expired);
+      // Destroying an active pg client rejects active/queued queries. Join their rejection
+      // before reporting cancellation, and forbid any later callback from reusing it.
+      await Promise.allSettled([...pending]);
+      raw?.removeListener?.("error", onTransportError);
     }
   }
 
@@ -2157,9 +2304,266 @@ export class PostgresPlatformState implements PlatformStateStore {
       return runtimeIntentFromRow(found!);
     }
 
+    const runtimeAdmissions: RuntimeAdmissionRepository = {
+      findRevisionAdmission: async (scope, revisionId) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        const found = rows(
+          (
+            await client.query(
+              `SELECT * FROM occ.agent_revision_runtime_admissions
+           WHERE namespace_id = $1 AND agent_id = $2 AND revision_id = $3`,
+              [scope.namespaceId, scope.agentId, revisionId],
+            )
+          ).rows,
+        )[0];
+        return found === undefined ? undefined : revisionAdmissionFromRow(found);
+      },
+      findCommittedAdmission: async (scope, transitionRef, attribution) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        // Exact immutable admission and original work, independent of head advancement,
+        // lease ownership, completion, and permanently failed reconciliation.
+        const found = rows(
+          (
+            await client.query(
+              `SELECT to_jsonb(intent) AS intent,
+             to_jsonb(revision) || jsonb_build_object('service_principal_id', agent.service_principal_id) AS revision,
+             to_jsonb(audit) AS audit
+           FROM occ.agent_revision_runtime_admissions admission
+           JOIN occ.agent_runtime_intents intent
+             ON intent.namespace_id = admission.namespace_id AND intent.agent_id = admission.agent_id
+            AND intent.revision_id = admission.revision_id AND intent.transition_ref = admission.runtime_transition_ref
+            AND intent.generation = admission.lifecycle_generation
+           JOIN occ.agent_revisions revision
+             ON revision.namespace_id = admission.namespace_id AND revision.agent_id = admission.agent_id
+            AND revision.id = admission.revision_id
+           JOIN occ.agents agent ON agent.namespace_id = revision.namespace_id AND agent.id = revision.agent_id
+           JOIN occ.controller_work work
+             ON work.idempotency_key = 'agent_revision:' || admission.revision_id || ':reconcile'
+            AND work.namespace_id = admission.namespace_id AND work.agent_id = admission.agent_id
+            AND work.revision_id = admission.revision_id AND work.runtime_transition_ref = admission.runtime_transition_ref
+            AND work.lifecycle_generation = admission.lifecycle_generation AND work.actor_id = intent.actor_id
+            AND work.namespace_target IS NULL
+           JOIN occ.audit_events audit ON audit.id = admission.audit_event_id
+           WHERE admission.namespace_id = $1 AND admission.agent_id = $2
+             AND admission.runtime_transition_ref = $3 AND intent.actor_id = $4 AND intent.request_id = $5
+             AND intent.desired_mode = 'running'`,
+              [
+                scope.namespaceId,
+                scope.agentId,
+                transitionRef,
+                attribution.actorId,
+                attribution.requestId,
+              ],
+            )
+          ).rows,
+        )[0];
+        if (found === undefined) return undefined;
+        const intent = runtimeIntentFromRow(jsonObject(found.intent));
+        const installation = await this.requireInitialized(context);
+        if (
+          intent.installationId !== installation.id ||
+          !isRuntimeAdmissionAudit(auditFromRow(jsonObject(found.audit), installation.id), intent)
+        )
+          return undefined;
+        return revisionFromRow(jsonObject(found.revision));
+      },
+      recordAdmission: async (admission) => {
+        await this.requireInitialized(context);
+        await client.query(
+          `INSERT INTO occ.agent_revision_runtime_admissions
+           (namespace_id, agent_id, revision_id, runtime_transition_ref, lifecycle_generation, audit_event_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            admission.namespaceId,
+            admission.agentId,
+            admission.revisionId,
+            admission.runtimeTransitionRef,
+            admission.lifecycleGeneration,
+            admission.auditEventId,
+          ],
+        );
+      },
+    };
+
+    function authorityOperation(row: PostgresRow): StoredRuntimeAuthorityOperation {
+      const result = parseRuntimeAuthorityV1("operationState", {
+        schemaVersion: 1,
+        result: "committed",
+        receipt: row.receipt,
+      });
+      if (!("receipt" in result) || typeof row.canonical_payload !== "string")
+        throw new DependencyUnavailableError("The runtime authority record is invalid.");
+      return immutableCopy({ canonicalPayload: row.canonical_payload, receipt: result.receipt });
+    }
+    const audit: PlatformAuditRepository = {
+      append: async (event) => {
+        await this.requireInstallation(context, event.installationId);
+        if (event.resource.namespaceId !== event.namespaceId)
+          throw new ScopeViolationError("The audit event and resource scopes do not match.");
+        const details = auditDetails(event);
+        await client.query(
+          `INSERT INTO occ.audit_events
+             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
+              outcome, details)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+          [
+            event.id,
+            event.occurredAt,
+            event.kind,
+            event.actorId,
+            event.action,
+            event.namespaceId ?? null,
+            event.resource.kind,
+            event.resource.id,
+            event.outcome,
+            details === undefined ? null : JSON.stringify(details),
+          ],
+        );
+      },
+      list: async () => {
+        const installation = await this.currentInstallation(context);
+        if (installation === undefined) return Object.freeze([]);
+        const found = rows(
+          (
+            await client.query(
+              `SELECT id, occurred_at, kind, actor_id, action, namespace_id, resource_kind,
+                        resource_id, outcome, details
+                 FROM occ.audit_events ORDER BY occurred_at, id`,
+            )
+          ).rows,
+        );
+        return Object.freeze(found.map((row) => auditFromRow(row, installation.id)));
+      },
+    };
+    const runtimeServiceTrust = createRuntimeServiceTrustRepository(
+      {
+        lockOperation: async (operationRef) => {
+          await client.query("SET LOCAL lock_timeout = '3000ms'");
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-service-trust-operation:' || $1,0))",
+            [operationRef],
+          );
+        },
+        lockSubject: async (installationId, kind, subjectRef) => {
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-service-trust-subject:' || $1 || ':' || $2 || ':' || $3,0))",
+            [installationId, kind, subjectRef],
+          );
+        },
+        operation: async (operationRef) => {
+          const result = await client.query(
+            "SELECT record FROM occ.runtime_service_trust_records WHERE operation_ref=$1",
+            [operationRef],
+          );
+          const row = rows(result.rows)[0];
+          return row === undefined ? undefined : parseRuntimeServiceTrustRecord(row.record);
+        },
+        latest: async (installationId, kind, subjectRef) => {
+          const result = await client.query(
+            "SELECT record FROM occ.runtime_service_trust_records WHERE installation_id=$1 AND subject_kind=$2 AND subject_ref=$3 ORDER BY record_version DESC LIMIT 1",
+            [installationId, kind, subjectRef],
+          );
+          const row = rows(result.rows)[0];
+          return row === undefined ? undefined : parseRuntimeServiceTrustRecord(row.record);
+        },
+        insert: async (record, event) => {
+          await audit.append(event);
+          await client.query(
+            "INSERT INTO occ.runtime_service_trust_records (installation_id,subject_kind,subject_ref,record_version,operation_ref,actor_id,audit_id,canonical_request,request_digest,committed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
+            [
+              record.installationId,
+              record.subjectKind,
+              record.subjectRef,
+              record.recordVersion,
+              record.operationRef,
+              record.actorId,
+              record.auditId,
+              record.canonicalRequest,
+              record.requestDigest,
+              record.committedAt,
+              JSON.stringify(record),
+            ],
+          );
+        },
+      },
+      { installations, agents, namespaces },
+      context.authorityGuard,
+    );
+    const runtimeAuthority = createRuntimeAuthorityRepository(
+      {
+        lockOperation: async (operationRef) => {
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-authority-operation:' || $1, 0))",
+            [operationRef],
+          );
+        },
+        allocation: async (scope, assignmentRef, lock) => {
+          const installation = await this.currentInstallation(context);
+          if (installation?.id !== scope.installationId) return undefined;
+          // Use the same Agent lock as intent/assignment writers before any head or version read.
+          if (lock)
+            await client.query(
+              "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR UPDATE",
+              [scope.namespaceId, scope.agentId],
+            );
+          const found = rows(
+            (
+              await client.query(
+                "SELECT * FROM occ.runtime_assignment_allocations WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND assignment_ref=$4",
+                [scope.installationId, scope.namespaceId, scope.agentId, assignmentRef],
+              )
+            ).rows,
+          )[0];
+          return found === undefined ? undefined : runtimeAllocationFromRow(found);
+        },
+        operations: async (scope, assignmentRef) =>
+          rows(
+            (
+              await client.query(
+                "SELECT canonical_payload, receipt FROM occ.runtime_authority_operations WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND assignment_ref=$4 ORDER BY assignment_record_version",
+                [scope.installationId, scope.namespaceId, scope.agentId, assignmentRef],
+              )
+            ).rows,
+          ).map(authorityOperation),
+        operation: async (operationRef) => {
+          const found = rows(
+            (
+              await client.query(
+                "SELECT canonical_payload, receipt FROM occ.runtime_authority_operations WHERE operation_ref=$1",
+                [operationRef],
+              )
+            ).rows,
+          )[0];
+          return found === undefined ? undefined : authorityOperation(found);
+        },
+        insert: async ({ canonicalPayload, receipt }) => {
+          await client.query(
+            `INSERT INTO occ.runtime_authority_operations
+          (operation_ref, installation_id, namespace_id, agent_id, assignment_ref, assignment_record_version, operation_kind, canonical_payload, receipt)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+            [
+              receipt.operationRef,
+              receipt.installationId,
+              receipt.namespaceId,
+              receipt.agentId,
+              receipt.assignmentRef.id,
+              receipt.assignmentRecordVersion,
+              receipt.operationKind,
+              canonicalPayload,
+              JSON.stringify(receipt),
+            ],
+          );
+        },
+      },
+      runtimeAssignments,
+      context.authorityGuard,
+    );
     return {
+      runtimeAuthority,
+      runtimeServiceTrust,
       channelBindings: serializeChannelBindingMutations(channelBindings),
       runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
+      runtimeAdmissions,
       installations,
       namespaces,
       configurations,
@@ -2167,46 +2571,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       serviceAccounts,
       agents,
       revisions,
-      audit: {
-        append: async (event) => {
-          await this.requireInstallation(context, event.installationId);
-          if (event.resource.namespaceId !== event.namespaceId)
-            throw new ScopeViolationError("The audit event and resource scopes do not match.");
-          const details = auditDetails(event);
-          await client.query(
-            `INSERT INTO occ.audit_events
-             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
-              outcome, details)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
-            [
-              event.id,
-              event.occurredAt,
-              event.kind,
-              event.actorId,
-              event.action,
-              event.namespaceId ?? null,
-              event.resource.kind,
-              event.resource.id,
-              event.outcome,
-              details === undefined ? null : JSON.stringify(details),
-            ],
-          );
-        },
-        list: async () => {
-          const installation = await this.currentInstallation(context);
-          if (installation === undefined) return Object.freeze([]);
-          const found = rows(
-            (
-              await client.query(
-                `SELECT id, occurred_at, kind, actor_id, action, namespace_id, resource_kind,
-                        resource_id, outcome, details
-                 FROM occ.audit_events ORDER BY occurred_at, id`,
-              )
-            ).rows,
-          );
-          return Object.freeze(found.map((row) => auditFromRow(row, installation.id)));
-        },
-      },
+      audit,
       operations: {
         append: async (operation) => {
           await this.requireInitialized(context);
@@ -2247,6 +2612,12 @@ export class PostgresPlatformState implements PlatformStateStore {
             ...(revisionId === undefined ? {} : { revisionId }),
             ...(namespaceTarget === undefined ? {} : { namespaceTarget }),
             actorId: operation.actorId,
+            ...(operation.runtimeTransitionRef === undefined
+              ? {}
+              : { runtimeTransitionRef: operation.runtimeTransitionRef }),
+            ...(operation.lifecycleGeneration === undefined
+              ? {}
+              : { lifecycleGeneration: operation.lifecycleGeneration }),
           });
         },
         list: async () => {
@@ -2254,7 +2625,8 @@ export class PostgresPlatformState implements PlatformStateStore {
           const found = rows(
             (
               await client.query(
-                `SELECT namespace_id, agent_id, revision_id, actor_id, namespace_target
+                `SELECT namespace_id, agent_id, revision_id, actor_id, namespace_target,
+                        runtime_transition_ref, lifecycle_generation
                  FROM occ.controller_work ORDER BY created_at, idempotency_key`,
               )
             ).rows,
@@ -2277,7 +2649,17 @@ export class PostgresPlatformState implements PlatformStateStore {
                   );
                 return immutableCopy({ ...base, kind: "namespace", target });
               }
-              return immutableCopy({ ...base, kind: "agent_revision" });
+              const runtimeTransitionRef = optionalText(row, "runtime_transition_ref");
+              return immutableCopy({
+                ...base,
+                kind: "agent_revision",
+                ...(runtimeTransitionRef === undefined
+                  ? {}
+                  : {
+                      runtimeTransitionRef,
+                      lifecycleGeneration: runtimeGeneration(row, "lifecycle_generation"),
+                    }),
+              });
             }),
           );
         },
@@ -2409,11 +2791,17 @@ export class PostgresPlatformState implements PlatformStateStore {
       );
     }
     for (const binding of state.bindings) {
+      const mapping =
+        binding.channelAdministration === undefined
+          ? undefined
+          : decodeChannelAdministrationMappingV1(binding.channelAdministration);
+      if (mapping?.kind === "invalid")
+        throw new DependencyUnavailableError("IAM channel administration is invalid.");
       await context.client.query(
         `INSERT INTO occ.iam_access_bindings
          (id, namespace_id, identity_subject_id, group_subject_id, role_id,
-          resource_kind, resource_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          resource_kind, resource_id, channel_administration)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
         [
           binding.id,
           binding.namespaceId ?? null,
@@ -2422,6 +2810,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           binding.roleId,
           binding.resourceKind ?? null,
           binding.resourceId ?? null,
+          mapping === undefined ? null : JSON.stringify(mapping.value),
         ],
       );
     }

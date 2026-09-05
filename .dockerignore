@@ -20,6 +20,13 @@ node_modules
 **/node_modules
 dist
 **/dist
+.build
+dataplane/target
+# Only selected native executables and locked packages are image inputs.
+!.build/mvp/native/oce-dnsgate
+!.build/mvp/native/oce-egress
+!.build/mvp/egress-debs/*.deb
+!.build/mvp/egress-debs/SHA256SUMS
 coverage
 playwright-report
 test-results
@@ -29,3 +36,6 @@ output/playwright
 tests/
 specs/
 docs/
+
+# Native executables are compiled inside the selected Go builder.
+components/runtime-security/bin/

@@ -1,0 +1,23 @@
+OpenClaw Enterprise adapted dataplane
+
+This directory contains selected components derived from Dream Serpent (DS),
+https://github.com/freeqaz/ds, public baseline
+ dccf15c760e219ab7bf284c7c2b52b62b9d925ef.
+
+The DS source is licensed under Apache License 2.0; see LICENSE. Existing source
+copyright and attribution notices are retained. Modified source files carry an
+OpenClaw Enterprise modification notice. SOURCE_MANIFEST.json identifies the
+selected source files and their hashes. This component's license is separate
+from the surrounding repository's license.
+
+OCE adaptations include the fixed-origin external model DNS and TLS adapters,
+current-authority and one-shot operation binding, explicit socket cancellation,
+fallible nftables and conntrack cleanup, policy/admission consistency fixes,
+shared-memory validation fixes, and the selected build and test inputs.
+The HTTP adapter uses Hyper and rustls. Stock DS executables, identity issuance,
+host/VM networking and collector deployment are not selected products.
+
+Third-party Cargo and Rust standard-library notices are retained in
+third-party-notices/. That inventory covers the selected Linux build graph;
+it is not an assertion that every listed component is linked into each binary.
+Container base and operating-system package notices are separate.

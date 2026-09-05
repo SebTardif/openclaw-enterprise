@@ -89,6 +89,7 @@ async function createFixture(options = {}) {
     { id: "iam-workspace-files" },
   );
   const auditSink = new InMemoryAuditSink();
+  const platformState = new InMemoryPlatformState({ auditSink });
   const configurationDriver = createTestConfigurationDriver({
     id: "configuration-workspace-files",
   });
@@ -118,32 +119,46 @@ async function createFixture(options = {}) {
     async retireRevision() {},
   };
 
+  function createOwnedController(installation) {
+    return new OpenClawController(installation, {
+      state: platformState,
+      recordOperations: false,
+      createId(kind) {
+        if (kind === "configuration") {
+          configurationSequence += 1;
+          return `cfg_20000000-0000-4000-8000-${String(configurationSequence).padStart(12, "0")}`;
+        }
+        sequence += 1;
+        const prefix = {
+          namespace: "ns",
+          agent: "agt",
+          agent_revision: "rev",
+        }[kind];
+        return `${prefix}_00000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
+      },
+    });
+  }
+
   function createApp(principal = administrator, overrides = {}, factory = createControllerApp) {
+    // Every app owns its sealed verifier while sharing the fixture's actual state and Drivers.
+    let appController;
+    if (controller) {
+      appController = createOwnedController(controller.installation);
+      for (const capability of ["iam", "compute", "configuration"]) {
+        const selected = controller.selectedDriver(capability);
+        appController.registerDriver(selected);
+        appController.selectDriver(capability, selected.id);
+      }
+    }
     const app = factory({
-      ...(controller === undefined
+      ...(appController === undefined
         ? {
             createController(installation) {
-              controller = new OpenClawController(installation, {
-                state: new InMemoryPlatformState({ auditSink }),
-                recordOperations: false,
-                createId(kind) {
-                  if (kind === "configuration") {
-                    configurationSequence += 1;
-                    return `cfg_20000000-0000-4000-8000-${String(configurationSequence).padStart(12, "0")}`;
-                  }
-                  sequence += 1;
-                  const prefix = {
-                    namespace: "ns",
-                    agent: "agt",
-                    agent_revision: "rev",
-                  }[kind];
-                  return `${prefix}_00000000-0000-4000-8000-${String(sequence).padStart(12, "0")}`;
-                },
-              });
+              controller = createOwnedController(installation);
               return controller;
             },
           }
-        : { controller }),
+        : { controller: appController }),
       iamDriver,
       computeDriver,
       configurationDriver,

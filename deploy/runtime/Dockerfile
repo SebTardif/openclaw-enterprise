@@ -1,29 +1,27 @@
 ARG NODE_BASE_IMAGE=node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
-FROM ${NODE_BASE_IMAGE}
+FROM ${NODE_BASE_IMAGE} AS packages
 
-ARG OPENCLAW_VERSION=2026.7.1
-ARG OPENCLAW_CODEX_PLUGIN_VERSION=2026.7.1-1
-ARG OPENCLAW_SLACK_PLUGIN_VERSION=2026.7.1
-ARG OPENAI_CODEX_VERSION=0.153.0
+WORKDIR /prepare
+COPY . .
+RUN node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major !== 24 || minor < 15) throw new Error(`OpenClaw Enterprise runtime images require Node.js 24.15+; found ${process.version}.`);' \
+  && node verify-context.mjs --verify-context /prepare \
+  && npm ci --offline --omit=dev --ignore-scripts --no-audit --no-fund \
+    --userconfig /prepare/empty.npmrc --globalconfig /prepare/empty-global.npmrc \
+    --cache /prepare/cache
+
+FROM ${NODE_BASE_IMAGE}
 
 ENV NODE_ENV=production
 ENV PATH=/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /app
-
-RUN node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major !== 24 || minor < 15) throw new Error(`OpenClaw Enterprise runtime images require Node.js 24.15+; found ${process.version}.`);'
-
-RUN npm init -y >/dev/null \
-  && npm install --omit=dev --no-audit --no-fund \
-    "openclaw@${OPENCLAW_VERSION}" \
-    "@openclaw/codex@${OPENCLAW_CODEX_PLUGIN_VERSION}" \
-    "@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}" \
-    "@openai/codex@${OPENAI_CODEX_VERSION}" \
-  && npm cache clean --force
+COPY --from=packages /prepare/node_modules ./node_modules
+COPY --from=packages /prepare/package.json /prepare/package-lock.json ./
 
 RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw \
   && cp -R node_modules/@openclaw/codex node_modules/openclaw/dist/extensions/codex \
   && cp -R node_modules/@openclaw/slack node_modules/openclaw/dist/extensions/slack \
+  && cp -R node_modules/@openclaw/msteams node_modules/openclaw/dist/extensions/msteams \
   && cp -R node_modules/@openclaw/slack/skills/slack ./plugin-skills/slack \
   && ln -s node_modules/openclaw/openclaw.mjs ./openclaw.mjs \
   && ln -s node_modules/openclaw/dist ./dist \
@@ -34,8 +32,12 @@ RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw
   && test ! -L /app/skills \
   && test -d /app/plugin-skills/slack \
   && node /app/openclaw.mjs --version \
-  && codex --version \
+  && test "$(codex --version)" = "codex-cli 0.153.0" \
   && test -f /app/dist/extensions/codex/openclaw.plugin.json \
-  && test -f /app/dist/extensions/slack/openclaw.plugin.json
+  && test -f /app/dist/extensions/slack/openclaw.plugin.json \
+  && test -f /app/dist/extensions/msteams/openclaw.plugin.json \
+  && test -f /app/dist/extensions/codex/index.js \
+  && test -f /app/dist/extensions/slack/index.js \
+  && test -f /app/dist/extensions/msteams/index.cjs
 
 USER node

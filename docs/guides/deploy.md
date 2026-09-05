@@ -7,8 +7,12 @@ root. Startup needs no model credential.
 ## Development
 
 Prerequisites: Docker Engine with Docker Compose, socket access, Bash, `curl`,
-Python 3, and a combined local runtime image or permission for the helper to
-build `openclaw-enterprise-runtime:quickstart`.
+Python 3, and a combined local runtime image. To let the helper build a missing
+`openclaw-enterprise-runtime:quickstart` image, also provide Node.js 24+ and the
+[prepared runtime build context](#prepare-the-runtime-build-context) through
+`OCC_RUNTIME_BUILD_CONTEXT`. Set `GO_BASE_IMAGE` in your
+environment or Compose `.env` to an approved digest-pinned Go 1.26 or newer
+builder image for the native controller components.
 
 ```bash
 ./scripts/dev-up
@@ -19,6 +23,47 @@ database, migration, bootstrap, API, and worker services, privately copies the
 initial service-key response, and checks `/installation`. Expected output starts
 with `OpenClaw Enterprise development stack is ready.` and includes the loopback
 URL, Installation ID, private key path, next check, and cleanup command.
+
+### Prepare the runtime build context
+
+The runtime recipe consumes five local package archives: OpenClaw core,
+`@openclaw/ai`, and the Slack, Microsoft Teams, and Codex plugins. Prepare them
+with the frozen dependency policy and immutable input description specified in
+the [runtime packaging contract](../../deploy/runtime/README.md). Preparation
+uses already built source artifacts; it does not rebuild the upstream SDK.
+The native Codex CLI remains pinned to `0.153.0`.
+
+Choose an absolute, task-owned output path that does not already exist:
+
+```bash
+export OCC_RUNTIME_BUILD_CONTEXT='/absolute/task-owned/runtime-context'
+node deploy/runtime/prepare-local-packages.mjs \
+  --inputs /absolute/task-owned/immutable-inputs.json \
+  --output "$OCC_RUNTIME_BUILD_CONTEXT"
+node deploy/runtime/prepare-local-packages.mjs \
+  --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
+```
+
+The prepared directory supplies `package.json`, `package-lock.json`,
+`artifacts/*.tgz`, and `preparation.json` as the Docker build context. Keep the
+original archives and input record with the preparation evidence. Preparation
+and offline smoke success do not promote provisional source artifacts to
+accepted release inputs or qualify an image for deployment.
+
+`scripts/dev-up` reuses an existing default runtime image. Only when that image
+is missing does it require `OCC_RUNTIME_BUILD_CONTEXT`, run the context verifier
+above, and build it with:
+
+```bash
+docker build -f deploy/runtime/Dockerfile \
+  --tag openclaw-enterprise-runtime:quickstart "$OCC_RUNTIME_BUILD_CONTEXT"
+```
+
+Custom runtime image selection retains its existing behavior and does not
+trigger this default-image preparation path. The helper does not create a
+context, rebuild the SDK, or substitute registry packages when inputs are
+missing. See [development settings](../reference/settings.md#required-development-controller-environment)
+for image selection and the context variable.
 
 ### Verify development
 
@@ -74,6 +119,12 @@ explicit production selection.
 
 ## Production
 
+The [external model egress packaging](../reference/egress.md) is a separate
+implementation candidate. Its local preflight and image recipe do not install
+the canonical authority or select mediation for an Agent. Follow its explicit
+dependency and verification requirements; existing runtime credential behavior
+continues until the complete external custody path is implemented and selected.
+
 ### Production prerequisites
 
 - Explicit Kubernetes context, enforcing NetworkPolicies, Helm, `kubectl`, and
@@ -89,19 +140,25 @@ explicit production selection.
 
 Build and push two images to a registry your cluster can access:
 
-| Image      | Source                                                                                                 | Used by                                          |
-| ---------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Controller | Root [`Dockerfile`](../../Dockerfile), target `runtime`                                                | API, worker, migration, and bootstrap            |
-| Runtime    | [`deploy/runtime/Dockerfile`](../../deploy/runtime/Dockerfile), installing OpenClaw and Codex from npm | Gateways and Agents (the same image serves both) |
+| Image      | Source                                                                                                     | Used by                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Controller | Root [`Dockerfile`](../../Dockerfile), target `runtime`                                                    | API, worker, migration, and bootstrap            |
+| Runtime    | [`deploy/runtime/Dockerfile`](../../deploy/runtime/Dockerfile), consuming a prepared local package context | Gateways and Agents (the same image serves both) |
 
-You need Docker with Buildx and registry push access. Replace the example
+You need Docker with Buildx and registry push access. Select an approved,
+digest-pinned Go builder image with Go 1.26 or newer and export `GO_BASE_IMAGE`.
+The controller build compiles the native OpenShell/SPIFFE executable and copies
+it into both controller image targets; the builder has no floating default.
+Replace the example
 registry and repository, and select the platform matching your Kubernetes
-nodes. The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
-which also documents package-version overrides.
+nodes. Prepare and verify `OCC_RUNTIME_BUILD_CONTEXT` using the
+[runtime context procedure](#prepare-the-runtime-build-context) before building.
+The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
+which owns the source-artifact and frozen dependency-policy requirements.
 
 The runtime must include the channel plugins its Agents enable, with their
 runtime dependencies available from a fresh home directory. The standard recipe
-packages Slack and Codex. Verify plugin loading and the gateway's supported
+packages Slack, Microsoft Teams, and Codex alongside core and AI. Verify plugin loading and the gateway's supported
 Codex app-server version before publishing; use the
 [runtime image checks](../../deploy/runtime/README.md#verify-the-local-image).
 Use the same verified runtime image for both slots unless you have separately
@@ -113,15 +170,18 @@ export OCC_IMAGE_REPOSITORY='registry.example.com/your-team/openclaw-enterprise'
 export OCC_IMAGE_TAG="$(git rev-parse HEAD)"
 export OCC_IMAGE_PLATFORM='linux/amd64'
 export NODE_BASE_IMAGE='node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584'
+export GO_BASE_IMAGE='registry.example.com/approved/golang@sha256:<approved-digest>'
 docker login registry.example.com
 
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" --target runtime \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
+  --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" .
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
   -f deploy/runtime/Dockerfile \
-  -t "$OCC_IMAGE_REPOSITORY/runtime:$OCC_IMAGE_TAG" deploy/runtime
+  -t "$OCC_IMAGE_REPOSITORY/runtime:$OCC_IMAGE_TAG" "$OCC_RUNTIME_BUILD_CONTEXT"
 
 CONTROLLER_DIGEST="$(docker buildx imagetools inspect \
   "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" \
@@ -356,19 +416,27 @@ export KUBECONFIG_FILE="$OCC_EXAMPLE_DIRECTORY/kubeconfig"
 export CONTEXT="k3d-$CLUSTER"
 ```
 
-Build and import the images:
+Build and import the images. Set `GO_BASE_IMAGE` to an approved digest-pinned
+Go 1.26 or newer builder as described above, and prepare
+`OCC_RUNTIME_BUILD_CONTEXT` with the [local package procedure](#prepare-the-runtime-build-context).
+These local builds and imports do not require a registry push:
 
 ```bash
 docker build --target runtime \
   --build-arg NODE_BASE_IMAGE=node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584 \
+  --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "localhost/$CLUSTER/controller:local" .
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker build -f deploy/runtime/Dockerfile \
-  -t "localhost/$CLUSTER/runtime:local" deploy/runtime
+  -t "localhost/$CLUSTER/runtime:local" "$OCC_RUNTIME_BUILD_CONTEXT"
 k3d image import "localhost/$CLUSTER/controller:local" \
   "localhost/$CLUSTER/runtime:local" -c "$CLUSTER"
 ```
 
-Register each imported manifest digest in k3s:
+Register each imported manifest digest in k3s. A Docker image ID from
+`docker image inspect --format '{{.Id}}'` identifies the local image configuration;
+it is not the registry or imported manifest digest required in the references
+below:
 
 ```bash
 for role in controller runtime; do
@@ -1064,7 +1132,7 @@ Use native surfaces for customization:
 - Production: extra Helm values files, ordinary Helm overrides, Kubernetes
   manifests, Installation startup YAML, and optional Collector Secrets.
 - Runtime images: [`deploy/runtime`](../../deploy/runtime/README.md) for the
-  recipe and package-version overrides.
+  recipe and immutable package-input requirements.
   [Build and publish](#build-and-publish-production-images) before configuring the digests.
 - Settings: [environment and tooling reference](../reference/settings.md).
 - Driver contracts: [Kubernetes Compute](../reference/drivers/kubernetes-compute.md),
@@ -1082,3 +1150,73 @@ If the Installation selects the ChatGPT Provider, create `occ-chatgpt-admin`
 with `--from-file=admin-key=/secure/occ/occ-chatgpt-admin-key` and enable the
 matching Provider/ServiceAccount Driver settings in native values and
 Installation YAML.
+
+## Check a local workload identity provider
+
+The SPIFFE Workload API component can verify that the current process receives
+its exact configured identity from an operator-trusted local SPIRE Agent.
+Prepare the provider and register this process through the provider's approved
+registration mechanism. For a source checkout, build the diagnostic first;
+the controller image already includes `/usr/local/bin/oce-runtime-security`:
+
+```sh
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+./components/runtime-security/bin/oce-runtime-security identity check \
+  --socket-path /run/spire/agent.sock \
+  --spiffe-id spiffe://example.org/oce/diagnostic \
+  --audience oce-diagnostic
+```
+
+The optional audience adds JWT issuance and provider-side validation. The command
+prints identity and expiry metadata only; it never prints SVID keys or tokens.
+It exits nonzero for an unavailable endpoint, wrong identity or failed
+validation. It does not alter registrations, select this provider for controller
+transport, or establish guest attestation or runtime readiness. See
+[workload identity](../reference/workload-identity.md) for the source API, limits
+and troubleshooting, and [OpenShell](../reference/drivers/openshell-sandbox.md)
+for the remaining launch requirements.
+
+## Optional authenticated runtime history readback
+
+Configure this path only for an independent service that needs its own exact
+retained runtime operation outcomes. It does not enable runtime mutation, model
+access, workload enrollment or positive lifecycle eligibility. The regular
+controller deployment route retains its current behavior.
+
+1. Install the protected native `oce-runtime-authority` executable and configure
+   its immutable digest, existing Workload API socket, own/recipient SPIFFE ID,
+   exact trust bundle and fixed transport limits in a `runtimeAuthoritySources`
+   entry. Protect those files and their parent directories using the deployment's
+   existing operator custody. Set `OCC_RUNTIME_AUTHORITY_BINARY_PATH` when using a
+   path other than the packaged executable. Keep at least two controller database
+   pool connections available for the operator path.
+2. Use a current human Installation-administrator session to POST a `source-admit`
+   operation to `/v1/runtime-service-trust/operations`. Supply a retained UUID
+   operation reference, the configured source reference and `expectedVersion:
+null` for the first admission. Startup configuration alone admits nothing.
+3. Through the same session-protected route, submit `service-admit` with a new
+   retained operation UUID, `expectedVersion: null`, `serviceIdentityRef: null`,
+   that source reference, the existing exact Namespace/Agent IDs and the intended
+   independent peer SPIFFE ID. Retain the returned service identity and version.
+   The actual native syntax validator runs before this record commits; the
+   registry does not issue the peer's certificate.
+4. Select that admitted service in the protected readback JSON and set
+   `OCC_RUNTIME_AUTHORITY_READBACK_CONFIG_PATH`. A fresh controller incarnation
+   loads current database state before starting the owned native child/listener.
+   The binary path and recipient must match the admitted technical source.
+5. Withdraw a source or service through the same operator route using its exact
+   current version. Source replacement also invalidates previous linked service
+   admissions. Re-admission is explicit and advances the retained version.
+
+Every request uses current registry and native transport checks. A lost COMMIT
+acknowledgement supplies an exact recovery locator; recover it through
+`GET /v1/runtime-service-trust/operations/:operationRef` with the original human
+administrator identity before deciding what to do next. A historical replay does
+not reactivate a withdrawn admission. Service keys cannot perform these operator
+operations.
+
+The [runtime authority reference](../reference/runtime-authority.md) specifies
+closed request/result fields, and the [transport reference](../reference/runtime-service-transport.md)
+describes native TLS, cancellation, restart and cleanup. Local fixture tests
+exercise real cryptography and PostgreSQL but do not qualify production enrollment,
+network policy, guest identity or timing for a deployed installation.

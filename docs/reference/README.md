@@ -18,28 +18,41 @@ procedure needs a public Docker-only OpenClaw/Codex runtime image.
 
 ## Features
 
-| Reference                                        | Owns                                                                                 |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| [Platform console](console.md)                   | Login, Agent creation, draft channels, revision inspection, and Namespace selection. |
-| [Namespaces](namespaces.md)                      | Tenant identity, placement, readiness, and deletion.                                 |
-| [Agents](agents.md)                              | Agent identity, mutable selection, immutable revisions, and workspace file routes.   |
-| [Gateway routing with Envoy](gateway-routing.md) | Private Agent endpoints, service keys, TLS, and network enforcement.                 |
-| [Configuration](configuration.md)                | Native documents, generations, references, and snapshots.                            |
-| [Secrets](drivers/kubernetes-secret.md)          | Namespace-owned Secret storage, metadata-only responses, env bindings, and redeploy. |
-| [Authentication](authentication.md)              | Supported caller credentials, sessions, bootstrap, and account provisioning.         |
-| [Authorization](authorization.md)                | Principals, Groups, Roles, Bindings, Restrictions, and exact-resource decisions.     |
-| [Providers](providers.md)                        | Provider configuration, related Drivers, client ownership, and Agent references.     |
-| [Service accounts](service-accounts.md)          | Account associations, credential references, issuance, and revocation boundaries.    |
-| [Harness execution](harness-execution.md)        | Runtime selection, topology, and admitted execution constraints.                     |
-| [Controller reconciliation](controller.md)       | Durable lifecycle work, authorization refresh, claims, retries, and recovery.        |
-| [Security](security.md)                          | Kubernetes workload and credential boundaries and enforcement limitations.           |
-| [Settings](settings.md)                          | Supported environment variables and programmatic configuration.                      |
-| [HTTP API](api.md)                               | Generated routes, wire schemas, and declared permissions.                            |
+| Reference                                               | Owns                                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [Platform console](console.md)                          | Login, Agent creation, draft channels, revision inspection, and Namespace selection.        |
+| [Namespaces](namespaces.md)                             | Tenant identity, placement, readiness, and deletion.                                        |
+| [Agents](agents.md)                                     | Agent identity, mutable selection, immutable revisions, and workspace file routes.          |
+| [Gateway routing with Envoy](gateway-routing.md)        | Private Agent endpoints, service keys, TLS, and network enforcement.                        |
+| [Configuration](configuration.md)                       | Native documents, generations, references, and snapshots.                                   |
+| [Channels and delivery](channels.md)                    | Direct channel topology, storage/custody boundaries, and verification limits.               |
+| [Manual channel bindings](channel-bindings.md)          | App/human/Agent administration and mapping-only resolution.                                 |
+| [Shared-turn receipt identity](shared-turn-receipts.md) | Internal identity/classification, distinct from durable admission.                          |
+| [Secrets](drivers/kubernetes-secret.md)                 | Namespace-owned Secret storage, metadata-only responses, env bindings, and redeploy.        |
+| [Authentication](authentication.md)                     | Supported caller credentials, sessions, bootstrap, and account provisioning.                |
+| [Authorization](authorization.md)                       | Principals, Groups, Roles, Bindings, Restrictions, and exact-resource decisions.            |
+| [Workload identity](workload-identity.md)               | Local SPIFFE Workload API source, credential refresh, diagnostics, and verification limits. |
+| [Providers](providers.md)                               | Provider configuration, related Drivers, client ownership, and Agent references.            |
+| [Service accounts](service-accounts.md)                 | Account associations, credential references, issuance, and revocation boundaries.           |
+| [Harness execution](harness-execution.md)               | Runtime selection, topology, and admitted execution constraints.                            |
+| [Controller reconciliation](controller.md)              | Durable lifecycle work, authorization refresh, claims, retries, and recovery.               |
+| [Security](security.md)                                 | Kubernetes workload and credential boundaries and enforcement limitations.                  |
+| [Settings](settings.md)                                 | Supported environment variables and programmatic configuration.                             |
+| [HTTP API](api.md)                                      | Generated routes, wire schemas, and declared permissions.                                   |
 
 Generated schemas describe wire shape. The feature pages additionally own
 behavioral rules such as cross-resource ownership, lifecycle ordering, and failure
 effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` and
 `pnpm openapi:check` after route or schema changes.
+
+## Development internals
+
+- [Build graph](build.md): explicit language and image prerequisites, offline source
+  compilation, artifact identity, and runtime verification limits.
+- [Delegated authority library](delegation.md): internal root grant and model request
+  constraints, with required authentication, currentness, and persistence integrations.
+- [External model egress packaging](egress.md): prepared images and isolated local
+  service packaging; canonical authority and production integration remain required.
 
 ## Drivers
 

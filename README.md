@@ -11,6 +11,7 @@ Requires Docker Engine with Docker Compose, Bash, `curl`, and Python 3. Start
 the local stack and run with:
 
 ```bash
+# Set GO_BASE_IMAGE to an approved digest-pinned Go 1.26+ builder image first.
 ./scripts/dev-up
 ```
 
@@ -67,6 +68,7 @@ see [Testing](docs/testing.md) for suite coverage, credentials, setup, and comma
 - [Observability](docs/guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
 - [Platform design](docs/design.md) and [current architecture](docs/ARCHITECTURE.md): target design and implemented components.
 - [Feature reference](docs/reference/README.md): supported behavior and Driver contracts.
+- [Channels and delivery](docs/reference/channels.md): current native channels, manual bindings, state ownership, and verification limits.
 - [Platform console](docs/reference/console.md): login, Namespace selection, Agent creation, revision inspection, and supported channel draft edits.
 - [Providers](docs/reference/providers.md): authenticated clients, related Drivers, and optional Agent association.
 - [Agent workspace files](docs/reference/agents.md#workspace-files): read and replace four native Agent workspace files through private Kubernetes routes managed by Compute, Envoy Gateway, and cert-manager.

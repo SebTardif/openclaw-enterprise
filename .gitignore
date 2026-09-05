@@ -6,6 +6,9 @@
 # Dependency trees and generated artifacts remain machine-local at every depth.
 node_modules/
 dist/
+components/runtime-security/bin/
+.build/
+dataplane/target/
 coverage/
 *.log
 .DS_Store

@@ -34,6 +34,20 @@ export function isChannelBindingOperation(
   return (operations as readonly string[]).includes(operationId);
 }
 
+/** These inventories and mutations require an admitted human administrator. */
+export function isHumanChannelAdministrationOperation(operationId: string): boolean {
+  return (
+    operationId === "createChannelInstallation" ||
+    operationId === "getChannelInstallation" ||
+    operationId === "listChannelInstallations" ||
+    operationId === "setChannelInstallationStatus" ||
+    operationId === "createChannelHumanBinding" ||
+    operationId === "getChannelHumanBinding" ||
+    operationId === "listChannelHumanBindings" ||
+    operationId === "setChannelHumanBindingStatus"
+  );
+}
+
 /** Called only after the central API admits credentials and validates the route schema. */
 export async function performChannelBindingOperation(
   service: ChannelBindingService,

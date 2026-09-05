@@ -143,7 +143,10 @@ function assertNoPackagingFailure(output) {
   assert.doesNotMatch(output, /ENOENT: no such file or directory/);
   assert.doesNotMatch(output, /TypeScript .* is not supported in strip-only mode/);
   assert.doesNotMatch(output, /drivers\.sandbox selects unavailable bundled OpenShell/);
-  assert.doesNotMatch(output, /OpenShell gRPC service was not found in the proto/);
+  assert.doesNotMatch(
+    output,
+    /native_binary_missing|native_process_failed|invalid_native_response/,
+  );
 }
 
 // The observer runs inside the image's isolated network namespace. It closes
@@ -325,12 +328,23 @@ test(
   },
 );
 
-test("production image includes the OpenShell gRPC proto asset", imageTestOptions, async () => {
+test("production image executes the Go OpenShell component", imageTestOptions, async () => {
   const probe = String.raw`
     import assert from "node:assert/strict";
-    import { GrpcOpenShellGatewayClient } from "./apps/controller/src/drivers/sandbox/openshell-gateway-client.ts";
+    import { readFile } from "node:fs/promises";
+    import { GoOpenShellGatewayClient } from "./apps/controller/src/drivers/sandbox/openshell-gateway-client.ts";
 
-    const client = new GrpcOpenShellGatewayClient({
+    const licenses = "/usr/share/licenses/oce-runtime-security";
+    const modules = await readFile(licenses + "/modules.tsv", "utf8");
+    assert.match(modules, /github.com\/spiffe\/go-spiffe\/v2\tv2\.8\.1/);
+    assert.match(modules, /google.golang.org\/grpc\tv1\.79\.3/);
+    assert.match(modules, /google.golang.org\/protobuf\tv1\.36\.11/);
+    for (const file of ["openshell/LICENSE", "openshell/NOTICE.md", "go/LICENSE",
+      "modules/github.com/spiffe/go-spiffe/v2/LICENSE", "modules/google.golang.org/grpc/NOTICE.txt",
+      "modules/github.com/go-jose/go-jose/v4/json/LICENSE", "modules/google.golang.org/protobuf/LICENSE"]) {
+      assert.ok((await readFile(licenses + "/" + file, "utf8")).length > 0);
+    }
+    const client = new GoOpenShellGatewayClient({
       endpoint: "127.0.0.1:9",
       auth: { mode: "unauthenticated" },
       requestTimeoutMs: 1000,
@@ -339,9 +353,9 @@ test("production image includes the OpenShell gRPC proto asset", imageTestOption
       await client.health(AbortSignal.timeout(1500));
       assert.fail("OpenShell probe unexpectedly reached an unavailable test endpoint.");
     } catch (error) {
-      assert.equal(error?.code, 14);
-      assert.match(String(error?.message), /UNAVAILABLE|ECONNREFUSED|No connection established/);
-      process.stdout.write('{"event":"openshell-proto-loaded"}\n');
+      assert.ok(error?.code === 14 || error?.code === 4);
+      assert.match(String(error?.message), /OpenShell native gateway failed \((gateway_rpc|deadline_exceeded)\)/);
+      process.stdout.write('{"event":"openshell-native-executed"}\n');
     } finally {
       client.close();
     }
@@ -356,7 +370,7 @@ test("production image includes the OpenShell gRPC proto asset", imageTestOption
     "--eval",
     probe,
   ]);
-  assert.match(stdout, /"event":"openshell-proto-loaded"/);
+  assert.match(stdout, /"event":"openshell-native-executed"/);
   assertNoPackagingFailure(`${stdout}\n${stderr}`);
 });
 

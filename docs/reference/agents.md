@@ -233,10 +233,46 @@ revision schema. See [SandboxDriver](drivers/sandbox.md).
 An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` has no
 request body. It requires a `ready` Namespace, exact-Agent `deploy`, exact
 Configuration `read`, and exact associated-account `read` when present. A
-successful `202` means the immutable revision was admitted and its work queued;
+successful `202` means the immutable revision, its running runtime intent,
+original reconciliation work, and attributable success audit committed together;
 it does not mean the workload is ready. Later Configuration edits or changes to
 an account's selected credential reference affect only future deployments. A
 snapshot freezes a Secret reference, not the value stored at that reference.
+
+Admission initializes intent generation 1 or advances the stored running head
+under the Agent lock. A stored disabled or stopped intent conflicts: deploy does
+not implicitly resume it. Two concurrent bodyless deploys may both succeed in
+sequence with distinct revisions and generations. The route accepts no client
+generation, transition locator, actor, or runtime profile, and repeating the POST
+admits another revision.
+
+Trusted OCC domain callers can additionally supply
+`expectedLifecycleGeneration` to `deployAgent`. Explicit `null` requires no
+intent head; a positive safe integer requires that exact current generation.
+The comparison runs under the existing Namespace and Agent locks before
+configuration or Secret Driver calls and revision admission. A mismatch leaves
+no new revision, intent, success audit, or work. Omitting the property retains
+the bodyless bridge behavior; explicit `undefined`, zero, fractional values,
+and unsafe integers are invalid. A matching generation never permits deploy
+to resume a disabled or stopped Agent.
+
+This internal comparison does not enable the client lifecycle protocol.
+The HTTP route still rejects bodies and retains its AgentRevision response.
+Current account and semantic management-role checks, authorized immutable
+image/policy/profile resolution, and coordinated API/worker cutover remain
+required before enabling a client generation body or minimal operation receipt.
+An admitted intent alone grants no runtime authority. Namespace locking also
+serializes deployments to different Agents in the same Namespace. Admission
+currently reads the full revision history to allocate the next revision number;
+history reads are unpaginated and their cost grows with retained history.
+
+The worker checks each revision's retained original intent association before
+its first Compute call. Later head advancement preserves the older association
+and the existing supersession and active-maintenance behavior. Historical
+revisions admitted before these associations existed retain their prior
+reconciliation behavior; an active pointer or healthy workload does not create
+an association. These records do not attest runtime identity or provide provider
+allocation, effect fencing, or stop/disable execution.
 
 The separate PostgreSQL controller worker prepares the exact Agent gateway and
 revision, activates its route, retires its predecessor, and sets

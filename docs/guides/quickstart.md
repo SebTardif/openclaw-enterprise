@@ -6,7 +6,9 @@ proves the controller is usable; it does not deploy an
 [Agent](concepts.md#agents-and-revisions) or make a model call.
 
 You need Docker Engine with Docker Compose, Bash, `curl`, and Python 3. Run
-commands from the repository root.
+commands from the repository root. Set `GO_BASE_IMAGE` in your environment or
+Compose `.env` to an approved digest-pinned Go 1.26 or newer builder image; the
+controller build uses it to compile the native OpenShell/SPIFFE components.
 
 ## Start the local stack
 

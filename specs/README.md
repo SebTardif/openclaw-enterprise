@@ -40,9 +40,20 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+The [channel-hosting roadmap](22-channel-hosting-roadmap.md) is **Proposed**:
+direct-channel acceptance, independent durable intake, shared-app brokerage,
+and optional availability improvements. Its owning current reference is
+[Channels and delivery](../docs/reference/channels.md); integrating the proposal
+does not complete any implementation or release gate.
+
+- [Delegated model custody MVP](delegated-model-custody-mvp.md): implementing
+  external credential custody and live authority; current support is limited to
+  the [delegation library](../docs/reference/delegation.md) and
+  [build graph](../docs/reference/build.md).
+
 | Implementation record                                                            | Recorded status                                                                                                                                                                            | Current reference                                                                                                                                         |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Common OpenTelemetry logging](20-common-otel-logging.md) | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md) |
+| [Common OpenTelemetry logging](20-common-otel-logging.md)                        | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable                                                                                            | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md)                                                    |
 | [Provider and related Drivers](17-provider-driver-abstraction.md)                | Implemented and locally verified in PR #8; live Provider proof pending                                                                                                                     | [Providers](../docs/reference/providers.md), [Agents](../docs/reference/agents.md), [ServiceAccount Driver](../docs/reference/drivers/service-account.md) |
 | [Development end-to-end guide](15-development-end-to-end-guide.md)               | Completed                                                                                                                                                                                  | [Development TUI guide](../docs/guides/deploy.md#development-end-to-end-tui); verified in `c208e48`                                                       |
 | [Feature Spec: Production interactive TUI](16-production-tui-end-to-end.md)      | Completed                                                                                                                                                                                  | [Deployment guide](../docs/guides/deploy.md#attach-with-the-openclaw-tui), [production TUI flow](../docs/flows/production-tui.md)                         |
@@ -84,3 +95,5 @@ Use the linked current references for supported behavior.
 | [Feature Spec: SecretDriver storage and delivery](.archive/14-secret-driver.md)                                                                          | Implemented and verified for Namespace-owned Secret storage and delivery; broader runtime limits recorded | [Kubernetes Secret Driver](../docs/reference/drivers/kubernetes-secret.md)                                                                           |
 
 - [Repository access modes](20-repository-access-modes.md): proposed native Git/gh and optional mediated/history-isolated contracts; implementation and acceptance outstanding.
+
+- [OpenShell and SPIFFE provider foundations](23-openshell-spiffe-provider-foundations.md): protocol correlation, local Workload API consumption, diagnostics and explicit remaining qualification.

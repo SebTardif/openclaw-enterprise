@@ -195,6 +195,30 @@ sequenceDiagram
 See [Agent management](reference/agents.md) and the
 [Harness execution topology](flows/harness-execution-topology.md).
 
+## Channels and delivery state
+
+The Kubernetes channel profile runs native Slack and Teams configuration in
+each Agent's dedicated gateway, with gateway-only channel credentials and private
+runtime state. PostgreSQL
+owns controller resources, audit, and infrastructure work; it is not a gateway
+runtime database or a channel event inbox. The separate same-Agent workspace
+does not expose the private gateway claim to the dedicated Harness.
+
+Authenticated manual app, human, and Agent binding APIs now persist exact
+ownership and versioned status. Their internal resolver is mapping-only: it
+does not verify received events or the complete audience, admit a turn, or grant
+runtime authority. Receipt identity/classification helpers likewise perform no
+durable intake. These are separate from native plugin delivery and from the
+proposed independent inbox or shared-app outbound broker.
+
+Only Slack has documented live channel coverage; Teams still requires the
+separately reviewed public webhook and end-to-end verification. Retained gateway
+storage and ordinary readiness do not certify complete shared-Agent collaboration,
+safe cross-version rollback, host-loss recovery, or exactly-once external effects.
+See [channels](reference/channels.md), [manual bindings](reference/channel-bindings.md),
+the [source flow](flows/channel-delivery.md), and the proposal-only
+[channel roadmap](../specs/22-channel-hosting-roadmap.md).
+
 ## Security boundaries
 
 - Controller API access uses authenticated sessions; IAM authorizes each
@@ -266,3 +290,26 @@ current implementation.
 - [Docker Compute Driver](reference/drivers/docker-compute.md)
 - [Kubernetes Compute Driver](reference/drivers/kubernetes-compute.md)
 - [Production Kubernetes deployment](guides/deploy.md)
+
+## Native runtime-security components
+
+The [`components/runtime-security` Go module](../components/runtime-security/README.md)
+implements OpenShell gateway operations and SPIFFE identity consumption.
+The controller invokes OpenShell operations through a versioned JSON subprocess
+boundary; the Go executable owns protocol, TLS, credential loading and exact
+readback checks. Both controller image targets include the executable built
+from the selected Go builder image.
+
+### Local workload identity provider
+
+The Go module includes a [SPIFFE Workload API component](reference/workload-identity.md)
+that receives X.509 material and fetches or validates audience-bound JWT-SVIDs
+from a configured trusted local Unix socket. It selects one exact identity and
+withdraws access when its stream or credential validity is lost. The operator
+diagnostic consumes this component without printing credentials.
+
+This component is available to explicit programmatic consumers; controller
+authentication, runtime activation and gateway-to-harness transport do not
+automatically consume it. Constrained registration, actual guest attestation,
+remote peer verification and current runtime authorization remain separate
+integration requirements.

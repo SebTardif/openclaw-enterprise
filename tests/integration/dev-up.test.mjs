@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -15,6 +16,75 @@ const defaultRuntimeImage = "openclaw-enterprise-runtime:quickstart";
 async function writeExecutable(path, body) {
   await writeFile(path, body, { mode: 0o755 });
   await chmod(path, 0o755);
+}
+
+async function createPreparedContext(fixture) {
+  const context = join(fixture.directory, "prepared runtime context");
+  await mkdir(join(context, "artifacts"), { recursive: true });
+  const dependencies = { "@openai/codex": "0.153.0" };
+  const packages = [];
+  const lockPackages = {
+    "node_modules/@openai/codex": {
+      version: "0.153.0",
+      resolved: "https://registry.npmjs.org/@openai/codex/-/codex-0.153.0.tgz",
+    },
+  };
+  const files = [];
+  const writeContextFile = async (path, content) => {
+    await writeFile(join(context, path), content);
+    files.push({
+      path,
+      bytes: Buffer.byteLength(content),
+      sha256: createHash("sha256").update(content).digest("hex"),
+    });
+  };
+  // This suite exercises real receipt verification and dev-up's build boundary;
+  // archive installation is covered by the package-preparation and image suites.
+  for (const [name, filename] of [
+    ["openclaw", "openclaw.tgz"],
+    ["@openclaw/ai", "openclaw-ai.tgz"],
+    ["@openclaw/slack", "slack.tgz"],
+    ["@openclaw/msteams", "msteams.tgz"],
+    ["@openclaw/codex", "codex.tgz"],
+  ]) {
+    const archive = `artifacts/${filename}`;
+    const content = `dev-up receipt fixture for ${name}\n`;
+    const integrity = `sha512-${createHash("sha512").update(content).digest("base64")}`;
+    const version = "2026.8.1";
+    await writeContextFile(archive, content);
+    dependencies[name] = `file:./${archive}`;
+    packages.push({ name, version, archive, integrity });
+    lockPackages[`node_modules/${name}`] = { version, integrity, resolved: `file:${archive}` };
+  }
+  const manifest = {
+    name: "dev-up-runtime-fixture",
+    version: "0.0.0",
+    private: true,
+    dependencies,
+  };
+  await writeContextFile("package.json", `${JSON.stringify(manifest)}\n`);
+  await writeContextFile(
+    "package-lock.json",
+    `${JSON.stringify({
+      name: manifest.name,
+      version: manifest.version,
+      lockfileVersion: 3,
+      requires: true,
+      packages: { "": manifest, ...lockPackages },
+    })}\n`,
+  );
+  await writeFile(
+    join(context, "preparation.json"),
+    `${JSON.stringify({
+      schema: "oce.runtime-packages/v1",
+      status: "prepared",
+      platform: "linux/amd64",
+      nativeCodexVersion: "0.153.0",
+      files,
+      packages,
+    })}\n`,
+  );
+  return context;
 }
 
 async function createFixture(t, options = {}) {
@@ -71,7 +141,7 @@ function delegateComposeConfig() {
   process.exit(delegated.status ?? 1);
 }
 if (args[0] === "image" && args[1] === "inspect") {
-  exit(args[2] === defaultRuntime ? 1 : 0);
+  exit(args[2] === defaultRuntime && process.env.DEV_UP_DEFAULT_RUNTIME_AVAILABLE === "0" ? 1 : 0);
 }
 if (args[0] === "build") exit(0);
 if (args[0] !== "compose") exit(99, "unexpected docker command: " + args.join(" "));
@@ -171,9 +241,11 @@ process.exit(exitCode);
     OCC_DOCKER_RUNTIME_IMAGE: "",
     OCC_DOCKER_GATEWAY_IMAGE: "",
     OCC_DOCKER_AGENT_IMAGE: "",
+    OCC_RUNTIME_BUILD_CONTEXT: "",
     DEV_UP_DOCKER_LOG: dockerLog,
     DEV_UP_CURL_LOG: curlLog,
     DEV_UP_FAKE_SCENARIO: options.scenario ?? "success",
+    DEV_UP_DEFAULT_RUNTIME_AVAILABLE: options.defaultRuntimeAvailable === false ? "0" : "1",
     DEV_UP_REAL_DOCKER: realDocker,
     DEV_UP_REAL_PATH: process.env.PATH ?? "",
     DEV_UP_REPOSITORY: repository,
@@ -266,8 +338,9 @@ function composeInvocations(logs) {
   return logs.filter((entry) => entry.args[0] === "compose" && entry.args[1] !== "version");
 }
 
-test("dev-up builds the default runtime only when real Compose leaves runtime images unselected", async (t) => {
-  const fixture = await createFixture(t);
+test("dev-up builds the missing default runtime from its verified prepared context", async (t) => {
+  const fixture = await createFixture(t, { defaultRuntimeAvailable: false });
+  fixture.env.OCC_RUNTIME_BUILD_CONTEXT = await createPreparedContext(fixture);
   const keyDirectory = join(fixture.directory, "private key directory");
   await mkdir(keyDirectory, { mode: 0o700 });
   const keyOutput = join(keyDirectory, "service-key.json");
@@ -290,12 +363,18 @@ test("dev-up builds the default runtime only when real Compose leaves runtime im
   assert.ok(
     dockerLogs.some((entry) => entry.args.join(" ") === `image inspect ${defaultRuntimeImage}`),
   );
-  assert.ok(
-    dockerLogs.some(
-      (entry) =>
-        entry.args.join(" ") ===
-        `build -f deploy/runtime/Dockerfile --tag ${defaultRuntimeImage} deploy/runtime`,
-    ),
+  assert.deepEqual(
+    dockerLogs.filter((entry) => entry.args[0] === "build").map((entry) => entry.args),
+    [
+      [
+        "build",
+        "-f",
+        "deploy/runtime/Dockerfile",
+        "--tag",
+        defaultRuntimeImage,
+        fixture.env.OCC_RUNTIME_BUILD_CONTEXT,
+      ],
+    ],
   );
   assert.ok(
     dockerLogs.some(
@@ -336,10 +415,93 @@ test("dev-up builds the default runtime only when real Compose leaves runtime im
   assert.doesNotMatch(JSON.stringify(curlLogs), new RegExp(serviceKey));
 });
 
+test("dev-up reuses the default runtime without requiring or inspecting a build context", async (t) => {
+  const fixture = await createFixture(t);
+  const keyOutput = join(fixture.directory, "reused-service-key.json");
+
+  // An existing image must remain usable even when an unrelated build context is invalid.
+  const result = runDevUp(["--key-output", keyOutput, "--", ...composeOptions(fixture)], {
+    ...fixture.env,
+    OCC_RUNTIME_BUILD_CONTEXT: "not-an-absolute-context",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const dockerLogs = await readJsonLines(fixture.dockerLog);
+  assert.ok(
+    dockerLogs.some((entry) => entry.args.join(" ") === `image inspect ${defaultRuntimeImage}`),
+  );
+  assert.equal(
+    dockerLogs.some((entry) => entry.args[0] === "build"),
+    false,
+  );
+  assert.ok(dockerLogs.some((entry) => entry.args[0] === "compose" && entry.args.includes("up")));
+});
+
+for (const { name, context, message } of [
+  { name: "missing", context: "", message: /OCC_RUNTIME_BUILD_CONTEXT is required/ },
+  {
+    name: "relative",
+    context: "relative-context",
+    message: /OCC_RUNTIME_BUILD_CONTEXT must be an absolute prepared directory/,
+  },
+]) {
+  test(`dev-up rejects a ${name} build context before building or starting services`, async (t) => {
+    const fixture = await createFixture(t, { defaultRuntimeAvailable: false });
+    const keyOutput = join(fixture.directory, "unprepared-service-key.json");
+
+    const result = runDevUp(["--key-output", keyOutput, "--", ...composeOptions(fixture)], {
+      ...fixture.env,
+      OCC_RUNTIME_BUILD_CONTEXT: context,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+    assert.match(result.stderr, /deploy\/runtime\/README\.md/);
+    const dockerLogs = await readJsonLines(fixture.dockerLog);
+    assert.equal(
+      dockerLogs.some(
+        (entry) =>
+          entry.args[0] === "build" || (entry.args[0] === "compose" && entry.args.includes("up")),
+      ),
+      false,
+    );
+    assert.equal((await readJsonLines(fixture.curlLog)).length, 0);
+  });
+}
+
+test("dev-up rejects changed prepared artifacts before building or starting services", async (t) => {
+  const fixture = await createFixture(t, { defaultRuntimeAvailable: false });
+  const context = await createPreparedContext(fixture);
+  // A receipt that no longer identifies its artifact bytes must stop the build.
+  await writeFile(join(context, "artifacts", "slack.tgz"), "changed after preparation\n");
+  const keyOutput = join(fixture.directory, "changed-context-service-key.json");
+
+  const result = runDevUp(["--key-output", keyOutput, "--", ...composeOptions(fixture)], {
+    ...fixture.env,
+    OCC_RUNTIME_BUILD_CONTEXT: context,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /runtime image failed: prepared context verification failed/);
+  const dockerLogs = await readJsonLines(fixture.dockerLog);
+  assert.equal(
+    dockerLogs.some(
+      (entry) =>
+        entry.args[0] === "build" || (entry.args[0] === "compose" && entry.args.includes("up")),
+    ),
+    false,
+  );
+  assert.equal((await readJsonLines(fixture.curlLog)).length, 0);
+});
+
 test("dev-up preserves a selected custom runtime image and skips the quickstart build", async (t) => {
   const fixture = await createFixture(t);
   const keyOutput = join(fixture.directory, "custom-service-key.json");
-  const env = { ...fixture.env, OPENCLAW_DEV_PORT: "4137" };
+  const env = {
+    ...fixture.env,
+    OPENCLAW_DEV_PORT: "4137",
+    OCC_RUNTIME_BUILD_CONTEXT: "not-an-absolute-context",
+  };
   const override = await customRuntimeOverride(fixture);
   const result = runDevUp(
     ["--key-output", keyOutput, "--", ...composeOptions(fixture, override)],

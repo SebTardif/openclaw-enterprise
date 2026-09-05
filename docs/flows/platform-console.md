@@ -19,9 +19,16 @@ and IAM retain resource authority.
 
 ## Entry Points
 
-- Browser: `apps/controller/src/console/console.mjs`,
-  `apps/controller/src/console/agents.mjs`, and
-  `apps/controller/src/console/channels.mjs`.
+- Browser entry: `apps/controller/src/console/console.mjs` composes the session,
+  request client, view lifetime, navigation, and shell.
+- Browser modules: `apps/controller/src/console/api-client.mjs` owns request
+  cancellation and current-session expiry handling; `view-lifetime.mjs` owns
+  generation and abort state; `navigation.mjs` owns safe return paths and history;
+  `shell.mjs` owns shared navigation and collection rendering.
+- Capability pages: `apps/controller/src/console/agents/{list,create,detail}.mjs`
+  own Agent views, while `channels/{slack,teams,shared-ui}.mjs` own provider forms
+  and their shared editor. Existing `agents.mjs` and `channels.mjs` compose these
+  modules through their current entrypoints.
 - HTTP: `apps/controller/src/index.ts:createFastifyApp`.
 - Startup: `apps/controller/src/composition/production.ts:composeProduction`
   and `development-postgres.ts:composePostgresDevelopment`.
@@ -78,7 +85,8 @@ Provider. The existing [Provider-managed credential delivery](service-account-dr
 client construction and Driver activation.
 
 `apps/controller/src/console-assets.ts:readConsoleAsset` maps public console
-assets to fixed files and recognized page URLs to the HTML shell. Agent create
+assets to individually allowlisted files, including each capability module, and
+recognized page URLs to the HTML shell. No module directory is served wholesale. Agent create
 and detail paths share the shell. Unknown console paths receive the same shell
 with HTTP `404`. The controller sets the HTML, CSS, or JavaScript MIME type and
 a same-origin content security policy. Other routes retain canonical API JSON
@@ -119,7 +127,7 @@ Installation `administer` precedes the safe startup-summary response. Explicit
 empty configuration is a successful empty list; absent wiring and dependency
 failure return errors.
 
-`apps/controller/src/console/agents.mjs:renderCreateAgent` loads Provider discovery
+`apps/controller/src/console/agents/create.mjs:renderCreateAgent` loads Provider discovery
 and `GET /namespaces/:namespaceId/service-accounts` into optional select lists.
 The latter requires Namespace read and filters each account by exact read access.
 Provider selection does not filter service accounts. A failed list read
@@ -136,13 +144,15 @@ a revision or start runtime work.
 
 ### 4. Render draft, revision, or channels
 
-`apps/controller/src/console/agents.mjs:renderAgentDetail`
+`apps/controller/src/console/agents/detail.mjs:renderAgentDetail`
 
 The detail page reads the Agent, revision list, and either the saved draft
 Configuration or the selected AgentRevision. `revision=draft` reads the current
 Configuration referenced by the Agent. `revision=<id>` reads that immutable
-snapshot. The active revision badge is derived from `activeRevisionId`; the
-newest revision in the list can differ from the active one. Revision snapshots
+snapshot. The Selected revision badge is derived from `activeRevisionId`; the
+newest revision and the viewed snapshot can both differ from that pointer.
+Serving status stays explicitly unavailable because these API responses provide
+no serving observation. Revision snapshots
 are read-only and do not expose rollback, edit, deploy, or live-health controls.
 Agent deletion is unavailable because the API has no Agent delete operation.
 
@@ -160,6 +170,11 @@ sends `{ values: updatedValues }` and omits `secretBindings`, so the backend
 retains existing bindings. This client-side generation check detects common
 stale-editor cases but is not atomic lost-update protection; the API accepts the
 last valid writer.
+An interrupted or unavailable PATCH reply keeps the result unknown and blocks
+another channel write until Refresh. Draft channel disablement changes only
+Configuration values; it does not stop a running Agent. The
+[operator workflow](operator-workflow.md) records the executable management
+commands and the lifecycle procedures still unavailable in this API.
 
 ### 5. Commit only the current response, or clear the view
 
@@ -169,7 +184,10 @@ Navigation, Namespace changes, refocus, and logout invalidate prior reads. The
 client cancels their requests and checks generation before accepting either
 success or failure. A late response cannot restore rows, change selection, or
 redirect a newer session. Current authorization and dependency errors clear
-rows and expose recovery; protected `401` clears private state and opens login.
+rows and expose recovery; a current protected `401` clears private state and
+opens login immediately, without waiting for sibling reads. A late error from an
+older view cannot redirect a newer session. Only locally defined reason messages
+and bounded server request IDs enter failure views; backend error text is omitted.
 Global Providers and Namespaces pages remain visibly Installation-wide.
 
 Logout first hides private state, then calls the existing sign-out endpoint.

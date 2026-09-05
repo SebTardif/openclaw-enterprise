@@ -1,3 +1,10 @@
+import {
+  runtimeServiceTrustOperations,
+  RuntimeServiceTrustRecordSchema,
+  RuntimeServiceTrustRequestSchema,
+  runtimeServiceTrustOperatorContext,
+  parseRuntimeServiceTrustHttpBody,
+} from "./admission/runtime-service-trust.ts";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import Fastify, {
@@ -52,13 +59,17 @@ import {
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
+  PostgresCommitOutcomeUnknownError,
   ResourceConflictError,
   ScopeViolationError,
+  type RuntimeServiceTrustService,
   type HarnessResolver,
+  type DeployAgentAdmissionContext,
   type OpenClawController,
 } from "@openclaw-enterprise/occ";
 import {
   isChannelBindingOperation,
+  isHumanChannelAdministrationOperation,
   performChannelBindingOperation,
 } from "./channels/channel-binding-routes.ts";
 import type { AdmittedCaller } from "./admission/admission-verifier.ts";
@@ -87,6 +98,7 @@ export interface DevelopmentAdmission {
 }
 
 export interface ControllerAppOptions {
+  readonly runtimeServiceTrust?: RuntimeServiceTrustService;
   readonly controller?: OpenClawController;
   readonly createController?: (installation: Installation) => OpenClawController;
   readonly iamDriver: IAMDriver;
@@ -310,6 +322,13 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
     action: operation.iamAction,
     resourceKind: operation.resourceKind,
   };
+
+  if (operation.operationId === "getAgentRevision") {
+    return [
+      { action: "read", resourceKind: "agent", scope: "requested" },
+      { action: "read", resourceKind: "agent_revision", scope: "requested" },
+    ];
+  }
 
   if (operation.operationId === "createNamespace") {
     return [
@@ -709,6 +728,74 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     development.installationId ?? controller?.installation.id ?? `ins_${randomUUID()}`;
   const admissions = new WeakMap<FastifyRequest, AdmittedCaller>();
   const contexts = new WeakMap<FastifyRequest, RequestContext>();
+  const identityAuthorities = new WeakMap<FastifyRequest, { driver: IAMDriver; id: string }>();
+  const humanChannelInvocations = new WeakMap<
+    object,
+    {
+      readonly request: FastifyRequest;
+      readonly context: RequestContext;
+      readonly service: OpenClawController["channelBindings"];
+      used: boolean;
+    }
+  >();
+
+  function installChannelHumanVerifier(target: OpenClawController): void {
+    const service = target.channelBindings;
+    service.installHumanAdministratorVerifier(async (candidate, protectedOperation) => {
+      const invocation = candidate.humanInvocation;
+      const owned = invocation && humanChannelInvocations.get(invocation);
+      if (!owned || owned.used || owned.service !== service) return undefined;
+      const { request, context } = owned;
+      const admitted = admissions.get(request);
+      const originalAuthority = identityAuthorities.get(request);
+      if (
+        !originalAuthority ||
+        request.raw.aborted ||
+        contexts.get(request) !== context ||
+        admitted?.method !== "session" ||
+        context.operation.operationId !== protectedOperation ||
+        candidate.requestId !== request.id ||
+        candidate.actorId !== context.actorId ||
+        candidate.issuer !== context.issuer ||
+        candidate.subject !== context.subject ||
+        candidate.admissionDecisionId !== context.admissionDecisionId ||
+        admitted.decisionId !== context.admissionDecisionId ||
+        admitted.externalIdentity.issuer !== context.issuer ||
+        admitted.externalIdentity.subject !== context.subject ||
+        admitted.admittedScope.installationId !== target.installation.id
+      )
+        return undefined;
+      owned.used = true;
+      const selected = originalAuthority.driver;
+      const selectedId = originalAuthority.id;
+      if (selectedIAMDriver() !== selected || selected.id !== selectedId)
+        throw dependencyUnavailable();
+      const principal = await selected.lookupIdentity({
+        issuer: context.issuer,
+        subject: context.subject,
+      });
+      if (
+        selectedIAMDriver() !== selected ||
+        selected.id !== selectedId ||
+        humanChannelInvocations.get(invocation!) !== owned ||
+        request.raw.aborted ||
+        contexts.get(request) !== context ||
+        admissions.get(request) !== admitted ||
+        identityAuthorities.get(request) !== originalAuthority
+      )
+        throw dependencyUnavailable();
+      if (
+        principal?.kind !== "principal" ||
+        principal.namespaceId !== undefined ||
+        principal.id !== context.actorId ||
+        principal.issuer !== context.issuer ||
+        principal.subject !== context.subject
+      )
+        return undefined;
+      return Object.freeze({ ...principal });
+    });
+  }
+  if (controller) installChannelHumanVerifier(controller);
   const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
   const factory = options.auditEventFactory ?? new AuditEventFactory();
   const createAuthAccountOperation = {
@@ -1181,9 +1268,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         "A required platform dependency is unavailable.",
       );
     let selected: IAMDriver;
+    let selectedId: string;
     let identity;
     try {
       selected = selectedIAMDriver();
+      selectedId = selected.id;
       identity = await selected.lookupIdentity(
         admitted.method === "api_key"
           ? {
@@ -1220,6 +1309,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       throw failure(403, "FORBIDDEN", "The exact platform operation was not authorized.");
     }
 
+    if (selectedIAMDriver() !== selected || selected.id !== selectedId)
+      throw dependencyUnavailable();
+    identityAuthorities.set(request, { driver: selected, id: selectedId });
     const context: RequestContext = {
       actorId: identity.id,
       issuer: admitted.externalIdentity.issuer,
@@ -1302,6 +1394,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             event(operation, request, target, "bootstrap", context, decision.evidence),
           );
         });
+        installChannelHumanVerifier(created);
         controller = created;
         reply.status(201).send({ data: created.installation, meta: { requestId: request.id } });
         return;
@@ -1314,17 +1407,31 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
 
     if (isChannelBindingOperation(operation.operationId)) {
-      const data = await performChannelBindingOperation(
-        controller.channelBindings,
-        operation.operationId,
-        { ...context, requestId: request.id },
-        { params: request.params, query: request.query, body: request.body },
-      );
-      reply.status(operation.method === "POST" ? 201 : 200).send({
-        data,
-        meta: { requestId: request.id },
-      });
-      return;
+      const humanInvocation = isHumanChannelAdministrationOperation(operation.operationId)
+        ? Object.freeze({})
+        : undefined;
+      if (humanInvocation)
+        humanChannelInvocations.set(humanInvocation, {
+          request,
+          context,
+          service: controller.channelBindings,
+          used: false,
+        });
+      try {
+        const data = await performChannelBindingOperation(
+          controller.channelBindings,
+          operation.operationId,
+          { ...context, requestId: request.id, ...(humanInvocation ? { humanInvocation } : {}) },
+          { params: request.params, query: request.query, body: request.body },
+        );
+        reply.status(operation.method === "POST" ? 201 : 200).send({
+          data,
+          meta: { requestId: request.id },
+        });
+        return;
+      } finally {
+        if (humanInvocation) humanChannelInvocations.delete(humanInvocation);
+      }
     }
 
     if (operation.operationId === "getInstallation") {
@@ -1742,31 +1849,45 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     }
 
     if (operation.operationId === "deployAgent") {
+      // Retain trusted correlation before the transaction so an uncertain COMMIT
+      // can recover this exact admission without admitting another revision.
+      const admission: DeployAgentAdmissionContext = {
+        transitionRef: randomUUID(),
+        requestId: request.id,
+        createAuditEvent: (admitted) =>
+          event(
+            operation,
+            request,
+            { kind: "agent_revision", id: admitted.id, namespaceId },
+            "mutation",
+            context,
+          ),
+      };
+      let revision: Readonly<AgentRevision>;
       try {
-        const revision = await controller.transact(async (unit) => {
-          const admitted = await controller!.deployAgent(
+        revision = await controller.transact(() =>
+          controller!.deployAgent(
             context.actorId,
             { namespaceId, agentId },
             options.resolveHarness,
-          );
-          await unit.audit.append(
-            event(
-              operation,
-              request,
-              { kind: "agent_revision", id: admitted.id, namespaceId },
-              "mutation",
-              context,
-            ),
-          );
-          return clientRevision(admitted);
-        });
-        reply.status(202).send({ data: revision, meta: { requestId: request.id } });
-        return;
+            admission,
+          ),
+        );
       } catch (error) {
-        if (error instanceof NamespaceNotReadyError)
-          await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
-        throw error;
+        if (error instanceof PostgresCommitOutcomeUnknownError) {
+          revision = await controller.recoverDeployAgent(
+            context.actorId,
+            { namespaceId, agentId },
+            admission,
+          );
+        } else {
+          if (error instanceof NamespaceNotReadyError)
+            await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
+          throw error;
+        }
       }
+      reply.status(202).send({ data: clientRevision(revision), meta: { requestId: request.id } });
+      return;
     }
 
     if (
@@ -2024,6 +2145,123 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       },
     };
 
+    void routes.register(async (trustRoutes) => {
+      // Encapsulated parser applies only to these closed counter-bearing operations.
+      trustRoutes.addContentTypeParser(
+        "application/json",
+        { parseAs: "string" },
+        (_request, body, done) => {
+          try {
+            done(null, parseRuntimeServiceTrustHttpBody(String(body)));
+          } catch {
+            done(
+              failure(400, "INVALID_REQUEST", "The request does not match the operation contract."),
+            );
+          }
+        },
+      );
+      for (const operation of runtimeServiceTrustOperations) {
+        const writing = operation.method === "POST";
+        const recordSchema = { ...RuntimeServiceTrustRecordSchema };
+        const writeSchema = {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["result", "record"],
+              properties: { result: { enum: ["applied", "exact-replay"] }, record: recordSchema },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["result", "operationRef", "nextAction"],
+              properties: {
+                result: { const: "commit-unknown" },
+                operationRef: { type: "string" },
+                nextAction: { const: "exact-readback-only" },
+              },
+            },
+          ],
+        };
+        trustRoutes.route({
+          method: operation.method as HTTPMethods,
+          url: operation.path,
+          schema: {
+            operationId: operation.operationId,
+            summary: operation.summary,
+            description:
+              "Requires a current human session, a resolved human Principal and the selected IAM Driver's administer permission on the exact Installation. Service API keys are denied.",
+            tags: operation.tags,
+            security: [{ sessionCookie: [] }],
+            "x-openclaw-permissions": [
+              { action: "administer", resourceKind: "installation", scope: "installation" },
+            ],
+            ...(writing
+              ? { body: RuntimeServiceTrustRequestSchema }
+              : {
+                  params: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["operationRef"],
+                    properties: {
+                      operationRef: {
+                        type: "string",
+                        pattern:
+                          "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                      },
+                    },
+                  },
+                }),
+            response: {
+              ...responses(writing ? writeSchema : recordSchema),
+              400: { description: "Bad Request", ...error },
+              403: { description: "Forbidden", ...error },
+              404: { description: "Not Found", ...error },
+              409: { description: "Conflict", ...error },
+            },
+          } as DocumentedFastifySchema,
+          onRequest: async (request) => admit(request, operation),
+          preValidation: async (request) => {
+            await resolveIdentity(request, operation);
+            const admitted = admissions.get(request);
+            const context = contexts.get(request);
+            if (admitted?.method !== "session" || !context) {
+              await denial(operation, request, "authorization_denial", context);
+              throw failure(403, "FORBIDDEN", "A current human administrator session is required.");
+            }
+          },
+          handler: async (request, reply) => {
+            const context = contexts.get(request);
+            if (!context) throw dependencyUnavailable();
+            await requireInstallationAdmin(request, operation, context);
+            if (!options.runtimeServiceTrust) throw dependencyUnavailable();
+            if (!writing && request.body !== undefined)
+              throw failure(
+                400,
+                "INVALID_REQUEST",
+                "The request does not match the operation contract.",
+              );
+            const bounded = workspaceFileRequestSignal(request, reply, 3000);
+            try {
+              const actor = runtimeServiceTrustOperatorContext(context, request.id);
+              const data = writing
+                ? await options.runtimeServiceTrust.apply(request.body, actor, bounded.signal)
+                : await options.runtimeServiceTrust.recover(
+                    (request.params as { operationRef: string }).operationRef,
+                    actor,
+                    bounded.signal,
+                  );
+              if (data === undefined)
+                throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+              reply.send({ data, meta: { requestId: request.id } });
+            } finally {
+              bounded.dispose();
+            }
+          },
+        });
+      }
+    });
+
     for (const operation of serviceKeyOperations) {
       const creating = operation.method === "POST";
       const serviceKey = {
@@ -2199,7 +2437,8 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         schema: {
           operationId: "signInEmail",
           summary: "Sign in with email and password",
-          description: "Authenticates a local account and issues a Better Auth session cookie.",
+          description:
+            "Reserves shared source and source/account quotas before authenticating a local account and issuing a session cookie. Exhaustion returns a generic 429 with Retry-After: 12; quota dependency failure returns 503 with Retry-After: 1. Forwarded headers do not select the quota source.",
           tags: ["Authentication"],
           security: [],
           body: {
@@ -2211,12 +2450,15 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               password: accountBody.properties.password,
             },
           },
-          response: responses({
-            type: "object",
-            additionalProperties: false,
-            required: ["authenticated"],
-            properties: { authenticated: { type: "boolean", const: true } },
-          }),
+          response: {
+            ...responses({
+              type: "object",
+              additionalProperties: false,
+              required: ["authenticated"],
+              properties: { authenticated: { type: "boolean", const: true } },
+            }),
+            429: { description: "Too Many Requests; retry after 12 seconds", ...error },
+          },
         },
       },
       async (request, reply) => options.auth.signInEmail(request, reply),

@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../../apps/controller/src/composition/production-harness.ts";
@@ -296,6 +297,7 @@ test("Secret bindings freeze public refs in revisions while value-only updates k
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
 
   const updated = await controller.updateSecret(administrator, {
@@ -307,6 +309,7 @@ test("Secret bindings freeze public refs in revisions while value-only updates k
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
 
   assert.deepEqual(updated, secret);
@@ -536,6 +539,7 @@ test("deployment admission stamps immutable native logging after sandbox policy"
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   const stored = await configurationDriver.read({
     namespaceId: namespace.id,
@@ -582,6 +586,7 @@ test("deploying a bound Secret requires both the caller and Agent service princi
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     AuthorizationDeniedError,
   );
@@ -591,6 +596,7 @@ test("deploying a bound Secret requires both the caller and Agent service princi
       noSecretOperator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, noSecretOperator),
     ),
     AuthorizationDeniedError,
   );
@@ -598,6 +604,7 @@ test("deploying a bound Secret requires both the caller and Agent service princi
     deployer,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, deployer),
   );
   assert.equal(revision.agentId, agent.id);
   assert.equal(revision.servicePrincipalId, agent.servicePrincipalId);
@@ -636,6 +643,7 @@ test("Secret binding admission fails closed for missing selection and backend id
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     DependencyUnavailableError,
   );
@@ -646,6 +654,7 @@ test("Secret binding admission fails closed for missing selection and backend id
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     DependencyUnavailableError,
   );
@@ -682,6 +691,7 @@ test("bound Secrets block deletion across current Configuration and admitted dep
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   await controller.updateConfiguration(administrator, {
     namespaceId: namespace.id,

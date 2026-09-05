@@ -1,3 +1,5 @@
+import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
+import { startRuntimeAuthorityReadback } from "./runtime-authority-readback.ts";
 import pg from "pg";
 import type { AuditEventFactory } from "@openclaw-enterprise/audit";
 import type {
@@ -11,7 +13,11 @@ import {
   validatePersistedNativeIAMState,
   type AuthPrincipalSeed,
 } from "@openclaw-enterprise/iam";
-import { OpenClawController, PostgresPlatformState } from "@openclaw-enterprise/occ";
+import {
+  RuntimeServiceTrustService,
+  OpenClawController,
+  PostgresPlatformState,
+} from "@openclaw-enterprise/occ";
 import { createPostgresControllerAuth } from "../auth/index.ts";
 import { createDockerDevelopmentComputeDriverFromEnv } from "../drivers/compute/docker/index.ts";
 import { createFilesystemDevelopmentConfigurationDriverFromEnv } from "../drivers/configuration/filesystem/index.ts";
@@ -33,6 +39,8 @@ export interface PostgresDevelopmentConfig {
   readonly authSecret: string;
   readonly authBaseURL: string;
   readonly poolMax?: number;
+  readonly runtimeAuthorityBinaryPath?: string;
+  readonly runtimeAuthorityReadbackConfigPath?: string;
   readonly logger?: OccLogger;
   readonly logging?: LoggingConfiguration;
   readonly trustedDevelopmentBridgeCidr?: string;
@@ -69,11 +77,16 @@ export async function composePostgresDevelopment(
     );
   }
 
+  const sources = drivers?.installation.runtimeAuthoritySources ?? [];
+  if (sources.length > 0 && (config.poolMax ?? 10) < 2)
+    throw new Error("Runtime service trust requires at least two PostgreSQL pool connections.");
   const pool = new pg.Pool({
+    connectionTimeoutMillis: 250,
     connectionString: config.databaseUrl,
     ...(config.poolMax === undefined ? {} : { max: config.poolMax }),
   });
   let poolClosed = false;
+  let readback: Awaited<ReturnType<typeof startRuntimeAuthorityReadback>> | undefined;
 
   try {
     const state = new PostgresPlatformState(pool);
@@ -167,8 +180,36 @@ export async function composePostgresDevelopment(
       workspaceFilesAccess = createWorkspaceFilesAccess(computeDriver, gatewayApiKeyPath);
     }
 
+    const binaryPath = config.runtimeAuthorityBinaryPath ?? "/usr/local/bin/oce-runtime-authority";
+    const runtimeServiceTrust =
+      sources.length === 0
+        ? undefined
+        : new RuntimeServiceTrustService({
+            installationId,
+            state,
+            iam: () => controller.selectedDriver("iam"),
+            sources,
+            validateProfile: (profile, signal) =>
+              validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
+          });
+    if (
+      config.runtimeAuthorityReadbackConfigPath !== undefined &&
+      runtimeServiceTrust === undefined
+    )
+      throw new Error("Runtime readback requires admitted technical source configuration.");
+    readback =
+      config.runtimeAuthorityReadbackConfigPath === undefined || runtimeServiceTrust === undefined
+        ? undefined
+        : await startRuntimeAuthorityReadback({
+            state,
+            installationId,
+            trust: runtimeServiceTrust,
+            configPath: config.runtimeAuthorityReadbackConfigPath,
+            binaryPath,
+          });
     const app = createFastifyApp({
       controller,
+      ...(runtimeServiceTrust === undefined ? {} : { runtimeServiceTrust }),
       iamDriver,
       computeDriver,
       publicOrigin: config.authBaseURL,
@@ -199,12 +240,29 @@ export async function composePostgresDevelopment(
       return { status: "ready" };
     });
     app.addHook("onClose", async () => {
-      poolClosed = true;
-      await state.close();
+      try {
+        await readback?.close();
+      } finally {
+        poolClosed = true;
+        await state.close();
+      }
     });
     return app;
   } catch (error) {
-    if (!poolClosed) await pool.end();
+    // Both owned resources are joined even when either cleanup rejects; preserve the
+    // original startup failure instead of leaving a child or database pool behind.
+    try {
+      await readback?.close();
+    } catch {
+      /* Preserve original startup failure. */
+    }
+    if (!poolClosed) {
+      try {
+        await pool.end();
+      } catch {
+        /* Preserve original failure. */
+      }
+    }
     throw error;
   }
 }

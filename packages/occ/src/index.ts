@@ -1,9 +1,14 @@
+export * from "./runtime-authority/service-trust.ts";
+export * from "./runtime-authority/service-trust-schema.ts";
+export * from "./runtime-authority/service.ts";
+export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
   AgentRevision,
+  AuditEvent,
   AuthorizationDecision,
   AuthorizationRequest,
   ComputeDriver,
@@ -63,6 +68,7 @@ import {
 } from "./providers.ts";
 import {
   InMemoryPlatformState,
+  isRuntimeAdmissionAudit,
   type RuntimeScope,
   type RuntimeIntentAttribution,
   type RuntimeIntent,
@@ -71,6 +77,9 @@ import {
   type RuntimeAllocationLocator,
   type RuntimeAssignmentReadRepository,
   type RuntimeAssignmentRepository,
+  type RevisionRuntimeAdmission,
+  type RuntimeAdmissionReadRepository,
+  type RuntimeAdmissionRepository,
   type PlatformReadView,
   type PlatformOperation,
   type PlatformStateStore,
@@ -95,6 +104,9 @@ export {
 } from "./providers.ts";
 export {
   InMemoryPlatformState,
+  type RevisionRuntimeAdmission,
+  type RuntimeAdmissionReadRepository,
+  type RuntimeAdmissionRepository,
   type AgentReadRepository,
   type AgentRepository,
   type AgentRevisionReadRepository,
@@ -116,6 +128,7 @@ export {
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
 export {
+  PostgresCommitOutcomeUnknownError,
   PostgresPlatformState,
   PostgresPlatformStateStore,
   type PersistedNativeIAMState,
@@ -217,6 +230,34 @@ export interface UpdateConfigurationInput {
 export interface DeployAgentInput {
   readonly namespaceId: string;
   readonly agentId: string;
+  /** Internal admission CAS; omission preserves the staged bodyless bridge. */
+  readonly expectedLifecycleGeneration?: number | null;
+}
+
+/** Trusted caller retains this locator before opening its outer transaction. */
+export interface DeployAgentAdmissionContext {
+  readonly transitionRef: string;
+  readonly requestId: string;
+  readonly createAuditEvent: (revision: Readonly<AgentRevision>) => AuditEvent;
+}
+
+function validateDeployLocator(
+  context: Pick<DeployAgentAdmissionContext, "transitionRef" | "requestId">,
+): void {
+  if (
+    context === undefined ||
+    context === null ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      context.transitionRef,
+    ) ||
+    typeof context.requestId !== "string" ||
+    context.requestId.length < 1 ||
+    context.requestId.length > 200 ||
+    !/^[A-Za-z0-9._:/-]+$/.test(context.requestId)
+  )
+    throw new ScopeViolationError(
+      "Deployment requires a retained trusted admission locator and sanitized request ID.",
+    );
 }
 
 export interface ActiveAgentRevisionSelection {
@@ -532,6 +573,10 @@ export class OpenClawController {
   private readonly identifier?: ControllerOptions["createId"];
   private readonly state: PlatformStateStore;
   private readonly transactionContext = new AsyncLocalStorage<PlatformUnitOfWork>();
+  private readonly failedAdmissions = new WeakMap<
+    PlatformUnitOfWork,
+    { readonly error: unknown }
+  >();
   private readonly mutationRollbacks = new AsyncLocalStorage<(() => Promise<void>)[]>();
   private readonly shouldRecordOperations: boolean;
   private readonly registry = new Map<string, RegisteredDriver>();
@@ -780,6 +825,11 @@ export class OpenClawController {
       throw new ScopeViolationError("The exact Agent identity is missing.");
     if (!isNonEmptyString(revisionId))
       throw new ScopeViolationError("The exact AgentRevision identity is missing.");
+    await this.authorize(principalId, "read", {
+      kind: "agent",
+      id: agentId,
+      namespaceId,
+    });
     return this.read(async (state) => {
       const namespace = await this.exactNamespace(state, namespaceId);
       const agent = await state.agents.findAgent(namespace.id, agentId);
@@ -1455,10 +1505,24 @@ export class OpenClawController {
     principalId: string,
     input: DeployAgentInput,
     resolveHarness: HarnessResolver,
+    admission: DeployAgentAdmissionContext,
   ): Promise<Readonly<AgentRevision>> {
+    validateDeployLocator(admission);
+    if (typeof admission.createAuditEvent !== "function")
+      throw new ScopeViolationError("Deployment requires a trusted admission audit factory.");
     if (!isNonEmptyString(input.agentId))
       throw new ScopeViolationError("The exact Agent identity is missing.");
+    const compareGeneration = Object.hasOwn(input, "expectedLifecycleGeneration");
+    const expectedGeneration = input.expectedLifecycleGeneration;
     return this.mutate(async (state) => {
+      if (
+        compareGeneration &&
+        expectedGeneration !== null &&
+        (!Number.isSafeInteger(expectedGeneration) || (expectedGeneration ?? 0) < 1)
+      )
+        throw new ScopeViolationError(
+          "The expected lifecycle generation must be null or a positive safe integer.",
+        );
       const namespace = await this.lockNamespace(state, input.namespaceId);
       const agent = await state.agents.findAgent(namespace.id, input.agentId);
       if (!agent)
@@ -1487,6 +1551,14 @@ export class OpenClawController {
         throw new ScopeViolationError(
           "The Agent or its service principal does not belong to the exact Namespace.",
         );
+      const scope = { namespaceId: namespace.id, agentId: lockedAgent.id };
+      const head = await state.runtimeAssignments.findRuntimeIntentHead(scope);
+      if (compareGeneration && expectedGeneration !== (head?.generation ?? null))
+        throw new ResourceConflictError("The lifecycle generation does not match.");
+      if (head !== undefined && head.desiredMode !== "running")
+        throw new ResourceConflictError("Deploy cannot resume a disabled or stopped Agent.");
+      if (head?.generation === Number.MAX_SAFE_INTEGER)
+        throw new ResourceConflictError("The lifecycle generation is exhausted.");
       const providerId = this.providerId(lockedAgent.providerId);
       if (sandbox !== undefined && lockedAgent.executionMode !== "dedicated")
         throw new ScopeViolationError(
@@ -1639,15 +1711,84 @@ export class OpenClawController {
           createdAt: this.timestamp(),
         }),
       );
-      await this.record(state, {
+      // The synchronous trusted factory runs before the intent write. No Driver
+      // calls intervene in the intent, exact audit, admission identity, and work unit.
+      const audit = immutableCopy(admission.createAuditEvent(revision));
+      const attribution = { actorId: principalId, requestId: admission.requestId };
+      const intent =
+        head === undefined
+          ? await state.runtimeAssignments.initializeRuntimeIntent(
+              scope,
+              revision.id,
+              admission.transitionRef,
+              attribution,
+            )
+          : await state.runtimeAssignments.advanceRuntimeIntent(
+              scope,
+              head.generation,
+              { desiredMode: "running", revisionId: revision.id },
+              admission.transitionRef,
+              attribution,
+            );
+      if (!isRuntimeAdmissionAudit(audit, intent))
+        throw new ScopeViolationError(
+          "The deploy audit does not match its exact admitted revision and actor.",
+        );
+      await state.audit.append(audit);
+      await state.runtimeAdmissions.recordAdmission({
+        ...scope,
+        revisionId: revision.id,
+        runtimeTransitionRef: intent.transitionRef,
+        lifecycleGeneration: intent.generation,
+        auditEventId: audit.id,
+      });
+      // Accepted deployments always require original reconciliation, including
+      // direct domain callers and controllers suppressing unrelated operations.
+      await state.operations.append({
         kind: "agent_revision",
         action: "reconcile",
         namespaceId: namespace.id,
         resourceId: revision.id,
         actorId: principalId,
+        runtimeTransitionRef: intent.transitionRef,
+        lifecycleGeneration: intent.generation,
       });
       return revision;
+    }).catch((error: unknown) => {
+      // A caller may catch a domain rejection inside its outer transaction. The
+      // entire admission unit must still roll back, including memory mutations
+      // and errors that did not abort the PostgreSQL transaction themselves.
+      const active = this.transactionContext.getStore();
+      if (active !== undefined) this.failedAdmissions.set(active, { error });
+      throw error;
     });
+  }
+
+  /** Resolve only this retained admission after its failed transaction has unwound. */
+  async recoverDeployAgent(
+    principalId: string,
+    input: DeployAgentInput,
+    admission: Pick<DeployAgentAdmissionContext, "transitionRef" | "requestId">,
+  ): Promise<Readonly<AgentRevision>> {
+    validateDeployLocator(admission);
+    if (this.transactionContext.getStore() !== undefined)
+      throw new DependencyUnavailableError(
+        "Deployment acknowledgement recovery requires a fresh read transaction.",
+      );
+    try {
+      const revision = await this.state.read(async (view) => {
+        const installation = await view.installations.getInstallation();
+        if (installation?.id !== this.installation.id) return undefined;
+        return view.runtimeAdmissions.findCommittedAdmission(input, admission.transitionRef, {
+          actorId: principalId,
+          requestId: admission.requestId,
+        });
+      });
+      if (revision !== undefined) return revision;
+    } catch {
+      // A failed or unavailable proof does not establish rollback or authorize a retry.
+    }
+    throw new DependencyUnavailableError("The deployment acknowledgement could not be verified.");
   }
 
   /**
@@ -1829,7 +1970,10 @@ export class OpenClawController {
               throw new ScopeViolationError(
                 "The controller state belongs to another Installation.",
               );
-            return work(state);
+            const result = await work(state);
+            const failedAdmission = this.failedAdmissions.get(state);
+            if (failedAdmission !== undefined) throw failedAdmission.error;
+            return result;
           }),
         ),
       );
