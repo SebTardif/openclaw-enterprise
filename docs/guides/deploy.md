@@ -76,6 +76,12 @@ explicit production selection.
 
 ## Production
 
+The [external model egress packaging](../reference/egress.md) is a separate
+implementation candidate. Its local preflight and image recipe do not install
+the canonical authority or select mediation for an Agent. Follow its explicit
+dependency and verification requirements; existing runtime credential behavior
+continues until the complete external custody path is implemented and selected.
+
 ### Production prerequisites
 
 - Explicit Kubernetes context, enforcing NetworkPolicies, Helm, `kubectl`, and

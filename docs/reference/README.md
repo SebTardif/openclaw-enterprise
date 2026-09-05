@@ -45,6 +45,15 @@ behavioral rules such as cross-resource ownership, lifecycle ordering, and failu
 effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` and
 `pnpm openapi:check` after route or schema changes.
 
+## Development internals
+
+- [Build graph](build.md): explicit language and image prerequisites, offline source
+  compilation, artifact identity, and runtime verification limits.
+- [Delegated authority library](delegation.md): internal root grant and model request
+  constraints, with required authentication, currentness, and persistence integrations.
+- [External model egress packaging](egress.md): prepared images and isolated local
+  service packaging; canonical authority and production integration remain required.
+
 ## Drivers
 
 The term **contract** names obligations that callers and Driver implementations

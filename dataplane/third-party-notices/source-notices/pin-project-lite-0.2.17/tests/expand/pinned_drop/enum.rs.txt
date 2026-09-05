@@ -1,0 +1,6 @@
+Source notices for pin-project-lite-0.2.17 / tests/expand/pinned_drop/enum.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-1:
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+

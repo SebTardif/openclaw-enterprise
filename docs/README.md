@@ -12,6 +12,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
 - [Security events](reference/security-events.md): versioned projection, audit access, and retention contracts; production emitters and durable sinks remain unimplemented.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
+- [Build graph](reference/build.md): inspect explicit TypeScript, Rust, and image dependencies; prepare inputs separately from offline source builds.
 
 - [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
 
@@ -56,6 +57,12 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
+- [Delegated authority library](reference/delegation.md): root grant constraints,
+  request binding, and required owner interfaces; executable authority is not yet wired.
+- [External model egress packaging](reference/egress.md): isolated DNS and
+  credential-service packaging, local preflight, and outstanding runtime requirements.
+- [External model egress flow](flows/external-model-egress.md): exact request,
+  connection, dispatch, and cancellation ownership in the adapter components.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Docker Compose development](flows/docker-compose-development.md),

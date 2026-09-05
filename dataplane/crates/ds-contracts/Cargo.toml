@@ -1,0 +1,18 @@
+# Modified for OpenClaw Enterprise.
+[package]
+name = "ds-contracts"
+autobins = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Deliberately empty — stdlib only, so the workspace `cargo check`s OFFLINE.
+# FROZEN RULE (doc 14 §6, D67/D40): neither boundary framework (the DNS resolver
+# crate used by ds-dnsgate, the proxy crate used by ds-tlsproxy) may cross this
+# crate — not in its API and not in its dependency graph, so swapping either
+# framework stays a single-service library migration. The full rule, naming both
+# crates, lives in this crate's README and lib.rs doc-comment. Generated proto
+# code (Rust target of proto/buf.gen.yaml) lands under src/gen/ ONLY via the
+# one-shot Stage-0 freeze PR.

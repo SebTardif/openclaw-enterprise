@@ -46,6 +46,11 @@ and optional availability improvements. Its owning current reference is
 [Channels and delivery](../docs/reference/channels.md); integrating the proposal
 does not complete any implementation or release gate.
 
+- [Delegated model custody MVP](delegated-model-custody-mvp.md): implementing
+  external credential custody and live authority; current support is limited to
+  the [delegation library](../docs/reference/delegation.md) and
+  [build graph](../docs/reference/build.md).
+
 | Implementation record                                                            | Recorded status                                                                                                                                                                            | Current reference                                                                                                                                         |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Common OpenTelemetry logging](20-common-otel-logging.md)                        | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable                                                                                            | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md)                                                    |

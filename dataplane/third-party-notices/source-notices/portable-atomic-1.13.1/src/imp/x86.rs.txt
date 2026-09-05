@@ -1,0 +1,6 @@
+Source notices for portable-atomic-1.13.1 / src/imp/x86.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 1-1:
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+

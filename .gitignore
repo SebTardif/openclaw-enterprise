@@ -7,6 +7,8 @@
 node_modules/
 dist/
 components/runtime-security/bin/
+.build/
+dataplane/target/
 coverage/
 *.log
 .DS_Store

@@ -1,0 +1,8 @@
+Source notices for minimal-lexical-0.2.1 / tests/libm_tests.rs
+Conservative source-inclusive collection; no assertion that this file is linked.
+
+Lines 3-5:
+// These are adapted from libm, a port of musl libc's libm to Rust.
+// libm can be found online [here](https://github.com/rust-lang/libm),
+// and is similarly licensed under an Apache2.0/MIT license
+
