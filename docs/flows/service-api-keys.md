@@ -117,7 +117,7 @@ effort, not an atomic transaction with the audit sink.
 ### 3. Verify the credential and enforce its fixed identity scope
 
 [apps/controller/src/auth/index.ts:ControllerAdmissionVerifier.verify](../../apps/controller/src/auth/index.ts);
-[apps/controller/src/index.ts:resolveIdentity](../../apps/controller/src/index.ts).
+[apps/controller/src/http/identity.ts:createIdentityResolver](../../apps/controller/src/http/identity.ts).
 
 For the resource request, an explicitly supplied `x-api-key` selects Better
 Auth's `verifyApiKey` before cookie handling. Blank, forged, expired, or revoked

@@ -1,3 +1,7 @@
+import {
+  ConfigurationValidationError,
+  ConfigurationOwnershipError,
+} from "@openclaw-enterprise/contracts/configuration-errors";
 import { asRecord, isNonEmptyString, sha256Hex } from "@openclaw-enterprise/utils";
 import { isAbsolute } from "node:path";
 import type { CoreV1Api, V1ConfigMap } from "@kubernetes/client-node";
@@ -11,7 +15,11 @@ import { resolveKubernetesNamespace } from "../../compute/kubernetes/index.ts";
 
 type KubernetesAuthentication =
   | { readonly mode: "inCluster" }
-  | { readonly mode: "kubeconfig"; readonly kubeconfigPath: string; readonly context: string };
+  | {
+      readonly mode: "kubeconfig";
+      readonly kubeconfigPath: string;
+      readonly context: string;
+    };
 
 export interface KubernetesConfigurationDriverOptions {
   readonly authentication: KubernetesAuthentication;
@@ -22,8 +30,10 @@ interface KubernetesConfigurationDriverSelection {
   readonly implementation?: string;
 }
 
-export class ConfigurationValidationError extends Error {}
-export class ConfigurationOwnershipError extends Error {}
+export {
+  ConfigurationValidationError,
+  ConfigurationOwnershipError,
+} from "@openclaw-enterprise/contracts/configuration-errors";
 
 const MANAGER = "openclaw-enterprise";
 const IMPLEMENTATION = "occ/kubernetes-configmap";
@@ -161,7 +171,9 @@ export class KubernetesConfigurationDriver implements ConfigurationDriver {
         "Unsupported Kubernetes configuration implementation.",
       );
     }
-    this.options = Object.freeze({ authentication: Object.freeze({ ...options.authentication }) });
+    this.options = Object.freeze({
+      authentication: Object.freeze({ ...options.authentication }),
+    });
   }
 
   async validate(configuration: Configuration): Promise<void> {
@@ -244,7 +256,11 @@ export class KubernetesConfigurationDriver implements ConfigurationDriver {
     }
     const desired = this.manifest(configuration, namespace);
     desired.metadata = { ...desired.metadata, resourceVersion };
-    const observed = await client.replaceNamespacedConfigMap({ name, namespace, body: desired });
+    const observed = await client.replaceNamespacedConfigMap({
+      name,
+      namespace,
+      body: desired,
+    });
     return this.checkedConfiguration(observed, configuration, namespace);
   }
 

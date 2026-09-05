@@ -1,0 +1,4004 @@
+{
+  "fixture-embedded": {
+    "identity": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent": "agent-builders-1",
+        "openclaw.dev/service-principal": "principal-builders-1",
+        "openclaw.dev/revision": "revision-builders-1"
+      },
+      "annotations": {
+        "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent-id": "agent-builders-1",
+        "openclaw.dev/service-principal-id": "principal-builders-1",
+        "openclaw.dev/revision-id": "revision-builders-1"
+      }
+    },
+    "namespaceManifest": {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008"
+        }
+      }
+    },
+    "configuration": {
+      "name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e",
+      "revision": 1,
+      "revisionId": "revision-builders-1",
+      "usesTrustedProxyAuth": false,
+      "annotations": {
+        "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/configuration-kind": "agent",
+        "openclaw.dev/configuration-generation": "2"
+      },
+      "loggingLevel": "info"
+    },
+    "membership": {},
+    "policies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "default-deny",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-1"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-1"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Ingress", "Egress"]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-dns",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-1"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-1"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "kube-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "dns"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "UDP",
+                  "port": 53
+                },
+                {
+                  "protocol": "TCP",
+                  "port": 53
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-ingress",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-1"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-1"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway"
+            }
+          },
+          "policyTypes": ["Ingress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "controller"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "controller"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "channelPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-gateway-channels-c9b4b04d61b4",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-1"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-1"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "gateway",
+            "openclaw.dev/agent": "agent-builders-1"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": []
+      }
+    },
+    "agentPolicies": [],
+    "enabled": [],
+    "projected": [],
+    "gatewayService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "gateway-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-1"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-1"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    },
+    "gatewayDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-1"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-1",
+          "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/configuration-kind": "agent",
+          "openclaw.dev/configuration-generation": "2",
+          "openclaw.dev/agent-revision": "1",
+          "openclaw.dev/agent-revision-id": "revision-builders-1"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-1",
+              "openclaw.dev/service-principal": "principal-builders-1",
+              "openclaw.dev/revision": "revision-builders-1",
+              "app.kubernetes.io/name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e",
+              "openclaw.dev/workload-role": "gateway"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-1",
+              "openclaw.dev/service-principal-id": "principal-builders-1",
+              "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/configuration-kind": "agent",
+              "openclaw.dev/configuration-generation": "2",
+              "openclaw.dev/agent-revision": "1",
+              "openclaw.dev/agent-revision-id": "revision-builders-1"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "gateway-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-configuration",
+                "configMap": {
+                  "name": "gateway-c9b4b04d61b4-rev-2a67cf65d66e",
+                  "items": [
+                    {
+                      "key": "openclaw.json",
+                      "path": "openclaw.json"
+                    }
+                  ],
+                  "optional": false
+                }
+              },
+              {
+                "name": "openclaw-service-principal",
+                "projected": {
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "audience": "openclaw-controller",
+                        "expirationSeconds": 900,
+                        "path": "token"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "gateway",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OPENCLAW_CONFIG_PATH",
+                    "value": "/etc/openclaw/openclaw.json"
+                  },
+                  {
+                    "name": "OCE_SERVICE_PRINCIPAL_ID",
+                    "value": "principal-builders-1"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/readyz",
+                    "port": 8080
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-configuration",
+                    "mountPath": "/etc/openclaw",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-service-principal",
+                    "mountPath": "/var/run/secrets/openclaw/service-principal",
+                    "readOnly": true
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "workspace": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "workspace-c9b4b04d61b4",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-1"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-1"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteMany"],
+        "resources": {
+          "requests": {
+            "storage": "40Gi"
+          }
+        }
+      }
+    },
+    "mounts": {
+      "gateway": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+          "subPath": "generated-images",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": false
+        }
+      ],
+      "agent": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.codex/generated_images",
+          "subPath": "generated-images",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": true
+        }
+      ],
+      "embeddedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        }
+      ],
+      "dedicatedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        }
+      ]
+    },
+    "directories": {
+      "gateway": [
+        "/home/node/.openclaw",
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.openclaw/codex-artifacts",
+        "/home/node/openclaw-runtime-assets"
+      ],
+      "agent": [
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.codex",
+        "/home/node/openclaw-runtime-assets"
+      ]
+    }
+  },
+  "runtime-dedicated-routed-channels": {
+    "identity": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent": "agent-builders-2",
+        "openclaw.dev/service-principal": "principal-builders-2",
+        "openclaw.dev/revision": "revision-builders-2"
+      },
+      "annotations": {
+        "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent-id": "agent-builders-2",
+        "openclaw.dev/service-principal-id": "principal-builders-2",
+        "openclaw.dev/revision-id": "revision-builders-2"
+      }
+    },
+    "namespaceManifest": {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008"
+        }
+      }
+    },
+    "configuration": {
+      "name": "gateway-dad583a63e58-rev-f727ab2cbddf",
+      "revision": 2,
+      "revisionId": "revision-builders-2",
+      "usesTrustedProxyAuth": true,
+      "annotations": {
+        "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/configuration-kind": "agent",
+        "openclaw.dev/configuration-generation": "3"
+      },
+      "loggingLevel": "info"
+    },
+    "membership": {
+      "openclaw-enterprise.io/gateway": "20ec97c41b82"
+    },
+    "policies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "default-deny",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-2"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-2"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Ingress", "Egress"]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-dns",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-2"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-2"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "kube-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "dns"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "UDP",
+                  "port": 53
+                },
+                {
+                  "protocol": "TCP",
+                  "port": 53
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-ingress",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-2"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-2"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway"
+            }
+          },
+          "policyTypes": ["Ingress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "envoy-gateway-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "gateway.envoyproxy.io/owning-gateway-namespace": "openclaw-system",
+                      "gateway.envoyproxy.io/owning-gateway-name": "oce-agent-gateways"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "channelPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-gateway-channels-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "gateway",
+            "openclaw.dev/agent": "agent-builders-2"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": [
+          {
+            "to": [
+              {
+                "ipBlock": {
+                  "cidr": "10.42.0.15/32"
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 3128
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "agentPolicies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-agent-dad583a63e58",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-2"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-2"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway",
+              "openclaw.dev/agent": "agent-builders-2"
+            }
+          },
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "podSelector": {
+                    "matchLabels": {
+                      "openclaw.dev/workload-role": "agent",
+                      "openclaw.dev/agent": "agent-builders-2",
+                      "openclaw.dev/revision": "revision-builders-2"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 18790
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-agent-runtime-dad583a63e58",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-2"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-2"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "agent",
+              "openclaw.dev/agent": "agent-builders-2",
+              "openclaw.dev/revision": "revision-builders-2"
+            }
+          },
+          "policyTypes": ["Ingress", "Egress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "podSelector": {
+                    "matchLabels": {
+                      "openclaw.dev/workload-role": "gateway",
+                      "openclaw.dev/agent": "agent-builders-2"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 18790
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "to": [
+                {
+                  "ipBlock": {
+                    "cidr": "0.0.0.0/0",
+                    "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 443
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "enabled": [
+      {
+        "secrets": ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"],
+        "egress": "https-proxy"
+      },
+      {
+        "secrets": ["MSTEAMS_APP_PASSWORD"],
+        "egress": "https-proxy"
+      }
+    ],
+    "projected": [],
+    "gatewayService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "gateway-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "gateway-dad583a63e58-rev-f727ab2cbddf"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    },
+    "gatewayDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "gateway-dad583a63e58-rev-f727ab2cbddf",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/configuration-kind": "agent",
+          "openclaw.dev/configuration-generation": "3",
+          "openclaw.dev/agent-revision": "2",
+          "openclaw.dev/agent-revision-id": "revision-builders-2"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "gateway-dad583a63e58-rev-f727ab2cbddf"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-2",
+              "openclaw.dev/revision": "revision-builders-2",
+              "app.kubernetes.io/name": "gateway-dad583a63e58-rev-f727ab2cbddf",
+              "openclaw.dev/workload-role": "gateway"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-2",
+              "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/configuration-kind": "agent",
+              "openclaw.dev/configuration-generation": "3",
+              "openclaw.dev/agent-revision": "2",
+              "openclaw.dev/agent-revision-id": "revision-builders-2"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "gateway-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-configuration",
+                "configMap": {
+                  "name": "gateway-dad583a63e58-rev-f727ab2cbddf",
+                  "items": [
+                    {
+                      "key": "openclaw.json",
+                      "path": "openclaw.json"
+                    }
+                  ],
+                  "optional": false
+                }
+              },
+              {
+                "name": "runtime-state",
+                "emptyDir": {
+                  "sizeLimit": "1Gi"
+                }
+              },
+              {
+                "name": "runtime-temporary",
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                }
+              },
+              {
+                "name": "openclaw-workspace",
+                "persistentVolumeClaim": {
+                  "claimName": "workspace-dad583a63e58"
+                }
+              },
+              {
+                "name": "openclaw-gateway-state",
+                "persistentVolumeClaim": {
+                  "claimName": "gateway-state-dad583a63e58"
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "prepare-private-state",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["node", "-e"],
+                "args": [
+                  "const { mkdirSync } = require(\"node:fs\");\nfor (const path of [\"/home/node/.openclaw\",\"/home/node/.openclaw/agents/main\",\"/home/node/.openclaw/codex-artifacts\",\"/home/node/openclaw-runtime-assets\",\"/gateway-state/state\",\"/gateway-state/agent\",\"/gateway-state/media\",\"/home/node/gateway-codex-home\"]) {\n  mkdirSync(path, { recursive: true });\n}"
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/gateway-state"
+                  }
+                ],
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "fsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "gateway",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OPENCLAW_CONFIG_PATH",
+                    "value": "/etc/openclaw/openclaw.json"
+                  },
+                  {
+                    "name": "OPENCLAW_WORKSPACE_DIR",
+                    "value": "/home/node/workspace"
+                  },
+                  {
+                    "name": "APP_SERVER_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "transport-dad583a63e58",
+                        "key": "app-server-token"
+                      }
+                    }
+                  },
+                  {
+                    "name": "APP_SERVER_URL",
+                    "value": "ws://agent-dad583a63e58:18790"
+                  },
+                  {
+                    "name": "OPENCLAW_STATE_DIR",
+                    "value": "/home/node/.openclaw"
+                  },
+                  {
+                    "name": "OPENCLAW_GATEWAY_PORT",
+                    "value": "8080"
+                  },
+                  {
+                    "name": "SLACK_APP_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "channel-dad583a63e58",
+                        "key": "SLACK_APP_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "SLACK_BOT_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "channel-dad583a63e58",
+                        "key": "SLACK_BOT_TOKEN"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MSTEAMS_APP_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "channel-dad583a63e58",
+                        "key": "MSTEAMS_APP_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "HTTPS_PROXY",
+                    "value": "http://10.42.0.15:3128"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "node",
+                      "-e",
+                      "\nconst timeout = setTimeout(() => process.exit(1), 2_000);\nconst request = require(\"node:http\").get(\n  \"http://127.0.0.1:\" + process.env.OPENCLAW_GATEWAY_PORT + \"/readyz\",\n  (response) => {\n    response.resume();\n    clearTimeout(timeout);\n    process.exit(response.statusCode === 200 ? 0 : 1);\n  },\n);\nrequest.on(\"error\", () => process.exit(1));\n"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-configuration",
+                    "mountPath": "/etc/openclaw",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "runtime-temporary",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/workspace",
+                    "subPath": "workspace",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/agents/main/sessions",
+                    "subPath": "sessions",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+                    "subPath": "generated-images",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+                    "subPath": "bundled-skills",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+                    "subPath": "plugin-skills",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/state",
+                    "subPath": "state",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent",
+                    "subPath": "agent",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/media",
+                    "subPath": "media",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent/codex-home",
+                    "subPath": "gateway-codex-home"
+                  }
+                ],
+                "command": ["node", "-e"],
+                "args": [
+                  "\nconst { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } = require(\"node:fs\");\nconst { join } = require(\"node:path\");\nconst { spawn } = require(\"node:child_process\");\n\nconst runtimeAssetsDirectory = \"/home/node/openclaw-runtime-assets\";\n\nfunction clearDirectoryContents(directory) {\n  mkdirSync(directory, { recursive: true });\n  for (const entry of readdirSync(directory)) {\n    rmSync(join(directory, entry), { recursive: true, force: true });\n  }\n}\n\nfunction publishImageTree(source, destination, required) {\n  if (!existsSync(source)) {\n    if (required) {\n      throw new Error(\"Required runtime asset tree is missing: \" + source);\n    }\n    clearDirectoryContents(destination);\n    return;\n  }\n  if (!lstatSync(source).isDirectory()) {\n    throw new Error(\"Runtime asset tree is not a directory: \" + source);\n  }\n  if (required && readdirSync(source).length === 0) {\n    throw new Error(\"Required runtime asset tree is empty: \" + source);\n  }\n  mkdirSync(runtimeAssetsDirectory, { recursive: true });\n  clearDirectoryContents(destination);\n  cpSync(source, destination, { recursive: true });\n}\n\nfunction publishDedicatedGatewayRuntimeAssets() {\n  publishImageTree(\"/app/skills\", runtimeAssetsDirectory + \"/bundled-skills\", true);\n  publishImageTree(\"/app/plugin-skills\", runtimeAssetsDirectory + \"/plugin-skills\", false);\n}\n\nfunction forwardTermination(child) {\n  let terminating = false;\n  const forward = (signal) => {\n    if (terminating) return;\n    terminating = true;\n    child.kill(signal);\n    setTimeout(() => child.kill(\"SIGKILL\"), 8_000).unref();\n  };\n  process.on(\"SIGTERM\", () => forward(\"SIGTERM\"));\n  process.on(\"SIGINT\", () => forward(\"SIGINT\"));\n}\n\nmkdirSync(\"/home/node/.openclaw\", { recursive: true });\nmkdirSync(\"/home/node/workspace\", { recursive: true });\nif (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {\n  mkdirSync(process.env.OPENCLAW_WORKSPACE_DIR, { recursive: true });\n  publishDedicatedGatewayRuntimeAssets();\n}\ndelete process.env.OPENCLAW_LOG_LEVEL;\nconst child = spawn(\n  \"node\",\n  [\"/app/openclaw.mjs\", \"gateway\", \"--port\", process.env.OPENCLAW_GATEWAY_PORT],\n  { stdio: \"inherit\" },\n);\nforwardTermination(child);\nchild.on(\"exit\", (code, signal) => process.exit(code ?? (signal === \"SIGTERM\" ? 0 : 1)));\n"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "workspace": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "workspace-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteMany"],
+        "resources": {
+          "requests": {
+            "storage": "40Gi"
+          }
+        }
+      }
+    },
+    "mounts": {
+      "gateway": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+          "subPath": "generated-images",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": false
+        }
+      ],
+      "agent": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.codex/generated_images",
+          "subPath": "generated-images",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": true
+        }
+      ],
+      "embeddedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        }
+      ],
+      "dedicatedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        }
+      ]
+    },
+    "directories": {
+      "gateway": [
+        "/home/node/.openclaw",
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.openclaw/codex-artifacts",
+        "/home/node/openclaw-runtime-assets"
+      ],
+      "agent": [
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.codex",
+        "/home/node/openclaw-runtime-assets"
+      ]
+    },
+    "privateState": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "gateway-state-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteOnce"],
+        "volumeMode": "Filesystem",
+        "storageClassName": "local-path",
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        }
+      }
+    },
+    "authenticationPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-agent-auth-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2",
+          "openclaw.dev/service-principal": "principal-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/service-principal-id": "principal-builders-2"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "agent",
+            "openclaw.dev/agent": "agent-builders-2",
+            "openclaw.dev/revision": "revision-builders-2"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": [
+          {
+            "to": [
+              {
+                "ipBlock": {
+                  "cidr": "0.0.0.0/0",
+                  "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 443
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "routeWithoutUid": {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "HTTPRoute",
+      "metadata": {
+        "name": "gateway-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/agent-revision": "2",
+          "openclaw.dev/agent-revision-id": "revision-builders-2"
+        }
+      },
+      "spec": {
+        "hostnames": ["occ-gateway-20ec97c41b82.envoy-gateway-system.svc"],
+        "parentRefs": [
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "openclaw-system",
+            "name": "oce-agent-gateways",
+            "sectionName": "https"
+          }
+        ],
+        "rules": [
+          {
+            "matches": [
+              {
+                "path": {
+                  "type": "Exact",
+                  "value": "/namespaces/ns_00000000-0000-4000-8000-000000000008/agents/agent-builders-2"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "type": "URLRewrite",
+                "urlRewrite": {
+                  "path": {
+                    "type": "ReplaceFullPath",
+                    "replaceFullPath": "/"
+                  }
+                }
+              },
+              {
+                "type": "RequestHeaderModifier",
+                "requestHeaderModifier": {
+                  "set": [
+                    {
+                      "name": "x-occ-identity",
+                      "value": "occ-workspace-files"
+                    },
+                    {
+                      "name": "x-real-ip",
+                      "value": "%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%"
+                    }
+                  ],
+                  "remove": ["x-forwarded-for", "forwarded", "x-openclaw-scopes"]
+                }
+              }
+            ],
+            "backendRefs": [
+              {
+                "group": "",
+                "kind": "Service",
+                "name": "gateway-builders",
+                "port": 8080
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "routeWithUid": {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "HTTPRoute",
+      "metadata": {
+        "name": "gateway-dad583a63e58",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/agent-revision": "2",
+          "openclaw.dev/agent-revision-id": "revision-builders-2"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "name": "gateway-builders",
+            "uid": "observed-service-uid",
+            "controller": false,
+            "blockOwnerDeletion": false
+          }
+        ]
+      },
+      "spec": {
+        "hostnames": ["occ-gateway-20ec97c41b82.envoy-gateway-system.svc"],
+        "parentRefs": [
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "openclaw-system",
+            "name": "oce-agent-gateways",
+            "sectionName": "https"
+          }
+        ],
+        "rules": [
+          {
+            "matches": [
+              {
+                "path": {
+                  "type": "Exact",
+                  "value": "/namespaces/ns_00000000-0000-4000-8000-000000000008/agents/agent-builders-2"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "type": "URLRewrite",
+                "urlRewrite": {
+                  "path": {
+                    "type": "ReplaceFullPath",
+                    "replaceFullPath": "/"
+                  }
+                }
+              },
+              {
+                "type": "RequestHeaderModifier",
+                "requestHeaderModifier": {
+                  "set": [
+                    {
+                      "name": "x-occ-identity",
+                      "value": "occ-workspace-files"
+                    },
+                    {
+                      "name": "x-real-ip",
+                      "value": "%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%"
+                    }
+                  ],
+                  "remove": ["x-forwarded-for", "forwarded", "x-openclaw-scopes"]
+                }
+              }
+            ],
+            "backendRefs": [
+              {
+                "group": "",
+                "kind": "Service",
+                "name": "gateway-builders",
+                "port": 8080
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "agentService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "agent-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2",
+          "openclaw.dev/service-principal": "principal-builders-2",
+          "openclaw.dev/revision": "revision-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/service-principal-id": "principal-builders-2",
+          "openclaw.dev/revision-id": "revision-builders-2"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "agent-builders"
+        },
+        "ports": [
+          {
+            "name": "websocket",
+            "port": 18790,
+            "targetPort": 18790
+          }
+        ]
+      }
+    },
+    "agentDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "agent-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-2",
+          "openclaw.dev/service-principal": "principal-builders-2",
+          "openclaw.dev/revision": "revision-builders-2"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-2",
+          "openclaw.dev/service-principal-id": "principal-builders-2",
+          "openclaw.dev/revision-id": "revision-builders-2"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "agent-builders"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-2",
+              "openclaw.dev/service-principal": "principal-builders-2",
+              "openclaw.dev/revision": "revision-builders-2",
+              "app.kubernetes.io/name": "agent-builders",
+              "openclaw.dev/workload-role": "agent"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-2",
+              "openclaw.dev/service-principal-id": "principal-builders-2",
+              "openclaw.dev/revision-id": "revision-builders-2"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "agent-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-service-principal",
+                "projected": {
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "audience": "openclaw-controller",
+                        "expirationSeconds": 900,
+                        "path": "token"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "runtime-state",
+                "emptyDir": {
+                  "sizeLimit": "1Gi"
+                }
+              },
+              {
+                "name": "runtime-temporary",
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                }
+              },
+              {
+                "name": "openclaw-workspace",
+                "persistentVolumeClaim": {
+                  "claimName": "workspace-dad583a63e58"
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "prepare-private-state",
+                "image": "agent:local",
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["node", "-e"],
+                "args": [
+                  "const { mkdirSync } = require(\"node:fs\");\nfor (const path of [\"/home/node/.openclaw/agents/main\",\"/home/node/.codex\",\"/home/node/openclaw-runtime-assets\"]) {\n  mkdirSync(path, { recursive: true });\n}"
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  }
+                ],
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "fsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "agent",
+                "image": "agent:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OCE_SERVICE_PRINCIPAL_ID",
+                    "value": "principal-builders-2"
+                  },
+                  {
+                    "name": "LOG_FORMAT",
+                    "value": "json"
+                  },
+                  {
+                    "name": "RUST_LOG",
+                    "value": "info,codex_otel=off"
+                  },
+                  {
+                    "name": "APP_SERVER_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "transport-dad583a63e58",
+                        "key": "app-server-token"
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "model-dad583a63e58",
+                        "key": "OPENAI_API_KEY"
+                      }
+                    }
+                  },
+                  {
+                    "name": "CODEX_HOME",
+                    "value": "/home/node/.codex"
+                  },
+                  {
+                    "name": "HOME",
+                    "value": "/home/node"
+                  },
+                  {
+                    "name": "PATH",
+                    "value": "/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                  },
+                  {
+                    "name": "APP_SERVER_PORT",
+                    "value": "18790"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 18790,
+                    "name": "websocket"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "node",
+                      "-e",
+                      "\nconst timeout = setTimeout(() => process.exit(1), 2_000);\nconst socket = new WebSocket(\"ws://127.0.0.1:\" + process.env.APP_SERVER_PORT, {\n  headers: { Authorization: \"Bearer \" + process.env.APP_SERVER_TOKEN },\n});\nsocket.addEventListener(\"open\", () => {\n  clearTimeout(timeout);\n  socket.close();\n  process.exit(0);\n});\nsocket.addEventListener(\"error\", () => process.exit(1));\n"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-service-principal",
+                    "mountPath": "/var/run/secrets/openclaw/service-principal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "runtime-temporary",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/workspace",
+                    "subPath": "workspace",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/agents/main/sessions",
+                    "subPath": "sessions",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.codex/generated_images",
+                    "subPath": "generated-images",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+                    "subPath": "bundled-skills",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+                    "subPath": "plugin-skills",
+                    "readOnly": true
+                  }
+                ],
+                "command": ["node", "-e"],
+                "args": [
+                  "\nconst { createHash } = require(\"node:crypto\");\nconst { mkdirSync } = require(\"node:fs\");\nconst { spawn, spawnSync } = require(\"node:child_process\");\n\nmkdirSync(process.env.CODEX_HOME, { recursive: true });\nmkdirSync(\"/home/node/workspace\", { recursive: true });\nconst accessToken = process.env.CODEX_ACCESS_TOKEN;\nconst workspaceId = process.env.CODEX_CHATGPT_WORKSPACE_ID;\nif (accessToken !== undefined && (!workspaceId || process.env.OPENAI_API_KEY !== undefined)) {\n  throw new Error(\"Codex service-account authentication configuration is invalid.\");\n}\nif (accessToken === undefined && workspaceId !== undefined) {\n  throw new Error(\"Codex service-account authentication configuration is invalid.\");\n}\nconst loginArguments = accessToken === undefined\n  ? [\"login\", \"--with-api-key\"]\n  : [\n      \"-c\",\n      \"cli_auth_credentials_store=file\",\n      \"-c\",\n      \"forced_chatgpt_workspace_id=\" + JSON.stringify(workspaceId),\n      \"login\",\n      \"--with-access-token\",\n    ];\nconst login = spawnSync(\"codex\", loginArguments, {\n  input: accessToken ?? process.env.OPENAI_API_KEY,\n  encoding: \"utf8\",\n  stdio: [\"pipe\", \"ignore\", \"pipe\"],\n});\nif (login.status !== 0) throw new Error(\"Codex model authentication initialization failed.\");\ndelete process.env.CODEX_ACCESS_TOKEN;\n\nfunction forwardTermination(child) {\n  let terminating = false;\n  const forward = (signal) => {\n    if (terminating) return;\n    terminating = true;\n    child.kill(signal);\n    setTimeout(() => child.kill(\"SIGKILL\"), 8_000).unref();\n  };\n  process.on(\"SIGTERM\", () => forward(\"SIGTERM\"));\n  process.on(\"SIGINT\", () => forward(\"SIGINT\"));\n}\n\nconst digest = createHash(\"sha256\").update(process.env.APP_SERVER_TOKEN).digest(\"hex\");\nconst child = spawn(\n  \"codex\",\n  [\n    \"-c\",\n    \"otel.exporter=\\\"none\\\"\",\n    \"-c\",\n    \"otel.log_user_prompt=false\",\n    \"app-server\",\n    \"--listen\",\n    \"ws://0.0.0.0:\" + process.env.APP_SERVER_PORT,\n    \"--ws-auth\",\n    \"capability-token\",\n    \"--ws-token-sha256\",\n    digest,\n  ],\n  { stdio: \"inherit\", cwd: \"/home/node/workspace\" },\n);\nforwardTermination(child);\nchild.on(\"exit\", (code, signal) => process.exit(code ?? (signal === \"SIGTERM\" ? 0 : 1)));\n"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "runtime-embedded-secret": {
+    "identity": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent": "agent-builders-3",
+        "openclaw.dev/service-principal": "principal-builders-3",
+        "openclaw.dev/revision": "revision-builders-3"
+      },
+      "annotations": {
+        "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent-id": "agent-builders-3",
+        "openclaw.dev/service-principal-id": "principal-builders-3",
+        "openclaw.dev/revision-id": "revision-builders-3"
+      }
+    },
+    "namespaceManifest": {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008"
+        }
+      }
+    },
+    "configuration": {
+      "name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20",
+      "revision": 3,
+      "revisionId": "revision-builders-3",
+      "usesTrustedProxyAuth": false,
+      "annotations": {
+        "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/configuration-kind": "agent",
+        "openclaw.dev/configuration-generation": "4"
+      },
+      "loggingLevel": "info"
+    },
+    "membership": {},
+    "policies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "default-deny",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-3"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-3"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Ingress", "Egress"]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-dns",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-3"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-3"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "kube-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "dns"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "UDP",
+                  "port": 53
+                },
+                {
+                  "protocol": "TCP",
+                  "port": 53
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-ingress",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-3"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-3"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway"
+            }
+          },
+          "policyTypes": ["Ingress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "controller"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "controller"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "channelPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-gateway-channels-cd30bcf6c15d",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "gateway",
+            "openclaw.dev/agent": "agent-builders-3"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": []
+      }
+    },
+    "agentPolicies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-agent-runtime-cd30bcf6c15d",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-3"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-3"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway",
+              "openclaw.dev/agent": "agent-builders-3"
+            }
+          },
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "ipBlock": {
+                    "cidr": "0.0.0.0/0",
+                    "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 443
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "enabled": [],
+    "projected": [
+      {
+        "name": "OPENAI_API_KEY",
+        "secretId": "sec_00000000-0000-4000-8000-000000000008",
+        "namespaceId": "ns_00000000-0000-4000-8000-000000000008",
+        "agentId": "agent-builders-3",
+        "backendRef": {
+          "namespaceName": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "name": "stored-model-key",
+          "key": "value",
+          "uid": "observed-secret-uid"
+        }
+      }
+    ],
+    "gatewayService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "gateway-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    },
+    "gatewayDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3",
+          "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/configuration-kind": "agent",
+          "openclaw.dev/configuration-generation": "4",
+          "openclaw.dev/agent-revision": "3",
+          "openclaw.dev/agent-revision-id": "revision-builders-3"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-3",
+              "openclaw.dev/service-principal": "principal-builders-3",
+              "openclaw.dev/revision": "revision-builders-3",
+              "app.kubernetes.io/name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20",
+              "openclaw.dev/workload-role": "gateway"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-3",
+              "openclaw.dev/service-principal-id": "principal-builders-3",
+              "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/configuration-kind": "agent",
+              "openclaw.dev/configuration-generation": "4",
+              "openclaw.dev/agent-revision": "3",
+              "openclaw.dev/agent-revision-id": "revision-builders-3"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "gateway-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-configuration",
+                "configMap": {
+                  "name": "gateway-cd30bcf6c15d-rev-72d3d6f69a20",
+                  "items": [
+                    {
+                      "key": "openclaw.json",
+                      "path": "openclaw.json"
+                    }
+                  ],
+                  "optional": false
+                }
+              },
+              {
+                "name": "openclaw-service-principal",
+                "projected": {
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "audience": "openclaw-controller",
+                        "expirationSeconds": 900,
+                        "path": "token"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "runtime-state",
+                "emptyDir": {
+                  "sizeLimit": "1Gi"
+                }
+              },
+              {
+                "name": "runtime-temporary",
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                }
+              },
+              {
+                "name": "openclaw-gateway-state",
+                "persistentVolumeClaim": {
+                  "claimName": "gateway-state-cd30bcf6c15d"
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "prepare-private-state",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["node", "-e"],
+                "args": [
+                  "const { mkdirSync } = require(\"node:fs\");\nfor (const path of [\"/home/node/.openclaw\",\"/home/node/.openclaw/agents/main\",\"/home/node/.openclaw/codex-artifacts\",\"/home/node/openclaw-runtime-assets\",\"/gateway-state/state\",\"/gateway-state/agent\",\"/gateway-state/media\",\"/home/node/gateway-codex-home\",\"/gateway-state/workspace\"]) {\n  mkdirSync(path, { recursive: true });\n}"
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/gateway-state"
+                  }
+                ],
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "fsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "gateway",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OPENCLAW_CONFIG_PATH",
+                    "value": "/etc/openclaw/openclaw.json"
+                  },
+                  {
+                    "name": "OCE_SERVICE_PRINCIPAL_ID",
+                    "value": "principal-builders-3"
+                  },
+                  {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "stored-model-key",
+                        "key": "value",
+                        "optional": false
+                      }
+                    }
+                  },
+                  {
+                    "name": "HOME",
+                    "value": "/home/node"
+                  },
+                  {
+                    "name": "OPENCLAW_GATEWAY_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "transport-cd30bcf6c15d",
+                        "key": "gateway-token"
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPENCLAW_STATE_DIR",
+                    "value": "/home/node/.openclaw"
+                  },
+                  {
+                    "name": "OPENCLAW_GATEWAY_PORT",
+                    "value": "8080"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "node",
+                      "-e",
+                      "\nconst timeout = setTimeout(() => process.exit(1), 2_000);\nconst request = require(\"node:http\").get(\n  \"http://127.0.0.1:\" + process.env.OPENCLAW_GATEWAY_PORT + \"/readyz\",\n  (response) => {\n    response.resume();\n    clearTimeout(timeout);\n    process.exit(response.statusCode === 200 ? 0 : 1);\n  },\n);\nrequest.on(\"error\", () => process.exit(1));\n"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-configuration",
+                    "mountPath": "/etc/openclaw",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-service-principal",
+                    "mountPath": "/var/run/secrets/openclaw/service-principal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "runtime-temporary",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/state",
+                    "subPath": "state",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent",
+                    "subPath": "agent",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/media",
+                    "subPath": "media",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/workspace",
+                    "subPath": "workspace",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent/codex-home",
+                    "subPath": "gateway-codex-home"
+                  }
+                ],
+                "command": ["node", "-e"],
+                "args": [
+                  "\nconst { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } = require(\"node:fs\");\nconst { join } = require(\"node:path\");\nconst { spawn } = require(\"node:child_process\");\n\nconst runtimeAssetsDirectory = \"/home/node/openclaw-runtime-assets\";\n\nfunction clearDirectoryContents(directory) {\n  mkdirSync(directory, { recursive: true });\n  for (const entry of readdirSync(directory)) {\n    rmSync(join(directory, entry), { recursive: true, force: true });\n  }\n}\n\nfunction publishImageTree(source, destination, required) {\n  if (!existsSync(source)) {\n    if (required) {\n      throw new Error(\"Required runtime asset tree is missing: \" + source);\n    }\n    clearDirectoryContents(destination);\n    return;\n  }\n  if (!lstatSync(source).isDirectory()) {\n    throw new Error(\"Runtime asset tree is not a directory: \" + source);\n  }\n  if (required && readdirSync(source).length === 0) {\n    throw new Error(\"Required runtime asset tree is empty: \" + source);\n  }\n  mkdirSync(runtimeAssetsDirectory, { recursive: true });\n  clearDirectoryContents(destination);\n  cpSync(source, destination, { recursive: true });\n}\n\nfunction publishDedicatedGatewayRuntimeAssets() {\n  publishImageTree(\"/app/skills\", runtimeAssetsDirectory + \"/bundled-skills\", true);\n  publishImageTree(\"/app/plugin-skills\", runtimeAssetsDirectory + \"/plugin-skills\", false);\n}\n\nfunction forwardTermination(child) {\n  let terminating = false;\n  const forward = (signal) => {\n    if (terminating) return;\n    terminating = true;\n    child.kill(signal);\n    setTimeout(() => child.kill(\"SIGKILL\"), 8_000).unref();\n  };\n  process.on(\"SIGTERM\", () => forward(\"SIGTERM\"));\n  process.on(\"SIGINT\", () => forward(\"SIGINT\"));\n}\n\nmkdirSync(\"/home/node/.openclaw\", { recursive: true });\nmkdirSync(\"/home/node/workspace\", { recursive: true });\nif (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {\n  mkdirSync(process.env.OPENCLAW_WORKSPACE_DIR, { recursive: true });\n  publishDedicatedGatewayRuntimeAssets();\n}\ndelete process.env.OPENCLAW_LOG_LEVEL;\nconst child = spawn(\n  \"node\",\n  [\"/app/openclaw.mjs\", \"gateway\", \"--port\", process.env.OPENCLAW_GATEWAY_PORT],\n  { stdio: \"inherit\" },\n);\nforwardTermination(child);\nchild.on(\"exit\", (code, signal) => process.exit(code ?? (signal === \"SIGTERM\" ? 0 : 1)));\n"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "workspace": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "workspace-cd30bcf6c15d",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteMany"],
+        "resources": {
+          "requests": {
+            "storage": "40Gi"
+          }
+        }
+      }
+    },
+    "mounts": {
+      "gateway": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+          "subPath": "generated-images",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": false
+        }
+      ],
+      "agent": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.codex/generated_images",
+          "subPath": "generated-images",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": true
+        }
+      ],
+      "embeddedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        }
+      ],
+      "dedicatedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        }
+      ]
+    },
+    "directories": {
+      "gateway": [
+        "/home/node/.openclaw",
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.openclaw/codex-artifacts",
+        "/home/node/openclaw-runtime-assets"
+      ],
+      "agent": [
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.codex",
+        "/home/node/openclaw-runtime-assets"
+      ]
+    },
+    "privateState": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "gateway-state-cd30bcf6c15d",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteOnce"],
+        "volumeMode": "Filesystem",
+        "storageClassName": "local-path",
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        }
+      }
+    },
+    "authenticationPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-agent-auth-cd30bcf6c15d",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-3",
+          "openclaw.dev/service-principal": "principal-builders-3"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-3",
+          "openclaw.dev/service-principal-id": "principal-builders-3"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "agent",
+            "openclaw.dev/agent": "agent-builders-3",
+            "openclaw.dev/revision": "revision-builders-3"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": [
+          {
+            "to": [
+              {
+                "ipBlock": {
+                  "cidr": "0.0.0.0/0",
+                  "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 443
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "runtime-dedicated-ipv6-proxy": {
+    "identity": {
+      "labels": {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent": "agent-builders-4",
+        "openclaw.dev/service-principal": "principal-builders-4",
+        "openclaw.dev/revision": "revision-builders-4"
+      },
+      "annotations": {
+        "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/agent-id": "agent-builders-4",
+        "openclaw.dev/service-principal-id": "principal-builders-4",
+        "openclaw.dev/revision-id": "revision-builders-4"
+      }
+    },
+    "namespaceManifest": {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008"
+        }
+      }
+    },
+    "configuration": {
+      "name": "gateway-8e4329e7cb6f-rev-bb213dddb457",
+      "revision": 4,
+      "revisionId": "revision-builders-4",
+      "usesTrustedProxyAuth": true,
+      "annotations": {
+        "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+        "openclaw.dev/configuration-kind": "agent",
+        "openclaw.dev/configuration-generation": "5"
+      },
+      "loggingLevel": "info"
+    },
+    "membership": {
+      "openclaw-enterprise.io/gateway": "20ec97c41b82"
+    },
+    "policies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "default-deny",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-4"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-4"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Ingress", "Egress"]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-dns",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-4"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-4"
+          }
+        },
+        "spec": {
+          "podSelector": {},
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "kube-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "app": "dns"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "UDP",
+                  "port": 53
+                },
+                {
+                  "protocol": "TCP",
+                  "port": 53
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-ingress",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-4"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-4"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway"
+            }
+          },
+          "policyTypes": ["Ingress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "namespaceSelector": {
+                    "matchLabels": {
+                      "kubernetes.io/metadata.name": "envoy-gateway-system"
+                    }
+                  },
+                  "podSelector": {
+                    "matchLabels": {
+                      "gateway.envoyproxy.io/owning-gateway-namespace": "openclaw-system",
+                      "gateway.envoyproxy.io/owning-gateway-name": "oce-agent-gateways"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 8080
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "channelPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-gateway-channels-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "gateway",
+            "openclaw.dev/agent": "agent-builders-4"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": [
+          {
+            "to": [
+              {
+                "ipBlock": {
+                  "cidr": "2001:db8::15/128"
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 8443
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "agentPolicies": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-gateway-agent-8e4329e7cb6f",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-4"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-4"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "gateway",
+              "openclaw.dev/agent": "agent-builders-4"
+            }
+          },
+          "policyTypes": ["Egress"],
+          "egress": [
+            {
+              "to": [
+                {
+                  "podSelector": {
+                    "matchLabels": {
+                      "openclaw.dev/workload-role": "agent",
+                      "openclaw.dev/agent": "agent-builders-4",
+                      "openclaw.dev/revision": "revision-builders-4"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 18790
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+          "name": "allow-agent-runtime-8e4329e7cb6f",
+          "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+          "labels": {
+            "app.kubernetes.io/managed-by": "openclaw-enterprise",
+            "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent": "agent-builders-4"
+          },
+          "annotations": {
+            "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+            "openclaw.dev/agent-id": "agent-builders-4"
+          }
+        },
+        "spec": {
+          "podSelector": {
+            "matchLabels": {
+              "openclaw.dev/workload-role": "agent",
+              "openclaw.dev/agent": "agent-builders-4",
+              "openclaw.dev/revision": "revision-builders-4"
+            }
+          },
+          "policyTypes": ["Ingress", "Egress"],
+          "ingress": [
+            {
+              "from": [
+                {
+                  "podSelector": {
+                    "matchLabels": {
+                      "openclaw.dev/workload-role": "gateway",
+                      "openclaw.dev/agent": "agent-builders-4"
+                    }
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 18790
+                }
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "to": [
+                {
+                  "ipBlock": {
+                    "cidr": "0.0.0.0/0",
+                    "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                  }
+                }
+              ],
+              "ports": [
+                {
+                  "protocol": "TCP",
+                  "port": 443
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "enabled": [
+      {
+        "secrets": ["MSTEAMS_APP_PASSWORD"],
+        "egress": "https-proxy"
+      }
+    ],
+    "projected": [],
+    "gatewayService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "gateway-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "gateway-8e4329e7cb6f-rev-bb213dddb457"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ]
+      }
+    },
+    "gatewayDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "gateway-8e4329e7cb6f-rev-bb213dddb457",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/configuration-kind": "agent",
+          "openclaw.dev/configuration-generation": "5",
+          "openclaw.dev/agent-revision": "4",
+          "openclaw.dev/agent-revision-id": "revision-builders-4"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "gateway-8e4329e7cb6f-rev-bb213dddb457"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-4",
+              "openclaw.dev/revision": "revision-builders-4",
+              "app.kubernetes.io/name": "gateway-8e4329e7cb6f-rev-bb213dddb457",
+              "openclaw.dev/workload-role": "gateway"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-4",
+              "openclaw.dev/configuration-id": "cfg_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/configuration-kind": "agent",
+              "openclaw.dev/configuration-generation": "5",
+              "openclaw.dev/agent-revision": "4",
+              "openclaw.dev/agent-revision-id": "revision-builders-4"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "gateway-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-configuration",
+                "configMap": {
+                  "name": "gateway-8e4329e7cb6f-rev-bb213dddb457",
+                  "items": [
+                    {
+                      "key": "openclaw.json",
+                      "path": "openclaw.json"
+                    }
+                  ],
+                  "optional": false
+                }
+              },
+              {
+                "name": "runtime-state",
+                "emptyDir": {
+                  "sizeLimit": "1Gi"
+                }
+              },
+              {
+                "name": "runtime-temporary",
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                }
+              },
+              {
+                "name": "openclaw-workspace",
+                "persistentVolumeClaim": {
+                  "claimName": "workspace-8e4329e7cb6f"
+                }
+              },
+              {
+                "name": "openclaw-gateway-state",
+                "persistentVolumeClaim": {
+                  "claimName": "gateway-state-8e4329e7cb6f"
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "prepare-private-state",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["node", "-e"],
+                "args": [
+                  "const { mkdirSync } = require(\"node:fs\");\nfor (const path of [\"/home/node/.openclaw\",\"/home/node/.openclaw/agents/main\",\"/home/node/.openclaw/codex-artifacts\",\"/home/node/openclaw-runtime-assets\",\"/gateway-state/state\",\"/gateway-state/agent\",\"/gateway-state/media\",\"/home/node/gateway-codex-home\"]) {\n  mkdirSync(path, { recursive: true });\n}"
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/gateway-state"
+                  }
+                ],
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "fsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "gateway",
+                "image": "gateway:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OPENCLAW_CONFIG_PATH",
+                    "value": "/etc/openclaw/openclaw.json"
+                  },
+                  {
+                    "name": "OPENCLAW_WORKSPACE_DIR",
+                    "value": "/home/node/workspace"
+                  },
+                  {
+                    "name": "APP_SERVER_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "transport-8e4329e7cb6f",
+                        "key": "app-server-token"
+                      }
+                    }
+                  },
+                  {
+                    "name": "APP_SERVER_URL",
+                    "value": "ws://agent-8e4329e7cb6f:18790"
+                  },
+                  {
+                    "name": "OPENCLAW_STATE_DIR",
+                    "value": "/home/node/.openclaw"
+                  },
+                  {
+                    "name": "OPENCLAW_GATEWAY_PORT",
+                    "value": "8080"
+                  },
+                  {
+                    "name": "MSTEAMS_APP_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "channel-8e4329e7cb6f",
+                        "key": "MSTEAMS_APP_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "HTTPS_PROXY",
+                    "value": "https://[2001:db8::15]:8443"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "http"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "node",
+                      "-e",
+                      "\nconst timeout = setTimeout(() => process.exit(1), 2_000);\nconst request = require(\"node:http\").get(\n  \"http://127.0.0.1:\" + process.env.OPENCLAW_GATEWAY_PORT + \"/readyz\",\n  (response) => {\n    response.resume();\n    clearTimeout(timeout);\n    process.exit(response.statusCode === 200 ? 0 : 1);\n  },\n);\nrequest.on(\"error\", () => process.exit(1));\n"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-configuration",
+                    "mountPath": "/etc/openclaw",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "runtime-temporary",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/workspace",
+                    "subPath": "workspace",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/agents/main/sessions",
+                    "subPath": "sessions",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+                    "subPath": "generated-images",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+                    "subPath": "bundled-skills",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+                    "subPath": "plugin-skills",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/state",
+                    "subPath": "state",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent",
+                    "subPath": "agent",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-gateway-state",
+                    "mountPath": "/home/node/.openclaw/media",
+                    "subPath": "media",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node/.openclaw/agents/main/agent/codex-home",
+                    "subPath": "gateway-codex-home"
+                  }
+                ],
+                "command": ["node", "-e"],
+                "args": [
+                  "\nconst { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } = require(\"node:fs\");\nconst { join } = require(\"node:path\");\nconst { spawn } = require(\"node:child_process\");\n\nconst runtimeAssetsDirectory = \"/home/node/openclaw-runtime-assets\";\n\nfunction clearDirectoryContents(directory) {\n  mkdirSync(directory, { recursive: true });\n  for (const entry of readdirSync(directory)) {\n    rmSync(join(directory, entry), { recursive: true, force: true });\n  }\n}\n\nfunction publishImageTree(source, destination, required) {\n  if (!existsSync(source)) {\n    if (required) {\n      throw new Error(\"Required runtime asset tree is missing: \" + source);\n    }\n    clearDirectoryContents(destination);\n    return;\n  }\n  if (!lstatSync(source).isDirectory()) {\n    throw new Error(\"Runtime asset tree is not a directory: \" + source);\n  }\n  if (required && readdirSync(source).length === 0) {\n    throw new Error(\"Required runtime asset tree is empty: \" + source);\n  }\n  mkdirSync(runtimeAssetsDirectory, { recursive: true });\n  clearDirectoryContents(destination);\n  cpSync(source, destination, { recursive: true });\n}\n\nfunction publishDedicatedGatewayRuntimeAssets() {\n  publishImageTree(\"/app/skills\", runtimeAssetsDirectory + \"/bundled-skills\", true);\n  publishImageTree(\"/app/plugin-skills\", runtimeAssetsDirectory + \"/plugin-skills\", false);\n}\n\nfunction forwardTermination(child) {\n  let terminating = false;\n  const forward = (signal) => {\n    if (terminating) return;\n    terminating = true;\n    child.kill(signal);\n    setTimeout(() => child.kill(\"SIGKILL\"), 8_000).unref();\n  };\n  process.on(\"SIGTERM\", () => forward(\"SIGTERM\"));\n  process.on(\"SIGINT\", () => forward(\"SIGINT\"));\n}\n\nmkdirSync(\"/home/node/.openclaw\", { recursive: true });\nmkdirSync(\"/home/node/workspace\", { recursive: true });\nif (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {\n  mkdirSync(process.env.OPENCLAW_WORKSPACE_DIR, { recursive: true });\n  publishDedicatedGatewayRuntimeAssets();\n}\ndelete process.env.OPENCLAW_LOG_LEVEL;\nconst child = spawn(\n  \"node\",\n  [\"/app/openclaw.mjs\", \"gateway\", \"--port\", process.env.OPENCLAW_GATEWAY_PORT],\n  { stdio: \"inherit\" },\n);\nforwardTermination(child);\nchild.on(\"exit\", (code, signal) => process.exit(code ?? (signal === \"SIGTERM\" ? 0 : 1)));\n"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "workspace": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "workspace-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteMany"],
+        "resources": {
+          "requests": {
+            "storage": "40Gi"
+          }
+        }
+      }
+    },
+    "mounts": {
+      "gateway": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/codex-artifacts/generated_images",
+          "subPath": "generated-images",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": false
+        }
+      ],
+      "agent": [
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.openclaw/agents/main/sessions",
+          "subPath": "sessions",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/.codex/generated_images",
+          "subPath": "generated-images",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+          "subPath": "bundled-skills",
+          "readOnly": true
+        },
+        {
+          "name": "openclaw-workspace",
+          "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+          "subPath": "plugin-skills",
+          "readOnly": true
+        }
+      ],
+      "embeddedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/workspace",
+          "subPath": "workspace",
+          "readOnly": false
+        }
+      ],
+      "dedicatedPrivate": [
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/state",
+          "subPath": "state",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/agents/main/agent",
+          "subPath": "agent",
+          "readOnly": false
+        },
+        {
+          "name": "openclaw-gateway-state",
+          "mountPath": "/home/node/.openclaw/media",
+          "subPath": "media",
+          "readOnly": false
+        }
+      ]
+    },
+    "directories": {
+      "gateway": [
+        "/home/node/.openclaw",
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.openclaw/codex-artifacts",
+        "/home/node/openclaw-runtime-assets"
+      ],
+      "agent": [
+        "/home/node/.openclaw/agents/main",
+        "/home/node/.codex",
+        "/home/node/openclaw-runtime-assets"
+      ]
+    },
+    "privateState": {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "gateway-state-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4"
+        }
+      },
+      "spec": {
+        "accessModes": ["ReadWriteOnce"],
+        "volumeMode": "Filesystem",
+        "storageClassName": "local-path",
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        }
+      }
+    },
+    "authenticationPolicy": {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "allow-agent-auth-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4",
+          "openclaw.dev/service-principal": "principal-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/service-principal-id": "principal-builders-4"
+        }
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "openclaw.dev/workload-role": "agent",
+            "openclaw.dev/agent": "agent-builders-4",
+            "openclaw.dev/revision": "revision-builders-4"
+          }
+        },
+        "policyTypes": ["Egress"],
+        "egress": [
+          {
+            "to": [
+              {
+                "ipBlock": {
+                  "cidr": "0.0.0.0/0",
+                  "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 443
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "routeWithoutUid": {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "HTTPRoute",
+      "metadata": {
+        "name": "gateway-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/agent-revision": "4",
+          "openclaw.dev/agent-revision-id": "revision-builders-4"
+        }
+      },
+      "spec": {
+        "hostnames": ["agents.example.internal"],
+        "parentRefs": [
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "openclaw-system",
+            "name": "oce-agent-gateways",
+            "sectionName": "https"
+          }
+        ],
+        "rules": [
+          {
+            "matches": [
+              {
+                "path": {
+                  "type": "Exact",
+                  "value": "/namespaces/ns_00000000-0000-4000-8000-000000000008/agents/agent-builders-4"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "type": "URLRewrite",
+                "urlRewrite": {
+                  "path": {
+                    "type": "ReplaceFullPath",
+                    "replaceFullPath": "/"
+                  }
+                }
+              },
+              {
+                "type": "RequestHeaderModifier",
+                "requestHeaderModifier": {
+                  "set": [
+                    {
+                      "name": "x-occ-identity",
+                      "value": "occ-workspace-files"
+                    },
+                    {
+                      "name": "x-real-ip",
+                      "value": "%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%"
+                    }
+                  ],
+                  "remove": ["x-forwarded-for", "forwarded", "x-openclaw-scopes"]
+                }
+              }
+            ],
+            "backendRefs": [
+              {
+                "group": "",
+                "kind": "Service",
+                "name": "gateway-builders",
+                "port": 8080
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "routeWithUid": {
+      "apiVersion": "gateway.networking.k8s.io/v1",
+      "kind": "HTTPRoute",
+      "metadata": {
+        "name": "gateway-8e4329e7cb6f",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/agent-revision": "4",
+          "openclaw.dev/agent-revision-id": "revision-builders-4"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "name": "gateway-builders",
+            "uid": "observed-service-uid",
+            "controller": false,
+            "blockOwnerDeletion": false
+          }
+        ]
+      },
+      "spec": {
+        "hostnames": ["agents.example.internal"],
+        "parentRefs": [
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "openclaw-system",
+            "name": "oce-agent-gateways",
+            "sectionName": "https"
+          }
+        ],
+        "rules": [
+          {
+            "matches": [
+              {
+                "path": {
+                  "type": "Exact",
+                  "value": "/namespaces/ns_00000000-0000-4000-8000-000000000008/agents/agent-builders-4"
+                }
+              }
+            ],
+            "filters": [
+              {
+                "type": "URLRewrite",
+                "urlRewrite": {
+                  "path": {
+                    "type": "ReplaceFullPath",
+                    "replaceFullPath": "/"
+                  }
+                }
+              },
+              {
+                "type": "RequestHeaderModifier",
+                "requestHeaderModifier": {
+                  "set": [
+                    {
+                      "name": "x-occ-identity",
+                      "value": "occ-workspace-files"
+                    },
+                    {
+                      "name": "x-real-ip",
+                      "value": "%DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT%"
+                    }
+                  ],
+                  "remove": ["x-forwarded-for", "forwarded", "x-openclaw-scopes"]
+                }
+              }
+            ],
+            "backendRefs": [
+              {
+                "group": "",
+                "kind": "Service",
+                "name": "gateway-builders",
+                "port": 8080
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "agentService": {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "agent-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4",
+          "openclaw.dev/service-principal": "principal-builders-4",
+          "openclaw.dev/revision": "revision-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/service-principal-id": "principal-builders-4",
+          "openclaw.dev/revision-id": "revision-builders-4"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "agent-builders"
+        },
+        "ports": [
+          {
+            "name": "websocket",
+            "port": 18790,
+            "targetPort": 18790
+          }
+        ]
+      }
+    },
+    "agentDeployment": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "agent-builders",
+        "namespace": "oce-ns-00000000-0000-4000-8000-000000000008-705f3988b560",
+        "labels": {
+          "app.kubernetes.io/managed-by": "openclaw-enterprise",
+          "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent": "agent-builders-4",
+          "openclaw.dev/service-principal": "principal-builders-4",
+          "openclaw.dev/revision": "revision-builders-4"
+        },
+        "annotations": {
+          "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+          "openclaw.dev/agent-id": "agent-builders-4",
+          "openclaw.dev/service-principal-id": "principal-builders-4",
+          "openclaw.dev/revision-id": "revision-builders-4"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "agent-builders"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/managed-by": "openclaw-enterprise",
+              "openclaw.dev/namespace": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent": "agent-builders-4",
+              "openclaw.dev/service-principal": "principal-builders-4",
+              "openclaw.dev/revision": "revision-builders-4",
+              "app.kubernetes.io/name": "agent-builders",
+              "openclaw.dev/workload-role": "agent"
+            },
+            "annotations": {
+              "openclaw.dev/namespace-id": "ns_00000000-0000-4000-8000-000000000008",
+              "openclaw.dev/agent-id": "agent-builders-4",
+              "openclaw.dev/service-principal-id": "principal-builders-4",
+              "openclaw.dev/revision-id": "revision-builders-4"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "agent-sa",
+            "automountServiceAccountToken": false,
+            "volumes": [
+              {
+                "name": "openclaw-service-principal",
+                "projected": {
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "audience": "openclaw-controller",
+                        "expirationSeconds": 900,
+                        "path": "token"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "runtime-state",
+                "emptyDir": {
+                  "sizeLimit": "1Gi"
+                }
+              },
+              {
+                "name": "runtime-temporary",
+                "emptyDir": {
+                  "sizeLimit": "64Mi"
+                }
+              },
+              {
+                "name": "openclaw-workspace",
+                "persistentVolumeClaim": {
+                  "claimName": "workspace-8e4329e7cb6f"
+                }
+              }
+            ],
+            "initContainers": [
+              {
+                "name": "prepare-private-state",
+                "image": "agent:local",
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["node", "-e"],
+                "args": [
+                  "const { mkdirSync } = require(\"node:fs\");\nfor (const path of [\"/home/node/.openclaw/agents/main\",\"/home/node/.codex\",\"/home/node/openclaw-runtime-assets\"]) {\n  mkdirSync(path, { recursive: true });\n}"
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  }
+                ],
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                }
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "runAsGroup": 1000,
+              "fsGroup": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "agent",
+                "image": "agent:local",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "OCE_SERVICE_PRINCIPAL_ID",
+                    "value": "principal-builders-4"
+                  },
+                  {
+                    "name": "LOG_FORMAT",
+                    "value": "json"
+                  },
+                  {
+                    "name": "RUST_LOG",
+                    "value": "info,codex_otel=off"
+                  },
+                  {
+                    "name": "APP_SERVER_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "transport-8e4329e7cb6f",
+                        "key": "app-server-token"
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "model-8e4329e7cb6f",
+                        "key": "OPENAI_API_KEY"
+                      }
+                    }
+                  },
+                  {
+                    "name": "CODEX_HOME",
+                    "value": "/home/node/.codex"
+                  },
+                  {
+                    "name": "HOME",
+                    "value": "/home/node"
+                  },
+                  {
+                    "name": "PATH",
+                    "value": "/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                  },
+                  {
+                    "name": "APP_SERVER_PORT",
+                    "value": "18790"
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 18790,
+                    "name": "websocket"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "node",
+                      "-e",
+                      "\nconst timeout = setTimeout(() => process.exit(1), 2_000);\nconst socket = new WebSocket(\"ws://127.0.0.1:\" + process.env.APP_SERVER_PORT, {\n  headers: { Authorization: \"Bearer \" + process.env.APP_SERVER_TOKEN },\n});\nsocket.addEventListener(\"open\", () => {\n  clearTimeout(timeout);\n  socket.close();\n  process.exit(0);\n});\nsocket.addEventListener(\"error\", () => process.exit(1));\n"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                  },
+                  "limits": {
+                    "cpu": "250m",
+                    "memory": "128Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": ["ALL"]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "openclaw-service-principal",
+                    "mountPath": "/var/run/secrets/openclaw/service-principal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/home/node"
+                  },
+                  {
+                    "name": "runtime-temporary",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/workspace",
+                    "subPath": "workspace",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.openclaw/agents/main/sessions",
+                    "subPath": "sessions",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/.codex/generated_images",
+                    "subPath": "generated-images",
+                    "readOnly": false
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/bundled-skills",
+                    "subPath": "bundled-skills",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "openclaw-workspace",
+                    "mountPath": "/home/node/openclaw-runtime-assets/plugin-skills",
+                    "subPath": "plugin-skills",
+                    "readOnly": true
+                  }
+                ],
+                "command": ["node", "-e"],
+                "args": [
+                  "\nconst { createHash } = require(\"node:crypto\");\nconst { mkdirSync } = require(\"node:fs\");\nconst { spawn, spawnSync } = require(\"node:child_process\");\n\nmkdirSync(process.env.CODEX_HOME, { recursive: true });\nmkdirSync(\"/home/node/workspace\", { recursive: true });\nconst accessToken = process.env.CODEX_ACCESS_TOKEN;\nconst workspaceId = process.env.CODEX_CHATGPT_WORKSPACE_ID;\nif (accessToken !== undefined && (!workspaceId || process.env.OPENAI_API_KEY !== undefined)) {\n  throw new Error(\"Codex service-account authentication configuration is invalid.\");\n}\nif (accessToken === undefined && workspaceId !== undefined) {\n  throw new Error(\"Codex service-account authentication configuration is invalid.\");\n}\nconst loginArguments = accessToken === undefined\n  ? [\"login\", \"--with-api-key\"]\n  : [\n      \"-c\",\n      \"cli_auth_credentials_store=file\",\n      \"-c\",\n      \"forced_chatgpt_workspace_id=\" + JSON.stringify(workspaceId),\n      \"login\",\n      \"--with-access-token\",\n    ];\nconst login = spawnSync(\"codex\", loginArguments, {\n  input: accessToken ?? process.env.OPENAI_API_KEY,\n  encoding: \"utf8\",\n  stdio: [\"pipe\", \"ignore\", \"pipe\"],\n});\nif (login.status !== 0) throw new Error(\"Codex model authentication initialization failed.\");\ndelete process.env.CODEX_ACCESS_TOKEN;\n\nfunction forwardTermination(child) {\n  let terminating = false;\n  const forward = (signal) => {\n    if (terminating) return;\n    terminating = true;\n    child.kill(signal);\n    setTimeout(() => child.kill(\"SIGKILL\"), 8_000).unref();\n  };\n  process.on(\"SIGTERM\", () => forward(\"SIGTERM\"));\n  process.on(\"SIGINT\", () => forward(\"SIGINT\"));\n}\n\nconst digest = createHash(\"sha256\").update(process.env.APP_SERVER_TOKEN).digest(\"hex\");\nconst child = spawn(\n  \"codex\",\n  [\n    \"-c\",\n    \"otel.exporter=\\\"none\\\"\",\n    \"-c\",\n    \"otel.log_user_prompt=false\",\n    \"app-server\",\n    \"--listen\",\n    \"ws://0.0.0.0:\" + process.env.APP_SERVER_PORT,\n    \"--ws-auth\",\n    \"capability-token\",\n    \"--ws-token-sha256\",\n    digest,\n  ],\n  { stdio: \"inherit\", cwd: \"/home/node/workspace\" },\n);\nforwardTermination(child);\nchild.on(\"exit\", (code, signal) => process.exit(code ?? (signal === \"SIGTERM\" ? 0 : 1)));\n"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

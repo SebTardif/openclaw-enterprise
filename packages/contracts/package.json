@@ -24,6 +24,7 @@
     "./drivers/iam": "./src/drivers/iam.ts",
     "./drivers/sandbox": "./src/drivers/sandbox.ts",
     "./drivers/service-account": "./src/drivers/service-account.ts",
+    "./configuration-errors": "./src/configuration-errors.ts",
     "./logging": "./src/logging.ts",
     "./secret-bindings": "./src/secret-bindings.ts",
     "./security-events": "./src/security-events.ts",
