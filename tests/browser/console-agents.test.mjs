@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { chromium } from "playwright";
-
 import { InMemoryPlatformState } from "../../packages/occ/src/index.ts";
 import { createConsoleAppFixture, providerFixtures } from "../helpers/console-app.mjs";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
+import { createConsoleBrowserFixture } from "../helpers/console-browser.mjs";
+
+const browserFixture = createConsoleBrowserFixture();
 
 async function artifactDirectory(t) {
   const configured = process.env.OCC_TEST_CONSOLE_ARTIFACT_DIR;
@@ -21,25 +22,9 @@ async function artifactDirectory(t) {
   return directory;
 }
 
-async function launchBrowser(t) {
-  const browserExecutable =
-    process.env.OCC_TEST_BROWSER_EXECUTABLE === undefined ||
-    process.env.OCC_TEST_BROWSER_EXECUTABLE.length === 0
-      ? undefined
-      : process.env.OCC_TEST_BROWSER_EXECUTABLE;
-  const browser = await chromium.launch({
-    ...(browserExecutable === undefined ? {} : { executablePath: browserExecutable }),
-    headless: true,
-  });
-  t.after(() => browser.close());
-  return browser;
-}
-
 async function newPage(t) {
   const artifacts = await artifactDirectory(t);
-  const browser = await launchBrowser(t);
-  const context = await browser.newContext();
-  t.after(() => context.close());
+  const context = await browserFixture.newContext(t);
   return { page: await context.newPage(), artifacts };
 }
 
