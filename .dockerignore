@@ -20,6 +20,11 @@ node_modules
 **/node_modules
 dist
 **/dist
+.build
+dataplane/target
+# Only verified native product binaries are image inputs.
+!.build/mvp/native/oce-dnsgate
+!.build/mvp/native/oce-egress
 coverage
 playwright-report
 test-results

@@ -10,6 +10,10 @@
   },
   "scripts": {
     "build": "tsc --build tsconfig.json --pretty false",
+    "build:mvp": "node scripts/build-mvp.mjs build",
+    "build:dataplane": "node scripts/build-mvp.mjs native",
+    "build:images": "node scripts/build-mvp.mjs images",
+    "test:build": "node --test tests/conformance/mvp-build.test.mjs",
     "typecheck": "tsc --build tsconfig.json --pretty false",
     "format:fix": "prettier --write \"{apps,packages,scripts,tests}/**/*.{ts,mjs,json,html,css}\" \"*.{json,yaml,yml,md}\" \"docs/**/*.md\" \"!docs/reference/api.md\"",
     "format:check": "prettier --check \"{apps,packages,scripts,tests}/**/*.{ts,mjs,json,html,css}\" \"*.{json,yaml,yml,md}\" \"docs/**/*.md\" \"!docs/reference/api.md\"",
