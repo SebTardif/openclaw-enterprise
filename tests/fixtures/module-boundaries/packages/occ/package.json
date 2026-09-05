@@ -1,0 +1,7 @@
+{
+  "name": "@openclaw-enterprise/occ",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

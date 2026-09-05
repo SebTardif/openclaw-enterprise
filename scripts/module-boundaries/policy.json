@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "description": "Checks active application/package source, including newly added leaves. Tests intentionally access implementation source and are outside this architecture graph. Package manifests own supported exports. Run node scripts/verify-module-boundaries.mjs; --json includes the complete graph. TypeScript must already be installed. Temporary exceptions must match an actual diagnostic exactly and are rejected when stale.",
+  "sourceRoots": ["apps/controller/src", "packages"],
+  "packages": [
+    "apps/controller",
+    "packages/utils",
+    "packages/contracts",
+    "packages/occ",
+    "packages/iam",
+    "packages/audit"
+  ],
+  "domainSources": [
+    "packages/contracts/src/**",
+    "packages/occ/src/**",
+    "apps/controller/src/worker/**"
+  ],
+  "domainInfrastructure": ["packages/occ/src/state/**", "packages/occ/src/auth-persistence/**"],
+  "implementationTargets": [
+    "packages/occ/src/state/**",
+    "packages/occ/src/auth-persistence/**",
+    "apps/controller/src/**"
+  ],
+  "implementationPackages": [
+    "pg",
+    "drizzle-orm",
+    "@kubernetes/client-node",
+    "dockerode",
+    "fastify"
+  ],
+  "httpSources": [
+    "apps/controller/src/index.ts",
+    "apps/controller/src/http/**",
+    "apps/controller/src/routes/**",
+    "apps/controller/src/channels/**"
+  ],
+  "providerRoots": [
+    "apps/controller/src/drivers/compute/docker",
+    "apps/controller/src/drivers/compute/kubernetes"
+  ],
+  "diagnosticLimit": 30
+}
