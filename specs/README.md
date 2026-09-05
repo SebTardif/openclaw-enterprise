@@ -90,3 +90,5 @@ Use the linked current references for supported behavior.
 | [Feature Spec: SecretDriver storage and delivery](.archive/14-secret-driver.md)                                                                          | Implemented and verified for Namespace-owned Secret storage and delivery; broader runtime limits recorded | [Kubernetes Secret Driver](../docs/reference/drivers/kubernetes-secret.md)                                                                           |
 
 - [Repository access modes](20-repository-access-modes.md): proposed native Git/gh and optional mediated/history-isolated contracts; implementation and acceptance outstanding.
+
+- [OpenShell and SPIFFE provider foundations](23-openshell-spiffe-provider-foundations.md): protocol correlation, local Workload API consumption, diagnostics and explicit remaining qualification.

@@ -371,33 +371,17 @@ function bridgeRequirements(context) {
   };
 }
 
-function protobufValue(value) {
-  if (value.structValue !== undefined) {
-    return Object.fromEntries(
-      Object.entries(value.structValue.fields).map(([name, entry]) => [name, protobufValue(entry)]),
-    );
-  }
-  if (value.listValue !== undefined) return value.listValue.values.map(protobufValue);
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.numberValue !== undefined) return value.numberValue;
-  if (value.boolValue !== undefined) return value.boolValue;
-  if (value.nullValue !== undefined) return null;
-  assert.fail("OpenShell driver_config contains an unsupported protobuf Struct value.");
-}
-
 function removeStockUnsupportedTokenProjection(request, requirements) {
   const compatible = structuredClone(request);
-  const kubernetes = compatible.spec.template.driver_config.fields.kubernetes.structValue.fields;
-  const volumes = kubernetes.volumes.listValue.values;
-  const volumeIndex = volumes.findIndex(
-    (volume) => volume.structValue.fields.name.stringValue === "openclaw-service-principal",
-  );
+  const kubernetes = compatible.spec.template.driver_config.kubernetes;
+  const volumes = kubernetes.volumes;
+  const volumeIndex = volumes.findIndex((volume) => volume.name === "openclaw-service-principal");
   assert.notEqual(
     volumeIndex,
     -1,
     "production OpenShell request must include the Enterprise token.",
   );
-  assert.deepEqual(protobufValue(volumes[volumeIndex]), {
+  assert.deepEqual(volumes[volumeIndex], {
     name: "openclaw-service-principal",
     projected: {
       sources: [
@@ -413,14 +397,10 @@ function removeStockUnsupportedTokenProjection(request, requirements) {
   });
   volumes.splice(volumeIndex, 1);
 
-  const mounts =
-    kubernetes.containers.structValue.fields.agent.structValue.fields.volume_mounts.listValue
-      .values;
-  const mountIndex = mounts.findIndex(
-    (mount) => mount.structValue.fields.name.stringValue === "openclaw-service-principal",
-  );
+  const mounts = kubernetes.containers.agent.volume_mounts;
+  const mountIndex = mounts.findIndex((mount) => mount.name === "openclaw-service-principal");
   assert.notEqual(mountIndex, -1, "production OpenShell request must mount the Enterprise token.");
-  assert.deepEqual(protobufValue(mounts[mountIndex]), {
+  assert.deepEqual(mounts[mountIndex], {
     name: "openclaw-service-principal",
     mount_path: requirements.serviceAccountToken.mountPath,
     read_only: true,
@@ -503,12 +483,15 @@ async function operatorProjectServicePrincipalToken(operatorKubernetes, context,
 }
 
 function projectedTokenGatewayClient(
-  GrpcOpenShellGatewayClient,
+  GoOpenShellGatewayClient,
   endpoint,
   operatorKubernetes,
   context,
 ) {
-  const gateway = new GrpcOpenShellGatewayClient({ endpoint });
+  const gateway = new GoOpenShellGatewayClient({
+    endpoint,
+    binaryPath: process.env.OCC_RUNTIME_SECURITY_BINARY,
+  });
   return {
     health(signal) {
       return gateway.health(signal);
@@ -532,7 +515,7 @@ function projectedTokenGatewayClient(
 
 function createIntegrationSandboxDriverFactory(
   OpenShellSandboxDriver,
-  GrpcOpenShellGatewayClient,
+  GoOpenShellGatewayClient,
   operatorKubernetes,
 ) {
   const gatewayState = new Map();
@@ -578,6 +561,9 @@ function createIntegrationSandboxDriverFactory(
     function optionsFor(requirements, namespaceName, endpoint) {
       const options = structuredClone(selection.configuration);
       options.gateway.endpoint = endpoint;
+      // Every lifecycle phase must exercise the selected native build, including cleanup.
+      options.gateway.binaryPath =
+        process.env.OCC_RUNTIME_SECURITY_BINARY ?? options.gateway.binaryPath;
       options.gateway.readiness = {
         ...options.gateway.readiness,
         serviceName: `openshell-${hash(namespaceName, 10)}`,
@@ -603,7 +589,7 @@ function createIntegrationSandboxDriverFactory(
           ? {}
           : {
               gatewayClient: projectedTokenGatewayClient(
-                GrpcOpenShellGatewayClient,
+                GoOpenShellGatewayClient,
                 endpoint,
                 operatorKubernetes,
                 context,
@@ -750,7 +736,7 @@ async function prepareProductionInstallation(context) {
     { createControllerWorker },
     { kubernetesNamespaceName },
     { OpenShellSandboxDriver },
-    { GrpcOpenShellGatewayClient },
+    { GoOpenShellGatewayClient },
     { KubeConfig, KubernetesObjectApi },
   ] = await Promise.all([
     import("pg"),
@@ -788,7 +774,7 @@ async function prepareProductionInstallation(context) {
     environment: { OCC_CONFIG_PATH: startupPath },
     createSandboxDriver: createIntegrationSandboxDriverFactory(
       OpenShellSandboxDriver,
-      GrpcOpenShellGatewayClient,
+      GoOpenShellGatewayClient,
       operatorKubernetes,
     ),
   });

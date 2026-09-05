@@ -29,3 +29,6 @@ output/playwright
 tests/
 specs/
 docs/
+
+# Native executables are compiled inside the selected Go builder.
+components/runtime-security/bin/
