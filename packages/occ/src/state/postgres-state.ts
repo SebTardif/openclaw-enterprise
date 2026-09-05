@@ -3,6 +3,11 @@ import { createPostgresChannelBindingRepository } from "./postgres/channel-bindi
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
+import {
+  createPostgresTurnJournal,
+  type PostgresTurnJournalOptions,
+} from "../turn-journal/postgres.ts";
+import { TurnJournalTransactionGuard } from "../turn-journal/transaction-guard.ts";
 import { createRuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 import { parseRuntimeServiceTrustRecord } from "../runtime-authority/service-trust-schema.ts";
 import {
@@ -110,6 +115,7 @@ export interface PersistedNativeIAMState {
 
 export interface PostgresPlatformStateOptions {
   readonly bootstrapNativeIAM?: PersistedNativeIAMState;
+  readonly turnJournal?: PostgresTurnJournalOptions;
 }
 
 export interface PersistedNativeIAMPrincipalSeed {
@@ -124,6 +130,7 @@ interface TransactionContext {
   readView?: PlatformReadView;
   readonly lifetime: RepositoryTransactionLifetime;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
+  readonly journalGuard: TurnJournalTransactionGuard;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -566,11 +573,13 @@ function permissions(value: unknown): readonly Permission[] {
 export class PostgresPlatformState implements PlatformStateStore {
   readonly auditSink: PlatformAuditSink;
   private readonly pool: PostgresPool;
+  private readonly turnJournal: PostgresTurnJournalOptions | undefined;
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
     this.pool = pool;
+    this.turnJournal = options.turnJournal;
     this.bootstrapNativeIAM = options.bootstrapNativeIAM;
     this.auditSink = {
       append: async (event) => this.transact(async (state) => state.audit.append(event)),
@@ -959,6 +968,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     let unit: PlatformUnitOfWork | undefined;
     let context: TransactionContext | undefined;
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
+    const journalGuard = new TurnJournalTransactionGuard();
     const onTransportError = () => {
       discardClient = true;
     };
@@ -1004,17 +1014,20 @@ export class PostgresPlatformState implements PlatformStateStore {
       context = {
         lifetime,
         authorityGuard,
+        journalGuard,
         client,
         installation: undefined,
         installationLoaded: false,
       };
       unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
+      journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
       const running = Promise.resolve().then(() => work(unit!, activeContext));
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
       await lifetime.finish();
       await authorityGuard.finish();
+      await journalGuard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
       committing = true;
       const acknowledgement = await raw.query("COMMIT");
@@ -1022,12 +1035,20 @@ export class PostgresPlatformState implements PlatformStateStore {
       started = false;
       if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
         throw new DependencyUnavailableError("The database transaction did not commit.");
+      // Claims stay provisional through every nested callback and uncertain COMMIT.
+      // This marker performs no external work; initiation waits for the outer return.
+      if (!readOnly) journalGuard.confirmCommitted();
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
       await lifetime.finish();
       try {
         await authorityGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
+      try {
+        await journalGuard.finish();
       } catch {
         /* Preserve the original failure. */
       }
@@ -1042,6 +1063,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      journalGuard.close();
       lifetime.close();
       closed = true;
       if (timer !== undefined) clearTimeout(timer);
@@ -2313,7 +2335,33 @@ export class PostgresPlatformState implements PlatformStateStore {
       runtimeAssignments,
       context.authorityGuard,
     );
+    const turnJournal =
+      this.turnJournal === undefined
+        ? undefined
+        : createPostgresTurnJournal(
+            {
+              get scope() {
+                context.lifetime.assertActive();
+                if (context.installation === undefined)
+                  throw new ScopeViolationError(
+                    "The server-owned Installation has not been initialized.",
+                  );
+                return { installationId: context.installation.id };
+              },
+              transaction: { assertActive: () => context.lifetime.assertActive() },
+              query: { query: (statement, parameters) => client.query(statement, parameters) },
+              currentInstallation: async () => {
+                context.lifetime.assertActive();
+                const installation = await this.currentInstallation(context);
+                context.lifetime.assertActive();
+                return installation;
+              },
+              guard: context.journalGuard,
+            },
+            this.turnJournal,
+          );
     return {
+      ...(turnJournal === undefined ? {} : { turnJournal }),
       runtimeAuthority,
       runtimeServiceTrust,
       channelBindings: serializeChannelBindingMutations(channelBindings),
