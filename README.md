@@ -11,6 +11,7 @@ Requires Docker Engine with Docker Compose, Bash, `curl`, and Python 3. Start
 the local stack and run with:
 
 ```bash
+# Set GO_BASE_IMAGE to an approved digest-pinned Go 1.26+ builder image first.
 ./scripts/dev-up
 ```
 

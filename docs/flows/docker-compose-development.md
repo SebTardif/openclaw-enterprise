@@ -98,6 +98,11 @@ explicitly to pick up package changes. The runtime recipe owns packaged channel
 plugins and gateway/Codex compatibility checks; `dev-up` does not install
 missing plugins or verify a model turn.
 
+The development controller image also compiles the Go runtime-security module.
+Set `GO_BASE_IMAGE` to an approved digest-pinned Go 1.26 or newer builder;
+Compose passes this build argument to the native build stage. Its executable is
+included in the controller image for OpenShell and identity diagnostics.
+
 ### 2. compose.yaml:services.postgres and services.migrate
 
 `compose.yaml:services.postgres`, `compose.yaml:services.migrate`

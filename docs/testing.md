@@ -596,3 +596,47 @@ remain; provider-account cleanup failures require explicit follow-up.
 - [Deployment guide](guides/deploy.md)
 - [Runtime image recipe](../deploy/runtime/README.md)
 - [Contributor integration boundaries](../AGENTS.md#running-integration-tests)
+
+## OpenShell and SPIFFE Go components
+
+Build and check the native implementation before exercising the controller
+adapter:
+
+```sh
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+go -C components/runtime-security test -race ./...
+go -C components/runtime-security vet ./...
+```
+
+Native wire tests require local socket creation. The controller adapter's tests
+must invoke the actual compiled executable. The [module README](../components/runtime-security/README.md)
+and [identity reference](reference/workload-identity.md) explain the native
+command and local identity boundary.
+
+For genuine provider interoperability, provision SPIRE and a registration for
+the actual Go test process, then select:
+
+```sh
+OCC_TEST_SPIFFE_SOCKET_PATH=/run/spire/agent.sock \
+OCC_TEST_SPIFFE_ID=spiffe://example.org/controller \
+OCC_TEST_SPIFFE_AUDIENCE=oce-local-test \
+go -C components/runtime-security test ./identity -run TestRealSPIRE -count=1
+```
+
+Any of these settings selects the real test and requires all three. Without
+them it skips explicitly. Keep native local SPIRE proof separate from actual
+Kubernetes/OpenShell/Kata guest attestation and current runtime authorization.
+The earlier TypeScript implementation's tests are historical checkpoint
+receipts, not validation of the native components.
+
+Run the native controller process tests from the repository root:
+
+```sh
+node --test tests/integration/openshell-native-bridge.test.mjs tests/integration/sandbox-driver-startup.test.mjs
+```
+
+The process suite compiles the Go executable into a temporary directory by
+default. To verify an existing build, set `OCC_RUNTIME_SECURITY_BINARY` to its
+absolute path. The actual native command runs in both cases; local socket
+permissions are required. Production image checks additionally inspect the
+packaged executable and its third-party license/version records.

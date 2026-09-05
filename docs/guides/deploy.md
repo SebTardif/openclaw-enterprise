@@ -8,7 +8,9 @@ root. Startup needs no model credential.
 
 Prerequisites: Docker Engine with Docker Compose, socket access, Bash, `curl`,
 Python 3, and a combined local runtime image or permission for the helper to
-build `openclaw-enterprise-runtime:quickstart`.
+build `openclaw-enterprise-runtime:quickstart`. Set `GO_BASE_IMAGE` in your
+environment or Compose `.env` to an approved digest-pinned Go 1.26 or newer
+builder image for the native controller components.
 
 ```bash
 ./scripts/dev-up
@@ -94,7 +96,11 @@ Build and push two images to a registry your cluster can access:
 | Controller | Root [`Dockerfile`](../../Dockerfile), target `runtime`                                                | API, worker, migration, and bootstrap            |
 | Runtime    | [`deploy/runtime/Dockerfile`](../../deploy/runtime/Dockerfile), installing OpenClaw and Codex from npm | Gateways and Agents (the same image serves both) |
 
-You need Docker with Buildx and registry push access. Replace the example
+You need Docker with Buildx and registry push access. Select an approved,
+digest-pinned Go builder image with Go 1.26 or newer and export `GO_BASE_IMAGE`.
+The controller build compiles the native OpenShell/SPIFFE executable and copies
+it into both controller image targets; the builder has no floating default.
+Replace the example
 registry and repository, and select the platform matching your Kubernetes
 nodes. The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
 which also documents package-version overrides.
@@ -113,10 +119,12 @@ export OCC_IMAGE_REPOSITORY='registry.example.com/your-team/openclaw-enterprise'
 export OCC_IMAGE_TAG="$(git rev-parse HEAD)"
 export OCC_IMAGE_PLATFORM='linux/amd64'
 export NODE_BASE_IMAGE='node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584'
+export GO_BASE_IMAGE='registry.example.com/approved/golang@sha256:<approved-digest>'
 docker login registry.example.com
 
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" --target runtime \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
+  --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" .
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
@@ -356,11 +364,13 @@ export KUBECONFIG_FILE="$OCC_EXAMPLE_DIRECTORY/kubeconfig"
 export CONTEXT="k3d-$CLUSTER"
 ```
 
-Build and import the images:
+Build and import the images. Set `GO_BASE_IMAGE` to an approved digest-pinned
+Go 1.26 or newer builder as described above:
 
 ```bash
 docker build --target runtime \
   --build-arg NODE_BASE_IMAGE=node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584 \
+  --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "localhost/$CLUSTER/controller:local" .
 docker build -f deploy/runtime/Dockerfile \
   -t "localhost/$CLUSTER/runtime:local" deploy/runtime
@@ -1082,3 +1092,28 @@ If the Installation selects the ChatGPT Provider, create `occ-chatgpt-admin`
 with `--from-file=admin-key=/secure/occ/occ-chatgpt-admin-key` and enable the
 matching Provider/ServiceAccount Driver settings in native values and
 Installation YAML.
+
+## Check a local workload identity provider
+
+The SPIFFE Workload API component can verify that the current process receives
+its exact configured identity from an operator-trusted local SPIRE Agent.
+Prepare the provider and register this process through the provider's approved
+registration mechanism. For a source checkout, build the diagnostic first;
+the controller image already includes `/usr/local/bin/oce-runtime-security`:
+
+```sh
+go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security
+./components/runtime-security/bin/oce-runtime-security identity check \
+  --socket-path /run/spire/agent.sock \
+  --spiffe-id spiffe://example.org/oce/diagnostic \
+  --audience oce-diagnostic
+```
+
+The optional audience adds JWT issuance and provider-side validation. The command
+prints identity and expiry metadata only; it never prints SVID keys or tokens.
+It exits nonzero for an unavailable endpoint, wrong identity or failed
+validation. It does not alter registrations, select this provider for controller
+transport, or establish guest attestation or runtime readiness. See
+[workload identity](../reference/workload-identity.md) for the source API, limits
+and troubleshooting, and [OpenShell](../reference/drivers/openshell-sandbox.md)
+for the remaining launch requirements.
