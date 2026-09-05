@@ -125,6 +125,24 @@ storage. Sign-in returns only `{ authenticated: true }`; the session token stays
 in its HttpOnly cookie and is omitted from session-inspection responses. Sign-out
 revokes the session, and public signup is disabled.
 
+The public sign-in wrapper checks browser Origin, then
+[`sign-in-quota.ts`](../../apps/controller/src/auth/sign-in-quota.ts) atomically
+reserves a source budget and a source/email budget before calling Better Auth's
+server API. The source comes from the actual transport socket, and account
+normalization does not perform an account lookup. PostgreSQL authentication uses
+the same database for shared fixed-slot accounting across controller instances.
+Ordered row locks and database time decide both reservations together; denial
+does not extend their refill debt. The in-memory auth fixture has local accounting
+only. Better Auth's HTTP-router rate hooks are not the admission boundary for
+these direct server API calls.
+
+An exhausted budget returns a generic `429` with `Retry-After: 12`. A quota
+dependency error returns `503` with `Retry-After: 1`; neither path enters account
+or password work. Timed-out or uncertain transactions discard their connections,
+and late pool acquisitions never continue authentication. The
+[authentication reference](../reference/authentication.md#sign-in-quotas) owns
+the exact budgets, storage bounds, proxy behavior, and clock/topology limits.
+
 ### 4. Admit and authorize protected API calls
 
 `apps/controller/src/index.ts:createFastifyApp` validates the session, resolves
@@ -145,6 +163,14 @@ IAM or audit failure rolls back the provisioning; accounts never receive
 implicit permissions.
 
 ## Debugging and Verification
+
+- `node --test tests/integration/sign-in-quota.test.mjs` exercises the actual
+  Fastify sign-in route with in-memory auth and delegating account/password
+  observers. `node --test tests/integration/postgres-sign-in-quota.test.mjs` with
+  `OCC_TEST_DATABASE_URL` separately verifies the actual shared store and two
+  loopback HTTP listeners, elapsed refill, bounded contention/outage responses,
+  limited-role constraints, and a real backend disconnect. No configured
+  database means an explicit skip, not persistence evidence.
 
 - `node --test tests/integration/postgres-production-wireup.test.mjs` with
   `OCC_PRODUCTION_WIREUP_DATABASE_URL` proves actual bootstrap, protected random
