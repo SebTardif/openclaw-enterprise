@@ -36,6 +36,7 @@ test("the build plan excludes image and live targets and shares native prerequis
     "native-dns",
     "native-tls",
     "native",
+    "egress-packages",
     "image-egress",
     "images",
   ]);

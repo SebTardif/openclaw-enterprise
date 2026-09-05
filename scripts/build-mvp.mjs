@@ -359,6 +359,7 @@ async function buildImage(kind) {
     `${controller ? "NODE_BASE_IMAGE" : "EGRESS_BASE_IMAGE"}=${base}`,
   ];
   if (controller) args.push("--target", "runtime");
+  else args.push("--network=none");
   args.push(".");
   await runCommand("docker", args);
   await verifyFile(idFile);
@@ -396,6 +397,14 @@ async function checkRuntimeImage() {
     throw new Error("The prepared runtime image must match this build's Linux platform.");
 }
 
+async function prepareEgressPackages() {
+  const script = join(repositoryRoot, "deploy/egress/download-packages.mjs");
+  await verifyFile(script);
+  await verifyFile(join(repositoryRoot, "deploy/egress/runtime-packages.lock.json"));
+  await runCommand(process.execPath, [script]);
+  await verifyFile(join(outputRoot, "egress-debs/SHA256SUMS"));
+}
+
 const targets = {
   "check-types": {
     deps: [],
@@ -431,8 +440,14 @@ const targets = {
     description: "Build the controller image with an explicit pinned Node base and output tag.",
     run: () => buildImage("controller"),
   },
+  "egress-packages": {
+    deps: [],
+    description:
+      "Prepare the locked Debian package inputs with the reviewed downloader; network may be used.",
+    run: prepareEgressPackages,
+  },
   "image-egress": {
-    deps: ["native"],
+    deps: ["native", "egress-packages"],
     description: "Build the egress image from native outputs with an explicit pinned base and tag.",
     run: () => buildImage("egress"),
   },

@@ -82,8 +82,10 @@ image to verify runtime library compatibility before deployment.
 
 ## Image builds
 
-Image construction is explicitly selected and may use the network. In
-particular, the existing controller Dockerfile installs production dependencies.
+Image construction is explicitly selected and may use the network. The egress
+package preparation step downloads the locked Debian dependency inputs outside
+Docker; its image build uses `--network=none`. The existing controller Dockerfile
+installs production dependencies during its separately selected image build.
 It is not part of `pnpm build:mvp` or `pnpm build:dataplane`.
 
 The image graph takes a separately prepared OpenClaw/Codex runtime image. It
@@ -110,18 +112,25 @@ build.
 pnpm build:images
 ```
 
-| Target             | Prerequisites and image recipe                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `runtime-image`    | Verify the selected local runtime digest reference and platform.                                                                                       |
-| `image-controller` | `check-types`, then the root `Dockerfile`'s `runtime` stage with `NODE_BASE_IMAGE` set explicitly.                                                     |
-| `image-egress`     | `native`, then `deploy/egress/Dockerfile` with `EGRESS_BASE_IMAGE` set explicitly and both verified native executables available in the build context. |
-| `images`           | `runtime-image`, `image-controller`, and `image-egress`.                                                                                               |
+| Target             | Prerequisites and image recipe                                                                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime-image`    | Verify the selected local runtime digest reference and platform.                                                                                                                   |
+| `image-controller` | `check-types`, then the root `Dockerfile`'s `runtime` stage with `NODE_BASE_IMAGE` set explicitly.                                                                                 |
+| `egress-packages`  | Run the checked-in `deploy/egress/download-packages.mjs` with `runtime-packages.lock.json`; require the resulting `.build/mvp/egress-debs/SHA256SUMS`.                             |
+| `image-egress`     | `native` and `egress-packages`, then `deploy/egress/Dockerfile` with `EGRESS_BASE_IMAGE` and `--network=none`, using the verified native executables and prepared Debian packages. |
+| `images`           | `runtime-image`, `image-controller`, and `image-egress`.                                                                                                                           |
 
 The individual image targets require only their own base and output tag. Images
 are built for the host Linux platform with `--pull=false`; a missing base may
 still need to be obtained by Docker during the explicitly selected image build.
 The graph does not push images, load them into Kubernetes, apply networking,
 install capabilities on the host, or deploy resources.
+
+Egress package preparation requires the checked-in downloader and lockfile.
+Missing preparation code or a missing checksum manifest fails explicitly. The
+Docker context includes only the two selected native executables, prepared
+`.deb` files, and their `SHA256SUMS` from `.build/mvp`; other local build outputs
+remain excluded.
 
 After a build, `.build/mvp/controller.image-id` and
 `.build/mvp/egress.image-id` contain Docker image IDs. The output tag and platform
