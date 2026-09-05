@@ -15,7 +15,7 @@ The Dockerfile installs only public npm packages:
 | `OPENCLAW_VERSION`              | `2026.7.1`                                                                                 |
 | `OPENCLAW_CODEX_PLUGIN_VERSION` | `2026.7.1-1`                                                                               |
 | `OPENCLAW_SLACK_PLUGIN_VERSION` | `2026.7.1`                                                                                 |
-| `OPENAI_CODEX_VERSION`          | `0.147.0`                                                                                  |
+| `OPENAI_CODEX_VERSION`          | `0.153.0`                                                                                  |
 
 Build it from the repository root:
 
