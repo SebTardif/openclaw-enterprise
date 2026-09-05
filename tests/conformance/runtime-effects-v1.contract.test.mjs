@@ -54,6 +54,41 @@ test("all primary requests and positive representation branches round-trip throu
   }
 });
 
+test("retained cleanup binds the execution to its exact cluster, namespace and Deployment", () => {
+  const valid = v.stopRequest();
+  const terminated = (request) => ({
+    ...v.appliedResult(request),
+    termination: {
+      status: "terminated",
+      execution: { target: request.effect.target, binding: request.binding },
+      terminationEvidence: v.evidence("termination"),
+    },
+  });
+  assert.equal(exchange(valid, terminated(valid)).termination.status, "terminated");
+  for (const field of ["clusterRef", "kubernetesNamespaceUid", "deploymentUid"]) {
+    const wrong = v.stopRequest();
+    wrong.binding[field] = "different-instance";
+    assert.throws(() => v.signRequest(wrong), field);
+    rejects("stopRetainingState", wrong);
+    assert.throws(() => exchange(wrong, terminated(wrong)), field);
+  }
+  const replacement = v.stopRequest();
+  replacement.binding = v.binding(2);
+  assert.throws(() => v.signRequest(replacement));
+  rejects("stopRetainingState", replacement);
+  assert.throws(() => exchange(replacement, terminated(replacement)));
+
+  const route = v.stopRequest();
+  route.effect.target = v.target(2);
+  route.providerTarget = v.providerTarget(2, "Service");
+  route.predicate = v.expectedObject(2, "Service");
+  route.binding = v.binding(2);
+  v.signRequest(route);
+  assert.notEqual(route.predicate.uid, route.binding.deploymentUid);
+  parse("stopRetainingState", route);
+  exchange(route, terminated(route));
+});
+
 test("unknown create retains the original locator and permits only exact readback", () => {
   const request = v.createRequest();
   const result = exchange(request, v.unknownResult(request));
@@ -426,6 +461,28 @@ test("workspace association is exact and configuration objects cannot satisfy mo
   rejects("storeResult", wrongKind);
 });
 
+test("observed mount paths preserve the shared admitted 512-character limit", () => {
+  for (const length of [201, 512]) {
+    const mount = v.storeResult();
+    const path = "a".repeat(length);
+    mount.store.approvedSubpaths[0].relativePath = path;
+    mount.mount.subpaths[0].relativePath = path;
+    assert.equal(
+      JSON.stringify(parseJson("storeBinding", JSON.stringify(mount.store))),
+      JSON.stringify(mount.store),
+    );
+    assert.equal(
+      JSON.stringify(parseJson("storeResult", JSON.stringify(mount))),
+      JSON.stringify(mount),
+    );
+  }
+  const tooLong = v.storeResult();
+  tooLong.store.approvedSubpaths[0].relativePath = "a".repeat(513);
+  tooLong.mount.subpaths[0].relativePath = "a".repeat(513);
+  rejects("storeBinding", tooLong.store);
+  rejects("storeResult", tooLong);
+});
+
 test("immutable store policy does not contain a successor mount; observed subpaths must match", () => {
   const store = v.store();
   store.approvedSubpaths[0].mountIdentityRef = "runtime-mount";
@@ -557,6 +614,72 @@ test("exact candidate observation rejects same-name changed UID and noncreate ef
   const candidate = v.candidate();
   candidate.responsibility = v.responsibility("retained-stop");
   rejects("observationInput", candidate);
+});
+
+test("writable candidate observations require exact prior-writer reservation and store scope", () => {
+  const candidate = v.copy(v.candidate());
+  candidate.preparation = {
+    kind: "writable",
+    preparationRef: v.uuid(60),
+    preparationVersion: 1,
+    admittedProfileDigest: v.digest(4),
+    priorWriterEvidence: v.copy(v.noWriterRef()),
+  };
+  assert.equal(
+    JSON.stringify(parseJson("observationInput", JSON.stringify(candidate))),
+    JSON.stringify(candidate),
+  );
+  const malformed = [
+    [
+      "foreign reservation",
+      (ref) => {
+        ref.reservation.scope.agentId = `agt_${v.uuid(999)}`;
+      },
+    ],
+    [
+      "foreign workspace",
+      (ref) => {
+        ref.workspaceStore.scope.agentId = `agt_${v.uuid(999)}`;
+      },
+    ],
+    [
+      "missing workspace",
+      (ref) => {
+        ref.workspaceStore.bindingRef = "missing-from-stores";
+      },
+    ],
+    [
+      "mixed store scope",
+      (ref) => {
+        const foreign = v.copy(ref.stores[0]);
+        foreign.bindingRef = "foreign-store";
+        foreign.scope.agentId = `agt_${v.uuid(999)}`;
+        ref.stores.push(foreign);
+      },
+    ],
+    [
+      "duplicate store",
+      (ref) => {
+        ref.stores.push(v.copy(ref.stores[0]));
+      },
+    ],
+    [
+      "conflicting store",
+      (ref) => {
+        const conflict = v.copy(ref.stores[0]);
+        conflict.bindingVersion += 1;
+        ref.stores.push(conflict);
+      },
+    ],
+  ];
+  for (const [name, corrupt] of malformed) {
+    const wrong = v.copy(candidate);
+    corrupt(wrong.preparation.priorWriterEvidence);
+    assert.throws(() => parse("observationInput", wrong), name);
+    const result = v.completeObservation();
+    result.input = wrong;
+    assert.throws(() => parse("observationResult", result), name);
+  }
 });
 
 test("no-writer closure requires the named producer/capability and coherent journal attempt", () => {

@@ -634,7 +634,8 @@ export const StoreBindingResultSchemaV1 = Type.Union([
       subpaths: Type.Array(
         object({
           category: ref,
-          relativePath: ref,
+          relativePath:
+            StoreBindingSchemaV1.anyOf[0].properties.approvedSubpaths.items.properties.relativePath,
           readOnly: Type.Boolean(),
           mountIdentityRef: ref,
         }),
@@ -953,18 +954,24 @@ function guardPlan(guard: RuntimeGateGuardV1, plan: RuntimeClosedPlanV1): void {
     [plan.planRef, plan.planVersion, plan.planDigest],
   );
 }
+function checkWriterRefScope(
+  value: Static<typeof PriorWriterEvidenceRefSchemaV1>,
+  expectedScope: RuntimeAuthorityScopeV1,
+): void {
+  equal(value.reservation.scope, expectedScope);
+  equal(value.workspaceStore.scope, expectedScope);
+  unique(value.stores, (store) => store.bindingRef);
+  if (!value.stores.some((store) => canonical(store) === canonical(value.workspaceStore)))
+    invalid();
+  for (const store of value.stores) equal(store.scope, expectedScope);
+}
 function checkWriterRef(
   value: Static<typeof PriorWriterEvidenceRefSchemaV1>,
   input: RuntimeEffectRequestV1,
 ): void {
-  equal(value.reservation.scope, input.gate.scope);
-  equal(value.workspaceStore.scope, input.gate.scope);
+  checkWriterRefScope(value, input.gate.scope);
   equal(value.closedPlanDigest, input.gate.planDigest);
   equal(value.admittedChildCutoff, input.gate.admittedChildCutoff);
-  unique(value.stores, (store) => store.bindingRef);
-  if (!value.stores.some((store) => canonical(store) === canonical(value.workspaceStore)))
-    invalid();
-  for (const store of value.stores) equal(store.scope, input.gate.scope);
 }
 function checkEffectInput(input: RuntimeEffectRequestV1): void {
   guardPlan(input.gate, input.plan);
@@ -1057,6 +1064,11 @@ function checkEffectInput(input: RuntimeEffectRequestV1): void {
       input.predicate.kind !== "expected-object"
     )
       invalid();
+    equal(input.binding.clusterRef, input.providerTarget.clusterRef);
+    equal(input.binding.kubernetesNamespaceUid, input.providerTarget.kubernetesNamespaceUid);
+    // Routing object UIDs identify the route, not the execution's Deployment.
+    if (input.providerTarget.apiKind === "Deployment")
+      equal(input.binding.deploymentUid, input.predicate.uid);
     // Permanent execution-root reservations must survive arbitrarily delayed initial POSTs.
     if (input.action === "remove-exact" && input.providerTarget.apiKind === "Deployment") invalid();
     for (const store of input.retainedStores) equal(store.scope, scopeOf(input.effect.target));
@@ -1356,6 +1368,8 @@ function intrinsic(input: unknown): void {
     equal(value.responsibility, value.createEffect.effect.responsibility);
     if (value.responsibility.kind !== "preparation") invalid();
     exactProvider(value.createEffect.providerTarget, value.target);
+    if (value.preparation.kind === "writable")
+      checkWriterRefScope(value.preparation.priorWriterEvidence, scopeOf(value.target));
   }
   if ("canonicalRequestJson" in r) {
     const child = r as RuntimePreparedChildV1;
