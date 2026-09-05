@@ -178,6 +178,49 @@ selected SandboxDriver facets are pinned at admission and enforced by the
 selected Driver. See the [SandboxDriver contract](drivers/sandbox.md) for
 provider-specific preparation and failure boundaries.
 
+## Worker implementation and verification
+
+[ControllerWorker](../../apps/controller/src/worker.ts) retains the public
+construction, startup, shutdown, and selected Driver lifecycle. It composes seven
+internal modules. The [runner](../../apps/controller/src/worker/runner.ts) polls,
+recovers stale claims, dispatches work, and reports health.
+[Namespace reconciliation](../../apps/controller/src/worker/namespaces.ts) and
+[revision reconciliation](../../apps/controller/src/worker/revisions.ts) preserve
+the exact claim, original actor, resource scope, and immutable admission checks.
+[Revision inputs](../../apps/controller/src/worker/revision-inputs.ts) resolve
+current authorization, Provider bindings, and scoped Secret projections;
+[cleanup](../../apps/controller/src/worker/cleanup.ts) performs the ordered
+activation, predecessor retirement, and maintenance effects.
+
+Each effect uses [LeasedEffects](../../apps/controller/src/worker/leased-effect.ts)
+to renew the claim before calling the Driver and serialize periodic heartbeats.
+Claim loss or shutdown propagates cooperative cancellation to the active effect;
+its lease scope drains pending heartbeat work before returning. Composition
+supplies narrow repository callbacks and frozen projections of explicitly
+selected, bound repository and queue methods. These projections restrict both
+the TypeScript interface and the runtime method surface.
+
+[Finalization](../../apps/controller/src/worker/finalization.ts) alone owns
+lifecycle publication, audit writes, and queue outcomes. Namespace publication
+and completion share one queue-bound transaction. Revision success preserves the
+staged sequence: compare-and-set the active revision in the first transaction,
+perform applicable activation and retirement effects, then recheck the claim,
+Agent principal, and active revision before recording the activation audit and
+completing work in a second transaction. Activation required before the first
+commit remains in revision reconciliation. Failed intervening effects retain
+the existing pending and recovery behavior.
+
+With the [PostgreSQL application-role test configuration](settings.md#postgresql-test-environment),
+run [postgres-worker-leases.test.mjs](../../tests/integration/postgres-worker-leases.test.mjs)
+and [postgres-worker-reconciliation.test.mjs](../../tests/integration/postgres-worker-reconciliation.test.mjs)
+using `node --test` and each file's path. The lease suite targets actual database
+lease loss, successor-claim protection, and shutdown draining. The reconciliation
+suite targets claim identity and attribution, Namespace denial and supersession,
+active-revision compare-and-set races, failure between publication and completion,
+and transactional audit rollback. Their recording Drivers observe worker
+ordering; live Docker, Kubernetes, and Harness execution require their separate
+runtime suites described in the [testing guide](../testing.md).
+
 ## Controller queue states
 
 Every controller operation persists in PostgreSQL and moves through the
