@@ -950,7 +950,7 @@ set -o pipefail
 umask 077
 export OCC_URL='https://<internal-occ-host>'
 export OCC_AUTH_BASE_URL='https://<configured-auth-origin>'
-export OCC_ORIGIN="$(python3 -c 'import os, urllib.parse; url=urllib.parse.urlsplit(os.environ["OCC_AUTH_BASE_URL"]); host=url.hostname; assert url.scheme and host; host="[" + host + "]" if ":" in host and not host.startswith("[") else host; default={"http":80,"https":443}.get(url.scheme); port="" if url.port in (None, default) else ":" + str(url.port); print(f"{url.scheme}://{host}{port}")')"
+export OCC_ORIGIN="$(node -e 'process.stdout.write(new URL(process.env.OCC_AUTH_BASE_URL).origin)')"
 export OCC_ADMIN_EMAIL='<first-admin@example.com>'
 export OCC_ADMIN_PASSWORD_FILE='/secure/occ/initial-admin-password'
 OCC_SESSION_DIRECTORY="$(mktemp -d)"
@@ -962,11 +962,14 @@ python3 -c 'import json, os, pathlib, sys; json.dump({"email": os.environ["OCC_A
 curl --fail-with-body --silent --show-error --cookie "$OCC_SESSION_COOKIE_JAR" "$OCC_URL/installation"
 ```
 
+These commands require Node.js and Python 3 on the operator's machine.
 Development may use `OCC_URL="http://$(docker compose port controller 3000)"`
-with the configured development administrator credentials. Sign out when done:
+with the configured development administrator credentials.
 `Origin` must be the canonical browser origin derived from `OCC_AUTH_BASE_URL`;
 `OCC_URL` is only the connection URL used by curl and may differ when operators
 reach the controller through a loopback port, proxy, or private network endpoint.
+Node.js uses the same URL origin normalization as the controller, including IPv6
+compression and default-port removal. Sign out when done:
 
 ```bash
 curl --fail-with-body --silent --show-error \
