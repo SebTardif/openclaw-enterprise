@@ -8,14 +8,17 @@ import { dirname, join } from "node:path";
 import { createServer } from "node:net";
 import { promisify } from "node:util";
 import test from "node:test";
-import pg from "pg";
 import { loadInstallationConfiguration } from "../../apps/controller/src/composition/installation-config.ts";
 import {
   DEVELOPMENT_HARNESS_DESCRIPTOR,
   PRODUCTION_HARNESS_DESCRIPTOR,
 } from "../../apps/controller/src/composition/production-harness.ts";
 import { kubernetesNamespaceName } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
-import { createControllerWorker } from "../../apps/controller/src/worker.ts";
+import { withComputeAbortSignal } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import { WorkerRevisionCleanup } from "../../apps/controller/src/worker/cleanup.ts";
+import { WorkerFinalization } from "../../apps/controller/src/worker/finalization.ts";
+import { LeasedEffects } from "../../apps/controller/src/worker/leased-effect.ts";
+import { RevisionReconciler } from "../../apps/controller/src/worker/revisions.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createInstallationDriverConfiguration as installation } from "../helpers/installation-driver-configuration.mjs";
 
@@ -198,15 +201,6 @@ test("production embedded and dedicated replacements preserve their active Servi
     name: kubernetesNamespaceName(namespaceId),
     external: false,
   }));
-  const pool = new pg.Pool({ connectionString: "postgresql://127.0.0.1:1/occ" });
-  t.after(async () => pool.end());
-  const worker = createControllerWorker({
-    pool,
-    mode: "production",
-    drivers,
-    emit: () => {},
-  });
-
   const shortHash = (value, length) =>
     createHash("sha256").update(value).digest("hex").slice(0, length);
   for (const harness of [
@@ -288,13 +282,61 @@ test("production embedded and dedicated replacements preserve their active Servi
     };
     // This selector unit assumes a live claim at the queue boundary; actual
     // renewal/loss is exercised by the PostgreSQL worker and stale-claim suites.
-    const heartbeat = t.mock.method(worker.queue, "heartbeat", async (received) => {
-      assert.equal(received, claim);
-      return claim;
+    const execution = { claim, signal: new AbortController().signal };
+    let renewals = 0;
+    const effects = new LeasedEffects({
+      queue: {
+        heartbeat: async (received) => {
+          assert.equal(received, claim);
+          renewals++;
+          return claim;
+        },
+      },
+      leaseDurationMs: 30_000,
+      withAbortSignal: withComputeAbortSignal,
+    });
+    const outsideObservation = () =>
+      assert.fail("Unexpected operation outside activation observation.");
+    const cleanup = new WorkerRevisionCleanup({
+      compute: computeDriver,
+      effects,
+      mode: "production",
+      maintenanceIntervalMs: undefined,
+      listRevisions: outsideObservation,
+      validObservation: outsideObservation,
+    });
+    // This unit begins after admission. Exercise the extracted observation and
+    // finalization owners; the PostgreSQL reconciliation suite covers dispatch,
+    // authorization, real queue leases, transaction rollback and audit atomicity.
+    const reconciler = new RevisionReconciler({
+      read: outsideObservation,
+      installation: outsideObservation,
+      compute: computeDriver,
+      resolveApprovedHarness: outsideObservation,
+      mode: "production",
+      inputs: {
+        authorizeRevision: outsideObservation,
+        resolveRevisionProvider: outsideObservation,
+        resolveRevisionSecretContext: outsideObservation,
+      },
+      cleanup,
+      finalization: {
+        finalizeRevision: outsideObservation,
+        completeActivatedRevision: outsideObservation,
+        finalizeActiveRevision: outsideObservation,
+      },
+      effects,
     });
 
     // Preparation must leave each mode's currently serving selector untouched before CAS.
-    const observation = await worker.observeRevision(claim, candidate, predecessor, predecessor.id);
+    const observation = await reconciler.observeRevision(
+      execution,
+      candidate,
+      predecessor,
+      predecessor.id,
+      {},
+    );
+    assert.equal(renewals, 1);
     assert.deepEqual(service.spec.selector, activeSelector);
     assert.deepEqual(serviceWrites, []);
     assert.equal(observation.expectedActiveRevisionId, predecessor.id);
@@ -307,24 +349,47 @@ test("production embedded and dedicated replacements preserve their active Servi
     };
     const retries = [];
     let compareAndSetAttempts = 0;
-    worker.state.transactWithQueue = async (transaction) =>
-      transaction(
-        {
-          agents: {
-            lockAgent: async () => activeAgent,
-            compareAndSetActiveRevision: async (...arguments_) => {
-              compareAndSetAttempts++;
-              assert.deepEqual(arguments_, [namespaceId, agentId, predecessor.id, candidate.id]);
-              return undefined;
+    let transactions = 0;
+    const finalization = new WorkerFinalization({
+      transact: async (transaction) => {
+        transactions++;
+        await transaction(
+          {
+            agents: {
+              lockAgent: async (...arguments_) => {
+                assert.deepEqual(arguments_, [namespaceId, agentId]);
+                return activeAgent;
+              },
+              compareAndSetActiveRevision: async (...arguments_) => {
+                compareAndSetAttempts++;
+                assert.deepEqual(arguments_, [namespaceId, agentId, predecessor.id, candidate.id]);
+                return undefined;
+              },
             },
           },
-        },
-        {
-          heartbeat: async () => claim,
-          retry: async (_claim, reason) => retries.push(reason),
-        },
-      );
-    await worker.finalizeRevision(claim, observation);
+          {
+            heartbeat: async (received) => {
+              assert.equal(received, claim);
+              return claim;
+            },
+            retry: async (received, reason) => {
+              assert.equal(received, claim);
+              retries.push(reason);
+            },
+          },
+        );
+      },
+      installation: outsideObservation,
+      iamDriverId: drivers.installation.drivers.iam.id,
+      computeDriverId: computeDriver.id,
+      convergenceTimeoutMs: 900_000,
+      maxAttempts: 5,
+      maintenanceIntervalMs: undefined,
+      cleanup,
+      emit: () => {},
+    });
+    await finalization.finalizeRevision(execution, observation);
+    assert.equal(transactions, 1);
     assert.equal(compareAndSetAttempts, 1);
     assert.deepEqual(retries, [{ code: "ACTIVE_REVISION_CHANGED" }]);
     assert.equal(activeAgent.activeRevisionId, predecessor.id);
@@ -370,13 +435,19 @@ test("production embedded and dedicated replacements preserve their active Servi
         inactiveSelector,
       ).spec.selector;
     }
-    const initial = await worker.observeRevision(claim, candidate, undefined, undefined);
+    const initial = await reconciler.observeRevision(
+      execution,
+      candidate,
+      undefined,
+      undefined,
+      {},
+    );
+    assert.equal(renewals, 2);
     assert.equal(initial.outcome, "success");
     assert.equal(initial.code, "REVISION_ACTIVATED");
     assert.equal(Object.hasOwn(initial, "expectedActiveRevisionId"), false);
     assert.deepEqual(serviceWrites, embedded ? [] : [inactiveSelector]);
     assert.deepEqual(service.spec.selector, inactiveSelector);
-    heartbeat.mock.restore();
   }
 });
 
