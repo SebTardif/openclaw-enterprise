@@ -5,7 +5,24 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ports/platform-read-view": "./src/ports/platform-read-view.ts",
+    "./ports/platform-unit-of-work": "./src/ports/platform-unit-of-work.ts",
+    "./ports/repositories/agent": "./src/ports/repositories/agent.ts",
+    "./ports/repositories/audit": "./src/ports/repositories/audit.ts",
+    "./ports/repositories/channel-bindings": "./src/ports/repositories/channel-bindings.ts",
+    "./ports/repositories/configuration": "./src/ports/repositories/configuration.ts",
+    "./ports/repositories/installation": "./src/ports/repositories/installation.ts",
+    "./ports/repositories/namespace": "./src/ports/repositories/namespace.ts",
+    "./ports/repositories/revision": "./src/ports/repositories/revision.ts",
+    "./ports/repositories/runtime-admission": "./src/ports/repositories/runtime-admission.ts",
+    "./ports/repositories/runtime-assignment": "./src/ports/repositories/runtime-assignment.ts",
+    "./ports/repositories/secret": "./src/ports/repositories/secret.ts",
+    "./ports/repositories/service-account": "./src/ports/repositories/service-account.ts",
+    "./ports/repositories/work": "./src/ports/repositories/work.ts",
+    "./ports/repository-factory": "./src/ports/repository-factory.ts",
+    "./ports/transaction-errors": "./src/ports/transaction-errors.ts",
+    "./ports/transaction": "./src/ports/transaction.ts"
   },
   "types": "./src/index.ts",
   "files": [

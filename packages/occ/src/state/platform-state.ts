@@ -1,3 +1,100 @@
+import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { createPlatformReadView } from "../ports/platform-read-view.ts";
+import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+import type {
+  InstallationReadRepository,
+  InstallationRepository,
+} from "../ports/repositories/installation.ts";
+export type {
+  InstallationReadRepository,
+  InstallationRepository,
+} from "../ports/repositories/installation.ts";
+import type {
+  NamespaceReadRepository,
+  PersistedNamespace,
+  NamespaceRepository,
+} from "../ports/repositories/namespace.ts";
+export type {
+  NamespaceReadRepository,
+  PersistedNamespace,
+  NamespaceRepository,
+} from "../ports/repositories/namespace.ts";
+import type { AgentReadRepository, AgentRepository } from "../ports/repositories/agent.ts";
+export type { AgentReadRepository, AgentRepository } from "../ports/repositories/agent.ts";
+import type {
+  AgentRevisionReadRepository,
+  AgentRevisionRepository,
+} from "../ports/repositories/revision.ts";
+export type {
+  AgentRevisionReadRepository,
+  AgentRevisionRepository,
+} from "../ports/repositories/revision.ts";
+import type {
+  ConfigurationOwnership,
+  ConfigurationReadRepository,
+  ConfigurationRepository,
+} from "../ports/repositories/configuration.ts";
+export type {
+  ConfigurationOwnership,
+  ConfigurationReadRepository,
+  ConfigurationRepository,
+} from "../ports/repositories/configuration.ts";
+import type { SecretReadRepository, SecretRepository } from "../ports/repositories/secret.ts";
+export type { SecretReadRepository, SecretRepository } from "../ports/repositories/secret.ts";
+import type {
+  ServiceAccountReadRepository,
+  ServiceAccountRepository,
+} from "../ports/repositories/service-account.ts";
+export type {
+  ServiceAccountReadRepository,
+  ServiceAccountRepository,
+} from "../ports/repositories/service-account.ts";
+import type {
+  PlatformAuditRepository,
+  TransactionalAuditWriter,
+  PlatformAuditSink,
+} from "../ports/repositories/audit.ts";
+export type {
+  PlatformAuditRepository,
+  TransactionalAuditWriter,
+  PlatformAuditSink,
+} from "../ports/repositories/audit.ts";
+import type { PlatformOperation, PlatformOperationRepository } from "../ports/repositories/work.ts";
+export type { PlatformOperation, PlatformOperationRepository } from "../ports/repositories/work.ts";
+import type {
+  ChannelBindingListOptions,
+  ChannelBindingReadRepository,
+  ChannelBindingRepository,
+} from "../ports/repositories/channel-bindings.ts";
+export type {
+  ChannelBindingListOptions,
+  ChannelBindingReadRepository,
+  ChannelBindingRepository,
+} from "../ports/repositories/channel-bindings.ts";
+import type {
+  RevisionRuntimeAdmission,
+  RuntimeAdmissionReadRepository,
+  RuntimeAdmissionRepository,
+} from "../ports/repositories/runtime-admission.ts";
+export type {
+  RevisionRuntimeAdmission,
+  RuntimeAdmissionReadRepository,
+  RuntimeAdmissionRepository,
+} from "../ports/repositories/runtime-admission.ts";
+import type {
+  RuntimeAssignmentReadRepository,
+  RuntimeAssignmentRepository,
+} from "../ports/repositories/runtime-assignment.ts";
+export type {
+  RuntimeAssignmentReadRepository,
+  RuntimeAssignmentRepository,
+} from "../ports/repositories/runtime-assignment.ts";
+import type { PlatformReadView } from "../ports/platform-read-view.ts";
+export type { PlatformReadView } from "../ports/platform-read-view.ts";
+import type { PlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+export type { PlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+import type { PlatformReadOptions, PlatformStateStore } from "../ports/transaction.ts";
+export type { PlatformReadOptions, PlatformStateStore } from "../ports/transaction.ts";
 import {
   createRuntimeServiceTrustRepository,
   runtimeServiceTrustAuditMatches,
@@ -58,160 +155,6 @@ import {
   ResourceConflictError,
   ScopeViolationError,
 } from "../errors.ts";
-
-export interface InstallationReadRepository {
-  findInstallation(installationId: string): Promise<Readonly<Installation> | undefined>;
-  getInstallation(): Promise<Readonly<Installation> | undefined>;
-}
-
-export interface InstallationRepository extends InstallationReadRepository {
-  createInstallation(installation: Installation): Promise<Readonly<Installation>>;
-}
-
-export interface NamespaceReadRepository {
-  findNamespace(namespaceId: string): Promise<Readonly<Namespace> | undefined>;
-  listNamespaces(): Promise<readonly Readonly<Namespace>[]>;
-}
-
-export interface PersistedNamespace extends Namespace {
-  readonly deletedAt?: string;
-}
-
-export interface NamespaceRepository extends NamespaceReadRepository {
-  createNamespace(namespace: Namespace): Promise<Readonly<Namespace>>;
-  lockNamespace(
-    namespaceId: string,
-    options?: { readonly includeDeleted?: boolean },
-  ): Promise<Readonly<PersistedNamespace> | undefined>;
-  hasAgents(namespaceId: string): Promise<boolean>;
-  hasConfigurations(namespaceId: string): Promise<boolean>;
-  hasServiceAccounts(namespaceId: string): Promise<boolean>;
-  hasSecrets(namespaceId: string): Promise<boolean>;
-  transitionNamespaceStatus(
-    namespaceId: string,
-    expected: NamespaceStatus | readonly NamespaceStatus[],
-    next: NamespaceStatus,
-  ): Promise<Readonly<PersistedNamespace> | undefined>;
-  markNamespaceDeleted(
-    namespaceId: string,
-    deletedAt: string,
-  ): Promise<Readonly<PersistedNamespace> | undefined>;
-}
-
-export interface AgentReadRepository {
-  findAgent(namespaceId: string, agentId: string): Promise<Readonly<Agent> | undefined>;
-  listAgents(namespaceId: string): Promise<readonly Readonly<Agent>[]>;
-}
-
-export interface AgentRepository extends AgentReadRepository {
-  createAgent(agent: Agent): Promise<Readonly<Agent>>;
-  lockAgent(namespaceId: string, agentId: string): Promise<Readonly<Agent> | undefined>;
-  updateConfiguration(
-    namespaceId: string,
-    agentId: string,
-    configurationId: string,
-    executionMode?: HarnessExecutionMode,
-    serviceAccountId?: string | null,
-    providerId?: string | null,
-  ): Promise<Readonly<Agent> | undefined>;
-  compareAndSetActiveRevision(
-    namespaceId: string,
-    agentId: string,
-    expectedRevisionId: string | undefined,
-    candidateRevisionId: string,
-  ): Promise<Readonly<Agent> | undefined>;
-}
-
-export interface AgentRevisionReadRepository {
-  findRevision(
-    namespaceId: string,
-    agentId: string,
-    revisionId: string,
-  ): Promise<Readonly<AgentRevision> | undefined>;
-  listRevisions(namespaceId: string, agentId: string): Promise<readonly Readonly<AgentRevision>[]>;
-}
-
-export interface AgentRevisionRepository extends AgentRevisionReadRepository {
-  createRevision(revision: AgentRevision): Promise<Readonly<AgentRevision>>;
-}
-
-export interface ConfigurationOwnership {
-  readonly id: string;
-  readonly namespaceId: string;
-  readonly kind: "agent";
-  readonly generation: number;
-  readonly secretBindings?: SecretBindings;
-  readonly createdAt: string;
-}
-
-export interface ConfigurationReadRepository {
-  findConfiguration(
-    namespaceId: string,
-    configurationId: string,
-  ): Promise<Readonly<ConfigurationOwnership> | undefined>;
-}
-
-export interface ConfigurationRepository extends ConfigurationReadRepository {
-  createConfiguration(
-    configuration: ConfigurationOwnership,
-  ): Promise<Readonly<ConfigurationOwnership>>;
-  lockConfiguration(
-    namespaceId: string,
-    configurationId: string,
-  ): Promise<Readonly<ConfigurationOwnership> | undefined>;
-  advanceConfigurationGeneration(
-    namespaceId: string,
-    configurationId: string,
-    expectedGeneration: number,
-    secretBindings?: SecretBindings,
-  ): Promise<Readonly<ConfigurationOwnership> | undefined>;
-  deleteConfiguration(namespaceId: string, configurationId: string): Promise<boolean>;
-}
-
-export interface SecretReadRepository {
-  findSecret(namespaceId: string, secretId: string): Promise<Readonly<Secret> | undefined>;
-}
-
-export interface SecretRepository extends SecretReadRepository {
-  lockSecret(namespaceId: string, secretId: string): Promise<Readonly<Secret> | undefined>;
-  createSecret(secret: Secret): Promise<Readonly<Secret>>;
-  deleteSecret(namespaceId: string, secretId: string): Promise<boolean>;
-  hasReferences(namespaceId: string, secretId: string): Promise<boolean>;
-}
-
-export interface ServiceAccountReadRepository {
-  findServiceAccount(
-    namespaceId: string,
-    serviceAccountId: string,
-  ): Promise<Readonly<ServiceAccount> | undefined>;
-  listServiceAccounts(namespaceId: string): Promise<readonly Readonly<ServiceAccount>[]>;
-  findServiceAccountProviderBinding(
-    namespaceId: string,
-    serviceAccountId: string,
-  ): Promise<
-    | Readonly<{
-        readonly providerId: string;
-        readonly driverId: string;
-        readonly workspaceId: string;
-        readonly credentialIssued: boolean;
-      }>
-    | undefined
-  >;
-}
-
-export interface ServiceAccountRepository extends ServiceAccountReadRepository {
-  createServiceAccount(account: ServiceAccount): Promise<Readonly<ServiceAccount>>;
-  lockServiceAccount(
-    namespaceId: string,
-    serviceAccountId: string,
-  ): Promise<Readonly<ServiceAccount> | undefined>;
-  updateCredential(
-    namespaceId: string,
-    serviceAccountId: string,
-    credential: ServiceAccountCredential,
-  ): Promise<Readonly<ServiceAccount> | undefined>;
-  deleteServiceAccount(namespaceId: string, serviceAccountId: string): Promise<boolean>;
-}
 
 const serviceAccountIdentifier =
   /^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -301,97 +244,6 @@ function assertAdmittedAgentRevision(revision: AgentRevision): void {
   }
 }
 
-export interface PlatformAuditRepository {
-  append(event: AuditEvent): Promise<void>;
-  list(): Promise<readonly Readonly<AuditEvent>[]>;
-}
-
-interface PlatformOperationBase {
-  readonly action: "reconcile";
-  readonly namespaceId: string;
-  readonly resourceId: string;
-  readonly actorId: string;
-  readonly runtimeTransitionRef?: string;
-  readonly lifecycleGeneration?: number;
-}
-
-export type PlatformOperation =
-  | (PlatformOperationBase & {
-      readonly kind: "namespace";
-      readonly target: "ready" | "deleted";
-    })
-  | (PlatformOperationBase & {
-      readonly kind: "agent_revision";
-      readonly target?: never;
-    });
-
-export interface PlatformOperationRepository {
-  append(operation: PlatformOperation): Promise<void>;
-  list(): Promise<readonly Readonly<PlatformOperation>[]>;
-}
-
-export interface ChannelBindingListOptions {
-  readonly afterId?: string;
-  readonly limit: number;
-}
-export interface ChannelBindingReadRepository {
-  findChannelInstallation(id: string): Promise<Readonly<ChannelInstallation> | undefined>;
-  listChannelInstallations(
-    options: ChannelBindingListOptions,
-  ): Promise<readonly Readonly<ChannelInstallation>[]>;
-  findHumanBinding(
-    parentId: string,
-    id: string,
-  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
-  findHumanBindingBySubject(
-    parentId: string,
-    subject: string,
-  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
-  listHumanBindings(
-    parentId: string,
-    options: ChannelBindingListOptions,
-  ): Promise<readonly Readonly<ChannelHumanBinding>[]>;
-  findAgentBinding(
-    parentId: string,
-    id: string,
-  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
-  findAgentBindingByChannel(
-    parentId: string,
-    channelRef: string,
-  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
-  listAgentBindings(
-    parentId: string,
-    options: ChannelBindingListOptions,
-  ): Promise<readonly Readonly<ChannelAgentBinding>[]>;
-}
-export interface ChannelBindingRepository extends ChannelBindingReadRepository {
-  createChannelInstallation(record: ChannelInstallation): Promise<Readonly<ChannelInstallation>>;
-  createHumanBinding(record: ChannelHumanBinding): Promise<Readonly<ChannelHumanBinding>>;
-  createAgentBinding(record: ChannelAgentBinding): Promise<Readonly<ChannelAgentBinding>>;
-  setChannelInstallationStatus(
-    id: string,
-    expectedVersion: number,
-    status: ChannelBindingStatus,
-    actorId: string,
-    updatedAt: string,
-  ): Promise<Readonly<ChannelInstallation> | undefined>;
-  setHumanBindingStatus(
-    parentId: string,
-    id: string,
-    expectedVersion: number,
-    status: ChannelBindingStatus,
-    actorId: string,
-    updatedAt: string,
-  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
-  setAgentBindingStatus(
-    parentId: string,
-    id: string,
-    expectedVersion: number,
-    status: ChannelBindingStatus,
-    actorId: string,
-    updatedAt: string,
-  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
-}
 export function validateChannelBindingList(options: ChannelBindingListOptions): void {
   if (
     !Number.isSafeInteger(options.limit) ||
@@ -428,27 +280,6 @@ export function serializeChannelBindingMutations(
 }
 
 /** Immutable admission identity, retained independently of work state and the intent head. */
-export interface RevisionRuntimeAdmission extends RuntimeScope {
-  readonly revisionId: string;
-  readonly runtimeTransitionRef: string;
-  readonly lifecycleGeneration: number;
-  readonly auditEventId: string;
-}
-export interface RuntimeAdmissionReadRepository {
-  findRevisionAdmission(
-    scope: RuntimeScope,
-    revisionId: string,
-  ): Promise<Readonly<RevisionRuntimeAdmission> | undefined>;
-  findCommittedAdmission(
-    scope: RuntimeScope,
-    transitionRef: string,
-    attribution: RuntimeIntentAttribution,
-  ): Promise<Readonly<AgentRevision> | undefined>;
-}
-export interface RuntimeAdmissionRepository extends RuntimeAdmissionReadRepository {
-  recordAdmission(admission: RevisionRuntimeAdmission): Promise<void>;
-}
-
 /** A success event must attest the exact canonical deploy admission. */
 export function isRuntimeAdmissionAudit(event: AuditEvent, intent: RuntimeIntent): boolean {
   return (
@@ -473,41 +304,6 @@ export function isRuntimeAdmissionAudit(event: AuditEvent, intent: RuntimeIntent
         event.authorization.resource.namespaceId === intent.namespaceId))
   );
 }
-export interface RuntimeAssignmentReadRepository {
-  findRuntimeIntent(
-    scope: RuntimeScope,
-    transitionRef: string,
-  ): Promise<Readonly<RuntimeIntent> | undefined>;
-  findRuntimeIntentHead(scope: RuntimeScope): Promise<Readonly<RuntimeIntent> | undefined>;
-  findRuntimeAllocation(
-    scope: RuntimeScope,
-    locator: RuntimeAllocationLocator,
-  ): Promise<Readonly<RuntimeAllocation> | undefined>;
-}
-export interface RuntimeAssignmentRepository extends RuntimeAssignmentReadRepository {
-  initializeRuntimeIntent(
-    scope: RuntimeScope,
-    revisionId: string,
-    transitionRef: string,
-    attribution: RuntimeIntentAttribution,
-  ): Promise<Readonly<RuntimeIntent>>;
-  advanceRuntimeIntent(
-    scope: RuntimeScope,
-    expectedGeneration: number,
-    next: Pick<RuntimeIntent, "desiredMode" | "revisionId">,
-    transitionRef: string,
-    attribution: RuntimeIntentAttribution,
-  ): Promise<Readonly<RuntimeIntent>>;
-  allocateUnboundRuntime(
-    scope: RuntimeScope,
-    expectedLifecycleGeneration: number,
-    component: RuntimeAllocation["component"],
-    expectedRuntimeGeneration: number,
-    createEffectRef: string,
-    profileRefs: RuntimeProfileRefs,
-  ): Promise<Readonly<RuntimeAllocation>>;
-}
-
 /** Serialize runtime mutations inside one unit of work, in addition to store/SQL locks. */
 export function serializeRuntimeAssignmentMutations(
   repository: RuntimeAssignmentRepository,
@@ -529,61 +325,6 @@ export function serializeRuntimeAssignmentMutations(
     advanceRuntimeIntent: (...args) => mutate(() => repository.advanceRuntimeIntent(...args)),
     allocateUnboundRuntime: (...args) => mutate(() => repository.allocateUnboundRuntime(...args)),
   };
-}
-
-export interface PlatformReadView {
-  readonly channelBindings: ChannelBindingReadRepository;
-  readonly runtimeAssignments: RuntimeAssignmentReadRepository;
-  readonly runtimeAdmissions: RuntimeAdmissionReadRepository;
-  readonly runtimeAuthority: RuntimeAuthorityReadRepository;
-  readonly runtimeServiceTrust: RuntimeServiceTrustReadRepository;
-  readonly installations: InstallationReadRepository;
-  readonly namespaces: NamespaceReadRepository;
-  readonly configurations: ConfigurationReadRepository;
-  readonly secrets: SecretReadRepository;
-  readonly serviceAccounts: ServiceAccountReadRepository;
-  readonly agents: AgentReadRepository;
-  readonly revisions: AgentRevisionReadRepository;
-}
-
-export interface PlatformUnitOfWork extends PlatformReadView {
-  readonly channelBindings: ChannelBindingRepository;
-  readonly runtimeAssignments: RuntimeAssignmentRepository;
-  readonly runtimeAdmissions: RuntimeAdmissionRepository;
-  readonly runtimeAuthority: RuntimeAuthorityRepository;
-  readonly runtimeServiceTrust: RuntimeServiceTrustRepository;
-  readonly installations: InstallationRepository;
-  readonly namespaces: NamespaceRepository;
-  readonly configurations: ConfigurationRepository;
-  readonly secrets: SecretRepository;
-  readonly serviceAccounts: ServiceAccountRepository;
-  readonly agents: AgentRepository;
-  readonly revisions: AgentRevisionRepository;
-  readonly audit: PlatformAuditRepository;
-  readonly operations: PlatformOperationRepository;
-}
-
-export interface PlatformReadOptions {
-  readonly signal: AbortSignal;
-  readonly timeoutMs: number;
-}
-
-export interface PlatformStateStore {
-  read<T>(work: (state: PlatformReadView) => Promise<T>, options?: PlatformReadOptions): Promise<T>;
-  transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T>;
-}
-
-export interface TransactionalAuditWriter {
-  append(event: AuditEvent): Promise<void>;
-  commit(): Promise<void>;
-  rollback(): Promise<void>;
-}
-
-export interface PlatformAuditSink {
-  append(event: AuditEvent): Promise<void>;
-  beginTransaction?(): TransactionalAuditWriter;
-  checkpoint?(): number;
-  restore?(checkpoint: number): void;
 }
 
 export interface InMemoryPlatformStateOptions {
@@ -1984,38 +1725,46 @@ export class InMemoryPlatformState implements PlatformStateStore {
     work: (state: PlatformReadView) => Promise<T>,
     options?: PlatformReadOptions,
   ): Promise<T> {
-    if (options === undefined) {
-      await this.pending;
-      return work(repositories(cloneSnapshot(this.snapshot)));
-    }
-    if (
-      options.signal.aborted ||
-      !Number.isFinite(options.timeoutMs) ||
-      options.timeoutMs <= 0 ||
-      options.timeoutMs > 3000
-    )
-      throw new DependencyUnavailableError("The platform read expired.");
-    const signal = AbortSignal.any([
-      options.signal,
-      AbortSignal.timeout(Math.ceil(options.timeoutMs)),
-    ]);
+    const lifetime = new RepositoryTransactionLifetime();
     let cancel: (() => void) | undefined;
+    let signal: AbortSignal | undefined;
     try {
+      if (options === undefined) {
+        await this.pending;
+        return await work(
+          createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime),
+        );
+      }
+      if (
+        options.signal.aborted ||
+        !Number.isFinite(options.timeoutMs) ||
+        options.timeoutMs <= 0 ||
+        options.timeoutMs > 3000
+      )
+        throw new DependencyUnavailableError("The platform read expired.");
+      signal = AbortSignal.any([options.signal, AbortSignal.timeout(Math.ceil(options.timeoutMs))]);
+      const boundedSignal = signal;
       return await Promise.race([
         (async () => {
           await this.pending;
-          if (signal.aborted) throw new DependencyUnavailableError();
-          const result = await work(repositories(cloneSnapshot(this.snapshot)));
-          if (signal.aborted) throw new DependencyUnavailableError();
+          if (boundedSignal.aborted) throw new DependencyUnavailableError();
+          const result = await work(
+            createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime),
+          );
+          if (boundedSignal.aborted) throw new DependencyUnavailableError();
           return result;
         })(),
         new Promise<never>((_resolve, reject) => {
-          cancel = () => reject(new DependencyUnavailableError("The platform read expired."));
-          signal.addEventListener("abort", cancel, { once: true });
+          cancel = () => {
+            lifetime.close();
+            reject(new DependencyUnavailableError("The platform read expired."));
+          };
+          boundedSignal.addEventListener("abort", cancel, { once: true });
         }),
       ]);
     } finally {
-      if (cancel) signal.removeEventListener("abort", cancel);
+      if (cancel) signal?.removeEventListener("abort", cancel);
+      await lifetime.finish();
     }
   }
 
@@ -2026,16 +1775,21 @@ export class InMemoryPlatformState implements PlatformStateStore {
       release = resolve;
     });
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
+    const lifetime = new RepositoryTransactionLifetime();
     try {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
-      const result = await work(repositories(working, authorityGuard));
+      const result = await work(
+        bindPlatformUnitOfWork(repositories(working, authorityGuard), lifetime),
+      );
+      await lifetime.finish();
       await authorityGuard.finish();
       await this.publishAudit(working.audit.slice(committedAuditCount));
       this.snapshot = working;
       return result;
     } catch (error) {
+      await lifetime.finish();
       // Drain already-started authority writes before discarding the private snapshot.
       try {
         await authorityGuard.finish();
@@ -2044,6 +1798,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
       }
       throw error;
     } finally {
+      lifetime.close();
       release?.();
     }
   }

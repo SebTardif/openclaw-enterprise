@@ -1,3 +1,7 @@
+import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { createPlatformReadView } from "../ports/platform-read-view.ts";
+import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import { createRuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 import { parseRuntimeServiceTrustRecord } from "../runtime-authority/service-trust-schema.ts";
 import {
@@ -122,14 +126,11 @@ export interface PersistedNativeIAMPrincipalSeed {
   readonly bindings: readonly AccessBinding[];
 }
 
-export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableError {
-  constructor() {
-    super("The PostgreSQL transaction commit outcome is unknown.");
-    this.name = "PostgresCommitOutcomeUnknownError";
-  }
-}
+export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
 interface TransactionContext {
+  readView?: PlatformReadView;
+  readonly lifetime: RepositoryTransactionLifetime;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
@@ -630,7 +631,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly auditSink: PlatformAuditSink;
   private readonly pool: PostgresPool;
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
-  private readonly contexts = new WeakMap<PlatformUnitOfWork, TransactionContext>();
+  private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
     this.pool = pool;
@@ -907,7 +908,16 @@ export class PostgresPlatformState implements PlatformStateStore {
     work: (state: PlatformReadView) => Promise<T>,
     options?: PlatformReadOptions,
   ): Promise<T> {
-    return this.execute(true, async (state) => work(state), options);
+    return this.execute(
+      true,
+      async (state, context) => {
+        const view = createPlatformReadView(state, context.lifetime);
+        context.readView = view;
+        this.contexts.set(view, context);
+        return work(view);
+      },
+      options,
+    );
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -915,14 +925,14 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   queryInTransaction(
-    unit: PlatformUnitOfWork,
+    unit: PlatformReadView,
     statement: string,
     parameters?: readonly unknown[],
   ): Promise<{ rows: unknown[]; rowCount: number | null }> {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
-    return context.client.query(statement, parameters);
+    return context.lifetime.run(() => context.client.query(statement, parameters));
   }
 
   async transactWithQueue<T>(
@@ -930,7 +940,18 @@ export class PostgresPlatformState implements PlatformStateStore {
     options: PostgresWorkQueueOptions = {},
   ): Promise<T> {
     return this.execute(false, async (state, context) =>
-      work(state, new PostgresWorkQueue(context.client, options)),
+      work(
+        state,
+        new Proxy(new PostgresWorkQueue(context.client, options), {
+          get(target, property, receiver) {
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function"
+              ? (...args: unknown[]) =>
+                  context.lifetime.run(async () => Reflect.apply(value, target, args))
+              : value;
+          },
+        }),
+      ),
     );
   }
 
@@ -961,6 +982,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         "Bounded platform reads require a bounded PostgreSQL pool.",
       );
     const readBegan = performance.now();
+    const lifetime = new RepositoryTransactionLifetime();
     let expired = false;
     let closed = false;
     let released = false;
@@ -976,6 +998,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       }
     };
     const abort = () => {
+      lifetime.close();
       expired = true;
       closed = true;
       release(true);
@@ -998,6 +1021,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     let committing = false;
     let discardClient = false;
     let unit: PlatformUnitOfWork | undefined;
+    let context: TransactionContext | undefined;
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const onTransportError = () => {
       discardClient = true;
@@ -1010,22 +1034,22 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw abortFailure();
       }
       const underlying = raw;
-      client =
-        options === undefined
-          ? raw
-          : {
-              query: async (statement, parameters) => {
-                if (closed || options.signal.aborted) throw abortFailure();
-                const query = underlying.query(statement, parameters);
-                pending.add(query);
-                try {
-                  return await query;
-                } finally {
-                  pending.delete(query);
-                }
-              },
-              release: (destroy) => release(destroy ?? false),
-            };
+      client = {
+        query: async (statement, parameters) => {
+          lifetime.assertActive();
+          if (closed || options?.signal.aborted) throw abortFailure();
+          const query = underlying.query(statement, parameters);
+          pending.add(query);
+          try {
+            const result = await query;
+            lifetime.assertActive();
+            return result;
+          } finally {
+            pending.delete(query);
+          }
+        },
+        release: (destroy) => release(destroy ?? false),
+      };
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
       if (options !== undefined) {
@@ -1041,20 +1065,23 @@ export class PostgresPlatformState implements PlatformStateStore {
         );
         await client.query("SET LOCAL client_connection_check_interval = '100ms'");
       }
-      const context: TransactionContext = {
+      context = {
+        lifetime,
         authorityGuard,
         client,
         installation: undefined,
         installationLoaded: false,
       };
-      unit = this.repositories(context);
+      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
       this.contexts.set(unit, context);
-      const running = Promise.resolve().then(() => work(unit!, context));
+      const activeContext = context;
+      const running = Promise.resolve().then(() => work(unit!, activeContext));
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      await lifetime.finish();
       await authorityGuard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
       committing = true;
-      const acknowledgement = await client.query("COMMIT");
+      const acknowledgement = await raw.query("COMMIT");
       committing = false;
       started = false;
       if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
@@ -1062,14 +1089,15 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
+      await lifetime.finish();
       try {
         await authorityGuard.finish();
       } catch {
         /* Preserve the original failure. */
       }
-      if (started && !released && client !== undefined) {
+      if (started && !released && raw !== undefined) {
         try {
-          await client.query("ROLLBACK");
+          await raw.query("ROLLBACK");
         } catch {
           discardClient = true;
         }
@@ -1078,10 +1106,12 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      lifetime.close();
       closed = true;
       if (timer !== undefined) clearTimeout(timer);
       options?.signal.removeEventListener("abort", abort);
       if (unit !== undefined) this.contexts.delete(unit);
+      if (context?.readView !== undefined) this.contexts.delete(context.readView);
       release(discardClient || expired);
       // Destroying an active pg client rejects active/queued queries. Join their rejection
       // before reporting cancellation, and forbid any later callback from reusing it.

@@ -22,7 +22,7 @@ import type {
   PlatformStateStore,
   PlatformUnitOfWork,
 } from "../state/platform-state.ts";
-import { PostgresCommitOutcomeUnknownError } from "../state/postgres-state.ts";
+import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import { RuntimeAuthorityTransactionGuard } from "./repository.ts";
 import type { RuntimeAuthorityCurrentTrustReader } from "./service.ts";
 import {

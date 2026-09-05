@@ -21,7 +21,7 @@ import {
   type RuntimeServiceTrustConfigurationV1,
 } from "@openclaw-enterprise/contracts";
 import type { PlatformStateStore } from "../state/platform-state.ts";
-import { PostgresCommitOutcomeUnknownError } from "../state/postgres-state.ts";
+import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import {
   RuntimeAuthorityConflictError,
   exactRuntimeAuthorityOperation,

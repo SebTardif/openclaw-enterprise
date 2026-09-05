@@ -85,7 +85,8 @@ import {
   type PlatformStateStore,
   type PlatformUnitOfWork,
 } from "./state/platform-state.ts";
-import { PostgresCommitOutcomeUnknownError } from "./state/postgres-state.ts";
+import { PostgresCommitOutcomeUnknownError } from "./ports/transaction-errors.ts";
+export { PostgresCommitOutcomeUnknownError } from "./ports/transaction-errors.ts";
 
 export {
   AuthorizationDeniedError,
@@ -128,7 +129,6 @@ export {
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
 export {
-  PostgresCommitOutcomeUnknownError,
   PostgresPlatformState,
   PostgresPlatformStateStore,
   type PersistedNativeIAMState,
