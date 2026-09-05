@@ -131,5 +131,7 @@ export * from "./channel-bindings.ts";
 export * from "./security-events.ts";
 
 export * from "./account-authority-v1.ts";
+export * from "./credential-authority-v1.ts";
+export * from "./credential-storage-v1.ts";
 
 export * from "./configuration-errors.ts";
