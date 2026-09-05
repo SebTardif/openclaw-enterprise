@@ -17,7 +17,7 @@ import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-
 import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
-} from "../kubernetes/runtime-entrypoints.ts";
+} from "../runtime/runtime-entrypoints.ts";
 
 export interface DockerComputeDriverOptions {
   readonly images: {
