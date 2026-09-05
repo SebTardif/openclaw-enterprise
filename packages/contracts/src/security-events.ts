@@ -1,4 +1,5 @@
-import type { AuditEvent, ResourceRef } from "./index.ts";
+import type { AuditEvent } from "./identity/audit.ts";
+import type { ResourceRef } from "./resources/scope.ts";
 
 /** A projection of the audit envelope; this version does not change AuditEvent v1. */
 export const SECURITY_EVENT_SCHEMA = "openclaw.security-event/v1" as const;

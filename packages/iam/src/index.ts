@@ -5,25 +5,26 @@ import {
   validateChannelAdministrationMappings,
   withChannelAdministrationEvidence,
 } from "./channel-administration.ts";
-import {
-  RESOURCE_KINDS,
-  type AccessBinding,
-  type AuthorizationDecision,
-  type AuthorizationEvidence,
-  type AuthorizationRequest,
-  type Group,
-  type GroupMembership,
-  type IAMDriver,
-  type Identity,
-  type IdentityLookup,
-  type JSONSchema,
-  type PermissionAction,
-  type Principal,
-  type ResourceRef,
-  type Restriction,
-  type Role,
-  type ServicePrincipal,
-} from "@openclaw-enterprise/contracts";
+import { RESOURCE_KINDS, type ResourceRef } from "@openclaw-enterprise/contracts/resources/scope";
+import type {
+  AccessBinding,
+  AuthorizationDecision,
+  AuthorizationEvidence,
+  AuthorizationRequest,
+  PermissionAction,
+  Restriction,
+  Role,
+} from "@openclaw-enterprise/contracts/identity/authorization";
+import type {
+  Group,
+  GroupMembership,
+  Identity,
+  IdentityLookup,
+  Principal,
+  ServicePrincipal,
+} from "@openclaw-enterprise/contracts/identity/identity";
+import type { IAMDriver } from "@openclaw-enterprise/contracts/drivers/iam";
+import type { JSONSchema } from "@openclaw-enterprise/contracts/drivers/base";
 
 export interface NativeIAMState {
   readonly identities: readonly Identity[];
