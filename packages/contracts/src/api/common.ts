@@ -50,11 +50,6 @@ export const Meta = Type.Object({ requestId: RequestId }, { additionalProperties
 
 export const NamedResourceBody = Type.Object({ name: Name }, { additionalProperties: false });
 
-export const CreateNamespaceBody = Type.Object(
-  { name: Name, existingNamespace: Type.Optional(KubernetesNamespaceName) },
-  { additionalProperties: false },
-);
-
 export const EmptyQuery = Type.Object({}, { additionalProperties: false });
 
 export const NamespaceParams = Type.Object(
@@ -169,16 +164,6 @@ export const SecretValue = Type.String({
     "Protected Secret value. It must be nonempty UTF-8 without NUL; OCC accepts at most 65,536 UTF-8 bytes and still enforces the route request body limit.",
 });
 
-export const CreateSecretBody = Type.Object(
-  { name: Name, value: SecretValue },
-  { additionalProperties: false },
-);
-
-export const UpdateSecretBody = Type.Object(
-  { value: SecretValue },
-  { additionalProperties: false },
-);
-
 export const ServiceAccountCredentialSchema = Type.Object(
   {
     kind: Type.Union([
@@ -196,42 +181,6 @@ export const ServiceAccountCredentialSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
-  },
-  { additionalProperties: false },
-);
-
-export const CreateServiceAccountBody = Type.Object(
-  { name: Name },
-  { additionalProperties: false },
-);
-
-export const CreateServiceAccountCredentialBody = Type.Object({}, { additionalProperties: false });
-
-export const UpdateServiceAccountCredentialBody = Type.Object(
-  {
-    kind: Type.Union([Type.Literal("api_key"), Type.Literal("oauth_access_token")]),
-    secretRef: ServiceAccountCredentialSchema.properties.secretRef,
-  },
-  { additionalProperties: false },
-);
-
-export const CreateAgentBody = Type.Object(
-  {
-    name: Name,
-    configurationId: ConfigurationId,
-    providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
-    serviceAccountId: Type.Optional(ServiceAccountId),
-    executionMode: Type.Optional(HarnessExecutionModeSchema),
-  },
-  { additionalProperties: false },
-);
-
-export const UpdateAgentBody = Type.Object(
-  {
-    configurationId: ConfigurationId,
-    providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
-    serviceAccountId: Type.Optional(Type.Union([ServiceAccountId, Type.Null()])),
-    executionMode: Type.Optional(HarnessExecutionModeSchema),
   },
   { additionalProperties: false },
 );
@@ -349,17 +298,6 @@ export type RevisionParams = Type.Static<typeof RevisionParams>;
 export type WorkspaceFileName = Type.Static<typeof WorkspaceFileName>;
 export type WorkspaceFileParams = Type.Static<typeof WorkspaceFileParams>;
 export type ConfigurationValues = Type.Static<typeof ConfigurationValues>;
-export type CreateSecretBody = Type.Static<typeof CreateSecretBody>;
-export type UpdateSecretBody = Type.Static<typeof UpdateSecretBody>;
-export type CreateServiceAccountBody = Type.Static<typeof CreateServiceAccountBody>;
-export type CreateServiceAccountCredentialBody = Type.Static<
-  typeof CreateServiceAccountCredentialBody
->;
-export type UpdateServiceAccountCredentialBody = Type.Static<
-  typeof UpdateServiceAccountCredentialBody
->;
-export type CreateAgentBody = Type.Static<typeof CreateAgentBody>;
-export type UpdateAgentBody = Type.Static<typeof UpdateAgentBody>;
 export type UpdateWorkspaceFileBody = Type.Static<typeof UpdateWorkspaceFileBody>;
 export type ErrorDetail = Type.Static<typeof ErrorDetail>;
 export type ErrorResponse = Type.Static<typeof ErrorResponse>;

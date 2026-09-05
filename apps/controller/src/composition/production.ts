@@ -17,6 +17,7 @@ import type {
   ServiceAccountDriverFactory,
 } from "./installation-config.ts";
 import { providerSummariesFromDefinitions } from "./installation-config.ts";
+import { initializeServiceAccountDriver } from "./driver-factories/service-account.ts";
 import type { OccLogger } from "../logging.ts";
 import { resolveApprovedProductionHarness } from "./production-harness.ts";
 import type { ControllerWorkspaceFilesAccess } from "../gateway/contracts.ts";
@@ -162,7 +163,8 @@ export async function composeProduction(config: ProductionConfig) {
     if (controller.selectDriver("configuration", configurationDriver.id) !== configurationDriver) {
       throw new Error("The configured Configuration Driver was not selected correctly.");
     }
-    config.serviceAccountDriverFactory?.(controller, state);
+    if (config.serviceAccountDriverFactory !== undefined)
+      initializeServiceAccountDriver(config.serviceAccountDriverFactory, controller, state);
     await controller.validateProviderConfiguration();
 
     let workspaceFilesAccess = config.workspaceFilesAccess;

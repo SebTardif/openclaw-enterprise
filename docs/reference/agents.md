@@ -293,6 +293,38 @@ Agent. Each returned revision requires its own authorized read; substituting a
 parent does not grant access to another Agent's history. Public response shapes
 are defined by the [API reference](api.md).
 
+## Service boundaries and verification
+
+[AgentService](../../packages/occ/src/services/agent/service.ts) owns draft
+creation, editing, and authorized Agent and revision reads.
+[DeploymentService](../../packages/occ/src/services/deployment/service.ts) owns
+admission, immutable snapshot construction, and retained-admission recovery.
+The controller assembles both services with methods selected from the same
+Installation-bound mutation runner and resolves selected Drivers when an
+operation needs them. Existing controller methods delegate to these services.
+The [Agent HTTP handlers](../../apps/controller/src/routes/agent.ts) use the
+current controller lazily; create and update keep mutation, success audit, and
+response projection inside the existing outer transaction.
+
+Deployment still commits the revision, runtime intent, admission proof, audit,
+and reconciliation work as one unit. A caught admission failure poisons that
+unit. If PostgreSQL commit acknowledgement is lost, the HTTP controller waits
+for the failed unit to unwind and asks the deployment service to verify the
+retained locator through a fresh storage read. Recovery checks the exact
+Installation, Agent scope, actor, and request; an unavailable proof remains a
+dependency failure. These services add no independent store or runtime worker.
+
+Focused coverage is in the [Agent service tests](../../tests/integration/agent-service.test.mjs),
+[deployment service tests](../../tests/integration/deployment-service.test.mjs),
+and [actual HTTP application tests](../../tests/integration/agent-service-api.test.mjs).
+The [PostgreSQL Agent tests](../../tests/integration/postgres-agent-service.test.mjs)
+and [PostgreSQL deployment tests](../../tests/integration/postgres-deployment-service.test.mjs)
+exercise persisted ownership, concurrent admission, rollback, and lost commit
+acknowledgement. They use separately prepared disposable databases selected by
+`OCC_AGENT_SERVICE_DATABASE_URL` and `OCC_DEPLOYMENT_SERVICE_DATABASE_URL`,
+respectively; follow the [test database settings](settings.md#postgresql-test-environment)
+for application-role access.
+
 ## Current limitations
 
 The public API has no Agent deletion operation, revision mutation/deletion,
