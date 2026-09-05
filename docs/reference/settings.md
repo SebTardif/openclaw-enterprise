@@ -974,3 +974,20 @@ See the [architecture guide](../ARCHITECTURE.md) for ownership and runtime
 boundaries, the [quickstart](../guides/quickstart.md) for the default local
 startup helper, and the [deployment guide](../guides/deploy.md) for production
 example files and Helm installation.
+
+### SPIFFE Workload API test environment
+
+These variables select only
+[`spiffe-workload-real.test.mjs`](../../tests/integration/spiffe-workload-real.test.mjs).
+They do not change controller authentication or runtime Driver selection.
+
+| Variable                      | Meaning                                                               |
+| ----------------------------- | --------------------------------------------------------------------- |
+| `OCC_TEST_SPIFFE_SOCKET_PATH` | Absolute protected Unix socket path of the real local SPIRE Agent.    |
+| `OCC_TEST_SPIFFE_ID`          | Exact SPIFFE workload ID registered for the actual Node test process. |
+| `OCC_TEST_SPIFFE_AUDIENCE`    | Explicit JWT audience used for issuance and validation.               |
+
+Providing any one selects the test and requires all three. An unconfigured test
+skips. See [workload identity](workload-identity.md) for supported path/ID bounds,
+the programmatic client and the metadata-only diagnostic. Runtime components
+do not discover or consume these test settings automatically.

@@ -11,6 +11,8 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
 
+- [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
+
 ## Architecture
 
 - [Platform design](design.md): platform architecture and resource model.

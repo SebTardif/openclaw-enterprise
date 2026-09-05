@@ -1082,3 +1082,26 @@ If the Installation selects the ChatGPT Provider, create `occ-chatgpt-admin`
 with `--from-file=admin-key=/secure/occ/occ-chatgpt-admin-key` and enable the
 matching Provider/ServiceAccount Driver settings in native values and
 Installation YAML.
+
+## Check a local workload identity provider
+
+The SPIFFE Workload API component can verify that the current process receives
+its exact configured identity from an operator-trusted local SPIRE Agent.
+Prepare the provider and register this process through the provider's approved
+registration mechanism before running:
+
+```sh
+node scripts/check-workload-identity.mjs \
+  --socket-path /run/spire/agent.sock \
+  --spiffe-id spiffe://example.org/oce/diagnostic \
+  --audience oce-diagnostic
+```
+
+The optional audience adds JWT issuance and provider-side validation. The command
+prints identity and expiry metadata only; it never prints SVID keys or tokens.
+It exits nonzero for an unavailable endpoint, wrong identity or failed
+validation. It does not alter registrations, select this provider for controller
+transport, or establish guest attestation or runtime readiness. See
+[workload identity](../reference/workload-identity.md) for the source API, limits
+and troubleshooting, and [OpenShell](../reference/drivers/openshell-sandbox.md)
+for the remaining launch requirements.

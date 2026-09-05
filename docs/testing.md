@@ -596,3 +596,36 @@ remain; provider-account cleanup failures require explicit follow-up.
 - [Deployment guide](guides/deploy.md)
 - [Runtime image recipe](../deploy/runtime/README.md)
 - [Contributor integration boundaries](../AGENTS.md#running-integration-tests)
+
+## SPIFFE Workload API
+
+The [workload identity reference](reference/workload-identity.md) describes the
+local credential source and its exact trust boundary. Run its configuration,
+Unix gRPC wire, and operator command checks with:
+
+```sh
+node --test tests/conformance/spiffe-workload-configuration.test.mjs \
+  tests/integration/spiffe-workload-api.test.mjs \
+  tests/integration/workload-identity-diagnostic.test.mjs
+```
+
+The wire suite creates real local gRPC sockets and temporary certificates. It
+uses a controlled provider to test the source's protocol and lifecycle; it does
+not prove SPIRE attestation or JWT signature enforcement. `openssl` and local
+Unix socket creation must be available.
+
+For genuine provider interoperability, provision a real SPIRE Agent and a
+registration that attests the Node test process, then explicitly select:
+
+```sh
+OCC_TEST_SPIFFE_SOCKET_PATH=/run/spire/agent.sock \
+OCC_TEST_SPIFFE_ID=spiffe://example.org/controller \
+OCC_TEST_SPIFFE_AUDIENCE=oce-local-test \
+node --test tests/integration/spiffe-workload-real.test.mjs
+```
+
+Any of these settings selects the test and requires all three. Without them it
+skips explicitly. The test exercises actual issuance, JWT validation and wrong
+audience/peer refusal. Registration, server installation and guest attestation
+are outside this test. Keep local host evidence separate from an actual
+OpenShell/Kata deployment and from current runtime authorization.

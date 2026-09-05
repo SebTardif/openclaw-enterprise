@@ -54,6 +54,7 @@ COPY --chown=node:node migrations/meta/_journal.json migrations/meta/_journal.js
 COPY --chown=node:node scripts/migrate-production.mjs scripts/migrate-production.mjs
 COPY --chown=node:node scripts/bootstrap-installation.mjs scripts/bootstrap-installation.mjs
 COPY --chown=node:node scripts/production-healthcheck.mjs scripts/production-healthcheck.mjs
+COPY --chown=node:node scripts/check-workload-identity.mjs scripts/check-workload-identity.mjs
 
 USER node
 ENTRYPOINT ["node"]

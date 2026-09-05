@@ -290,3 +290,17 @@ current implementation.
 - [Docker Compute Driver](reference/drivers/docker-compute.md)
 - [Kubernetes Compute Driver](reference/drivers/kubernetes-compute.md)
 - [Production Kubernetes deployment](guides/deploy.md)
+
+## Local workload identity provider
+
+The controller source includes a [SPIFFE Workload API component](reference/workload-identity.md)
+that receives X.509 material and fetches or validates audience-bound JWT-SVIDs
+from a configured trusted local Unix socket. It selects one exact identity and
+withdraws access when its stream or credential validity is lost. The operator
+diagnostic consumes this component without printing credentials.
+
+This component is available to explicit programmatic consumers; controller
+authentication, runtime activation and gateway-to-harness transport do not
+automatically consume it. Constrained registration, actual guest attestation,
+remote peer verification and current runtime authorization remain separate
+integration requirements.
