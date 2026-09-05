@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertStartupFailureRecord } from "../helpers/startup-failure-record.mjs";
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
 import test from "node:test";
@@ -43,11 +44,7 @@ async function databaseConnectionProbe(t) {
 }
 
 function assertSafeServerFailure(result) {
-  assert.deepEqual(JSON.parse(result.stderr), {
-    event: "startup-error",
-    code: "STARTUP_FAILED",
-    error: "Controller startup failed. Check the configured startup prerequisites.",
-  });
+  assertStartupFailureRecord(result.stderr, "api");
 }
 
 test("development startup accepts bracketed IPv6 loopback auth base URLs", async (t) => {
@@ -61,8 +58,10 @@ test("development startup accepts bracketed IPv6 loopback auth base URLs", async
     assert.equal(database.connections(), 0);
     if (path === "apps/controller/src/server.mjs") assertSafeServerFailure(result);
     else {
-      assert.match(result.stderr, /OCC_AUTH_SECRET/);
-      assert.doesNotMatch(result.stderr, /loopback host|loopback HTTP\(S\) URL/);
+      const record = JSON.parse(result.stderr);
+      assert.equal(record.event, "installation.bootstrap-failed");
+      assert.equal(record.code, "AUTH_SECRET_INVALID");
+      assert.doesNotMatch(result.stderr, /OCC_AUTH_SECRET|loopback host|loopback HTTP\(S\) URL/);
     }
   }
   // Fixing the auth secret lets the real API with an IPv6 auth URL reach persistence.
@@ -86,7 +85,12 @@ test("development startup still rejects nonloopback auth base URLs", async (t) =
     });
     assert.equal(database.connections(), 0);
     if (path === "apps/controller/src/server.mjs") assertSafeServerFailure(result);
-    else assert.match(result.stderr, /loopback host|loopback HTTP\(S\) URL/);
+    else {
+      const record = JSON.parse(result.stderr);
+      assert.equal(record.event, "installation.bootstrap-failed");
+      assert.equal(record.code, "AUTH_BASE_URL_INVALID");
+      assert.doesNotMatch(result.stderr, /loopback host|loopback HTTP\(S\) URL/);
+    }
   }
   // Changing only the nonloopback URL permits startup to advance to persistence.
   assertSafeServerFailure(

@@ -174,11 +174,20 @@ const startupConnectionProbe = String.raw`
     } catch (error) {
       assert.equal(error.code, 1);
       assert.equal(error.signal, null);
-      assert.equal(error.stderr, JSON.stringify({
+      // The packaged launcher must emit only the fixed diagnostic and Pino metadata.
+      const lines = error.stderr.split("\n");
+      assert.equal(lines.length, 2);
+      assert.equal(lines[1], "");
+      const { time, ...record } = JSON.parse(lines[0]);
+      assert.equal(typeof time, "string");
+      assert.equal(new Date(time).toISOString(), time);
+      assert.deepEqual(record, {
+        severity: "ERROR",
+        service: component === "server" ? "occ-api" : "occ-worker",
         event: component === "server" ? "startup-error" : "worker.startup-error",
         code: "STARTUP_FAILED",
         error: "Controller startup failed. Check the configured startup prerequisites.",
-      }) + "\n");
+      });
     }
   }
   try {

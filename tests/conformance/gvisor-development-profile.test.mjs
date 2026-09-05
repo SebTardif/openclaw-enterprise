@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +44,10 @@ function revisionFor(driver, overrides = {}) {
     configurationId: "cfg_00000000-0000-4000-8000-000000000001",
     configurationKind: "agent",
     configurationGeneration: 1,
-    configuration: { gateway: { controlUi: { enabled: false } } },
+    configuration: admitLoggingConfiguration(
+      { gateway: { controlUi: { enabled: false } } },
+      "info",
+    ),
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "sp_00000000-0000-4000-8000-000000000001",
@@ -110,6 +114,7 @@ function fixture({
     gatewayName,
     "gateway",
     {},
+    driver.gatewayConfiguration(revision).loggingLevel,
     driver.gatewayConfiguration(revision),
   );
   const agent = driver.deployment(
@@ -119,6 +124,8 @@ function fixture({
     options().images.agent,
     agentName,
     "agent",
+    {},
+    driver.gatewayConfiguration(revision).loggingLevel,
   );
   // Readiness is explicit observation data, never inferred from an accepted patch.
   for (const deployment of [gateway, agent]) {
@@ -474,7 +481,10 @@ test("gVisor Agent manifests preserve projected identity, mounts, resource limit
       readOnly: true,
     },
   );
-  assert.equal(pod.containers[0].env, undefined);
+  assert.deepEqual(pod.containers[0].env, [
+    { name: "LOG_FORMAT", value: "json" },
+    { name: "RUST_LOG", value: "info,codex_otel=off" },
+  ]);
   assert.deepEqual(pod.securityContext, {
     runAsNonRoot: true,
     runAsUser: 1000,
@@ -663,6 +673,8 @@ test("gVisor preparation preserves lifecycle environment on its dedicated Harnes
   );
   assert.deepEqual(agent.spec.template.spec.containers[0].env, [
     { name: "OCE_FIXTURE_SETTING", value: "opaque-fixture-value" },
+    { name: "LOG_FORMAT", value: "json" },
+    { name: "RUST_LOG", value: "info,codex_otel=off" },
   ]);
   assert.equal(agent.spec.template.spec.runtimeClassName, GVISOR_RUNTIME_CLASS);
 });

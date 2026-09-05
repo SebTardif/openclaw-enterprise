@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertStartupFailureRecord } from "../helpers/startup-failure-record.mjs";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -15,6 +16,7 @@ import {
 } from "../../apps/controller/src/composition/production-harness.ts";
 import { kubernetesNamespaceName } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { createControllerWorker } from "../../apps/controller/src/worker.ts";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createInstallationDriverConfiguration as installation } from "../helpers/installation-driver-configuration.mjs";
 
 async function fixture(t, configuration = installation()) {
@@ -222,7 +224,7 @@ test("production embedded and dedicated replacements preserve their active Servi
       configurationId: `cfg_production-${harness.mode}-cutover`,
       configurationKind: "agent",
       configurationGeneration: 1,
-      configuration: {},
+      configuration: admitLoggingConfiguration({}, "info"),
       harness,
       compute: { id: computeDriver.id, implementation: computeDriver.implementation },
       servicePrincipalId,
@@ -339,6 +341,7 @@ test("production embedded and dedicated replacements preserve their active Servi
         `agent-${shortHash(agentId, 12)}`,
         "gateway",
         {},
+        "info",
         computeDriver.gatewayConfiguration(candidate),
         true,
         servicePrincipalId,
@@ -426,11 +429,7 @@ async function failedStartup(component, env) {
   } catch (error) {
     assert.equal(error.code, 1);
     assert.equal(error.signal, null);
-    assert.deepEqual(JSON.parse(error.stderr), {
-      event: component === "server" ? "startup-error" : "worker.startup-error",
-      code: "STARTUP_FAILED",
-      error: "Controller startup failed. Check the configured startup prerequisites.",
-    });
+    assertStartupFailureRecord(error.stderr, component === "server" ? "api" : "worker");
   }
 }
 

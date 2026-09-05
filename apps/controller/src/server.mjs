@@ -1,17 +1,23 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import { loadInstallationConfiguration } from "./composition/installation-config.ts";
+import {
+  loadInstallationConfiguration,
+  loadStartupConfigurationSnapshot,
+} from "./composition/installation-config.ts";
 import { composeProduction } from "./composition/production.ts";
 import { validateWorkspaceFilesApiKeyPath } from "./composition/workspace-files.ts";
 import { startupDiagnostic } from "./startup-diagnostics.ts";
+import { createOccLogger } from "./logging.ts";
 
 const loopbackHosts = new Set(["127.0.0.1", "::1", "[::1]"]);
 const developmentBindHosts = new Set(["127.0.0.1", "::1", "0.0.0.0"]);
 const DEFAULT_BETTER_AUTH_BASE_URL = "http://127.0.0.1:3000";
 
 function startupFailure(error) {
-  process.stderr.write(`${JSON.stringify(startupDiagnostic("api", error))}\n`);
+  const logger = createOccLogger({ component: "occ-api", level: "info", destination: "stderr" });
+  // The diagnostic contains only locally selected fixed fields, never the original Error.
+  logger.error(startupDiagnostic("api", error));
   process.exitCode = 1;
 }
 
@@ -153,11 +159,17 @@ function configuration() {
 
 async function start() {
   const settings = configuration();
+  const startupConfiguration = await loadStartupConfigurationSnapshot({ mode: settings.mode });
+  const logging = startupConfiguration.logging;
+  const logger = createOccLogger({ component: "occ-api", level: logging.level });
   if (settings.gatewayApiKeyPath !== undefined) {
     await validateWorkspaceFilesApiKeyPath(settings.gatewayApiKeyPath);
   }
-  const compositionSettings = settings;
-  const drivers = await loadInstallationConfiguration({ mode: settings.mode });
+  const compositionSettings = { ...settings, logger, logging };
+  const drivers = await loadInstallationConfiguration({
+    mode: settings.mode,
+    startupConfiguration,
+  });
   let serviceAccountDriverFactory;
   const selectedServiceAccountDriver = drivers?.installation.drivers.service_account;
   if (selectedServiceAccountDriver !== undefined) {
@@ -214,6 +226,7 @@ async function start() {
     app = await composeProduction({
       ...compositionSettings,
       drivers,
+      logger,
       ...(serviceAccountDriverFactory === undefined ? {} : { serviceAccountDriverFactory }),
     });
   } else {
@@ -246,9 +259,7 @@ async function start() {
     await app.close().catch(() => {});
     throw error;
   }
-  process.stdout.write(
-    `${JSON.stringify({ event: "listening", host: settings.host, port: settings.port })}\n`,
-  );
+  logger.info({ event: "listening", host: settings.host, port: settings.port });
 }
 
 try {

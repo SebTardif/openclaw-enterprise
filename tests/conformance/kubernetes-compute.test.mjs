@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -900,6 +901,7 @@ test("dedicated Codex projects the account-owned token and workspace without exp
     "codex-agent",
     "agent",
     {},
+    "info",
     undefined,
     false,
     undefined,
@@ -936,6 +938,7 @@ test("dedicated Codex projects the account-owned token and workspace without exp
     "codex-gateway",
     "gateway",
     {},
+    "info",
     undefined,
     false,
     undefined,
@@ -1056,7 +1059,10 @@ test("native channel providers supply only owning gateway secrets and reviewed p
     ],
     [{ defaults: {}, modelByChannel: {} }, []],
   ]) {
-    const configuredRevision = { ...revision, configuration: { channels } };
+    const configuredRevision = {
+      ...revision,
+      configuration: { ...revision.configuration, channels },
+    };
     const enabled = driver.enabledChannels(configuredRevision);
     const gateway = driver.deployment(
       `gateway-${suffix}`,
@@ -1066,6 +1072,7 @@ test("native channel providers supply only owning gateway secrets and reviewed p
       `gateway-${suffix}`,
       "gateway",
       {},
+      "info",
       undefined,
       false,
       undefined,
@@ -1119,6 +1126,8 @@ test("native channel providers supply only owning gateway secrets and reviewed p
       "openclaw-enterprise/agent-fixture:local",
       `agent-${suffix}`,
       "agent",
+      {},
+      "info",
     );
     const agentEnvironment = agent.spec.template.spec.containers[0].env;
     for (const key of [...expectedSecrets, "HTTPS_PROXY"]) {
@@ -1130,7 +1139,19 @@ test("native channel providers supply only owning gateway secrets and reviewed p
   }
 
   // Removing channel runtime must revoke the exact existing grant without needing its old proxy.
-  const activeRevision = { ...revision, configuration: { channels: { slack: {} } } };
+  const activeRevision = {
+    ...revision,
+    configuration: {
+      channels: { slack: {} },
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
+    },
+  };
   const previouslyGranted = driver.channelNetworkPolicy(
     activeRevision,
     driver.enabledChannels(activeRevision),
@@ -1148,7 +1169,16 @@ test("native channel providers supply only owning gateway secrets and reviewed p
     const disabledRevision = {
       ...revision,
       compute: { id: removed.id, implementation: removed.implementation },
-      configuration: { channels: { slack: { enabled: false } } },
+      configuration: {
+        channels: { slack: { enabled: false } },
+        logging: {
+          level: "info",
+          consoleLevel: "info",
+          consoleStyle: "json",
+          redactSensitive: "tools",
+        },
+        diagnostics: { otel: { logs: false } },
+      },
     };
     const revoked = removed.channelNetworkPolicy(
       disabledRevision,
@@ -1166,7 +1196,16 @@ test("native channel providers supply only owning gateway secrets and reviewed p
   await assert.rejects(
     driver.prepareRevision({
       ...revision,
-      configuration: { channels: { discord: { enabled: true } } },
+      configuration: {
+        channels: { discord: { enabled: true } },
+        logging: {
+          level: "info",
+          consoleLevel: "info",
+          consoleStyle: "json",
+          redactSensitive: "tools",
+        },
+        diagnostics: { otel: { logs: false } },
+      },
     }),
     /Unsupported OpenClaw channel provider "discord"\./,
   );
@@ -1184,7 +1223,16 @@ test("native channel providers supply only owning gateway secrets and reviewed p
   const teamsRevision = {
     ...revision,
     compute: { id: ipv6.id, implementation: ipv6.implementation },
-    configuration: { channels: { msteams: {} } },
+    configuration: {
+      channels: { msteams: {} },
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
+    },
   };
   const ipv6Policy = ipv6.channelNetworkPolicy(
     teamsRevision,
@@ -1233,6 +1281,13 @@ test("embedded replacement preparation recovers past an unready active gateway w
     id: "revision-embedded-recovery-bad",
     revision: 7,
     configuration: {
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
       gateway: {
         trustedProxies: ["10.42.0.0/16"],
         allowRealIpFallback: true,
@@ -1253,6 +1308,13 @@ test("embedded replacement preparation recovers past an unready active gateway w
     id: "revision-embedded-recovery-restored",
     revision: 8,
     configuration: {
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
       gateway: {
         trustedProxies: ["10.42.0.0/16"],
         allowRealIpFallback: true,
@@ -1301,6 +1363,7 @@ test("embedded replacement preparation recovers past an unready active gateway w
       agentName,
       "gateway",
       {},
+      driver.gatewayConfiguration(oldRevision).loggingLevel,
       driver.gatewayConfiguration(oldRevision),
       true,
       oldRevision.servicePrincipalId,
@@ -1314,6 +1377,7 @@ test("embedded replacement preparation recovers past an unready active gateway w
         agentName,
         "gateway",
         {},
+        driver.gatewayConfiguration(oldRevision).loggingLevel,
         driver.gatewayConfiguration(oldRevision),
         true,
         oldRevision.servicePrincipalId,
@@ -1598,7 +1662,16 @@ test("Kubernetes lifecycle hooks never run before cluster ownership and workload
     configurationId: "cfg_00000000-0000-4000-8000-000000000001",
     configurationKind: "agent",
     configurationGeneration: 1,
-    configuration: { gateway: { controlUi: { enabled: false } }, logging: { level: "info" } },
+    configuration: {
+      gateway: { controlUi: { enabled: false } },
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
+    },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
     compute: { id: "another-driver", implementation: "another-implementation" },
     servicePrincipalId: "service-principal-agent-foreign",
@@ -1784,6 +1857,8 @@ test("provider-owned Harness requirements preserve the exact projected ServicePr
     "agent:local",
     "agent-projected-identity",
     "agent",
+    {},
+    "info",
   );
 
   const requirements = driver.harnessRequirementsFromDeployment(workload);
@@ -1851,6 +1926,8 @@ test("provider-owned Harness requirements preserve the exact projected ServicePr
     "agent:local",
     "agent-projected-identity",
     "agent",
+    {},
+    "info",
   );
   assert.throws(
     () => withoutProjection.harnessRequirementsFromDeployment(unprojected),
@@ -1885,7 +1962,10 @@ function providerReadinessFixture({ provisionHarness, lifecycleDrivers = [] } = 
   );
   const revision = routedRevision(driver, {
     sandboxDriverId: "sandbox-provider",
-    configuration: { gateway: { controlUi: { enabled: false } } },
+    configuration: admitLoggingConfiguration(
+      { gateway: { controlUi: { enabled: false } } },
+      "info",
+    ),
   });
   const namespace = kubernetesNamespaceName(tenant.id);
   const agentName = `agent-${digest(revision.agentId)}`;
@@ -1901,6 +1981,8 @@ function providerReadinessFixture({ provisionHarness, lifecycleDrivers = [] } = 
     "agent:local",
     agentName,
     "agent",
+    {},
+    driver.gatewayConfiguration(revision).loggingLevel,
   );
   const { labels } = driver.harnessRequirementsFromDeployment(deployment);
   const requests = [];
@@ -2143,6 +2225,7 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
     gatewayName,
     "gateway",
     {},
+    driver.gatewayConfiguration(revision).loggingLevel,
     driver.gatewayConfiguration(revision),
   );
   gateway.metadata.generation = 1;
@@ -2291,7 +2374,16 @@ test("revision lifecycle rejects another driver or missing identity before clust
     configurationId: "cfg_00000000-0000-4000-8000-000000000001",
     configurationKind: "agent",
     configurationGeneration: 1,
-    configuration: { gateway: { controlUi: { enabled: false } }, logging: { level: "info" } },
+    configuration: {
+      gateway: { controlUi: { enabled: false } },
+      logging: {
+        level: "info",
+        consoleLevel: "info",
+        consoleStyle: "json",
+        redactSensitive: "tools",
+      },
+      diagnostics: { otel: { logs: false } },
+    },
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-agent-a",
@@ -2303,7 +2395,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
       await assert.rejects(
         driver.prepareRevision({
           ...revision,
-          configuration: { channels: { [provider]: configuration } },
+          configuration: { ...revision.configuration, channels: { [provider]: configuration } },
         }),
         /isolated credentials and a reviewed proxy/i,
       );
@@ -2412,7 +2504,10 @@ test("revision lifecycle rejects another driver or missing identity before clust
     await assert.rejects(
       production.prepareRevision({
         ...embeddedRevision,
-        configuration: { channels: { [provider]: { enabled: true } } },
+        configuration: {
+          ...embeddedRevision.configuration,
+          channels: { [provider]: { enabled: true } },
+        },
       }),
       /channels require a dedicated Agent workload\./i,
     );
@@ -2427,6 +2522,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     `agent-${agentHash.slice(0, 12)}`,
     "gateway",
     {},
+    production.gatewayConfiguration(embeddedRevision).loggingLevel,
     production.gatewayConfiguration(embeddedRevision),
     true,
     revision.servicePrincipalId,
@@ -2454,7 +2550,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     id: "revision-a-embedded-trusted-proxy",
     configuration: {
       ...embeddedRevision.configuration,
-      gateway: { auth: { mode: "trusted-proxy" } },
+      gateway: { ...embeddedRevision.configuration.gateway, auth: { mode: "trusted-proxy" } },
     },
   };
   const trustedProxyGateway = production.deployment(
@@ -2465,6 +2561,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     `agent-${agentHash.slice(0, 12)}`,
     "gateway",
     {},
+    production.gatewayConfiguration(trustedProxyRevision).loggingLevel,
     production.gatewayConfiguration(trustedProxyRevision),
     true,
     revision.servicePrincipalId,
@@ -2556,6 +2653,7 @@ test("gateway SQLite and media mounts are private, durable, and preserve ephemer
       "gateway",
       "gateway",
       {},
+      "info",
       undefined,
       embedded,
     );
@@ -2605,7 +2703,14 @@ test("gateway SQLite and media mounts are private, durable, and preserve ephemer
         "gateway",
         "gateway",
         {},
-        { name: "configuration-2", revision: 2, revisionId: "revision-2", annotations: {} },
+        "info",
+        {
+          name: "configuration-2",
+          revision: 2,
+          revisionId: "revision-2",
+          annotations: {},
+          loggingLevel: "info",
+        },
         true,
       ).spec.template.spec;
       assert.deepEqual(
@@ -2640,7 +2745,16 @@ test("gateway SQLite and media mounts are private, durable, and preserve ephemer
       !embedded,
     );
   }
-  const harness = driver.deployment("agent", ownership, namespace, "agent:local", "agent", "agent");
+  const harness = driver.deployment(
+    "agent",
+    ownership,
+    namespace,
+    "agent:local",
+    "agent",
+    "agent",
+    {},
+    "info",
+  );
   assert.equal(JSON.stringify(harness).includes(claim.metadata.name), false);
   assert.equal(JSON.stringify(harness).includes("openclaw-gateway-state"), false);
 });

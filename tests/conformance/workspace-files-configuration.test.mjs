@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertStartupFailureRecord } from "../helpers/startup-failure-record.mjs";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,11 +44,7 @@ async function failedStartup(env) {
   } catch (error) {
     assert.equal(error.code, 1);
     assert.equal(error.signal, null);
-    assert.deepEqual(JSON.parse(error.stderr), {
-      event: "startup-error",
-      code: "STARTUP_FAILED",
-      error: "Controller startup failed. Check the configured startup prerequisites.",
-    });
+    assertStartupFailureRecord(error.stderr, "api");
   }
 }
 

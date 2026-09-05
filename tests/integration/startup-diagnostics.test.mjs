@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertStartupFailureRecord } from "../helpers/startup-failure-record.mjs";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -55,15 +56,8 @@ async function launch(component, env) {
 }
 
 function assertOutput(result, component, marker, code, error) {
-  // Equality of the entire stderr stream rejects extra parser dumps and cleanup errors.
-  assert.equal(
-    result.stderr,
-    `${JSON.stringify({
-      event: component === "api" ? "startup-error" : "worker.startup-error",
-      code,
-      error,
-    })}\n`,
-  );
+  // The entire stderr stream must be one fixed diagnostic with only the logger envelope.
+  assertStartupFailureRecord(result.stderr, component, { code, error });
   assert.equal(result.stdout.includes(marker), false);
   assert.equal(result.stderr.includes(marker), false);
   assert.doesNotMatch(result.stdout, /"event":"listening"|"event":"worker.started"/);
@@ -112,10 +106,16 @@ test(
 
     // Use the production bootstrap itself, so Installation, IAM and auth prerequisites
     // are real. Generated credentials remain in protected disposable files, never logs.
+    const bootstrapConfigurationPath = join(directory, "bootstrap-installation.json");
+    await writeFile(
+      bootstrapConfigurationPath,
+      JSON.stringify(createInstallationDriverConfiguration()),
+      { mode: 0o600 },
+    );
     const bootstrapped = await run(process.execPath, ["scripts/bootstrap-installation.mjs"], {
       cwd: repository,
       env: {
-        ...environment(join(directory, "unused.json")),
+        ...environment(bootstrapConfigurationPath),
         OCC_BOOTSTRAP_ADMIN_EMAIL: "startup-admin@example.test",
         OCC_BOOTSTRAP_INSTALLATION_NAME: "startup-diagnostics",
         OCC_BOOTSTRAP_PASSWORD_FILE: join(directory, "admin-password"),
@@ -157,8 +157,20 @@ test(
           // Only the real Kubernetes helper can register this category. An earlier
           // database, Installation, auth or IAM failure would instead be STARTUP_FAILED.
           assertOutput(result, component, marker, "KUBERNETES_CONFIGURATION_INVALID", kubeFailure);
-          if (component === "worker") assert.equal(result.stdout, '{"event":"worker.stopped"}\n');
-          else assert.equal(result.stdout, "");
+          if (component === "worker") {
+            // Cleanup emits exactly one safe operational record through the real worker logger.
+            const lines = result.stdout.split("\n");
+            assert.equal(lines.length, 2);
+            assert.equal(lines[1], "");
+            const { time, ...record } = JSON.parse(lines[0]);
+            assert.equal(typeof time, "string");
+            assert.equal(new Date(time).toISOString(), time);
+            assert.deepEqual(record, {
+              severity: "INFO",
+              service: "occ-worker",
+              event: "worker.stopped",
+            });
+          } else assert.equal(result.stdout, "");
         });
       }
     }

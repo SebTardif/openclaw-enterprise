@@ -1,6 +1,11 @@
 import { unlink, writeFile } from "node:fs/promises";
 import pg from "pg";
-import { loadInstallationConfiguration } from "./composition/installation-config.ts";
+import {
+  loadInstallationConfiguration,
+  loadOperationalLoggingConfiguration,
+  loadStartupConfigurationSnapshot,
+} from "./composition/installation-config.ts";
+import { createOccLogger, createWorkerLogEmitter, emitOccLogEvent } from "./logging.ts";
 import { createControllerWorker } from "./worker.ts";
 import { startupDiagnostic } from "./startup-diagnostics.ts";
 
@@ -41,8 +46,14 @@ function configuration() {
 let worker;
 let pool;
 let readinessPath;
+let logger;
+let logging;
+let startupConfiguration;
 try {
   const { databaseUrl, mode, ...options } = configuration();
+  startupConfiguration = await loadStartupConfigurationSnapshot({ mode });
+  logging = startupConfiguration.logging;
+  logger = createOccLogger({ component: "occ-worker", level: logging.level });
   readinessPath = process.env.OCC_WORKER_READINESS_PATH;
   if (readinessPath !== undefined) {
     if (!readinessPath.startsWith("/"))
@@ -53,7 +64,7 @@ try {
       if (error?.code !== "ENOENT") throw error;
     }
   }
-  const drivers = await loadInstallationConfiguration({ mode });
+  const drivers = await loadInstallationConfiguration({ mode, startupConfiguration });
   let computeDriver;
   if (drivers === undefined && mode === "development") {
     const { createDevelopmentDockerComputeDriver } =
@@ -66,6 +77,7 @@ try {
     pool,
     mode,
     ...options,
+    emit: createWorkerLogEmitter(logger),
     ...(drivers === undefined ? { computeDriver } : { drivers }),
     ...(readinessPath === undefined
       ? {}
@@ -82,9 +94,7 @@ try {
       await worker.stop();
       process.exitCode = 0;
     } catch {
-      process.stderr.write(
-        `${JSON.stringify({ event: "worker.error", code: "SHUTDOWN_FAILED" })}\n`,
-      );
+      emitOccLogEvent(logger, { event: "worker.error", code: "SHUTDOWN_FAILED" });
       process.exitCode = 1;
     }
   }
@@ -94,6 +104,21 @@ try {
   if (readinessPath !== undefined) await unlink(readinessPath).catch(() => {});
   if (worker !== undefined) await worker.stop().catch(() => {});
   else if (pool !== undefined) await pool.end().catch(() => {});
-  process.stderr.write(`${JSON.stringify(startupDiagnostic("worker", error))}\n`);
+  try {
+    const mode = process.env.NODE_ENV === "production" ? "production" : "development";
+    logging =
+      logging ??
+      startupConfiguration?.logging ??
+      (await loadOperationalLoggingConfiguration({ mode }));
+    logger = createOccLogger({
+      component: "occ-worker",
+      level: logging.level,
+      destination: "stderr",
+    });
+  } catch {
+    logger = createOccLogger({ component: "occ-worker", level: "info", destination: "stderr" });
+  }
+  // Preserve the fixed diagnostic even if cleanup or logging configuration failed.
+  logger.error(startupDiagnostic("worker", error));
   process.exitCode = 1;
 }

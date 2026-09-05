@@ -180,7 +180,9 @@ async function request(controller, method, path, body, options = {}) {
     headers: {
       ...(options.authenticated === false
         ? {}
-        : authenticatedHeaders(options.session ?? controller.session)),
+        : authenticatedHeaders(options.session ?? controller.session, {
+            origin: controller.origin,
+          })),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -248,7 +250,17 @@ test(
       signal: AbortSignal.timeout(10_000),
     });
     assert.notEqual(prematureExit, 0);
-    assert.match(prematureWorker.output(), /installation|initializ|bootstrap/i);
+    const startupError = prematureWorker
+      .output()
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((line) => line.event === "worker.startup-error");
+    assert.ok(startupError, prematureWorker.output());
+    assert.equal(startupError.severity, "ERROR");
+    assert.equal(startupError.service, "occ-worker");
+    assert.equal(startupError.code, "STARTUP_FAILED");
 
     const namespaceId = `ns_${randomUUID()}`;
     const agentId = `agt_${randomUUID()}`;

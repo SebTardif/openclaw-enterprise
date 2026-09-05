@@ -40,8 +40,9 @@ import type {
   SandboxResourceRef,
   SandboxWorkspaceMount,
   SecretEnvironmentProjection,
+  LoggingLevel,
 } from "@openclaw-enterprise/contracts";
-import { normalizeSecretBindings } from "@openclaw-enterprise/contracts";
+import { admittedLoggingLevel, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
@@ -174,6 +175,7 @@ interface GatewayConfigurationSnapshot {
   readonly revisionId: string;
   readonly usesTrustedProxyAuth: boolean;
   readonly annotations: Readonly<Record<string, string>>;
+  readonly loggingLevel: LoggingLevel;
 }
 
 class OwnershipFailure extends Error {}
@@ -1228,6 +1230,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
             gatewayAccountName,
             "gateway",
             embeddedEnvironment,
+            configuration.loggingLevel,
             configuration,
             embedded,
             embedded ? revision.servicePrincipalId : undefined,
@@ -1315,6 +1318,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         agentName,
         "agent",
         launch.environment,
+        configuration.loggingLevel,
         undefined,
         false,
         undefined,
@@ -1442,6 +1446,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
               agentName,
               "gateway",
               launch.environment,
+              this.gatewayConfiguration(revision).loggingLevel,
               this.gatewayConfiguration(revision),
               true,
               revision.servicePrincipalId,
@@ -1475,6 +1480,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     const revisionName = `${agentName}-rev-${sha256Hex(revision.id, 12)}`;
     const sandboxDriver = this.sandboxDriverForRevision(revision);
+    const configuration = this.gatewayConfiguration(revision);
     const agentDeployment = this.deployment(
       revisionName,
       { ...ownership, revisionId: revision.id },
@@ -1483,6 +1489,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       agentName,
       "agent",
       {},
+      configuration.loggingLevel,
       undefined,
       false,
       undefined,
@@ -1525,7 +1532,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
         gatewayName,
         "gateway",
         {},
-        this.gatewayConfiguration(revision),
+        configuration.loggingLevel,
+        configuration,
         false,
         undefined,
         undefined,
@@ -2814,6 +2822,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         "openclaw.dev/configuration-kind": revision.configurationKind,
         "openclaw.dev/configuration-generation": String(revision.configurationGeneration),
       },
+      loggingLevel: admittedLoggingLevel(revision.configuration),
     };
   }
 
@@ -3451,7 +3460,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     image: string,
     serviceAccountName: string,
     role: "gateway" | "agent",
-    environment: Readonly<Record<string, string>> = {},
+    environment: Readonly<Record<string, string>>,
+    loggingLevel: LoggingLevel,
     configuration?: GatewayConfigurationSnapshot,
     embedded = false,
     workloadServicePrincipalId?: string,
@@ -3471,6 +3481,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
             [AGENT_REVISION_ANNOTATION]: String(configuration.revision),
             [AGENT_REVISION_ID_ANNOTATION]: configuration.revisionId,
           }
+        : {};
+    const revisionLabels =
+      role === "gateway" && configuration !== undefined
+        ? { "openclaw.dev/revision": configuration.revisionId }
         : {};
     const deployment = this.manifest("apps/v1", "Deployment", name, ownership, namespace);
     const selector = { "app.kubernetes.io/name": name };
@@ -3530,6 +3544,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     if (role === "agent" || embedded) {
       variables.push(...Object.entries(environment).map(([name, value]) => ({ name, value })));
+    }
+    if (role === "agent") {
+      variables.push(
+        { name: "LOG_FORMAT", value: "json" },
+        { name: "RUST_LOG", value: `${loggingLevel},codex_otel=off` },
+      );
     }
     if (secretEnvironment.length > 0) {
       if (role !== "gateway") {
@@ -3690,7 +3710,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
           metadata: {
             ...workloadMetadata,
             annotations: { ...workloadMetadata.annotations, ...configurationAnnotations },
-            labels: { ...workloadMetadata.labels, ...selector, "openclaw.dev/workload-role": role },
+            labels: {
+              ...workloadMetadata.labels,
+              ...revisionLabels,
+              ...selector,
+              "openclaw.dev/workload-role": role,
+            },
           },
           spec: {
             ...(role === "agent" && this.options.isolationProfile !== undefined

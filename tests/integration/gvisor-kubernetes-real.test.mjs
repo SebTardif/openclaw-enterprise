@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -247,7 +248,10 @@ function revisionFor(driver, owner, agentId, configurationId, number) {
     configurationId,
     configurationKind: "agent",
     configurationGeneration: number,
-    configuration: { gateway: { controlUi: { enabled: false } }, logging: { level: "info" } },
+    configuration: admitLoggingConfiguration(
+      { gateway: { controlUi: { enabled: false } } },
+      "info",
+    ),
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: `service-agent-${agentId}`,

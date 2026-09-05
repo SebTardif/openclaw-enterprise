@@ -10,9 +10,13 @@ projection in development and production.
 | `KUBERNETES_CONFIGURATION_INVALID` | `Kubernetes client configuration is unavailable or invalid.`             | The Kubernetes client helper could not load its selected configuration or rejected its context, cluster, identity or HTTPS settings. |
 | `STARTUP_FAILED`                   | `Controller startup failed. Check the configured startup prerequisites.` | Any other startup failure, including an unrecognized error.                                                                          |
 
-These records contain only `event`, `code` and `error`. They do not include the
-original exception message, stack, cause, parser excerpt, file path, arbitrary
-properties or credential contents. A field named `code` on an upstream exception
+The fixed diagnostic contains only `event`, `code` and `error`. The shared OCC
+logger adds `severity: "ERROR"`, an ISO timestamp in `time`, and `service` set to
+`occ-api` or `occ-worker`. The complete stderr record contains only those six
+fields. The `error` field is always the fixed text above; it is not an exception
+object or the original exception message. The record does not include a stack,
+cause, parser excerpt, file path, arbitrary properties or credential contents.
+A field named `code` on an upstream exception
 cannot select a diagnostic category. Categories are registered locally at the
 validation boundary; all other errors receive the generic category. There is no
 ordinary-log option to expose raw errors.
@@ -52,7 +56,9 @@ Run the configuration-only and serializer checks with:
 node --test tests/conformance/startup-diagnostics.test.mjs
 ```
 
-The launcher suite also covers generic safe failure without external services:
+The launcher suite also covers generic safe failure without external services.
+It checks the entire stderr stream, including the logger envelope, so additional
+parser output or cleanup errors fail verification:
 
 ```sh
 node --test tests/integration/startup-diagnostics.test.mjs
