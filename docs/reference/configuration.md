@@ -127,6 +127,32 @@ updates and conditional edits, and mutation/audit atomicity. An absent database 
 not PostgreSQL evidence. These checks use the existing Configuration storage
 fixture; they do not establish live Kubernetes ConfigMap or RBAC proof.
 
+The [memory Configuration repository](../../packages/occ/src/state/memory/configurations.ts)
+and [PostgreSQL Configuration repository](../../packages/occ/src/state/postgres/configurations.ts)
+persist ownership metadata and normalized Secret binding references. Their
+factories borrow the store's existing working maps or transaction client and
+lifetime. Construction performs no I/O; Configuration creation sees the live
+Installation, including one created earlier in the same unit of work. The store
+continues to own Namespace locking, shared Secret validation, commit, rollback,
+and closure while accepted internal calls finish. Generation comparisons and
+immutable returned records retain their existing behavior.
+
+Run the focused storage checks after preparing development dependencies:
+
+```sh
+node --test tests/conformance/configuration-repository-memory.test.mjs
+node --test tests/integration/postgres-configuration-repository.test.mjs
+```
+
+For the PostgreSQL command, `OCC_TEST_DATABASE_URL` selects the prepared
+application-role database for ordinary storage cases.
+`OCC_PRODUCTION_WIREUP_DATABASE_URL` separately selects an independently prepared,
+empty disposable database for same-unit bootstrap coverage. Follow the existing
+[PostgreSQL test environment](settings.md#postgresql-test-environment) requirements.
+An absent selector skips its corresponding database cases. These checks exercise
+Secret references, generation contention, transaction closure and cross-resource
+atomicity through the actual storage adapters.
+
 ## Secret bindings
 
 Use `Configuration.secretBindings` only to map a Namespace-owned OCC Secret to a

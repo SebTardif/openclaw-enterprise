@@ -1,6 +1,7 @@
 import { RepositoryTransactionLifetime, type RepositoryTransaction } from "../ports/transaction.ts";
 import { createMemoryChannelBindingRepository } from "./memory/channel-bindings.ts";
 import { createMemoryNamespaceRepository } from "./memory/namespaces.ts";
+import { createMemoryConfigurationRepository } from "./memory/configurations.ts";
 export { validateChannelBindingList } from "./channel-binding-validation.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -35,7 +36,6 @@ export type {
 import type {
   ConfigurationOwnership,
   ConfigurationReadRepository,
-  ConfigurationRepository,
 } from "../ports/repositories/configuration.ts";
 export type {
   ConfigurationOwnership,
@@ -544,92 +544,38 @@ function repositories(
     },
   });
 
-  const configurations: ConfigurationRepository = {
-    findConfiguration: async (namespaceId, configurationId) => {
-      if (snapshot.namespaces.get(namespaceId)?.deletedAt !== undefined) return undefined;
-      const configuration = snapshot.configurations.get(agentKey(namespaceId, configurationId));
-      return configuration === undefined ? undefined : immutableCopy(configuration);
+  const configurations = createMemoryConfigurationRepository({
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    createConfiguration: async (configuration) => {
-      assertInitialized(snapshot);
-      if (
-        configuration.kind !== "agent" ||
-        !Number.isSafeInteger(configuration.generation) ||
-        configuration.generation <= 0
-      )
-        throw new ScopeViolationError("The Configuration kind or generation is invalid.");
-      const namespace = await namespaces.lockNamespace(configuration.namespaceId);
-      if (
-        namespace === undefined ||
-        (namespace.status !== "provisioning" && namespace.status !== "ready")
-      )
-        throw new ScopeViolationError("The Configuration belongs to an unavailable Namespace.");
-      const key = agentKey(configuration.namespaceId, configuration.id);
-      if (
-        snapshot.configurations.has(key) ||
-        Array.from(snapshot.configurations.values()).some(
-          (existing) => existing.id === configuration.id,
-        )
-      )
-        throw new ResourceConflictError("The server generated an existing Configuration identity.");
-      const secretBindings = normalizedSecretBindings(configuration.secretBindings);
-      await assertSecretBindingsAvailable(
+    snapshot: {
+      get installation() {
+        return snapshot.installation;
+      },
+      configurations: snapshot.configurations,
+      namespaces: snapshot.namespaces,
+      agents: snapshot.agents,
+    },
+    namespaces,
+    configurationKey: agentKey,
+    normalizedSecretBindings,
+    assertCreateSecretBindingsAvailable: (namespaceId, bindings) =>
+      assertSecretBindingsAvailable(
         {
           findSecret: async (namespaceId, secretId) => {
             const secret = snapshot.secrets.get(agentKey(namespaceId, secretId));
             return secret === undefined ? undefined : immutableCopy(secret);
           },
         },
-        configuration.namespaceId,
-        secretBindings,
-      );
-      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = configuration;
-      const saved = immutableCopy({
-        ...withoutSecretBindings,
-        ...(secretBindings === undefined ? {} : { secretBindings }),
-      });
-      snapshot.configurations.set(key, saved);
-      return immutableCopy(saved);
-    },
-    lockConfiguration: async (namespaceId, configurationId) =>
-      configurations.findConfiguration(namespaceId, configurationId),
-    advanceConfigurationGeneration: async (
-      namespaceId,
-      configurationId,
-      expectedGeneration,
-      nextSecretBindings,
-    ) => {
-      const current = await configurations.findConfiguration(namespaceId, configurationId);
-      if (current === undefined || current.generation !== expectedGeneration) return undefined;
-      if (current.generation === Number.MAX_SAFE_INTEGER)
-        throw new ScopeViolationError("The Configuration generation exceeds its supported range.");
-      const secretBindings =
-        nextSecretBindings === undefined
-          ? current.secretBindings
-          : normalizedSecretBindings(nextSecretBindings);
-      await assertSecretBindingsAvailable(secrets, namespaceId, secretBindings);
-      const { secretBindings: _currentSecretBindings, ...withoutSecretBindings } = current;
-      const updated = immutableCopy({
-        ...withoutSecretBindings,
-        generation: current.generation + 1,
-        ...(secretBindings === undefined ? {} : { secretBindings }),
-      });
-      snapshot.configurations.set(agentKey(namespaceId, configurationId), updated);
-      return immutableCopy(updated);
-    },
-    deleteConfiguration: async (namespaceId, configurationId) => {
-      const existing = await configurations.findConfiguration(namespaceId, configurationId);
-      if (existing === undefined) return false;
-      if (
-        Array.from(snapshot.agents.values()).some(
-          (agent) => agent.namespaceId === namespaceId && agent.configurationId === configurationId,
-        )
-      )
-        throw new ScopeViolationError("The Configuration is referenced by an Agent.");
-      snapshot.configurations.delete(agentKey(namespaceId, configurationId));
-      return true;
-    },
-  };
+        namespaceId,
+        bindings,
+      ),
+    assertSecretBindingsAvailable: (namespaceId, bindings) =>
+      assertSecretBindingsAvailable(secrets, namespaceId, bindings),
+  });
 
   const secrets: SecretRepository = {
     findSecret: async (namespaceId, secretId) => {

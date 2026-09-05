@@ -1,5 +1,6 @@
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { createPostgresNamespaceRepository } from "./postgres/namespaces.ts";
+import { createPostgresConfigurationRepository } from "./postgres/configurations.ts";
 import { createPostgresChannelBindingRepository } from "./postgres/channel-bindings.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -57,8 +58,6 @@ import type {
   RuntimeIntentAttribution,
   AgentRepository,
   AgentRevisionRepository,
-  ConfigurationOwnership,
-  ConfigurationRepository,
   InstallationRepository,
   PlatformAuditSink,
   PlatformOperation,
@@ -271,21 +270,6 @@ function serviceAccountFromRow(row: PostgresRow): Readonly<ServiceAccount> {
     namespaceId: text(row, "namespace_id"),
     name: text(row, "name"),
     ...(credential === null ? {} : { credential }),
-  });
-}
-
-function configurationFromRow(row: PostgresRow): Readonly<ConfigurationOwnership> {
-  const secretBindings =
-    row.secret_bindings === null || row.secret_bindings === undefined
-      ? undefined
-      : secretBindingsFromJson(row.secret_bindings, text(row, "namespace_id"));
-  return immutableCopy({
-    id: text(row, "id"),
-    namespaceId: text(row, "namespace_id"),
-    kind: text(row, "kind") as ConfigurationOwnership["kind"],
-    generation: Number(row.generation),
-    ...(secretBindings === undefined ? {} : { secretBindings }),
-    createdAt: timestamp(row, "created_at"),
   });
 }
 
@@ -1155,110 +1139,24 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw new ScopeViolationError("Secret bindings reference unavailable Secret metadata.");
     };
 
-    const findConfiguration = async (
-      namespaceId: string,
-      configurationId: string,
-      lock = false,
-    ): Promise<Readonly<ConfigurationOwnership> | undefined> => {
-      const found = rows(
-        (
-          await client.query(
-            `SELECT c.id, c.namespace_id, c.kind, c.generation, c.created_at
-                  , c.secret_bindings
-             FROM occ.configurations AS c
-             JOIN occ.namespaces AS n ON n.id = c.namespace_id AND n.deleted_at IS NULL
-             WHERE c.namespace_id = $1 AND c.id = $2${lock ? " FOR UPDATE OF c" : ""}`,
-            [namespaceId, configurationId],
-          )
-        ).rows,
-      )[0];
-      return found === undefined ? undefined : configurationFromRow(found);
-    };
-
-    const configurations: ConfigurationRepository = {
-      findConfiguration,
-      createConfiguration: async (configuration) => {
-        await this.requireInitialized(context);
-        const namespace = await namespaces.lockNamespace(configuration.namespaceId);
-        if (
-          namespace === undefined ||
-          (namespace.status !== "provisioning" && namespace.status !== "ready")
-        )
-          throw new ScopeViolationError("The Configuration belongs to an unavailable Namespace.");
-        const serializedSecretBindings = serializeSecretBindings(
-          configuration.namespaceId,
-          configuration.secretBindings,
-        );
-        await validateSecretBindingsAvailable(
-          configuration.namespaceId,
-          configuration.secretBindings,
-        );
-        await client.query(
-          `INSERT INTO occ.configurations
-           (id, namespace_id, kind, generation, secret_bindings, created_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
-          [
-            configuration.id,
-            configuration.namespaceId,
-            configuration.kind,
-            configuration.generation,
-            serializedSecretBindings,
-            configuration.createdAt,
-          ],
-        );
-        const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = configuration;
-        const storedSecretBindings =
-          serializedSecretBindings === null
-            ? undefined
-            : secretBindingsFromJson(serializedSecretBindings, configuration.namespaceId);
-        const saved: ConfigurationOwnership =
-          storedSecretBindings === undefined
-            ? withoutSecretBindings
-            : { ...withoutSecretBindings, secretBindings: storedSecretBindings };
-        return immutableCopy({
-          ...saved,
-        });
+    const configurations = createPostgresConfigurationRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
       },
-      lockConfiguration: async (namespaceId, configurationId) =>
-        findConfiguration(namespaceId, configurationId, true),
-      advanceConfigurationGeneration: async (
-        namespaceId,
-        configurationId,
-        expectedGeneration,
-        nextSecretBindings,
-      ) => {
-        const current = await findConfiguration(namespaceId, configurationId, true);
-        if (current === undefined || current.generation !== expectedGeneration) return undefined;
-        const secretBindings =
-          nextSecretBindings === undefined ? current.secretBindings : nextSecretBindings;
-        await validateSecretBindingsAvailable(namespaceId, secretBindings);
-        const serializedSecretBindings = serializeSecretBindings(namespaceId, secretBindings);
-        const updated = rows(
-          (
-            await client.query(
-              `UPDATE occ.configurations AS c
-               SET generation = c.generation + 1, secret_bindings = $4::jsonb
-               FROM occ.namespaces AS n
-               WHERE c.namespace_id = $1 AND c.id = $2 AND c.generation = $3
-                 AND n.id = c.namespace_id AND n.deleted_at IS NULL
-               RETURNING c.id, c.namespace_id, c.kind, c.generation, c.secret_bindings,
-                         c.created_at`,
-              [namespaceId, configurationId, expectedGeneration, serializedSecretBindings],
-            )
-          ).rows,
-        )[0];
-        return updated === undefined ? undefined : configurationFromRow(updated);
-      },
-      deleteConfiguration: async (namespaceId, configurationId) => {
-        const deleted = await client.query(
-          `DELETE FROM occ.configurations AS c USING occ.namespaces AS n
-           WHERE c.namespace_id = $1 AND c.id = $2
-             AND n.id = c.namespace_id AND n.deleted_at IS NULL`,
-          [namespaceId, configurationId],
-        );
-        return deleted.rowCount === 1;
-      },
-    };
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => client.query(statement, parameters) },
+      requireInitialized: () => this.requireInitialized(context),
+      namespaces,
+      serializeSecretBindings,
+      validateSecretBindingsAvailable,
+      secretBindingsFromJson,
+      rows,
+      text,
+      timestamp,
+    });
 
     const secrets: SecretRepository = {
       findSecret,
