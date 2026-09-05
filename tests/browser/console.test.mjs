@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { chromium } from "playwright";
-
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
+import { createConsoleBrowserFixture } from "../helpers/console-browser.mjs";
+
+const browserFixture = createConsoleBrowserFixture();
 
 async function artifactDirectory(t) {
   const configured = process.env.OCC_TEST_CONSOLE_ARTIFACT_DIR;
@@ -18,36 +19,18 @@ async function artifactDirectory(t) {
   return directory;
 }
 
-async function launchBrowser(t) {
-  const browserExecutable =
-    process.env.OCC_TEST_BROWSER_EXECUTABLE === undefined ||
-    process.env.OCC_TEST_BROWSER_EXECUTABLE.length === 0
-      ? undefined
-      : process.env.OCC_TEST_BROWSER_EXECUTABLE;
-  const browser = await chromium.launch({
-    ...(browserExecutable === undefined ? {} : { executablePath: browserExecutable }),
-    headless: true,
-  });
-  t.after(() => browser.close());
-  return browser;
-}
-
 async function newPage(t) {
   const artifacts = await artifactDirectory(t);
-  const browser = await launchBrowser(t);
-  const context = await browser.newContext();
-  t.after(() => context.close());
+  const context = await browserFixture.newContext(t);
   return { page: await context.newPage(), artifacts };
 }
 
 async function newMobilePage(t) {
-  const browser = await launchBrowser(t);
-  const context = await browser.newContext({
+  const context = await browserFixture.newContext(t, {
     hasTouch: true,
     isMobile: true,
     viewport: { width: 390, height: 844 },
   });
-  t.after(() => context.close());
   return { page: await context.newPage() };
 }
 
@@ -284,3 +267,54 @@ async function expectNoText(page, pattern) {
     /Timeout/,
   );
 }
+
+test("shared browser contexts keep separate users, cookies and storage isolated", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const other = await fixture.createAccountWithPolicy("other-console-user", (principal) => {
+    fixture.policy.bindings.push({
+      id: `binding-${principal.id}`,
+      subjectKind: "identity",
+      subjectId: principal.id,
+      roleId: fixture.policy.roles[0].id,
+    });
+  });
+  const { page: first } = await newPage(t);
+  await login(first, fixture, "/console/settings");
+  await first.getByText(fixture.credentials.email.toLowerCase()).waitFor();
+  await first.evaluate(() => {
+    localStorage.setItem("context-isolation", "first-user");
+    sessionStorage.setItem("context-isolation", "first-user");
+  });
+
+  // Both users access the same real application origin. The shared process must
+  // not carry the first user's session or browser storage into a fresh context.
+  const { page: second } = await newPage(t);
+  assert.equal(first.context().browser(), second.context().browser());
+  assert.notEqual(first.context(), second.context());
+  assert.deepEqual(await second.context().storageState(), { cookies: [], origins: [] });
+  await second.goto(`${fixture.origin}/console/settings`);
+  await second.getByRole("button", { name: "Login" }).waitFor();
+  assert.deepEqual(
+    await second.evaluate(() => [
+      localStorage.getItem("context-isolation"),
+      sessionStorage.getItem("context-isolation"),
+    ]),
+    [null, null],
+  );
+  await login(
+    second,
+    { origin: fixture.origin, credentials: other.credentials },
+    "/console/settings",
+  );
+  await second.getByText(other.credentials.email.toLowerCase()).waitFor();
+  await first.reload();
+  await first.getByText(fixture.credentials.email.toLowerCase()).waitFor();
+
+  // A real sign-out in one context must leave the other user's session valid.
+  await openShellMenu(first);
+  await first.getByRole("menuitem", { name: "Logout" }).click();
+  await first.waitForURL(/\/console\/login$/);
+  await second.reload();
+  await second.getByText(other.credentials.email.toLowerCase()).waitFor();
+});

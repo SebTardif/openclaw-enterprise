@@ -1,3 +1,6 @@
+# Verification commands must never prepare or repair dependencies implicitly.
+verifyDepsBeforeRun: error
+
 packages:
   - apps/controller
   - packages/utils

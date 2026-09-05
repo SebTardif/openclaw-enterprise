@@ -6,13 +6,14 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  realpath,
   rm,
   stat,
   writeFile,
+  symlink,
+  rename,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -33,6 +34,11 @@ async function createRepositoryFixture(t, { initializeGit = true } = {}) {
   await copyFile(
     join(repositoryRoot, ".githooks/pre-push"),
     join(fixtureRoot, ".githooks/pre-push"),
+  );
+
+  await copyFile(
+    join(repositoryRoot, "scripts/format.mjs"),
+    join(fixtureRoot, "scripts/format.mjs"),
   );
 
   if (initializeGit) {
@@ -120,68 +126,218 @@ test("hook installation refuses to replace an existing unmanaged native hook", a
   assert.notEqual((await stat(nativeHookPath)).mode & 0o111, 0);
 });
 
-test("the native pre-push hook runs installed Prettier directly and blocks formatting failures", async (t) => {
-  const fixtureRoot = await createRepositoryFixture(t);
-  const install = installHooks(fixtureRoot);
-  assert.equal(install.status, 0, install.stderr);
-
-  const binariesPath = join(fixtureRoot, "bin");
-  await mkdir(binariesPath);
-  const prettierPath = join(fixtureRoot, "node_modules/prettier/bin/prettier.cjs");
-  await mkdir(join(fixtureRoot, "node_modules/prettier/bin"), { recursive: true });
-  await writeFile(prettierPath, "");
-  const nodePath = join(binariesPath, "node");
-  await writeFile(
-    nodePath,
-    '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOOK_INVOCATION_LOG"\nexit "${HOOK_EXIT_CODE:-0}"\n',
-  );
-  await chmod(nodePath, 0o755);
-  const packageManagerPath = join(binariesPath, "pnpm");
-  await writeFile(
-    packageManagerPath,
-    '#!/bin/sh\nprintf "%s\\n" "$@" > "$PACKAGE_MANAGER_INVOCATION_LOG"\nexit 97\n',
-  );
-  await chmod(packageManagerPath, 0o755);
-
-  const invocationLog = join(fixtureRoot, "node-invocation.log");
-  const packageManagerInvocationLog = join(fixtureRoot, "pnpm-invocation.log");
-  const nativeHookPath = join(fixtureRoot, ".git/hooks/pre-push");
-  const environment = {
-    ...process.env,
-    PATH: `${binariesPath}${delimiter}${process.env.PATH ?? ""}`,
-    HOOK_INVOCATION_LOG: invocationLog,
-    PACKAGE_MANAGER_INVOCATION_LOG: packageManagerInvocationLog,
-  };
-  const expectedInvocation = [
-    await realpath(prettierPath),
-    "--check",
-    "{apps,packages,scripts,tests}/**/*.{ts,mjs,json}",
-    "*.{json,yaml,yml,md}",
-    "",
-  ].join("\n");
-
-  for (const expectedExitCode of [0, 23]) {
-    const result = spawnSync(nativeHookPath, ["origin", "https://example.test/repository"], {
-      cwd: fixtureRoot,
-      encoding: "utf8",
-      env: {
-        ...environment,
-        HOOK_EXIT_CODE: String(expectedExitCode),
-      },
-    });
-
-    assert.equal(result.status, expectedExitCode, result.stderr);
-    assert.equal(await readFile(invocationLog, "utf8"), expectedInvocation);
-  }
-
-  await rm(prettierPath);
-  const missingPrettier = spawnSync(nativeHookPath, [], {
+function git(fixtureRoot, args) {
+  const result = spawnSync("git", args, {
     cwd: fixtureRoot,
     encoding: "utf8",
-    env: environment,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Hook test",
+      GIT_AUTHOR_EMAIL: "hook@example.test",
+      GIT_COMMITTER_NAME: "Hook test",
+      GIT_COMMITTER_EMAIL: "hook@example.test",
+    },
   });
-  assert.equal(missingPrettier.status, 1);
-  assert.match(missingPrettier.stderr, /installed Prettier executable is unavailable/);
-  assert.equal(await readFile(invocationLog, "utf8"), expectedInvocation);
-  await assert.rejects(stat(packageManagerInvocationLog), { code: "ENOENT" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+async function formattingFixture(t) {
+  const root = await createRepositoryFixture(t);
+  const sourceManifest = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify(
+      { devDependencies: { prettier: sourceManifest.devDependencies.prettier } },
+      null,
+      2,
+    ) + "\n",
+  );
+  await writeFile(join(root, ".gitignore"), "node_modules/\n");
+  await writeFile(join(root, ".prettierrc.json"), '{ "printWidth": 100 }\n');
+  await writeFile(join(root, ".prettierignore"), "node_modules/\n");
+  await mkdir(join(root, "apps"));
+  await mkdir(join(root, "docs/reference"), { recursive: true });
+  await writeFile(join(root, "apps/example.mjs"), "const answer = 42;\n");
+  await writeFile(join(root, "docs/guide.md"), "# Guide\n");
+  await writeFile(join(root, "docs/reference/api.md"), "#   generated deliberately unformatted\n");
+  await mkdir(join(root, "node_modules"));
+  await symlink(
+    join(repositoryRoot, "node_modules/prettier"),
+    join(root, "node_modules/prettier"),
+    "dir",
+  );
+  return root;
+}
+
+function format(root, ...args) {
+  return spawnSync(process.execPath, ["scripts/format.mjs", ...args], {
+    cwd: root,
+    encoding: "utf8",
+  });
+}
+
+function commit(root) {
+  git(root, ["add", "."]);
+  git(root, ["commit", "--quiet", "-m", "fixture"]);
+  return git(root, ["rev-parse", "HEAD"]);
+}
+
+function pushCheck(root, commits) {
+  return spawnSync(join(root, ".git/hooks/pre-push"), [], {
+    cwd: root,
+    encoding: "utf8",
+    input: commits
+      .map((oid, i) => `refs/heads/test${i} ${oid} refs/heads/test${i} ${"0".repeat(40)}\n`)
+      .join(""),
+  });
+}
+
+test("real formatter invalidates warm content/config caches and handles focused unusual paths", async (t) => {
+  const root = await formattingFixture(t);
+  let result = format(root, "--write");
+  assert.equal(result.status, 0, result.stderr);
+  result = format(root, "--check");
+  assert.equal(result.status, 0, result.stderr);
+  const unusual = "apps/name [literal] space.mjs";
+  await rename(join(root, "apps/example.mjs"), join(root, unusual));
+  await writeFile(join(root, unusual), "const answer={value:42}\n");
+  result = format(root, "--check", "--", unusual);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Code style issues/);
+  result = format(root, "--write", unusual);
+  assert.equal(result.status, 0, result.stderr);
+  result = format(root, "--check");
+  assert.equal(result.status, 0, result.stderr);
+  await writeFile(join(root, ".prettierignore"), "node_modules/\napps/\n");
+  await writeFile(join(root, unusual), "const answer={value:42}\n");
+  assert.equal(format(root, "--check").status, 0);
+  await writeFile(join(root, ".prettierignore"), "node_modules/\n");
+  assert.equal(format(root, "--check").status, 1);
+  assert.equal(format(root, "--write", unusual).status, 0);
+  await writeFile(join(root, ".prettierrc.json"), '{ "semi": false }\n');
+  result = format(root, "--check", unusual);
+  assert.equal(result.status, 1);
+  await rm(join(root, unusual));
+  result = format(root, "--check", "docs/guide.md");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(format(root, "--check", "docs/reference/api.md").status, 1);
+});
+
+test("native hook checks every outgoing tip independently of dirty worktree and HEAD", async (t) => {
+  const root = await formattingFixture(t);
+  assert.equal(format(root, "--write").status, 0);
+  const good = commit(root);
+  assert.equal(installHooks(root).status, 0);
+  await writeFile(join(root, "docs/guide.md"), "#   Bad heading\n");
+  await writeFile(join(root, "apps/page.html"), "<div    class = 'test'><p>content</p></div>\n");
+  await writeFile(join(root, "apps/style.css"), "div{color:red}\n");
+  // Archive attributes cannot hide committed files from the formatter snapshot.
+  await writeFile(join(root, ".gitattributes"), "docs/guide.md export-ignore\n");
+  const bad = commit(root);
+  git(root, ["checkout", "--quiet", good]);
+  // HEAD is clean but the pushed non-HEAD branch contains bad authored docs.
+  let result = pushCheck(root, [good, bad]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /docs\/guide.md/);
+  assert.match(result.stderr, /apps\/page.html/);
+  assert.match(result.stderr, /apps\/style.css/);
+  // A dirty file must neither rescue a bad committed tip nor reject a good tip.
+  await writeFile(join(root, "docs/guide.md"), "#   Another bad heading\n");
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 0, result.stderr);
+  result = pushCheck(root, ["0".repeat(40)]);
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  manifest.dependencies = { "unprepared-package": "1.0.0" };
+  await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Outgoing dependency input differs/);
+  await rm(join(root, "node_modules"), { recursive: true });
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /installed Prettier executable is unavailable/);
+});
+
+async function configuredPluginFixture(t, configuration) {
+  const root = await formattingFixture(t);
+  const plugin = join(root, "node_modules/fixture-plugin");
+  await mkdir(join(plugin, "node_modules/policy"), { recursive: true });
+  await writeFile(
+    join(plugin, "package.json"),
+    JSON.stringify({ name: "fixture-plugin", main: "index.cjs" }),
+  );
+  // Exercise Prettier's actual plugin loader, parser and printer, including an
+  // implementation dependency outside the plugin's immediate package files.
+  await writeFile(
+    join(plugin, "index.cjs"),
+    `
+const policy = require('./node_modules/policy');
+module.exports = {
+  parsers: { fixture: { parse: text => ({ text }), astFormat: 'fixture', locStart: () => 0, locEnd: () => 0 } },
+  printers: { fixture: { print: path => path.node.text.trimEnd().replace(/;$/, '') + policy.suffix + "\\n" } }
+};
+`,
+  );
+  const policy = join(plugin, "node_modules/policy/index.js");
+  await writeFile(policy, 'exports.suffix = ";";');
+  await writeFile(join(root, ".prettierrc.json"), JSON.stringify(configuration));
+  return { root, plugin, policy };
+}
+
+test("configured plugins and override plugins do not reuse stale transitive implementation evidence", async (t) => {
+  for (const options of [
+    {
+      plugins: ["fixture-plugin"],
+      overrides: [{ files: "apps/example.mjs", options: { parser: "fixture" } }],
+    },
+    {
+      overrides: [
+        { files: "apps/example.mjs", options: { parser: "fixture", plugins: ["fixture-plugin"] } },
+      ],
+    },
+  ]) {
+    const { root, policy } = await configuredPluginFixture(t, options);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = format(root, "--check", "apps/example.mjs");
+      assert.equal(result.status, 0, result.stderr);
+    }
+    await writeFile(policy, 'exports.suffix = "!";');
+    const result = format(root, "--check", "apps/example.mjs");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Code style issues/);
+  }
+});
+
+test("outgoing formatting rejects plugin dependency closures instead of reading dirty workspace plugins", async (t) => {
+  const { root, plugin } = await configuredPluginFixture(t, {
+    overrides: [
+      { files: "apps/example.mjs", options: { parser: "fixture", plugins: ["fixture-plugin"] } },
+    ],
+  });
+  await mkdir(join(root, "packages"));
+  await rename(plugin, join(root, "packages/fixture-plugin"));
+  await symlink(join(root, "packages/fixture-plugin"), plugin, "dir");
+  const tip = commit(root);
+  assert.equal(installHooks(root).status, 0);
+  for (const implementation of ["exports.suffix = ';';", "exports.suffix = '!';"]) {
+    await writeFile(join(root, "packages/fixture-plugin/index.cjs"), implementation);
+    const result = pushCheck(root, [tip]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /static JSON configuration without plugins/);
+  }
+});
+
+test("focused writes reject file paths whose parent symlink escapes the worktree", async (t) => {
+  const root = await formattingFixture(t);
+  const outside = await mkdtemp(join(tmpdir(), "formatter-outside-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const content = "const answer={value:42}\n";
+  await writeFile(join(outside, "escaped.mjs"), content);
+  await symlink(outside, join(root, "apps/linked"), "dir");
+  const result = format(root, "--write", "apps/linked/escaped.mjs");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /outside this worktree/);
+  assert.equal(await readFile(join(outside, "escaped.mjs"), "utf8"), content);
 });

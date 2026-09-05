@@ -49,14 +49,22 @@ async function createFixture(options = {}) {
   const administrator = adminAuth.seed.principal;
   const readerEmail = `tenant-a-reader-${randomUUID()}@example.com`;
   const readerPassword = `generated-password-${randomUUID()}`;
-  const readerAccount = await adminAuth.auth.createAccount({
-    email: readerEmail,
-    password: readerPassword,
-    name: "Tenant A Reader",
-  });
-  const readerSeed = adminAuth.auth.principalSeed(readerAccount);
-  const tenantAReader = readerSeed.principal;
-  const identities = options.identities ?? [administrator, tenantAReader];
+  // Provision and authenticate the reader only for scenarios that exercise its grants.
+  // Each requested account still uses the real password policy and owns a fresh session.
+  const readerAccount = options.withReader
+    ? await adminAuth.auth.createAccount({
+        email: readerEmail,
+        password: readerPassword,
+        name: "Tenant A Reader",
+      })
+    : undefined;
+  const tenantAReader = readerAccount
+    ? adminAuth.auth.principalSeed(readerAccount).principal
+    : undefined;
+  const identities = options.identities ?? [
+    administrator,
+    ...(tenantAReader ? [tenantAReader] : []),
+  ];
   const identityIds = new Set(identities.map(({ id }) => id));
   const state = {
     identities,
@@ -88,7 +96,7 @@ async function createFixture(options = {}) {
         id: "binding-tenant-a-reader",
         namespaceId: tenantANamespaceId,
         subjectKind: "identity",
-        subjectId: tenantAReader.id,
+        subjectId: tenantAReader?.id,
         roleId: "role-tenant-a-reader",
       },
     ].filter(({ subjectId }) => identityIds.has(subjectId)),
@@ -193,18 +201,28 @@ async function createFixture(options = {}) {
 
   const app = createApp(administrator, options);
   sessions.set(administrator.id, await signInToControllerApp(app, adminAuth));
-  sessions.set(
-    tenantAReader.id,
-    await signInToControllerApp(app, { email: readerEmail, password: readerPassword }),
-  );
+  if (tenantAReader) {
+    sessions.set(
+      tenantAReader.id,
+      await signInToControllerApp(app, { email: readerEmail, password: readerPassword }),
+    );
+  }
   app.defaultSession = sessions.get(administrator.id);
 
   return {
     app,
     administrator,
-    tenantAReader,
+    get tenantAReader() {
+      assert.ok(tenantAReader, "Reader scenarios require createFixture({ withReader: true })");
+      return tenantAReader;
+    },
     auditSink,
     createApp,
+    asPrincipal(principal) {
+      // Authentication belongs to each request; changing caller does not require another app.
+      assert.ok(sessions.has(principal.id), "The fixture principal must have a real session");
+      return { fetch: app.fetch.bind(app), defaultSession: sessions.get(principal.id) };
+    },
     auth: adminAuth.auth,
     iamDriver,
     iamStateStore,
@@ -314,7 +332,7 @@ async function deploy(fixture, namespace, agent) {
 }
 
 async function createRevisionFixture() {
-  const fixture = await createFixture();
+  const fixture = await createFixture({ withReader: true });
   await bootstrap(fixture);
   const namespaceA = await createNamespace(fixture, "Revision tenant A");
   const namespaceB = await createNamespace(fixture, "Revision tenant B");
@@ -360,7 +378,7 @@ async function createRevisionFixture() {
     agentB,
     revisionA,
     revisionB,
-    readerApp: fixture.createApp(fixture.tenantAReader),
+    readerApp: fixture.asPrincipal(fixture.tenantAReader),
   };
 }
 
@@ -591,7 +609,7 @@ test("single revision API reads honor either native Restriction and sanitize an 
 });
 
 test("existing namespace adoption requires installation administration and waits for provisioning", async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture({ withReader: true });
   await bootstrap(fixture);
 
   // Ordinary namespace creation does not authorize claiming an operator-owned Kubernetes namespace.
@@ -605,7 +623,7 @@ test("existing namespace adoption requires installation administration and waits
     subjectId: fixture.tenantAReader.id,
     roleId: "role-namespace-creator",
   });
-  const creator = fixture.createApp(fixture.tenantAReader);
+  const creator = fixture.asPrincipal(fixture.tenantAReader);
   const managed = await request(creator, "/namespaces", {
     body: { name: "Ordinary tenant" },
   });
@@ -678,7 +696,7 @@ test("existing namespace adoption requires installation administration and waits
 });
 
 test("Agent configuration replacement requires exact Agent update authorization and keeps identity private", async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture({ withReader: true });
   await bootstrap(fixture);
   const namespace = await createNamespace(fixture, "Tenant A");
   const agent = await createAgent(fixture, namespace, "Private configuration agent");
@@ -692,7 +710,7 @@ test("Agent configuration replacement requires exact Agent update authorization 
   assert.equal(updated.payload.data.configurationId, replacement.id);
   assert.equal(Object.hasOwn(updated.payload.data, "servicePrincipalId"), false);
 
-  const readOnly = fixture.createApp(fixture.tenantAReader);
+  const readOnly = fixture.asPrincipal(fixture.tenantAReader);
   const denied = await request(readOnly, `/namespaces/${namespace.id}/agents/${agent.id}`, {
     method: "PATCH",
     body: { configurationId: agent.configurationId },
@@ -1084,7 +1102,7 @@ test("malformed, non-JSON, invalid, and oversized inputs fail without mutations"
 });
 
 test("exact Namespace ownership prevents cross-tenant access and resource traversal", async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture({ withReader: true });
   await bootstrap(fixture);
   const namespaceA = await createNamespace(fixture, "Tenant A");
   const namespaceB = await createNamespace(fixture, "Tenant B");
@@ -1124,7 +1142,7 @@ test("exact Namespace ownership prevents cross-tenant access and resource traver
 
   const reader = fixture.tenantAReader;
   assert.equal(namespaceA.id, tenantANamespaceId);
-  const readerApp = fixture.createApp(reader);
+  const readerApp = fixture.asPrincipal(reader);
 
   const visible = await request(readerApp, "/namespaces", {
     principal: reader,
@@ -1170,11 +1188,11 @@ test("exact Namespace ownership prevents cross-tenant access and resource traver
 });
 
 test("Namespace deletion authorizes the exact target and rejects nonempty resources", async () => {
-  const fixture = await createFixture();
+  const fixture = await createFixture({ withReader: true });
   await bootstrap(fixture);
   const occupied = await createNamespace(fixture, "Occupied tenant");
   assert.equal(occupied.id, tenantANamespaceId);
-  const readerApp = fixture.createApp(fixture.tenantAReader);
+  const readerApp = fixture.asPrincipal(fixture.tenantAReader);
   const forbidden = await request(readerApp, `/namespaces/${occupied.id}`, {
     method: "DELETE",
   });

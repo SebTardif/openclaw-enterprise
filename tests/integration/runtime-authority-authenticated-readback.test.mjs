@@ -16,7 +16,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import test from "node:test";
+import test, { after } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import { PostgresPlatformState, runtimeServiceTrustDigest } from "../../packages/occ/src/index.ts";
@@ -37,10 +37,16 @@ import { seedAuthority } from "../fixtures/runtime-authority-state/seed.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const execute = promisify(execFile);
 const offlineGo = { ...process.env, GOTOOLCHAIN: "local", GOPROXY: "off", GOSUMDB: "off" };
+let executableBuild;
+let executableDirectory;
+
+after(async () => {
+  if (executableDirectory) await rm(executableDirectory, { recursive: true, force: true });
+});
 
 async function buildExecutables(t) {
-  const directory = await mkdtemp(join(tmpdir(), "occ-authenticated-readback-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), "occ-readback-binaries-"));
+  executableDirectory = directory;
   const binaryPath = join(directory, "oce-runtime-authority");
   const fixturePath = join(directory, "runtime-authority-service");
   // Build actual checked-in Go code. The fixture supplies generated credentials
@@ -49,6 +55,7 @@ async function buildExecutables(t) {
     [binaryPath, "./cmd/oce-runtime-authority"],
     [fixturePath, "../../tests/fixtures/runtime-authority-service/main.go"],
   ]) {
+    const started = performance.now();
     await execute(
       "go",
       ["build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", output, source],
@@ -63,14 +70,27 @@ async function buildExecutables(t) {
       .update(await readFile(output))
       .digest("hex");
     t.diagnostic(
-      `Built ${source}: mode ${(before.mode & 0o777).toString(8)}, sha256:${digest}; protecting fixture artifact mode 555`,
+      `Built ${source} in ${(performance.now() - started).toFixed(1)}ms: mode ${(before.mode & 0o777).toString(8)}, sha256:${digest}; protecting fixture artifact mode 555`,
     );
     await chmod(output, 0o555);
   }
   const nativeExecutableSha256 = `sha256:${createHash("sha256")
     .update(await readFile(binaryPath))
     .digest("hex")}`;
-  return { directory, binaryPath, fixturePath, nativeExecutableSha256 };
+  return Object.freeze({ binaryPath, fixturePath, nativeExecutableSha256 });
+}
+
+async function testExecutables(t) {
+  // Publish both real binaries only after both builds and artifact protection
+  // succeed. Every file invocation still builds current sources with its selected
+  // Go toolchain; a rejected build is never exposed as a reusable artifact.
+  executableBuild ??= buildExecutables(t);
+  const binaries = await executableBuild;
+  const directory = await mkdtemp(join(tmpdir(), "occ-authenticated-readback-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  // Only protected executables are shared. Configurations, negative-test copies,
+  // child processes, sockets and database fixtures retain their own case lifetime.
+  return { ...binaries, directory };
 }
 
 function fixtureMessages(child) {
@@ -306,7 +326,7 @@ test(
   "actual native validator rejects malformed trailing child output after a valid first frame",
   { timeout: 60000 },
   async (t) => {
-    const binaries = await buildExecutables(t);
+    const binaries = await testExecutables(t);
     const source = await technicalSource({}, binaries.binaryPath);
     const profile = nativeProfile(source, "spiffe://example.test/independent-service");
     // This public validator starts no Source. Its actual Go process is the positive
@@ -538,7 +558,7 @@ test(
     assert.equal(lockURL.hostname, appURL.hostname);
     assert.equal(lockURL.port, appURL.port);
     assert.equal(lockURL.pathname, appURL.pathname);
-    const binaries = await buildExecutables(t);
+    const binaries = await testExecutables(t);
     await t.test(
       "historical exact receipt survives head advance, restart, conflicts and foreign scope",
       async (t) => {
