@@ -1,0 +1,11 @@
+{
+  "name": "@fixture/compute",
+  "version": "1.2.3",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./compiled/index.mjs"
+    }
+  }
+}
