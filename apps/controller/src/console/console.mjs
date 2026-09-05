@@ -84,6 +84,7 @@ function resetReads() {
 }
 
 async function request(path, { method = "GET", body, signal = reads.signal } = {}) {
+  const active = generation;
   const response = await fetch(path, {
     method,
     credentials: "same-origin",
@@ -93,6 +94,9 @@ async function request(path, { method = "GET", body, signal = reads.signal } = {
       ? {}
       : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
+  // Expiry invalidates the whole view, including other reads or saves still pending.
+  if (response.status === 401 && session && active === generation)
+    showLogin("Your session has expired.", location.pathname + location.search);
   let payload;
   try {
     payload = await response.json();
@@ -102,8 +106,12 @@ async function request(path, { method = "GET", body, signal = reads.signal } = {
   if (!response.ok || payload === null || !Object.hasOwn(payload, "data")) {
     const error = new Error("The request could not be completed.");
     error.status = response.status;
-    error.requestId = payload?.meta?.requestId;
-    error.code = payload?.error?.code;
+    const requestId = payload?.meta?.requestId;
+    if (
+      typeof requestId === "string" &&
+      /^req_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId)
+    )
+      error.requestId = requestId;
     throw error;
   }
   return payload.data;
@@ -601,8 +609,10 @@ async function loadPage() {
       navigate,
       pageUrl,
       isCurrent: () => active === generation,
-      onExpired: () =>
-        showLogin("Your session has expired.", pageUrl(current.target, current.namespace)),
+      onExpired: () => {
+        if (active === generation)
+          showLogin("Your session has expired.", pageUrl(current.target, current.namespace));
+      },
       setTitle: (title) => {
         app.querySelector("h1").textContent = title;
       },
@@ -653,15 +663,17 @@ async function loadPage() {
           ? "Resource unavailable"
           : error.status === 400
             ? "Namespace unavailable"
-            : current.feature === "providers"
-              ? "Provider discovery unavailable"
-              : "Request unavailable";
+            : error.name === "TypeError" || error.name === "TimeoutError"
+              ? "Request interrupted"
+              : current.feature === "providers"
+                ? "Provider discovery unavailable"
+                : "Request unavailable";
     panel(
       shell.view,
       title,
       error.status === 403
         ? "You do not have permission to read this collection."
-        : "The collection could not be loaded. Try again or choose another page.",
+        : "The read could not be completed. Retry to check current access and saved state.",
       "Retry",
       () => void loadPage(),
       error.requestId,

@@ -141,8 +141,10 @@ a revision or start runtime work.
 The detail page reads the Agent, revision list, and either the saved draft
 Configuration or the selected AgentRevision. `revision=draft` reads the current
 Configuration referenced by the Agent. `revision=<id>` reads that immutable
-snapshot. The active revision badge is derived from `activeRevisionId`; the
-newest revision in the list can differ from the active one. Revision snapshots
+snapshot. The Selected revision badge is derived from `activeRevisionId`; the
+newest revision and the viewed snapshot can both differ from that pointer.
+Serving status stays explicitly unavailable because these API responses provide
+no serving observation. Revision snapshots
 are read-only and do not expose rollback, edit, deploy, or live-health controls.
 Agent deletion is unavailable because the API has no Agent delete operation.
 
@@ -160,6 +162,11 @@ sends `{ values: updatedValues }` and omits `secretBindings`, so the backend
 retains existing bindings. This client-side generation check detects common
 stale-editor cases but is not atomic lost-update protection; the API accepts the
 last valid writer.
+An interrupted or unavailable PATCH reply keeps the result unknown and blocks
+another channel write until Refresh. Draft channel disablement changes only
+Configuration values; it does not stop a running Agent. The
+[operator workflow](operator-workflow.md) records the executable management
+commands and the lifecycle procedures still unavailable in this API.
 
 ### 5. Commit only the current response, or clear the view
 
@@ -169,7 +176,10 @@ Navigation, Namespace changes, refocus, and logout invalidate prior reads. The
 client cancels their requests and checks generation before accepting either
 success or failure. A late response cannot restore rows, change selection, or
 redirect a newer session. Current authorization and dependency errors clear
-rows and expose recovery; protected `401` clears private state and opens login.
+rows and expose recovery; a current protected `401` clears private state and
+opens login immediately, without waiting for sibling reads. A late error from an
+older view cannot redirect a newer session. Only locally defined reason messages
+and bounded server request IDs enter failure views; backend error text is omitted.
 Global Providers and Namespaces pages remain visibly Installation-wide.
 
 Logout first hides private state, then calls the existing sign-out endpoint.

@@ -22,9 +22,12 @@ function message(error, mutation = false) {
   if (error.status === 409)
     return "The request conflicts with the saved state. Check for an existing Agent name or changed Configuration, then refresh.";
   if (error.status === 400) return "Check the entered values and resource IDs, then try again.";
+  if (error.status === 429) return "Too many requests. Wait before trying again.";
   return mutation
-    ? "The result could not be confirmed. Refresh and inspect the saved state before trying again."
-    : "The request could not be completed. Please retry.";
+    ? "Outcome unknown. The result could not be confirmed. Refresh and inspect the saved state before trying again."
+    : error.name === "TypeError" || error.name === "TimeoutError"
+      ? "Request interrupted. Retry to check current access and saved state."
+      : "Service unavailable. The read could not be completed. Please retry.";
 }
 
 function errorPanel(error, context, retry) {
@@ -114,7 +117,7 @@ export function renderAgentList(context) {
         element(
           "tr",
           {},
-          ...["Agent", "Execution mode", "Active revision", "Created"].map((label) =>
+          ...["Agent", "Execution mode", "Selected revision", "Created"].map((label) =>
             element("th", { scope: "col" }, label),
           ),
         ),
@@ -142,7 +145,7 @@ export function renderAgentList(context) {
                   `agents/${item.id}?revision=${item.activeRevisionId}`,
                   context,
                 )
-              : "No active revision",
+              : "No selected revision",
           ),
           element("td", {}, displayDate(item.createdAt)),
         ),
@@ -274,6 +277,7 @@ export function renderCreateAgent(context) {
   let providersLoaded = false;
   let accountsLoaded = false;
   let pending = false;
+  let outcomeUnknown = false;
   let savedConfiguration;
   const feedback = element("p", { className: "error", role: "alert" });
   const savedStatus = element("p", { className: "hint", role: "status" });
@@ -314,6 +318,7 @@ export function renderCreateAgent(context) {
     reset.disabled = pending || Boolean(savedConfiguration);
     mode.disabled = pending || Boolean(savedConfiguration);
     configuration.readOnly = Boolean(savedConfiguration);
+    submit.disabled = pending || outcomeUnknown;
   };
   for (const [path, control, status, label] of [
     ["/providers", provider, providerStatus, "Providers"],
@@ -356,7 +361,7 @@ export function renderCreateAgent(context) {
   }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (pending || !form.reportValidity()) return;
+    if (pending || outcomeUnknown || !form.reportValidity()) return;
     let values;
     try {
       values = JSON.parse(configuration.value);
@@ -399,6 +404,7 @@ export function renderCreateAgent(context) {
         error.status === 409 && savedConfiguration
           ? "Agent creation conflicts with the saved state. Check the Agent name and selections, then try again."
           : message(error, true);
+      outcomeUnknown = ![400, 403, 404, 409, 429].includes(error.status);
       feedback.textContent = detail + (error.requestId ? ` Request ID: ${error.requestId}` : "");
     } finally {
       if (context.isCurrent()) {
@@ -437,8 +443,8 @@ export async function renderAgentDetail(context) {
       "span",
       { className: "badge" },
       agent.activeRevisionId
-        ? `Active revision · ${shortId(agent.activeRevisionId)}`
-        : "No active revision",
+        ? `Selected revision · ${shortId(agent.activeRevisionId)}`
+        : "No selected revision",
     ),
   );
   const identity = element("p", { className: "resource-id" }, agent.id);
@@ -457,7 +463,18 @@ export async function renderAgentDetail(context) {
         ...(id === selectedTab ? { "aria-current": "page" } : {}),
       }),
     );
-  view.replaceChildren(header, identity, selector, tabs, content);
+  // TODO: consume authenticated serving observations when the lifecycle status API ships.
+  const serving = element(
+    "section",
+    { className: "agent-card", "aria-label": "Serving observation" },
+    element("h2", {}, "Serving status unavailable"),
+    element(
+      "p",
+      { className: "muted" },
+      "The API supplies no serving observation. Selecting or admitting a revision does not confirm runtime health, completed cutover, or shutdown. An operator must verify the installed runtime separately.",
+    ),
+  );
+  view.replaceChildren(header, identity, serving, selector, tabs, content);
   const results = await Promise.allSettled([
     request(`${path}/revisions`),
     request(
@@ -479,7 +496,7 @@ export async function renderAgentDetail(context) {
   const snapshot = results[1].status === "fulfilled" ? results[1].value : null;
   const activeRevision = revisions.find((revision) => revision.id === agent.activeRevisionId);
   if (activeRevision)
-    header.lastChild.textContent = `Active revision · v${activeRevision.revision}`;
+    header.lastChild.textContent = `Selected revision · v${activeRevision.revision}`;
   const chooser = element(
     "select",
     { id: "revision-selector", "aria-label": "AgentRevision" },
@@ -490,7 +507,7 @@ export async function renderAgentDetail(context) {
       element(
         "option",
         { value: revision.id },
-        `v${revision.revision} · ${displayDate(revision.createdAt)} · ${revision.id === agent.activeRevisionId ? "Active" : "Not active"}`,
+        `v${revision.revision} · ${displayDate(revision.createdAt)} · ${revision.id === agent.activeRevisionId ? "Selected by Agent" : "Not selected by Agent"}`,
       ),
     );
   if (selected !== "draft" && !revisions.some((revision) => revision.id === selected))
@@ -498,7 +515,7 @@ export async function renderAgentDetail(context) {
       element(
         "option",
         { value: selected },
-        snapshot ? `v${snapshot.revision} · Selected revision` : "Selected revision unavailable",
+        snapshot ? `v${snapshot.revision} · Viewed snapshot` : "Viewed snapshot unavailable",
       ),
     );
   chooser.value = selected;
@@ -530,7 +547,7 @@ export async function renderAgentDetail(context) {
         selected !== "draft" && revisions.length > 1 ? newer : null,
         selected !== "draft" ? button("Saved draft", () => change("draft")) : null,
         agent.activeRevisionId && selected !== agent.activeRevisionId
-          ? button("Return to active revision", () => change(agent.activeRevisionId))
+          ? button("View selected revision", () => change(agent.activeRevisionId))
           : null,
       ),
     ].filter(Boolean),
@@ -571,10 +588,10 @@ export async function renderAgentDetail(context) {
       "p",
       { className: "notice", role: "status" },
       draft
-        ? "Saved draft. Changes affect future deployments using this Configuration. Active and historical AgentRevisions stay unchanged."
+        ? "Saved draft. Changes affect future deployments using this Configuration. Admitted AgentRevisions stay unchanged."
         : selected === agent.activeRevisionId
-          ? "Active AgentRevision · read-only. These values are the admitted snapshot; activation does not confirm live runtime health."
-          : "Historical / non-active AgentRevision · read-only. All values below belong to this selected snapshot. Browsing does not change the Agent.",
+          ? "Selected AgentRevision · read-only admitted snapshot. Selection does not confirm that this revision is serving."
+          : "Unselected AgentRevision · read-only admitted snapshot. Browsing this snapshot does not change the Agent's selected revision.",
     ),
   );
   if (selectedTab === "channels") {
@@ -583,6 +600,7 @@ export async function renderAgentDetail(context) {
       executionMode,
       readOnly: !draft,
       onSave: async (updatedValues) => {
+        let mutationStarted = false;
         try {
           const [freshAgent, freshConfig] = await Promise.all([
             request(path),
@@ -599,12 +617,14 @@ export async function renderAgentDetail(context) {
             throw new Error(
               "The saved Configuration changed while you were editing. Close this editor and refresh before saving.",
             );
+          mutationStarted = true;
           await request(
             `${namespacePath(namespaceId)}/configurations/${encodeURIComponent(snapshot.id)}`,
             { method: "PATCH", body: { values: updatedValues } },
           );
           if (context.isCurrent()) change("draft", "channels");
         } catch (error) {
+          if (!context.isCurrent()) throw error;
           if (error.status === 401) {
             context.onExpired();
             throw new Error("Your session has expired.");
@@ -614,7 +634,9 @@ export async function renderAgentDetail(context) {
             error.name === "TimeoutError" ||
             error.name === "TypeError"
           )
-            error.message = message(error, true);
+            error.message = message(error, mutationStarted);
+          error.outcomeUnknown =
+            mutationStarted && ![400, 403, 404, 409, 429].includes(error.status);
           throw error;
         }
       },
