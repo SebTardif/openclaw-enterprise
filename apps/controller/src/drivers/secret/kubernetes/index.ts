@@ -7,13 +7,13 @@ import {
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { CoreV1Api, V1ObjectMeta, V1Secret } from "@kubernetes/client-node";
+import type { JSONSchema } from "@openclaw-enterprise/contracts/drivers/base";
 import type {
-  JSONSchema,
   Secret,
   SecretBackendRef,
-  SecretDriver,
   SecretIdentity,
-} from "@openclaw-enterprise/contracts";
+} from "@openclaw-enterprise/contracts/resources/secret";
+import type { SecretDriver } from "@openclaw-enterprise/contracts/drivers/secret";
 import {
   DependencyUnavailableError,
   ResourceConflictError,
