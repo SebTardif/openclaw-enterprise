@@ -31,6 +31,8 @@
     "./account-authority-v1": "./src/account-authority-v1.ts",
     "./runtime-assignment": "./src/runtime-assignment.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
+    "./completed-context-v1": "./src/completed-context-v1.ts",
+    "./turn-journal-v1": "./src/turn-journal-v1.ts",
     "./channel-bindings": "./src/channel-bindings.ts",
     "./api/common": "./src/api/common.ts",
     "./api/resources": "./src/api/resources.ts",
