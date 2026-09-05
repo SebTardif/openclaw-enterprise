@@ -70,6 +70,10 @@ A name filter is focused evidence: reported counts can include a file harness ev
 when no test body matched. Verify the intended cases actually executed; neither
 file validation nor a green reporter summary establishes complete coverage.
 
+For repeatable measurements of the selected local suites, use the
+[test concurrency benchmark](testing/test-concurrency.md). Compare complete
+outcomes and host pressure before changing a concurrency setting.
+
 ## Formatting feedback
 
 ```sh
@@ -143,6 +147,10 @@ aggregate throughput. Preserve independent contexts, accounts, sessions,
 databases, sockets and other mutable state. Database parallelism requires
 resource isolation first. Do not shorten waits that prove a required timeout,
 lease, quota or cancellation contract.
+
+The [PostgreSQL isolation pilot](testing/postgres-isolation.md) runs its two
+selected suites in separately owned disposable databases. Other PostgreSQL
+suites retain the existing serial command and their explicit setup requirements.
 
 ## Work concurrently and hand off small changes
 
