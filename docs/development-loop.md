@@ -86,7 +86,8 @@ live infrastructure, expiring credentials or other time-sensitive behavior.
 Run commands from the repository root. Package-script names below identify the
 canonical scope; use their direct equivalents above during verification to avoid
 automatic package-manager preparation. The examples identify useful starting
-points; they do not replace a change's full acceptance requirements.
+points; they do not replace a change's full acceptance requirements. Check that
+explicit test paths exist and that reported test counts match the intended scope.
 
 | Changed scope                                                                        | Focused checks and expansion                                                                                                                                                                                                                       |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
