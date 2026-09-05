@@ -35,7 +35,8 @@ export class SyntheticSecurityEventDelivery {
   append(input, { fault, operation = "grant" } = {}) {
     const bytes = serializeSecurityEvent(input);
     const event = parseSecurityEventJson(bytes);
-    const prior = this.disk.get(event.id);
+    const key = `${event.installationId}:${event.id}`;
+    const prior = this.disk.get(key);
     if (prior !== undefined && prior !== bytes) return this.failure(operation, "EventConflict");
     if (prior !== undefined) return { committed: true, duplicate: true, owner: "sink" };
     const byteCount = [...this.disk.values()].reduce(
@@ -50,7 +51,7 @@ export class SyntheticSecurityEventDelivery {
     )
       return this.failure(operation, "AuditUnavailable");
     // The only transfer point. A partial frame is never put in committed disk.
-    this.disk.set(event.id, bytes);
+    this.disk.set(key, bytes);
     if (fault === "after_commit_before_ack") return this.failure(operation, "CommitUnknown");
     return { committed: true, duplicate: false, owner: "sink" };
   }

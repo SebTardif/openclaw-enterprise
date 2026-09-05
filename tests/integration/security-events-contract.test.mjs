@@ -472,7 +472,7 @@ test("synthetic delivery: responsibility transfers at commit; duplicate retry is
   assert.equal(sink.disk.size, 1);
   const conflict = { ...event, reasonCode: "Unknown" };
   assert.equal(sink.append(conflict).committed, false);
-  assert.equal(sink.disk.get(event.id), serializeSecurityEvent(event));
+  assert.equal(sink.disk.get(`${event.installationId}:${event.id}`), serializeSecurityEvent(event));
 });
 
 test("synthetic delivery: partial write, acknowledgement loss and reopen preserve ownership", () => {
@@ -599,4 +599,16 @@ test("synthetic retention: only exact scoped retention administrators purge expi
   assert.deepEqual(sink.purgeExpired(admin, now), { purged: 1, missing: 1 });
   assert.equal(sink.evidence().diagnostics.at(-1).code, "MandatoryEvidenceExpired");
   assert.equal(sink.disk.size, 0);
+});
+
+test("synthetic delivery: duplicate identity is scoped to its Installation", () => {
+  const sink = new SyntheticSecurityEventDelivery();
+  const event = project();
+  const other = { ...event, installationId: ids.other_namespace };
+  assert.equal(sink.append(event).duplicate, false);
+  assert.equal(sink.append(other).duplicate, false);
+  assert.equal(sink.append(other).duplicate, true);
+  assert.equal(sink.disk.size, 2);
+  sink.exportBatch();
+  assert.equal(sink.exported.size, 2);
 });
