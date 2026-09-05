@@ -6,7 +6,7 @@ export * from "./runtime-authority/service.ts";
 export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { MutationRunner } from "./application/mutation-runner.ts";
 import type {
   Agent,
   AgentRevision,
@@ -81,7 +81,6 @@ import {
   type PlatformStateStore,
   type PlatformUnitOfWork,
 } from "./state/platform-state.ts";
-import { PostgresCommitOutcomeUnknownError } from "./ports/transaction-errors.ts";
 export { PostgresCommitOutcomeUnknownError } from "./ports/transaction-errors.ts";
 
 export {
@@ -479,12 +478,7 @@ export class OpenClawController {
   private readonly clock: () => Date;
   private readonly identifier?: ControllerOptions["createId"];
   private readonly state: PlatformStateStore;
-  private readonly transactionContext = new AsyncLocalStorage<PlatformUnitOfWork>();
-  private readonly failedAdmissions = new WeakMap<
-    PlatformUnitOfWork,
-    { readonly error: unknown }
-  >();
-  private readonly mutationRollbacks = new AsyncLocalStorage<(() => Promise<void>)[]>();
+  private readonly mutations: MutationRunner;
   private readonly shouldRecordOperations: boolean;
   private readonly drivers = new DriverSelection();
   private readonly providers: readonly ProviderDefinition[];
@@ -511,6 +505,7 @@ export class OpenClawController {
     this.clock = options.now ?? (() => new Date());
     this.identifier = options.createId;
     this.state = options.state ?? new InMemoryPlatformState();
+    this.mutations = new MutationRunner(this.installation, this.state);
     this.channelBindings = new ChannelBindingService({
       installationId: this.installation.id,
       state: this.state,
@@ -1628,8 +1623,7 @@ export class OpenClawController {
       // A caller may catch a domain rejection inside its outer transaction. The
       // entire admission unit must still roll back, including memory mutations
       // and errors that did not abort the PostgreSQL transaction themselves.
-      const active = this.transactionContext.getStore();
-      if (active !== undefined) this.failedAdmissions.set(active, { error });
+      this.mutations.poisonAdmission(error);
       throw error;
     });
   }
@@ -1641,7 +1635,7 @@ export class OpenClawController {
     admission: Pick<DeployAgentAdmissionContext, "transitionRef" | "requestId">,
   ): Promise<Readonly<AgentRevision>> {
     validateDeployLocator(admission);
-    if (this.transactionContext.getStore() !== undefined)
+    if (this.mutations.hasActiveTransaction())
       throw new DependencyUnavailableError(
         "Deployment acknowledgement recovery requires a fresh read transaction.",
       );
@@ -1826,51 +1820,12 @@ export class OpenClawController {
 
   /** Stage resources, reconciliation intents, and audit evidence as one unit. */
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
-    const active = this.transactionContext.getStore();
-    if (active) return work(active);
-
-    const rollbacks: (() => Promise<void>)[] = [];
-    try {
-      return await this.state.transact(async (state) =>
-        this.transactionContext.run(state, () =>
-          this.mutationRollbacks.run(rollbacks, async () => {
-            const existing = await state.installations.getInstallation();
-            if (!existing) await state.installations.createInstallation(this.installation);
-            else if (existing.id !== this.installation.id)
-              throw new ScopeViolationError(
-                "The controller state belongs to another Installation.",
-              );
-            const result = await work(state);
-            const failedAdmission = this.failedAdmissions.get(state);
-            if (failedAdmission !== undefined) throw failedAdmission.error;
-            return result;
-          }),
-        ),
-      );
-    } catch (error) {
-      if (error instanceof PostgresCommitOutcomeUnknownError) throw error;
-      let rollbackFailed = false;
-      for (const rollback of rollbacks.reverse()) {
-        try {
-          await rollback();
-        } catch {
-          rollbackFailed = true;
-        }
-      }
-      if (rollbackFailed)
-        throw new DependencyUnavailableError(
-          "A Driver could not roll back a failed resource mutation.",
-        );
-      throw error;
-    }
+    return this.mutations.transact(work);
   }
 
   /** Compensate a Driver side effect if the owning resource transaction fails. */
   registerRollback(rollback: () => Promise<void>): void {
-    const rollbacks = this.mutationRollbacks.getStore();
-    if (rollbacks === undefined || this.transactionContext.getStore() === undefined)
-      throw new DependencyUnavailableError("The platform mutation transaction is unavailable.");
-    rollbacks.push(rollback);
+    this.mutations.registerRollback(rollback);
   }
 
   pendingOperations(): readonly Readonly<ReconciliationOperation>[] {
@@ -2127,13 +2082,11 @@ export class OpenClawController {
   }
 
   private async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    const active = this.transactionContext.getStore();
-    return active ? work(active) : this.state.read(work);
+    return this.mutations.read(work);
   }
 
   private async mutate<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
-    const active = this.transactionContext.getStore();
-    return active ? work(active) : this.transact(work);
+    return this.mutations.mutate(work);
   }
 
   private validateLifecycleScope(result: unknown, namespace: Readonly<Namespace>): void {
