@@ -197,7 +197,7 @@ Sign in with email and password
 
 **Operation ID:** `signInEmail`
 
-**Permissions:** Authenticates a local account and issues a Better Auth session cookie.
+**Permissions:** Reserves shared source and source/account quotas before authenticating a local account and issuing a session cookie. Exhaustion returns a generic 429 with Retry-After: 12; quota dependency failure returns 503 with Retry-After: 1. Forwarded headers do not select the quota source.
 
 #### Request body
 
@@ -216,6 +216,7 @@ Sign in with email and password
 | --- | --- |
 | `200` | OK |
 | `401` | Unauthorized |
+| `429` | Too Many Requests |
 | `503` | Service Unavailable |
 
 **`200` response body:** `application/json`

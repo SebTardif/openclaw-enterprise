@@ -17,6 +17,13 @@ import type {
   AdmittedCaller,
 } from "../admission/admission-verifier.ts";
 import { AdmissionFailure } from "../admission/admission-verifier.ts";
+import {
+  createSignInQuota,
+  MemorySignInQuotaStore,
+  PostgresSignInQuotaStore,
+  SignInQuotaFailure,
+  type SignInQuotaStore,
+} from "./sign-in-quota.ts";
 
 export const OCC_BETTER_AUTH_ISSUER_PREFIX = "occ:installation:";
 export const OCC_AUTH_COOKIE_PREFIX = "openclaw_occ";
@@ -40,6 +47,7 @@ export interface ControllerAuthOptions {
   readonly database?: BetterAuthOptions["database"];
   readonly memoryDatabase?: MemoryDB;
   readonly secureCookies?: boolean;
+  readonly signInQuotaStore?: SignInQuotaStore;
 }
 
 export interface PostgresControllerAuthOptions extends Omit<
@@ -136,7 +144,12 @@ function setAuthHeaders(reply: FastifyReply, headers?: Headers | null): void {
   if (cookies.length > 0) reply.header("set-cookie", cookies);
 }
 
-function authFailure(error: unknown): { readonly status: number; readonly code: string } {
+function authFailure(error: unknown): {
+  readonly status: number;
+  readonly code: string;
+  readonly retryAfter?: number;
+} {
+  if (error instanceof SignInQuotaFailure) return error;
   if (error instanceof AdmissionFailure) return { status: error.status, code: error.code };
   if (error instanceof APIError || (typeof error === "object" && error !== null)) {
     const candidate = error as Record<string, unknown>;
@@ -222,6 +235,7 @@ async function sendAuthEndpoint(
     });
   } catch (error) {
     const failure = authFailure(error);
+    if (failure.retryAfter !== undefined) reply.header("retry-after", failure.retryAfter);
     reply.status(failure.status).send({
       error: { code: failure.code, message: failureMessage },
       meta: { requestId: request.id },
@@ -366,6 +380,13 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
 
   const expectedBrowserOrigin = new URL(options.baseURL).origin;
   const issuer = betterAuthIssuer(options.installationId);
+  if (options.database && !options.signInQuotaStore)
+    throw new Error("Persistent authentication requires a shared sign-in quota store.");
+  const reserveSignIn = createSignInQuota(
+    options.signInQuotaStore ?? new MemorySignInQuotaStore(),
+    options.secret,
+    options.installationId,
+  );
   const auth = betterAuth<BetterAuthOptions & { plugins: ReturnType<typeof apiKey>[] }>({
     appName: "OpenClaw Enterprise Controller",
     baseURL: options.baseURL,
@@ -476,12 +497,16 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
     await sendAuthEndpoint(
       request,
       reply,
-      () => {
+      async () => {
         // Better Auth server API calls skip origin middleware without a Request context.
         requireTrustedBrowserOrigin(request, expectedBrowserOrigin);
-        const body = ensureEmailPassword(authBody(request));
+        const input = authBody(request);
+        // The direct Better Auth API also skips its HTTP rate hooks. Admit before
+        // any account lookup/password work, using only the actual transport peer.
+        await reserveSignIn(request.raw.socket.remoteAddress, input.email);
+        const body = ensureEmailPassword(input);
         return api.signInEmail({
-          body: { ...body, rememberMe: true },
+          body: { ...body, email: body.email.trim().toLowerCase(), rememberMe: true },
           headers: authHeaders(request.headers),
           asResponse: false,
           returnHeaders: true,
@@ -597,5 +622,6 @@ export async function createPostgresControllerAuth(
   return createControllerAuth({
     ...controllerOptions,
     database: await createOccAuthDatabase(pool),
+    signInQuotaStore: new PostgresSignInQuotaStore(pool),
   });
 }

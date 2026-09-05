@@ -2199,7 +2199,8 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         schema: {
           operationId: "signInEmail",
           summary: "Sign in with email and password",
-          description: "Authenticates a local account and issues a Better Auth session cookie.",
+          description:
+            "Reserves shared source and source/account quotas before authenticating a local account and issuing a session cookie. Exhaustion returns a generic 429 with Retry-After: 12; quota dependency failure returns 503 with Retry-After: 1. Forwarded headers do not select the quota source.",
           tags: ["Authentication"],
           security: [],
           body: {
@@ -2211,12 +2212,15 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               password: accountBody.properties.password,
             },
           },
-          response: responses({
-            type: "object",
-            additionalProperties: false,
-            required: ["authenticated"],
-            properties: { authenticated: { type: "boolean", const: true } },
-          }),
+          response: {
+            ...responses({
+              type: "object",
+              additionalProperties: false,
+              required: ["authenticated"],
+              properties: { authenticated: { type: "boolean", const: true } },
+            }),
+            429: { description: "Too Many Requests; retry after 12 seconds", ...error },
+          },
         },
       },
       async (request, reply) => options.auth.signInEmail(request, reply),

@@ -1267,3 +1267,15 @@ export const channelAgentBindings = occSchema.table(
     ),
   ],
 );
+
+export const signInQuotaSlots = occSchema.table(
+  "sign_in_quota_slots",
+  {
+    slot: integer("slot").primaryKey(),
+    nextAtMs: bigint("next_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    check("sign_in_quota_slot_bounded", sql`${table.slot} >= 0 AND ${table.slot} < 20480`),
+    check("sign_in_quota_timestamp_valid", sql`${table.nextAtMs} BETWEEN 0 AND 9007199254740991`),
+  ],
+);
