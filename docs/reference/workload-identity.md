@@ -17,18 +17,19 @@ Supply an absolute, protected local Unix socket path and one exact expected
 SPIFFE identity. There is no environment discovery or fallback identity.
 The operator must protect the socket and its parent directories from replacement
 by untrusted processes. A pathname check does not authenticate an endpoint or
-prove that it belongs to a particular guest.
+prove that it belongs to a particular execution sandbox.
 
 The upstream Go parser handles SPIFFE identity syntax and X.509-SVID structure;
 OCE compares the selected identity to the configured expectation. The Go source
-uses the upstream certificate profile rather than interpreting Node's rendered
-SAN strings. This does not turn material acquisition into remote-peer
+uses the upstream certificate profile, including its rules for permitted SANs. This does not turn material acquisition into remote-peer
 certificate-path verification or current application authorization.
 
 SPIRE owns node/workload attestation, registration, issuance and trust-bundle
 delivery. This package exposes no administrative registration API and installs
 no SPIRE Server or Agent. A local host check cannot establish the identity of
-an OpenShell/Kata guest or separation between processes sharing a Unix UID.
+a gVisor sandbox, an OpenShell/Kata guest, or separation between processes
+sharing a Unix UID. Each selected runtime needs its own attestation, delivery
+and current-assignment integration.
 
 ## Source lifecycle
 
@@ -40,10 +41,22 @@ Missing identity, invalid material, expiry, stream failure, cancellation or
 `Close()` withdraws availability. The previous snapshot cannot remain healthy
 after a failed update.
 
+Before the SDK selects entries by hint, the source validates every raw SVID,
+checks raw collection and certificate counts, and rejects duplicate SPIFFE IDs.
+Global response identity uniqueness is a stricter OCE source policy. It then
+ignores hints to select the exact configured identity. SDK-allowed extra DNS
+SANs remain supported. The JWT audience is bounded to 2,048 bytes.
+
 The source is single-use after terminal failure. A consumer must construct a new
 source under its own bounded recovery policy. The wrapper cancels upstream
 watch/retry behavior when the source fails; reconnecting the provider cannot
 silently revive a retired source.
+
+The initial readiness and each JWT operation have a configured timeout of one
+to 60 seconds (10 seconds by default). gRPC messages are capped at 4 MiB; JWTs at
+64 KiB; response collections and certificate/bundle lists at 64 entries; and
+concurrent JWT operations at 16. Socket paths are explicit normalized absolute
+paths up to 103 bytes. These limits are local source policy.
 
 `Metadata()` returns identity, expiry and certificate counts. `Snapshot()`
 returns independent credential copies. Consumers must protect those copies,
@@ -115,7 +128,7 @@ go -C components/runtime-security vet ./...
 The native protocol tests exercise actual local gRPC sockets, upstream generated
 messages and temporary test certificates. Controlled endpoints prove component
 behavior and error handling; they do not prove SPIRE attestation or production
-guest isolation.
+runtime isolation.
 
 Select a real SPIRE test only after provisioning an Agent and registration for
 the actual Go test process:
@@ -142,7 +155,7 @@ TypeScript checkpoint receipts are not Go implementation evidence.
   new source. A closed source remains closed.
 - Use the fixed source error code and bounded provider-side diagnostics.
   Do not print SVID material or arbitrary provider exception text.
-- Keep unavailable guest attestation, remote mTLS and current assignment
+- Keep unavailable runtime attestation, remote mTLS and current assignment
   authorization as explicit integration requirements.
 
 ## Upstream sources

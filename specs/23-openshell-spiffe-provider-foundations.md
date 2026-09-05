@@ -1,7 +1,7 @@
 # OpenShell and SPIFFE provider foundations
 
-Status: Go implementation in verification for the provider protocol and local identity source scope.
-Full OpenShell/Kata launch and guest identity remain unqualified. Current behavior belongs to the
+Status: implemented in Go for the provider protocol and local identity source scope.
+Full OpenShell/Kata launch and runtime-bound identity remain unqualified. Current behavior belongs to the
 [OpenShell reference](../docs/reference/drivers/openshell-sandbox.md) and
 [workload identity reference](../docs/reference/workload-identity.md).
 
@@ -66,27 +66,45 @@ audience-bound projected identity, approved PVC subpaths and Secret reference
 transport. Keep unsupported fields as explicit failures. A test-only gateway
 bridge does not establish upstream support.
 
-Production SPIFFE consumption additionally needs constrained registration from
+SPIFFE consumption in a selected runtime, including gVisor or a separately
+selected OpenShell/Kata profile, additionally needs constrained registration from
 authoritative instance assignments, exact remote-peer verification, current
 authorization at each effect boundary, bounded renewal and revocation behavior,
-and a verified mechanism for the actual guest workload to reach its identity
+and a verified mechanism for the actual execution workload to reach its identity
 provider. Mounting a host socket into a VM is insufficient evidence of guest
 attestation. Keep these integration requirements separate from local API proof.
 
-Qualification must identify the actual OpenShell, Kubernetes, runtime, guest
-kernel, networking and SPIRE tuple, and test both allowed operations and denied
+Qualification must identify the selected Kubernetes, runtime, networking and
+SPIRE tuple, including OpenShell and guest-kernel versions when selected, and test both allowed operations and denied
 cross-workload operations. Missing infrastructure remains an unrun qualification
 requirement. No direct runtime or credential fallback is introduced by this
 increment.
 
 ## Completion evidence
 
-Acceptance requires Go race tests and vet, actual local gRPC/TLS and Unix socket
-wire tests, a fresh real SPIRE 1.15.3 run against the Go source and diagnostic,
-and controller integration that invokes the compiled Go executable. TypeScript
-build and formatting checks cover the remaining controller process adapter.
+The complete Go module passed `go test -mod=readonly -race -count=1 ./...`,
+`go vet -mod=readonly ./...`, module checksum verification, and a static native
+build. The protocol suites execute actual local gRPC/TLS and Unix sockets,
+including raw response bounds, concurrent rotation, cancellation and command
+pipe backpressure. The opt-in real SPIRE test is skipped in an unconfigured
+local suite and was separately executed against the real provider below.
 
-The prior TypeScript implementation and its live SPIRE receipts are historical
-checkpoint evidence. They do not qualify the Go implementation. Final native
-results belong in the accompanying verification record after those checks run.
-The remaining integration requirements above stay open.
+The controller boundary passed seven tests against the compiled Go executable;
+two additional Sandbox startup tests passed. TypeScript, formatting and
+workspace boundary checks passed. These results verify provider and process
+behavior; they do not run the upstream OpenShell Kubernetes provider.
+
+The final Go source and diagnostic passed a fresh native SPIRE 1.15.3 run:
+12 source checks, the checked-in real test with race detection and no skips,
+two diagnostic success/failure invocations, and five registration/removal,
+recovery and outage checks. The fixture verified actual certificate rotation
+and used join-token node enrollment with Unix UID workload attestation.
+Provider and fixture processes terminated cleanly. Source and executable hashes
+were checked before and after the run. This does not establish separation
+between same-UID callers or any runtime-specific attestation path.
+
+Production image execution and full OpenShell/Kubernetes/runtime qualification
+remain unrun. The image includes the native executable and linked dependency
+notices; the notice collector was exercised locally. The prior TypeScript
+implementation and its live receipts are retained only as historical checkpoint
+evidence. The remaining integration requirements above stay open.

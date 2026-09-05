@@ -628,3 +628,15 @@ them it skips explicitly. Keep native local SPIRE proof separate from actual
 Kubernetes/OpenShell/Kata guest attestation and current runtime authorization.
 The earlier TypeScript implementation's tests are historical checkpoint
 receipts, not validation of the native components.
+
+Run the native controller process tests from the repository root:
+
+```sh
+node --test tests/integration/openshell-native-bridge.test.mjs tests/integration/sandbox-driver-startup.test.mjs
+```
+
+The process suite compiles the Go executable into a temporary directory by
+default. To verify an existing build, set `OCC_RUNTIME_SECURITY_BINARY` to its
+absolute path. The actual native command runs in both cases; local socket
+permissions are required. Production image checks additionally inspect the
+packaged executable and its third-party license/version records.

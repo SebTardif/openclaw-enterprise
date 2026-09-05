@@ -22,6 +22,8 @@ operation; the controller has no JavaScript provider fallback.
 
 Production and development images build this module in a separate Go stage.
 Supply an approved digest-pinned `GO_BASE_IMAGE` alongside `NODE_BASE_IMAGE`.
+Images include the linked third-party licenses and module versions under
+`/usr/share/licenses/oce-runtime-security`.
 See the [deployment guide](../../docs/guides/deploy.md).
 
 ## Identity diagnostic
@@ -39,13 +41,15 @@ process, then run:
 The optional audience checks real JWT issuance and provider validation. Output
 contains identity and expiry metadata only. SVID keys, raw certificates, JWTs
 and provider errors are never diagnostic output. This verifies the local
-Workload API, not guest attestation, remote-peer authentication or current
-runtime authorization.
+Workload API. Runtime attestation, remote-peer authentication and current
+runtime authorization require separate integration and verification.
 
 ## Controller protocol
 
 `oce-runtime-security openshell` reads one versioned JSON request from standard
-input and writes one versioned JSON response to standard output. Requests and
+input and writes one versioned JSON response to standard output. The command
+bounds incomplete input and blocked output to five seconds and honors process
+cancellation. Requests and
 responses are bounded to 4 MiB. The supported operations are `health`, `create`,
 `get` and `delete`; executable commands are not accepted through JSON. Trusted
 gateway configuration and launch requirements travel over standard input,

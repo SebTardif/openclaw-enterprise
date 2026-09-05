@@ -170,7 +170,7 @@ Explicit `http://` and bare host/port endpoints remain available for
 unauthenticated local verification. The driver rejects bearer credentials or
 TLS files on these endpoints. When using `serviceName`, configuring a bearer
 token or TLS trust/client certificate selects HTTPS unless `scheme` is
-explicit; an explicit HTTP scheme with credentials fails startup.
+explicit; an explicit HTTP scheme with credentials fails before any gateway RPC.
 
 ### Lifecycle correspondence checks
 
