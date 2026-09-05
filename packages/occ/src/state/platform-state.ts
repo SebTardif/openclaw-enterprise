@@ -1,3 +1,20 @@
+import type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "@openclaw-enterprise/contracts";
+export type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "@openclaw-enterprise/contracts";
+
 import { randomUUID } from "node:crypto";
 import type {
   Agent,
@@ -393,22 +410,6 @@ export function serializeChannelBindingMutations(
   };
 }
 
-export interface RuntimeScope {
-  readonly namespaceId: string;
-  readonly agentId: string;
-}
-export interface RuntimeIntentAttribution {
-  readonly actorId: string;
-  readonly requestId: string;
-}
-export interface RuntimeIntent extends RuntimeScope, RuntimeIntentAttribution {
-  readonly installationId: string;
-  readonly transitionRef: string;
-  readonly generation: number;
-  readonly desiredMode: "running" | "disabled" | "stopped";
-  readonly revisionId: string;
-  readonly createdAt: string;
-}
 /** Immutable admission identity, retained independently of work state and the intent head. */
 export interface RevisionRuntimeAdmission extends RuntimeScope {
   readonly revisionId: string;
@@ -455,26 +456,6 @@ export function isRuntimeAdmissionAudit(event: AuditEvent, intent: RuntimeIntent
         event.authorization.resource.namespaceId === intent.namespaceId))
   );
 }
-export interface RuntimeProfileRefs {
-  readonly providerProfileRef: string;
-  readonly runtimeProfileRef: string;
-  readonly identityProfileRef: string;
-}
-export interface RuntimeAllocation extends RuntimeScope, RuntimeProfileRefs {
-  readonly assignmentRef: string;
-  readonly createEffectRef: string;
-  readonly installationId: string;
-  readonly revisionId: string;
-  readonly servicePrincipalId: string;
-  readonly lifecycleGeneration: number;
-  readonly component: "gateway" | "harness";
-  readonly runtimeGeneration: number;
-  readonly bindingCondition: "unbound";
-  readonly createdAt: string;
-}
-export type RuntimeAllocationLocator =
-  | { readonly assignmentRef: string; readonly createEffectRef?: never }
-  | { readonly createEffectRef: string; readonly assignmentRef?: never };
 export interface RuntimeAssignmentReadRepository {
   findRuntimeIntent(
     scope: RuntimeScope,

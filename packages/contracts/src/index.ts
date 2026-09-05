@@ -1,3 +1,13 @@
+export type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "./runtime-assignment.ts";
+export * from "./runtime-authority-v1.ts";
+
 import { immutableCopy } from "@openclaw-enterprise/utils";
 
 export {
