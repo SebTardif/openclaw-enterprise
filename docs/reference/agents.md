@@ -246,6 +246,26 @@ sequence with distinct revisions and generations. The route accepts no client
 generation, transition locator, actor, or runtime profile, and repeating the POST
 admits another revision.
 
+Trusted OCC domain callers can additionally supply
+`expectedLifecycleGeneration` to `deployAgent`. Explicit `null` requires no
+intent head; a positive safe integer requires that exact current generation.
+The comparison runs under the existing Namespace and Agent locks before
+configuration or Secret Driver calls and revision admission. A mismatch leaves
+no new revision, intent, success audit, or work. Omitting the property retains
+the bodyless bridge behavior; explicit `undefined`, zero, fractional values,
+and unsafe integers are invalid. A matching generation never permits deploy
+to resume a disabled or stopped Agent.
+
+This internal comparison does not enable the client lifecycle protocol.
+The HTTP route still rejects bodies and retains its AgentRevision response.
+Current account and semantic management-role checks, authorized immutable
+image/policy/profile resolution, and coordinated API/worker cutover remain
+required before enabling a client generation body or minimal operation receipt.
+An admitted intent alone grants no runtime authority. Namespace locking also
+serializes deployments to different Agents in the same Namespace. Admission
+currently reads the full revision history to allocate the next revision number;
+history reads are unpaginated and their cost grows with retained history.
+
 The worker checks each revision's retained original intent association before
 its first Compute call. Later head advancement preserves the older association
 and the existing supersession and active-maintenance behavior. Historical
