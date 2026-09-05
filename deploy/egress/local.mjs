@@ -16,10 +16,19 @@ const supportedFields = new Set([
   "authoritySocketDirectory",
   "providerKeyPath",
   "providerBindingRef",
+  "credentialBinding",
   "certificatePath",
   "certificateKeyPath",
   "dnsUpstream",
 ]);
+const credentialBindingFields = [
+  "provider_binding_ref",
+  "service_account_id",
+  "credential_profile_ref",
+  "provider_profile_ref",
+  "audience_ref",
+  "transport_profile_ref",
+];
 
 function requireValue(condition, message) {
   if (!condition) throw new Error(message);
@@ -43,6 +52,25 @@ export function validateConfiguration(value) {
     typeof value.providerBindingRef === "string" &&
       /^[a-zA-Z0-9._:-]{1,128}$/.test(value.providerBindingRef),
     "providerBindingRef must identify an existing configured authority route",
+  );
+  const binding = value.credentialBinding;
+  requireValue(
+    binding !== null &&
+      typeof binding === "object" &&
+      !Array.isArray(binding) &&
+      Object.keys(binding).length === credentialBindingFields.length &&
+      Object.keys(binding).every((key) => credentialBindingFields.includes(key)),
+    "credentialBinding must contain exactly the six provisioned credential descriptor fields",
+  );
+  for (const field of credentialBindingFields) {
+    requireValue(
+      typeof binding[field] === "string" && /^[\x21-\x7e]{1,128}$/.test(binding[field]),
+      `credentialBinding.${field} must be a provisioned reference of 1 to 128 nonspace ASCII characters`,
+    );
+  }
+  requireValue(
+    binding.provider_binding_ref === value.providerBindingRef,
+    "credentialBinding.provider_binding_ref must equal providerBindingRef",
   );
   requireValue(
     typeof value.dnsUpstream === "string" &&
@@ -224,6 +252,7 @@ export function createCompose(config, stateDirectory, owner) {
 }
 
 export function createTlsConfiguration(config) {
+  validateConfiguration(config);
   return {
     listen: "0.0.0.0:8443",
     listener_authority: "localhost:8443",
@@ -231,6 +260,9 @@ export function createTlsConfiguration(config) {
     dns_socket: "/run/oce-dns/admission.sock",
     provider_key_path: "/run/oce-provider/key",
     provider_binding_ref: config.providerBindingRef,
+    credential_binding: Object.fromEntries(
+      credentialBindingFields.map((field) => [field, config.credentialBinding[field]]),
+    ),
     root_ca_path: "/etc/ssl/certs/ca-certificates.crt",
     incoming_certificate_path: "/run/oce-tls/certificate.pem",
     incoming_key_path: "/run/oce-tls/key.pem",

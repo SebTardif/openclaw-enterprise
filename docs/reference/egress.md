@@ -28,6 +28,11 @@ there is no ordinary resolver fallback. IPv6 upstream transport is disabled in
 this profile. CONNECT, WebSockets, compact, arbitrary origins, and a generic
 credential substitution proxy are outside this profile.
 
+This is the fixed OpenAI API provider-key profile. Separate experiments using an
+existing Codex ChatGPT workload-identity credential do not configure this adapter
+and are not a supported product path. Do not substitute a ChatGPT session or WIF
+credential, change the recipient, or infer support from those probes.
+
 Three distinct process identities are required:
 
 | Process                 | Linux UID | Authority and mounts                                                                                                                                      |
@@ -112,7 +117,11 @@ mounts preserve inode ownership: the files must actually be readable by UID
 parent permits the TLS bind mount to read them while other host users cannot
 traverse the parent. Do not change an existing credential store's permissions;
 use a separately provisioned private development credential file. Supply the
-existing authority's selected provider binding reference.
+existing authority's selected provider binding reference and its complete
+immutable credential descriptor. The operator must provision the exact service
+account, credential profile, provider profile, audience, and transport profile
+references. The launcher supplies no defaults, discovers no identity from the key,
+and does not establish that a reference exists in canonical OCE state.
 
 Create a local configuration file outside tracked source, replacing each
 illustrative value with the actual provisioned value:
@@ -125,11 +134,28 @@ illustrative value with the actual provisioned value:
   "authoritySocketDirectory": "/absolute/operator/authority",
   "providerKeyPath": "/absolute/private/provider-key",
   "providerBindingRef": "existing-openai-binding",
+  "credentialBinding": {
+    "provider_binding_ref": "existing-openai-binding",
+    "service_account_id": "<exact-provisioned-service-account-id>",
+    "credential_profile_ref": "<exact-provisioned-credential-profile-ref>",
+    "provider_profile_ref": "<exact-provisioned-provider-profile-ref>",
+    "audience_ref": "<exact-provisioned-audience-ref>",
+    "transport_profile_ref": "<exact-provisioned-transport-profile-ref>"
+  },
   "certificatePath": "/absolute/private/localhost.pem",
   "certificateKeyPath": "/absolute/private/localhost-key.pem",
   "dnsUpstream": "<actual-IPv4-resolver>:53"
 }
 ```
+
+`credentialBinding` must contain exactly those six snake-case fields, each a
+nonempty reference of at most 128 nonspace ASCII characters. Its
+`provider_binding_ref` must equal `providerBindingRef`. The generated TLS
+configuration preserves this complete descriptor as `credential_binding`; TLS
+compares every field to the independently authenticated authority decision
+before credential dispatch. Unknown, missing, malformed, or mismatched fields
+stop local configuration generation. The placeholders above are not provisioned
+identities and must be replaced with operator-owned values.
 
 The image field also accepts an existing registry manifest digest reference. The
 local image ID form is used only to select content already in the local Docker
@@ -150,6 +176,11 @@ checks both current authority and actual DNS enforcement. This is dependency
 readiness, not a synthetic model turn. Only a real admitted workload bearer and
 canonical turn can authorize a provider request. Startup failure stops this
 Compose project and retains its generated state for inspection.
+
+This local profile explicitly sets `max_concurrent: 8` and a 128-process limit
+for each adapter container. Those are configured bounds, not a verified capacity
+guarantee; container resource exhaustion and authority unavailability must still
+fail closed.
 
 The generated Compose configuration and adapter files are under
 `.build/mvp/egress-local/<project>/`. Provider and TLS private keys remain at their
@@ -221,6 +252,17 @@ pnpm check:workspace
 
 These tests verify generated configuration and real package-file integrity, not a
 running container, canonical authority, Kubernetes policy, or provider response.
+When `.build/mvp/native/oce-egress` exists, the suite also runs that actual
+executable against generated configuration with ephemeral test TLS material and
+an intentionally absent authority socket. It requires successful Rust
+configuration/TLS loading followed by the exact authority-dependency refusal;
+missing credential descriptor fields and provider mismatches must instead fail
+configuration loading. No fake authority or provider key is supplied. Select a
+different current built executable with the absolute path
+`OCC_TEST_EGRESS_CONFIG_BINARY`; an explicitly selected missing executable fails
+the test. If no executable is available at the default path, this native check
+is explicitly skipped, leaving Rust configuration acceptance unverified. The
+native check requires the existing `openssl` command and installs nothing.
 Runtime acceptance must inspect actual UIDs/effective capabilities, exercise nft
 and read-only socket mounts, reject unexpected peer UIDs, check dependency
 outage/expiry, and observe both allowed provider traffic and denied bypass
