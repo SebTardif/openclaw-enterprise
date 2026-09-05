@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -231,10 +232,14 @@ func claims(t *testing.T, id, subject, aud string, exp int64) *workload.Validate
 }
 func signedToken(t *testing.T, id, aud string, exp time.Time) string {
 	t.Helper()
+	return signedClaimsToken(t, map[string]any{"sub": id, "aud": []string{aud}, "exp": exp.Unix()})
+}
+func signedClaimsToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(t, err)
 	header, _ := json.Marshal(map[string]any{"alg": "ES256", "typ": "JWT", "kid": "disposable-fixture"})
-	payload, _ := json.Marshal(map[string]any{"sub": id, "aud": []string{aud}, "exp": exp.Unix()})
+	payload, _ := json.Marshal(claims)
 	input := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
 	digest := sha256.Sum256([]byte(input))
 	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
@@ -263,6 +268,54 @@ func TestX509SelectionAndMetadata(t *testing.T) {
 		if !reflect.DeepEqual(r.metadata, []string{"true"}) {
 			t.Fatal("required workload metadata missing")
 		}
+	}
+}
+
+func TestX509ExactIdentityOverridesSharedHint(t *testing.T) {
+	f := newFixture(t, func(w *wireServer, c credentials) {
+		first, selected := clone(c.other), clone(c.first)
+		first.Hint, selected.Hint = "shared", "shared"
+		w.initial.Svids = []*workload.X509SVID{first, selected}
+	})
+	f.start(t)
+	snapshot := f.snapshot(t)
+	if snapshot.SPIFFEID != ownID || !bytes.Equal(snapshot.PrivateKey, f.certs.first.X509SvidKey) {
+		t.Fatal("shared hint displaced the explicitly selected nonfirst identity")
+	}
+}
+
+func TestX509RejectsInvalidEntriesHiddenByHints(t *testing.T) {
+	for _, kind := range []string{"certificate", "key", "bundle", "duplicate other identity", "oversized chain", "oversized bundle", "swapped envelopes"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t, func(w *wireServer, c credentials) {
+				selected, hidden := clone(c.first), clone(c.other)
+				selected.Hint, hidden.Hint = "shared", "shared"
+				w.initial.Svids = []*workload.X509SVID{selected, hidden}
+				// Hint filtering must never conceal an invalid raw entry. Each
+				// fixture starts with a valid expected identity as the first entry.
+				switch kind {
+				case "certificate":
+					hidden.X509Svid = []byte("invalid certificate")
+				case "key":
+					hidden.X509SvidKey = c.first.X509SvidKey
+				case "bundle":
+					hidden.Bundle = []byte("invalid bundle")
+				case "duplicate other identity":
+					w.initial.Svids = append(w.initial.Svids, clone(hidden))
+				case "oversized chain":
+					chain, err := x509.ParseCertificates(hidden.X509Svid)
+					must(t, err)
+					hidden.X509Svid = append(bytes.Clone(chain[0].Raw), bytes.Repeat(c.ca.Raw, 64)...)
+				case "oversized bundle":
+					hidden.Bundle = bytes.Repeat(c.ca.Raw, 65)
+				case "swapped envelopes":
+					selected.SpiffeId, hidden.SpiffeId = hidden.SpiffeId, selected.SpiffeId
+				}
+			})
+			safeError(t, f.source.Start(context.Background()), "")
+			_, err := f.source.Snapshot()
+			safeError(t, err, "")
+		})
 	}
 }
 
@@ -369,18 +422,16 @@ func TestX509ReceiveLimit(t *testing.T) {
 
 func TestX509CollectionBoundary(t *testing.T) {
 	f := newFixture(t, func(w *wireServer, c credentials) {
-		for range 63 {
-			w.initial.Svids = append(w.initial.Svids, c.other)
+		for i := range 63 {
+			w.initial.Svids = append(w.initial.Svids, c.leaf(t, otherID+"/"+strconv.Itoa(i), int64(100+i), time.Now().Add(-time.Minute), time.Now().Add(time.Hour), nil, nil))
 		}
 	})
 	f.start(t)
 	if f.snapshot(t).SPIFFEID != ownID {
 		t.Fatal("valid 64-entry response was not selected")
 	}
-	response := &workload.X509SVIDResponse{Svids: []*workload.X509SVID{f.certs.first}}
-	for range 64 {
-		response.Svids = append(response.Svids, f.certs.other)
-	}
+	response := proto.Clone(f.wire.initial).(*workload.X509SVIDResponse)
+	response.Svids = append(response.Svids, f.certs.other)
 	f.wire.events <- wireEvent{response: response}
 	eventually(t, func() bool { _, err := f.source.Snapshot(); return err != nil })
 }
@@ -543,6 +594,148 @@ func TestJWTWireRequests(t *testing.T) {
 	}
 	if fetches != 1 || validations != 2 {
 		t.Fatalf("fetch/validate RPC counts %d/%d, want 1/2", fetches, validations)
+	}
+}
+
+func TestJWTExactIdentityOverridesSharedHint(t *testing.T) {
+	f := newFixture(t, func(w *wireServer, _ credentials) {
+		other := signedToken(t, otherID, audience, time.Now().Add(time.Hour))
+		w.fetch = func(context.Context, *workload.JWTSVIDRequest) (*workload.JWTSVIDResponse, error) {
+			return &workload.JWTSVIDResponse{Svids: []*workload.JWTSVID{
+				{SpiffeId: otherID, Svid: other, Hint: "shared"},
+				{SpiffeId: ownID, Svid: w.issued, Hint: "shared"},
+			}}, nil
+		}
+	})
+	f.start(t)
+	jwt, err := f.source.FetchJWTSVID(context.Background(), audience)
+	must(t, err)
+	if jwt.SPIFFEID != ownID || jwt.Token != f.wire.issued {
+		t.Fatal("hint displaced explicitly selected JWT")
+	}
+	validations := 0
+	for _, request := range f.wire.records() {
+		if request.method == "validate" {
+			validations++
+			if request.token != jwt.Token {
+				t.Fatal("selected JWT was not sent for trusted validation")
+			}
+		}
+	}
+	if validations != 1 {
+		t.Fatal("fetch did not require trusted validation of selected token")
+	}
+}
+
+func TestJWTRejectsInvalidEntriesHiddenByHints(t *testing.T) {
+	for _, kind := range []string{"duplicate expected identity", "duplicate other identity", "invalid raw ID", "malformed token", "oversized token", "envelope mismatch", "wrong audience"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t, func(w *wireServer, _ credentials) {
+				selected := &workload.JWTSVID{SpiffeId: ownID, Svid: w.issued, Hint: "shared"}
+				hidden := &workload.JWTSVID{SpiffeId: otherID, Svid: signedToken(t, otherID, audience, time.Now().Add(time.Hour)), Hint: "shared"}
+				entries := []*workload.JWTSVID{selected, hidden}
+				switch kind {
+				case "duplicate expected identity":
+					entries = append(entries, proto.Clone(selected).(*workload.JWTSVID))
+				case "duplicate other identity":
+					entries = append(entries, proto.Clone(hidden).(*workload.JWTSVID))
+				case "invalid raw ID":
+					hidden.SpiffeId = "not-a-spiffe-id"
+				case "malformed token":
+					hidden.Svid = "not-a-JWT"
+				case "oversized token":
+					// This is otherwise parseable and signed, so the size limit is
+					// tested independently of malformed compact serialization.
+					hidden.Svid = signedClaimsToken(t, map[string]any{"sub": otherID, "aud": []string{audience}, "exp": time.Now().Add(time.Hour).Unix(), "padding": strings.Repeat("x", 64*1024)})
+				case "envelope mismatch":
+					hidden.Svid = w.issued
+				case "wrong audience":
+					hidden.Svid = signedToken(t, otherID, "other-audience", time.Now().Add(time.Hour))
+				}
+				w.fetch = func(context.Context, *workload.JWTSVIDRequest) (*workload.JWTSVIDResponse, error) {
+					return &workload.JWTSVIDResponse{Svids: entries}, nil
+				}
+			})
+			f.start(t)
+			_, err := f.source.FetchJWTSVID(context.Background(), audience)
+			safeError(t, err, "")
+			for _, request := range f.wire.records() {
+				if request.method == "validate" {
+					t.Fatal("invalid complete fetch response reached selected-token validation")
+				}
+			}
+		})
+	}
+}
+
+func TestX509ExpiryTimerRevokesIdentity(t *testing.T) {
+	f := newFixture(t, func(w *wireServer, c credentials) {
+		w.initial.Svids = []*workload.X509SVID{c.leaf(t, ownID, 9, time.Now().Add(-time.Minute), time.Now().Add(2*time.Second), nil, nil)}
+	})
+	f.start(t)
+	stream := <-f.wire.entered
+	// Wait for transport cancellation without calling a getter: this proves
+	// passage of time triggers revocation independently of lazy access checks.
+	select {
+	case <-stream.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("expiry timer did not cancel the identity stream")
+	}
+	_, err := f.source.Snapshot()
+	safeError(t, err, "EXPIRED")
+	_, err = f.source.Metadata()
+	safeError(t, err, "EXPIRED")
+	_, err = f.source.FetchJWTSVID(context.Background(), audience)
+	safeError(t, err, "EXPIRED")
+	for _, request := range f.wire.records() {
+		if request.method == "fetch" {
+			t.Fatal("expired source issued a JWT RPC")
+		}
+	}
+}
+
+func TestJWTConcurrentOperationBoundary(t *testing.T) {
+	entered := make(chan context.Context, 16)
+	f := newFixture(t, func(w *wireServer, _ credentials) {
+		w.fetch = func(ctx context.Context, _ *workload.JWTSVIDRequest) (*workload.JWTSVIDResponse, error) {
+			entered <- ctx
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+	})
+	f.start(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	results := make(chan error, 16)
+	for range 16 {
+		go func() { _, err := f.source.FetchJWTSVID(ctx, audience); results <- err }()
+	}
+	for range 16 {
+		select {
+		case <-entered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("16 concurrent operations were not admitted")
+		}
+	}
+	_, err := f.source.FetchJWTSVID(context.Background(), audience)
+	safeError(t, err, "BUSY")
+	cancel()
+	for range 16 {
+		select {
+		case err := <-results:
+			safeError(t, err, "ABORTED")
+		case <-time.After(3 * time.Second):
+			t.Fatal("pending JWT operation was not cancelled")
+		}
+	}
+	fetches := 0
+	for _, request := range f.wire.records() {
+		if request.method == "fetch" {
+			fetches++
+		}
+	}
+	if fetches != 16 {
+		t.Fatalf("admitted %d RPCs, want 16", fetches)
 	}
 }
 

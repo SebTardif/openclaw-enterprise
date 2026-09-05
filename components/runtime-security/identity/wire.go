@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
+	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"google.golang.org/grpc"
 )
 
@@ -44,9 +47,30 @@ func (s *Source) stageResponse(response *workload.X509SVIDResponse) error {
 		return failure("INVALID_RESPONSE")
 	}
 	var selected *workload.X509SVID
+	seen := make(map[spiffeid.ID]bool, len(response.Svids))
 	for _, candidate := range response.Svids {
 		if candidate == nil {
 			return failure("INVALID_RESPONSE")
+		}
+		id, err := workloadID(candidate.SpiffeId)
+		if err != nil {
+			return failure("INVALID_RESPONSE")
+		}
+		if seen[id] {
+			return failure("IDENTITY_MISMATCH")
+		}
+		seen[id] = true
+		// SDK hint de-duplication can skip a raw entry. Validate every entry with
+		// maintained parsers before permitting any hint handling or selection.
+		parsed, err := x509svid.ParseRaw(candidate.X509Svid, candidate.X509SvidKey)
+		if err != nil || len(parsed.Certificates) > maxEntries {
+			return failure("INVALID_RESPONSE")
+		}
+		if parsed.ID != id {
+			return failure("IDENTITY_MISMATCH")
+		}
+		if _, err := parseBundle(id.TrustDomain(), candidate.Bundle); err != nil {
+			return err
 		}
 		if candidate.SpiffeId == s.expected.String() {
 			if selected != nil {
@@ -65,6 +89,20 @@ func (s *Source) stageResponse(response *workload.X509SVIDResponse) error {
 		if len(crl) == 0 {
 			return failure("INVALID_RESPONSE")
 		}
+	}
+	for id, raw := range response.FederatedBundles {
+		td, err := spiffeid.TrustDomainFromString(id)
+		if err != nil || len(id) > 2048 || td.ID().String() != id {
+			return failure("INVALID_RESPONSE")
+		}
+		if _, err := parseBundle(td, raw); err != nil {
+			return err
+		}
+	}
+	// Selection is by configured identity, not operator hints. After validating
+	// all entries, suppress the SDK's hint filter so it cannot hide that identity.
+	for _, candidate := range response.Svids {
+		candidate.Hint = ""
 	}
 	pending := &wireSnapshot{certificates: bytes.Clone(selected.X509Svid), key: bytes.Clone(selected.X509SvidKey), bundle: bytes.Clone(selected.Bundle), crls: cloneBytes(response.Crl), federated: make(map[string][]byte, len(response.FederatedBundles))}
 	for id, bundle := range response.FederatedBundles {
@@ -101,10 +139,30 @@ func (s *Source) unaryInterceptor(ctx context.Context, method string, request, r
 		if len(response.Svids) > maxEntries {
 			return failure("INVALID_RESPONSE")
 		}
+		params, ok := request.(*workload.JWTSVIDRequest)
+		if !ok {
+			return failure("INVALID_RESPONSE")
+		}
+		seen := make(map[spiffeid.ID]bool, len(response.Svids))
 		count := 0
 		for _, candidate := range response.Svids {
-			if candidate == nil || len(candidate.Svid) > maxTokenBytes {
+			if candidate == nil || len(candidate.Svid) == 0 || len(candidate.Svid) > maxTokenBytes {
 				return failure("INVALID_RESPONSE")
+			}
+			id, err := workloadID(candidate.SpiffeId)
+			if err != nil {
+				return failure("INVALID_RESPONSE")
+			}
+			if seen[id] {
+				return failure("IDENTITY_MISMATCH")
+			}
+			seen[id] = true
+			parsed, err := jwtsvid.ParseInsecure(candidate.Svid, params.Audience)
+			if err != nil {
+				return failure("INVALID_RESPONSE")
+			}
+			if parsed.ID != id {
+				return failure("IDENTITY_MISMATCH")
 			}
 			if candidate.SpiffeId == s.expected.String() {
 				count++
@@ -113,6 +171,9 @@ func (s *Source) unaryInterceptor(ctx context.Context, method string, request, r
 		}
 		if count != 1 {
 			return failure("IDENTITY_MISMATCH")
+		}
+		for _, candidate := range response.Svids {
+			candidate.Hint = ""
 		}
 	case *workload.ValidateJWTSVIDResponse:
 		expected, ok := ctx.Value(validationKey{}).(validationExpectation)

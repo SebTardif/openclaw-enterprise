@@ -2,6 +2,7 @@ package identity_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -13,10 +14,10 @@ import (
 // workload. It never fabricates an identity or turns fixture success into live
 // attestation evidence. Credentials remain in memory and are never logged.
 func TestRealSPIRE(t *testing.T) {
-	path := os.Getenv("OCC_TEST_SPIFFE_SOCKET_PATH")
-	id := os.Getenv("OCC_TEST_SPIFFE_ID")
-	aud := os.Getenv("OCC_TEST_SPIFFE_AUDIENCE")
-	if path == "" && id == "" && aud == "" {
+	path, pathSet := os.LookupEnv("OCC_TEST_SPIFFE_SOCKET_PATH")
+	id, idSet := os.LookupEnv("OCC_TEST_SPIFFE_ID")
+	aud, audSet := os.LookupEnv("OCC_TEST_SPIFFE_AUDIENCE")
+	if !pathSet && !idSet && !audSet {
 		t.Skip("real SPIRE not selected: set OCC_TEST_SPIFFE_SOCKET_PATH, OCC_TEST_SPIFFE_ID, and OCC_TEST_SPIFFE_AUDIENCE")
 	}
 	if path == "" || id == "" || aud == "" {
@@ -52,5 +53,14 @@ func TestRealSPIRE(t *testing.T) {
 	}
 	if _, err = source.ValidateJWTSVID(ctx, jwt.Token, aud+"-wrong-audience", id); err == nil {
 		t.Fatal("real SPIRE accepted a token for an unrequested audience")
+	}
+	wrongPeer := "spiffe://denied-test.example/not-this-workload"
+	if id == wrongPeer {
+		wrongPeer = "spiffe://denied-test.example/another-workload"
+	}
+	_, err = source.ValidateJWTSVID(ctx, jwt.Token, aud, wrongPeer)
+	var identityError *identity.Error
+	if !errors.As(err, &identityError) || identityError.Code != "IDENTITY_MISMATCH" {
+		t.Fatal("real SPIRE validation did not reject a mismatched expected peer")
 	}
 }
