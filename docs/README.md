@@ -9,6 +9,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Deploy](guides/deploy.md): configure Docker Compose or Kubernetes, verify your deployment, run the development end-to-end TUI proof, and troubleshoot startup.
 - [Observability](guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
+- [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
 
 ## Architecture
