@@ -22,7 +22,8 @@ with the projected access token and workspace.
   Agent association, and deployment.
 - Sources: `apps/controller/src/server.mjs:start`,
   `apps/controller/src/drivers/service-account/chatgpt.ts:ChatGPTServiceAccountDriver`,
-  `packages/occ/src/index.ts:OpenClawController`.
+  `packages/occ/src/services/service-account/service.ts:ServiceAccountService`,
+  `apps/controller/src/routes/service-account.ts:createServiceAccountOperationHandlers`.
 - Requires PostgreSQL, a ready Namespace, exact OCC permissions, the selected
   ChatGPT Provider and member ServiceAccount Driver, an API-only credential for
   the configured ChatGPT workspace, and a dedicated Codex runtime for managed
@@ -72,13 +73,18 @@ stale or mismatched deployment snapshots before Compute effects.
 
 ### 2. Create the account and private provider binding
 
-`packages/occ/src/index.ts:OpenClawController.createServiceAccount`
+`packages/occ/src/services/service-account/service.ts:ServiceAccountService.createServiceAccount`
 
-`OpenClawController.createServiceAccount` authorizes the exact Namespace and
+`ServiceAccountService.createServiceAccount` authorizes the exact Namespace and
 allocates its `sa_*` identity. `ChatGPTServiceAccountDriver.create` creates the
 upstream account, registers rollback, and persists its private provider binding
 in the same PostgreSQL transaction, including Provider, Driver, Namespace,
 account, and workspace identity.
+
+The Driver receives a narrow `ProviderAccountLinks` access port and compensation
+registration from startup composition. Its dedicated PostgreSQL adapter borrows
+the initialized Installation transaction and lifetime; it neither opens another
+transaction nor exposes SQL to the Driver. External identifiers remain private.
 
 Account creation and credential issuance are separate operations. Creating the
 account does not issue a token, and later issuance or deletion requires that
@@ -88,7 +94,7 @@ exact binding to match the current configured Provider and member Driver.
 
 `apps/controller/src/drivers/service-account/chatgpt.ts:ChatGPTServiceAccountDriver.createCredential`
 
-`OpenClawController.createServiceAccountCredential` authorizes account `update`
+`ServiceAccountService.createServiceAccountCredential` authorizes account `update`
 before `ChatGPTServiceAccountDriver.createCredential` issues a Codex-scoped
 token. `KubernetesComputeDriver.storeServiceAccountCredential` stores it with
 the workspace ID in one account-owned Secret. The private credential ID, public

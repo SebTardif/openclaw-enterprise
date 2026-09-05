@@ -110,9 +110,9 @@ Deleting a tenant preserves its discovered, operator-owned Kubernetes namespace
 and external resources, removing only OCC-owned infrastructure. Driver-owned
 Kubernetes namespaces are deleted normally.
 
-A Namespace containing any Agent, Configuration, or service account
+A Namespace containing any Agent, Configuration, Secret, or service account
 cannot be deleted and returns `409 NAMESPACE_NOT_EMPTY`. Delete unreferenced
-Configurations and service accounts before deleting their Namespace. The
+Configurations, Secrets, and service accounts before deleting their Namespace. The
 current API does not yet provide an Agent deletion endpoint.
 
 ## Isolation and gateways
@@ -143,12 +143,48 @@ workload is ready.
 - `404`: The Namespace does not exist, belongs outside the requested scope, or
   has already been tombstoned.
 - `409 NAMESPACE_NOT_EMPTY`: Remove the Namespace's unreferenced
-  Configurations and service accounts before deletion; remaining Agents also
+  Configurations, Secrets, and service accounts before deletion; remaining Agents also
   prevent deletion, and the public Agent deletion operation is not available
   yet.
 - Without an eligible [controller worker](controller.md) against the same
   PostgreSQL database, lifecycle work remains queued and the Namespace can stay
   `provisioning` or `deleting`. Infrastructure readiness is asynchronous.
+
+## Application service and verification
+
+The [Namespace service](../../packages/occ/src/services/namespace/service.ts)
+implements the named
+[command, query, and lifecycle port](../../packages/occ/src/services/namespace/port.ts).
+Controller composition supplies the server-owned Installation identity, current selected
+authorization and Compute Driver callbacks, required repository methods, and
+identifier and clock functions. Construction performs no storage or Driver I/O;
+Installation persistence remains lazy for bootstrap. Create and delete join the
+existing mutation transaction, so their resource changes, queued work, and HTTP
+audit evidence commit together. The
+[Namespace HTTP adapter](../../apps/controller/src/routes/namespace.ts) resolves
+the current service when each request runs; protected registration retains
+session admission, validation, and exact error handling.
+
+The existing single-attempt `handleNamespaceLifecycle` entrypoint checks exact
+Driver evidence and rechecks persisted lifecycle state before changing Namespace
+status or writing its deletion tombstone.
+Production polling, lease handling, and finalization remain with the
+[controller worker](controller.md).
+
+From a prepared checkout, run the focused application and HTTP checks:
+
+```sh
+node --test tests/conformance/namespace-service.test.mjs tests/integration/namespace-http.test.mjs
+node --test tests/integration/postgres-namespace-service.test.mjs
+```
+
+The PostgreSQL service suite requires `OCC_NAMESPACE_SERVICE_DATABASE_URL` to
+select a fresh, migrated disposable database using the non-superuser `occ_app`
+role. An absent selector skips that suite. The checks cover exact IAM scope,
+lazy bootstrap, child-resource deletion restrictions, resource/work/audit
+atomicity, and rejection of stale or foreign lifecycle evidence. Lifecycle
+checks use the existing deterministic Compute fixture; live worker and
+Kubernetes verification is separate.
 
 ## Storage and verification
 
@@ -187,7 +223,12 @@ see [PostgreSQL test settings](settings.md#postgresql-test-environment).
 - [IAM](authorization.md)
 - [Controller configuration](settings.md)
 - [Implementation architecture](../ARCHITECTURE.md)
-- [Namespace lifecycle implementation](../../packages/occ/src/index.ts)
+- [Namespace command, query, and lifecycle port](../../packages/occ/src/services/namespace/port.ts)
+- [Namespace lifecycle implementation](../../packages/occ/src/services/namespace/service.ts)
+- [Namespace HTTP adapter](../../apps/controller/src/routes/namespace.ts)
+- [Namespace service conformance coverage](../../tests/conformance/namespace-service.test.mjs)
+- [Namespace HTTP coverage](../../tests/integration/namespace-http.test.mjs)
+- [Namespace PostgreSQL coverage](../../tests/integration/postgres-namespace-service.test.mjs)
 - [API isolation coverage](../../tests/conformance/occ-api-security.test.mjs)
 
 ## Manual Notes

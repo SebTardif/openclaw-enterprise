@@ -28,6 +28,10 @@ import {
 } from "./http/operation-registry.ts";
 import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
 import { createConfigurationOperationHandlers } from "./routes/configuration.ts";
+import { createAgentOperationHandlers } from "./routes/agent.ts";
+import { createNamespaceOperationHandlers } from "./routes/namespace.ts";
+import { createSecretOperationHandlers } from "./routes/secret.ts";
+import { createServiceAccountOperationHandlers } from "./routes/service-account.ts";
 export type { DevelopmentAdmission } from "./http/admission.ts";
 export type { ControllerApp } from "./http/transport.ts";
 import {
@@ -52,13 +56,11 @@ import {
   ErrorResponse,
   SecretResponse,
   occApiRoutes,
-  type Agent,
   type AgentRevision,
   type AuditEvent,
   type AuthorizationEvidence,
   type ConfigurationDriver,
   type ComputeDriver,
-  type HarnessExecutionMode,
   type IAMDriver,
   type Installation,
   type OccApiRoute,
@@ -68,9 +70,6 @@ import {
   type ResourceRef,
   type SandboxDriver,
   type SecretDriver,
-  type SecretMetadata,
-  type ServiceAccount,
-  type ServiceAccountCredential,
   type UpdateWorkspaceFileBody,
   type WorkspaceFileName,
 } from "@openclaw-enterprise/contracts";
@@ -144,58 +143,6 @@ function validAuthorizationEvidence(value: unknown): value is AuthorizationEvide
     candidate.roleIds,
     candidate.restrictionIds,
   ].every((entries) => Array.isArray(entries) && entries.every(isNonEmptyString));
-}
-
-function clientServiceAccount(account: Readonly<ServiceAccount>): Record<string, unknown> {
-  return {
-    id: account.id,
-    namespaceId: account.namespaceId,
-    name: account.name,
-    ...(account.credential === undefined ? {} : { credential: account.credential }),
-  };
-}
-
-function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
-  return {
-    id: agent.id,
-    namespaceId: agent.namespaceId,
-    name: agent.name,
-    configurationId: agent.configurationId,
-    providerId: agent.providerId,
-    executionMode: agent.executionMode,
-    ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
-    ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
-    createdAt: agent.createdAt,
-  };
-}
-
-function clientSecret(secret: Readonly<SecretMetadata>): Record<string, unknown> {
-  return {
-    id: secret.id,
-    namespaceId: secret.namespaceId,
-    name: secret.name,
-    ref: secret.ref,
-  };
-}
-
-function clientRevision(revision: Readonly<AgentRevision>): Record<string, unknown> {
-  return {
-    id: revision.id,
-    namespaceId: revision.namespaceId,
-    agentId: revision.agentId,
-    revision: revision.revision,
-    configurationId: revision.configurationId,
-    configurationKind: revision.configurationKind,
-    configurationGeneration: revision.configurationGeneration,
-    providerId: revision.providerId,
-    configuration: revision.configuration,
-    harness: revision.harness,
-    compute: revision.compute,
-    ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
-    ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
-    ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
-    createdAt: revision.createdAt,
-  };
 }
 
 export function createFastifyApp(options: ControllerAppOptions): FastifyInstance {
@@ -806,381 +753,12 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       return;
     }
 
-    if (operation.operationId === "createNamespace") {
-      const namespace = await controller.transact(async (unit) => {
-        const created = await controller!.createNamespace(context.actorId, {
-          name: body?.name as string,
-          ...(body?.existingNamespace === undefined
-            ? {}
-            : { existingNamespace: body.existingNamespace as string }),
-        });
-        const target: ResourceRef = {
-          kind: "namespace",
-          id: created.id,
-          namespaceId: created.id,
-        };
-        await unit.audit.append(event(operation, request, target, "mutation", context));
-        return created;
-      });
-      reply.status(201).send({ data: namespace, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "listNamespaces") {
-      reply.send({
-        data: await controller.listNamespaces(context.actorId),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
     const namespaceId = params.namespaceId;
     if (!namespaceId)
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
-    if (operation.operationId === "getNamespace") {
-      reply.send({
-        data: await controller.getNamespace(context.actorId, namespaceId),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "deleteNamespace") {
-      const namespace = await controller.transact(async (unit) => {
-        const deleting = await controller!.deleteNamespace(context.actorId, namespaceId);
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            {
-              kind: "namespace",
-              id: deleting.id,
-              namespaceId: deleting.id,
-            },
-            "mutation",
-            context,
-          ),
-        );
-        return deleting;
-      });
-      reply.status(202).send({ data: namespace, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "createSecret") {
-      const secret = await controller.transact(async (unit) => {
-        const created = await controller!.createSecret(context.actorId, {
-          namespaceId,
-          name: body?.name as string,
-          value: body?.value as string,
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "secret", id: created.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientSecret(created);
-      });
-      reply.status(201).send({ data: secret, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "getSecret") {
-      const secret = await controller.readSecret(
-        context.actorId,
-        namespaceId,
-        params.secretId as string,
-      );
-      reply.send({
-        data: clientSecret(secret),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "updateSecret") {
-      const secret = await controller.transact(async (unit) => {
-        const updated = await controller!.updateSecret(context.actorId, {
-          namespaceId,
-          secretId: params.secretId as string,
-          value: body?.value as string,
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "secret", id: updated.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientSecret(updated);
-      });
-      reply.send({ data: secret, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "deleteSecret") {
-      await controller.transact(async (unit) => {
-        await controller!.deleteSecret(context.actorId, namespaceId, params.secretId as string);
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "secret", id: params.secretId as string, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-      });
-      reply.status(204).send();
-      return;
-    }
-
-    if (operation.operationId === "createServiceAccount") {
-      const account = await controller.transact(async (unit) => {
-        const created = await controller!.createServiceAccount(context.actorId, {
-          namespaceId,
-          name: body?.name as string,
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "service_account", id: created.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientServiceAccount(created);
-      });
-      reply.status(201).send({ data: account, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "listServiceAccounts") {
-      const accounts = await controller.listServiceAccounts(context.actorId, namespaceId);
-      reply.send({
-        data: accounts.map(clientServiceAccount),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "getServiceAccount") {
-      const account = await controller.getServiceAccount(
-        context.actorId,
-        namespaceId,
-        params.serviceAccountId as string,
-      );
-      reply.send({
-        data: clientServiceAccount(account),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "createServiceAccountCredential") {
-      const account = await controller.transact(async (unit) => {
-        const updated = await controller!.createServiceAccountCredential(
-          context.actorId,
-          namespaceId,
-          params.serviceAccountId as string,
-        );
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "service_account", id: updated.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientServiceAccount(updated);
-      });
-      reply.status(201).send({ data: account, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "updateServiceAccountCredential") {
-      const account = await controller.transact(async (unit) => {
-        const updated = await controller!.updateServiceAccountCredential(
-          context.actorId,
-          namespaceId,
-          params.serviceAccountId as string,
-          body as unknown as ServiceAccountCredential,
-        );
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "service_account", id: updated.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientServiceAccount(updated);
-      });
-      reply.send({ data: account, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "deleteServiceAccount") {
-      await controller.transact(async (unit) => {
-        await controller!.deleteServiceAccount(
-          context.actorId,
-          namespaceId,
-          params.serviceAccountId as string,
-        );
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            {
-              kind: "service_account",
-              id: params.serviceAccountId as string,
-              namespaceId,
-            },
-            "mutation",
-            context,
-          ),
-        );
-      });
-      reply.status(204).send();
-      return;
-    }
-
-    if (operation.operationId === "createAgent") {
-      const agent = await controller.transact(async (unit) => {
-        const created = await controller!.createAgent(context.actorId, {
-          namespaceId,
-          name: body?.name as string,
-          configurationId: body?.configurationId as string,
-          ...(body?.providerId === undefined
-            ? {}
-            : { providerId: body.providerId as string | null }),
-          ...(body?.executionMode === undefined
-            ? {}
-            : { executionMode: body.executionMode as HarnessExecutionMode }),
-          ...(body?.serviceAccountId === undefined
-            ? {}
-            : { serviceAccountId: body.serviceAccountId as string }),
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "agent", id: created.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientAgent(created);
-      });
-      reply.status(201).send({ data: agent, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "listAgents") {
-      const agents = await controller.listAgents(context.actorId, namespaceId);
-      reply.send({
-        data: agents.map(clientAgent),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
     const agentId = params.agentId;
     if (!agentId)
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
-    if (operation.operationId === "getAgent") {
-      reply.send({
-        data: clientAgent(await controller.getAgent(context.actorId, namespaceId, agentId)),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "updateAgent") {
-      const agent = await controller.transact(async (unit) => {
-        const updated = await controller!.updateAgent(context.actorId, {
-          namespaceId,
-          agentId,
-          configurationId: body?.configurationId as string,
-          ...(body?.providerId === undefined
-            ? {}
-            : { providerId: body.providerId as string | null }),
-          ...(body?.executionMode === undefined
-            ? {}
-            : { executionMode: body.executionMode as HarnessExecutionMode }),
-          ...(body?.serviceAccountId === undefined
-            ? {}
-            : { serviceAccountId: body.serviceAccountId as string | null }),
-        });
-        await unit.audit.append(
-          event(
-            operation,
-            request,
-            { kind: "agent", id: updated.id, namespaceId },
-            "mutation",
-            context,
-          ),
-        );
-        return clientAgent(updated);
-      });
-      reply.send({ data: agent, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "deployAgent") {
-      // Retain trusted correlation before the transaction so an uncertain COMMIT
-      // can recover this exact admission without admitting another revision.
-      const admission: DeployAgentAdmissionContext = {
-        transitionRef: randomUUID(),
-        requestId: request.id,
-        createAuditEvent: (admitted) =>
-          event(
-            operation,
-            request,
-            { kind: "agent_revision", id: admitted.id, namespaceId },
-            "mutation",
-            context,
-          ),
-      };
-      let revision: Readonly<AgentRevision>;
-      try {
-        revision = await controller.transact(() =>
-          controller!.deployAgent(
-            context.actorId,
-            { namespaceId, agentId },
-            options.resolveHarness,
-            admission,
-          ),
-        );
-      } catch (error) {
-        if (error instanceof PostgresCommitOutcomeUnknownError) {
-          revision = await controller.recoverDeployAgent(
-            context.actorId,
-            { namespaceId, agentId },
-            admission,
-          );
-        } else {
-          if (error instanceof NamespaceNotReadyError)
-            await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
-          throw error;
-        }
-      }
-      reply.status(202).send({
-        data: clientRevision(revision),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
     if (
       operation.operationId === "getAgentWorkspaceFile" ||
       operation.operationId === "putAgentWorkspaceFile"
@@ -1368,29 +946,6 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       } finally {
         workspaceFileSignal.dispose();
       }
-    }
-
-    if (operation.operationId === "listAgentRevisions") {
-      const revisions = await controller.listRevisions(context.actorId, namespaceId, agentId);
-      reply.send({
-        data: revisions.map(clientRevision),
-        meta: { requestId: request.id },
-      });
-      return;
-    }
-
-    if (operation.operationId === "getAgentRevision") {
-      const revision = await controller.getRevision(
-        context.actorId,
-        namespaceId,
-        agentId,
-        params.revisionId as string,
-      );
-      reply.send({
-        data: clientRevision(revision),
-        meta: { requestId: request.id },
-      });
-      return;
     }
 
     throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
@@ -1997,6 +1552,157 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         });
       },
     });
+    const secretHandlers = createSecretOperationHandlers({
+      resolveSecretService: () => {
+        if (!controller)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return controller.secret;
+      },
+      requestContext: (request) => {
+        const context = contexts.get(request);
+        if (!context)
+          throw failure(
+            503,
+            "DEPENDENCY_UNAVAILABLE",
+            "A required platform dependency is unavailable.",
+          );
+        return context;
+      },
+      runSecretMutation: async (request, operation, context, mutate, resource) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
+          return result;
+        });
+      },
+    });
+    const serviceAccountHandlers = createServiceAccountOperationHandlers({
+      resolveServiceAccountService: () => {
+        if (!controller)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return controller.serviceAccount;
+      },
+      requestContext: (request) => {
+        const context = contexts.get(request);
+        if (!context)
+          throw failure(
+            503,
+            "DEPENDENCY_UNAVAILABLE",
+            "A required platform dependency is unavailable.",
+          );
+        return context;
+      },
+      runServiceAccountMutation: async (request, operation, context, mutate, resource) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
+          return result;
+        });
+      },
+    });
+    const namespaceHandlers = createNamespaceOperationHandlers({
+      resolveNamespaceService: () => {
+        if (!controller)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return controller.namespace;
+      },
+      requestContext: (request) => {
+        const context = contexts.get(request);
+        if (!context)
+          throw failure(
+            503,
+            "DEPENDENCY_UNAVAILABLE",
+            "A required platform dependency is unavailable.",
+          );
+        return context;
+      },
+      runNamespaceMutation: async (request, operation, context, mutate, resource) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
+          return result;
+        });
+      },
+    });
+    const agentHandlers = createAgentOperationHandlers({
+      resolveAgentService: () => {
+        if (!controller)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return controller.agent;
+      },
+      requestContext: (request) => {
+        const context = contexts.get(request);
+        if (!context)
+          throw failure(
+            503,
+            "DEPENDENCY_UNAVAILABLE",
+            "A required platform dependency is unavailable.",
+          );
+        return context;
+      },
+      runAgentMutation: async (request, operation, context, mutate, resource, project) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
+          return project(result);
+        });
+      },
+      runDeployment: async (request, operation, context, { namespaceId, agentId }) => {
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        // Retain trusted correlation before the transaction so an uncertain COMMIT
+        // can recover this exact admission without admitting another revision.
+        const admission: DeployAgentAdmissionContext = {
+          transitionRef: randomUUID(),
+          requestId: request.id,
+          createAuditEvent: (admitted) =>
+            event(
+              operation,
+              request,
+              { kind: "agent_revision", id: admitted.id, namespaceId },
+              "mutation",
+              context,
+            ),
+        };
+        let revision: Readonly<AgentRevision>;
+        try {
+          revision = await currentController.transact(() =>
+            currentController.deployment.deployAgent(
+              context.actorId,
+              { namespaceId, agentId },
+              options.resolveHarness,
+              admission,
+            ),
+          );
+        } catch (error) {
+          if (error instanceof PostgresCommitOutcomeUnknownError) {
+            revision = await currentController.deployment.recoverDeployAgent(
+              context.actorId,
+              { namespaceId, agentId },
+              admission,
+            );
+          } else {
+            if (error instanceof NamespaceNotReadyError)
+              await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
+            throw error;
+          }
+        }
+        return revision;
+      },
+    });
     const handlers = {
       createChannelInstallation: perform,
       listChannelInstallations: perform,
@@ -2012,33 +1718,33 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       setChannelAgentBindingStatus: perform,
       getInstallation: perform,
       listProviders: perform,
-      createNamespace: perform,
-      listNamespaces: perform,
-      getNamespace: perform,
-      deleteNamespace: perform,
+      createNamespace: namespaceHandlers.createNamespace,
+      listNamespaces: namespaceHandlers.listNamespaces,
+      getNamespace: namespaceHandlers.getNamespace,
+      deleteNamespace: namespaceHandlers.deleteNamespace,
       createConfiguration: configurationHandlers.createConfiguration,
       getConfiguration: configurationHandlers.getConfiguration,
       updateConfiguration: configurationHandlers.updateConfiguration,
       deleteConfiguration: configurationHandlers.deleteConfiguration,
-      createSecret: perform,
-      getSecret: perform,
-      updateSecret: perform,
-      deleteSecret: perform,
-      createServiceAccount: perform,
-      listServiceAccounts: perform,
-      getServiceAccount: perform,
-      createServiceAccountCredential: perform,
-      updateServiceAccountCredential: perform,
-      deleteServiceAccount: perform,
-      createAgent: perform,
-      updateAgent: perform,
-      listAgents: perform,
-      getAgent: perform,
-      deployAgent: perform,
+      createSecret: secretHandlers.createSecret,
+      getSecret: secretHandlers.getSecret,
+      updateSecret: secretHandlers.updateSecret,
+      deleteSecret: secretHandlers.deleteSecret,
+      createServiceAccount: serviceAccountHandlers.createServiceAccount,
+      listServiceAccounts: serviceAccountHandlers.listServiceAccounts,
+      getServiceAccount: serviceAccountHandlers.getServiceAccount,
+      createServiceAccountCredential: serviceAccountHandlers.createServiceAccountCredential,
+      updateServiceAccountCredential: serviceAccountHandlers.updateServiceAccountCredential,
+      deleteServiceAccount: serviceAccountHandlers.deleteServiceAccount,
+      createAgent: agentHandlers.createAgent,
+      updateAgent: agentHandlers.updateAgent,
+      listAgents: agentHandlers.listAgents,
+      getAgent: agentHandlers.getAgent,
+      deployAgent: agentHandlers.deployAgent,
       getAgentWorkspaceFile: perform,
       putAgentWorkspaceFile: perform,
-      listAgentRevisions: perform,
-      getAgentRevision: perform,
+      listAgentRevisions: agentHandlers.listAgentRevisions,
+      getAgentRevision: agentHandlers.getAgentRevision,
     };
     registerProtectedOperations(routes, handlers, { admit, resolveIdentity });
     registerBootstrapOperation(routes, bootstrapOperation, perform, {

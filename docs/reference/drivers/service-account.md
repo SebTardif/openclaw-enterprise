@@ -47,6 +47,12 @@ storage writes the token and workspace identity to an account-owned Secret;
 the Driver returns only the secret reference. Provider account IDs, credential
 IDs, and workspace bindings remain internal.
 
+Startup supplies the Driver with transaction-scoped `ProviderAccountLinks` and
+compensation callbacks. The link adapter preserves exact Namespace, account,
+Provider, Driver and workspace ownership in the controller-owned transaction.
+The port carries opaque identifiers, never credential values; account deletion
+retains the existing database cascade.
+
 Credential creation rejects a missing exact binding or an existing credential.
 Provider and Secret creation register compensation with OCC so a failed
 operation can remove resources it created. Deletion revokes the provider

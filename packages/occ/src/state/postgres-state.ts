@@ -1,4 +1,7 @@
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { bindRepository } from "../ports/repository-factory.ts";
+import type { ProviderAccountLinks } from "../ports/provider-account-links.ts";
+import { createPostgresProviderAccountLinks } from "./postgres/provider-account-links.ts";
 import { createPostgresNamespaceRepository } from "./postgres/namespaces.ts";
 import { createPostgresConfigurationRepository } from "./postgres/configurations.ts";
 import { createPostgresChannelBindingRepository } from "./postgres/channel-bindings.ts";
@@ -832,6 +835,23 @@ export class PostgresPlatformState implements PlatformStateStore {
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
     return context.lifetime.run(() => context.client.query(statement, parameters));
+  }
+
+  providerAccountLinksInTransaction(unit: PlatformReadView): ProviderAccountLinks {
+    const context = this.contexts.get(unit);
+    if (context === undefined)
+      throw new DependencyUnavailableError("The platform transaction is unavailable.");
+    const links = createPostgresProviderAccountLinks({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
+      },
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => context.client.query(statement, parameters) },
+    });
+    return bindRepository(links, context.lifetime, ["create", "find", "recordCredential"]);
   }
 
   async transactWithQueue<T>(
