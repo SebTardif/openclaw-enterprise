@@ -218,6 +218,11 @@ async function createFixture(options = {}) {
     },
     auditSink,
     createApp,
+    asPrincipal(principal) {
+      // Authentication belongs to each request; changing caller does not require another app.
+      assert.ok(sessions.has(principal.id), "The fixture principal must have a real session");
+      return { fetch: app.fetch.bind(app), defaultSession: sessions.get(principal.id) };
+    },
     auth: adminAuth.auth,
     iamDriver,
     iamStateStore,
@@ -373,7 +378,7 @@ async function createRevisionFixture() {
     agentB,
     revisionA,
     revisionB,
-    readerApp: fixture.createApp(fixture.tenantAReader),
+    readerApp: fixture.asPrincipal(fixture.tenantAReader),
   };
 }
 
@@ -618,7 +623,7 @@ test("existing namespace adoption requires installation administration and waits
     subjectId: fixture.tenantAReader.id,
     roleId: "role-namespace-creator",
   });
-  const creator = fixture.createApp(fixture.tenantAReader);
+  const creator = fixture.asPrincipal(fixture.tenantAReader);
   const managed = await request(creator, "/namespaces", {
     body: { name: "Ordinary tenant" },
   });
@@ -705,7 +710,7 @@ test("Agent configuration replacement requires exact Agent update authorization 
   assert.equal(updated.payload.data.configurationId, replacement.id);
   assert.equal(Object.hasOwn(updated.payload.data, "servicePrincipalId"), false);
 
-  const readOnly = fixture.createApp(fixture.tenantAReader);
+  const readOnly = fixture.asPrincipal(fixture.tenantAReader);
   const denied = await request(readOnly, `/namespaces/${namespace.id}/agents/${agent.id}`, {
     method: "PATCH",
     body: { configurationId: agent.configurationId },
@@ -1137,7 +1142,7 @@ test("exact Namespace ownership prevents cross-tenant access and resource traver
 
   const reader = fixture.tenantAReader;
   assert.equal(namespaceA.id, tenantANamespaceId);
-  const readerApp = fixture.createApp(reader);
+  const readerApp = fixture.asPrincipal(reader);
 
   const visible = await request(readerApp, "/namespaces", {
     principal: reader,
@@ -1187,7 +1192,7 @@ test("Namespace deletion authorizes the exact target and rejects nonempty resour
   await bootstrap(fixture);
   const occupied = await createNamespace(fixture, "Occupied tenant");
   assert.equal(occupied.id, tenantANamespaceId);
-  const readerApp = fixture.createApp(fixture.tenantAReader);
+  const readerApp = fixture.asPrincipal(fixture.tenantAReader);
   const forbidden = await request(readerApp, `/namespaces/${occupied.id}`, {
     method: "DELETE",
   });
