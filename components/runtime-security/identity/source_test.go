@@ -285,7 +285,7 @@ func TestX509ExactIdentityOverridesSharedHint(t *testing.T) {
 }
 
 func TestX509RejectsInvalidEntriesHiddenByHints(t *testing.T) {
-	for _, kind := range []string{"certificate", "key", "bundle", "duplicate other identity", "oversized chain", "oversized bundle", "swapped envelopes"} {
+	for _, kind := range []string{"certificate", "key", "bundle", "invalid raw ID", "duplicate other identity", "oversized chain", "oversized bundle", "swapped envelopes"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, func(w *wireServer, c credentials) {
 				selected, hidden := clone(c.first), clone(c.other)
@@ -300,6 +300,8 @@ func TestX509RejectsInvalidEntriesHiddenByHints(t *testing.T) {
 					hidden.X509SvidKey = c.first.X509SvidKey
 				case "bundle":
 					hidden.Bundle = []byte("invalid bundle")
+				case "invalid raw ID":
+					hidden.SpiffeId = "not-a-spiffe-id"
 				case "duplicate other identity":
 					w.initial.Svids = append(w.initial.Svids, clone(hidden))
 				case "oversized chain":

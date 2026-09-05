@@ -399,6 +399,12 @@ func (s *Source) buildSnapshot(value *workloadapi.X509Context) (*Snapshot, *Erro
 }
 
 func parseBundle(td spiffeid.TrustDomain, raw []byte) ([][]byte, *Error) {
+	// The SDK bundle de-duplicates authorities. Apply the resource bound to
+	// every decoded raw certificate before that de-duplication can shrink it.
+	certificates, err := x509.ParseCertificates(raw)
+	if err != nil || len(certificates) == 0 || len(certificates) > maxEntries {
+		return nil, failure("INVALID_RESPONSE")
+	}
 	bundle, err := x509bundle.ParseRaw(td, raw)
 	if err != nil || len(bundle.X509Authorities()) == 0 || len(bundle.X509Authorities()) > maxEntries {
 		return nil, failure("INVALID_RESPONSE")
