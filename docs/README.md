@@ -10,6 +10,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Observability](guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
+- [Security events](reference/security-events.md): versioned projection, audit access, and retention contracts; production emitters and durable sinks remain unimplemented.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
 
 ## Architecture
