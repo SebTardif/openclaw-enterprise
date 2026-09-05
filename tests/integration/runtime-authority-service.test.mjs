@@ -99,3 +99,107 @@ test("expired and cancelled actual service calls cannot mutate or expose retaine
   }
   assert.equal((await f.record()).authority.assignmentRecordVersion, 2);
 });
+
+test("runtime readback awaits an asynchronous unavailable inspection before reporting not-visible", async () => {
+  const state = new InMemoryPlatformState();
+  const f = await seedAuthority(state);
+  await f.append(f.bind);
+  const initial = await f.record();
+  const inspection = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  let registryReads = 0;
+  const service = new RuntimeAuthorityService({
+    store: state,
+    installationId: f.target.installationId,
+    recipientRef: "recipient/occ",
+    clock: { now: () => new Date(), monotonicMilliseconds: () => performance.now() },
+    // This controlled unavailable dependency tests asynchronous custody only. It never
+    // authenticates a caller or creates a trusted context; real TLS coverage is separate.
+    contextFactory: {
+      inspect() {
+        entered.resolve();
+        return inspection.promise;
+      },
+    },
+    currentTrust: {
+      async readCurrent() {
+        registryReads += 1;
+        return undefined;
+      },
+    },
+  });
+  let settled = false;
+  const result = service
+    .readOperation(exactRuntimeAuthorityOperation(f.bind), {
+      context: { schemaVersion: 1 },
+      requestRef: f.bind.requestRef,
+      recipientRef: "recipient/occ",
+      deadline: new Date(Date.now() + 3000).toISOString(),
+      signal: new AbortController().signal,
+    })
+    .then((value) => {
+      settled = true;
+      return value;
+    });
+  await entered.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.equal(registryReads, 0);
+  inspection.resolve(undefined);
+  assert.deepEqual(await result, {
+    schemaVersion: 1,
+    result: "not-visible",
+    reasonCode: "scope-hidden",
+  });
+  assert.equal(registryReads, 0);
+  assert.deepEqual(await f.record(), initial);
+});
+
+test("cancellation ends runtime readback while an unavailable inspection is pending", async () => {
+  const state = new InMemoryPlatformState();
+  const f = await seedAuthority(state);
+  await f.append(f.bind);
+  const initial = await f.record();
+  const inspection = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  const cancellation = new AbortController();
+  let registryReads = 0;
+  const service = new RuntimeAuthorityService({
+    store: state,
+    installationId: f.target.installationId,
+    recipientRef: "recipient/occ",
+    clock: { now: () => new Date(), monotonicMilliseconds: () => performance.now() },
+    // A pending unavailable inspector exercises the real service's cancellation bound;
+    // there is no fabricated successful verifier or role decision in this fixture.
+    contextFactory: {
+      inspect() {
+        entered.resolve();
+        return inspection.promise;
+      },
+    },
+    currentTrust: {
+      async readCurrent() {
+        registryReads += 1;
+        return undefined;
+      },
+    },
+  });
+  const result = service.readOperation(exactRuntimeAuthorityOperation(f.bind), {
+    context: { schemaVersion: 1 },
+    requestRef: f.bind.requestRef,
+    recipientRef: "recipient/occ",
+    deadline: new Date(Date.now() + 3000).toISOString(),
+    signal: cancellation.signal,
+  });
+  await entered.promise;
+  cancellation.abort();
+  assert.deepEqual(await result, {
+    schemaVersion: 1,
+    result: "unavailable",
+    nextAction: "exact-readback-only",
+  });
+  inspection.resolve(undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(registryReads, 0);
+  assert.deepEqual(await f.record(), initial);
+});

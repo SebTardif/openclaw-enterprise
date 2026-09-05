@@ -177,9 +177,12 @@ the real transport correspondence in process-local handles. Ordinary JSON and
 misuse; it is not an authentication implementation.
 
 Each authority call carries the trusted handle, cancellation signal, bounded
-deadline, recipient and request correlation. The implementation must inspect the
-handle and enforce its current exact role/scope on every call. This local interface
-does not define an authenticated remote forwarding protocol.
+deadline, recipient and request correlation. The implementation awaits a fresh
+`inspect` result and enforces its current exact role/scope on every call. Inspection
+is asynchronous so a selected native adapter can check the live connection within
+the same deadline and cancellation bounds; a cached verification snapshot cannot
+replace that check. This local interface does not define an authenticated remote
+forwarding protocol.
 
 `RUNTIME_AUTHORITY_ROLE_POLICY_V1` defines the closed maximum role permissions.
 Every unlisted method, purpose or suboperation is denied. The configured verified

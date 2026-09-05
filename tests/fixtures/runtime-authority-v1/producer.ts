@@ -24,12 +24,12 @@ export class UnavailableProducer implements RuntimeAssignmentAuthorityV1 {
     readonly existingAllocationRepository: RuntimeAssignmentReadRepository,
   ) {}
 
-  private rejection(call: AuthorityCallV1) {
+  private async rejection(call: AuthorityCallV1) {
     return {
       schemaVersion: 1,
       result: "rejected-before-effect",
       reasonCode:
-        this.contexts.inspect(call.context, call) === undefined
+        (await this.contexts.inspect(call.context, call)) === undefined
           ? "scope-hidden"
           : "lookup-unavailable",
     } as const;
@@ -50,7 +50,7 @@ export class UnavailableProducer implements RuntimeAssignmentAuthorityV1 {
     input: ResolveAssignmentRequestV1,
     call: AuthorityCallV1,
   ): Promise<ResolveAssignmentResultV1> {
-    const permittedContext = this.contexts.inspect(call.context, call) !== undefined;
+    const permittedContext = (await this.contexts.inspect(call.context, call)) !== undefined;
     return permittedContext
       ? {
           schemaVersion: 1,
@@ -71,7 +71,7 @@ export class UnavailableProducer implements RuntimeAssignmentAuthorityV1 {
     _input: ExactAuthorityOperationV1,
     call: AuthorityCallV1,
   ): Promise<AuthorityOperationStateV1> {
-    return this.contexts.inspect(call.context, call) === undefined
+    return (await this.contexts.inspect(call.context, call)) === undefined
       ? { schemaVersion: 1, result: "not-visible", reasonCode: "scope-hidden" }
       : { schemaVersion: 1, result: "unavailable", nextAction: "exact-readback-only" };
   }

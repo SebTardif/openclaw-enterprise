@@ -157,8 +157,9 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
       !call.signal.aborted &&
       clock.monotonicMilliseconds() - began < 3000;
     if (!validBounds()) return undefined;
-    const verified = contextFactory.inspect(call.context, call);
+    const verified = await contextFactory.inspect(call.context, call);
     if (
+      !validBounds() ||
       !verified ||
       verified.configuration.installationId !== this.options.installationId ||
       verified.configuration.permittedRecipientRef !== call.recipientRef ||
@@ -172,7 +173,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
       verified.configuration.serviceIdentityRef,
       call.signal,
     );
-    const again = contextFactory.inspect(call.context, call);
+    const again = await contextFactory.inspect(call.context, call);
     if (
       !validBounds() ||
       !current ||

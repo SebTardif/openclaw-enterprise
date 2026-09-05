@@ -773,7 +773,9 @@ export interface RuntimeAuthorityVerifiedServiceV1 {
  * No factory implementation or serializable context constructor is supplied here.
  * It authenticates an independent service, never requires the target Agent's SVID.
  * inspect must reject foreign, copied, expired, wrong-recipient and revoked handles;
- * a structural brand test alone is insufficient. The authority calls it on every use.
+ * a structural brand test alone is insufficient. The authority awaits it on every use
+ * so a selected native adapter can recheck its live connection, bounded by call cancellation
+ * and deadline, rather than returning a cached verification snapshot.
  */
 export interface RuntimeAuthorityContextFactoryV1<Transport> {
   authenticate(
@@ -784,7 +786,7 @@ export interface RuntimeAuthorityContextFactoryV1<Transport> {
   inspect(
     context: RuntimeAuthorityTrustedContextV1,
     call: RuntimeAuthorityCallBoundsV1,
-  ): Readonly<RuntimeAuthorityVerifiedServiceV1> | undefined;
+  ): Promise<Readonly<RuntimeAuthorityVerifiedServiceV1> | undefined>;
 }
 export interface RuntimeAuthorityCallBoundsV1 {
   readonly requestRef: string;
