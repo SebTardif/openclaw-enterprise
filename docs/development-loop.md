@@ -29,10 +29,16 @@ lifecycle hooks, or establish browser, database, credential or cluster readiness
 It probes the package-manager version without invoking a package command. Source exports are identified
 separately from Git worktrees.
 
-Package-manager wrappers can perform preparation before a command starts. For
-verification without automatic installation, use the direct installed commands
-below; do not use `pnpm exec` as a read-only wrapper. The package scripts remain
-the inventory for full suites and their required preceding checks.
+The workspace sets `verifyDepsBeforeRun: error`: supported pnpm `run` and `exec`
+commands stop on stale dependency state instead of installing packages or running
+preparation hooks. Valid commands may still refresh pnpm metadata, and explicit
+configuration overrides can supersede this workflow default. The initial check
+is not repeated for every nested pnpm invocation. Repair setup
+explicitly when needed. Keep this setting in
+`pnpm-workspace.yaml`; a project `.npmrc` entry is not the supported control here.
+The direct commands below remain useful when diagnosing setup or running checks
+that do not require dependencies. Package scripts remain the inventory for full
+suites and their required preceding checks.
 
 | Package script                | Direct command on a prepared worktree                                                                         |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -45,6 +51,24 @@ the inventory for full suites and their required preceding checks.
 
 For a test-suite script containing preceding workspace checks, retain those checks
 at handoff/integration; a direct individual test is focused editing evidence.
+
+## Validate a manually selected test scope
+
+```sh
+node scripts/test-files.mjs --test-concurrency=2 --test-reporter=tap -- tests/conformance/example.test.mjs tests/integration/example.test.mjs
+```
+
+Replace the example names with existing test files. The runner validates every
+explicit filename before starting any test. It rejects missing files, unsupported
+options and paths escaping the checkout; literal spaces and brackets are supported.
+It does not expand globs, select tests automatically or prepare infrastructure.
+Node executes the selected files with process isolation, with a default file
+concurrency of one. Preserve the required
+workspace/module checks and full acceptance scope at handoff and integration.
+
+A name filter is focused evidence: reported counts can include a file harness even
+when no test body matched. Verify the intended cases actually executed; neither
+file validation nor a green reporter summary establishes complete coverage.
 
 ## Formatting feedback
 
