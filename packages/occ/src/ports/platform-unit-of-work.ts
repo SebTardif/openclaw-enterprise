@@ -1,3 +1,4 @@
+import type { TurnJournalUnitOfWorkV1 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { bindRepository } from "./repository-factory.ts";
 import type { RepositoryTransactionLifetime } from "./transaction.ts";
 import type { PlatformReadView } from "./platform-read-view.ts";
@@ -17,6 +18,7 @@ import type { RuntimeAuthorityRepository } from "../runtime-authority/repository
 import type { RuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly turnJournal?: TurnJournalUnitOfWorkV1;
   readonly channelBindings: ChannelBindingRepository;
   readonly runtimeAssignments: RuntimeAssignmentRepository;
   readonly runtimeAdmissions: RuntimeAdmissionRepository;
@@ -39,6 +41,35 @@ export function bindPlatformUnitOfWork(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformUnitOfWork {
   return Object.freeze({
+    ...(repositories.turnJournal
+      ? {
+          turnJournal: bindRepository(repositories.turnJournal, lifetime, [
+            "findAdmission",
+            "findAttempt",
+            "findCompletion",
+            "readHead",
+            "findDelivery",
+            "findCheckpointAllocation",
+            "findCancellation",
+            "findRelease",
+            "findNonTurnIntake",
+            "findIncomingLink",
+            "findRejectedAdmission",
+            "admit",
+            "recordDispatchIntent",
+            "consumeAttempt",
+            "allocateCheckpoint",
+            "publishCompleted",
+            "releaseReservation",
+            "recordOutcome",
+            "commitCancellation",
+            "reserveDelivery",
+            "recordDelivery",
+            "admitNonTurn",
+            "admitRejected",
+          ]),
+        }
+      : {}),
     channelBindings: bindRepository(repositories.channelBindings, lifetime, [
       "findChannelInstallation",
       "listChannelInstallations",
