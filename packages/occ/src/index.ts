@@ -1,3 +1,5 @@
+import { ExactAuthorization } from "./application/authorization.ts";
+import { DriverSelection, type DriverFor } from "./application/driver-selection.ts";
 export * from "./runtime-authority/service-trust.ts";
 export * from "./runtime-authority/service-trust-schema.ts";
 export * from "./runtime-authority/service.ts";
@@ -12,7 +14,6 @@ import type {
   AuthorizationDecision,
   AuthorizationRequest,
   ComputeDriver,
-  ComputeLifecycleHooks,
   Configuration,
   ConfigurationDriver,
   Driver,
@@ -32,7 +33,6 @@ import type {
   ResourceKind,
   ResourceRef,
   SandboxDriver,
-  SandboxFacet,
   Secret,
   SecretBindings,
   SecretDriver,
@@ -43,8 +43,6 @@ import type {
   ServiceAccountRevision,
 } from "@openclaw-enterprise/contracts";
 import {
-  DRIVER_CAPABILITIES,
-  SANDBOX_FACETS,
   admitLoggingConfiguration,
   normalizeLoggingLevel,
   normalizeSecretBindings,
@@ -53,7 +51,6 @@ import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/
 import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
-  DriverSelectionError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -63,7 +60,6 @@ import {
   assertConfiguredProvider,
   providerDefinitionMap,
   validateProviderDefinitions,
-  validateSelectedProviderDrivers,
   validateServiceAccountProviderBinding,
 } from "./providers.ts";
 import {
@@ -267,97 +263,8 @@ export interface ActiveAgentRevisionSelection {
 
 export type ReconciliationOperation = PlatformOperation;
 
-interface RegisteredDriver {
-  readonly driver: Driver;
-  readonly capability: DriverCapability;
-  readonly id: string;
-  readonly implementation: string;
-}
-
-type DriverByCapability = {
-  iam: IAMDriver;
-  configuration: ConfigurationDriver;
-  service_account: ServiceAccountDriver;
-  secret: SecretDriver;
-  sandbox: SandboxDriver;
-  compute: ComputeDriver;
-};
-type DriverFor<Capability extends DriverCapability> = DriverByCapability[Capability];
-
-const COMPUTE_LIFECYCLE_PHASES = [
-  "afterNamespacePrepared",
-  "beforeWorkloadStart",
-  "beforeWorkloadStop",
-  "beforeNamespaceDelete",
-] as const satisfies readonly (keyof ComputeLifecycleHooks)[];
-
 function validName(value: unknown): value is string {
   return isNonEmptyString(value) && value.length <= 200;
-}
-
-function capability(value: unknown): value is DriverCapability {
-  return typeof value === "string" && DRIVER_CAPABILITIES.some((candidate) => candidate === value);
-}
-
-function driverHasCapabilityContract(driver: Driver): boolean {
-  const candidate = driver as unknown as Record<string, unknown>;
-  if (driver.capability === "iam")
-    return (
-      typeof candidate.lookupIdentity === "function" && typeof candidate.authorize === "function"
-    );
-  if (driver.capability === "configuration")
-    return ["create", "read", "update", "delete", "validate"].every(
-      (operation) => typeof candidate[operation] === "function",
-    );
-  if (driver.capability === "secret")
-    return ["create", "update", "delete", "resolve"].every(
-      (operation) => typeof candidate[operation] === "function",
-    );
-  if (driver.capability === "service_account")
-    return ["create", "createCredential", "delete"].every(
-      (operation) => typeof candidate[operation] === "function",
-    );
-  if (driver.capability === "sandbox")
-    return (
-      sandboxFacets(candidate.facets) &&
-      (candidate.configureAgent === undefined || typeof candidate.configureAgent === "function") &&
-      (candidate.ensureNamespace === undefined ||
-        typeof candidate.ensureNamespace === "function") &&
-      (candidate.provisionHarness === undefined ||
-        typeof candidate.provisionHarness === "function") &&
-      typeof candidate.cleanup === "function"
-    );
-  return (
-    typeof candidate.ensureNamespace === "function" &&
-    typeof candidate.deleteNamespace === "function" &&
-    typeof candidate.prepareRevision === "function" &&
-    typeof candidate.retireRevision === "function"
-  );
-}
-
-function sandboxFacets(value: unknown): value is readonly SandboxFacet[] {
-  if (!Array.isArray(value) || value.length === 0) return false;
-  const seen = new Set<string>();
-  const allowed = new Set<string>(SANDBOX_FACETS);
-  for (const facet of value) {
-    if (typeof facet !== "string" || !allowed.has(facet) || seen.has(facet)) return false;
-    seen.add(facet);
-  }
-  return true;
-}
-
-function driverHasValidLifecycleHooks(driver: Driver): boolean {
-  const hooks: unknown = driver.computeLifecycleHooks;
-  if (hooks === undefined) return true;
-  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return false;
-
-  const candidate = hooks as Record<string, unknown>;
-  const phases: readonly string[] = COMPUTE_LIFECYCLE_PHASES;
-  const keys = Object.keys(candidate);
-  return (
-    keys.length > 0 &&
-    keys.every((key) => phases.includes(key) && typeof candidate[key] === "function")
-  );
 }
 
 function frozenRevision(revision: AgentRevision): Readonly<AgentRevision> {
@@ -568,7 +475,7 @@ export class OpenClawController {
   readonly channelBindings: ChannelBindingService;
   readonly installation: Readonly<Installation>;
 
-  private readonly authorization?: ControllerOptions["authorize"];
+  private readonly authorization: ExactAuthorization;
   private readonly clock: () => Date;
   private readonly identifier?: ControllerOptions["createId"];
   private readonly state: PlatformStateStore;
@@ -579,8 +486,7 @@ export class OpenClawController {
   >();
   private readonly mutationRollbacks = new AsyncLocalStorage<(() => Promise<void>)[]>();
   private readonly shouldRecordOperations: boolean;
-  private readonly registry = new Map<string, RegisteredDriver>();
-  private readonly selections = new Map<DriverCapability, RegisteredDriver>();
+  private readonly drivers = new DriverSelection();
   private readonly providers: readonly ProviderDefinition[];
   private readonly loggingLevel: LoggingLevel;
   private readonly providerMap: ReadonlyMap<string, ProviderDefinition>;
@@ -598,7 +504,10 @@ export class OpenClawController {
       name: installation.name,
       createdAt: installation.createdAt,
     });
-    this.authorization = options.authorize;
+    this.authorization = new ExactAuthorization(
+      () => this.selectedDriver("iam"),
+      options.authorize,
+    );
     this.clock = options.now ?? (() => new Date());
     this.identifier = options.createId;
     this.state = options.state ?? new InMemoryPlatformState();
@@ -614,63 +523,24 @@ export class OpenClawController {
   }
 
   registerDriver(driver: Driver): Driver {
-    if (
-      !driver ||
-      !isNonEmptyString(driver.id) ||
-      !isNonEmptyString(driver.implementation) ||
-      !capability(driver.capability) ||
-      !driverHasCapabilityContract(driver) ||
-      !driverHasValidLifecycleHooks(driver)
-    )
-      throw new DriverSelectionError("The Driver does not satisfy its exact capability contract.");
-    const key = this.driverKey(driver.capability, driver.id);
-    if (this.registry.has(key))
-      throw new DriverSelectionError(
-        "A Driver is already registered for this exact capability and identity.",
-      );
-    this.registry.set(
-      key,
-      Object.freeze({
-        driver,
-        capability: driver.capability,
-        id: driver.id,
-        implementation: driver.implementation,
-      }),
-    );
-    return driver;
+    return this.drivers.registerDriver(driver);
   }
 
   selectDriver<Capability extends DriverCapability>(
     selectedCapability: Capability,
     driverId: string,
   ): DriverFor<Capability> {
-    if (!capability(selectedCapability) || !isNonEmptyString(driverId))
-      throw new DriverSelectionError(
-        "The Driver capability or implementation identity is invalid.",
-      );
-    const selected = this.registry.get(this.driverKey(selectedCapability, driverId));
-    if (!selected || !this.unchangedDriver(selected))
-      throw new DriverSelectionError(
-        "No registered Driver matches the exact selected capability and identity.",
-      );
-    return this.applyDriverSelection(selectedCapability, selected);
+    return this.drivers.selectDriver(selectedCapability, driverId);
   }
 
   selectedDriver<Capability extends DriverCapability>(
     selectedCapability: Capability,
   ): DriverFor<Capability> {
-    if (!capability(selectedCapability))
-      throw new DriverSelectionError("The requested Driver capability is invalid.");
-    const selected = this.selections.get(selectedCapability);
-    if (!selected || !this.unchangedDriver(selected))
-      throw new DriverSelectionError(
-        "The selected Driver is unavailable or no longer matches its capability.",
-      );
-    return selected.driver as DriverFor<Capability>;
+    return this.drivers.selectedDriver(selectedCapability);
   }
 
   async validateProviderConfiguration(): Promise<void> {
-    validateSelectedProviderDrivers(this.providers, this.selections.get("service_account")?.driver);
+    await this.drivers.validateProviderConfiguration(this.providers);
   }
 
   async getInstallation(principalId: string): Promise<Readonly<Installation>> {
@@ -2013,68 +1883,15 @@ export class OpenClawController {
     action: AuthorizationRequest["action"],
     resource: ResourceRef,
   ): Promise<void> {
-    const decision = await this.authorizationDecision(principalId, action, resource);
-    if (!decision.allowed)
-      throw new AuthorizationDeniedError(
-        isNonEmptyString(decision.reason) ? decision.reason : "The exact operation was denied.",
-        decision.evidence,
-        { action, resource },
-      );
+    await this.authorization.authorize(principalId, action, resource);
   }
 
   private async canRead(principalId: string, resource: ResourceRef): Promise<boolean> {
-    return (await this.authorizationDecision(principalId, "read", resource)).allowed;
+    return this.authorization.canRead(principalId, resource);
   }
 
   private authorizationAuthority(principalId: string): IAMDriver {
-    if (!isNonEmptyString(principalId))
-      throw new AuthorizationDeniedError("The acting identity is unavailable.");
-    try {
-      return this.selectedDriver("iam");
-    } catch {
-      throw new DependencyUnavailableError("The selected authorization Driver is unavailable.");
-    }
-  }
-
-  private async authorizationDecision(
-    principalId: string,
-    action: AuthorizationRequest["action"],
-    resource: ResourceRef,
-  ): Promise<AuthorizationDecision> {
-    const selected = this.authorizationAuthority(principalId);
-    const request = Object.freeze({
-      principalId,
-      action,
-      resource: Object.freeze({ ...resource }),
-    });
-    let decision: AuthorizationDecision;
-    try {
-      decision = this.authorization
-        ? await this.authorization(request)
-        : await selected.authorize(request);
-    } catch {
-      throw new DependencyUnavailableError(
-        "The selected authorization Driver could not verify the operation.",
-      );
-    }
-    if (
-      !decision ||
-      typeof decision.allowed !== "boolean" ||
-      !isNonEmptyString(decision.driverId) ||
-      !decision.evidence ||
-      (decision.evidence.identityId !== undefined &&
-        !isNonEmptyString(decision.evidence.identityId)) ||
-      !["groupIds", "bindingIds", "roleIds", "restrictionIds"].every((key) => {
-        const entries = decision.evidence[key as keyof typeof decision.evidence];
-        return Array.isArray(entries) && entries.every(isNonEmptyString);
-      })
-    )
-      throw new DependencyUnavailableError(
-        "The selected authorization Driver returned an invalid decision.",
-      );
-    if (decision.driverId !== selected.id || this.authorizationAuthority(principalId) !== selected)
-      throw new DependencyUnavailableError("The authorization decision belongs to another Driver.");
-    return decision;
+    return this.authorization.authorizationAuthority(principalId);
   }
 
   private async exactNamespace(
@@ -2173,16 +1990,7 @@ export class OpenClawController {
   }
 
   private secretDriver(expectedId?: string): SecretDriver {
-    try {
-      const driver = this.selectedDriver("secret");
-      if (expectedId !== undefined && driver.id !== expectedId)
-        throw new Error("Driver identity mismatch.");
-      return driver;
-    } catch {
-      throw new DependencyUnavailableError(
-        "The selected Secret Driver is unavailable or does not own this Secret.",
-      );
-    }
+    return this.drivers.secretDriver(expectedId);
   }
 
   /** Secret SDK error bodies can contain request bytes; never propagate their message or cause. */
@@ -2228,29 +2036,15 @@ export class OpenClawController {
   }
 
   private configurationDriver(): ConfigurationDriver {
-    try {
-      return this.selectedDriver("configuration");
-    } catch {
-      throw new DependencyUnavailableError("The selected Configuration Driver is unavailable.");
-    }
+    return this.drivers.configurationDriver();
   }
 
   private serviceAccountDriver(): ServiceAccountDriver | undefined {
-    if (!this.selections.has("service_account")) return undefined;
-    try {
-      return this.selectedDriver("service_account");
-    } catch {
-      throw new DependencyUnavailableError("The selected ServiceAccount Driver is unavailable.");
-    }
+    return this.drivers.serviceAccountDriver();
   }
 
   private sandboxDriver(): SandboxDriver | undefined {
-    if (!this.selections.has("sandbox")) return undefined;
-    try {
-      return this.selectedDriver("sandbox");
-    } catch {
-      throw new DependencyUnavailableError("The selected Sandbox Driver is unavailable.");
-    }
+    return this.drivers.sandboxDriver();
   }
 
   private async driverOperation<T>(
@@ -2326,63 +2120,10 @@ export class OpenClawController {
     return now.toISOString();
   }
 
-  private driverKey(selectedCapability: DriverCapability, driverId: string): string {
-    return `${selectedCapability}\u0000${driverId}`;
-  }
-
   private providerId(value: ProviderRef | undefined, preserve?: ProviderRef): ProviderRef {
     const providerId = value === undefined ? (preserve ?? null) : value;
     assertConfiguredProvider(this.providerMap, providerId, "Provider");
     return providerId;
-  }
-
-  private applyDriverSelection<Capability extends DriverCapability>(
-    selectedCapability: Capability,
-    selected: RegisteredDriver,
-  ): DriverFor<Capability> {
-    const proposed = new Map(this.selections);
-    proposed.set(selectedCapability, selected);
-    const lifecycleDrivers = this.lifecycleDrivers(proposed);
-    const compute = proposed.get("compute");
-    if (compute !== undefined) {
-      if (!this.unchangedDriver(compute))
-        throw new DriverSelectionError("The selected compute Driver identity has changed.");
-      const selectedCompute = compute.driver as ComputeDriver;
-      if (typeof selectedCompute.setLifecycleDrivers === "function") {
-        selectedCompute.setLifecycleDrivers(lifecycleDrivers);
-      } else if (lifecycleDrivers.length > 0) {
-        throw new DriverSelectionError(
-          "The selected compute Driver cannot accept selected lifecycle Drivers.",
-        );
-      }
-    }
-
-    this.selections.set(selectedCapability, selected);
-    return selected.driver as DriverFor<Capability>;
-  }
-
-  private lifecycleDrivers(
-    selections: ReadonlyMap<DriverCapability, RegisteredDriver>,
-  ): readonly Driver[] {
-    const drivers: Driver[] = [];
-    for (const [selectedCapability, selected] of selections) {
-      if (selectedCapability === "compute") continue;
-      if (!this.unchangedDriver(selected))
-        throw new DriverSelectionError(
-          "A selected lifecycle Driver no longer matches its registered identity.",
-        );
-      if (selected.driver.computeLifecycleHooks !== undefined) drivers.push(selected.driver);
-    }
-    return Object.freeze(drivers);
-  }
-
-  private unchangedDriver(selected: RegisteredDriver): boolean {
-    return (
-      selected.driver.id === selected.id &&
-      selected.driver.capability === selected.capability &&
-      selected.driver.implementation === selected.implementation &&
-      driverHasCapabilityContract(selected.driver)
-    );
   }
 
   private async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
