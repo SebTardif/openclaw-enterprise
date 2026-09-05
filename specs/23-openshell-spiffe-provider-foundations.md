@@ -1,6 +1,7 @@
 # OpenShell and SPIFFE provider foundations
 
-Status: implementation in progress. Current behavior belongs to the
+Status: implemented for the provider protocol and local identity source scope.
+Full OpenShell/Kata launch and guest identity remain unqualified. Current behavior belongs to the
 [OpenShell reference](../docs/reference/drivers/openshell-sandbox.md) and
 [workload identity reference](../docs/reference/workload-identity.md).
 
@@ -62,3 +63,22 @@ kernel, networking and SPIRE tuple, and test both allowed operations and denied
 cross-workload operations. Missing infrastructure remains an unrun qualification
 requirement. No direct runtime or credential fallback is introduced by this
 increment.
+
+## Completion evidence
+
+The OpenShell protocol suite passed 40 tests over actual local gRPC/TLS; its
+startup integration passed two additional cases. The SPIFFE configuration
+suite passed 19 cases and its Unix gRPC wire suite passed 37. The operator
+diagnostic's three tests passed after integrating the real source.
+
+Native SPIRE 1.15.3 passed the checked-in real integration test without skips.
+A separate bounded fixture exercised 17 additional issue, renewal, denial,
+registration-removal, recovery and outage checks; actual diagnostic invocations
+also passed success and wrong-identity failure cases. The fixture used
+join-token node enrollment and Unix UID workload attestation. Those results do
+not prove separation between same-UID processes or the production guest path.
+
+TypeScript, formatting and workspace boundary checks passed for the worker
+implementations. Source and protocol files in the integrated tree match the
+tested worker revisions byte-for-byte. The listed suites ran separately. The
+remaining integration requirements above stay open.

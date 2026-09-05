@@ -181,6 +181,16 @@ cleanup. The worker does not independently create sandbox resources or bypass
 Compute ownership. Docker dispatch continues in the
 [Docker Compose development flow](docker-compose-development.md).
 
+The bundled [OpenShell Sandbox Driver](../reference/drivers/openshell-sandbox.md)
+uses its gateway client to verify the create response and then read back the
+Sandbox with `GetSandbox`. The name, workspace, caller-owned metadata and
+normalized launch specification must match, and the provider ID must stay
+stable across successful create/readback. A duplicate or uncertain create
+permits one matching readback; an absent or conflicting record remains a
+failure. This verifies persisted launch intent, not a live Pod, guest identity
+or effective supervisor policy. Cancellation is rechecked after connection and
+credential setup so a lost claim cannot submit a new RPC during those waits.
+
 ### 6. Persist the result and finish revision activation
 
 `apps/controller/src/worker.ts:ControllerWorker.finalize`,
