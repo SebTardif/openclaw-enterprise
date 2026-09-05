@@ -251,6 +251,714 @@ Sign out of the current session
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | — |
 
+## Channel bindings
+
+### `GET /api/channel-installations`
+
+List channel app installation metadata
+
+**Operation ID:** `listChannelInstallations`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `limit` | query | `string` | No | pattern: `^(?:[1-9]\|[1-9][0-9]\|100)$` |
+| `cursor` | query | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.items` | `array<object>` | Yes | max items: 100 |
+| `data.items[].createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].id` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].platform` | `"slack" or "msteams"` | Yes | — |
+| `data.items[].providerTenantRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].recipientAppRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].status` | `"enabled" or "disabled"` | Yes | — |
+| `data.items[].updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.nextCursor` | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `POST /api/channel-installations`
+
+Create channel app installation metadata
+
+**Operation ID:** `createChannelInstallation`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `platform` | `"slack" or "msteams"` | Yes | — |
+| `providerTenantRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `recipientAppRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Created |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`201` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.platform` | `"slack" or "msteams"` | Yes | — |
+| `data.providerTenantRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.recipientAppRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /api/channel-installations/{channelInstallationId}`
+
+Get channel app installation metadata
+
+**Operation ID:** `getChannelInstallation`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.platform` | `"slack" or "msteams"` | Yes | — |
+| `data.providerTenantRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.recipientAppRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `PATCH /api/channel-installations/{channelInstallationId}`
+
+Set channel app installation status
+
+**Operation ID:** `setChannelInstallationStatus`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `expectedVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `status` | `"enabled" or "disabled"` | Yes | — |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.platform` | `"slack" or "msteams"` | Yes | — |
+| `data.providerTenantRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.recipientAppRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /api/channel-installations/{channelInstallationId}/agent-bindings`
+
+List channel Agent binding metadata
+
+**Operation ID:** `listChannelAgentBindings`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `limit` | query | `string` | No | pattern: `^(?:[1-9]\|[1-9][0-9]\|100)$` |
+| `cursor` | query | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.items` | `array<object>` | Yes | max items: 100 |
+| `data.items[].agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].channelRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].id` | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].scopeKind` | `"slack-private-channel" or "msteams-standard-channel"` | Yes | — |
+| `data.items[].status` | `"enabled" or "disabled"` | Yes | — |
+| `data.items[].updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.nextCursor` | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `POST /api/channel-installations/{channelInstallationId}/agent-bindings`
+
+Create channel Agent binding metadata
+
+**Operation ID:** `createChannelAgentBinding`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `channelRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `scopeKind` | `"slack-private-channel" or "msteams-standard-channel"` | Yes | — |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Created |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`201` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scopeKind` | `"slack-private-channel" or "msteams-standard-channel"` | Yes | — |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /api/channel-installations/{channelInstallationId}/agent-bindings/{bindingId}`
+
+Get channel Agent binding metadata
+
+**Operation ID:** `getChannelAgentBinding`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scopeKind` | `"slack-private-channel" or "msteams-standard-channel"` | Yes | — |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `PATCH /api/channel-installations/{channelInstallationId}/agent-bindings/{bindingId}`
+
+Set channel Agent binding status
+
+**Operation ID:** `setChannelAgentBindingStatus`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `expectedVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `status` | `"enabled" or "disabled"` | Yes | — |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.channelRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scopeKind` | `"slack-private-channel" or "msteams-standard-channel"` | Yes | — |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /api/channel-installations/{channelInstallationId}/human-bindings`
+
+List channel human binding metadata
+
+**Operation ID:** `listChannelHumanBindings`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `limit` | query | `string` | No | pattern: `^(?:[1-9]\|[1-9][0-9]\|100)$` |
+| `cursor` | query | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.items` | `array<object>` | Yes | max items: 100 |
+| `data.items[].channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].iamDriverId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].id` | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.items[].principalId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].principalIssuer` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].principalSubject` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].providerSubjectRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].status` | `"enabled" or "disabled"` | Yes | — |
+| `data.items[].updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.items[].updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.items[].version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.nextCursor` | `string` | No | min length: 1; max length: 2048; pattern: `^[A-Za-z0-9_-]+$` |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `POST /api/channel-installations/{channelInstallationId}/human-bindings`
+
+Create channel human binding metadata
+
+**Operation ID:** `createChannelHumanBinding`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `principal` | `object` | Yes | — |
+| `principal.issuer` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `principal.subject` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `providerSubjectRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Created |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`201` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.iamDriverId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.principalId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalIssuer` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalSubject` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.providerSubjectRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /api/channel-installations/{channelInstallationId}/human-bindings/{bindingId}`
+
+Get channel human binding metadata
+
+**Operation ID:** `getChannelHumanBinding`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.iamDriverId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.principalId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalIssuer` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalSubject` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.providerSubjectRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `PATCH /api/channel-installations/{channelInstallationId}/human-bindings/{bindingId}`
+
+Set channel human binding status
+
+**Operation ID:** `setChannelHumanBindingStatus`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `channelInstallationId` | path | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `expectedVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `status` | `"enabled" or "disabled"` | Yes | — |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.channelInstallationId` | `string` | Yes | pattern: `^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.createdBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.iamDriverId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.id` | `string` | Yes | pattern: `^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.principalId` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalIssuer` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.principalSubject` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.providerSubjectRef` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.status` | `"enabled" or "disabled"` | Yes | — |
+| `data.updatedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.updatedBy` | `string` | Yes | min length: 1; max length: 1024; pattern: `^[^\u0000-\u001f\u007f-\u009f]+$`; Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode. |
+| `data.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
 ## Installation
 
 ### `GET /installation`

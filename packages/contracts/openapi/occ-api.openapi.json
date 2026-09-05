@@ -1146,6 +1146,2496 @@
         "tags": ["Authentication"]
       }
     },
+    "/api/channel-installations": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "listChannelInstallations",
+        "parameters": [
+          {
+            "description": "Page size, default and maximum 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": { "pattern": "^(?:[1-9]|[1-9][0-9]|100)$", "type": "string" }
+          },
+          {
+            "description": "Opaque continuation cursor from the same parent-scoped query.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "createdAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "createdBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "id": {
+                                "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "installationId": {
+                                "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "platform": {
+                                "anyOf": [
+                                  { "const": "slack", "type": "string" },
+                                  { "const": "msteams", "type": "string" }
+                                ]
+                              },
+                              "providerTenantRef": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "recipientAppRef": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "status": {
+                                "anyOf": [
+                                  { "const": "enabled", "type": "string" },
+                                  { "const": "disabled", "type": "string" }
+                                ]
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "updatedBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "installationId",
+                              "version",
+                              "status",
+                              "createdAt",
+                              "updatedAt",
+                              "createdBy",
+                              "updatedBy",
+                              "id",
+                              "platform",
+                              "providerTenantRef",
+                              "recipientAppRef"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 100,
+                          "type": "array"
+                        },
+                        "nextCursor": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["items"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "List channel app installation metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "post": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "createChannelInstallation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "platform": {
+                    "anyOf": [
+                      { "const": "slack", "type": "string" },
+                      { "const": "msteams", "type": "string" }
+                    ]
+                  },
+                  "providerTenantRef": {
+                    "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  },
+                  "recipientAppRef": {
+                    "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  }
+                },
+                "required": ["platform", "providerTenantRef", "recipientAppRef"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "platform": {
+                          "anyOf": [
+                            { "const": "slack", "type": "string" },
+                            { "const": "msteams", "type": "string" }
+                          ]
+                        },
+                        "providerTenantRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "recipientAppRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "platform",
+                        "providerTenantRef",
+                        "recipientAppRef"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Create channel app installation metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/api/channel-installations/{channelInstallationId}": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "getChannelInstallation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "platform": {
+                          "anyOf": [
+                            { "const": "slack", "type": "string" },
+                            { "const": "msteams", "type": "string" }
+                          ]
+                        },
+                        "providerTenantRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "recipientAppRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "platform",
+                        "providerTenantRef",
+                        "recipientAppRef"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Get channel app installation metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "patch": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "setChannelInstallationStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      { "const": "enabled", "type": "string" },
+                      { "const": "disabled", "type": "string" }
+                    ]
+                  }
+                },
+                "required": ["expectedVersion", "status"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "platform": {
+                          "anyOf": [
+                            { "const": "slack", "type": "string" },
+                            { "const": "msteams", "type": "string" }
+                          ]
+                        },
+                        "providerTenantRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "recipientAppRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "platform",
+                        "providerTenantRef",
+                        "recipientAppRef"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Set channel app installation status",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/api/channel-installations/{channelInstallationId}/agent-bindings": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "listChannelAgentBindings",
+        "parameters": [
+          {
+            "description": "Page size, default and maximum 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": { "pattern": "^(?:[1-9]|[1-9][0-9]|100)$", "type": "string" }
+          },
+          {
+            "description": "Opaque continuation cursor from the same parent-scoped query.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "agentId": {
+                                "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "channelInstallationId": {
+                                "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "channelRef": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "createdBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "id": {
+                                "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "installationId": {
+                                "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "namespaceId": {
+                                "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "scopeKind": {
+                                "anyOf": [
+                                  { "const": "slack-private-channel", "type": "string" },
+                                  { "const": "msteams-standard-channel", "type": "string" }
+                                ]
+                              },
+                              "status": {
+                                "anyOf": [
+                                  { "const": "enabled", "type": "string" },
+                                  { "const": "disabled", "type": "string" }
+                                ]
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "updatedBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "installationId",
+                              "version",
+                              "status",
+                              "createdAt",
+                              "updatedAt",
+                              "createdBy",
+                              "updatedBy",
+                              "id",
+                              "channelInstallationId",
+                              "channelRef",
+                              "scopeKind",
+                              "namespaceId",
+                              "agentId"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 100,
+                          "type": "array"
+                        },
+                        "nextCursor": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["items"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "List channel Agent binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "post": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "createChannelAgentBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "agentId": {
+                    "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "channelRef": {
+                    "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  },
+                  "namespaceId": {
+                    "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "scopeKind": {
+                    "anyOf": [
+                      { "const": "slack-private-channel", "type": "string" },
+                      { "const": "msteams-standard-channel", "type": "string" }
+                    ]
+                  }
+                },
+                "required": ["channelRef", "scopeKind", "namespaceId", "agentId"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "agentId": {
+                          "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "namespaceId": {
+                          "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scopeKind": {
+                          "anyOf": [
+                            { "const": "slack-private-channel", "type": "string" },
+                            { "const": "msteams-standard-channel", "type": "string" }
+                          ]
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "channelRef",
+                        "scopeKind",
+                        "namespaceId",
+                        "agentId"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Create channel Agent binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/api/channel-installations/{channelInstallationId}/agent-bindings/{bindingId}": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "getChannelAgentBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "agentId": {
+                          "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "namespaceId": {
+                          "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scopeKind": {
+                          "anyOf": [
+                            { "const": "slack-private-channel", "type": "string" },
+                            { "const": "msteams-standard-channel", "type": "string" }
+                          ]
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "channelRef",
+                        "scopeKind",
+                        "namespaceId",
+                        "agentId"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Get channel Agent binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "patch": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "setChannelAgentBindingStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      { "const": "enabled", "type": "string" },
+                      { "const": "disabled", "type": "string" }
+                    ]
+                  }
+                },
+                "required": ["expectedVersion", "status"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "agentId": {
+                          "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "channelRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^cha_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "namespaceId": {
+                          "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scopeKind": {
+                          "anyOf": [
+                            { "const": "slack-private-channel", "type": "string" },
+                            { "const": "msteams-standard-channel", "type": "string" }
+                          ]
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "channelRef",
+                        "scopeKind",
+                        "namespaceId",
+                        "agentId"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Set channel Agent binding status",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/api/channel-installations/{channelInstallationId}/human-bindings": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "listChannelHumanBindings",
+        "parameters": [
+          {
+            "description": "Page size, default and maximum 100.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": { "pattern": "^(?:[1-9]|[1-9][0-9]|100)$", "type": "string" }
+          },
+          {
+            "description": "Opaque continuation cursor from the same parent-scoped query.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "channelInstallationId": {
+                                "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "createdAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "createdBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "iamDriverId": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "id": {
+                                "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "installationId": {
+                                "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "principalId": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "principalIssuer": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "principalSubject": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "providerSubjectRef": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "status": {
+                                "anyOf": [
+                                  { "const": "enabled", "type": "string" },
+                                  { "const": "disabled", "type": "string" }
+                                ]
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                                "type": "string"
+                              },
+                              "updatedBy": {
+                                "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                                "maxLength": 1024,
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "installationId",
+                              "version",
+                              "status",
+                              "createdAt",
+                              "updatedAt",
+                              "createdBy",
+                              "updatedBy",
+                              "id",
+                              "channelInstallationId",
+                              "providerSubjectRef",
+                              "iamDriverId",
+                              "principalId",
+                              "principalIssuer",
+                              "principalSubject"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 100,
+                          "type": "array"
+                        },
+                        "nextCursor": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["items"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "List channel human binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "post": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "createChannelHumanBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "principal": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "issuer": {
+                        "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                        "maxLength": 1024,
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                        "type": "string"
+                      },
+                      "subject": {
+                        "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                        "maxLength": 1024,
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["issuer", "subject"],
+                    "type": "object"
+                  },
+                  "providerSubjectRef": {
+                    "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  }
+                },
+                "required": ["providerSubjectRef", "principal"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "iamDriverId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "principalId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalIssuer": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalSubject": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "providerSubjectRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "providerSubjectRef",
+                        "iamDriverId",
+                        "principalId",
+                        "principalIssuer",
+                        "principalSubject"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Create channel human binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/api/channel-installations/{channelInstallationId}/human-bindings/{bindingId}": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "getChannelHumanBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "iamDriverId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "principalId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalIssuer": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalSubject": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "providerSubjectRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "providerSubjectRef",
+                        "iamDriverId",
+                        "principalId",
+                        "principalIssuer",
+                        "principalSubject"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Get channel human binding metadata",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      },
+      "patch": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "setChannelHumanBindingStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channelInstallationId",
+            "required": true,
+            "schema": {
+              "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "bindingId",
+            "required": true,
+            "schema": {
+              "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedVersion": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      { "const": "enabled", "type": "string" },
+                      { "const": "disabled", "type": "string" }
+                    ]
+                  }
+                },
+                "required": ["expectedVersion", "status"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "channelInstallationId": {
+                          "pattern": "^chi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "iamDriverId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "id": {
+                          "pattern": "^chh_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "installationId": {
+                          "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "principalId": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalIssuer": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "principalSubject": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "providerSubjectRef": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "enabled", "type": "string" },
+                            { "const": "disabled", "type": "string" }
+                          ]
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "updatedBy": {
+                          "description": "Opaque reference, preserved exactly; at most 1024 UTF-8 bytes, without controls or malformed Unicode.",
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                          "type": "string"
+                        },
+                        "version": { "maximum": 9007199254740991, "minimum": 1, "type": "integer" }
+                      },
+                      "required": [
+                        "installationId",
+                        "version",
+                        "status",
+                        "createdAt",
+                        "updatedAt",
+                        "createdBy",
+                        "updatedBy",
+                        "id",
+                        "channelInstallationId",
+                        "providerSubjectRef",
+                        "iamDriverId",
+                        "principalId",
+                        "principalIssuer",
+                        "principalSubject"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Set channel human binding status",
+        "tags": ["Channel bindings"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
     "/installation": {
       "get": {
         "description": "Requires read permission on the requested Installation.",

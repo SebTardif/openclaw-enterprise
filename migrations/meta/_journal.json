@@ -113,6 +113,13 @@
       "when": 1787000000015,
       "tag": "0015_runtime_assignment_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787000000016,
+      "tag": "0016_channel_principal_bindings",
+      "breakpoints": true
     }
   ]
 }

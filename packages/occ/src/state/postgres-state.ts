@@ -3,6 +3,11 @@ import type {
   AccessBinding,
   Agent,
   AgentRevision,
+  ChannelInstallation,
+  ChannelHumanBinding,
+  ChannelAgentBinding,
+  ChannelBindingMetadata,
+  ChannelBindingStatus,
   AuditEvent,
   Group,
   GroupMembership,
@@ -19,6 +24,7 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  isChannelBindingReference,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
 } from "@openclaw-enterprise/contracts";
@@ -28,8 +34,14 @@ import {
   ResourceConflictError,
   ScopeViolationError,
 } from "../errors.ts";
-import { serializeRuntimeAssignmentMutations } from "./platform-state.ts";
+import {
+  serializeChannelBindingMutations,
+  validateChannelBindingList,
+  serializeRuntimeAssignmentMutations,
+} from "./platform-state.ts";
 import type {
+  ChannelBindingRepository,
+  ChannelBindingListOptions,
   RuntimeAssignmentRepository,
   RuntimeIntent,
   RuntimeAllocation,
@@ -116,6 +128,62 @@ const SECRET_IDENTIFIER =
   /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const NAMESPACE_IDENTIFIER =
   /^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function channelMetadataFromRow(row: PostgresRow): ChannelBindingMetadata {
+  const version = Number(row.version);
+  const status = text(row, "status");
+  if (
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    (status !== "enabled" && status !== "disabled")
+  )
+    throw new DependencyUnavailableError("The stored channel binding state is invalid.");
+  return {
+    id: text(row, "id"),
+    installationId: text(row, "installation_id"),
+    version,
+    status,
+    createdAt: timestamp(row, "created_at"),
+    updatedAt: timestamp(row, "updated_at"),
+    createdBy: text(row, "created_by"),
+    updatedBy: text(row, "updated_by"),
+  };
+}
+function channelInstallationFromRow(row: PostgresRow): Readonly<ChannelInstallation> {
+  const platform = text(row, "platform");
+  if (platform !== "slack" && platform !== "msteams")
+    throw new DependencyUnavailableError("The stored channel platform is invalid.");
+  return immutableCopy({
+    ...channelMetadataFromRow(row),
+    platform,
+    providerTenantRef: text(row, "provider_tenant_ref"),
+    recipientAppRef: text(row, "recipient_app_ref"),
+  });
+}
+function channelHumanFromRow(row: PostgresRow): Readonly<ChannelHumanBinding> {
+  return immutableCopy({
+    ...channelMetadataFromRow(row),
+    channelInstallationId: text(row, "channel_installation_id"),
+    providerSubjectRef: text(row, "provider_subject_ref"),
+    iamDriverId: text(row, "iam_driver_id"),
+    principalId: text(row, "principal_id"),
+    principalIssuer: text(row, "principal_issuer"),
+    principalSubject: text(row, "principal_subject"),
+  });
+}
+function channelAgentFromRow(row: PostgresRow): Readonly<ChannelAgentBinding> {
+  const scopeKind = text(row, "scope_kind");
+  if (scopeKind !== "slack-private-channel" && scopeKind !== "msteams-standard-channel")
+    throw new DependencyUnavailableError("The stored channel scope is invalid.");
+  return immutableCopy({
+    ...channelMetadataFromRow(row),
+    channelInstallationId: text(row, "channel_installation_id"),
+    channelRef: text(row, "channel_ref"),
+    scopeKind,
+    namespaceId: text(row, "namespace_id"),
+    agentId: text(row, "agent_id"),
+  });
+}
 
 function runtimeGeneration(row: PostgresRow, key: string): number {
   const value = Number(row[key]);
@@ -849,9 +917,13 @@ export class PostgresPlatformState implements PlatformStateStore {
       this.contexts.set(unit, context);
       const result = await work(unit, context);
       committing = true;
-      await client.query("COMMIT");
+      const acknowledgement = await client.query("COMMIT");
       committing = false;
       started = false;
+      // PostgreSQL answers COMMIT with ROLLBACK after a caught statement failure.
+      // A callback result must never acknowledge writes the database discarded.
+      if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
+        throw new DependencyUnavailableError("The database transaction did not commit.");
       return result;
     } catch (error) {
       if (started) {
@@ -1672,6 +1744,229 @@ export class PostgresPlatformState implements PlatformStateStore {
         return undefined;
       return { installation, agent };
     };
+    type ChannelTable =
+      "channel_installations" | "channel_human_bindings" | "channel_agent_bindings";
+    const channelConflict = (): never => {
+      throw new ResourceConflictError(
+        "The channel binding conflicts with retained identity, ownership or state.",
+      );
+    };
+    const channelQuery = async (sql: string, values: unknown[]) => {
+      try {
+        return await client.query(sql, values);
+      } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        if (
+          typeof code === "string" &&
+          (code.startsWith("23") || code === "55000" || code.startsWith("22"))
+        )
+          channelConflict();
+        throw error;
+      }
+    };
+    const channelFind = async <T>(
+      table: ChannelTable,
+      decode: (row: PostgresRow) => Readonly<T>,
+      key: "id" | "provider_subject_ref" | "channel_ref",
+      value: string,
+      parentId?: string,
+      lock = false,
+    ): Promise<Readonly<T> | undefined> => {
+      const installation = await this.currentInstallation(context);
+      if (
+        !installation ||
+        !isChannelBindingReference(value) ||
+        (parentId !== undefined && !isChannelBindingReference(parentId))
+      )
+        return undefined;
+      const result = await client.query(
+        `SELECT * FROM occ.${table} WHERE installation_id = $1 AND ${key} = $2${parentId === undefined ? "" : " AND channel_installation_id = $3"}${lock ? " FOR UPDATE" : ""}`,
+        parentId === undefined ? [installation.id, value] : [installation.id, value, parentId],
+      );
+      const row = rows(result.rows)[0];
+      return row && decode(row);
+    };
+    const channelList = async <T>(
+      table: ChannelTable,
+      decode: (row: PostgresRow) => Readonly<T>,
+      options: ChannelBindingListOptions,
+      parentId?: string,
+    ): Promise<readonly Readonly<T>[]> => {
+      validateChannelBindingList(options);
+      const installation = await this.currentInstallation(context);
+      if (!installation) return Object.freeze([]);
+      const result = await client.query(
+        `SELECT * FROM occ.${table} WHERE installation_id = $1 AND ($2::text IS NULL OR id COLLATE "C" > $2 COLLATE "C")${parentId === undefined ? "" : " AND channel_installation_id = $4"} ORDER BY id COLLATE "C" LIMIT $3`,
+        parentId === undefined
+          ? [installation.id, options.afterId ?? null, options.limit]
+          : [installation.id, options.afterId ?? null, options.limit, parentId],
+      );
+      return Object.freeze(rows(result.rows).map(decode));
+    };
+    const lockChannelParent = async (id: string) =>
+      channelFind("channel_installations", channelInstallationFromRow, "id", id, undefined, true);
+    const channelCreate = async <T extends ChannelBindingMetadata>(
+      table: ChannelTable,
+      decode: (row: PostgresRow) => Readonly<T>,
+      record: T,
+      additional: readonly [string, unknown][],
+    ): Promise<Readonly<T>> => {
+      const installation = await this.currentInstallation(context);
+      if (!installation || record.installationId !== installation.id) channelConflict();
+      // Reject malformed Unicode before the PostgreSQL client can replace its bytes.
+      if (
+        ![record.createdBy, record.updatedBy, ...additional.map(([, value]) => value)].every(
+          isChannelBindingReference,
+        )
+      )
+        channelConflict();
+      if ("channelInstallationId" in record) {
+        const parent = await lockChannelParent(String(record.channelInstallationId));
+        if (!parent || parent.status !== "enabled") channelConflict();
+      }
+      const fields: readonly [string, unknown][] = [
+        ["id", record.id],
+        ["installation_id", record.installationId],
+        ["version", record.version],
+        ["status", record.status],
+        ["created_at", record.createdAt],
+        ["updated_at", record.updatedAt],
+        ["created_by", record.createdBy],
+        ["updated_by", record.updatedBy],
+        ...additional,
+      ];
+      const result = await channelQuery(
+        `INSERT INTO occ.${table} (${fields.map(([name]) => name).join(",")}) VALUES (${fields.map((_, i) => `$${i + 1}`).join(",")}) ON CONFLICT DO NOTHING RETURNING *`,
+        fields.map(([, value]) => value),
+      );
+      const row = rows(result.rows)[0];
+      if (!row) channelConflict();
+      return decode(row!);
+    };
+    const channelStatus = async <T extends ChannelBindingMetadata>(
+      table: ChannelTable,
+      decode: (row: PostgresRow) => Readonly<T>,
+      id: string,
+      expectedVersion: number,
+      status: ChannelBindingStatus,
+      actorId: string,
+      updatedAt: string,
+      parentId?: string,
+    ): Promise<Readonly<T> | undefined> => {
+      // All adapter mutations lock parent before child, including disabling a child.
+      const parent = parentId === undefined ? undefined : await lockChannelParent(parentId);
+      if (parentId !== undefined && !parent) return undefined;
+      const record = await channelFind(table, decode, "id", id, parentId, true);
+      if (!record) return undefined;
+      if (
+        !Number.isSafeInteger(expectedVersion) ||
+        expectedVersion < 1 ||
+        record.version !== expectedVersion ||
+        (status !== "enabled" && status !== "disabled") ||
+        !isChannelBindingReference(actorId) ||
+        !Number.isFinite(Date.parse(updatedAt))
+      )
+        channelConflict();
+      if (record.status === status) return record;
+      if (
+        record.version === Number.MAX_SAFE_INTEGER ||
+        (parent && status === "enabled" && parent.status !== "enabled")
+      )
+        channelConflict();
+      const result = await channelQuery(
+        `UPDATE occ.${table} SET status=$1,version=version+1,updated_by=$2,updated_at=$3 WHERE installation_id=$4 AND id=$5 AND version=$6 RETURNING *`,
+        [status, actorId, updatedAt, record.installationId, id, expectedVersion],
+      );
+      const row = rows(result.rows)[0];
+      if (!row) channelConflict();
+      return decode(row!);
+    };
+    const channelBindings: ChannelBindingRepository = {
+      findChannelInstallation: (id) =>
+        channelFind("channel_installations", channelInstallationFromRow, "id", id),
+      listChannelInstallations: (options) =>
+        channelList("channel_installations", channelInstallationFromRow, options),
+      findHumanBinding: (parentId, id) =>
+        channelFind("channel_human_bindings", channelHumanFromRow, "id", id, parentId),
+      findHumanBindingBySubject: (parentId, subject) =>
+        channelFind(
+          "channel_human_bindings",
+          channelHumanFromRow,
+          "provider_subject_ref",
+          subject,
+          parentId,
+        ),
+      listHumanBindings: (parentId, options) =>
+        channelList("channel_human_bindings", channelHumanFromRow, options, parentId),
+      findAgentBinding: (parentId, id) =>
+        channelFind("channel_agent_bindings", channelAgentFromRow, "id", id, parentId),
+      findAgentBindingByChannel: (parentId, channelRef) =>
+        channelFind(
+          "channel_agent_bindings",
+          channelAgentFromRow,
+          "channel_ref",
+          channelRef,
+          parentId,
+        ),
+      listAgentBindings: (parentId, options) =>
+        channelList("channel_agent_bindings", channelAgentFromRow, options, parentId),
+      createChannelInstallation: (record) =>
+        channelCreate("channel_installations", channelInstallationFromRow, record, [
+          ["platform", record.platform],
+          ["provider_tenant_ref", record.providerTenantRef],
+          ["recipient_app_ref", record.recipientAppRef],
+        ]),
+      createHumanBinding: (record) =>
+        channelCreate("channel_human_bindings", channelHumanFromRow, record, [
+          ["channel_installation_id", record.channelInstallationId],
+          ["provider_subject_ref", record.providerSubjectRef],
+          ["iam_driver_id", record.iamDriverId],
+          ["principal_id", record.principalId],
+          ["principal_issuer", record.principalIssuer],
+          ["principal_subject", record.principalSubject],
+        ]),
+      createAgentBinding: (record) =>
+        channelCreate("channel_agent_bindings", channelAgentFromRow, record, [
+          ["channel_installation_id", record.channelInstallationId],
+          ["channel_ref", record.channelRef],
+          ["scope_kind", record.scopeKind],
+          ["namespace_id", record.namespaceId],
+          ["agent_id", record.agentId],
+        ]),
+      setChannelInstallationStatus: (id, version, status, actor, at) =>
+        channelStatus(
+          "channel_installations",
+          channelInstallationFromRow,
+          id,
+          version,
+          status,
+          actor,
+          at,
+        ),
+      setHumanBindingStatus: (parentId, id, version, status, actor, at) =>
+        channelStatus(
+          "channel_human_bindings",
+          channelHumanFromRow,
+          id,
+          version,
+          status,
+          actor,
+          at,
+          parentId,
+        ),
+      setAgentBindingStatus: (parentId, id, version, status, actor, at) =>
+        channelStatus(
+          "channel_agent_bindings",
+          channelAgentFromRow,
+          id,
+          version,
+          status,
+          actor,
+          at,
+          parentId,
+        ),
+    };
+
     const runtimeAssignments: RuntimeAssignmentRepository = {
       findRuntimeIntent: async (scope, transitionRef) => {
         if (!(await runtimeOwner(scope))) return undefined;
@@ -1863,6 +2158,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
 
     return {
+      channelBindings: serializeChannelBindingMutations(channelBindings),
       runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
       installations,
       namespaces,

@@ -46,6 +46,7 @@ import {
 import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
+  ChannelBindingInvalidError,
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
@@ -54,6 +55,10 @@ import {
   type HarnessResolver,
   type OpenClawController,
 } from "@openclaw-enterprise/occ";
+import {
+  isChannelBindingOperation,
+  performChannelBindingOperation,
+} from "./channels/channel-binding-routes.ts";
 import type { AdmittedCaller } from "./admission/admission-verifier.ts";
 import {
   OCC_AUTH_COOKIE_PREFIX,
@@ -539,6 +544,8 @@ function validationDetails(error: FastifyError): readonly ErrorDetail[] {
 
 function requestFailure(error: unknown): RequestFailure {
   if (error instanceof RequestFailure) return error;
+  if (error instanceof ChannelBindingInvalidError)
+    return failure(400, "INVALID_REQUEST", "The channel binding request is invalid.");
   if (error instanceof ConfigurationValidationError)
     return failure(400, "INVALID_REQUEST", "The supplied configuration is invalid.");
   if (error instanceof ConfigurationOwnershipError)
@@ -1036,7 +1043,12 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     )
       throw failure(401, "UNAUTHENTICATED", "A human controller session is required.");
     const params = request.params as Record<string, unknown>;
-    if (Object.keys(request.query as Record<string, unknown>).length > 0)
+    const paginatedChannelList = [
+      "listChannelInstallations",
+      "listChannelHumanBindings",
+      "listChannelAgentBindings",
+    ].includes(operation.operationId);
+    if (!paginatedChannelList && Object.keys(request.query as Record<string, unknown>).length > 0)
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
     for (const [parameter, pattern] of Object.entries(RESOURCE_ID)) {
       if (
@@ -1275,6 +1287,20 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
     if (!controller)
       throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+
+    if (isChannelBindingOperation(operation.operationId)) {
+      const data = await performChannelBindingOperation(
+        controller.channelBindings,
+        operation.operationId,
+        { ...context, requestId: request.id },
+        { params: request.params, query: request.query, body: request.body },
+      );
+      reply.status(operation.method === "POST" ? 201 : 200).send({
+        data,
+        meta: { requestId: request.id },
+      });
+      return;
+    }
 
     if (operation.operationId === "getInstallation") {
       reply.send({

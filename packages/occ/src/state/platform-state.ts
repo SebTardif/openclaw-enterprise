@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type {
   Agent,
   AgentRevision,
+  ChannelInstallation,
+  ChannelHumanBinding,
+  ChannelAgentBinding,
+  ChannelBindingMetadata,
+  ChannelBindingStatus,
   AuditEvent,
   HarnessExecutionMode,
   Installation,
@@ -12,7 +17,7 @@ import type {
   ServiceAccount,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
-import { normalizeSecretBindings } from "@openclaw-enterprise/contracts";
+import { isChannelBindingReference, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   DependencyUnavailableError,
@@ -289,6 +294,103 @@ export interface PlatformOperationRepository {
   list(): Promise<readonly Readonly<PlatformOperation>[]>;
 }
 
+export interface ChannelBindingListOptions {
+  readonly afterId?: string;
+  readonly limit: number;
+}
+export interface ChannelBindingReadRepository {
+  findChannelInstallation(id: string): Promise<Readonly<ChannelInstallation> | undefined>;
+  listChannelInstallations(
+    options: ChannelBindingListOptions,
+  ): Promise<readonly Readonly<ChannelInstallation>[]>;
+  findHumanBinding(
+    parentId: string,
+    id: string,
+  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
+  findHumanBindingBySubject(
+    parentId: string,
+    subject: string,
+  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
+  listHumanBindings(
+    parentId: string,
+    options: ChannelBindingListOptions,
+  ): Promise<readonly Readonly<ChannelHumanBinding>[]>;
+  findAgentBinding(
+    parentId: string,
+    id: string,
+  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
+  findAgentBindingByChannel(
+    parentId: string,
+    channelRef: string,
+  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
+  listAgentBindings(
+    parentId: string,
+    options: ChannelBindingListOptions,
+  ): Promise<readonly Readonly<ChannelAgentBinding>[]>;
+}
+export interface ChannelBindingRepository extends ChannelBindingReadRepository {
+  createChannelInstallation(record: ChannelInstallation): Promise<Readonly<ChannelInstallation>>;
+  createHumanBinding(record: ChannelHumanBinding): Promise<Readonly<ChannelHumanBinding>>;
+  createAgentBinding(record: ChannelAgentBinding): Promise<Readonly<ChannelAgentBinding>>;
+  setChannelInstallationStatus(
+    id: string,
+    expectedVersion: number,
+    status: ChannelBindingStatus,
+    actorId: string,
+    updatedAt: string,
+  ): Promise<Readonly<ChannelInstallation> | undefined>;
+  setHumanBindingStatus(
+    parentId: string,
+    id: string,
+    expectedVersion: number,
+    status: ChannelBindingStatus,
+    actorId: string,
+    updatedAt: string,
+  ): Promise<Readonly<ChannelHumanBinding> | undefined>;
+  setAgentBindingStatus(
+    parentId: string,
+    id: string,
+    expectedVersion: number,
+    status: ChannelBindingStatus,
+    actorId: string,
+    updatedAt: string,
+  ): Promise<Readonly<ChannelAgentBinding> | undefined>;
+}
+export function validateChannelBindingList(options: ChannelBindingListOptions): void {
+  if (
+    !Number.isSafeInteger(options.limit) ||
+    options.limit < 1 ||
+    options.limit > 101 ||
+    (options.afterId !== undefined && !/^(chi|chh|cha)_[0-9a-f-]{36}$/.test(options.afterId))
+  )
+    throw new ResourceConflictError("The channel binding list bounds are invalid.");
+}
+/** Also serialize mutations sharing a single transaction callback and SQL connection. */
+export function serializeChannelBindingMutations(
+  repository: ChannelBindingRepository,
+): ChannelBindingRepository {
+  let pending: Promise<void> = Promise.resolve();
+  function mutate<T>(work: () => Promise<T>): Promise<T> {
+    const result = pending.then(work);
+    pending = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+  return {
+    ...repository,
+    createChannelInstallation: (...args) =>
+      mutate(() => repository.createChannelInstallation(...args)),
+    createHumanBinding: (...args) => mutate(() => repository.createHumanBinding(...args)),
+    createAgentBinding: (...args) => mutate(() => repository.createAgentBinding(...args)),
+    setChannelInstallationStatus: (...args) =>
+      mutate(() => repository.setChannelInstallationStatus(...args)),
+    setHumanBindingStatus: (...args) => mutate(() => repository.setHumanBindingStatus(...args)),
+    setAgentBindingStatus: (...args) => mutate(() => repository.setAgentBindingStatus(...args)),
+  };
+}
+
 export interface RuntimeScope {
   readonly namespaceId: string;
   readonly agentId: string;
@@ -384,6 +486,7 @@ export function serializeRuntimeAssignmentMutations(
 }
 
 export interface PlatformReadView {
+  readonly channelBindings: ChannelBindingReadRepository;
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
@@ -395,6 +498,7 @@ export interface PlatformReadView {
 }
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly channelBindings: ChannelBindingRepository;
   readonly runtimeAssignments: RuntimeAssignmentRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
@@ -430,6 +534,9 @@ export interface InMemoryPlatformStateOptions {
 }
 
 interface PlatformSnapshot {
+  readonly channelInstallations: Map<string, Readonly<ChannelInstallation>>;
+  readonly channelHumans: Map<string, Readonly<ChannelHumanBinding>>;
+  readonly channelAgents: Map<string, Readonly<ChannelAgentBinding>>;
   readonly runtimeIntents: Map<string, Readonly<RuntimeIntent>>;
   readonly runtimeHeads: Map<string, string>;
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
@@ -450,6 +557,9 @@ function agentKey(namespaceId: string, agentId: string): string {
 
 function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
   return {
+    channelInstallations: new Map(snapshot.channelInstallations),
+    channelHumans: new Map(snapshot.channelHumans),
+    channelAgents: new Map(snapshot.channelAgents),
     runtimeIntents: new Map(snapshot.runtimeIntents),
     runtimeHeads: new Map(snapshot.runtimeHeads),
     runtimeAllocations: new Map(snapshot.runtimeAllocations),
@@ -1148,6 +1258,232 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       return undefined;
     return agent;
   };
+  function channelConflict(): never {
+    throw new ResourceConflictError(
+      "The channel binding conflicts with retained identity, ownership or state.",
+    );
+  }
+  function validateChannelMetadata(record: ChannelBindingMetadata, prefix: string): void {
+    const pattern = new RegExp(
+      `^${prefix}_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+    );
+    if (
+      !snapshot.installation ||
+      record.installationId !== snapshot.installation.id ||
+      !pattern.test(record.id) ||
+      record.version !== 1 ||
+      record.status !== "enabled" ||
+      !isChannelBindingReference(record.createdBy) ||
+      !isChannelBindingReference(record.updatedBy) ||
+      !Number.isFinite(Date.parse(record.createdAt)) ||
+      !Number.isFinite(Date.parse(record.updatedAt)) ||
+      record.updatedAt !== record.createdAt ||
+      record.updatedBy !== record.createdBy
+    )
+      channelConflict();
+  }
+  function channelParent(parentId: string): Readonly<ChannelInstallation> | undefined {
+    const parent = snapshot.channelInstallations.get(parentId);
+    return parent?.installationId === snapshot.installation?.id ? parent : undefined;
+  }
+  function childFind<T extends ChannelBindingMetadata & { channelInstallationId: string }>(
+    map: Map<string, Readonly<T>>,
+    parentId: string,
+    id: string,
+  ): Readonly<T> | undefined {
+    const record = map.get(id);
+    return channelParent(parentId) && record?.channelInstallationId === parentId
+      ? immutableCopy(record)
+      : undefined;
+  }
+  function channelList<T extends ChannelBindingMetadata>(
+    values: Iterable<Readonly<T>>,
+    options: ChannelBindingListOptions,
+  ): readonly Readonly<T>[] {
+    validateChannelBindingList(options);
+    return Object.freeze(
+      [...values]
+        .filter(
+          (r) =>
+            r.installationId === snapshot.installation?.id &&
+            (options.afterId === undefined || r.id > options.afterId),
+        )
+        .sort((a, b) => {
+          if (a.id === b.id) return 0;
+          return a.id < b.id ? -1 : 1;
+        })
+        .slice(0, options.limit)
+        .map((r) => immutableCopy(r)),
+    );
+  }
+  function requireChannelParent(
+    record: ChannelHumanBinding | ChannelAgentBinding,
+  ): Readonly<ChannelInstallation> {
+    const parent = channelParent(record.channelInstallationId);
+    if (!parent || parent.status !== "enabled" || parent.installationId !== record.installationId)
+      channelConflict();
+    return parent;
+  }
+  function requireChannelAgent(record: ChannelAgentBinding, parent: ChannelInstallation): void {
+    const namespace = snapshot.namespaces.get(record.namespaceId);
+    const agent = snapshot.agents.get(agentKey(record.namespaceId, record.agentId));
+    if (
+      !namespace ||
+      namespace.status !== "ready" ||
+      namespace.deletedAt !== undefined ||
+      !agent ||
+      (parent.platform === "slack"
+        ? record.scopeKind !== "slack-private-channel"
+        : record.scopeKind !== "msteams-standard-channel")
+    )
+      channelConflict();
+  }
+  function changeChannelStatus<T extends ChannelBindingMetadata>(
+    map: Map<string, Readonly<T>>,
+    record: Readonly<T> | undefined,
+    expectedVersion: number,
+    status: ChannelBindingStatus,
+    actorId: string,
+    updatedAt: string,
+  ): Readonly<T> | undefined {
+    if (!record) return undefined;
+    if (
+      !Number.isSafeInteger(expectedVersion) ||
+      expectedVersion < 1 ||
+      record.version !== expectedVersion ||
+      (status !== "enabled" && status !== "disabled") ||
+      !isChannelBindingReference(actorId) ||
+      !Number.isFinite(Date.parse(updatedAt)) ||
+      Date.parse(updatedAt) < Date.parse(record.createdAt)
+    )
+      channelConflict();
+    if (record.status === status) return immutableCopy(record);
+    if (record.version === Number.MAX_SAFE_INTEGER) channelConflict();
+    const updated = immutableCopy({
+      ...record,
+      status,
+      version: record.version + 1,
+      updatedBy: actorId,
+      updatedAt,
+    });
+    map.set(record.id, updated);
+    return immutableCopy(updated);
+  }
+  const channelBindings: ChannelBindingRepository = {
+    findChannelInstallation: async (id) => {
+      const parent = channelParent(id);
+      return parent && immutableCopy(parent);
+    },
+    listChannelInstallations: async (options) =>
+      channelList(snapshot.channelInstallations.values(), options),
+    findHumanBinding: async (parentId, id) => childFind(snapshot.channelHumans, parentId, id),
+    findHumanBindingBySubject: async (parentId, subject) => {
+      const found = [...snapshot.channelHumans.values()].find(
+        (r) => r.channelInstallationId === parentId && r.providerSubjectRef === subject,
+      );
+      return found && childFind(snapshot.channelHumans, parentId, found.id);
+    },
+    listHumanBindings: async (parentId, options) =>
+      channelList(
+        [...snapshot.channelHumans.values()].filter(
+          (r) => !!channelParent(parentId) && r.channelInstallationId === parentId,
+        ),
+        options,
+      ),
+    findAgentBinding: async (parentId, id) => childFind(snapshot.channelAgents, parentId, id),
+    findAgentBindingByChannel: async (parentId, channelRef) => {
+      const found = [...snapshot.channelAgents.values()].find(
+        (r) => r.channelInstallationId === parentId && r.channelRef === channelRef,
+      );
+      return found && childFind(snapshot.channelAgents, parentId, found.id);
+    },
+    listAgentBindings: async (parentId, options) =>
+      channelList(
+        [...snapshot.channelAgents.values()].filter(
+          (r) => !!channelParent(parentId) && r.channelInstallationId === parentId,
+        ),
+        options,
+      ),
+    createChannelInstallation: async (record) => {
+      validateChannelMetadata(record, "chi");
+      if (
+        (record.platform !== "slack" && record.platform !== "msteams") ||
+        !isChannelBindingReference(record.providerTenantRef) ||
+        !isChannelBindingReference(record.recipientAppRef) ||
+        snapshot.channelInstallations.has(record.id) ||
+        [...snapshot.channelInstallations.values()].some(
+          (r) =>
+            r.installationId === record.installationId &&
+            r.platform === record.platform &&
+            r.providerTenantRef === record.providerTenantRef &&
+            r.recipientAppRef === record.recipientAppRef,
+        )
+      )
+        channelConflict();
+      snapshot.channelInstallations.set(record.id, immutableCopy(record));
+      return immutableCopy(record);
+    },
+    createHumanBinding: async (record) => {
+      validateChannelMetadata(record, "chh");
+      requireChannelParent(record);
+      if (
+        ![
+          record.providerSubjectRef,
+          record.iamDriverId,
+          record.principalId,
+          record.principalIssuer,
+          record.principalSubject,
+        ].every(isChannelBindingReference) ||
+        snapshot.channelHumans.has(record.id) ||
+        [...snapshot.channelHumans.values()].some(
+          (r) =>
+            r.channelInstallationId === record.channelInstallationId &&
+            r.providerSubjectRef === record.providerSubjectRef,
+        )
+      )
+        channelConflict();
+      snapshot.channelHumans.set(record.id, immutableCopy(record));
+      return immutableCopy(record);
+    },
+    createAgentBinding: async (record) => {
+      validateChannelMetadata(record, "cha");
+      const parent = requireChannelParent(record);
+      requireChannelAgent(record, parent);
+      if (
+        !isChannelBindingReference(record.channelRef) ||
+        snapshot.channelAgents.has(record.id) ||
+        [...snapshot.channelAgents.values()].some(
+          (r) =>
+            r.channelInstallationId === record.channelInstallationId &&
+            r.channelRef === record.channelRef,
+        )
+      )
+        channelConflict();
+      snapshot.channelAgents.set(record.id, immutableCopy(record));
+      return immutableCopy(record);
+    },
+    setChannelInstallationStatus: async (id, version, status, actor, at) =>
+      changeChannelStatus(
+        snapshot.channelInstallations,
+        channelParent(id),
+        version,
+        status,
+        actor,
+        at,
+      ),
+    setHumanBindingStatus: async (parentId, id, version, status, actor, at) => {
+      const record = childFind(snapshot.channelHumans, parentId, id);
+      if (record && status === "enabled" && record.status !== status) requireChannelParent(record);
+      return changeChannelStatus(snapshot.channelHumans, record, version, status, actor, at);
+    },
+    setAgentBindingStatus: async (parentId, id, version, status, actor, at) => {
+      const record = childFind(snapshot.channelAgents, parentId, id);
+      if (record && status === "enabled" && record.status !== status)
+        requireChannelAgent(record, requireChannelParent(record));
+      return changeChannelStatus(snapshot.channelAgents, record, version, status, actor, at);
+    },
+  };
+
   const runtimeAssignments: RuntimeAssignmentRepository = {
     findRuntimeIntent: async (scope, transitionRef) => {
       if (!(await runtimeOwner(scope))) return undefined;
@@ -1304,6 +1640,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
   }
 
   return {
+    channelBindings: serializeChannelBindingMutations(channelBindings),
     runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
     installations,
     namespaces,
@@ -1364,6 +1701,9 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
 /** Process-local, single-writer state. No restart or multi-process durability. */
 export class InMemoryPlatformState implements PlatformStateStore {
   private snapshot: PlatformSnapshot = {
+    channelInstallations: new Map(),
+    channelHumans: new Map(),
+    channelAgents: new Map(),
     runtimeIntents: new Map(),
     runtimeHeads: new Map(),
     runtimeAllocations: new Map(),

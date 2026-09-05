@@ -1,3 +1,5 @@
+import { ChannelBindingService } from "./channel-bindings.ts";
+export * from "./channel-bindings.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
@@ -518,6 +520,7 @@ function validExecutionMode(value: unknown): value is HarnessExecutionMode {
 }
 
 export class OpenClawController {
+  readonly channelBindings: ChannelBindingService;
   readonly installation: Readonly<Installation>;
 
   private readonly authorization?: ControllerOptions["authorize"];
@@ -549,6 +552,11 @@ export class OpenClawController {
     this.clock = options.now ?? (() => new Date());
     this.identifier = options.createId;
     this.state = options.state ?? new InMemoryPlatformState();
+    this.channelBindings = new ChannelBindingService({
+      installationId: this.installation.id,
+      state: this.state,
+      iam: () => this.selectedDriver("iam"),
+    });
     this.shouldRecordOperations = options.recordOperations ?? true;
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.providerMap = providerDefinitionMap(this.providers);

@@ -563,3 +563,5 @@ export { normalizeSecretBindings } from "./secret-bindings.ts";
 export * from "./api/common.ts";
 export * from "./api/resources.ts";
 export * from "./api/routes.ts";
+
+export * from "./channel-bindings.ts";
