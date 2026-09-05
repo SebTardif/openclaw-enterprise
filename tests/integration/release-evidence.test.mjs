@@ -17,13 +17,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { registry, validateRegistry } from "../../scripts/release-evidence/registry.mjs";
+import {
+  REGISTRY_VERSION,
+  registry,
+  validateRegistry,
+} from "../../scripts/release-evidence/registry.mjs";
 import {
   assertionCounts,
   digest,
   resultOutcome,
   summarize,
   validateAttempt,
+  validateInputs,
 } from "../../scripts/release-evidence/evidence.mjs";
 import {
   collect,
@@ -73,6 +78,7 @@ async function filesText(directory) {
 test("registry covers sixteen gates, both channels and required standalone/adapter profiles; all fresh cases are unrun", () => {
   const value = registry();
   assert.equal(validateRegistry(value), true);
+  assert.equal(REGISTRY_VERSION, "release-registry/v2");
   assert.deepEqual(
     [...new Set(value.cases.map((item) => item.requirement))],
     Array.from({ length: 16 }, (_, i) => `R${i + 1}`),
@@ -88,15 +94,13 @@ test("registry covers sixteen gates, both channels and required standalone/adapt
         (item) =>
           item.requirement === requirement &&
           item.required &&
-          item.profile.includes("kata-standalone-spire"),
+          item.profile === "kubernetes-gvisor-systrap-strict-standalone-spire-native",
       ),
     );
   assert.equal(value.cases.find((item) => !item.required).id, "r15-operator-managed-provider");
   for (const item of value.cases) {
-    assert.deepEqual(
-      item.assertions.map((assertion) => assertion.kind),
-      ["positive", "denial", "failure"],
-    );
+    for (const kind of ["positive", "denial", "failure"])
+      assert.ok(item.assertions.some((assertion) => assertion.kind === kind));
     assert.equal(item.fixture.status, "to-build");
     assert.ok(item.prerequisites.includes("accepted-assertions"));
   }
@@ -623,4 +627,75 @@ test("CLI handles real ENOSPC stdout with fixed diagnostics and no raw stack", (
   } finally {
     closeSync(descriptor);
   }
+});
+
+test("selected gVisor assertions are individually mandatory and imported live passes remain untrusted", async (t) => {
+  for (const caseId of ["r13-gvisor", "r14-workload-identity"]) {
+    const { attempt } = await collected(t, { caseId, executionClass: "live" });
+    assert.equal(attempt.outcome, "pass");
+    for (const assertion of attempt.metadata.assertions) {
+      const incomplete = structuredClone(attempt);
+      incomplete.metadata.assertions = incomplete.metadata.assertions.filter(
+        (item) => item.id !== assertion.id,
+      );
+      recompute(incomplete);
+      assert.throws(() => validateAttempt(incomplete, inputs), /missing-assertions/);
+    }
+    const report = summarize([attempt], inputs);
+    assert.equal(report.requiredLiveCounts.pass, 0);
+    assert.equal(report.requiredLiveCounts.blocked, 1);
+    assert.equal(report.releaseAcceptance, "not-established");
+  }
+});
+
+test("prior registry, runtime case and fixture identities cannot be relabelled as current gVisor evidence", async (t) => {
+  const { attempt, request } = await collected(t);
+  // Exact digest of the prior registry; retained data needs a fresh execution,
+  // not a profile-string replacement or an automatic import migration.
+  const oldInputs = {
+    ...inputs,
+    registry: "sha256:42797a340180bf5ecbfc816cb819086c50d271ee2d353f4705c82207a47600d3",
+  };
+  assert.throws(() => validateInputs(oldInputs), /stale-registry/);
+  const stale = structuredClone(attempt);
+  stale.metadata.inputs = oldInputs;
+  assert.throws(() => summarize([stale], inputs), /stale-registry/);
+  for (const profile of [
+    "kubernetes-openshell-kata-standalone-spire-native",
+    "kubernetes-gvisor-systrap-standalone-spire-native",
+    "kubernetes-gvisor-ptrace-strict-standalone-spire-native",
+  ]) {
+    const mismatch = structuredClone(attempt);
+    mismatch.metadata.profile = profile;
+    assert.throws(() => validateAttempt(mismatch, inputs), /case-identity-mismatch/);
+  }
+  for (const caseId of ["r13-kata", "r14-guest-identity"]) {
+    const mismatch = structuredClone(attempt);
+    mismatch.metadata.caseId = caseId;
+    assert.throws(() => validateAttempt(mismatch, inputs), /unknown-case/);
+  }
+  const fixtureMismatch = structuredClone(attempt);
+  fixtureMismatch.metadata.fixture.id = "runtime-stop-v1";
+  assert.throws(() => validateAttempt(fixtureMismatch, inputs), /fixture-mismatch/);
+  await writeFile(join(request.outputDirectory, "manifest.json"), JSON.stringify(stale));
+  await assert.rejects(loadAttempt(request.outputDirectory, inputs), /stale-registry/);
+});
+
+test("changed binary/configuration inputs invalidate reported gVisor results and probe checks never qualify current live gates", async (t) => {
+  const { attempt } = await collected(t, { caseId: "r13-gvisor", executionClass: "probe" });
+  const baseline = summarize([attempt], inputs);
+  assert.equal(baseline.byClass.probe.pass, 1);
+  assert.equal(baseline.requiredLiveCounts.unrun, 19);
+  for (const field of ["tuple", "configuration", "harness"]) {
+    const current = { ...inputs, [field]: digest(`changed-synthetic-gvisor-${field}`) };
+    assert.throws(() => validateAttempt(attempt, current), /stale-inputs/);
+    const report = summarize([attempt], current);
+    assert.equal(report.cases.find((item) => item.id === "r13-gvisor").outcome, "blocked");
+    assert.equal(report.releaseAcceptance, "not-established");
+  }
+  const currentImages = {
+    ...inputs,
+    images: [{ name: "synthetic", digest: digest("changed-plugin-selected-codex-image") }],
+  };
+  assert.throws(() => validateAttempt(attempt, currentImages), /stale-inputs/);
 });
