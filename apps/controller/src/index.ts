@@ -1,4 +1,35 @@
 import {
+  createHttpTransport,
+  createFetchAdapter,
+  responseHeaders,
+  type ControllerApp,
+} from "./http/transport.ts";
+import {
+  failure,
+  RequestFailure,
+  requestFailure,
+  canonicalFailure,
+  validateConfiguration,
+  type ErrorDetail,
+} from "./http/errors.ts";
+import {
+  createHttpAdmission,
+  validateTrustedDevelopmentCidrs,
+  RESOURCE_ID,
+  type DevelopmentAdmission,
+} from "./http/admission.ts";
+import { createIdentityResolver, type RequestContext } from "./http/identity.ts";
+import {
+  operationTarget,
+  requiredPermissions,
+  permissionDescription,
+  bootstrapOperation,
+  type DocumentedFastifySchema,
+} from "./http/operation-registry.ts";
+import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
+export type { DevelopmentAdmission } from "./http/admission.ts";
+export type { ControllerApp } from "./http/transport.ts";
+import {
   runtimeServiceTrustOperations,
   RuntimeServiceTrustRecordSchema,
   RuntimeServiceTrustRequestSchema,
@@ -7,25 +38,17 @@ import {
 } from "./admission/runtime-service-trust.ts";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
-import Fastify, {
-  LogController,
-  type FastifyError,
+import {
   type FastifyInstance,
   type FastifyBaseLogger,
   type FastifyReply,
   type FastifyRequest,
-  type FastifySchema,
   type HTTPMethods,
-  type InjectOptions,
 } from "fastify";
-import swagger from "@fastify/swagger";
-import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import ajvFormats from "ajv-formats";
 import { AuditEventFactory, type AuditSink } from "@openclaw-enterprise/audit";
 import { AuthAccountRoleNotFoundError, type AuthPrincipalSeed } from "@openclaw-enterprise/iam";
 import {
   ErrorResponse,
-  JsonValue,
   SecretResponse,
   occApiRoutes,
   type Agent,
@@ -57,11 +80,8 @@ import {
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
   ChannelBindingInvalidError,
   DependencyUnavailableError,
-  NamespaceNotEmptyError,
   NamespaceNotReadyError,
   PostgresCommitOutcomeUnknownError,
-  ResourceConflictError,
-  ScopeViolationError,
   type RuntimeServiceTrustService,
   type HarnessResolver,
   type DeployAgentAdmissionContext,
@@ -80,22 +100,12 @@ import {
 } from "./auth/index.ts";
 import { CONSOLE_CONTENT_SECURITY_POLICY, readConsoleAsset } from "./console-assets.ts";
 import {
-  ConfigurationOwnershipError,
-  ConfigurationValidationError,
-} from "./drivers/configuration/kubernetes/index.ts";
-import {
   ControllerWorkspaceFileUnknownOutcomeError,
   isAllowedWorkspaceFileName,
   type ControllerWorkspaceFilesAccess,
   type ControllerWorkspaceFileReadResult,
   type ControllerWorkspaceFileWriteResult,
 } from "./gateway/contracts.ts";
-
-export interface DevelopmentAdmission {
-  readonly enabled: boolean;
-  readonly installationId?: string;
-  readonly trustedCidrs?: readonly string[];
-}
 
 export interface ControllerAppOptions {
   readonly runtimeServiceTrust?: RuntimeServiceTrustService;
@@ -123,130 +133,8 @@ export interface ControllerAppOptions {
   readonly logger?: FastifyBaseLogger;
 }
 
-export interface ControllerApp {
-  fetch(request: Request): Promise<Response>;
-}
-
-interface RequestContext {
-  readonly actorId: string;
-  readonly issuer: string;
-  readonly subject: string;
-  readonly admissionDecisionId: string;
-  readonly operation: OccApiRoute;
-}
-
-interface ErrorDetail {
-  readonly path: string;
-  readonly code:
-    | "REQUIRED"
-    | "UNKNOWN_FIELD"
-    | "INVALID_TYPE"
-    | "INVALID_FORMAT"
-    | "INVALID_VALUE"
-    | "TOO_LONG"
-    | "TOO_DEEP";
-}
-
-interface RequiredPermission {
-  readonly action: PermissionAction;
-  readonly resourceKind: ResourceKind;
-  readonly scope: "requested" | "installation" | "namespace" | "each_returned" | "request_body";
-  readonly condition?: "associated_service_account" | "existing_namespace" | "bound_secret";
-}
-
-interface DocumentedFastifySchema extends FastifySchema {
-  readonly "x-openclaw-permissions": readonly RequiredPermission[];
-}
-
-class RequestFailure extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly details?: readonly ErrorDetail[];
-
-  constructor(status: number, code: string, message: string, details?: readonly ErrorDetail[]) {
-    super(message);
-    this.name = "RequestFailure";
-    this.status = status;
-    this.code = code;
-    if (details !== undefined) this.details = details;
-  }
-}
-
 const DEFAULT_BODY_LIMIT = 64 * 1024;
-const WORKSPACE_FILE_BODY_LIMIT = 48 * 1024;
 const WORKSPACE_FILE_CONTENT_LIMIT = 16 * 1024;
-const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-const RESOURCE_ID = {
-  namespaceId: /^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  configurationId: /^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  serviceAccountId: /^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  secretId: /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  agentId: /^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  revisionId: /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-} as const;
-
-function formatsPlugin(ajv: Parameters<typeof ajvFormats.default>[0]) {
-  return ajvFormats.default(ajv);
-}
-
-function failure(
-  status: number,
-  code: string,
-  message: string,
-  details?: readonly ErrorDetail[],
-): RequestFailure {
-  return new RequestFailure(status, code, message, details);
-}
-
-function ipv4(value: string): number | undefined {
-  const parts = value.split(".");
-  if (parts.length !== 4) return undefined;
-  let result = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return undefined;
-    const octet = Number(part);
-    if (octet > 255) return undefined;
-    result = (result << 8) | octet;
-  }
-  return result >>> 0;
-}
-
-function cidrContains(cidr: string, address: string): boolean {
-  const [network, prefixText] = cidr.split("/");
-  if (network === undefined || prefixText === undefined || cidr.split("/").length !== 2)
-    throw new Error("Development trusted CIDRs must use IPv4 CIDR notation.");
-  const prefix = Number(prefixText);
-  if (!/^\d+$/.test(prefixText) || !Number.isInteger(prefix) || prefix < 0 || prefix > 32)
-    throw new Error("Development trusted CIDRs must use IPv4 CIDR notation.");
-  const networkValue = ipv4(network);
-  const addressValue = ipv4(address);
-  if (networkValue === undefined)
-    throw new Error("Development trusted CIDRs must use IPv4 CIDR notation.");
-  if (addressValue === undefined) return false;
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return (networkValue & mask) === (addressValue & mask);
-}
-
-function trustedDevelopmentAddress(
-  development: DevelopmentAdmission,
-  remoteAddress: string,
-): boolean {
-  if (LOOPBACK_ADDRESSES.has(remoteAddress)) return true;
-  const cidrs = development.trustedCidrs ?? [];
-  if (cidrs.length === 0) return false;
-  const normalized = remoteAddress.startsWith("::ffff:")
-    ? remoteAddress.slice("::ffff:".length)
-    : remoteAddress;
-  return cidrs.some((cidr) => cidrContains(cidr, normalized));
-}
-
-function validateTrustedDevelopmentCidrs(development: DevelopmentAdmission): void {
-  for (const cidr of development.trustedCidrs ?? []) {
-    cidrContains(cidr, "127.0.0.1");
-  }
-}
-
 function validAuthorizationEvidence(value: unknown): value is AuthorizationEvidence {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<AuthorizationEvidence>;
@@ -257,206 +145,6 @@ function validAuthorizationEvidence(value: unknown): value is AuthorizationEvide
     candidate.roleIds,
     candidate.restrictionIds,
   ].every((entries) => Array.isArray(entries) && entries.every(isNonEmptyString));
-}
-
-function jsonPointer(segment: string): string {
-  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
-}
-
-function validateConfiguration(value: unknown, depth = 0, path = ""): void {
-  if (depth > 24)
-    throw failure(400, "INVALID_REQUEST", "The supplied configuration is invalid.", [
-      { path, code: "TOO_DEEP" },
-    ]);
-  if (value === null || typeof value !== "object") return;
-  if (Array.isArray(value)) {
-    for (const [index, entry] of value.entries())
-      validateConfiguration(entry, depth + 1, `${path}/${index}`);
-    return;
-  }
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "__proto__" || key === "constructor" || key === "prototype")
-      throw failure(400, "INVALID_REQUEST", "The supplied configuration is invalid.", [
-        { path: `${path}/${jsonPointer(key)}`, code: "INVALID_VALUE" },
-      ]);
-    validateConfiguration(entry, depth + 1, `${path}/${jsonPointer(key)}`);
-  }
-}
-
-function operationTarget(
-  operation: OccApiRoute,
-  installationId: string,
-  params: Readonly<Record<string, unknown>>,
-): ResourceRef {
-  const namespaceId = typeof params.namespaceId === "string" ? params.namespaceId : undefined;
-  const configurationId =
-    typeof params.configurationId === "string" ? params.configurationId : undefined;
-  const serviceAccountId =
-    typeof params.serviceAccountId === "string" ? params.serviceAccountId : undefined;
-  const secretId = typeof params.secretId === "string" ? params.secretId : undefined;
-  const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
-  const revisionId = typeof params.revisionId === "string" ? params.revisionId : undefined;
-  if (operation.operationId === "createNamespace") return { kind: "namespace", id: installationId };
-  if (operation.operationId === "createConfiguration" && namespaceId)
-    return { kind: "configuration", id: namespaceId, namespaceId };
-  if (configurationId && namespaceId)
-    return { kind: "configuration", id: configurationId, namespaceId };
-  if (operation.operationId === "createServiceAccount" && namespaceId)
-    return { kind: "service_account", id: namespaceId, namespaceId };
-  if (serviceAccountId && namespaceId)
-    return { kind: "service_account", id: serviceAccountId, namespaceId };
-  if (operation.operationId === "createSecret" && namespaceId)
-    return { kind: "secret", id: namespaceId, namespaceId };
-  if (secretId && namespaceId) return { kind: "secret", id: secretId, namespaceId };
-  if (operation.operationId === "createAgent" && namespaceId)
-    return { kind: "agent", id: namespaceId, namespaceId };
-  if (operation.operationId === "getAgentRevision" && namespaceId && revisionId)
-    return { kind: "agent_revision", id: revisionId, namespaceId };
-  if (agentId && namespaceId) return { kind: "agent", id: agentId, namespaceId };
-  if (namespaceId) return { kind: "namespace", id: namespaceId, namespaceId };
-  return { kind: "installation", id: installationId };
-}
-
-function requiredPermissions(operation: OccApiRoute): readonly RequiredPermission[] {
-  const permission = {
-    action: operation.iamAction,
-    resourceKind: operation.resourceKind,
-  };
-
-  if (operation.operationId === "getAgentRevision") {
-    return [
-      { action: "read", resourceKind: "agent", scope: "requested" },
-      { action: "read", resourceKind: "agent_revision", scope: "requested" },
-    ];
-  }
-
-  if (operation.operationId === "createNamespace") {
-    return [
-      { ...permission, scope: "installation" },
-      {
-        action: "administer",
-        resourceKind: "installation",
-        scope: "requested",
-        condition: "existing_namespace",
-      },
-    ];
-  }
-
-  if (
-    operation.operationId === "createConfiguration" ||
-    operation.operationId === "updateConfiguration"
-  ) {
-    return [
-      {
-        ...permission,
-        scope: operation.operationId === "createConfiguration" ? "namespace" : "requested",
-      },
-      {
-        action: "operate",
-        resourceKind: "secret",
-        scope: operation.operationId === "createConfiguration" ? "request_body" : "requested",
-        condition: "bound_secret",
-      },
-    ];
-  }
-
-  if (operation.operationId === "createSecret") {
-    return [{ ...permission, scope: "namespace" }];
-  }
-
-  if (
-    operation.operationId === "createAgent" ||
-    operation.operationId === "updateAgent" ||
-    operation.operationId === "deployAgent"
-  ) {
-    return [
-      { ...permission, scope: operation.operationId === "createAgent" ? "namespace" : "requested" },
-      { action: "read", resourceKind: "configuration", scope: "requested" },
-      {
-        action: "read",
-        resourceKind: "service_account",
-        scope: "requested",
-        condition: "associated_service_account",
-      },
-      {
-        action: "operate",
-        resourceKind: "secret",
-        scope: "requested",
-        condition: "bound_secret",
-      },
-    ];
-  }
-
-  switch (operation.authorizationTarget) {
-    case "namespace_collection":
-      return [{ ...permission, scope: "namespace" }];
-    case "namespace_candidates":
-      return [{ ...permission, scope: "each_returned" }];
-    case "namespace_and_agent_candidates":
-      return [
-        { action: "read", resourceKind: "namespace", scope: "requested" },
-        { ...permission, scope: "each_returned" },
-      ];
-    case "namespace_and_service_account_candidates":
-      return [
-        { action: "read", resourceKind: "namespace", scope: "requested" },
-        { ...permission, scope: "each_returned" },
-      ];
-    case "agent_collection":
-      return [
-        { ...permission, scope: "requested" },
-        { action: "read", resourceKind: "agent_revision", scope: "each_returned" },
-      ];
-    default:
-      return [{ ...permission, scope: "requested" }];
-  }
-}
-
-function permissionDescription(
-  permissions: readonly RequiredPermission[],
-  operation?: OccApiRoute,
-): string {
-  const names: Record<ResourceKind, string> = {
-    installation: "Installation",
-    namespace: "Namespace",
-    configuration: "Configuration",
-    service_account: "ServiceAccount",
-    secret: "Secret",
-    agent: "Agent",
-    agent_revision: "AgentRevision",
-  };
-
-  const description = permissions
-    .map(({ action, resourceKind, scope, condition }) => {
-      const name = names[resourceKind];
-      if (condition === "associated_service_account")
-        return `Requires ${action} permission on each currently associated or newly associated ${name} when present.`;
-      if (condition === "existing_namespace")
-        return `Requires ${action} permission on the ${name} when selecting an existing Kubernetes namespace.`;
-      if (condition === "bound_secret") {
-        if (operation?.operationId === "createConfiguration")
-          return `Requires ${action} permission on each ${name} supplied in request body Secret bindings.`;
-        if (operation?.operationId === "updateConfiguration")
-          return `Requires ${action} permission on each ${name} bound by the resulting Configuration.`;
-        return `Requires ${action} permission on each bound ${name} when Secret bindings are present or selected.`;
-      }
-      switch (scope) {
-        case "installation":
-          return `Requires ${action} permission for ${name} resources in the Installation.`;
-        case "namespace":
-          return `Requires ${action} permission for ${name} resources in the requested Namespace.`;
-        case "each_returned":
-          return `Only ${name} resources with individual ${action} permission are returned.`;
-        default:
-          return `Requires ${action} permission on the requested ${name}.`;
-      }
-    })
-    .join(" ");
-
-  if (operation?.operationId === "deployAgent") {
-    return `${description} Deployment also requires the owning Agent service principal to have operate permission on each bound Secret.`;
-  }
-  return description;
 }
 
 function clientServiceAccount(account: Readonly<ServiceAccount>): Record<string, unknown> {
@@ -511,141 +199,6 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
   };
 }
 
-function responseHeaders(reply: FastifyReply, requestId: string): void {
-  reply.header("cache-control", "no-store");
-  reply.header("content-type", "application/json; charset=utf-8");
-  reply.header("x-content-type-options", "nosniff");
-  reply.header("x-request-id", requestId);
-}
-
-function canonicalFailure(reply: FastifyReply, error: RequestFailure): void {
-  responseHeaders(reply, reply.request.id);
-  reply.status(error.status).send({
-    error: {
-      code: error.code,
-      message: error.message,
-      ...(error.details === undefined ? {} : { details: error.details }),
-    },
-    meta: { requestId: reply.request.id },
-  });
-}
-
-function validationCode(keyword: string): ErrorDetail["code"] {
-  switch (keyword) {
-    case "required":
-      return "REQUIRED";
-    case "additionalProperties":
-      return "UNKNOWN_FIELD";
-    case "type":
-      return "INVALID_TYPE";
-    case "format":
-    case "pattern":
-      return "INVALID_FORMAT";
-    case "maxLength":
-      return "TOO_LONG";
-    default:
-      return "INVALID_VALUE";
-  }
-}
-
-function validationDetails(error: FastifyError): readonly ErrorDetail[] {
-  if (!Array.isArray(error.validation)) return [];
-  return error.validation.slice(0, 32).map((detail): ErrorDetail => {
-    const parameters = detail.params as Record<string, unknown>;
-    let path = typeof detail.instancePath === "string" ? detail.instancePath : "";
-    if (detail.keyword === "required" && typeof parameters.missingProperty === "string")
-      path += `/${jsonPointer(parameters.missingProperty)}`;
-    if (
-      detail.keyword === "additionalProperties" &&
-      typeof parameters.additionalProperty === "string"
-    )
-      path += `/${jsonPointer(parameters.additionalProperty)}`;
-    return { path, code: validationCode(detail.keyword) };
-  });
-}
-
-function requestFailure(error: unknown): RequestFailure {
-  if (error instanceof RequestFailure) return error;
-  if (error instanceof ChannelBindingInvalidError)
-    return failure(400, "INVALID_REQUEST", "The channel binding request is invalid.");
-  if (error instanceof ConfigurationValidationError)
-    return failure(400, "INVALID_REQUEST", "The supplied configuration is invalid.");
-  if (error instanceof ConfigurationOwnershipError)
-    return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
-  if (error instanceof NamespaceNotReadyError)
-    return failure(
-      409,
-      "NAMESPACE_NOT_READY",
-      "The requested Namespace is not ready for deployment.",
-    );
-  if (error instanceof NamespaceNotEmptyError)
-    return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
-  if (error instanceof DependencyUnavailableError)
-    return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
-  if (error instanceof ResourceConflictError)
-    return failure(409, "RESOURCE_CONFLICT", "The requested platform resource already exists.");
-  if (error instanceof ScopeViolationError)
-    return failure(404, "NOT_FOUND", "The requested platform resource was not found.");
-  if (error instanceof AuthorizationDeniedError)
-    return failure(403, "FORBIDDEN", "The exact platform operation was not authorized.");
-  if (error instanceof Error) {
-    const candidate = error as FastifyError;
-    if (error.name === "APIError") {
-      const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
-      const status = typeof statusCode === "number" ? statusCode : 500;
-      if (status === 409)
-        return failure(409, "RESOURCE_CONFLICT", "The requested platform resource already exists.");
-      if (status === 400)
-        return failure(
-          400,
-          "INVALID_REQUEST",
-          "The request does not match the operation contract.",
-        );
-      if (status === 401)
-        return failure(401, "UNAUTHENTICATED", "The caller did not provide valid credentials.");
-      if (status === 403)
-        return failure(403, "FORBIDDEN", "The exact platform operation was not authorized.");
-      return failure(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "A required platform dependency is unavailable.",
-      );
-    }
-    if (candidate.code === "FST_ERR_CTP_BODY_TOO_LARGE")
-      return failure(413, "PAYLOAD_TOO_LARGE", "The request body exceeds the permitted size.");
-    if (candidate.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE")
-      return failure(415, "UNSUPPORTED_MEDIA_TYPE", "Requests must use application/json.");
-    if (
-      candidate.code === "FST_ERR_CTP_EMPTY_JSON_BODY" ||
-      candidate.code === "FST_ERR_CTP_INVALID_CONTENT_LENGTH" ||
-      candidate.code === "FST_ERR_CTP_INVALID_JSON_BODY" ||
-      candidate.statusCode === 400
-    ) {
-      const details = validationDetails(candidate);
-      return failure(
-        400,
-        "INVALID_REQUEST",
-        "The request does not match the operation contract.",
-        details.length > 0 ? details : undefined,
-      );
-    }
-    if (error.name === "AdmissionFailure") {
-      const status =
-        candidate.statusCode === 403 || (candidate as { status?: number }).status === 403
-          ? 403
-          : 401;
-      return failure(
-        status,
-        status === 403 ? "FORBIDDEN" : "UNAUTHENTICATED",
-        status === 403
-          ? "The request did not satisfy the configured admission boundary."
-          : "The caller did not provide valid admission evidence.",
-      );
-    }
-  }
-  return failure(500, "INTERNAL_ERROR", "The platform request could not be completed.");
-}
-
 export function createFastifyApp(options: ControllerAppOptions): FastifyInstance {
   const development = Object.freeze({ ...options.development });
   if (
@@ -681,45 +234,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   }
   validateTrustedDevelopmentCidrs(development);
 
-  const app = Fastify({
+  const app = createHttpTransport({
     bodyLimit,
-    ...(options.logger === undefined
-      ? {}
-      : {
-          loggerInstance: options.logger,
-          logController: new LogController({ disableRequestLogging: true }),
-        }),
-    trustProxy: false,
-    requestIdHeader: false,
-    genReqId: () => `req_${randomUUID()}`,
-    ajv: {
-      customOptions: { removeAdditional: false, coerceTypes: false, useDefaults: false },
-      plugins: [formatsPlugin],
-    },
-  }).withTypeProvider<TypeBoxTypeProvider>();
-
-  app.removeContentTypeParser("text/plain");
-  app.addSchema(JsonValue);
-  void app.register(swagger, {
-    convertConstToEnum: false,
-    openapi: {
-      openapi: "3.1.0",
-      info: {
-        title: development.enabled ? "Development OCC API" : "Internal OCC API",
-        version: "0.1.0",
-      },
-      components: {
-        securitySchemes: {
-          sessionCookie: {
-            type: "apiKey",
-            in: "cookie",
-            name: `${OCC_AUTH_COOKIE_PREFIX}.session_token`,
-          },
-          serviceApiKey: { type: "apiKey", in: "header", name: OCC_SERVICE_KEY_HEADER },
-        },
-      },
-      security: [{ sessionCookie: [] }, { serviceApiKey: [] }],
-    },
+    developmentEnabled: development.enabled,
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
 
   let controller = options.controller;
@@ -853,7 +371,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     kind: "bootstrap" | "mutation" | "authorization_denial",
     context?: RequestContext,
     evidence?: AuthorizationEvidence,
-    result?: { readonly outcome: "success" | "denied" | "failure"; readonly reasonCode?: string },
+    result?: {
+      readonly outcome: "success" | "denied" | "failure";
+      readonly reasonCode?: string;
+    },
     authorization?: NonNullable<AuthorizationDeniedError["authorization"]>,
   ): AuditEvent {
     return factory.create({
@@ -887,7 +408,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               ? {}
               : {
                   ...(evidence.restrictionIds.length > 0
-                    ? { decisionReason: "A matching Restriction denied the operation." }
+                    ? {
+                        decisionReason: "A matching Restriction denied the operation.",
+                      }
                     : {}),
                   details: {
                     iamEvidence: {
@@ -927,21 +450,6 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
   function dependencyUnavailable(): RequestFailure {
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
-  }
-
-  function requireBrowserIntent(request: FastifyRequest, requireOrigin: boolean): void {
-    const admitted = admissions.get(request);
-    if (admitted?.method === "api_key") return;
-    const fetchSite = request.headers["sec-fetch-site"];
-    const fetchSites =
-      fetchSite === undefined ? [] : Array.isArray(fetchSite) ? fetchSite : [fetchSite];
-    if (fetchSites.some((site) => site.toLowerCase() === "cross-site"))
-      throw failure(403, "FORBIDDEN", "The request did not satisfy the configured CSRF boundary.");
-    if (!requireOrigin) return;
-    if (publicOrigin === undefined) throw dependencyUnavailable();
-    const origin = request.headers.origin;
-    if (typeof origin !== "string" || origin !== publicOrigin)
-      throw failure(403, "FORBIDDEN", "The request did not satisfy the configured CSRF boundary.");
   }
 
   function workspaceFileRequestSignal(
@@ -1006,7 +514,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     resource: ResourceRef,
     context: RequestContext,
     filename: WorkspaceFileName,
-    result?: { readonly outcome: "success" | "failure"; readonly reasonCode?: string },
+    result?: {
+      readonly outcome: "success" | "failure";
+      readonly reasonCode?: string;
+    },
   ): AuditEvent {
     const base = event(operation, request, resource, "mutation", context, undefined, result);
     return {
@@ -1147,188 +658,21 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     });
   });
 
-  async function admit(request: FastifyRequest, operation: OccApiRoute): Promise<void> {
-    if (
-      request.headers[OCC_SERVICE_KEY_HEADER] !== undefined &&
-      (operation === createAuthAccountOperation ||
-        operation.operationId === "bootstrapInstallation")
-    )
-      throw failure(401, "UNAUTHENTICATED", "A human controller session is required.");
-    const params = request.params as Record<string, unknown>;
-    const paginatedChannelList = [
-      "listChannelInstallations",
-      "listChannelHumanBindings",
-      "listChannelAgentBindings",
-    ].includes(operation.operationId);
-    if (!paginatedChannelList && Object.keys(request.query as Record<string, unknown>).length > 0)
-      throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
-    for (const [parameter, pattern] of Object.entries(RESOURCE_ID)) {
-      if (
-        params[parameter] !== undefined &&
-        (typeof params[parameter] !== "string" || !pattern.test(params[parameter] as string))
-      )
-        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
-    }
-
-    const host = request.headers.host;
-    let hostname: string;
-    try {
-      hostname = new URL(`http://${host ?? "127.0.0.1"}`).hostname;
-    } catch {
-      hostname = "";
-    }
-    const remoteAddress = request.raw.socket.remoteAddress ?? "127.0.0.1";
-    const origin = request.headers.origin;
-    let originAllowed = true;
-    if (typeof origin === "string") {
-      try {
-        originAllowed = LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
-      } catch {
-        originAllowed = false;
-      }
-    } else if (Array.isArray(origin)) {
-      originAllowed = false;
-    }
-    const forwarded = Object.keys(request.headers).some(
-      (name) => name === "forwarded" || name === "x-real-ip" || name.startsWith("x-forwarded-"),
-    );
-    if (
-      forwarded ||
-      (development.enabled &&
-        (!LOOPBACK_HOSTNAMES.has(hostname) ||
-          !originAllowed ||
-          !trustedDevelopmentAddress(development, remoteAddress)))
-    ) {
-      throw failure(
-        403,
-        "FORBIDDEN",
-        development.enabled
-          ? "Development admission is restricted to direct loopback requests."
-          : "Production admission requires a direct request.",
-      );
-    }
-
-    let admitted: AdmittedCaller;
-    try {
-      admitted = await options.auth.admissionVerifier.verify({
-        requestId: request.id,
-        method: request.method,
-        routeId: operation.operationId,
-        requestedScope: {
-          installationId,
-          ...(typeof params.namespaceId === "string" ? { namespaceId: params.namespaceId } : {}),
-        },
-        transport: {
-          remoteAddress,
-          ...(request.raw.socket.localAddress === undefined
-            ? {}
-            : { localAddress: request.raw.socket.localAddress }),
-          trustProxy: false,
-        },
-        ...(typeof request.headers.authorization === "string"
-          ? { authorizationHeader: request.headers.authorization }
-          : {}),
-        headers: request.headers,
-      });
-    } catch (error) {
-      throw requestFailure(error);
-    }
-
-    if (
-      !admitted ||
-      !isNonEmptyString(admitted.externalIdentity?.issuer) ||
-      !isNonEmptyString(admitted.externalIdentity?.subject) ||
-      !isNonEmptyString(admitted.decisionId) ||
-      (admitted.method !== "session" && admitted.method !== "api_key") ||
-      admitted.admittedScope?.installationId !== installationId ||
-      (admitted.method === "session" &&
-        admitted.admittedScope.namespaceId !== undefined &&
-        admitted.admittedScope.namespaceId !== params.namespaceId)
-    ) {
-      await denial(operation, request, "authorization_denial");
-      throw failure(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "A required platform dependency is unavailable.",
-      );
-    }
-
-    admissions.set(request, admitted);
-    // Only verified explicit service keys can bypass browser intent. A cookie
-    // mutation requires the configured exact Origin even for a bodyless POST.
-    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) requireBrowserIntent(request, true);
-  }
-
-  async function resolveIdentity(request: FastifyRequest, operation: OccApiRoute): Promise<void> {
-    const admitted = admissions.get(request);
-    if (!admitted)
-      throw failure(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "A required platform dependency is unavailable.",
-      );
-    let selected: IAMDriver;
-    let selectedId: string;
-    let identity;
-    try {
-      selected = selectedIAMDriver();
-      selectedId = selected.id;
-      identity = await selected.lookupIdentity(
-        admitted.method === "api_key"
-          ? {
-              servicePrincipalId: admitted.externalIdentity.subject,
-              ...(admitted.admittedScope.namespaceId === undefined
-                ? {}
-                : { namespaceId: admitted.admittedScope.namespaceId }),
-            }
-          : {
-              issuer: admitted.externalIdentity.issuer,
-              subject: admitted.externalIdentity.subject,
-            },
-      );
-    } catch {
-      throw failure(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "A required platform dependency is unavailable.",
-      );
-    }
-
-    if (
-      !identity ||
-      (admitted.method === "api_key"
-        ? identity.kind !== "service_principal" ||
-          identity.agentId !== undefined ||
-          identity.id !== admitted.externalIdentity.subject ||
-          identity.namespaceId !== admitted.admittedScope.namespaceId
-        : identity.kind !== "principal" ||
-          identity.issuer !== admitted.externalIdentity.issuer ||
-          identity.subject !== admitted.externalIdentity.subject)
-    ) {
-      await denial(operation, request, "authorization_denial");
-      throw failure(403, "FORBIDDEN", "The exact platform operation was not authorized.");
-    }
-
-    if (selectedIAMDriver() !== selected || selected.id !== selectedId)
-      throw dependencyUnavailable();
-    identityAuthorities.set(request, { driver: selected, id: selectedId });
-    const context: RequestContext = {
-      actorId: identity.id,
-      issuer: admitted.externalIdentity.issuer,
-      subject: admitted.externalIdentity.subject,
-      admissionDecisionId: admitted.decisionId,
-      operation,
-    };
-    contexts.set(request, context);
-    if (
-      admitted.method === "api_key" &&
-      admitted.admittedScope.namespaceId !== undefined &&
-      admitted.admittedScope.namespaceId !== (request.params as Record<string, unknown>).namespaceId
-    ) {
-      await denial(operation, request, "authorization_denial", context);
-      throw failure(403, "FORBIDDEN", "The admitted Namespace does not match.");
-    }
-  }
+  const { admit, requireBrowserIntent } = createHttpAdmission({
+    development,
+    installationId,
+    ...(publicOrigin === undefined ? {} : { publicOrigin }),
+    verifyAdmission: (request) => options.auth.admissionVerifier.verify(request),
+    admissions,
+    denial,
+  });
+  const resolveIdentity = createIdentityResolver({
+    admissions,
+    contexts,
+    selectedIAMDriver,
+    denial,
+    recordIdentityAuthority: (request, authority) => identityAuthorities.set(request, authority),
+  });
 
   async function perform(
     request: FastifyRequest,
@@ -1396,7 +740,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         });
         installChannelHumanVerifier(created);
         controller = created;
-        reply.status(201).send({ data: created.installation, meta: { requestId: request.id } });
+        reply.status(201).send({
+          data: created.installation,
+          meta: { requestId: request.id },
+        });
         return;
       } finally {
         bootstrapping = false;
@@ -1421,7 +768,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         const data = await performChannelBindingOperation(
           controller.channelBindings,
           operation.operationId,
-          { ...context, requestId: request.id, ...(humanInvocation ? { humanInvocation } : {}) },
+          {
+            ...context,
+            requestId: request.id,
+            ...(humanInvocation ? { humanInvocation } : {}),
+          },
           { params: request.params, query: request.query, body: request.body },
         );
         reply.status(operation.method === "POST" ? 201 : 200).send({
@@ -1447,7 +798,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       const providers = options.providerSummaries;
       if (providers === undefined) throw dependencyUnavailable();
       reply.send({
-        data: providers.map((provider) => ({ id: provider.id, type: provider.type })),
+        data: providers.map((provider) => ({
+          id: provider.id,
+          type: provider.type,
+        })),
         meta: { requestId: request.id },
       });
       return;
@@ -1585,7 +939,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           event(
             operation,
             request,
-            { kind: "configuration", id: params.configurationId as string, namespaceId },
+            {
+              kind: "configuration",
+              id: params.configurationId as string,
+              namespaceId,
+            },
             "mutation",
             context,
           ),
@@ -1623,7 +981,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         namespaceId,
         params.secretId as string,
       );
-      reply.send({ data: clientSecret(secret), meta: { requestId: request.id } });
+      reply.send({
+        data: clientSecret(secret),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -1689,7 +1050,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
     if (operation.operationId === "listServiceAccounts") {
       const accounts = await controller.listServiceAccounts(context.actorId, namespaceId);
-      reply.send({ data: accounts.map(clientServiceAccount), meta: { requestId: request.id } });
+      reply.send({
+        data: accounts.map(clientServiceAccount),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -1699,7 +1063,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         namespaceId,
         params.serviceAccountId as string,
       );
-      reply.send({ data: clientServiceAccount(account), meta: { requestId: request.id } });
+      reply.send({
+        data: clientServiceAccount(account),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -1759,7 +1126,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           event(
             operation,
             request,
-            { kind: "service_account", id: params.serviceAccountId as string, namespaceId },
+            {
+              kind: "service_account",
+              id: params.serviceAccountId as string,
+              namespaceId,
+            },
             "mutation",
             context,
           ),
@@ -1802,7 +1173,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
     if (operation.operationId === "listAgents") {
       const agents = await controller.listAgents(context.actorId, namespaceId);
-      reply.send({ data: agents.map(clientAgent), meta: { requestId: request.id } });
+      reply.send({
+        data: agents.map(clientAgent),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -1886,7 +1260,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           throw error;
         }
       }
-      reply.status(202).send({ data: clientRevision(revision), meta: { requestId: request.id } });
+      reply.status(202).send({
+        data: clientRevision(revision),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -1915,7 +1292,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             ? controller.getReadableActiveAgentRevision(context.actorId, namespaceId, agentId)
             : controller.getOperableActiveAgentRevision(context.actorId, namespaceId, agentId),
         );
-        const target = { kind: "agent" as const, id: agent.id, namespaceId: agent.namespaceId };
+        const target = {
+          kind: "agent" as const,
+          id: agent.id,
+          namespaceId: agent.namespaceId,
+        };
         if (signal.aborted) throw dependencyUnavailable();
 
         if (operation.operationId === "getAgentWorkspaceFile") {
@@ -1941,7 +1322,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             throw dependencyUnavailable();
           }
           const isWellFormed = (
-            String.prototype as unknown as { isWellFormed: (this: string) => boolean }
+            String.prototype as unknown as {
+              isWellFormed: (this: string) => boolean;
+            }
           ).isWellFormed;
           if (
             Buffer.byteLength(result.file.content, "utf8") > WORKSPACE_FILE_CONTENT_LIMIT ||
@@ -2089,7 +1472,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         agentId,
         params.revisionId as string,
       );
-      reply.send({ data: clientRevision(revision), meta: { requestId: request.id } });
+      reply.send({
+        data: clientRevision(revision),
+        meta: { requestId: request.id },
+      });
       return;
     }
 
@@ -2124,7 +1510,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       },
     };
     const responses = (success: Record<string, unknown>, status = 200) => ({
-      [status]: { description: status === 201 ? "Created" : "OK", ...envelope(success) },
+      [status]: {
+        description: status === 201 ? "Created" : "OK",
+        ...envelope(success),
+      },
       401: { description: "Unauthorized", ...error },
       503: { description: "Service Unavailable", ...error },
     });
@@ -2169,7 +1558,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               type: "object",
               additionalProperties: false,
               required: ["result", "record"],
-              properties: { result: { enum: ["applied", "exact-replay"] }, record: recordSchema },
+              properties: {
+                result: { enum: ["applied", "exact-replay"] },
+                record: recordSchema,
+              },
             },
             {
               type: "object",
@@ -2194,7 +1586,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             tags: operation.tags,
             security: [{ sessionCookie: [] }],
             "x-openclaw-permissions": [
-              { action: "administer", resourceKind: "installation", scope: "installation" },
+              {
+                action: "administer",
+                resourceKind: "installation",
+                scope: "installation",
+              },
             ],
             ...(writing
               ? { body: RuntimeServiceTrustRequestSchema }
@@ -2220,7 +1616,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               409: { description: "Conflict", ...error },
             },
           } as DocumentedFastifySchema,
-          onRequest: async (request) => admit(request, operation),
+          onRequest: async (request) => admit(request, operation, "runtime-service"),
           preValidation: async (request) => {
             await resolveIdentity(request, operation);
             const admitted = admissions.get(request);
@@ -2289,7 +1685,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           tags: [...operation.tags],
           security: [{ sessionCookie: [] }, { serviceApiKey: [] }],
           "x-openclaw-permissions": [
-            { action: "administer", resourceKind: "installation", scope: "requested" },
+            {
+              action: "administer",
+              resourceKind: "installation",
+              scope: "requested",
+            },
           ],
           ...(creating
             ? {
@@ -2298,9 +1698,21 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
                   additionalProperties: false,
                   required: ["servicePrincipalId", "name"],
                   properties: {
-                    servicePrincipalId: { type: "string", minLength: 1, maxLength: 200 },
-                    namespaceId: { type: "string", pattern: RESOURCE_ID.namespaceId.source },
-                    name: { type: "string", minLength: 1, maxLength: 32, pattern: "\\S" },
+                    servicePrincipalId: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 200,
+                    },
+                    namespaceId: {
+                      type: "string",
+                      pattern: RESOURCE_ID.namespaceId.source,
+                    },
+                    name: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 32,
+                      pattern: "\\S",
+                    },
                     expiresIn: {
                       type: "integer",
                       minimum: 86400,
@@ -2315,7 +1727,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
                   type: "object",
                   additionalProperties: false,
                   required: ["keyId"],
-                  properties: { keyId: { type: "string", minLength: 1, maxLength: 200 } },
+                  properties: {
+                    keyId: { type: "string", minLength: 1, maxLength: 200 },
+                  },
                 },
               }),
           response: {
@@ -2339,7 +1753,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             409: { description: "Conflict", ...error },
           },
         } as DocumentedFastifySchema,
-        onRequest: async (request) => admit(request, operation),
+        onRequest: async (request) => admit(request, operation, "auth"),
         preHandler: async (request) => resolveIdentity(request, operation),
         handler: async (request, reply) => {
           const context = contexts.get(request);
@@ -2425,7 +1839,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             } catch {
               throw dependencyUnavailable();
             }
-            reply.send({ data: { id: key.id, revoked: true }, meta: { requestId: request.id } });
+            reply.send({
+              data: { id: key.id, revoked: true },
+              meta: { requestId: request.id },
+            });
           }
         },
       });
@@ -2457,7 +1874,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               required: ["authenticated"],
               properties: { authenticated: { type: "boolean", const: true } },
             }),
-            429: { description: "Too Many Requests; retry after 12 seconds", ...error },
+            429: {
+              description: "Too Many Requests; retry after 12 seconds",
+              ...error,
+            },
           },
         },
       },
@@ -2532,7 +1952,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           tags: [...createAuthAccountOperation.tags],
           security: [{ sessionCookie: [] }],
           "x-openclaw-permissions": [
-            { action: "administer", resourceKind: "installation", scope: "requested" },
+            {
+              action: "administer",
+              resourceKind: "installation",
+              scope: "requested",
+            },
           ],
           response: {
             ...responses(account, 201),
@@ -2541,7 +1965,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             409: { description: "Conflict", ...error },
           },
         },
-        onRequest: async (request) => admit(request, createAuthAccountOperation),
+        onRequest: async (request) => admit(request, createAuthAccountOperation, "auth"),
         preValidation: async (request) => resolveIdentity(request, createAuthAccountOperation),
       },
       async (request, reply) => {
@@ -2632,43 +2056,54 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   void app.register(async (routes) => {
     routes.addSchema(ErrorResponse);
     routes.addSchema(SecretResponse);
-    for (const operation of occApiRoutes) {
-      const permissions = requiredPermissions(operation);
-      const schema: DocumentedFastifySchema = {
-        ...operation.schema,
-        operationId: operation.operationId,
-        summary: operation.summary,
-        description: permissionDescription(permissions, operation),
-        tags: [...operation.tags],
-        "x-openclaw-permissions": permissions,
-        ...(operation.operationId === "bootstrapInstallation"
-          ? { security: [{ sessionCookie: [] }] }
-          : {}),
-      } as DocumentedFastifySchema;
-      routes.route({
-        method: operation.method as HTTPMethods,
-        url: operation.path,
-        ...(operation.operationId === "putAgentWorkspaceFile"
-          ? { bodyLimit: WORKSPACE_FILE_BODY_LIMIT }
-          : {}),
-        schema,
-        onRequest: async (request) => admit(request, operation),
-        preValidation: async (request) => {
-          const hasRequestBody =
-            request.body !== undefined ||
-            Number(request.headers["content-length"] ?? 0) > 0 ||
-            request.headers["transfer-encoding"] !== undefined;
-          if (!Object.hasOwn(operation.schema, "body") && hasRequestBody)
-            throw failure(
-              400,
-              "INVALID_REQUEST",
-              "The request does not match the operation contract.",
-            );
-        },
-        preHandler: async (request) => resolveIdentity(request, operation),
-        handler: async (request, reply) => perform(request, reply, operation),
-      });
-    }
+    const handlers = {
+      createChannelInstallation: perform,
+      listChannelInstallations: perform,
+      getChannelInstallation: perform,
+      setChannelInstallationStatus: perform,
+      createChannelHumanBinding: perform,
+      listChannelHumanBindings: perform,
+      getChannelHumanBinding: perform,
+      setChannelHumanBindingStatus: perform,
+      createChannelAgentBinding: perform,
+      listChannelAgentBindings: perform,
+      getChannelAgentBinding: perform,
+      setChannelAgentBindingStatus: perform,
+      getInstallation: perform,
+      listProviders: perform,
+      createNamespace: perform,
+      listNamespaces: perform,
+      getNamespace: perform,
+      deleteNamespace: perform,
+      createConfiguration: perform,
+      getConfiguration: perform,
+      updateConfiguration: perform,
+      deleteConfiguration: perform,
+      createSecret: perform,
+      getSecret: perform,
+      updateSecret: perform,
+      deleteSecret: perform,
+      createServiceAccount: perform,
+      listServiceAccounts: perform,
+      getServiceAccount: perform,
+      createServiceAccountCredential: perform,
+      updateServiceAccountCredential: perform,
+      deleteServiceAccount: perform,
+      createAgent: perform,
+      updateAgent: perform,
+      listAgents: perform,
+      getAgent: perform,
+      deployAgent: perform,
+      getAgentWorkspaceFile: perform,
+      putAgentWorkspaceFile: perform,
+      listAgentRevisions: perform,
+      getAgentRevision: perform,
+    };
+    registerProtectedOperations(routes, handlers, { admit, resolveIdentity });
+    registerBootstrapOperation(routes, bootstrapOperation, perform, {
+      admit,
+      resolveIdentity,
+    });
   });
 
   app.route({
@@ -2751,37 +2186,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 }
 
 export function createControllerApp(options: ControllerAppOptions): ControllerApp {
-  const app = createFastifyApp(options);
-  return {
-    async fetch(request: Request): Promise<Response> {
-      const url = new URL(request.url);
-      const headers: Record<string, string> = {};
-      request.headers.forEach((value, name) => {
-        headers[name] = value;
-      });
-      headers.host = url.host;
-      const body = request.body ? Buffer.from(await request.arrayBuffer()) : undefined;
-      const result = await app.inject({
-        method: request.method as NonNullable<InjectOptions["method"]>,
-        url: `${url.pathname}${url.search}`,
-        headers,
-        ...(body === undefined ? {} : { payload: body }),
-        remoteAddress: "127.0.0.1",
-      });
-      const convertedHeaders = new Headers();
-      for (const [name, value] of Object.entries(result.headers)) {
-        if (Array.isArray(value)) {
-          for (const entry of value) convertedHeaders.append(name, entry);
-        } else if (value !== undefined) {
-          convertedHeaders.set(name, String(value));
-        }
-      }
-      return new Response(result.statusCode === 204 ? null : new Uint8Array(result.rawPayload), {
-        status: result.statusCode,
-        headers: convertedHeaders,
-      });
-    },
-  };
+  return createFetchAdapter(createFastifyApp(options));
 }
 
 export const createOccApi = createControllerApp;

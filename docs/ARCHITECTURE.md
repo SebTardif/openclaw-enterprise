@@ -89,6 +89,16 @@ The controller worker claims pending Namespace and AgentRevision work,
 reauthorizes the original operation, and invokes the selected Compute Driver.
 Resource changes, queued work, and audit evidence are committed together.
 
+The HTTP entrypoint composes the request infrastructure in
+[`apps/controller/src/http`](../apps/controller/src/http). Protected registration
+requires an exact handler for each ordinary API operation and installs admission,
+strict request validation, current identity lookup, and documented permissions.
+The API keeps authentication, bootstrap, and runtime-service operations under
+explicit separate registration profiles. Domain handlers retain resource and
+audit transactions. Configuration validation and ownership failures use the
+shared [contract error constructors](../packages/contracts/src/configuration-errors.ts)
+so HTTP response mapping does not depend on the Kubernetes Configuration Driver.
+
 The main implementation boundaries are:
 
 | Component            | Responsibility                                              |

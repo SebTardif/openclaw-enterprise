@@ -39,7 +39,7 @@
     },
     {
       "rule": "unresolved-dynamic-import",
-      "from": "apps/controller/src/composition/installation-config.ts",
+      "from": "apps/controller/src/composition/driver-packages/loader.ts",
       "to": "",
       "specifier": "pathToFileURL(entryPath).href",
       "kind": "dynamic-import",
@@ -48,30 +48,6 @@
       "removeWhen": "Remove this exception if the supported installed Driver loader is removed or replaced by static registration.",
       "reason": "The installed Driver loader validates configured package identity, trusted root and entrypoint at runtime; its target is deliberately not a statically enumerable workspace import.",
       "bindings": ["*"]
-    },
-    {
-      "rule": "cross-provider-implementation",
-      "from": "apps/controller/src/drivers/compute/docker/index.ts",
-      "to": "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
-      "specifier": "../kubernetes/runtime-entrypoints.ts",
-      "kind": "import",
-      "typeOnly": false,
-      "owner": "Compute runtime helpers",
-      "removeWhen": "Move shared runtime-entrypoint scripts into the provider-neutral compute runtime module and update both providers.",
-      "reason": "Docker currently consumes shared runtime scripts located under the Kubernetes provider.",
-      "bindings": ["value:AGENT_READINESS_ENTRYPOINT", "value:AGENT_RUNTIME_ENTRYPOINT"]
-    },
-    {
-      "rule": "http-to-provider",
-      "from": "apps/controller/src/index.ts",
-      "to": "apps/controller/src/drivers/configuration/kubernetes/index.ts",
-      "specifier": "./drivers/configuration/kubernetes/index.ts",
-      "kind": "import",
-      "typeOnly": false,
-      "owner": "HTTP configuration boundary",
-      "removeWhen": "Move semantic Configuration errors into the neutral contract and update the HTTP importer.",
-      "reason": "HTTP currently imports semantic Configuration errors from the selected Kubernetes implementation.",
-      "bindings": ["value:ConfigurationOwnershipError", "value:ConfigurationValidationError"]
     },
     {
       "rule": "internal-root-barrel",
