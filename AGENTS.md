@@ -25,7 +25,9 @@ Do not create a competing architecture specification in this checkout.
 
 ## Development integration
 
-Use isolated worktrees with exclusive file ownership for concurrent implementation.
+Use isolated worktrees with narrow scopes and clear interface ownership for concurrent implementation.
+Small, understood file overlaps may proceed independently; resolve mechanical conflicts
+during reviewed composition and preserve actual semantic prerequisites.
 Keep active worktrees in persistent home or workspace storage, not `/tmp` or
 `/var/tmp`, where they can be wiped. Preserve existing worktrees and their contents.
 
@@ -283,6 +285,12 @@ establishes real-runtime outcomes.
 
 ## TypeScript style and verification
 
+- Follow the [development verification loop](docs/development-loop.md) to select
+  focused editing checks, complete handoff evidence and combined integration
+  checks. Keep preparation explicit and distinguish executed, reused and skipped
+  evidence. Independent isolated worktrees may overlap in small, understood
+  file scopes; resolve mechanical conflicts during reviewed composition while
+  preserving actual semantic prerequisites.
 - Use `ts-pattern` for tagged unions and branches that would otherwise become
   nested ternaries. Prefer `match(value).with(...).exhaustive()` so every case
   is explicit and checked by TypeScript.
