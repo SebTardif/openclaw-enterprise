@@ -101,6 +101,14 @@ header keep the documented sign-in/sign-out flow.
 | `GET /api/auth/session`        | Returns safe account identity for a valid session or `data: null` without one. Inspecting the session is optional.                                          |
 | `POST /api/auth/sign-out`      | Revokes the current session. Protected API requests using that session subsequently return `401`.                                                           |
 
+For a valid signed session cookie, sign-out clears the cookie and reports success
+only after the selected authentication adapter acknowledges deletion. A storage
+failure returns `503 DEPENDENCY_UNAVAILABLE` without replacing or clearing the
+cookie. This is an unconfirmed revocation: the cookie may work after recovery,
+and a lost acknowledgement does not prove the session remains stored. See
+[authentication storage failures](authentication-failures.md) for recovery and
+diagnostic boundaries. Requests authenticated before deletion may finish.
+
 For example, the sign-in body is:
 
 ```json
@@ -370,6 +378,7 @@ do not prove a production installation; their commands and required
 [test environment](settings.md#postgresql-test-environment) are linked from the
 [service API key flow](../flows/service-api-keys.md#debugging-and-verification).
 
+- [Authentication storage failures](authentication-failures.md): logout outcomes, dependency diagnostics, and the separate database regression.
 - [Service API key flow](../flows/service-api-keys.md)
 - [Deployment procedure](../guides/deploy.md#service-api-keys-for-automation)
 - [Authorization](authorization.md)
