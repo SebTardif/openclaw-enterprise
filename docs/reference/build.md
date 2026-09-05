@@ -80,6 +80,63 @@ host glibc field records build provenance; it is not a measurement of the
 binary's minimum supported glibc. Execute the real product inside the selected
 image to verify runtime library compatibility before deployment.
 
+### Local upstream SDK declarations
+
+The contracts package uses the normal dependency
+`openclaw: link:../../.build/upstream-sdk/openclaw`. Its checked-in package
+manifest and pnpm lockfile must contain that dependency, and the workspace
+dependency graph must be prepared separately. The
+[SDK layout helper](../../scripts/prepare-upstream-sdk.mjs) creates the ignored
+link target for one worktree without editing package metadata or installing
+dependencies.
+
+Obtain the private layout manifest supplied with the accepted artifacts and its expected SHA-256.
+From the canonical worktree root, create `.build` as a real directory, then
+prepare a destination that does not yet exist:
+
+```sh
+mkdir -p .build
+node scripts/prepare-upstream-sdk.mjs \
+  --manifest /absolute/path/private-layout.json \
+  --sha256 '<manifest-sha256>' \
+  --output "$PWD/.build/upstream-sdk"
+```
+
+The manifest uses schema `oce.upstream-sdk-layout/v1`. Its `packages` array names
+exactly three physical packages, placed automatically at these destinations:
+`openclaw` at `openclaw`, `@openclaw/ai` at
+`openclaw/node_modules/@openclaw/ai`, and `@types/ws` at `node_modules/@types/ws`.
+Each entry has `name`, `version`, canonical absolute `source`, and `files` records
+with relative `path`, `bytes`, `sha256`, and an integer `mode` matching the source.
+The inventory must cover every payload file, excluding the package's top-level
+`node_modules`; dependencies are handled separately. Root and AI versions must
+agree, and the root must expose the real `plugin-sdk/channel-inbound` type entry.
+
+Root and AI entries also require `archive: { path, sha256 }`. Their physical file
+inventories must already be accepted against those archives: the helper checks
+archive hashes but does not extract archives or establish that correspondence.
+The `links` array records output-relative `path`, canonical absolute `target`,
+`name`, `version`, and `manifestSha256` for each local third-party dependency.
+Manifest and source paths must resolve without symlinks. Keep this machine-specific
+manifest outside tracked source; tracked code and documentation contain no
+selected private source paths.
+
+The helper verifies these inputs, copies all three packages' complete inventoried
+files unchanged, and writes `preparation.json` only after preparing the layout.
+It does not import SDK code, execute lifecycle scripts, fetch packages or install
+them. Third-party links retain their existing local targets; only those targets'
+package-manifest identities are checked, not their complete contents. The layout
+supports local declaration consumers, but preparation alone does not establish a
+portable installation, complete declaration or runtime dependency closure, or
+resolution of the separate `fs-safe` runtime-image dependency gap.
+
+The output parent must already exist at its canonical path. An occupied output
+is rejected and preserved. Use a new validation worktree when a fresh layout is
+needed; the helper does not overwrite an existing layout. A failure after output
+creation can leave a partial directory without `preparation.json`; preserve it
+for diagnosis and select a fresh workspace for another attempt. Prepare the
+ignored layout separately in each worktree before compiling its SDK consumers.
+
 ## Image builds
 
 Image construction is explicitly selected and may use the network. The egress
