@@ -51,6 +51,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 ## Understand the code
 
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
+- [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
