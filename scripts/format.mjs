@@ -9,12 +9,10 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -40,8 +38,9 @@ const inScope = (path) =>
     /^[^/]+\.(json|yaml|yml|md)$/.test(path) ||
     /^docs\/.*\.md$/.test(path));
 
-// Hash package contents as well as lockfiles: reinstalling or editing a plugin at
-// the same version must not reuse evidence from its previous implementation.
+// Package contents also invalidate the built-in formatter cache when its version
+// stays unchanged. Configured plugins have arbitrary dependency closures, so
+// their checks remain uncached instead of guessing an implementation identity.
 function hashTree(hash, path) {
   const metadata = lstatSync(path);
   if (metadata.isDirectory()) {
@@ -55,41 +54,32 @@ function hashTree(hash, path) {
   else throw new Error(`Unsupported formatter package entry: ${path}`);
 }
 
+function hasPlugins(value) {
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, child]) => key === "plugins" || hasPlugins(child));
+}
+
+function unboundedConfiguration(path, content) {
+  if (configurationInput(path) && !path.endsWith("ignore")) {
+    if (!path.endsWith(".json")) return true;
+    return hasPlugins(JSON.parse(content));
+  }
+  if (path.endsWith("package.json")) {
+    const config = JSON.parse(content).prettier;
+    return typeof config === "string" || hasPlugins(config);
+  }
+  return false;
+}
+
 function cacheIdentity(prettierRoot) {
   const hash = createHash("sha256").update(process.version);
   hashTree(hash, prettierRoot);
-  const plugins = new Set();
   for (const path of files().sort()) {
     if (!dependencyInput(path) && !configurationInput(path)) continue;
     if (!existsSync(join(root, path))) continue;
     const content = readFileSync(join(root, path));
     hash.update(path).update(content);
-    if (configurationInput(path) && !path.endsWith("ignore")) {
-      // Executable/YAML configuration can import arbitrary implementation code.
-      // Check normally without caching instead of guessing those dependencies.
-      if (!path.endsWith(".json")) return undefined;
-      const config = JSON.parse(content);
-      for (const plugin of config.plugins ?? []) plugins.add(plugin);
-    }
-    if (path.endsWith("package.json")) {
-      const config = JSON.parse(content).prettier;
-      if (typeof config === "string") return undefined;
-      for (const plugin of config?.plugins ?? []) plugins.add(plugin);
-    }
-  }
-  const require = createRequire(join(root, "package.json"));
-  for (const plugin of plugins) {
-    if (typeof plugin !== "string") return undefined;
-    // Local plugins can import arbitrary workspace code; retain uncached checks.
-    if (plugin.startsWith(".") || isAbsolute(plugin)) return undefined;
-    let packageRoot = dirname(require.resolve(plugin));
-    while (!existsSync(join(packageRoot, "package.json"))) {
-      const parent = dirname(packageRoot);
-      if (parent === packageRoot) return undefined;
-      packageRoot = parent;
-    }
-    hash.update(plugin);
-    hashTree(hash, packageRoot);
+    if (unboundedConfiguration(path, content)) return undefined;
   }
   return hash.digest("hex");
 }
@@ -139,6 +129,11 @@ function snapshot(commit, destination) {
     if (!Number.isSafeInteger(size)) throw new Error("Invalid Git blob response.");
     const content = blobs.subarray(newline + 1, newline + 1 + size);
     offset = newline + 1 + size + 1;
+    if (unboundedConfiguration(entry.path, content)) {
+      throw new Error(
+        `Outgoing formatting requires static JSON configuration without plugins: ${entry.path}`,
+      );
+    }
     const target = join(destination, entry.path);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, content);
@@ -196,7 +191,6 @@ try {
       const directory = mkdtempSync(join(tmpdir(), "oce-format-tip-"));
       try {
         snapshot(commit, directory);
-        symlinkSync(join(root, "node_modules"), join(directory, "node_modules"), "dir");
         console.log(`Checking outgoing ref tip ${commit}`);
         // Fresh committed snapshots deliberately do not reuse mutable-worktree
         // evidence. Prettier resolves configuration from the outgoing bytes.
@@ -218,6 +212,17 @@ try {
             !lstatSync(join(root, relativePath)).isFile()
           )
             throw new Error(`Expected an existing authored file in formatting scope: ${path}`);
+          const actualRelativePath = relative(
+            realpathSync(root),
+            realpathSync(join(root, relativePath)),
+          );
+          if (
+            isAbsolute(actualRelativePath) ||
+            actualRelativePath === ".." ||
+            actualRelativePath.startsWith(`..${sep}`)
+          ) {
+            throw new Error(`Formatting input resolves outside this worktree: ${path}`);
+          }
           return `./${relativePath}`;
         })
       : scope;

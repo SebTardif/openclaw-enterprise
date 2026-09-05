@@ -161,7 +161,12 @@ async function formattingFixture(t) {
   await writeFile(join(root, "apps/example.mjs"), "const answer = 42;\n");
   await writeFile(join(root, "docs/guide.md"), "# Guide\n");
   await writeFile(join(root, "docs/reference/api.md"), "#   generated deliberately unformatted\n");
-  await symlink(join(repositoryRoot, "node_modules"), join(root, "node_modules"), "dir");
+  await mkdir(join(root, "node_modules"));
+  await symlink(
+    join(repositoryRoot, "node_modules/prettier"),
+    join(root, "node_modules/prettier"),
+    "dir",
+  );
   return root;
 }
 
@@ -249,8 +254,90 @@ test("native hook checks every outgoing tip independently of dirty worktree and 
   result = pushCheck(root, [good]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Outgoing dependency input differs/);
-  await rm(join(root, "node_modules"));
+  await rm(join(root, "node_modules"), { recursive: true });
   result = pushCheck(root, [good]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /installed Prettier executable is unavailable/);
+});
+
+async function configuredPluginFixture(t, configuration) {
+  const root = await formattingFixture(t);
+  const plugin = join(root, "node_modules/fixture-plugin");
+  await mkdir(join(plugin, "node_modules/policy"), { recursive: true });
+  await writeFile(
+    join(plugin, "package.json"),
+    JSON.stringify({ name: "fixture-plugin", main: "index.cjs" }),
+  );
+  // Exercise Prettier's actual plugin loader, parser and printer, including an
+  // implementation dependency outside the plugin's immediate package files.
+  await writeFile(
+    join(plugin, "index.cjs"),
+    `
+const policy = require('./node_modules/policy');
+module.exports = {
+  parsers: { fixture: { parse: text => ({ text }), astFormat: 'fixture', locStart: () => 0, locEnd: () => 0 } },
+  printers: { fixture: { print: path => path.node.text.trimEnd().replace(/;$/, '') + policy.suffix + "\\n" } }
+};
+`,
+  );
+  const policy = join(plugin, "node_modules/policy/index.js");
+  await writeFile(policy, 'exports.suffix = ";";');
+  await writeFile(join(root, ".prettierrc.json"), JSON.stringify(configuration));
+  return { root, plugin, policy };
+}
+
+test("configured plugins and override plugins do not reuse stale transitive implementation evidence", async (t) => {
+  for (const options of [
+    {
+      plugins: ["fixture-plugin"],
+      overrides: [{ files: "apps/example.mjs", options: { parser: "fixture" } }],
+    },
+    {
+      overrides: [
+        { files: "apps/example.mjs", options: { parser: "fixture", plugins: ["fixture-plugin"] } },
+      ],
+    },
+  ]) {
+    const { root, policy } = await configuredPluginFixture(t, options);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = format(root, "--check", "apps/example.mjs");
+      assert.equal(result.status, 0, result.stderr);
+    }
+    await writeFile(policy, 'exports.suffix = "!";');
+    const result = format(root, "--check", "apps/example.mjs");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Code style issues/);
+  }
+});
+
+test("outgoing formatting rejects plugin dependency closures instead of reading dirty workspace plugins", async (t) => {
+  const { root, plugin } = await configuredPluginFixture(t, {
+    overrides: [
+      { files: "apps/example.mjs", options: { parser: "fixture", plugins: ["fixture-plugin"] } },
+    ],
+  });
+  await mkdir(join(root, "packages"));
+  await rename(plugin, join(root, "packages/fixture-plugin"));
+  await symlink(join(root, "packages/fixture-plugin"), plugin, "dir");
+  const tip = commit(root);
+  assert.equal(installHooks(root).status, 0);
+  for (const implementation of ["exports.suffix = ';';", "exports.suffix = '!';"]) {
+    await writeFile(join(root, "packages/fixture-plugin/index.cjs"), implementation);
+    const result = pushCheck(root, [tip]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /static JSON configuration without plugins/);
+  }
+});
+
+test("focused writes reject file paths whose parent symlink escapes the worktree", async (t) => {
+  const root = await formattingFixture(t);
+  const outside = await mkdtemp(join(tmpdir(), "formatter-outside-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const content = "const answer={value:42}\n";
+  await writeFile(join(outside, "escaped.mjs"), content);
+  await symlink(outside, join(root, "apps/linked"), "dir");
+  const result = format(root, "--write", "apps/linked/escaped.mjs");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /outside this worktree/);
+  assert.equal(await readFile(join(outside, "escaped.mjs"), "utf8"), content);
 });
