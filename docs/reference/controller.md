@@ -374,6 +374,25 @@ constraints and triggers preserve ownership, immutable history and monotonic
 sequences. The in-memory adapter preserves the same observable transaction
 behavior within one process.
 
+The controller delegates its shared mutation boundary to
+[MutationRunner](../../packages/occ/src/application/mutation-runner.ts). Nested
+transactions, mutations, and reads join its current unit of work. The outer
+transaction creates a missing Installation or rejects a different Installation ID
+before running its work. Registered Driver compensations belong to that outer
+unit and run in reverse order on an ordinary failure. A deployment admission
+failure marks the unit as failed even if its caller catches the rejection.
+`forRepositories` copies explicit repository and method selections for read and
+mutation callbacks and supplies frozen projections of bound method delegates,
+including when a read joins a mutable unit. The store retains ownership of
+commit, accepted-operation draining, and repository-handle lifetime.
+`PostgresCommitOutcomeUnknownError` is rethrown without compensation or replay;
+recovery still uses the caller's retained admission locator.
+
+Verify the runner and wired controller with
+`node --test tests/conformance/mutation-coordinator.test.mjs` and, with the existing
+[PostgreSQL application-role test configuration](settings.md#postgresql-test-environment),
+`node --test tests/integration/postgres-mutation-atomicity.test.mjs`.
+
 The bodyless deployment route and canonical `deployAgent` domain operation now
 admit running intents. They initialize an absent head or advance its exact stored
 running generation; disabled and stopped heads conflict. They do not allocate

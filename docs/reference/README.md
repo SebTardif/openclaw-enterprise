@@ -49,6 +49,8 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
+- [Turn journal and completion interfaces](turn-journal.md): versioned types and
+  strict codecs; durable journal storage and channel/runtime integration remain required.
 - [Delegated authority library](delegation.md): internal root grant and model request
   constraints, with required authentication, currentness, and persistence integrations.
 - [External model egress packaging](egress.md): prepared images and isolated local
