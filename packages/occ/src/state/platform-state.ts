@@ -1,3 +1,10 @@
+import {
+  createRuntimeAuthorityRepository,
+  RuntimeAuthorityTransactionGuard,
+  type RuntimeAuthorityReadRepository,
+  type RuntimeAuthorityRepository,
+  type StoredRuntimeAuthorityOperation,
+} from "../runtime-authority/repository.ts";
 import type {
   RuntimeScope,
   RuntimeIntentAttribution,
@@ -518,6 +525,7 @@ export interface PlatformReadView {
   readonly channelBindings: ChannelBindingReadRepository;
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
   readonly runtimeAdmissions: RuntimeAdmissionReadRepository;
+  readonly runtimeAuthority: RuntimeAuthorityReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
   readonly configurations: ConfigurationReadRepository;
@@ -531,6 +539,7 @@ export interface PlatformUnitOfWork extends PlatformReadView {
   readonly channelBindings: ChannelBindingRepository;
   readonly runtimeAssignments: RuntimeAssignmentRepository;
   readonly runtimeAdmissions: RuntimeAdmissionRepository;
+  readonly runtimeAuthority: RuntimeAuthorityRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
   readonly configurations: ConfigurationRepository;
@@ -572,6 +581,7 @@ interface PlatformSnapshot {
   readonly runtimeHeads: Map<string, string>;
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
   readonly runtimeAdmissions: Map<string, Readonly<RevisionRuntimeAdmission>>;
+  readonly runtimeAuthorityOperations: Map<string, StoredRuntimeAuthorityOperation>;
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
   readonly configurations: Map<string, Readonly<ConfigurationOwnership>>;
@@ -596,6 +606,7 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimeHeads: new Map(snapshot.runtimeHeads),
     runtimeAllocations: new Map(snapshot.runtimeAllocations),
     runtimeAdmissions: new Map(snapshot.runtimeAdmissions),
+    runtimeAuthorityOperations: new Map(snapshot.runtimeAuthorityOperations),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
     namespaces: new Map(
@@ -741,7 +752,10 @@ function validRuntimeReference(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._:/-]{1,200}$/.test(value);
 }
 
-function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
+function repositories(
+  snapshot: PlatformSnapshot,
+  authorityGuard = new RuntimeAuthorityTransactionGuard(),
+): PlatformUnitOfWork {
   const installations: InstallationRepository = {
     findInstallation: async (installationId) =>
       snapshot.installation?.id === installationId
@@ -1753,7 +1767,41 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     },
   };
 
+  const runtimeAuthority = createRuntimeAuthorityRepository(
+    {
+      lockOperation: async () => {}, // Existing memory transaction already serializes all writers.
+      allocation: async (scope, assignmentRef) => {
+        if (snapshot.installation?.id !== scope.installationId) return undefined;
+        const allocation = snapshot.runtimeAllocations.get(assignmentRef);
+        return allocation?.namespaceId === scope.namespaceId && allocation.agentId === scope.agentId
+          ? allocation
+          : undefined;
+      },
+      operations: async (scope, assignmentRef) =>
+        [...snapshot.runtimeAuthorityOperations.values()]
+          .filter(
+            ({ receipt }) =>
+              receipt.installationId === scope.installationId &&
+              receipt.namespaceId === scope.namespaceId &&
+              receipt.agentId === scope.agentId &&
+              receipt.assignmentRef.id === assignmentRef,
+          )
+          .sort((a, b) => a.receipt.assignmentRecordVersion - b.receipt.assignmentRecordVersion),
+      operation: async (operationRef) => snapshot.runtimeAuthorityOperations.get(operationRef),
+      insert: async (operation) => {
+        if (snapshot.runtimeAuthorityOperations.has(operation.receipt.operationRef))
+          throw new ResourceConflictError("The runtime authority operation already exists.");
+        snapshot.runtimeAuthorityOperations.set(
+          operation.receipt.operationRef,
+          immutableCopy(operation),
+        );
+      },
+    },
+    runtimeAssignments,
+    authorityGuard,
+  );
   return {
+    runtimeAuthority,
     channelBindings: serializeChannelBindingMutations(channelBindings),
     runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
     runtimeAdmissions,
@@ -1859,6 +1907,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimeHeads: new Map(),
     runtimeAllocations: new Map(),
     runtimeAdmissions: new Map(),
+    runtimeAuthorityOperations: new Map(),
     installation: undefined,
     namespaces: new Map(),
     configurations: new Map(),
@@ -1891,14 +1940,24 @@ export class InMemoryPlatformState implements PlatformStateStore {
     this.pending = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     try {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
-      const result = await work(repositories(working));
+      const result = await work(repositories(working, authorityGuard));
+      await authorityGuard.finish();
       await this.publishAudit(working.audit.slice(committedAuditCount));
       this.snapshot = working;
       return result;
+    } catch (error) {
+      // Drain already-started authority writes before discarding the private snapshot.
+      try {
+        await authorityGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
+      throw error;
     } finally {
       release?.();
     }

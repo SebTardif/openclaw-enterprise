@@ -5,10 +5,79 @@
 requests and results. The interface separates immutable runtime identity,
 versioned evidence, purpose-specific currentness, and retained operation receipts.
 
-This is an interface and validation surface. There is no installed runtime
-authority provider, transport-context factory, new HTTP route, or runtime effect
-implementation behind these exports. Current controller deployment behavior is
-described in [Controller reconciliation](controller.md).
+OCC now persists immutable runtime binding, separately versioned evidence,
+retirement and exact operation receipts in its existing memory and PostgreSQL
+state adapters. The local service boundary denies mutations and positive purpose
+resolution until its trusted transport, observation and acceptance dependencies
+are integrated. There is no installed transport-context producer or runtime
+effect implementation behind this boundary. Current controller deployment
+behavior is described in [Controller reconciliation](controller.md).
+
+## Current persistence and service boundary
+
+Every `PlatformUnitOfWork` exposes `runtimeAuthority`. Its `appendMutation` method
+is an internal OCC persistence operation. It requires an existing exact allocation
+and validates the accepted request schema, immutable ownership, current lifecycle
+generation and expected assignment version. It does not authenticate the caller,
+validate external observation provenance or grant preparation/cleanup permission.
+Only the future trusted acceptor may connect it to service requests after those
+checks are bound to the authoritative transaction.
+
+The adapters retain one append-only operation history. Each row contains the full
+canonical mutation and its immutable receipt together; binding, runtime evidence,
+identity evidence and retirement remain distinct record kinds. Allocation is
+version `1`; each accepted new mutation advances the assignment record exactly
+once. Runtime and identity evidence have independent consecutive versions. An
+immutable binding can be observed again with the same instance tuple, but changed
+Pod, runsc instance, restart, image or profile fields conflict. Evidence history
+has no pointer that turns a newer receipt time into freshness. Neither verified
+identity data nor a satisfied runtime observation selects an active runtime.
+
+Retirement records authority withdrawal and preserves the exact responsibility
+reference/version supplied by the trusted internal caller. The persistence layer
+does not create that responsibility. It records termination and provider credential
+revocation as `not-asserted`. An unbound allocation can retire without fabricated
+Pod or runsc fields. The current slice cannot remove an active selection and
+therefore rejects retirement requests with a non-null expected selection. There
+is no transition back from retirement to a bound or active assignment.
+
+The PostgreSQL adapter uses the same Agent lock as runtime intent/allocation
+writers, plus serialization of the exact operation ID across different Agents.
+Database constraints and a bounded closed-shape validator reject incomplete,
+foreign, conflicting or undecodable operation records even through direct inserts
+by the limited application role. That role can read and insert history; it cannot
+update or delete it. Failed authority mutation validation marks the whole existing
+unit for rollback, including when the caller catches the failure or starts two
+mutations concurrently inside that unit. The memory adapter enforces the same
+state semantics but has no restart or multi-process durability.
+
+`commitRuntimeAuthorityMutation` is internal persistence orchestration. It retains
+the pretransaction operation ID and full canonical payload digest and converts a
+lost PostgreSQL COMMIT acknowledgement into `commit-unknown` with
+`exact-readback-only`. It never retries the mutation or invents a new operation.
+Exact original-service replay is compared before current lifecycle/version checks,
+so later head changes and retirement do not erase a committed historical result.
+Internal scoped readback exposes the retained record without asserting currentness.
+
+`RuntimeAuthorityService` implements the local interface and requires explicit
+server Installation, recipient and trusted clock configuration. Its optional
+context-factory and current service-registry dependencies have no default trusted
+implementation: an absent dependency denies. Ordinary JSON, service-key admission
+and claimed role fields cannot supply a trusted runtime context. It enforces the
+interface's role ceiling and exact scope before a potential operation read, and
+rechecks current context/registry state before returning an original-service
+receipt. The entire read is bounded by the caller deadline and the three-second
+lookup ceiling. These code paths do not establish deployment-qualified timing.
+
+The service currently rejects all mutation submissions and returns no positive
+purpose result. Required protected Compute/verifier observation, admitted profile,
+preparation/selection, cleanup successor exclusion and completed-context policy
+readers are not integrated. In particular it does not implement cleanup readback
+for a different original service: that requires the separately accepted exact
+cleanup responsibility reader. Retained internal storage remains readable after
+retirement, while service disclosure stays denied until that narrow guard exists.
+There is no provider allocation, route selection, registrar write, runtime start,
+credential issuance, context restore or physical teardown in this component.
 
 ## Imported surface
 
@@ -191,3 +260,32 @@ termination and resolution of possible creates are required before any writable
 successor, including initialization, restoration and repair. A generic fence,
 lease, valid certificate or syntactically valid evidence reference cannot substitute
 for that proof.
+
+## Verify the implemented storage slice
+
+Run the memory persistence and actual service-denial checks with installed Node:
+
+```sh
+node --test tests/conformance/runtime-authority-memory.test.mjs tests/integration/runtime-authority-service.test.mjs
+```
+
+Against an explicitly selected, isolated and migrated PostgreSQL 18.6 database,
+set `OCC_TEST_DATABASE_URL` to the limited application role and run:
+
+```sh
+node --test --test-concurrency=1 tests/integration/postgres-runtime-authority.test.mjs
+```
+
+The PostgreSQL suite checks the actual server version and limited role, runs the
+same state contract, races independent database clients, exercises direct SQL
+constraints and withholds a real COMMIT acknowledgement through the reviewed wire
+proxy. An unset database URL explicitly skips this real database suite. The
+optional `OCC_RUNTIME_AUTHORITY_RESTART_RECEIPT` path writes exact private test
+readback data; after restarting only that owned test database, a fresh process can
+verify it with `node tests/fixtures/runtime-authority-state/restart-readback.mjs`.
+
+Persistence fixture values are synthetic ownership/observation inputs to the real
+store. They are not trusted context producers, real runsc observations, verifier
+proofs, active-selection evidence or runtime qualification. Service-denial tests
+exercise actual missing-dependency behavior; authenticated positive service and
+purpose eligibility remain unverified until the corresponding producers exist.

@@ -1083,6 +1083,12 @@ export const runtimeAssignmentAllocations = occSchema.table(
   },
   (table): PgTableExtraConfigValue[] => [
     unique("runtime_allocations_create_effect_unique").on(table.createEffectRef),
+    unique("runtime_allocations_authority_owner").on(
+      table.installationId,
+      table.namespaceId,
+      table.agentId,
+      table.assignmentRef,
+    ),
     unique("runtime_allocations_component_generation_unique").on(
       table.namespaceId,
       table.agentId,
@@ -1367,5 +1373,57 @@ export const signInQuotaSlots = occSchema.table(
   (table) => [
     check("sign_in_quota_slot_bounded", sql`${table.slot} >= 0 AND ${table.slot} < 20480`),
     check("sign_in_quota_timestamp_valid", sql`${table.nextAtMs} BETWEEN 0 AND 9007199254740991`),
+  ],
+);
+
+/** Append-only binding/evidence/retirement records; SQL triggers enforce the transition,
+ * immutable receipt and payload association under the existing Agent owner lock. */
+export const runtimeAuthorityOperations = occSchema.table(
+  "runtime_authority_operations",
+  {
+    operationRef: text("operation_ref").primaryKey(),
+    installationId: text("installation_id").notNull(),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    assignmentRef: text("assignment_ref").notNull(),
+    assignmentRecordVersion: bigint("assignment_record_version", { mode: "number" }).notNull(),
+    operationKind: text("operation_kind").notNull(),
+    canonicalPayload: text("canonical_payload").notNull(),
+    receipt: jsonb("receipt").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "runtime_authority_allocation_owner",
+      columns: [table.installationId, table.namespaceId, table.agentId, table.assignmentRef],
+      foreignColumns: [
+        runtimeAssignmentAllocations.installationId,
+        runtimeAssignmentAllocations.namespaceId,
+        runtimeAssignmentAllocations.agentId,
+        runtimeAssignmentAllocations.assignmentRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("runtime_authority_assignment_version").on(
+      table.assignmentRef,
+      table.assignmentRecordVersion,
+    ),
+    check(
+      "runtime_authority_operation_ref",
+      sql`${table.operationRef} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      "runtime_authority_version",
+      sql`${table.assignmentRecordVersion} BETWEEN 2 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_authority_kind",
+      sql`${table.operationKind} IN ('bind', 'record-evidence', 'retire')`,
+    ),
+    check(
+      "runtime_authority_payload_size",
+      sql`octet_length(${table.canonicalPayload}) BETWEEN 1 AND 262144`,
+    ),
+    check("runtime_authority_receipt_object", sql`jsonb_typeof(${table.receipt}) = 'object'`),
   ],
 );

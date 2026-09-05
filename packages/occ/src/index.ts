@@ -1,3 +1,5 @@
+export * from "./runtime-authority/service.ts";
+export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
