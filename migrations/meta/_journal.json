@@ -134,6 +134,13 @@
       "when": 1787000000018,
       "tag": "0018_revision_runtime_intent",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787000000019,
+      "tag": "0019_runtime_authority",
+      "breakpoints": true
     }
   ]
 }

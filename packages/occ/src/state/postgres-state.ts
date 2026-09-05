@@ -1,3 +1,9 @@
+import {
+  createRuntimeAuthorityRepository,
+  RuntimeAuthorityTransactionGuard,
+  type StoredRuntimeAuthorityOperation,
+} from "../runtime-authority/repository.ts";
+import { parseRuntimeAuthorityV1 } from "@openclaw-enterprise/contracts";
 import { randomUUID } from "node:crypto";
 import type {
   AccessBinding,
@@ -111,6 +117,7 @@ export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableErro
 }
 
 interface TransactionContext {
+  readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -918,10 +925,12 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
     client.on?.("error", onTransportError);
     let unit: PlatformUnitOfWork | undefined;
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     try {
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
       const context: TransactionContext = {
+        authorityGuard,
         client,
         installation: undefined,
         installationLoaded: false,
@@ -929,6 +938,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       unit = this.repositories(context);
       this.contexts.set(unit, context);
       const result = await work(unit, context);
+      await context.authorityGuard.finish();
       committing = true;
       const acknowledgement = await client.query("COMMIT");
       committing = false;
@@ -939,6 +949,13 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw new DependencyUnavailableError("The database transaction did not commit.");
       return result;
     } catch (error) {
+      // Drain already-started authority work before rollback/client release, including
+      // a callback that throws while one of its admissions is still pending.
+      try {
+        await authorityGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
       if (started) {
         try {
           await client.query("ROLLBACK");
@@ -2251,7 +2268,87 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
 
+    function authorityOperation(row: PostgresRow): StoredRuntimeAuthorityOperation {
+      const result = parseRuntimeAuthorityV1("operationState", {
+        schemaVersion: 1,
+        result: "committed",
+        receipt: row.receipt,
+      });
+      if (!("receipt" in result) || typeof row.canonical_payload !== "string")
+        throw new DependencyUnavailableError("The runtime authority record is invalid.");
+      return immutableCopy({ canonicalPayload: row.canonical_payload, receipt: result.receipt });
+    }
+    const runtimeAuthority = createRuntimeAuthorityRepository(
+      {
+        lockOperation: async (operationRef) => {
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('runtime-authority-operation:' || $1, 0))",
+            [operationRef],
+          );
+        },
+        allocation: async (scope, assignmentRef, lock) => {
+          const installation = await this.currentInstallation(context);
+          if (installation?.id !== scope.installationId) return undefined;
+          // Use the same Agent lock as intent/assignment writers before any head or version read.
+          if (lock)
+            await client.query(
+              "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR UPDATE",
+              [scope.namespaceId, scope.agentId],
+            );
+          const found = rows(
+            (
+              await client.query(
+                "SELECT * FROM occ.runtime_assignment_allocations WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND assignment_ref=$4",
+                [scope.installationId, scope.namespaceId, scope.agentId, assignmentRef],
+              )
+            ).rows,
+          )[0];
+          return found === undefined ? undefined : runtimeAllocationFromRow(found);
+        },
+        operations: async (scope, assignmentRef) =>
+          rows(
+            (
+              await client.query(
+                "SELECT canonical_payload, receipt FROM occ.runtime_authority_operations WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND assignment_ref=$4 ORDER BY assignment_record_version",
+                [scope.installationId, scope.namespaceId, scope.agentId, assignmentRef],
+              )
+            ).rows,
+          ).map(authorityOperation),
+        operation: async (operationRef) => {
+          const found = rows(
+            (
+              await client.query(
+                "SELECT canonical_payload, receipt FROM occ.runtime_authority_operations WHERE operation_ref=$1",
+                [operationRef],
+              )
+            ).rows,
+          )[0];
+          return found === undefined ? undefined : authorityOperation(found);
+        },
+        insert: async ({ canonicalPayload, receipt }) => {
+          await client.query(
+            `INSERT INTO occ.runtime_authority_operations
+          (operation_ref, installation_id, namespace_id, agent_id, assignment_ref, assignment_record_version, operation_kind, canonical_payload, receipt)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+            [
+              receipt.operationRef,
+              receipt.installationId,
+              receipt.namespaceId,
+              receipt.agentId,
+              receipt.assignmentRef.id,
+              receipt.assignmentRecordVersion,
+              receipt.operationKind,
+              canonicalPayload,
+              JSON.stringify(receipt),
+            ],
+          );
+        },
+      },
+      runtimeAssignments,
+      context.authorityGuard,
+    );
     return {
+      runtimeAuthority,
       channelBindings: serializeChannelBindingMutations(channelBindings),
       runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
       runtimeAdmissions,
