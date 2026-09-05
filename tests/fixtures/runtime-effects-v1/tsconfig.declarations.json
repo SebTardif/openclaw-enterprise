@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.module.json",
+  "compilerOptions": {
+    "paths": {
+      "@openclaw-enterprise/contracts": ["../../../packages/contracts/dist/index.d.ts"],
+      "@openclaw-enterprise/utils": ["../../../packages/utils/dist/index.d.ts"]
+    }
+  },
+  "files": ["producer.ts", "lifecycle-consumer.ts", "type-negatives.ts"]
+}
