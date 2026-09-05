@@ -1,4 +1,5 @@
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { createPostgresNamespaceRepository } from "./postgres/namespaces.ts";
 import { createPostgresChannelBindingRepository } from "./postgres/channel-bindings.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -21,7 +22,6 @@ import type {
   GroupMembership,
   Identity,
   Installation,
-  Namespace,
   Permission,
   Principal,
   Restriction,
@@ -60,8 +60,6 @@ import type {
   ConfigurationOwnership,
   ConfigurationRepository,
   InstallationRepository,
-  NamespaceRepository,
-  PersistedNamespace,
   PlatformAuditSink,
   PlatformOperation,
   PlatformReadView,
@@ -245,25 +243,6 @@ function installationFromRow(row: PostgresRow): Readonly<Installation> {
     id: text(row, "id"),
     name: text(row, "name"),
     createdAt: timestamp(row, "created_at"),
-  });
-}
-
-function namespaceFromRow(row: PostgresRow): Readonly<PersistedNamespace> {
-  const status = text(row, "status");
-  if (!["provisioning", "ready", "failed", "deleting"].includes(status))
-    throw new DependencyUnavailableError("Persisted Namespace status is invalid.");
-  const deletedAt =
-    row.deleted_at === null || row.deleted_at === undefined
-      ? undefined
-      : timestamp(row, "deleted_at");
-  const existingNamespace = optionalText(row, "existing_namespace");
-  return immutableCopy({
-    id: text(row, "id"),
-    name: text(row, "name"),
-    ...(existingNamespace === undefined ? {} : { existingNamespace }),
-    status: status as Namespace["status"],
-    createdAt: timestamp(row, "created_at"),
-    ...(deletedAt === undefined ? {} : { deletedAt }),
   });
 }
 
@@ -1123,143 +1102,17 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
 
-    const namespaces: NamespaceRepository = {
-      findNamespace: async (namespaceId) => {
-        const found = rows(
-          (
-            await client.query(
-              `SELECT id, name, existing_namespace, status, created_at, deleted_at
-               FROM occ.namespaces WHERE id = $1 AND deleted_at IS NULL`,
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found === undefined ? undefined : namespaceFromRow(found);
+    const namespaces = createPostgresNamespaceRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
       },
-      listNamespaces: async () => {
-        const found = rows(
-          (
-            await client.query(
-              `SELECT id, name, existing_namespace, status, created_at, deleted_at
-               FROM occ.namespaces WHERE deleted_at IS NULL ORDER BY created_at, id`,
-            )
-          ).rows,
-        );
-        return Object.freeze(found.map((row) => namespaceFromRow(row)));
-      },
-      createNamespace: async (namespace) => {
-        await this.requireInitialized(context);
-        await client.query(
-          `INSERT INTO occ.namespaces (id, name, existing_namespace, status, created_at)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [
-            namespace.id,
-            namespace.name,
-            namespace.existingNamespace ?? null,
-            namespace.status,
-            namespace.createdAt,
-          ],
-        );
-        return immutableCopy(namespace);
-      },
-      lockNamespace: async (namespaceId, options = {}) => {
-        const found = rows(
-          (
-            await client.query(
-              `SELECT id, name, existing_namespace, status, created_at, deleted_at
-               FROM occ.namespaces
-               WHERE id = $1${options.includeDeleted === true ? "" : " AND deleted_at IS NULL"}
-               FOR UPDATE`,
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found === undefined ? undefined : namespaceFromRow(found);
-      },
-      hasAgents: async (namespaceId) => {
-        const found = rows(
-          (
-            await client.query(
-              "SELECT EXISTS (SELECT 1 FROM occ.agents WHERE namespace_id = $1) AS present",
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found?.present === true;
-      },
-      hasConfigurations: async (namespaceId) => {
-        const found = rows(
-          (
-            await client.query(
-              "SELECT EXISTS (SELECT 1 FROM occ.configurations WHERE namespace_id = $1) AS present",
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found?.present === true;
-      },
-      hasServiceAccounts: async (namespaceId) => {
-        const found = rows(
-          (
-            await client.query(
-              "SELECT EXISTS (SELECT 1 FROM occ.service_accounts WHERE namespace_id = $1) AS present",
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found?.present === true;
-      },
-      hasSecrets: async (namespaceId) => {
-        const found = rows(
-          (
-            await client.query(
-              "SELECT EXISTS (SELECT 1 FROM occ.secrets WHERE namespace_id = $1) AS present",
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return found?.present === true;
-      },
-      transitionNamespaceStatus: async (namespaceId, expected, next) => {
-        await this.requireInitialized(context);
-        const expectedStatuses = Array.isArray(expected) ? expected : [expected];
-        const found = rows(
-          (
-            await client.query(
-              `UPDATE occ.namespaces SET status = $3
-               WHERE id = $1 AND status = ANY($2::text[]) AND deleted_at IS NULL
-               RETURNING id, name, existing_namespace, status, created_at, deleted_at`,
-              [namespaceId, expectedStatuses, next],
-            )
-          ).rows,
-        )[0];
-        return found === undefined ? undefined : namespaceFromRow(found);
-      },
-      markNamespaceDeleted: async (namespaceId, deletedAt) => {
-        await this.requireInitialized(context);
-        const updated = rows(
-          (
-            await client.query(
-              `UPDATE occ.namespaces SET deleted_at = $2
-               WHERE id = $1 AND status = 'deleting' AND deleted_at IS NULL
-               RETURNING id, name, existing_namespace, status, created_at, deleted_at`,
-              [namespaceId, deletedAt],
-            )
-          ).rows,
-        )[0];
-        if (updated !== undefined) return namespaceFromRow(updated);
-        const existing = rows(
-          (
-            await client.query(
-              `SELECT id, name, existing_namespace, status, created_at, deleted_at
-               FROM occ.namespaces WHERE id = $1 AND status = 'deleting' FOR UPDATE`,
-              [namespaceId],
-            )
-          ).rows,
-        )[0];
-        return existing === undefined ? undefined : namespaceFromRow(existing);
-      },
-    };
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => client.query(statement, parameters) },
+      requireInitialized: () => this.requireInitialized(context),
+    });
 
     const findSecret = async (
       namespaceId: string,
