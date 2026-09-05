@@ -825,6 +825,11 @@ export class OpenClawController {
       throw new ScopeViolationError("The exact Agent identity is missing.");
     if (!isNonEmptyString(revisionId))
       throw new ScopeViolationError("The exact AgentRevision identity is missing.");
+    await this.authorize(principalId, "read", {
+      kind: "agent",
+      id: agentId,
+      namespaceId,
+    });
     return this.read(async (state) => {
       const namespace = await this.exactNamespace(state, namespaceId);
       const agent = await state.agents.findAgent(namespace.id, agentId);

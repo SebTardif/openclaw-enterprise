@@ -69,6 +69,7 @@ import {
 } from "@openclaw-enterprise/occ";
 import {
   isChannelBindingOperation,
+  isHumanChannelAdministrationOperation,
   performChannelBindingOperation,
 } from "./channels/channel-binding-routes.ts";
 import type { AdmittedCaller } from "./admission/admission-verifier.ts";
@@ -321,6 +322,13 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
     action: operation.iamAction,
     resourceKind: operation.resourceKind,
   };
+
+  if (operation.operationId === "getAgentRevision") {
+    return [
+      { action: "read", resourceKind: "agent", scope: "requested" },
+      { action: "read", resourceKind: "agent_revision", scope: "requested" },
+    ];
+  }
 
   if (operation.operationId === "createNamespace") {
     return [
@@ -720,6 +728,74 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     development.installationId ?? controller?.installation.id ?? `ins_${randomUUID()}`;
   const admissions = new WeakMap<FastifyRequest, AdmittedCaller>();
   const contexts = new WeakMap<FastifyRequest, RequestContext>();
+  const identityAuthorities = new WeakMap<FastifyRequest, { driver: IAMDriver; id: string }>();
+  const humanChannelInvocations = new WeakMap<
+    object,
+    {
+      readonly request: FastifyRequest;
+      readonly context: RequestContext;
+      readonly service: OpenClawController["channelBindings"];
+      used: boolean;
+    }
+  >();
+
+  function installChannelHumanVerifier(target: OpenClawController): void {
+    const service = target.channelBindings;
+    service.installHumanAdministratorVerifier(async (candidate, protectedOperation) => {
+      const invocation = candidate.humanInvocation;
+      const owned = invocation && humanChannelInvocations.get(invocation);
+      if (!owned || owned.used || owned.service !== service) return undefined;
+      const { request, context } = owned;
+      const admitted = admissions.get(request);
+      const originalAuthority = identityAuthorities.get(request);
+      if (
+        !originalAuthority ||
+        request.raw.aborted ||
+        contexts.get(request) !== context ||
+        admitted?.method !== "session" ||
+        context.operation.operationId !== protectedOperation ||
+        candidate.requestId !== request.id ||
+        candidate.actorId !== context.actorId ||
+        candidate.issuer !== context.issuer ||
+        candidate.subject !== context.subject ||
+        candidate.admissionDecisionId !== context.admissionDecisionId ||
+        admitted.decisionId !== context.admissionDecisionId ||
+        admitted.externalIdentity.issuer !== context.issuer ||
+        admitted.externalIdentity.subject !== context.subject ||
+        admitted.admittedScope.installationId !== target.installation.id
+      )
+        return undefined;
+      owned.used = true;
+      const selected = originalAuthority.driver;
+      const selectedId = originalAuthority.id;
+      if (selectedIAMDriver() !== selected || selected.id !== selectedId)
+        throw dependencyUnavailable();
+      const principal = await selected.lookupIdentity({
+        issuer: context.issuer,
+        subject: context.subject,
+      });
+      if (
+        selectedIAMDriver() !== selected ||
+        selected.id !== selectedId ||
+        humanChannelInvocations.get(invocation!) !== owned ||
+        request.raw.aborted ||
+        contexts.get(request) !== context ||
+        admissions.get(request) !== admitted ||
+        identityAuthorities.get(request) !== originalAuthority
+      )
+        throw dependencyUnavailable();
+      if (
+        principal?.kind !== "principal" ||
+        principal.namespaceId !== undefined ||
+        principal.id !== context.actorId ||
+        principal.issuer !== context.issuer ||
+        principal.subject !== context.subject
+      )
+        return undefined;
+      return Object.freeze({ ...principal });
+    });
+  }
+  if (controller) installChannelHumanVerifier(controller);
   const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
   const factory = options.auditEventFactory ?? new AuditEventFactory();
   const createAuthAccountOperation = {
@@ -1192,9 +1268,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         "A required platform dependency is unavailable.",
       );
     let selected: IAMDriver;
+    let selectedId: string;
     let identity;
     try {
       selected = selectedIAMDriver();
+      selectedId = selected.id;
       identity = await selected.lookupIdentity(
         admitted.method === "api_key"
           ? {
@@ -1231,6 +1309,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       throw failure(403, "FORBIDDEN", "The exact platform operation was not authorized.");
     }
 
+    if (selectedIAMDriver() !== selected || selected.id !== selectedId)
+      throw dependencyUnavailable();
+    identityAuthorities.set(request, { driver: selected, id: selectedId });
     const context: RequestContext = {
       actorId: identity.id,
       issuer: admitted.externalIdentity.issuer,
@@ -1313,6 +1394,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             event(operation, request, target, "bootstrap", context, decision.evidence),
           );
         });
+        installChannelHumanVerifier(created);
         controller = created;
         reply.status(201).send({ data: created.installation, meta: { requestId: request.id } });
         return;
@@ -1325,17 +1407,31 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
 
     if (isChannelBindingOperation(operation.operationId)) {
-      const data = await performChannelBindingOperation(
-        controller.channelBindings,
-        operation.operationId,
-        { ...context, requestId: request.id },
-        { params: request.params, query: request.query, body: request.body },
-      );
-      reply.status(operation.method === "POST" ? 201 : 200).send({
-        data,
-        meta: { requestId: request.id },
-      });
-      return;
+      const humanInvocation = isHumanChannelAdministrationOperation(operation.operationId)
+        ? Object.freeze({})
+        : undefined;
+      if (humanInvocation)
+        humanChannelInvocations.set(humanInvocation, {
+          request,
+          context,
+          service: controller.channelBindings,
+          used: false,
+        });
+      try {
+        const data = await performChannelBindingOperation(
+          controller.channelBindings,
+          operation.operationId,
+          { ...context, requestId: request.id, ...(humanInvocation ? { humanInvocation } : {}) },
+          { params: request.params, query: request.query, body: request.body },
+        );
+        reply.status(operation.method === "POST" ? 201 : 200).send({
+          data,
+          meta: { requestId: request.id },
+        });
+        return;
+      } finally {
+        if (humanInvocation) humanChannelInvocations.delete(humanInvocation);
+      }
     }
 
     if (operation.operationId === "getInstallation") {

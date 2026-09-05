@@ -90,26 +90,42 @@ async function createFixture(options = {}) {
     { id: "iam-secret-api" },
   );
   const auditSink = new InMemoryAuditSink();
+  const platformState = new InMemoryPlatformState({ auditSink });
+  const computeDriver = createTestComputeDriver();
+  const configurationDriver = createTestConfigurationDriver({ id: "configuration-secret-api" });
   const secretDriver = options.secretDriver ?? createTestSecretDriver({ id: "secret-api-test" });
   let controller;
   const sessionsByPrincipalId = new Map();
 
+  function createOwnedController(installation) {
+    return new OpenClawController(installation, {
+      state: platformState,
+      recordOperations: false,
+    });
+  }
+
   function createApp(identity = principal) {
+    let appController;
+    if (controller) {
+      appController = createOwnedController(controller.installation);
+      for (const capability of ["iam", "compute", "configuration", "secret"]) {
+        const driver = controller.selectedDriver(capability);
+        appController.registerDriver(driver);
+        appController.selectDriver(capability, driver.id);
+      }
+    }
     const app = createControllerApp({
-      ...(controller
-        ? { controller }
+      ...(appController
+        ? { controller: appController }
         : {
             createController(installation) {
-              controller = new OpenClawController(installation, {
-                state: new InMemoryPlatformState({ auditSink }),
-                recordOperations: false,
-              });
+              controller = createOwnedController(installation);
               return controller;
             },
           }),
       iamDriver,
-      computeDriver: createTestComputeDriver(),
-      configurationDriver: createTestConfigurationDriver({ id: "configuration-secret-api" }),
+      computeDriver,
+      configurationDriver,
       secretDriver,
       resolveHarness: resolveApprovedDevelopmentHarness,
       auditSink,

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
+import test, { after } from "node:test";
+import { createFastifyApp } from "../../apps/controller/src/index.ts";
+import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";
+import { OpenClawController } from "../../packages/occ/src/index.ts";
 import { InMemoryPlatformState } from "../../packages/occ/src/state/platform-state.ts";
 import { ChannelBindingService } from "../../packages/occ/src/channel-bindings.ts";
 import { resolveChannelCandidateBindingsV1 } from "../../apps/controller/src/channels/channel-principal-bindings.ts";
@@ -10,6 +13,16 @@ import {
   classifyReceiptV1,
 } from "../../apps/controller/src/channels/shared-turn-receipt.ts";
 import { seedRuntimeOwner } from "./runtime-assignment-store.contract.mjs";
+import {
+  createAuthenticatedControllerRequest,
+  createTestAuthPrincipal,
+} from "../helpers/auth-session.mjs";
+
+const channelRoot = "/api/channel-installations";
+const controllerApps = new Set();
+after(async () => {
+  await Promise.all([...controllerApps].map((app) => app.close()));
+});
 
 const human = {
   kind: "principal",
@@ -18,12 +31,14 @@ const human = {
   subject: "human-a",
 };
 const secondHuman = { ...human, id: "prn_channel-human-b", subject: "human-b" };
-const admin = { ...human, id: "prn_channel-admin", subject: "admin" };
 
 async function fixture(platform = "slack") {
-  const state = new InMemoryPlatformState();
+  const auditSink = new InMemoryAuditSink();
+  const state = new InMemoryPlatformState({ auditSink });
   const owner = await seedRuntimeOwner(state);
   const scope = owner.scope;
+  const authenticated = await createTestAuthPrincipal({ installationId: owner.installation.id });
+  const admin = authenticated.seed.principal;
   // Existing provisioned policy is test setup, not a grant-management endpoint.
   const policy = {
     identities: [admin, human, secondHuman],
@@ -52,6 +67,14 @@ async function fixture(platform = "slack") {
         roleId: "rol_install-admin",
         resourceKind: "installation",
         resourceId: owner.installation.id,
+        channelAdministration: {
+          schemaVersion: 1,
+          version: 1,
+          status: "enabled",
+          installationId: owner.installation.id,
+          roleId: "rol_install-admin",
+          semanticClass: "installation-administrator",
+        },
       },
       ...[admin, human, secondHuman].map((identity) => ({
         id: `bnd_agent-${identity.id}`,
@@ -64,17 +87,40 @@ async function fixture(platform = "slack") {
       })),
     ],
   };
-  const native = new NativeIAMDriver({ loadNativeIAMState: async () => policy });
+  const iamStateStore = { loadNativeIAMState: async () => policy };
+  const native = new NativeIAMDriver(iamStateStore);
   let selected = native;
   const options = { state, installationId: owner.installation.id, iam: () => selected };
   const service = new ChannelBindingService(options);
   const context = { actorId: admin.id, requestId: `test/${randomUUID()}` };
-  const app = await service.createInstallation(context, {
+
+  // Protected fixture mutations use real request custody; the resolver still supplies no authority.
+  const controller = new OpenClawController(owner.installation, { state });
+  controller.registerDriver(native);
+  controller.selectDriver("iam", native.id);
+  const controllerApp = createFastifyApp({
+    controller,
+    iamDriver: native,
+    auth: authenticated.auth,
+    auditSink,
+    publicOrigin: "http://127.0.0.1",
+    development: { enabled: true, installationId: owner.installation.id },
+  });
+  controllerApps.add(controllerApp);
+  await controllerApp.ready();
+  const adminRequest = await createAuthenticatedControllerRequest(controllerApp, authenticated);
+  async function adminData(method, path, body) {
+    const response = await adminRequest(method, path, body);
+    assert.equal(response.status, method === "POST" ? 201 : 200, JSON.stringify(response));
+    assert.ok(Object.hasOwn(response, "data"));
+    return response.data;
+  }
+  const app = await adminData("POST", channelRoot, {
     platform,
     providerTenantRef: "tenant/Case:opaque",
     recipientAppRef: "app/recipient",
   });
-  const person = await service.createHumanBinding(context, app.id, {
+  const person = await adminData("POST", `${channelRoot}/${app.id}/human-bindings`, {
     providerSubjectRef: "sender/external",
     principal: { issuer: human.issuer, subject: human.subject },
   });
@@ -109,7 +155,11 @@ async function fixture(platform = "slack") {
     owner,
     scope,
     policy,
+    admin,
+    adminRequest,
+    adminData,
     native,
+    iamStateStore,
     options,
     service,
     context,
@@ -233,12 +283,12 @@ test("every app dimension and nested binding owner must match the exact receipt"
     { channelRef: "channel/other" },
   ])
     assert.equal((await f.resolve(f.receipt(change))).kind, "unmapped");
-  const other = await f.service.createInstallation(f.context, {
+  const other = await f.adminData("POST", channelRoot, {
     platform: "slack",
     providerTenantRef: f.app.providerTenantRef,
     recipientAppRef: "app/other",
   });
-  await f.service.createHumanBinding(f.context, other.id, {
+  await f.adminData("POST", `${channelRoot}/${other.id}/human-bindings`, {
     providerSubjectRef: f.person.providerSubjectRef,
     principal: { issuer: secondHuman.issuer, subject: secondHuman.subject },
   });
@@ -252,9 +302,13 @@ test("every app dimension and nested binding owner must match the exact receipt"
   );
   assert.equal(mapped.kind, "candidate-mapped");
   assert.equal(mapped.principalId, secondHuman.id);
-  await assert.rejects(f.service.getHumanBinding(f.context, other.id, f.person.id), {
-    name: "ChannelBindingNotFoundError",
-  });
+  const hiddenHuman = await f.adminRequest(
+    "GET",
+    `${channelRoot}/${other.id}/human-bindings/${f.person.id}`,
+  );
+  assert.equal(hiddenHuman.status, 404);
+  assert.equal(hiddenHuman.error.code, "NOT_FOUND");
+  assert.equal(hiddenHuman.data, undefined);
   await assert.rejects(f.service.getAgentBinding(f.context, other.id, f.route.id), {
     name: "ChannelBindingNotFoundError",
   });
@@ -267,12 +321,12 @@ test("disable and re-enable retain original mappings while checking the current 
     [
       f.app,
       (version) =>
-        f.service.setInstallationStatus(f.context, f.app.id, {
+        f.adminData("PATCH", `${channelRoot}/${f.app.id}`, {
           expectedVersion: version,
           status: "disabled",
         }),
       (version) =>
-        f.service.setInstallationStatus(f.context, f.app.id, {
+        f.adminData("PATCH", `${channelRoot}/${f.app.id}`, {
           expectedVersion: version,
           status: "enabled",
         }),
@@ -280,12 +334,12 @@ test("disable and re-enable retain original mappings while checking the current 
     [
       f.person,
       (version) =>
-        f.service.setHumanBindingStatus(f.context, f.app.id, f.person.id, {
+        f.adminData("PATCH", `${channelRoot}/${f.app.id}/human-bindings/${f.person.id}`, {
           expectedVersion: version,
           status: "disabled",
         }),
       (version) =>
-        f.service.setHumanBindingStatus(f.context, f.app.id, f.person.id, {
+        f.adminData("PATCH", `${channelRoot}/${f.app.id}/human-bindings/${f.person.id}`, {
           expectedVersion: version,
           status: "enabled",
         }),
@@ -314,17 +368,25 @@ test("disable and re-enable retain original mappings while checking the current 
   f.policy.identities = f.policy.identities.filter((identity) => identity.id !== human.id);
   f.policy.bindings = f.policy.bindings.filter((binding) => binding.subjectId !== human.id);
   assert.equal((await f.resolve()).kind, "identity-changed");
-  const disabled = await f.service.setHumanBindingStatus(f.context, f.app.id, f.person.id, {
-    expectedVersion: 3,
-    status: "disabled",
-  });
-  await assert.rejects(
-    f.service.setHumanBindingStatus(f.context, f.app.id, f.person.id, {
+  const disabled = await f.adminData(
+    "PATCH",
+    `${channelRoot}/${f.app.id}/human-bindings/${f.person.id}`,
+    {
+      expectedVersion: 3,
+      status: "disabled",
+    },
+  );
+  const unavailableHuman = await f.adminRequest(
+    "PATCH",
+    `${channelRoot}/${f.app.id}/human-bindings/${f.person.id}`,
+    {
       expectedVersion: disabled.version,
       status: "enabled",
-    }),
-    { name: "ChannelBindingInvalidError" },
+    },
   );
+  assert.equal(unavailableHuman.status, 400);
+  assert.equal(unavailableHuman.error.code, "INVALID_REQUEST");
+  assert.equal(unavailableHuman.data, undefined);
   assert.equal((await f.resolve()).kind, "disabled");
 });
 
@@ -348,7 +410,7 @@ test("selected IAM replacement, changed Principal ID and ambiguous identity neve
   f.policy.bindings = f.policy.bindings.map((binding) =>
     binding.subjectId === "prn_replacement" ? { ...binding, subjectId: human.id } : binding,
   );
-  f.policy.identities = [admin, human, { ...human, id: "prn_ambiguous" }, secondHuman];
+  f.policy.identities = [f.admin, human, { ...human, id: "prn_ambiguous" }, secondHuman];
   assert.equal((await f.resolve()).kind, "identity-changed");
 });
 
@@ -410,40 +472,38 @@ test(
         release = resolve;
       });
       let block = true;
-      const driver = {
-        id: f.native.id,
-        capability: "iam",
-        lookupIdentity: async (input) => {
-          if (block) {
-            block = false;
-            entered();
-            await gate;
-          }
-          return f.native.lookupIdentity(input);
-        },
-        authorize: (request) => f.native.authorize(request),
+      f.iamStateStore.loadNativeIAMState = async () => {
+        if (block) {
+          block = false;
+          entered();
+          await gate;
+        }
+        return f.policy;
       };
-      f.select(driver);
       const pending = f.resolve();
       await arrived;
       // Resolve a real persisted mutation while the selected IAM lookup is suspended.
-      if (change === "parent")
-        await f.service.setInstallationStatus(f.context, f.app.id, {
-          expectedVersion: 1,
-          status: "disabled",
-        });
-      if (change === "human")
-        await f.service.setHumanBindingStatus(f.context, f.app.id, f.person.id, {
-          expectedVersion: 1,
-          status: "disabled",
-        });
-      if (change === "agent")
-        await f.service.setAgentBindingStatus(f.context, f.app.id, f.route.id, {
-          expectedVersion: 1,
-          status: "disabled",
-        });
-      if (change === "driver") f.select(f.native);
-      release();
+      try {
+        if (change === "parent")
+          await f.adminData("PATCH", `${channelRoot}/${f.app.id}`, {
+            expectedVersion: 1,
+            status: "disabled",
+          });
+        if (change === "human")
+          await f.adminData("PATCH", `${channelRoot}/${f.app.id}/human-bindings/${f.person.id}`, {
+            expectedVersion: 1,
+            status: "disabled",
+          });
+        if (change === "agent")
+          await f.service.setAgentBindingStatus(f.context, f.app.id, f.route.id, {
+            expectedVersion: 1,
+            status: "disabled",
+          });
+        if (change === "driver")
+          f.select(new NativeIAMDriver(f.iamStateStore, { id: f.native.id }));
+      } finally {
+        release();
+      }
       assert.equal(
         (await pending).kind,
         change === "driver" ? "dependency-unavailable" : "changed-during-resolution",
@@ -455,7 +515,7 @@ test(
 test("current target lifecycle and administrator Agent authority are enforced independently", async () => {
   const f = await fixture();
   f.policy.bindings = f.policy.bindings.filter(
-    (binding) => !(binding.subjectId === admin.id && binding.resourceKind === "agent"),
+    (binding) => !(binding.subjectId === f.admin.id && binding.resourceKind === "agent"),
   );
   await assert.rejects(
     f.service.createAgentBinding(f.context, f.app.id, {

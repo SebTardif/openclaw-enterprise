@@ -1694,10 +1694,11 @@ Get an exact authorized immutable Agent revision
 
 **Operation ID:** `getAgentRevision`
 
-**Permissions:** Requires read permission on the requested AgentRevision.
+**Permissions:** Requires read permission on the requested Agent. Requires read permission on the requested AgentRevision.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
+| `read` | `agent` | `requested` |
 | `read` | `agent_revision` | `requested` |
 
 #### Parameters

@@ -9,6 +9,12 @@ export type {
 export * from "./runtime-authority-v1.ts";
 
 import { immutableCopy } from "@openclaw-enterprise/utils";
+import type {
+  ChannelAdministrationEvidenceV1,
+  ChannelAdministrationMappingV1,
+} from "./channel-administration.ts";
+
+export * from "./channel-administration.ts";
 
 export {
   LOGGING_LEVELS,
@@ -333,6 +339,7 @@ export interface AccessBinding extends Scope {
   readonly roleId: string;
   readonly resourceKind?: ResourceKind;
   readonly resourceId?: string;
+  readonly channelAdministration?: ChannelAdministrationMappingV1;
 }
 
 export interface Restriction extends Scope {
@@ -363,6 +370,7 @@ export interface AuthorizationEvidence {
   readonly bindingIds: readonly string[];
   readonly roleIds: readonly string[];
   readonly restrictionIds: readonly string[];
+  readonly channelAdministration?: ChannelAdministrationEvidenceV1;
 }
 
 export type IdentityLookup = Scope &

@@ -15,7 +15,12 @@ import type {
   Principal,
   ResourceRef,
 } from "@openclaw-enterprise/contracts";
-import { isChannelBindingReference } from "@openclaw-enterprise/contracts";
+import {
+  accountIAMChecksV1,
+  accountSemanticRequirementsV1,
+  decodeChannelAdministrationEvidenceV1,
+  isChannelBindingReference,
+} from "@openclaw-enterprise/contracts";
 import { immutableCopy } from "@openclaw-enterprise/utils";
 import {
   AuthorizationDeniedError,
@@ -47,7 +52,18 @@ export interface ChannelBindingContext {
   readonly admissionDecisionId?: string;
   readonly issuer?: string;
   readonly subject?: string;
+  /** Opaque one-request object owned by the actual controller admission adapter. */
+  readonly humanInvocation?: object;
 }
+export type HumanChannelAdministrationOperation =
+  | "createChannelInstallation"
+  | "getChannelInstallation"
+  | "listChannelInstallations"
+  | "setChannelInstallationStatus"
+  | "createChannelHumanBinding"
+  | "getChannelHumanBinding"
+  | "listChannelHumanBindings"
+  | "setChannelHumanBindingStatus";
 export interface ChannelBindingServiceOptions {
   readonly installationId: string;
   readonly state: PlatformStateStore;
@@ -120,6 +136,11 @@ export async function requireChannelPermission(
     })
   )
     throw new DependencyUnavailableError();
+  const semantic =
+    decision.evidence.channelAdministration === undefined
+      ? undefined
+      : decodeChannelAdministrationEvidenceV1(decision.evidence.channelAdministration);
+  if (semantic?.kind === "invalid") throw new DependencyUnavailableError();
   const evidence = immutableCopy({
     ...(decision.evidence.identityId === undefined
       ? {}
@@ -128,6 +149,7 @@ export async function requireChannelPermission(
     bindingIds: decision.evidence.bindingIds,
     roleIds: decision.evidence.roleIds,
     restrictionIds: decision.evidence.restrictionIds,
+    ...(semantic?.kind === "valid" ? { channelAdministration: semantic.value } : {}),
   });
   if (!decision.allowed)
     throw new AuthorizationDeniedError(undefined, evidence, {
@@ -168,9 +190,93 @@ export async function lookupChannelHuman(
 /** Authenticated callers use the selected IAM authority; repositories remain internal. */
 export class ChannelBindingService {
   private readonly options: ChannelBindingServiceOptions;
+  private humanAdministratorVerifier?: (
+    context: ChannelBindingContext,
+    operation: HumanChannelAdministrationOperation,
+  ) => Promise<Readonly<Principal> | undefined>;
+  private humanAdministrationStarted = false;
 
   constructor(options: ChannelBindingServiceOptions) {
     this.options = options;
+  }
+
+  /** Trusted startup wiring only; the verifier must own and consume original request custody. */
+  installHumanAdministratorVerifier(
+    verifier: (
+      context: ChannelBindingContext,
+      operation: HumanChannelAdministrationOperation,
+    ) => Promise<Readonly<Principal> | undefined>,
+  ): void {
+    if (
+      typeof verifier !== "function" ||
+      this.humanAdministratorVerifier !== undefined ||
+      this.humanAdministrationStarted
+    )
+      throw new Error("The channel administrator admission verifier is already sealed.");
+    this.humanAdministratorVerifier = verifier;
+  }
+
+  private async humanAdmin(
+    context: ChannelBindingContext,
+    protectedOperation: HumanChannelAdministrationOperation,
+  ): Promise<{ driver: IAMDriver; checks: Check[] }> {
+    this.humanAdministrationStarted = true;
+    const operation = { kind: "installation.administer" as const, target: {} };
+    const [required] = accountIAMChecksV1(this.options.installationId, operation);
+    if (
+      required === undefined ||
+      !accountSemanticRequirementsV1(operation).includes("installation-administrator")
+    )
+      throw new DependencyUnavailableError();
+    const deny = () => new AuthorizationDeniedError(undefined, undefined, required);
+    if (
+      !context.humanInvocation ||
+      typeof context.humanInvocation !== "object" ||
+      !isChannelBindingReference(context.issuer) ||
+      !isChannelBindingReference(context.subject)
+    )
+      throw deny();
+    const verifier = this.humanAdministratorVerifier;
+    if (verifier === undefined) throw new DependencyUnavailableError();
+    const selected = selectedChannelIAM(this.options);
+    const selectedId = selected.id;
+    let principal: Readonly<Principal> | undefined;
+    try {
+      principal = await verifier(context, protectedOperation);
+    } catch (error) {
+      if (error instanceof AuthorizationDeniedError) throw error;
+      throw new DependencyUnavailableError();
+    }
+    assertChannelIAM(this.options, selected, selectedId);
+    if (
+      principal?.kind !== "principal" ||
+      principal.namespaceId !== undefined ||
+      principal.id !== context.actorId ||
+      principal.issuer !== context.issuer ||
+      principal.subject !== context.subject
+    )
+      throw deny();
+    const result = await this.admin(context);
+    if (result.driver !== selected) throw new DependencyUnavailableError();
+    const check = result.checks[0]!;
+    if (check.decision.evidence.identityId !== context.actorId)
+      throw new DependencyUnavailableError();
+    if (check.decision.evidence.restrictionIds.length !== 0)
+      throw new AuthorizationDeniedError(undefined, check.decision.evidence, required);
+    const semantic = check.decision.evidence.channelAdministration;
+    if (!semantic || semantic.installationId !== this.options.installationId)
+      throw new DependencyUnavailableError();
+    if (
+      semantic.mappings.some(
+        (mapping) =>
+          !check.decision.evidence.bindingIds.includes(mapping.bindingId) ||
+          !check.decision.evidence.roleIds.includes(mapping.roleId),
+      )
+    )
+      throw new DependencyUnavailableError();
+    if (semantic.mappings.length === 0)
+      throw new AuthorizationDeniedError(undefined, check.decision.evidence, required);
+    return result;
   }
 
   private async admin(
@@ -295,7 +401,7 @@ export class ChannelBindingService {
     context: ChannelBindingContext,
     input: CreateChannelInstallation,
   ): Promise<Readonly<ChannelInstallation>> {
-    const { driver, checks } = await this.admin(context);
+    const { driver, checks } = await this.humanAdmin(context, "createChannelInstallation");
     closed(input, ["platform", "providerTenantRef", "recipientAppRef"]);
     references(input.providerTenantRef, input.recipientAppRef);
     if (input.platform !== "slack" && input.platform !== "msteams")
@@ -315,7 +421,7 @@ export class ChannelBindingService {
     context: ChannelBindingContext,
     id: string,
   ): Promise<Readonly<ChannelInstallation>> {
-    await this.admin(context);
+    await this.humanAdmin(context, "getChannelInstallation");
     return this.options.state.read((state) => this.parent(state, id));
   }
   async setInstallationStatus(
@@ -323,7 +429,7 @@ export class ChannelBindingService {
     id: string,
     input: ChangeChannelBindingStatus,
   ): Promise<Readonly<ChannelInstallation>> {
-    const { driver, checks } = await this.admin(context);
+    const { driver, checks } = await this.humanAdmin(context, "setChannelInstallationStatus");
     this.version(input);
     return this.options.state.transact(async (state) => {
       const before = await this.parent(state, id);
@@ -347,7 +453,7 @@ export class ChannelBindingService {
     parentId: string,
     input: CreateChannelHumanBinding,
   ): Promise<Readonly<ChannelHumanBinding>> {
-    const { driver, checks } = await this.admin(context);
+    const { driver, checks } = await this.humanAdmin(context, "createChannelHumanBinding");
     closed(input, ["providerSubjectRef", "principal"]);
     closed(input.principal, ["issuer", "subject"]);
     references(input.providerSubjectRef);
@@ -372,7 +478,7 @@ export class ChannelBindingService {
     parentId: string,
     id: string,
   ): Promise<Readonly<ChannelHumanBinding>> {
-    await this.admin(context);
+    await this.humanAdmin(context, "getChannelHumanBinding");
     recordId(id, "chh");
     return this.options.state.read(async (state) => {
       await this.parent(state, parentId);
@@ -387,7 +493,7 @@ export class ChannelBindingService {
     id: string,
     input: ChangeChannelBindingStatus,
   ): Promise<Readonly<ChannelHumanBinding>> {
-    const { driver, checks } = await this.admin(context);
+    const { driver, checks } = await this.humanAdmin(context, "setChannelHumanBindingStatus");
     this.version(input);
     recordId(id, "chh");
     return this.options.state.transact(async (state) => {
@@ -543,7 +649,7 @@ export class ChannelBindingService {
     context: ChannelBindingContext,
     query: ChannelBindingListQuery = {},
   ): Promise<ChannelBindingPage<ChannelInstallation>> {
-    await this.admin(context);
+    await this.humanAdmin(context, "listChannelInstallations");
     const page = this.pageQuery("installation", this.options.installationId, query);
     return this.options.state.read(async (state) => {
       await this.initialized(state);
@@ -560,7 +666,7 @@ export class ChannelBindingService {
     parentId: string,
     query: ChannelBindingListQuery = {},
   ): Promise<ChannelBindingPage<ChannelHumanBinding>> {
-    await this.admin(context);
+    await this.humanAdmin(context, "listChannelHumanBindings");
     const page = this.pageQuery("human", parentId, query);
     return this.options.state.read(async (state) => {
       await this.parent(state, parentId);

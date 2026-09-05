@@ -1,4 +1,5 @@
 import type {
+  ChannelAdministrationMappingV1,
   HarnessExecutionMode,
   SecretBindings,
   ServiceAccountCredential,
@@ -576,6 +577,7 @@ export const iamAccessBindings = occSchema.table(
       .references(() => iamRoles.id, { onDelete: "restrict", onUpdate: "restrict" }),
     resourceKind: text("resource_kind"),
     resourceId: text("resource_id"),
+    channelAdministration: jsonb("channel_administration").$type<ChannelAdministrationMappingV1>(),
   },
   (table) => [
     check(
@@ -585,6 +587,10 @@ export const iamAccessBindings = occSchema.table(
     check(
       "iam_access_bindings_resource_pair",
       sql`(${table.resourceKind} IS NULL) = (${table.resourceId} IS NULL)`,
+    ),
+    check(
+      "iam_access_bindings_channel_administration_valid",
+      sql`${table.channelAdministration} IS NULL OR occ.channel_administration_mapping_valid(${table.channelAdministration})`,
     ),
   ],
 );

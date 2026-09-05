@@ -5,6 +5,7 @@ import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";
 import {
   AuthorizationDeniedError,
+  DependencyUnavailableError,
   NamespaceNotReadyError,
   OpenClawController,
   ResourceConflictError,
@@ -88,19 +89,18 @@ async function createFixture() {
       roleId: "role-principal-scoped-b",
     },
   ];
-  const iam = new NativeIAMDriver(
-    {
-      loadNativeIAMState: async () => ({
-        identities,
-        groups: [],
-        memberships: [],
-        roles,
-        bindings,
-        restrictions: [],
-      }),
-    },
-    { id: "iam-read-test" },
-  );
+  const restrictions = [];
+  const iamStateStore = {
+    loadNativeIAMState: async () => ({
+      identities,
+      groups: [],
+      memberships: [],
+      roles,
+      bindings,
+      restrictions,
+    }),
+  };
+  const iam = new NativeIAMDriver(iamStateStore, { id: "iam-read-test" });
   let sequence = 0;
   let configurationSequence = 0;
   const controller = new OpenClawController(installation, {
@@ -204,14 +204,17 @@ async function createFixture() {
   return {
     agentA,
     agentB,
+    bindings,
     controller,
     hiddenAgentA,
     hiddenRevisionA,
     iam,
+    iamStateStore,
     namespaceA,
     namespaceB,
     revisionA,
     revisionB,
+    restrictions,
     roles,
   };
 }
@@ -301,6 +304,180 @@ test("installation and exact resource reads require their own explicit authoriza
     (await controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id)).id,
     revisionA.id,
   );
+});
+
+test("single revision reads deny revision-only authority before resolving any Agent parent", async () => {
+  const { controller, bindings, namespaceA, namespaceB, agentA, agentB, revisionA } =
+    await createFixture();
+  bindings.splice(
+    bindings.findIndex(({ id }) => id === "binding-a-agent"),
+    1,
+  );
+
+  // The revision grant stays fixed: missing or foreign parents cannot reveal whether an Agent exists.
+  for (const [namespaceId, agentId] of [
+    [namespaceA.id, agentA.id],
+    [namespaceA.id, "agent-missing"],
+    [namespaceA.id, agentB.id],
+    [namespaceB.id, agentB.id],
+    ["namespace-missing", agentA.id],
+  ]) {
+    await assert.rejects(
+      controller.getRevision("principal-exact-a", namespaceId, agentId, revisionA.id),
+      (error) => {
+        assert.ok(error instanceof AuthorizationDeniedError);
+        assert.deepEqual(error.authorization, {
+          action: "read",
+          resource: { kind: "agent", id: agentId, namespaceId },
+        });
+        assert.deepEqual(error.evidence.bindingIds, []);
+        return true;
+      },
+    );
+  }
+});
+
+test("single revision reads retain the exact AgentRevision permission conjunct", async () => {
+  const { controller, bindings, namespaceA, agentA, revisionA } = await createFixture();
+  bindings.splice(
+    bindings.findIndex(({ id }) => id === "binding-a-agent_revision"),
+    1,
+  );
+
+  await assert.rejects(
+    controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id),
+    (error) => {
+      assert.ok(error instanceof AuthorizationDeniedError);
+      assert.deepEqual(error.authorization, {
+        action: "read",
+        resource: { kind: "agent_revision", id: revisionA.id, namespaceId: namespaceA.id },
+      });
+      return true;
+    },
+  );
+});
+
+test("single revision reads accept both exact grants without a Namespace read grant", async () => {
+  const { controller, bindings, namespaceA, agentA, revisionA } = await createFixture();
+  bindings.splice(
+    bindings.findIndex(({ id }) => id === "binding-a-namespace"),
+    1,
+  );
+
+  await assert.rejects(
+    controller.getNamespace("principal-exact-a", namespaceA.id),
+    AuthorizationDeniedError,
+  );
+  assert.deepEqual(
+    await controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id),
+    revisionA,
+  );
+});
+
+test("single revision reads cannot substitute another Agent or Namespace grant", async () => {
+  const {
+    controller,
+    bindings,
+    roles,
+    namespaceA,
+    namespaceB,
+    agentA,
+    hiddenAgentA,
+    agentB,
+    revisionA,
+  } = await createFixture();
+  const agentBinding = bindings.find(({ id }) => id === "binding-a-agent");
+  roles.push({
+    id: "role-other-agent-reader",
+    permissions: [{ action: "read", resourceKind: "agent" }],
+  });
+
+  for (const [namespaceId, agentId] of [
+    [namespaceA.id, hiddenAgentA.id],
+    [namespaceB.id, agentB.id],
+  ]) {
+    Object.assign(agentBinding, {
+      namespaceId,
+      resourceId: agentId,
+      roleId: "role-other-agent-reader",
+    });
+    assert.equal(
+      (await controller.getAgent("principal-exact-a", namespaceId, agentId)).id,
+      agentId,
+    );
+    await assert.rejects(
+      controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id),
+      (error) =>
+        error instanceof AuthorizationDeniedError &&
+        error.authorization.resource.kind === "agent" &&
+        error.authorization.resource.id === agentA.id &&
+        error.authorization.resource.namespaceId === namespaceA.id,
+    );
+  }
+});
+
+test("single revision reads preserve parent ownership despite broad read grants", async () => {
+  const { controller, namespaceA, namespaceB, agentA, hiddenAgentA, agentB, revisionA, revisionB } =
+    await createFixture();
+
+  for (const [namespaceId, agentId, revisionId] of [
+    [namespaceA.id, hiddenAgentA.id, revisionA.id],
+    [namespaceA.id, agentA.id, revisionB.id],
+    [namespaceB.id, agentA.id, revisionA.id],
+    [namespaceA.id, agentB.id, revisionB.id],
+    [namespaceA.id, agentA.id, "revision-missing"],
+  ]) {
+    await assert.rejects(
+      controller.getRevision("principal-admin", namespaceId, agentId, revisionId),
+      ScopeViolationError,
+    );
+  }
+});
+
+test("single revision reads honor current Restrictions on either exact read and fail closed on IAM outage", async () => {
+  const { controller, restrictions, iamStateStore, namespaceA, agentA, revisionA } =
+    await createFixture();
+  const operationCount = controller.pendingOperations().length;
+
+  for (const [resourceKind, resourceId] of [
+    ["agent", agentA.id],
+    ["agent_revision", revisionA.id],
+  ]) {
+    const restriction = {
+      id: `restriction-revision-read-${resourceKind}`,
+      namespaceId: namespaceA.id,
+      resourceKind,
+      resourceId,
+      action: "read",
+      effect: "deny",
+    };
+    restrictions.push(restriction);
+    await assert.rejects(
+      controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id),
+      (error) => {
+        assert.ok(error instanceof AuthorizationDeniedError);
+        assert.equal(error.authorization.resource.kind, resourceKind);
+        assert.deepEqual(error.evidence.restrictionIds, [restriction.id]);
+        return true;
+      },
+    );
+    restrictions.pop();
+    assert.equal(
+      (await controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id))
+        .id,
+      revisionA.id,
+    );
+  }
+
+  // Only the native policy store fails; the selected Driver still runs its real authorization path.
+  iamStateStore.loadNativeIAMState = async () => {
+    throw new Error("The native policy store is unavailable.");
+  };
+  await assert.rejects(
+    controller.getRevision("principal-exact-a", namespaceA.id, agentA.id, revisionA.id),
+    DependencyUnavailableError,
+  );
+  assert.equal(controller.pendingOperations().length, operationCount);
 });
 
 test("each Agent owns one distinct service principal across configuration changes and revisions", async () => {

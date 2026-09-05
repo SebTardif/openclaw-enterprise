@@ -328,6 +328,7 @@ async function createInjectedFixture(options = {}) {
     async retireRevision() {},
   };
   const auditSink = options.auditSink ?? new InMemoryAuditSink();
+  const platformState = new InMemoryPlatformState({ auditSink });
   const configurationDriver = createTestConfigurationDriver({ id: "configuration-integration" });
   const sessionsByPrincipalId = new Map();
   let controller;
@@ -344,17 +345,35 @@ async function createInjectedFixture(options = {}) {
     if (auditEvent !== undefined) await auditSink.append(auditEvent);
   }
 
+  function createOwnedController(installation) {
+    return new OpenClawController(installation, {
+      state: platformState,
+      recordOperations: false,
+      ...(options.providers === undefined ? {} : { providers: options.providers }),
+    });
+  }
+
   function createApp(identity = principal, createApplication = createControllerApp) {
+    let appController;
+    if (controller) {
+      appController = createOwnedController(controller.installation);
+      for (const capability of [
+        "iam",
+        "compute",
+        "configuration",
+        ...(options.providers?.length ? ["service_account"] : []),
+      ]) {
+        const driver = controller.selectedDriver(capability);
+        appController.registerDriver(driver);
+        appController.selectDriver(capability, driver.id);
+      }
+    }
     const created = createApplication({
-      ...(controller
-        ? { controller }
+      ...(appController
+        ? { controller: appController }
         : {
             createController(installation) {
-              controller = new OpenClawController(installation, {
-                state: new InMemoryPlatformState({ auditSink }),
-                recordOperations: false,
-                ...(options.providers === undefined ? {} : { providers: options.providers }),
-              });
+              controller = createOwnedController(installation);
               if (options.providers?.length) {
                 // Association alone must never provision an upstream account or credential.
                 const unexpectedProviderCall = async () => assert.fail("Unexpected Provider call");
@@ -1563,6 +1582,24 @@ test("OCC isolates Namespace ownership and filters collections by exact IAM gran
   const revisionReaderApp = fixture.createApp(revisionReader);
   const ownRevisionPath = `/namespaces/${tenantB.data.id}/agents/${ownAgent.data.id}/revisions/${missingRevisionId}`;
 
+  const authorizedMissingRevision = await injectedRequest(readerApp, "GET", ownRevisionPath);
+  assert.equal(authorizedMissingRevision.status, 404);
+  assert.equal(authorizedMissingRevision.body.error.code, "NOT_FOUND");
+
+  function assertRevisionOnlyDenied(result) {
+    assert.equal(result.status, 403);
+    assert.deepEqual(
+      { ...result.body, meta: { ...result.body.meta, requestId: "normalized-request-id" } },
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "The exact platform operation was not authorized.",
+        },
+        meta: { requestId: "normalized-request-id" },
+      },
+    );
+  }
+
   const parentDenied = await injectedRequest(
     revisionReaderApp,
     "GET",
@@ -1571,21 +1608,46 @@ test("OCC isolates Namespace ownership and filters collections by exact IAM gran
   assert.equal(parentDenied.status, 403);
 
   const exactRevision = await injectedRequest(revisionReaderApp, "GET", ownRevisionPath);
-  assert.equal(exactRevision.status, 404);
-  assert.equal(exactRevision.body.error.code, "NOT_FOUND");
+  assertRevisionOnlyDenied(exactRevision);
+  assert.deepEqual(fixture.auditSink.events.at(-1).authorization, {
+    principalId: revisionReader.id,
+    action: "read",
+    resource: { kind: "agent", id: ownAgent.data.id, namespaceId: tenantB.data.id },
+  });
 
   const wrongParent = await injectedRequest(
     revisionReaderApp,
     "GET",
     `/namespaces/${tenantA.data.id}/agents/${ownAgent.data.id}/revisions/${missingRevisionId}`,
   );
-  assert.equal(wrongParent.status, 404);
+  assertRevisionOnlyDenied(wrongParent);
+  assert.deepEqual(fixture.auditSink.events.at(-1).authorization, {
+    principalId: revisionReader.id,
+    action: "read",
+    resource: { kind: "agent", id: ownAgent.data.id, namespaceId: tenantA.data.id },
+  });
+
+  const missingParent = await injectedRequest(
+    revisionReaderApp,
+    "GET",
+    `/namespaces/${tenantB.data.id}/agents/agt_00000000-0000-4000-8000-000000009999/revisions/${missingRevisionId}`,
+  );
+  assertRevisionOnlyDenied(missingParent);
+  assert.deepEqual(fixture.auditSink.events.at(-1).authorization, {
+    principalId: revisionReader.id,
+    action: "read",
+    resource: {
+      kind: "agent",
+      id: "agt_00000000-0000-4000-8000-000000009999",
+      namespaceId: tenantB.data.id,
+    },
+  });
 
   fixture.state.roles.find((role) => role.id === "role-revision-only-reader").permissions.length =
     0;
   const deniedRevisionApp = fixture.createApp(revisionReader);
   const deniedRevision = await injectedRequest(deniedRevisionApp, "GET", ownRevisionPath);
-  assert.equal(deniedRevision.status, 403);
+  assertRevisionOnlyDenied(deniedRevision);
   const denialEvent = fixture.auditSink.events.at(-1);
   assert.equal(denialEvent.kind, "authorization_denial");
   assert.equal(denialEvent.action, "openclaw.agent_revisions.read");
@@ -1597,7 +1659,7 @@ test("OCC isolates Namespace ownership and filters collections by exact IAM gran
   assert.deepEqual(denialEvent.authorization, {
     principalId: revisionReader.id,
     action: "read",
-    resource: denialEvent.resource,
+    resource: { kind: "agent", id: ownAgent.data.id, namespaceId: tenantB.data.id },
   });
 
   const refreshedReaderApp = fixture.createApp(reader);

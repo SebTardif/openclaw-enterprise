@@ -119,6 +119,61 @@ test("channel binding administration uses authenticated exact-scope controller r
   const root = "/api/channel-installations";
   const appBody = { platform: "slack", providerTenantRef: "T α", recipientAppRef: "A/one" };
   let channelApp, binding, route;
+  const protectedRequests = () => [
+    ["POST", root, { ...appBody, recipientAppRef: "denied-admin-create" }],
+    ["GET", root],
+    ["GET", `${root}/${channelApp.id}`],
+    [
+      "PATCH",
+      `${root}/${channelApp.id}`,
+      { expectedVersion: channelApp.version, status: "disabled" },
+    ],
+    [
+      "POST",
+      `${root}/${channelApp.id}/human-bindings`,
+      {
+        providerSubjectRef: "denied-human-create",
+        principal: { issuer: human.issuer, subject: human.subject },
+      },
+    ],
+    ["GET", `${root}/${channelApp.id}/human-bindings`],
+    ["GET", `${root}/${channelApp.id}/human-bindings/${binding.id}`],
+    [
+      "PATCH",
+      `${root}/${channelApp.id}/human-bindings/${binding.id}`,
+      {
+        expectedVersion: binding.version,
+        status: "disabled",
+      },
+    ],
+  ];
+  async function assertProtectedDenied(headers, status = 403) {
+    const before = await state.read(async (view) => ({
+      installation: await view.channelBindings.findChannelInstallation(channelApp.id),
+      human: await view.channelBindings.findHumanBinding(channelApp.id, binding.id),
+      installations: await view.channelBindings.listChannelInstallations({ limit: 100 }),
+      humans: await view.channelBindings.listHumanBindings(channelApp.id, { limit: 100 }),
+      successes: auditSink.events.filter(
+        (event) => event.kind === "mutation" && event.outcome === "success",
+      ),
+    }));
+    for (const [method, path, body] of protectedRequests()) {
+      const result = await request(method, path, body, headers);
+      assert.equal(result.status, status, `${method} ${path}: ${JSON.stringify(result)}`);
+      assert.equal(result.error.code, status === 503 ? "DEPENDENCY_UNAVAILABLE" : "FORBIDDEN");
+      assert.equal(result.data, undefined);
+    }
+    const after = await state.read(async (view) => ({
+      installation: await view.channelBindings.findChannelInstallation(channelApp.id),
+      human: await view.channelBindings.findHumanBinding(channelApp.id, binding.id),
+      installations: await view.channelBindings.listChannelInstallations({ limit: 100 }),
+      humans: await view.channelBindings.listHumanBindings(channelApp.id, { limit: 100 }),
+      successes: auditSink.events.filter(
+        (event) => event.kind === "mutation" && event.outcome === "success",
+      ),
+    }));
+    assert.deepEqual(after, before, "denied administration neither mutates nor creates records");
+  }
   await t.test("closed creation, exact Unicode references and parent-scoped reads", async () => {
     const created = await request("POST", root, appBody);
     assert.equal(created.status, 201, JSON.stringify(created));
@@ -321,11 +376,46 @@ test("channel binding administration uses authenticated exact-scope controller r
     });
     assert.equal(issued.status, 201, JSON.stringify(issued));
     const keyHeaders = { "x-api-key": issued.data.key };
-    assert.equal((await request("GET", root, undefined, keyHeaders)).status, 200);
+    // The real service key remains admitted and retains its generic IAM Role.
+    // It cannot substitute for an authenticated human on any protected operation.
+    await assertProtectedDenied(keyHeaders);
+    const serviceParent = await request("POST", root, {
+      ...appBody,
+      recipientAppRef: "service-agent-parent",
+    });
+    assert.equal(serviceParent.status, 201);
+    const servicePath = `${root}/${serviceParent.data.id}/agent-bindings`;
+    const serviceRoute = await request(
+      "POST",
+      servicePath,
+      {
+        channelRef: "service-exact-agent",
+        scopeKind: "slack-private-channel",
+        namespaceId,
+        agentId,
+      },
+      keyHeaders,
+    );
+    assert.equal(serviceRoute.status, 201, JSON.stringify(serviceRoute));
+    assert.equal((await request("GET", servicePath, undefined, keyHeaders)).status, 200);
     assert.equal(
-      (await request("POST", root, { ...appBody, recipientAppRef: "service-key-app" }, keyHeaders))
+      (await request("GET", `${servicePath}/${serviceRoute.data.id}`, undefined, keyHeaders))
         .status,
-      201,
+      200,
+    );
+    assert.equal(
+      (
+        await request(
+          "PATCH",
+          `${servicePath}/${serviceRoute.data.id}`,
+          {
+            expectedVersion: 1,
+            status: "disabled",
+          },
+          keyHeaders,
+        )
+      ).status,
+      200,
     );
     const scoped = await request("POST", "/api/auth/service-keys", {
       servicePrincipalId: scopedService.id,
@@ -349,6 +439,299 @@ test("channel binding administration uses authenticated exact-scope controller r
       401,
     );
   });
+  await t.test(
+    "current explicit human mapping is independent of generic administration",
+    async () => {
+      const unmapped = {
+        id: `binding-${randomUUID()}`,
+        subjectKind: "identity",
+        subjectId: human.id,
+        roleId: seed.roles[0].id,
+      };
+      policy.bindings.push(unmapped);
+      const ordinary = { cookie: humanSession.cookie, origin: "http://127.0.0.1" };
+      // Same granting Role, real Principal and session; no semantic registration.
+      await assertProtectedDenied(ordinary);
+      assert.equal(
+        (await request("GET", `${root}/${channelApp.id}/agent-bindings`, undefined, ordinary))
+          .status,
+        200,
+      );
+      policy.bindings.splice(policy.bindings.indexOf(unmapped), 1);
+
+      const namespaceRole = {
+        id: `role-${randomUUID()}`,
+        namespaceId,
+        permissions: [{ action: "administer", resourceKind: "namespace" }],
+      };
+      const namespaceBinding = {
+        id: `binding-${randomUUID()}`,
+        namespaceId,
+        subjectKind: "identity",
+        subjectId: human.id,
+        roleId: namespaceRole.id,
+        resourceKind: "namespace",
+        resourceId: namespaceId,
+      };
+      policy.roles.push(namespaceRole);
+      policy.bindings.push(namespaceBinding);
+      await assertProtectedDenied(ordinary);
+      policy.bindings.pop();
+      policy.roles.pop();
+
+      const index = policy.bindings.findIndex((entry) => entry.channelAdministration !== undefined);
+      assert.notEqual(index, -1);
+      const original = policy.bindings[index];
+      // Remove the mapped binding while a separate actual generic grant remains.
+      const replacement = { ...original, id: `binding-${randomUUID()}` };
+      delete replacement.channelAdministration;
+      policy.bindings[index] = replacement;
+      await assertProtectedDenied(cookieHeaders);
+      policy.bindings[index] = original;
+      policy.bindings[index] = {
+        ...original,
+        channelAdministration: {
+          ...original.channelAdministration,
+          status: "disabled",
+          version: 2,
+        },
+      };
+      await assertProtectedDenied(cookieHeaders);
+      // A valid mapping alone cannot bypass an actual Installation Restriction.
+      policy.bindings[index] = original;
+      policy.restrictions.push({
+        id: `restriction-${randomUUID()}`,
+        action: "administer",
+        resourceKind: "installation",
+        resourceId: installationId,
+        effect: "deny",
+      });
+      await assertProtectedDenied(cookieHeaders);
+      policy.restrictions.pop();
+      // Corrupt producer metadata is unavailable, with no record disclosure/effect.
+      policy.bindings[index] = {
+        ...original,
+        channelAdministration: { ...original.channelAdministration, roleId: "wrong-role" },
+      };
+      await assertProtectedDenied(cookieHeaders, 503);
+      policy.bindings[index] = original;
+      const roleIndex = policy.roles.findIndex((role) => role.id === original.roleId);
+      const originalRole = policy.roles[roleIndex];
+      policy.roles[roleIndex] = {
+        ...originalRole,
+        permissions: originalRole.permissions.filter(
+          (permission) =>
+            !(permission.action === "administer" && permission.resourceKind === "installation"),
+        ),
+      };
+      await assertProtectedDenied(cookieHeaders);
+      policy.roles[roleIndex] = originalRole;
+      assert.equal((await request("GET", root)).status, 200);
+
+      const recorded = auditSink.events.find(
+        (event) =>
+          event.action === "openclaw.channel-bindings.installation.create" &&
+          event.details?.recordId === channelApp.id,
+      );
+      assert.ok(recorded);
+      const evidence = recorded.details.checks[0].evidence;
+      assert.equal(evidence.identityId, seed.principal.id);
+      assert.deepEqual(evidence.channelAdministration, {
+        schemaVersion: 1,
+        installationId,
+        mappings: [{ bindingId: original.id, roleId: original.roleId, version: 1 }],
+      });
+    },
+  );
+  await t.test(
+    "direct service calls cannot manufacture or replace controller invocation custody",
+    async () => {
+      const before = await state.read(async (view) => ({
+        installations: await view.channelBindings.listChannelInstallations({ limit: 100 }),
+        humans: await view.channelBindings.listHumanBindings(channelApp.id, { limit: 100 }),
+        successes: auditSink.events.filter(
+          (event) => event.kind === "mutation" && event.outcome === "success",
+        ),
+      }));
+      const context = {
+        actorId: seed.principal.id,
+        requestId: `req_${randomUUID()}`,
+        admissionDecisionId: `adm_${randomUUID()}`,
+        issuer: seed.principal.issuer,
+        subject: seed.principal.subject,
+        humanInvocation: Object.freeze({}),
+      };
+      const calls = [
+        () =>
+          controller.channelBindings.createInstallation(context, {
+            ...appBody,
+            recipientAppRef: "direct-forgery",
+          }),
+        () => controller.channelBindings.getInstallation(context, channelApp.id),
+        () => controller.channelBindings.listInstallations(context),
+        () =>
+          controller.channelBindings.setInstallationStatus(context, channelApp.id, {
+            expectedVersion: 1,
+            status: "disabled",
+          }),
+        () =>
+          controller.channelBindings.createHumanBinding(context, channelApp.id, {
+            providerSubjectRef: "direct-forgery",
+            principal: { issuer: human.issuer, subject: human.subject },
+          }),
+        () => controller.channelBindings.getHumanBinding(context, channelApp.id, binding.id),
+        () => controller.channelBindings.listHumanBindings(context, channelApp.id),
+        () =>
+          controller.channelBindings.setHumanBindingStatus(context, channelApp.id, binding.id, {
+            expectedVersion: 1,
+            status: "disabled",
+          }),
+      ];
+      for (const call of calls) await assert.rejects(call, { name: "AuthorizationDeniedError" });
+      assert.throws(
+        () =>
+          controller.channelBindings.installHumanAdministratorVerifier(async () => seed.principal),
+        /already sealed/,
+      );
+      const after = await state.read(async (view) => ({
+        installations: await view.channelBindings.listChannelInstallations({ limit: 100 }),
+        humans: await view.channelBindings.listHumanBindings(channelApp.id, { limit: 100 }),
+        successes: auditSink.events.filter(
+          (event) => event.kind === "mutation" && event.outcome === "success",
+        ),
+      }));
+      assert.deepEqual(after, before);
+      // The rejected replacement never executes and cannot affect a later actual route.
+      assert.equal((await request("GET", `${root}/${channelApp.id}`)).status, 200);
+    },
+  );
+  await t.test(
+    "real request custody rejects reuse, context substitutions and another operation",
+    async () => {
+      const service = controller.channelBindings;
+      const original = service.listInstallations.bind(service);
+      let captured;
+      // This observer receives an actual controller-owned invocation. Every result
+      // comes from the original service; the wrapper supplies no positive proof.
+      service.listInstallations = async (context, query) => {
+        captured = context;
+        for (const changed of [
+          { requestId: `req_${randomUUID()}` },
+          { actorId: human.id },
+          { admissionDecisionId: `adm_${randomUUID()}` },
+          { issuer: "another-issuer" },
+          { subject: "another-subject" },
+          { humanInvocation: Object.freeze({}) },
+        ])
+          await assert.rejects(() => original({ ...context, ...changed }, query), {
+            name: "AuthorizationDeniedError",
+          });
+        await assert.rejects(() => service.getInstallation(context, channelApp.id), {
+          name: "AuthorizationDeniedError",
+        });
+        const result = await original(context, query);
+        await assert.rejects(() => original(context, query), { name: "AuthorizationDeniedError" });
+        return result;
+      };
+      try {
+        assert.equal((await request("GET", root)).status, 200);
+      } finally {
+        service.listInstallations = original;
+      }
+      assert.ok(captured);
+      await assert.rejects(() => original(captured), { name: "AuthorizationDeniedError" });
+      assert.equal((await request("GET", root)).status, 200);
+    },
+  );
+  await t.test(
+    "the original identity resolution and protected invocation pin the selected Driver",
+    async () => {
+      const replacement = new NativeIAMDriver(
+        { loadNativeIAMState: async () => policy },
+        { id: `replacement-${randomUUID()}` },
+      );
+      controller.registerDriver(replacement);
+      const service = controller.channelBindings;
+      const original = service.listInstallations.bind(service);
+      service.listInstallations = async (context, query) => {
+        controller.selectDriver("iam", replacement.id);
+        return original(context, query);
+      };
+      try {
+        assert.equal((await request("GET", root)).status, 503);
+      } finally {
+        service.listInstallations = original;
+        controller.selectDriver("iam", iamDriver.id);
+      }
+      const lookup = iamDriver.lookupIdentity.bind(iamDriver);
+      // Swap only after the real original Driver resolves the admitted subject.
+      iamDriver.lookupIdentity = async (input) => {
+        const result = await lookup(input);
+        controller.selectDriver("iam", replacement.id);
+        return result;
+      };
+      try {
+        assert.equal((await request("GET", root)).status, 503);
+      } finally {
+        iamDriver.lookupIdentity = lookup;
+        controller.selectDriver("iam", iamDriver.id);
+      }
+      assert.equal((await request("GET", root)).status, 200);
+    },
+  );
+  await t.test(
+    "malformed selected-provider evidence cannot satisfy the semantic guard",
+    async () => {
+      const original = iamDriver.authorize.bind(iamDriver);
+      // Negative provider-fault injection starts with real current Native IAM
+      // evidence. No synthetic allow decision is used as a positive authority test.
+      for (const [change, expected] of [
+        [
+          (evidence) => {
+            evidence.restrictionIds.push("restriction-observed-by-provider");
+          },
+          403,
+        ],
+        [
+          (evidence) => {
+            delete evidence.channelAdministration;
+          },
+          503,
+        ],
+        [
+          (evidence) => {
+            delete evidence.identityId;
+          },
+          503,
+        ],
+        [
+          (evidence) => {
+            evidence.channelAdministration.mappings[0].bindingId = "unrelated-binding";
+          },
+          503,
+        ],
+      ]) {
+        iamDriver.authorize = async (input) => {
+          const decision = await original(input);
+          if (
+            !decision.allowed ||
+            input.action !== "administer" ||
+            input.resource.kind !== "installation"
+          )
+            return decision;
+          const faulty = structuredClone(decision);
+          change(faulty.evidence);
+          return faulty;
+        };
+        try {
+          await assertProtectedDenied(cookieHeaders, expected);
+        } finally {
+          iamDriver.authorize = original;
+        }
+      }
+      assert.equal((await request("GET", root)).status, 200);
+    },
+  );
   await t.test("CAS status, disabled recovery and retained identities", async () => {
     const path = `${root}/${channelApp.id}`;
     const disabled = await request("PATCH", path, { expectedVersion: 1, status: "disabled" });
