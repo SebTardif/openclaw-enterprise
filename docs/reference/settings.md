@@ -19,7 +19,7 @@ For packaged Kubernetes deployment, immutable image inputs, operator-provisioned
 Secrets, dedicated migration credentials, and exact network selectors, see
 [Production Kubernetes deployment](../guides/deploy.md).
 
-For a public Docker-only runtime image recipe used by the quickstart and
+For the prepared local-package runtime image recipe used by the quickstart and
 real-runtime tests, see [`deploy/runtime`](../../deploy/runtime/README.md).
 
 The controller reads environment variables directly from its process. It does
@@ -108,29 +108,40 @@ The table includes Compose inputs for its separate processes. `OPENCLAW_DEV_EMAI
 `OCC_BOOTSTRAP_SERVICE_KEY_FILE` belong only to the initializer; the API and
 worker require initialized state and do not read those credentials or output.
 
-| Variable                              | Required value or format                                                     | Behavior                                                                                                                                                                                                          |
-| ------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                            | Exactly `development`.                                                       | Selects local development admission; production has separate required inputs below.                                                                                                                               |
-| `OCC_HOST`                            | Host-process development: exactly `127.0.0.1` or `::1`; Compose: `0.0.0.0`.  | Host-process development must bind loopback. Compose may bind `0.0.0.0` inside its private bridge only because the published host port remains `127.0.0.1` and `OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR` is explicit. |
-| `OCC_PORT`                            | Decimal integer from `1` through `65535`.                                    | Selects the controller TCP port; no default is supplied.                                                                                                                                                          |
-| `OCC_AUTH_SECRET`                     | High-entropy secret string.                                                  | Signs and verifies Better Auth session material; do not reuse across installations.                                                                                                                               |
-| `OCC_AUTH_BASE_URL`                   | Absolute controller base URL.                                                | Defines the Better Auth base URL and cookie origin for backend auth endpoints.                                                                                                                                    |
-| `OPENCLAW_DEV_EMAIL`                  | Email address.                                                               | Initializer input selecting the development administrator sign-in email; defaults to `admin@openclaw.local`.                                                                                                      |
-| `OPENCLAW_DEV_INSTALLATION_NAME`      | `OpenClaw Local Development`.                                                | Development-only Installation name used by the initializer when the database is fresh.                                                                                                                            |
-| `OPENCLAW_DEV_PASSWORD`               | String from `12` through `128` characters.                                   | Initializer input selecting the development administrator sign-in password; defaults to `openclaw-development-password`.                                                                                          |
-| `OCC_DOCKER_GATEWAY_IMAGE`            | Image reference.                                                             | Existing OpenClaw gateway image with Node 24.15+, `/app/openclaw.mjs`, bundled skills, and the Codex plugin. Required unless `OCC_DOCKER_RUNTIME_IMAGE` supplies both runtimes.                                   |
-| `OCC_DOCKER_AGENT_IMAGE`              | Image reference.                                                             | Existing Codex Agent image with Node 24.15+, `codex` on `PATH`, and `codex app-server`. Required unless `OCC_DOCKER_RUNTIME_IMAGE` supplies both runtimes.                                                        |
-| `OCC_DOCKER_RUNTIME_IMAGE`            | Image reference.                                                             | Optional shared image used for both gateway and Agent runtimes when it contains both entrypoints; `scripts/dev-up` selects `openclaw-enterprise-runtime:quickstart` for its default invocation.                   |
-| `OPENCLAW_DEV_PORT`                   | TCP port; defaults to `3000`.                                                | Publishes the controller on host `127.0.0.1:<port>`.                                                                                                                                                              |
-| `OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR` | CIDR block.                                                                  | Explicit Compose bridge range admitted as local development traffic while keeping forwarded headers rejected.                                                                                                     |
-| `OCC_DEVELOPMENT_CONFIGURATION_ROOT`  | Absolute path.                                                               | Development filesystem Configuration Driver root. Compose sets `/app/.development/configurations` from the controller-only `occ_configuration_data` volume.                                                       |
-| `OCC_BOOTSTRAP_SERVICE_KEY_FILE`      | Required private absolute output path; written only on fresh initialization. | Compose supplies `/var/lib/openclaw/bootstrap/initial-admin-service-key.json` on its bootstrap-only volume. Existing Installations do not issue or replace output.                                                |
-| `OPENAI_API_KEY`                      | Existing authorized provider credential.                                     | Used only by the Agent-owned combined embedded container or dedicated Codex container for real model turns; never print or commit it.                                                                             |
+| Variable                              | Required value or format                                                     | Behavior                                                                                                                                                                                                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                            | Exactly `development`.                                                       | Selects local development admission; production has separate required inputs below.                                                                                                                                                         |
+| `OCC_HOST`                            | Host-process development: exactly `127.0.0.1` or `::1`; Compose: `0.0.0.0`.  | Host-process development must bind loopback. Compose may bind `0.0.0.0` inside its private bridge only because the published host port remains `127.0.0.1` and `OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR` is explicit.                           |
+| `OCC_PORT`                            | Decimal integer from `1` through `65535`.                                    | Selects the controller TCP port; no default is supplied.                                                                                                                                                                                    |
+| `OCC_AUTH_SECRET`                     | High-entropy secret string.                                                  | Signs and verifies Better Auth session material; do not reuse across installations.                                                                                                                                                         |
+| `OCC_AUTH_BASE_URL`                   | Absolute controller base URL.                                                | Defines the Better Auth base URL and cookie origin for backend auth endpoints.                                                                                                                                                              |
+| `OPENCLAW_DEV_EMAIL`                  | Email address.                                                               | Initializer input selecting the development administrator sign-in email; defaults to `admin@openclaw.local`.                                                                                                                                |
+| `OPENCLAW_DEV_INSTALLATION_NAME`      | `OpenClaw Local Development`.                                                | Development-only Installation name used by the initializer when the database is fresh.                                                                                                                                                      |
+| `OPENCLAW_DEV_PASSWORD`               | String from `12` through `128` characters.                                   | Initializer input selecting the development administrator sign-in password; defaults to `openclaw-development-password`.                                                                                                                    |
+| `OCC_DOCKER_GATEWAY_IMAGE`            | Image reference.                                                             | Existing OpenClaw gateway image with Node 24.15+, `/app/openclaw.mjs`, bundled skills, and the Codex plugin. Required unless `OCC_DOCKER_RUNTIME_IMAGE` supplies both runtimes.                                                             |
+| `OCC_DOCKER_AGENT_IMAGE`              | Image reference.                                                             | Existing Codex Agent image with Node 24.15+, `codex` on `PATH`, and `codex app-server`. Required unless `OCC_DOCKER_RUNTIME_IMAGE` supplies both runtimes.                                                                                  |
+| `OCC_DOCKER_RUNTIME_IMAGE`            | Image reference.                                                             | Optional shared image used for both gateway and Agent runtimes when it contains both entrypoints; `scripts/dev-up` selects `openclaw-enterprise-runtime:quickstart` for its default invocation.                                             |
+| `OCC_RUNTIME_BUILD_CONTEXT`           | Absolute path to an existing task-owned prepared runtime context.            | Host-side `scripts/dev-up` input required only when the default quickstart runtime image is absent. The helper verifies this context before building that image; existing default images and custom image selections retain their behavior. |
+| `OPENCLAW_DEV_PORT`                   | TCP port; defaults to `3000`.                                                | Publishes the controller on host `127.0.0.1:<port>`.                                                                                                                                                                                        |
+| `OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR` | CIDR block.                                                                  | Explicit Compose bridge range admitted as local development traffic while keeping forwarded headers rejected.                                                                                                                               |
+| `OCC_DEVELOPMENT_CONFIGURATION_ROOT`  | Absolute path.                                                               | Development filesystem Configuration Driver root. Compose sets `/app/.development/configurations` from the controller-only `occ_configuration_data` volume.                                                                                 |
+| `OCC_BOOTSTRAP_SERVICE_KEY_FILE`      | Required private absolute output path; written only on fresh initialization. | Compose supplies `/var/lib/openclaw/bootstrap/initial-admin-service-key.json` on its bootstrap-only volume. Existing Installations do not issue or replace output.                                                                          |
+| `OPENAI_API_KEY`                      | Existing authorized provider credential.                                     | Used only by the Agent-owned combined embedded container or dedicated Codex container for real model turns; never print or commit it.                                                                                                       |
 
 Generate `OCC_AUTH_SECRET` with `openssl rand -hex 32`; do not commit it, log
 it, or reuse another installation's secret. Local `.env` files are ignored by
 Git. Docker Compose reads them through native Compose precedence; do not source
 `.env` as shell.
+
+Prepare `OCC_RUNTIME_BUILD_CONTEXT` with
+`node deploy/runtime/prepare-local-packages.mjs --inputs <immutable-inputs.json> --output <new-directory>`
+and export its absolute path in the invoking shell. The
+[runtime packaging contract](../../deploy/runtime/README.md) defines the five
+local package inputs, frozen dependency policy, and context receipt. The helper
+does not prepare missing inputs or rebuild the upstream SDK. Its check is
+`node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"`;
+only a verified context is passed to `docker build -f deploy/runtime/Dockerfile`.
+This host preparation setting is not a controller or Agent runtime setting.
 
 Caller-supplied identity headers, forwarded requests, trusted proxies, bearer
 credentials, and non-loopback clients are rejected. The Compose bridge CIDR is
@@ -492,15 +503,21 @@ Driver gateway entrypoint, UID `1000:1000`, a read-only root filesystem, and
 tmpfs-backed `/home/node` and `/tmp`. Host Node.js 24+ is required to run the
 test.
 
-| Variable                 | Requirement or default                                 |
-| ------------------------ | ------------------------------------------------------ |
-| `OCC_TEST_RUNTIME_IMAGE` | Locally built OpenClaw runtime image tag; unset skips. |
-| `OCC_DOCKER_BIN`         | Optional Docker executable path; defaults to `docker`. |
+| Variable                 | Requirement or default                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `OCC_TEST_RUNTIME_IMAGE` | Locally built OpenClaw runtime image tag or exact local Docker image ID; unset skips. |
+| `OCC_DOCKER_BIN`         | Optional Docker executable path; defaults to `docker`.                                |
 
-This check proves an embedded OpenClaw gateway reaches `/readyz` from a fresh
-runtime home and the bundled Codex plugin can be discovered without missing
-package dependencies. It does not prove Docker Compose orchestration,
-Kubernetes reconciliation, model credentials, or a model turn.
+This check verifies an embedded OpenClaw gateway reaches `/readyz` from a fresh
+runtime home, bundled Codex/Slack/Microsoft Teams plugins load without missing
+package dependencies, and the installed Codex plugin initializes the real
+packaged app-server through its version guard. The recipe pins native Codex CLI
+to `0.153.0`. It runs offline without provider or channel credentials and does
+not prove Docker Compose orchestration, authenticated WebSocket execution,
+Kubernetes reconciliation, a model turn, live channel delivery, or gVisor
+qualification. A passing smoke does not replace source-artifact acceptance.
+Use the [image test procedure](../testing.md#images-and-helm) to bind the run to
+the built local image ID; that ID is not a registry manifest digest.
 
 ### Docker Compose development test environment
 

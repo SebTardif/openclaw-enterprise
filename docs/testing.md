@@ -235,20 +235,33 @@ change its URL. Keep the general and bootstrap databases separate.
 
 ## Images and Helm
 
-Build the [runtime image](../deploy/runtime/README.md), then run its startup smoke:
+Prepare the five-package context using the [runtime image recipe](../deploy/runtime/README.md)
+and set `OCC_RUNTIME_BUILD_CONTEXT` to its absolute task-owned directory. It uses
+already built core, AI, Slack, Microsoft Teams, and Codex plugin artifacts plus
+frozen dependency policy; it does not rebuild the SDK. Verify that context,
+build the image, then run its startup smoke against the resulting local image ID:
 
 ```sh
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker build -f deploy/runtime/Dockerfile \
-  --tag openclaw-enterprise-runtime:test deploy/runtime
-OCC_TEST_RUNTIME_IMAGE=openclaw-enterprise-runtime:test \
+  --tag openclaw-enterprise-runtime:test "$OCC_RUNTIME_BUILD_CONTEXT"
+OCC_TEST_RUNTIME_IMAGE="$(docker image inspect --format '{{.Id}}' openclaw-enterprise-runtime:test)" \
   node --test tests/integration/runtime-image-startup.test.mjs
 ```
 
-This checks gateway readiness and bundled Codex/Slack plugin loading from a
+This checks gateway readiness and bundled Codex, Slack, and Microsoft Teams plugin loading from a
 fresh runtime home, then initializes the image's real Codex app-server through
 the installed plugin's version guard. The smoke runs offline without provider
-credentials. It does not make a model call or establish a Slack connection;
-run the [live Slack test](#slack) for channel delivery proof.
+or channel credentials. Native Codex CLI is pinned to `0.153.0`. This does not
+make a model call, establish authenticated WebSocket operation, or prove live
+Slack/Teams delivery, Kubernetes behavior, or gVisor qualification; run the
+[live Slack test](#slack) for Slack delivery proof. Source-artifact acceptance
+remains a separate gate: successful local packaging and offline smoke do not
+qualify provisional artifacts for shared integration or deployment.
+
+The local Docker image ID binds this smoke to the built image without a registry
+push. It is not a registry manifest digest and must not be substituted into a
+Kubernetes `repository@sha256:...` reference.
 
 Build the controller image using the [production prerequisites](guides/deploy.md#production-prerequisites),
 then set `OCC_TEST_PRODUCTION_IMAGE` to the local tag you built:

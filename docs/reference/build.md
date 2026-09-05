@@ -92,7 +92,21 @@ The image graph takes a separately prepared OpenClaw/Codex runtime image. It
 checks that its exact digest reference is present in the local Docker engine
 and matches the Linux host architecture. It does not rebuild, pull, or substitute
 that runtime. Follow the [runtime image recipe](../../deploy/runtime/README.md)
-to prepare it.
+to prepare it from five local package artifacts: OpenClaw core, `@openclaw/ai`,
+Slack, Microsoft Teams, and the Codex plugin, with native Codex CLI `0.153.0`.
+The separate preparation command consumes immutable input records and frozen
+dependency policy without rebuilding the upstream SDK. It produces a task-owned
+Docker context containing `package.json`, `package-lock.json`, `artifacts/*.tgz`,
+and `preparation.json`; verify it with
+`node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"`
+before selecting it as the context for `deploy/runtime/Dockerfile`.
+
+`OCC_RUNTIME_BUILD_CONTEXT` is an absolute prepared-directory path used by
+`scripts/dev-up` only when its default quickstart runtime image is absent. It
+does not replace `OCC_BUILD_RUNTIME_IMAGE`, which selects an already built
+image for this graph. Local preparation and image smoke evidence do not establish
+final source-artifact acceptance, channel delivery, or deployment qualification.
+Provisional source artifacts retain that status until their acceptance gates pass.
 
 Set all six inputs explicitly:
 

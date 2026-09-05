@@ -245,8 +245,20 @@ runtime_images="$(sed -n '3,$p' "$compose_analysis")"
 if [ "$runtime_mode" = "default" ]; then
   export OCC_DOCKER_RUNTIME_IMAGE="$DEFAULT_RUNTIME_IMAGE"
   if ! docker image inspect "$DEFAULT_RUNTIME_IMAGE" >/dev/null 2>&1; then
-    if ! docker build -f deploy/runtime/Dockerfile --tag "$DEFAULT_RUNTIME_IMAGE" deploy/runtime; then
-      fail "runtime image" "could not build $DEFAULT_RUNTIME_IMAGE" docker build -f deploy/runtime/Dockerfile --tag "$DEFAULT_RUNTIME_IMAGE" deploy/runtime
+    runtime_build_context="${OCC_RUNTIME_BUILD_CONTEXT:-}"
+    if [ -z "$runtime_build_context" ]; then
+      fail "runtime image" "OCC_RUNTIME_BUILD_CONTEXT is required to build $DEFAULT_RUNTIME_IMAGE; prepare local packages as described in deploy/runtime/README.md"
+    fi
+    case "$runtime_build_context" in
+      /*) ;;
+      *) fail "runtime image" "OCC_RUNTIME_BUILD_CONTEXT must be an absolute prepared directory; see deploy/runtime/README.md" ;;
+    esac
+    require_command node
+    if ! node deploy/runtime/prepare-local-packages.mjs --verify-context "$runtime_build_context"; then
+      fail "runtime image" "prepared context verification failed" node deploy/runtime/prepare-local-packages.mjs --verify-context "$runtime_build_context"
+    fi
+    if ! docker build -f deploy/runtime/Dockerfile --tag "$DEFAULT_RUNTIME_IMAGE" "$runtime_build_context"; then
+      fail "runtime image" "could not build $DEFAULT_RUNTIME_IMAGE" docker build -f deploy/runtime/Dockerfile --tag "$DEFAULT_RUNTIME_IMAGE" "$runtime_build_context"
     fi
   fi
 elif [ "$runtime_mode" = "custom" ]; then

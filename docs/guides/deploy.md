@@ -7,8 +7,10 @@ root. Startup needs no model credential.
 ## Development
 
 Prerequisites: Docker Engine with Docker Compose, socket access, Bash, `curl`,
-Python 3, and a combined local runtime image or permission for the helper to
-build `openclaw-enterprise-runtime:quickstart`. Set `GO_BASE_IMAGE` in your
+Python 3, and a combined local runtime image. To let the helper build a missing
+`openclaw-enterprise-runtime:quickstart` image, also provide Node.js 24+ and the
+[prepared runtime build context](#prepare-the-runtime-build-context) through
+`OCC_RUNTIME_BUILD_CONTEXT`. Set `GO_BASE_IMAGE` in your
 environment or Compose `.env` to an approved digest-pinned Go 1.26 or newer
 builder image for the native controller components.
 
@@ -21,6 +23,47 @@ database, migration, bootstrap, API, and worker services, privately copies the
 initial service-key response, and checks `/installation`. Expected output starts
 with `OpenClaw Enterprise development stack is ready.` and includes the loopback
 URL, Installation ID, private key path, next check, and cleanup command.
+
+### Prepare the runtime build context
+
+The runtime recipe consumes five local package archives: OpenClaw core,
+`@openclaw/ai`, and the Slack, Microsoft Teams, and Codex plugins. Prepare them
+with the frozen dependency policy and immutable input description specified in
+the [runtime packaging contract](../../deploy/runtime/README.md). Preparation
+uses already built source artifacts; it does not rebuild the upstream SDK.
+The native Codex CLI remains pinned to `0.153.0`.
+
+Choose an absolute, task-owned output path that does not already exist:
+
+```bash
+export OCC_RUNTIME_BUILD_CONTEXT='/absolute/task-owned/runtime-context'
+node deploy/runtime/prepare-local-packages.mjs \
+  --inputs /absolute/task-owned/immutable-inputs.json \
+  --output "$OCC_RUNTIME_BUILD_CONTEXT"
+node deploy/runtime/prepare-local-packages.mjs \
+  --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
+```
+
+The prepared directory supplies `package.json`, `package-lock.json`,
+`artifacts/*.tgz`, and `preparation.json` as the Docker build context. Keep the
+original archives and input record with the preparation evidence. Preparation
+and offline smoke success do not promote provisional source artifacts to
+accepted release inputs or qualify an image for deployment.
+
+`scripts/dev-up` reuses an existing default runtime image. Only when that image
+is missing does it require `OCC_RUNTIME_BUILD_CONTEXT`, run the context verifier
+above, and build it with:
+
+```bash
+docker build -f deploy/runtime/Dockerfile \
+  --tag openclaw-enterprise-runtime:quickstart "$OCC_RUNTIME_BUILD_CONTEXT"
+```
+
+Custom runtime image selection retains its existing behavior and does not
+trigger this default-image preparation path. The helper does not create a
+context, rebuild the SDK, or substitute registry packages when inputs are
+missing. See [development settings](../reference/settings.md#required-development-controller-environment)
+for image selection and the context variable.
 
 ### Verify development
 
@@ -97,10 +140,10 @@ continues until the complete external custody path is implemented and selected.
 
 Build and push two images to a registry your cluster can access:
 
-| Image      | Source                                                                                                 | Used by                                          |
-| ---------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Controller | Root [`Dockerfile`](../../Dockerfile), target `runtime`                                                | API, worker, migration, and bootstrap            |
-| Runtime    | [`deploy/runtime/Dockerfile`](../../deploy/runtime/Dockerfile), installing OpenClaw and Codex from npm | Gateways and Agents (the same image serves both) |
+| Image      | Source                                                                                                     | Used by                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Controller | Root [`Dockerfile`](../../Dockerfile), target `runtime`                                                    | API, worker, migration, and bootstrap            |
+| Runtime    | [`deploy/runtime/Dockerfile`](../../deploy/runtime/Dockerfile), consuming a prepared local package context | Gateways and Agents (the same image serves both) |
 
 You need Docker with Buildx and registry push access. Select an approved,
 digest-pinned Go builder image with Go 1.26 or newer and export `GO_BASE_IMAGE`.
@@ -108,12 +151,14 @@ The controller build compiles the native OpenShell/SPIFFE executable and copies
 it into both controller image targets; the builder has no floating default.
 Replace the example
 registry and repository, and select the platform matching your Kubernetes
-nodes. The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
-which also documents package-version overrides.
+nodes. Prepare and verify `OCC_RUNTIME_BUILD_CONTEXT` using the
+[runtime context procedure](#prepare-the-runtime-build-context) before building.
+The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
+which owns the source-artifact and frozen dependency-policy requirements.
 
 The runtime must include the channel plugins its Agents enable, with their
 runtime dependencies available from a fresh home directory. The standard recipe
-packages Slack and Codex. Verify plugin loading and the gateway's supported
+packages Slack, Microsoft Teams, and Codex alongside core and AI. Verify plugin loading and the gateway's supported
 Codex app-server version before publishing; use the
 [runtime image checks](../../deploy/runtime/README.md#verify-the-local-image).
 Use the same verified runtime image for both slots unless you have separately
@@ -132,10 +177,11 @@ docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" --target runtime \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
   --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" .
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
   -f deploy/runtime/Dockerfile \
-  -t "$OCC_IMAGE_REPOSITORY/runtime:$OCC_IMAGE_TAG" deploy/runtime
+  -t "$OCC_IMAGE_REPOSITORY/runtime:$OCC_IMAGE_TAG" "$OCC_RUNTIME_BUILD_CONTEXT"
 
 CONTROLLER_DIGEST="$(docker buildx imagetools inspect \
   "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" \
@@ -371,20 +417,26 @@ export CONTEXT="k3d-$CLUSTER"
 ```
 
 Build and import the images. Set `GO_BASE_IMAGE` to an approved digest-pinned
-Go 1.26 or newer builder as described above:
+Go 1.26 or newer builder as described above, and prepare
+`OCC_RUNTIME_BUILD_CONTEXT` with the [local package procedure](#prepare-the-runtime-build-context).
+These local builds and imports do not require a registry push:
 
 ```bash
 docker build --target runtime \
   --build-arg NODE_BASE_IMAGE=node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584 \
   --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
   -t "localhost/$CLUSTER/controller:local" .
+node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker build -f deploy/runtime/Dockerfile \
-  -t "localhost/$CLUSTER/runtime:local" deploy/runtime
+  -t "localhost/$CLUSTER/runtime:local" "$OCC_RUNTIME_BUILD_CONTEXT"
 k3d image import "localhost/$CLUSTER/controller:local" \
   "localhost/$CLUSTER/runtime:local" -c "$CLUSTER"
 ```
 
-Register each imported manifest digest in k3s:
+Register each imported manifest digest in k3s. A Docker image ID from
+`docker image inspect --format '{{.Id}}'` identifies the local image configuration;
+it is not the registry or imported manifest digest required in the references
+below:
 
 ```bash
 for role in controller runtime; do
@@ -1080,7 +1132,7 @@ Use native surfaces for customization:
 - Production: extra Helm values files, ordinary Helm overrides, Kubernetes
   manifests, Installation startup YAML, and optional Collector Secrets.
 - Runtime images: [`deploy/runtime`](../../deploy/runtime/README.md) for the
-  recipe and package-version overrides.
+  recipe and immutable package-input requirements.
   [Build and publish](#build-and-publish-production-images) before configuring the digests.
 - Settings: [environment and tooling reference](../reference/settings.md).
 - Driver contracts: [Kubernetes Compute](../reference/drivers/kubernetes-compute.md),
