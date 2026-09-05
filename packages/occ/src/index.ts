@@ -226,6 +226,8 @@ export interface UpdateConfigurationInput {
 export interface DeployAgentInput {
   readonly namespaceId: string;
   readonly agentId: string;
+  /** Internal admission CAS; omission preserves the staged bodyless bridge. */
+  readonly expectedLifecycleGeneration?: number | null;
 }
 
 /** Trusted caller retains this locator before opening its outer transaction. */
@@ -1501,7 +1503,17 @@ export class OpenClawController {
       throw new ScopeViolationError("Deployment requires a trusted admission audit factory.");
     if (!isNonEmptyString(input.agentId))
       throw new ScopeViolationError("The exact Agent identity is missing.");
+    const compareGeneration = Object.hasOwn(input, "expectedLifecycleGeneration");
+    const expectedGeneration = input.expectedLifecycleGeneration;
     return this.mutate(async (state) => {
+      if (
+        compareGeneration &&
+        expectedGeneration !== null &&
+        (!Number.isSafeInteger(expectedGeneration) || (expectedGeneration ?? 0) < 1)
+      )
+        throw new ScopeViolationError(
+          "The expected lifecycle generation must be null or a positive safe integer.",
+        );
       const namespace = await this.lockNamespace(state, input.namespaceId);
       const agent = await state.agents.findAgent(namespace.id, input.agentId);
       if (!agent)
@@ -1532,8 +1544,12 @@ export class OpenClawController {
         );
       const scope = { namespaceId: namespace.id, agentId: lockedAgent.id };
       const head = await state.runtimeAssignments.findRuntimeIntentHead(scope);
+      if (compareGeneration && expectedGeneration !== (head?.generation ?? null))
+        throw new ResourceConflictError("The lifecycle generation does not match.");
       if (head !== undefined && head.desiredMode !== "running")
         throw new ResourceConflictError("Deploy cannot resume a disabled or stopped Agent.");
+      if (head?.generation === Number.MAX_SAFE_INTEGER)
+        throw new ResourceConflictError("The lifecycle generation is exhausted.");
       const providerId = this.providerId(lockedAgent.providerId);
       if (sandbox !== undefined && lockedAgent.executionMode !== "dedicated")
         throw new ScopeViolationError(
