@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const REGISTRY_VERSION = "release-registry/v1";
+export const REGISTRY_VERSION = "release-registry/v2";
 export const OUTCOMES = ["pass", "fail", "blocked", "skipped", "unrun"];
 export const CLASSES = ["source", "unit", "static", "render", "smoke", "probe", "live"];
 
@@ -14,7 +14,7 @@ const definitions = [
       [
         "public-install",
         "positive",
-        "A second engineer installs pinned public prerequisites and artifacts and completes the example.",
+        "A second engineer installs the exact public Kubernetes, gVisor systrap/STRICT and standalone SPIRE profile without KVM or nested virtualization and completes the example.",
       ],
       [
         "private-dependency",
@@ -252,45 +252,60 @@ const definitions = [
   ],
   [
     "R13",
-    "kata",
+    "gvisor",
     "runtime",
     [
       [
-        "actual-kata",
+        "actual-gvisor",
         "positive",
-        "Observe the actual Kata VM, approved RuntimeClass/image/policy/mounts and one intended harness through update and stop.",
+        "Observe the workload executing through verified runsc and containerd-shim-runsc-v1. Bind the complete installed six-member archive/hash closure, including gvisor-bin/checkpointgofer, gvisor-bin/gvisor-sentry-prewarmer, gvisor-bin/gvisor_sentry and gvisor-bin/runsc-metric-server. Record distinct actual runsc/shim version outputs and the companions selected or invoked for the fixture's operations; do not require every conditional helper to execute or invent per-helper version interfaces. Retain one intended Harness across provision, update and stop.",
       ],
       [
-        "openshell-controls",
+        "effective-handler",
+        "positive",
+        "Observe occ/kubernetes-gvisor with isolationProfile gvisor-systrap, RuntimeClass and handler oce-gvisor-systrap, runtimeType io.containerd.runsc.v1, platform systrap and sidecar-usage-policy STRICT. Bind effective node handler arguments/environment and final admitted shape to the configuration digest; require a Compute-owned dedicated Harness Deployment and separate trusted gateway.",
+      ],
+      [
+        "companion-selection",
         "denial",
-        "Effective OpenShell filesystem, process and network denial is observed.",
+        "Deny substituted binaries, unauthorized GVISOR_SIDECAR_BINARIES_DIR and directory/environment overrides. Freeze and exercise the separate sidecar-release-enforcement-policy and GVISOR_ENFORCE_RELEASE behavior; STRICT alone excludes embedded companion fallback and does not pin companion resolution or release matching. These companions are host runtime programs, not Kubernetes sidecars.",
+      ],
+      [
+        "containment-controls",
+        "denial",
+        "Observe approved process, privilege, filesystem/mount, network and resource controls, including gateway-private state separation. A RuntimeClass label, readiness or userspace-kernel selection alone does not prove effective controls, VM-equivalent isolation or hardware attestation.",
       ],
       [
         "missing-handler",
         "failure",
-        "Missing handler or required enforcement denies activation without direct-container fallback; gVisor cannot substitute.",
+        "Missing or substituted handler, unsafe final shape, embedded placement, SandboxDriver composition or required control failure denies activation without ordinary-container fallback. Later OpenShell/Kata qualification cannot replace current gVisor evidence.",
       ],
     ],
   ],
   [
     "R14",
-    "guest-identity",
+    "workload-identity",
     "identity",
     [
       [
         "standalone-spire",
         "positive",
-        "Two Agents receive distinct authorized identities through the actual Kata guest path using standalone SPIRE.",
+        "Two Agents receive distinct authorized identities through an implemented standalone SPIRE enrollment, delivery and verifier path for the actual gVisor sandbox/component. Bind server-owned installation, Namespace, Agent, revision, component, assignment and generation; a shared host Workload API socket, ServiceAccount or label does not prove the executing workload.",
+      ],
+      [
+        "direct-provider-binding",
+        "positive",
+        "Bind the Compute-owned Deployment UID, cluster reference, Namespace UID, exact ReplicaSet/Deployment ancestry, Pod UID, trusted runsc sandbox identity and a separate required process execution discriminator to the preallocated create effect. Preserve original observation time/freshness and exact runtime, image, policy, resource and store references. openShellSandboxId is absent only for the explicitly admitted typed direct-gVisor Harness profile; absence grants no authority.",
       ],
       [
         "forged-identity",
         "denial",
-        "Wrong trust domain, forged assignment, wrong Agent and retired generation are denied.",
+        "Wrong trust domain, forged assignment, wrong Agent, substituted execution instance and retired generation are denied. Readiness, runtimeclass strings, Pod labels, projected tokens and shared host sockets cannot substitute for protected workload identity and currentness evidence.",
       ],
       [
         "identity-lifecycle",
         "failure",
-        "Issuance, rotation, expiration and dependency outage are exercised.",
+        "Exercise issuance, rotation, expiration, runtime replacement and dependency outage for the actual bound workload. A Harness process/container restart under the same Pod UID, even with unchanged sandbox identity, requires fresh assignment, binding and identity evidence; predecessor authority cannot be reused.",
       ],
     ],
   ],
@@ -345,9 +360,9 @@ const cases = definitions.flatMap(([requirement, name, producer, assertions]) =>
     channel,
     producer,
     required: true,
-    profile: "kubernetes-openshell-kata-standalone-spire-native",
+    profile: "kubernetes-gvisor-systrap-strict-standalone-spire-native",
     executionClass: "live",
-    fixture: { id: `${producer}-${name}-v1`, status: "to-build", adapter: "pending" },
+    fixture: { id: `${producer}-${name}-v2`, status: "to-build", adapter: "pending" },
     prerequisites: [
       "component-fixture",
       "accepted-assertions",
@@ -363,8 +378,8 @@ cases.push({
   ...cases.find((item) => item.requirement === "R15"),
   id: "r15-operator-managed-provider",
   required: false,
-  profile: "kubernetes-openshell-kata-operator-managed-spire-native",
-  fixture: { id: "identity-operator-managed-provider-v1", status: "to-build", adapter: "pending" },
+  profile: "kubernetes-gvisor-systrap-strict-operator-managed-spire-native",
+  fixture: { id: "identity-operator-managed-provider-v2", status: "to-build", adapter: "pending" },
   prerequisites: [
     "component-fixture",
     "accepted-assertions",
