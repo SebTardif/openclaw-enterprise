@@ -91,6 +91,29 @@ test("console collection APIs keep exact Namespace and Agent IAM boundaries", as
   assert.equal(hiddenAgents.body.error.code, "FORBIDDEN");
   assert.equal(betaAgent.name, "Beta agent");
 
+  // Direct URLs and writes retain server-side scope checks even without the console selector.
+  for (const [method, path, body] of [
+    ["GET", `/namespaces/${beta.id}/agents/${betaAgent.id}`],
+    ["GET", `/namespaces/${beta.id}/configurations/${betaAgent.configurationId}`],
+    [
+      "PATCH",
+      `/namespaces/${beta.id}/configurations/${betaAgent.configurationId}`,
+      { values: { marker: "denied" } },
+    ],
+    ["GET", `/namespaces/${alpha.id}/agents/${betaAgent.id}`],
+  ]) {
+    const denied = await fixture.request(method, path, { session: limitedSession, body });
+    assert.ok([403, 404].includes(denied.status), `${method} ${path}`);
+    assert.equal(denied.body.data, undefined);
+    assert.doesNotMatch(JSON.stringify(denied.body), /Beta agent|secretBindings|configurationId/);
+  }
+  const unchangedForeign = await fixture.request(
+    "GET",
+    `/namespaces/${beta.id}/configurations/${betaAgent.configurationId}`,
+  );
+  assert.deepEqual(unchangedForeign.data.values, {});
+  assert.equal(unchangedForeign.data.generation, 1);
+
   const providerDenied = await fixture.request("GET", "/providers", { session: limitedSession });
   assert.equal(providerDenied.status, 403);
   assert.equal(providerDenied.body.error.code, "FORBIDDEN");

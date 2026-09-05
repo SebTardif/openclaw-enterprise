@@ -573,3 +573,4 @@ export * from "./api/resources.ts";
 export * from "./api/routes.ts";
 
 export * from "./channel-bindings.ts";
+export * from "./security-events.ts";

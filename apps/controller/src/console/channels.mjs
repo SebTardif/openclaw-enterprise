@@ -336,9 +336,17 @@ function renderCard(section, state, provider) {
   const support = provider === "slack" ? supportSlack(state.values) : supportTeams(state.values);
   const blockReason = pluginBlockReason(state.values, provider);
   const disabledByMode = state.executionMode === "embedded" && !status.enabled;
-  const canOpen = !state.readOnly && !disabledByMode && !blockReason && support.supported;
+  const canOpen =
+    !state.readOnly &&
+    !state.outcomeUnknown &&
+    !disabledByMode &&
+    !blockReason &&
+    support.supported;
   const canDisable =
-    !state.readOnly && status.enabled && isRecord(providerConfig(state.values, provider));
+    !state.readOnly &&
+    !state.outcomeUnknown &&
+    status.enabled &&
+    isRecord(providerConfig(state.values, provider));
   const action =
     status.label === "Not configured"
       ? `Configure ${PROVIDERS[provider].name}`
@@ -408,7 +416,7 @@ async function disableProvider(state, provider) {
 }
 
 async function save(state, values, dialog, targetError) {
-  if (state.pending) return;
+  if (state.pending || state.outcomeUnknown) return;
   state.pending = true;
   const controlsRoot = dialog ?? state.section;
   const errorNode = targetError ?? state.error;
@@ -422,12 +430,17 @@ async function save(state, values, dialog, targetError) {
     dialog?.close();
     dialog?.remove();
   } catch (error) {
-    errorNode.replaceChildren(
+    state.outcomeUnknown = Boolean(error.outcomeUnknown);
+    (state.outcomeUnknown ? state.error : errorNode).replaceChildren(
       element("p", { className: "error", role: "alert" }, errorText(error)),
     );
+    if (state.outcomeUnknown) {
+      dialog?.close();
+      dialog?.remove();
+    }
   } finally {
     state.pending = false;
-    if (succeeded || !dialog) state.rerender();
+    if (succeeded || !dialog || state.outcomeUnknown) state.rerender();
     else {
       for (const node of controlsRoot.querySelectorAll("button, input, select"))
         node.disabled = false;
@@ -440,6 +453,7 @@ function input(id, value, attrs = {}) {
 }
 
 function openDrawer(section, state, provider) {
+  if (state.pending || state.outcomeUnknown) return;
   const support = provider === "slack" ? supportSlack(state.values) : supportTeams(state.values);
   if (!support.supported || pluginBlockReason(state.values, provider)) return;
   section.querySelector("dialog")?.remove();
@@ -627,6 +641,7 @@ export function renderChannels({ values, executionMode, readOnly, onSave }) {
     onSave,
     section,
     pending: false,
+    outcomeUnknown: false,
     error: element("div", { "aria-live": "polite" }),
     rerender: () => render(),
   };
@@ -643,8 +658,8 @@ export function renderChannels({ values, executionMode, readOnly, onSave }) {
             "p",
             { className: "muted" },
             readOnly
-              ? "Live connection status unavailable. These are the selected AgentRevision’s immutable channel settings."
-              : "Live connection status unavailable. Save updates the shared Configuration draft, not any active AgentRevision.",
+              ? "Live connection status unavailable. These are the viewed AgentRevision’s immutable channel settings."
+              : "Live connection status unavailable. Save and Disable update only the shared Configuration draft. They do not stop or disable a running Agent or change admitted revisions.",
           ),
         ),
       ),
