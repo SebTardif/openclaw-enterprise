@@ -38,11 +38,14 @@ import {
   serializeChannelBindingMutations,
   validateChannelBindingList,
   serializeRuntimeAssignmentMutations,
+  isRuntimeAdmissionAudit,
 } from "./platform-state.ts";
 import type {
   ChannelBindingRepository,
   ChannelBindingListOptions,
   RuntimeAssignmentRepository,
+  RuntimeAdmissionRepository,
+  RevisionRuntimeAdmission,
   RuntimeIntent,
   RuntimeAllocation,
   RuntimeScope,
@@ -206,6 +209,16 @@ function runtimeIntentFromRow(row: PostgresRow): Readonly<RuntimeIntent> {
     actorId: text(row, "actor_id"),
     requestId: text(row, "request_id"),
     createdAt: timestamp(row, "created_at"),
+  });
+}
+function revisionAdmissionFromRow(row: PostgresRow): Readonly<RevisionRuntimeAdmission> {
+  return immutableCopy({
+    namespaceId: text(row, "namespace_id"),
+    agentId: text(row, "agent_id"),
+    revisionId: text(row, "revision_id"),
+    runtimeTransitionRef: text(row, "runtime_transition_ref"),
+    lifecycleGeneration: runtimeGeneration(row, "lifecycle_generation"),
+    auditEventId: text(row, "audit_event_id"),
   });
 }
 function runtimeAllocationFromRow(row: PostgresRow): Readonly<RuntimeAllocation> {
@@ -2157,9 +2170,91 @@ export class PostgresPlatformState implements PlatformStateStore {
       return runtimeIntentFromRow(found!);
     }
 
+    const runtimeAdmissions: RuntimeAdmissionRepository = {
+      findRevisionAdmission: async (scope, revisionId) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        const found = rows(
+          (
+            await client.query(
+              `SELECT * FROM occ.agent_revision_runtime_admissions
+           WHERE namespace_id = $1 AND agent_id = $2 AND revision_id = $3`,
+              [scope.namespaceId, scope.agentId, revisionId],
+            )
+          ).rows,
+        )[0];
+        return found === undefined ? undefined : revisionAdmissionFromRow(found);
+      },
+      findCommittedAdmission: async (scope, transitionRef, attribution) => {
+        if (!(await runtimeOwner(scope))) return undefined;
+        // Exact immutable admission and original work, independent of head advancement,
+        // lease ownership, completion, and permanently failed reconciliation.
+        const found = rows(
+          (
+            await client.query(
+              `SELECT to_jsonb(intent) AS intent,
+             to_jsonb(revision) || jsonb_build_object('service_principal_id', agent.service_principal_id) AS revision,
+             to_jsonb(audit) AS audit
+           FROM occ.agent_revision_runtime_admissions admission
+           JOIN occ.agent_runtime_intents intent
+             ON intent.namespace_id = admission.namespace_id AND intent.agent_id = admission.agent_id
+            AND intent.revision_id = admission.revision_id AND intent.transition_ref = admission.runtime_transition_ref
+            AND intent.generation = admission.lifecycle_generation
+           JOIN occ.agent_revisions revision
+             ON revision.namespace_id = admission.namespace_id AND revision.agent_id = admission.agent_id
+            AND revision.id = admission.revision_id
+           JOIN occ.agents agent ON agent.namespace_id = revision.namespace_id AND agent.id = revision.agent_id
+           JOIN occ.controller_work work
+             ON work.idempotency_key = 'agent_revision:' || admission.revision_id || ':reconcile'
+            AND work.namespace_id = admission.namespace_id AND work.agent_id = admission.agent_id
+            AND work.revision_id = admission.revision_id AND work.runtime_transition_ref = admission.runtime_transition_ref
+            AND work.lifecycle_generation = admission.lifecycle_generation AND work.actor_id = intent.actor_id
+            AND work.namespace_target IS NULL
+           JOIN occ.audit_events audit ON audit.id = admission.audit_event_id
+           WHERE admission.namespace_id = $1 AND admission.agent_id = $2
+             AND admission.runtime_transition_ref = $3 AND intent.actor_id = $4 AND intent.request_id = $5
+             AND intent.desired_mode = 'running'`,
+              [
+                scope.namespaceId,
+                scope.agentId,
+                transitionRef,
+                attribution.actorId,
+                attribution.requestId,
+              ],
+            )
+          ).rows,
+        )[0];
+        if (found === undefined) return undefined;
+        const intent = runtimeIntentFromRow(jsonObject(found.intent));
+        const installation = await this.requireInitialized(context);
+        if (
+          intent.installationId !== installation.id ||
+          !isRuntimeAdmissionAudit(auditFromRow(jsonObject(found.audit), installation.id), intent)
+        )
+          return undefined;
+        return revisionFromRow(jsonObject(found.revision));
+      },
+      recordAdmission: async (admission) => {
+        await this.requireInitialized(context);
+        await client.query(
+          `INSERT INTO occ.agent_revision_runtime_admissions
+           (namespace_id, agent_id, revision_id, runtime_transition_ref, lifecycle_generation, audit_event_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            admission.namespaceId,
+            admission.agentId,
+            admission.revisionId,
+            admission.runtimeTransitionRef,
+            admission.lifecycleGeneration,
+            admission.auditEventId,
+          ],
+        );
+      },
+    };
+
     return {
       channelBindings: serializeChannelBindingMutations(channelBindings),
       runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
+      runtimeAdmissions,
       installations,
       namespaces,
       configurations,
@@ -2247,6 +2342,12 @@ export class PostgresPlatformState implements PlatformStateStore {
             ...(revisionId === undefined ? {} : { revisionId }),
             ...(namespaceTarget === undefined ? {} : { namespaceTarget }),
             actorId: operation.actorId,
+            ...(operation.runtimeTransitionRef === undefined
+              ? {}
+              : { runtimeTransitionRef: operation.runtimeTransitionRef }),
+            ...(operation.lifecycleGeneration === undefined
+              ? {}
+              : { lifecycleGeneration: operation.lifecycleGeneration }),
           });
         },
         list: async () => {
@@ -2254,7 +2355,8 @@ export class PostgresPlatformState implements PlatformStateStore {
           const found = rows(
             (
               await client.query(
-                `SELECT namespace_id, agent_id, revision_id, actor_id, namespace_target
+                `SELECT namespace_id, agent_id, revision_id, actor_id, namespace_target,
+                        runtime_transition_ref, lifecycle_generation
                  FROM occ.controller_work ORDER BY created_at, idempotency_key`,
               )
             ).rows,
@@ -2277,7 +2379,17 @@ export class PostgresPlatformState implements PlatformStateStore {
                   );
                 return immutableCopy({ ...base, kind: "namespace", target });
               }
-              return immutableCopy({ ...base, kind: "agent_revision" });
+              const runtimeTransitionRef = optionalText(row, "runtime_transition_ref");
+              return immutableCopy({
+                ...base,
+                kind: "agent_revision",
+                ...(runtimeTransitionRef === undefined
+                  ? {}
+                  : {
+                      runtimeTransitionRef,
+                      lifecycleGeneration: runtimeGeneration(row, "lifecycle_generation"),
+                    }),
+              });
             }),
           );
         },

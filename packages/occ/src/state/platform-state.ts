@@ -277,6 +277,8 @@ interface PlatformOperationBase {
   readonly namespaceId: string;
   readonly resourceId: string;
   readonly actorId: string;
+  readonly runtimeTransitionRef?: string;
+  readonly lifecycleGeneration?: number;
 }
 
 export type PlatformOperation =
@@ -407,6 +409,52 @@ export interface RuntimeIntent extends RuntimeScope, RuntimeIntentAttribution {
   readonly revisionId: string;
   readonly createdAt: string;
 }
+/** Immutable admission identity, retained independently of work state and the intent head. */
+export interface RevisionRuntimeAdmission extends RuntimeScope {
+  readonly revisionId: string;
+  readonly runtimeTransitionRef: string;
+  readonly lifecycleGeneration: number;
+  readonly auditEventId: string;
+}
+export interface RuntimeAdmissionReadRepository {
+  findRevisionAdmission(
+    scope: RuntimeScope,
+    revisionId: string,
+  ): Promise<Readonly<RevisionRuntimeAdmission> | undefined>;
+  findCommittedAdmission(
+    scope: RuntimeScope,
+    transitionRef: string,
+    attribution: RuntimeIntentAttribution,
+  ): Promise<Readonly<AgentRevision> | undefined>;
+}
+export interface RuntimeAdmissionRepository extends RuntimeAdmissionReadRepository {
+  recordAdmission(admission: RevisionRuntimeAdmission): Promise<void>;
+}
+
+/** A success event must attest the exact canonical deploy admission. */
+export function isRuntimeAdmissionAudit(event: AuditEvent, intent: RuntimeIntent): boolean {
+  return (
+    event.installationId === intent.installationId &&
+    event.namespaceId === intent.namespaceId &&
+    event.kind === "mutation" &&
+    event.outcome === "success" &&
+    event.action === "openclaw.agents.deploy" &&
+    event.actorId === intent.actorId &&
+    (event.actor?.principalId === undefined || event.actor.principalId === intent.actorId) &&
+    (event.actor?.id === undefined || event.actor.id === intent.actorId) &&
+    event.actor?.unresolved !== true &&
+    event.requestId === intent.requestId &&
+    event.resource.kind === "agent_revision" &&
+    event.resource.id === intent.revisionId &&
+    event.resource.namespaceId === intent.namespaceId &&
+    (event.authorization === undefined ||
+      (event.authorization.principalId === intent.actorId &&
+        event.authorization.action === "deploy" &&
+        event.authorization.resource.kind === "agent" &&
+        event.authorization.resource.id === intent.agentId &&
+        event.authorization.resource.namespaceId === intent.namespaceId))
+  );
+}
 export interface RuntimeProfileRefs {
   readonly providerProfileRef: string;
   readonly runtimeProfileRef: string;
@@ -488,6 +536,7 @@ export function serializeRuntimeAssignmentMutations(
 export interface PlatformReadView {
   readonly channelBindings: ChannelBindingReadRepository;
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
+  readonly runtimeAdmissions: RuntimeAdmissionReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
   readonly configurations: ConfigurationReadRepository;
@@ -500,6 +549,7 @@ export interface PlatformReadView {
 export interface PlatformUnitOfWork extends PlatformReadView {
   readonly channelBindings: ChannelBindingRepository;
   readonly runtimeAssignments: RuntimeAssignmentRepository;
+  readonly runtimeAdmissions: RuntimeAdmissionRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
   readonly configurations: ConfigurationRepository;
@@ -540,6 +590,7 @@ interface PlatformSnapshot {
   readonly runtimeIntents: Map<string, Readonly<RuntimeIntent>>;
   readonly runtimeHeads: Map<string, string>;
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
+  readonly runtimeAdmissions: Map<string, Readonly<RevisionRuntimeAdmission>>;
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
   readonly configurations: Map<string, Readonly<ConfigurationOwnership>>;
@@ -563,6 +614,7 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimeIntents: new Map(snapshot.runtimeIntents),
     runtimeHeads: new Map(snapshot.runtimeHeads),
     runtimeAllocations: new Map(snapshot.runtimeAllocations),
+    runtimeAdmissions: new Map(snapshot.runtimeAdmissions),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
     namespaces: new Map(
@@ -1639,9 +1691,91 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     return immutableCopy(intent);
   }
 
+  const runtimeAdmissions: RuntimeAdmissionRepository = {
+    findRevisionAdmission: async (scope, revisionId) => {
+      if (!(await runtimeOwner(scope))) return undefined;
+      const admission = snapshot.runtimeAdmissions.get(revisionId);
+      return admission?.namespaceId === scope.namespaceId && admission.agentId === scope.agentId
+        ? immutableCopy(admission)
+        : undefined;
+    },
+    findCommittedAdmission: async (scope, transitionRef, attribution) => {
+      const intent = await runtimeAssignments.findRuntimeIntent(scope, transitionRef);
+      if (
+        intent === undefined ||
+        intent.desiredMode !== "running" ||
+        intent.actorId !== attribution.actorId ||
+        intent.requestId !== attribution.requestId
+      )
+        return undefined;
+      const admission = await runtimeAdmissions.findRevisionAdmission(scope, intent.revisionId);
+      if (
+        admission === undefined ||
+        admission.runtimeTransitionRef !== transitionRef ||
+        admission.lifecycleGeneration !== intent.generation
+      )
+        return undefined;
+      const revision = await revisions.findRevision(
+        scope.namespaceId,
+        scope.agentId,
+        intent.revisionId,
+      );
+      const agent = await agents.findAgent(scope.namespaceId, scope.agentId);
+      const operation = snapshot.operations.find(
+        (item) =>
+          item.kind === "agent_revision" &&
+          item.resourceId === intent.revisionId &&
+          item.action === "reconcile",
+      );
+      const audit = snapshot.audit.find((item) => item.id === admission.auditEventId);
+      if (
+        revision === undefined ||
+        agent === undefined ||
+        revision.servicePrincipalId !== agent.servicePrincipalId ||
+        operation?.namespaceId !== scope.namespaceId ||
+        operation.actorId !== intent.actorId ||
+        operation.runtimeTransitionRef !== transitionRef ||
+        operation.lifecycleGeneration !== intent.generation ||
+        audit === undefined ||
+        !isRuntimeAdmissionAudit(audit, intent)
+      )
+        return undefined;
+      return immutableCopy(revision);
+    },
+    recordAdmission: async (admission) => {
+      const intent = await runtimeAssignments.findRuntimeIntent(
+        admission,
+        admission.runtimeTransitionRef,
+      );
+      const audit = snapshot.audit.find((event) => event.id === admission.auditEventId);
+      if (
+        intent === undefined ||
+        intent.desiredMode !== "running" ||
+        intent.revisionId !== admission.revisionId ||
+        intent.generation !== admission.lifecycleGeneration ||
+        audit === undefined ||
+        !isRuntimeAdmissionAudit(audit, intent)
+      )
+        throw new ScopeViolationError(
+          "The revision admission does not match its exact intent and audit.",
+        );
+      if (
+        snapshot.runtimeAdmissions.has(admission.revisionId) ||
+        [...snapshot.runtimeAdmissions.values()].some(
+          (item) =>
+            item.runtimeTransitionRef === admission.runtimeTransitionRef ||
+            item.auditEventId === admission.auditEventId,
+        )
+      )
+        throw new ResourceConflictError("The revision runtime admission is immutable.");
+      snapshot.runtimeAdmissions.set(admission.revisionId, immutableCopy(admission));
+    },
+  };
+
   return {
     channelBindings: serializeChannelBindingMutations(channelBindings),
     runtimeAssignments: serializeRuntimeAssignmentMutations(runtimeAssignments),
+    runtimeAdmissions,
     installations,
     namespaces,
     configurations,
@@ -1655,6 +1789,8 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
           throw new ScopeViolationError("The audit event belongs to another Installation.");
         if (event.resource.namespaceId !== event.namespaceId)
           throw new ScopeViolationError("The audit event belongs to another Namespace.");
+        if (snapshot.audit.some((existing) => existing.id === event.id))
+          throw new ResourceConflictError("The audit event identity already exists.");
         snapshot.audit.push(immutableCopy(event));
       },
       list: async () => Object.freeze(snapshot.audit.map((event) => immutableCopy(event))),
@@ -1664,6 +1800,19 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
         assertInitialized(snapshot);
         if (operation.kind !== "namespace" && operation.kind !== "agent_revision")
           throw new ScopeViolationError("The platform operation has an unsupported resource kind.");
+        const hasTransition = operation.runtimeTransitionRef !== undefined;
+        const hasGeneration = operation.lifecycleGeneration !== undefined;
+        if (
+          hasTransition !== hasGeneration ||
+          (hasTransition &&
+            (!runtimeUuid.test(operation.runtimeTransitionRef!) ||
+              !Number.isSafeInteger(operation.lifecycleGeneration) ||
+              operation.lifecycleGeneration! < 1)) ||
+          (operation.kind === "namespace" && hasTransition)
+        )
+          throw new ScopeViolationError(
+            "Controller work requires an exact paired runtime admission.",
+          );
         if (
           operation.kind === "namespace" &&
           (operation.namespaceId !== operation.resourceId ||
@@ -1683,12 +1832,33 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
         if (duplicate !== undefined) {
           if (
             duplicate.actorId !== operation.actorId ||
-            duplicate.namespaceId !== operation.namespaceId
+            duplicate.namespaceId !== operation.namespaceId ||
+            duplicate.runtimeTransitionRef !== operation.runtimeTransitionRef ||
+            duplicate.lifecycleGeneration !== operation.lifecycleGeneration
           )
             throw new ResourceConflictError(
               "The platform operation already belongs to another owner or actor.",
             );
           return;
+        }
+        if (operation.kind === "agent_revision") {
+          const admission = snapshot.runtimeAdmissions.get(operation.resourceId);
+          if (hasTransition || admission !== undefined) {
+            const intent =
+              admission === undefined
+                ? undefined
+                : snapshot.runtimeIntents.get(admission.runtimeTransitionRef);
+            if (
+              admission === undefined ||
+              admission.namespaceId !== operation.namespaceId ||
+              admission.runtimeTransitionRef !== operation.runtimeTransitionRef ||
+              admission.lifecycleGeneration !== operation.lifecycleGeneration ||
+              intent?.actorId !== operation.actorId
+            )
+              throw new ScopeViolationError(
+                "Controller work does not match its exact revision admission.",
+              );
+          }
         }
         snapshot.operations.push(immutableCopy(operation));
       },
@@ -1707,6 +1877,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimeIntents: new Map(),
     runtimeHeads: new Map(),
     runtimeAllocations: new Map(),
+    runtimeAdmissions: new Map(),
     installation: undefined,
     namespaces: new Map(),
     configurations: new Map(),

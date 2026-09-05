@@ -131,7 +131,10 @@ implementation. If the Agent has an associated native
 [service account](service-accounts.md), the revision also snapshots its
 identity and opaque credential reference. OCC separately
 authorizes the referenced Configuration and any exact associated account,
-then queues one revision operation in the same transaction. The source Configuration identity and generation remain pinned even when the
+then atomically records the new running intent, exact success audit, immutable
+revision admission association, and original revision operation. New deployment
+work is mandatory even for direct OCC callers using `recordOperations: false`.
+The source Configuration identity and generation remain pinned even when the
 admitted copy differs. Later Configuration, account, or Agent placement changes
 never mutate an admitted revision; see [Agent references and deployment](agents.md#revisions-and-deployment).
 PostgreSQL enforces the exact admitted snapshot shape, so the worker trusts
@@ -371,11 +374,32 @@ constraints and triggers preserve ownership, immutable history and monotonic
 sequences. The in-memory adapter preserves the same observable transaction
 behavior within one process.
 
-These records have no production lifecycle caller yet. They do not change deploy,
-stop or disable behavior, select runtime policy, invoke Drivers, bind identities,
-or establish execution authority. An existing Agent has no intent until a trusted
-internal caller explicitly initializes one. Profile references identify stored
-values only; persistence does not approve a runtime profile or attest a guest.
+The bodyless deployment route and canonical `deployAgent` domain operation now
+admit running intents. They initialize an absent head or advance its exact stored
+running generation; disabled and stopped heads conflict. They do not allocate
+provider instances, select runtime policy, bind identities, or establish current
+execution authority. Historical revisions have no admission association unless
+explicitly admitted through this operation; existing active pointers and healthy
+workloads are not backfilled. Profile references identify stored values only;
+persistence does not approve a runtime profile or attest a guest.
+
+Every `deployAgent` caller supplies a mandatory `DeployAgentAdmissionContext` with
+a UUID-v4 `transitionRef`, sanitized `requestId`, and synchronous trusted audit
+factory. It retains the context before opening its outer transaction. The
+canonical operation verifies the resulting event's exact actor, action, request,
+scope, and revision before appending it once. The API derives these inputs from
+its authenticated request and retains the existing `202` response shape.
+
+`runtimeAdmissions` exposes narrow internal reads for each revision's immutable
+original association and committed-admission recovery. After an unknown COMMIT,
+`recoverDeployAgent` opens a fresh read transaction and requires the exact retained
+intent, revision owner and service principal, original reconcile work, and
+successful audit. Completed or permanently failed original work remains valid
+admission evidence, including after a newer head exists. Missing, mismatched, or
+unavailable proof remains unavailable; recovery never automatically deploys a
+duplicate. No additional revision-read permission is required by this internal
+recovery path. Retained caller memory is required; repeated HTTP POSTs are not
+idempotent.
 
 Before opening a transaction, the trusted caller retains a fresh UUID-v4
 `transitionRef` or `createEffectRef`. After `PostgresCommitOutcomeUnknownError`,
@@ -393,3 +417,9 @@ and, with the existing PostgreSQL application-role test configuration,
 `node --test tests/integration/postgres-runtime-assignment-state.test.mjs`.
 The database suite verifies real constraints, concurrent transactions and lost
 COMMIT acknowledgement. It explicitly skips when its database URL is absent.
+The admission bridge is covered by
+`node --test tests/conformance/runtime-admission-memory.test.mjs` and
+`node --test tests/integration/postgres-runtime-admission.test.mjs`, alongside the
+actual API and revision-worker suites. These tests establish persistence and
+controller behavior; selected test Compute observations do not prove live
+provider identity or effect fencing.

@@ -654,6 +654,8 @@ export const controllerWork = occSchema.table(
     revisionId: text("revision_id"),
     actorId: text("actor_id").notNull(),
     namespaceTarget: text("namespace_target"),
+    runtimeTransitionRef: text("runtime_transition_ref"),
+    lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }),
     state: text("state").notNull().default("queued"),
     availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
@@ -663,7 +665,7 @@ export const controllerWork = occSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
-  (table) => [
+  (table): PgTableExtraConfigValue[] => [
     foreignKey({
       name: "controller_work_agent_owner",
       columns: [table.namespaceId, table.agentId],
@@ -671,6 +673,34 @@ export const controllerWork = occSchema.table(
     })
       .onUpdate("restrict")
       .onDelete("restrict"),
+    foreignKey({
+      name: "controller_work_runtime_admission_owner",
+      columns: [
+        table.namespaceId,
+        table.agentId,
+        table.revisionId,
+        table.runtimeTransitionRef,
+        table.lifecycleGeneration,
+      ],
+      foreignColumns: [
+        agentRevisionRuntimeAdmissions.namespaceId,
+        agentRevisionRuntimeAdmissions.agentId,
+        agentRevisionRuntimeAdmissions.revisionId,
+        agentRevisionRuntimeAdmissions.runtimeTransitionRef,
+        agentRevisionRuntimeAdmissions.lifecycleGeneration,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "controller_work_runtime_pair_valid",
+      sql`(${table.runtimeTransitionRef} IS NULL AND ${table.lifecycleGeneration} IS NULL)
+        OR (${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
+          AND ${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
+          AND ${table.namespaceTarget} IS NULL
+          AND ${table.runtimeTransitionRef} ~ ${runtimeReferencePattern}
+          AND ${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991)`,
+    ),
     foreignKey({
       name: "controller_work_revision_owner",
       columns: [table.namespaceId, table.agentId, table.revisionId],
@@ -902,6 +932,13 @@ export const agentRuntimeIntents = occSchema.table(
       table.generation,
       table.revisionId,
     ),
+    unique("runtime_intents_admission_identity_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.revisionId,
+      table.transitionRef,
+      table.generation,
+    ),
     foreignKey({
       name: "runtime_intents_agent_owner",
       columns: [table.namespaceId, table.agentId],
@@ -937,6 +974,59 @@ export const agentRuntimeIntents = occSchema.table(
       sql`char_length(${table.requestId}) BETWEEN 1 AND 200 AND ${table.requestId} ~ '^[A-Za-z0-9._:/-]+$'`,
     ),
     check("runtime_intents_created_at_finite", sql`isfinite(${table.createdAt})`),
+  ],
+);
+
+// Migration triggers bind the exact success audit and original work at commit,
+// and preserve both admission and work identity independently of queue state.
+export const agentRevisionRuntimeAdmissions = occSchema.table(
+  "agent_revision_runtime_admissions",
+  {
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    revisionId: text("revision_id").primaryKey(),
+    runtimeTransitionRef: text("runtime_transition_ref")
+      .notNull()
+      .unique("agent_revision_runtime_admissions_runtime_transition_ref_key"),
+    lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }).notNull(),
+    auditEventId: text("audit_event_id")
+      .notNull()
+      .unique("agent_revision_runtime_admissions_audit_event_id_key"),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    foreignKey({
+      name: "agent_revision_runtime_admissions_audit_event_id_fkey",
+      columns: [table.auditEventId],
+      foreignColumns: [auditEvents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("revision_runtime_admissions_work_identity_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.revisionId,
+      table.runtimeTransitionRef,
+      table.lifecycleGeneration,
+    ),
+    foreignKey({
+      name: "revision_runtime_admissions_intent_owner",
+      columns: [
+        table.namespaceId,
+        table.agentId,
+        table.revisionId,
+        table.runtimeTransitionRef,
+        table.lifecycleGeneration,
+      ],
+      foreignColumns: [
+        agentRuntimeIntents.namespaceId,
+        agentRuntimeIntents.agentId,
+        agentRuntimeIntents.revisionId,
+        agentRuntimeIntents.transitionRef,
+        agentRuntimeIntents.generation,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
   ],
 );
 

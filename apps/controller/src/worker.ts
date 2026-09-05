@@ -520,7 +520,12 @@ export class ControllerWorker {
       await this.processRevision(claim);
       return;
     }
-    if (claim.agentId !== undefined || claim.namespaceTarget === undefined) {
+    if (
+      claim.agentId !== undefined ||
+      claim.namespaceTarget === undefined ||
+      claim.runtimeTransitionRef !== undefined ||
+      claim.lifecycleGeneration !== undefined
+    ) {
       await this.finalize(claim, undefined, { outcome: "permanent", code: "INVALID_TARGET" });
       return;
     }
@@ -566,6 +571,20 @@ export class ControllerWorker {
           claim.agentId!,
           claim.revisionId!,
         );
+        const scope = { namespaceId: claim.namespaceId, agentId: claim.agentId! };
+        // Both-null claim fields do not establish historical admission. Consult
+        // the immutable original association, never the current intent head.
+        const admission = await view.runtimeAdmissions.findRevisionAdmission(
+          scope,
+          claim.revisionId!,
+        );
+        const intent =
+          admission === undefined
+            ? undefined
+            : await view.runtimeAssignments.findRuntimeIntent(
+                scope,
+                admission.runtimeTransitionRef,
+              );
         const previous =
           agent?.activeRevisionId === undefined
             ? undefined
@@ -574,9 +593,9 @@ export class ControllerWorker {
                 claim.agentId!,
                 agent.activeRevisionId,
               );
-        return { namespace, agent, revision, previous };
+        return { namespace, agent, revision, previous, admission, intent };
       });
-      const { namespace, agent, revision, previous } = resources;
+      const { namespace, agent, revision, previous, admission, intent } = resources;
       if (namespace === undefined || agent === undefined || revision === undefined) {
         await this.finalizeRevision(claim, {
           outcome: "permanent",
@@ -596,6 +615,30 @@ export class ControllerWorker {
         await this.finalizeRevision(claim, {
           outcome: "permanent",
           code: "INVALID_ADMITTED_REVISION",
+        });
+        return;
+      }
+      if (
+        admission === undefined
+          ? claim.runtimeTransitionRef !== undefined || claim.lifecycleGeneration !== undefined
+          : intent === undefined ||
+            intent.desiredMode !== "running" ||
+            intent.installationId !== this.installation?.id ||
+            intent.namespaceId !== namespace.id ||
+            intent.agentId !== agent.id ||
+            intent.revisionId !== revision.id ||
+            intent.actorId !== claim.actorId ||
+            admission.namespaceId !== namespace.id ||
+            admission.agentId !== agent.id ||
+            admission.revisionId !== revision.id ||
+            admission.runtimeTransitionRef !== intent.transitionRef ||
+            admission.lifecycleGeneration !== intent.generation ||
+            claim.runtimeTransitionRef !== admission.runtimeTransitionRef ||
+            claim.lifecycleGeneration !== admission.lifecycleGeneration
+      ) {
+        await this.finalizeRevision(claim, {
+          outcome: "permanent",
+          code: "INVALID_RUNTIME_ADMISSION",
         });
         return;
       }
@@ -1122,6 +1165,12 @@ export class ControllerWorker {
       revisionId: revision.id,
       actorId: claim.actorId,
       availableAt,
+      ...(claim.runtimeTransitionRef === undefined
+        ? {}
+        : { runtimeTransitionRef: claim.runtimeTransitionRef }),
+      ...(claim.lifecycleGeneration === undefined
+        ? {}
+        : { lifecycleGeneration: claim.lifecycleGeneration }),
     });
   }
 

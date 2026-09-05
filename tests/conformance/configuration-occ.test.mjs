@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -187,6 +188,7 @@ test("Configuration metadata and selected substrate generation divergence fails 
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     DependencyUnavailableError,
   );
@@ -234,6 +236,7 @@ test("Agent deployment snapshots its selected Configuration and Compute identity
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
 
   assert.equal(revision.configurationId, configuration.id);
@@ -386,6 +389,7 @@ test("one installation admits embedded and dedicated revisions without rewriting
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   const codexConfiguration = await controller.createConfiguration(administrator, {
     namespaceId: namespace.id,
@@ -409,6 +413,7 @@ test("one installation admits embedded and dedicated revisions without rewriting
     administrator,
     { namespaceId: namespace.id, agentId: dedicatedAgent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   assert.deepEqual(dedicatedNeighbor.harness, {
     id: "codex",
@@ -427,6 +432,7 @@ test("one installation admits embedded and dedicated revisions without rewriting
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   assert.deepEqual(embedded.harness, { id: "openclaw", version: "1.0.0", mode: "embedded" });
   assert.deepEqual(dedicated.harness, { id: "codex", version: "1.0.0", mode: "dedicated" });
@@ -511,6 +517,7 @@ for (const scope of ["primary", "default-fallback", "entry-fallback", "provider-
       administrator,
       { namespaceId: namespace.id, agentId: dedicated.id },
       resolveApprovedProductionHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     );
 
     assert.deepEqual(configuration.values, values);
@@ -769,6 +776,7 @@ test("OCC rejects alternate selectable runtimes and unsupported Codex providers 
         administrator,
         { namespaceId: namespace.id, agentId: agent.id },
         resolveApprovedDevelopmentHarness,
+        createRuntimeAdmissionContext(installation.id, administrator),
       ),
       ScopeViolationError,
       name,
@@ -808,6 +816,7 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     DependencyUnavailableError,
   );
@@ -816,6 +825,7 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
       administrator,
       { namespaceId: namespace.id, agentId: agent.id },
       () => DEVELOPMENT_HARNESS_DESCRIPTOR,
+      createRuntimeAdmissionContext(installation.id, administrator),
     ),
     ScopeViolationError,
   );
@@ -836,6 +846,7 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedProductionHarness,
+    createRuntimeAdmissionContext(installation.id, administrator),
   );
   assert.deepEqual(embedded.harness, { ...DEVELOPMENT_HARNESS_DESCRIPTOR, mode: "embedded" });
   assert.deepEqual(await controller.listRevisions(administrator, namespace.id, agent.id), [
@@ -878,6 +889,7 @@ test("Agent deployment separately authorizes its exact Configuration", async () 
       deployOnly,
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, deployOnly),
     ),
     AuthorizationDeniedError,
   );

@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../../apps/controller/src/composition/production-harness.ts";
@@ -172,6 +173,7 @@ async function createFixture() {
     "principal-admin",
     { namespaceId: namespaceA.id, agentId: agentA.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   const nextConfigurationA = await controller.createConfiguration("principal-admin", {
     namespaceId: namespaceA.id,
@@ -187,11 +189,13 @@ async function createFixture() {
     "principal-admin",
     { namespaceId: namespaceA.id, agentId: agentA.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   const revisionB = await controller.deployAgent(
     "principal-admin",
     { namespaceId: namespaceB.id, agentId: agentB.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
 
   assert.equal(namespaceA.id, "namespace-1");

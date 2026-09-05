@@ -52,9 +52,11 @@ import {
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
+  PostgresCommitOutcomeUnknownError,
   ResourceConflictError,
   ScopeViolationError,
   type HarnessResolver,
+  type DeployAgentAdmissionContext,
   type OpenClawController,
 } from "@openclaw-enterprise/occ";
 import {
@@ -1742,31 +1744,45 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     }
 
     if (operation.operationId === "deployAgent") {
+      // Retain trusted correlation before the transaction so an uncertain COMMIT
+      // can recover this exact admission without admitting another revision.
+      const admission: DeployAgentAdmissionContext = {
+        transitionRef: randomUUID(),
+        requestId: request.id,
+        createAuditEvent: (admitted) =>
+          event(
+            operation,
+            request,
+            { kind: "agent_revision", id: admitted.id, namespaceId },
+            "mutation",
+            context,
+          ),
+      };
+      let revision: Readonly<AgentRevision>;
       try {
-        const revision = await controller.transact(async (unit) => {
-          const admitted = await controller!.deployAgent(
+        revision = await controller.transact(() =>
+          controller!.deployAgent(
             context.actorId,
             { namespaceId, agentId },
             options.resolveHarness,
-          );
-          await unit.audit.append(
-            event(
-              operation,
-              request,
-              { kind: "agent_revision", id: admitted.id, namespaceId },
-              "mutation",
-              context,
-            ),
-          );
-          return clientRevision(admitted);
-        });
-        reply.status(202).send({ data: revision, meta: { requestId: request.id } });
-        return;
+            admission,
+          ),
+        );
       } catch (error) {
-        if (error instanceof NamespaceNotReadyError)
-          await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
-        throw error;
+        if (error instanceof PostgresCommitOutcomeUnknownError) {
+          revision = await controller.recoverDeployAgent(
+            context.actorId,
+            { namespaceId, agentId },
+            admission,
+          );
+        } else {
+          if (error instanceof NamespaceNotReadyError)
+            await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
+          throw error;
+        }
       }
+      reply.status(202).send({ data: clientRevision(revision), meta: { requestId: request.id } });
+      return;
     }
 
     if (

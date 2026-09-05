@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -224,6 +225,7 @@ async function createDurableController(pool) {
   return {
     controller,
     state,
+    installation,
     harness: DEVELOPMENT_HARNESS_DESCRIPTOR,
     resolveHarness: resolveApprovedDevelopmentHarness,
   };
@@ -610,7 +612,8 @@ test(
     assert.ok(persistedAgents.rows.every(({ execution_mode }) => execution_mode === "embedded"));
     assert.ok(persistedAgents.rows.every(({ kind }) => kind === "service_principal"));
 
-    const { controller, state, harness, resolveHarness } = await createDurableController(pool);
+    const { controller, state, installation, harness, resolveHarness } =
+      await createDurableController(pool);
     const historyBefore = await state.read((view) =>
       view.revisions.listRevisions(namespace.data.id, first.data.id),
     );
@@ -621,6 +624,7 @@ test(
       principalId,
       { namespaceId: namespace.data.id, agentId: first.data.id },
       resolveHarness,
+      createRuntimeAdmissionContext(installation.id, principalId),
     );
     assert.equal(revision.namespaceId, namespace.data.id);
     assert.equal(revision.agentId, first.data.id);

@@ -99,11 +99,28 @@ and maps the accepted operation to `PostgresWorkQueue.enqueue`. The state,
 admission audit, and queue entry commit together; a rollback does not leave
 orphan work for the worker.
 
+For deploy, the API retains a UUID transition locator and its sanitized request
+ID before opening the transaction. Canonical `deployAgent` checks the stored
+runtime intent under the Agent lock, rejects a disabled or stopped head, and
+initializes or advances a running intent selecting the newly frozen revision.
+It appends the trusted success audit, immutable original admission association,
+and mandatory original work in that same unit, including direct domain callers
+that disable unrelated operation recording. A lost COMMIT acknowledgement is
+resolved through a fresh exact scoped read of that locator, retained revision,
+original work, and success audit. Work completion and later head advancement do
+not erase the committed admission. Missing proof remains unavailable.
+
 The queue record freezes the original actor, Namespace owner, lifecycle target,
 and, for revision work, exact Agent and immutable AgentRevision. Its idempotency
 key identifies the operation. Reusing that key with a different actor, owner, or
 target is rejected. The API returns accepted lifecycle state without waiting for
 Compute; the next owner is the independent worker.
+
+New revision work also freezes a paired runtime transition and lifecycle
+generation. Enqueue and database ownership constraints reject changing, adding,
+or removing this pair on replay, including removal to NULL; terminal replay
+retains its terminal state. Namespace work and genuinely historical revision
+work have neither field.
 
 ### 3. Recover expired claims and claim one eligible operation
 
@@ -146,6 +163,16 @@ rechecks any managed credential's exact Provider, Driver, workspace, and issued
 account binding before Compute effects. It uses a read-only projection and has
 no Provider client or admin key. The
 [Provider-managed credential delivery flow](service-account-driver-credential-delivery.md) owns these checks.
+
+Before `bindAgent` or any other Compute call, `processRevision()` independently
+reads the exact revision's original admission and its retained intent. It checks
+the Installation, Namespace, Agent, revision, original initiating actor, and
+recorded pair. A malformed or missing required association fails without
+Compute calls; an unavailable lookup retries without effects. Both-null work
+fields select historical behavior only when the revision itself has no original
+admission association. Maintenance copies the validated original pair through
+both successful observation and failed active-maintenance replacement. Reading
+a newer head never relabels older work or supplies provider fencing.
 
 Revoked actors and denied operations become permanent results before runtime
 creation. A revision older than the current active revision completes as

@@ -1,3 +1,4 @@
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -326,6 +327,7 @@ test("authorized resources retain exact Namespace ownership without metadata-onl
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   assert.equal(Object.hasOwn(firstRevision, "installationId"), false);
   assert.equal(firstRevision.namespaceId, namespace.id);
@@ -357,6 +359,7 @@ test("authorized resources retain exact Namespace ownership without metadata-onl
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   assert.equal(nextRevision.revision, 2);
   assert.equal(nextRevision.configurationId, nextConfiguration.id);
@@ -414,6 +417,7 @@ test("deployment fails closed when no Compute Driver is selected", async () => {
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     ),
     DependencyUnavailableError,
   );
@@ -454,6 +458,7 @@ test("Agent configuration references stay mutable while deployment admits deeply
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     ),
     NamespaceNotReadyError,
   );
@@ -491,6 +496,7 @@ test("Agent configuration references stay mutable while deployment admits deeply
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       () => undefined,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     ),
     DependencyUnavailableError,
   );
@@ -499,6 +505,7 @@ test("Agent configuration references stay mutable while deployment admits deeply
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   assert.equal(first.revision, 1);
   assert.equal(first.configurationId, savedConfiguration.id);
@@ -561,6 +568,7 @@ test("Agent configuration references stay mutable while deployment admits deeply
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
   assert.equal(second.revision, 2);
   assert.equal(second.configurationId, replacementConfiguration.id);
@@ -637,6 +645,7 @@ test("Sandbox admission applies provider-owned Agent configuration before freezi
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
 
   assert.equal(revision.sandboxDriverId, sandbox.id);
@@ -688,6 +697,7 @@ test("Sandbox Drivers without an Agent configuration hook preserve the admitted 
     "principal-admin",
     { namespaceId: namespace.id, agentId: agent.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-admin"),
   );
 
   assert.deepEqual(revision.configuration, admitLoggingConfiguration(values, "info"));
@@ -724,6 +734,7 @@ test("Sandbox admission rejects malformed provider configuration before creating
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     ),
     ScopeViolationError,
   );
@@ -763,6 +774,7 @@ for (const facets of [["networking"], ["filesystem"], ["process"], ["networking"
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     );
     assert.equal(revision.sandboxDriverId, sandbox.id);
     assert.deepEqual(
@@ -799,6 +811,7 @@ test("selected Sandbox Drivers fail closed for embedded Agents regardless of dec
         "principal-admin",
         { namespaceId: namespace.id, agentId: agent.id },
         resolveApprovedDevelopmentHarness,
+        createRuntimeAdmissionContext(installation.id, "principal-admin"),
       ),
       ScopeViolationError,
     );
@@ -843,6 +856,7 @@ test("configuration updates and admission reject unauthorized or foreign exact A
       "principal-unbound",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-unbound"),
     ),
     AuthorizationDeniedError,
   );
@@ -869,6 +883,7 @@ test("the one-shot lifecycle harness gates deployment and tombstones an empty Na
       "principal-admin",
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-admin"),
     ),
     NamespaceNotReadyError,
   );
@@ -880,6 +895,7 @@ test("the one-shot lifecycle harness gates deployment and tombstones an empty Na
         "principal-admin",
         { namespaceId: namespace.id, agentId: agent.id },
         resolveApprovedDevelopmentHarness,
+        createRuntimeAdmissionContext(installation.id, "principal-admin"),
       )
     ).agentId,
     agent.id,
@@ -1157,6 +1173,7 @@ test("two Namespace tenants cannot create or deploy each other's Agents", async 
     "principal-tenant-b",
     { namespaceId: namespaceB.id, agentId: agentB.id },
     resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installation.id, "principal-tenant-b"),
   );
   assert.equal(revisionB.namespaceId, namespaceB.id);
   assert.equal(revisionB.servicePrincipalId, agentB.servicePrincipalId);
@@ -1167,6 +1184,7 @@ test("two Namespace tenants cannot create or deploy each other's Agents", async 
       "principal-tenant-b",
       { namespaceId: namespaceB.id, agentId: agentA.id },
       resolveApprovedDevelopmentHarness,
+      createRuntimeAdmissionContext(installation.id, "principal-tenant-b"),
     ),
     ScopeViolationError,
   );

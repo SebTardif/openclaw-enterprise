@@ -233,10 +233,26 @@ revision schema. See [SandboxDriver](drivers/sandbox.md).
 An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` has no
 request body. It requires a `ready` Namespace, exact-Agent `deploy`, exact
 Configuration `read`, and exact associated-account `read` when present. A
-successful `202` means the immutable revision was admitted and its work queued;
+successful `202` means the immutable revision, its running runtime intent,
+original reconciliation work, and attributable success audit committed together;
 it does not mean the workload is ready. Later Configuration edits or changes to
 an account's selected credential reference affect only future deployments. A
 snapshot freezes a Secret reference, not the value stored at that reference.
+
+Admission initializes intent generation 1 or advances the stored running head
+under the Agent lock. A stored disabled or stopped intent conflicts: deploy does
+not implicitly resume it. Two concurrent bodyless deploys may both succeed in
+sequence with distinct revisions and generations. The route accepts no client
+generation, transition locator, actor, or runtime profile, and repeating the POST
+admits another revision.
+
+The worker checks each revision's retained original intent association before
+its first Compute call. Later head advancement preserves the older association
+and the existing supersession and active-maintenance behavior. Historical
+revisions admitted before these associations existed retain their prior
+reconciliation behavior; an active pointer or healthy workload does not create
+an association. These records do not attest runtime identity or provide provider
+allocation, effect fencing, or stop/disable execution.
 
 The separate PostgreSQL controller worker prepares the exact Agent gateway and
 revision, activates its route, retires its predecessor, and sets

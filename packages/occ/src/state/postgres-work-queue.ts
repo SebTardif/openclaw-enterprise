@@ -16,6 +16,8 @@ export interface ControllerWork {
   readonly namespaceId: string;
   readonly agentId?: string;
   readonly revisionId?: string;
+  readonly runtimeTransitionRef?: string;
+  readonly lifecycleGeneration?: number;
   readonly actorId: string;
   readonly namespaceTarget?: "ready" | "deleted";
   readonly state: ControllerWorkState;
@@ -39,6 +41,8 @@ export interface EnqueueWork {
   readonly namespaceId: string;
   readonly agentId?: string;
   readonly revisionId?: string;
+  readonly runtimeTransitionRef?: string;
+  readonly lifecycleGeneration?: number;
   readonly actorId: string;
   readonly namespaceTarget?: "ready" | "deleted";
   readonly availableAt?: Date | string;
@@ -91,6 +95,8 @@ interface WorkRow {
   readonly namespace_id: string;
   readonly agent_id: string | null;
   readonly revision_id: string | null;
+  readonly runtime_transition_ref: string | null;
+  readonly lifecycle_generation: string | number | null;
   readonly actor_id: string;
   readonly namespace_target: "ready" | "deleted" | null;
   readonly state: ControllerWorkState;
@@ -155,6 +161,17 @@ function asWork(value: unknown): ControllerWork {
     namespaceId: row.namespace_id,
     ...(row.agent_id === null ? {} : { agentId: row.agent_id }),
     ...(row.revision_id === null ? {} : { revisionId: row.revision_id }),
+    ...(row.runtime_transition_ref === null
+      ? {}
+      : { runtimeTransitionRef: row.runtime_transition_ref }),
+    ...(row.lifecycle_generation === null
+      ? {}
+      : {
+          lifecycleGeneration: positiveInteger(
+            Number(row.lifecycle_generation),
+            "Controller work lifecycle generation",
+          ),
+        }),
     actorId: row.actor_id,
     ...(row.namespace_target === null ? {} : { namespaceTarget: row.namespace_target }),
     state: row.state,
@@ -284,6 +301,8 @@ export class PostgresWorkQueue {
       );
     }
     const namespaceTarget = input.namespaceTarget ?? null;
+    const runtimeTransitionRef = input.runtimeTransitionRef ?? null;
+    const lifecycleGeneration = input.lifecycleGeneration ?? null;
     if (
       (agentId === null && namespaceTarget !== "ready" && namespaceTarget !== "deleted") ||
       (agentId !== null && namespaceTarget !== null)
@@ -296,15 +315,26 @@ export class PostgresWorkQueue {
     const inserted = await this.client.query(
       `INSERT INTO occ.controller_work (
          idempotency_key, namespace_id, agent_id, revision_id, actor_id, namespace_target,
+         runtime_transition_ref, lifecycle_generation,
          state, available_at, attempt_count, created_at, updated_at
        ) VALUES (
-         $1, $2, $3, $4, $5, $6,
+         $1, $2, $3, $4, $5, $6, $8::text, $9::bigint,
          'queued', COALESCE($7::timestamptz, clock_timestamp()), 0,
          clock_timestamp(), clock_timestamp()
        )
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING *`,
-      [idempotencyKey, namespaceId, agentId, revisionId, actorId, namespaceTarget, availableAt],
+      [
+        idempotencyKey,
+        namespaceId,
+        agentId,
+        revisionId,
+        actorId,
+        namespaceTarget,
+        availableAt,
+        runtimeTransitionRef,
+        lifecycleGeneration,
+      ],
     );
 
     if (inserted.rows[0] !== undefined) return asWork(inserted.rows[0]);
@@ -314,11 +344,22 @@ export class PostgresWorkQueue {
           namespace_id IS DISTINCT FROM $2::text
           OR agent_id IS DISTINCT FROM $3::text
           OR revision_id IS DISTINCT FROM $4::text
-          OR actor_id IS DISTINCT FROM $5::text AS owner_conflict,
+          OR actor_id IS DISTINCT FROM $5::text
+          OR runtime_transition_ref IS DISTINCT FROM $7::text
+          OR lifecycle_generation IS DISTINCT FROM $8::bigint AS owner_conflict,
           namespace_target IS DISTINCT FROM $6::text AS target_conflict
        FROM occ.controller_work
        WHERE idempotency_key = $1`,
-      [idempotencyKey, namespaceId, agentId, revisionId, actorId, namespaceTarget],
+      [
+        idempotencyKey,
+        namespaceId,
+        agentId,
+        revisionId,
+        actorId,
+        namespaceTarget,
+        runtimeTransitionRef,
+        lifecycleGeneration,
+      ],
     );
     const row = existing.rows[0];
     if (row === undefined) {
