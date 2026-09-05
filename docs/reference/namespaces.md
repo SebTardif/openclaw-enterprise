@@ -150,6 +150,32 @@ workload is ready.
   PostgreSQL database, lifecycle work remains queued and the Namespace can stay
   `provisioning` or `deleting`. Infrastructure readiness is asynchronous.
 
+## Storage and verification
+
+The [memory](../../packages/occ/src/state/memory/namespaces.ts) and
+[PostgreSQL](../../packages/occ/src/state/postgres/namespaces.ts) Namespace
+repositories borrow the platform store's working snapshot or transaction client.
+Factory construction performs no I/O; Installation lookup stays lazy so bootstrap
+and Namespace creation can share one unit of work. The store owns commit and
+rollback for Namespace changes, related resources, audit and queued work. It
+drains accepted internal repository calls before finishing the transaction and
+rejects repository calls after that lifetime ends.
+
+Run the focused storage checks from a prepared checkout:
+
+```sh
+node --test tests/conformance/namespace-repository-memory.test.mjs
+node --test tests/integration/postgres-namespace-repository.test.mjs
+```
+
+These checks exercise empty Namespace lifecycle and tombstones, resource presence,
+transaction lifetime and atomic commit/rollback across repositories. For the
+PostgreSQL command, set `OCC_TEST_DATABASE_URL` to a prepared disposable database
+using the application role. Set `OCC_PRODUCTION_WIREUP_DATABASE_URL` to a separate,
+prepared, initially empty application-role database to include bootstrap and
+rollback coverage. Each missing selector skips its corresponding database cases;
+see [PostgreSQL test settings](settings.md#postgresql-test-environment).
+
 ## Related
 
 - [Quickstart](../guides/quickstart.md)
