@@ -67,6 +67,14 @@ runtime generation.
 
 Shared Kubernetes clusters are not currently supported.
 
+The concrete Driver also contains the bounded, read-only
+[runtime observation adapter](../runtime-effects.md). It follows exact
+Deployment/ReplicaSet/Pod ownership and consumes independently authenticated
+producer records. Its required trusted startup integrations are not supplied by
+default, so positive production observations remain unavailable. This adapter
+adds no Installation configuration option and does not change revision readiness,
+activation or cleanup.
+
 ## Configuration
 
 Select the Kubernetes Compute Driver in the Installation startup YAML. Set

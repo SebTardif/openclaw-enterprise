@@ -9,6 +9,10 @@ import { KubernetesConditionalMutations } from "./conditional-mutations.ts";
 import { KubernetesReadiness, IsolationFailure } from "./readiness.ts";
 import { KubernetesRouting } from "./routing.ts";
 import { KubernetesCleanup } from "./cleanup.ts";
+import {
+  KubernetesRuntimeObservations,
+  type KubernetesRuntimeObservationDependencies,
+} from "./runtime-observations.ts";
 import * as KubernetesIdentity from "./resources/identity.ts";
 import * as KubernetesNetwork from "./resources/network.ts";
 import * as KubernetesGateway from "./resources/gateway.ts";
@@ -66,6 +70,11 @@ import type {
   SandboxWorkspaceMount,
   SecretEnvironmentProjection,
   LoggingLevel,
+  ExactCreateEffectV1,
+  DiscoveryResultV1,
+  RuntimeObservationInputV1,
+  RuntimeObservationResultV1,
+  RuntimeReadCallV1,
 } from "@openclaw-enterprise/contracts";
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
@@ -323,6 +332,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly readiness: KubernetesReadiness;
   private readonly routing: KubernetesRouting;
   private readonly cleanup: KubernetesCleanup;
+  private readonly runtimeObservations: KubernetesRuntimeObservations;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
     ReturnType<typeof import("@kubernetes/client-node").setHeaderOptions> | undefined;
@@ -503,6 +513,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly implementation?: string;
       readonly lifecycleDrivers?: readonly Driver[];
       readonly sandboxDriver?: SandboxDriver;
+      readonly runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies;
     } = {},
   ) {
     KubernetesComputeDriver.validateConfiguration(options);
@@ -521,6 +532,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
     this.options = immutableCopy(options);
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
+    this.runtimeObservations = new KubernetesRuntimeObservations(
+      {
+        clients: () => this.clients(),
+        request: (operation) => this.request(operation),
+      },
+      selection.runtimeObservationDependencies,
+      this.options.isolationProfile,
+    );
     this.ownership = new KubernetesOwnership(
       {
         clients: () => this.clients(),
@@ -582,6 +601,17 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new Error("Compute lifecycle owners cannot change after lifecycle operations begin.");
     }
     this.lifecycle = new ComputeLifecycleDispatcher(drivers);
+  }
+
+  discover(input: ExactCreateEffectV1, call: RuntimeReadCallV1): Promise<DiscoveryResultV1> {
+    return this.runtimeObservations.discover(input, call);
+  }
+
+  observe(
+    input: RuntimeObservationInputV1,
+    call: RuntimeReadCallV1,
+  ): Promise<RuntimeObservationResultV1> {
+    return this.runtimeObservations.observe(input, call);
   }
 
   async preflight(): Promise<void> {

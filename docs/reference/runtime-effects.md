@@ -11,6 +11,22 @@ observer or physical termination. A parsed record establishes shape and intrinsi
 consistency. The actual accepting services must independently establish provenance,
 current authority and the physical facts required by each positive result.
 
+The concrete Kubernetes Compute Driver separately provides `discover` and
+preallocated-candidate `observe` read methods. Its internal collaborator checks
+retained create correlation and the exact Deployment/ReplicaSet/Pod UID chain
+through the existing Kubernetes client. Positive results require independently
+authenticated current admission, execution, profile and original observation
+records supplied through trusted constructor dependencies. Default startup does
+not supply those integrations, so these reads remain unavailable in production.
+No Installation JSON setting enables them. A complete candidate observation has
+only `observation-only` eligibility and can have absent target identity evidence;
+it does not require Pod Ready or authorize binding, routing or execution.
+
+Run `node --test tests/conformance/kubernetes-runtime-observations.test.mjs` for
+controlled-client checks of the actual Driver methods, ancestry, current source
+records, stale evidence and cancellation. Those tests do not qualify live
+Kubernetes, gVisor execution or authenticated production producers.
+
 ## Exported surface
 
 Import from `@openclaw-enterprise/contracts`:
