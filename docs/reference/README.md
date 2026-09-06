@@ -52,6 +52,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
 - [Native consumer measurement](native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Shared native interaction scenarios](shared-native-scenarios-v1.md): inspect labeled Slack/Teams traces and ordering/correlation findings; fixtures and declaration checks do not establish native execution or authority.
+- [Isolated upstream consumer preparation](isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.
 - [Operational diagnostic records](operational-diagnostics.md): submit bounded lifecycle and security projections to Pino; production invocation, durable audit delivery, and Collector verification remain separate.
 - [Runtime identity ports](runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.
 - [Hosted gateway composition](hosted-gateway.md): programmatic local Slack/Teams
