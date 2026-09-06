@@ -51,6 +51,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
+- [Allocation companion reader](allocation-companion-v1.md): inspect complete expected inventory, declared attempts and receipt history with bounded offline diagnostics; authentic acceptance remains separate.
 - [Native consumer measurement](native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Shared native interaction scenarios](shared-native-scenarios-v1.md): inspect labeled Slack/Teams traces and ordering/correlation findings; fixtures and declaration checks do not establish native execution or authority.
 - [Isolated upstream consumer preparation](isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.

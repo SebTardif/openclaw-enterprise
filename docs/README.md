@@ -11,6 +11,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
 - [Acceptance companions and producer receipts](reference/acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
+- [Allocation companion reader](reference/allocation-companion-v1.md): inspect complete expected inventory, declared attempts and receipt history with bounded offline diagnostics; authentic acceptance remains separate.
 - [Native consumer measurement](reference/native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Shared native interaction scenarios](reference/shared-native-scenarios-v1.md): inspect labeled Slack/Teams traces and ordering/correlation findings; fixtures and declaration checks do not establish native execution or authority.
 - [Isolated upstream consumer preparation](reference/isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.
@@ -53,6 +54,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   and revision activation.
 - [Runtime authority interfaces](reference/runtime-authority.md): immutable bindings,
   purpose-specific results, trusted-context requirements, and contract verification.
+- [Runtime activation](reference/runtime-activation-v1.md): bounded conditional routing,
+  exact predecessor cleanup and original-operation recovery.
 - [Channels and delivery](reference/channels.md): current direct-channel topology,
   binding versus admission, state ownership, and Slack/Teams verification limits.
 - [Security controls](reference/security.md), [settings](reference/settings.md),
