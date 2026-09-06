@@ -1,3 +1,7 @@
+import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
+import { DriverSelection } from "../application/driver-selection.ts";
+import { createGuardedWorkloadProfileUnit } from "./postgres/workload-profile-guard.ts";
+import type { GuardedWorkloadProfileUnit } from "../services/workload-profile/port.ts";
 import { createPostgresWorkloadProfile } from "./postgres/workload-profile.ts";
 import { WorkloadProfileUnitPhase } from "../ports/platform-unit-of-work.ts";
 import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
@@ -127,6 +131,9 @@ export interface PersistedNativeIAMPrincipalSeed {
 export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
 interface TransactionContext {
+  profilePolicyLocked?: boolean;
+  profileToken?: object;
+  protectedProfile?: ReturnType<typeof createGuardedWorkloadProfileUnit>;
   readView?: PlatformReadView;
   readonly lifetime: RepositoryTransactionLifetime;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
@@ -518,6 +525,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   private readonly turnJournal: PostgresTurnJournalOptions | undefined;
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
+  readonly #profileContexts = new WeakMap<object, TransactionContext>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
     this.pool = pool;
@@ -537,174 +545,185 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async loadNativeIAMState(installationId?: string): Promise<PersistedNativeIAMState> {
-    return this.execute(true, async (_state, context) => {
-      const installation = await this.currentInstallation(context);
-      if (installation === undefined) {
-        if (this.bootstrapNativeIAM !== undefined) return this.bootstrapNativeIAM;
-        throw new DependencyUnavailableError("The platform Installation has not been initialized.");
-      }
-      if (installationId !== undefined && installation.id !== installationId)
-        throw new ScopeViolationError("IAM state belongs to another Installation.");
+    return this.execute(true, async (_state, context) =>
+      this.nativeIAMState(context, context.client.query, installationId),
+    );
+  }
 
-      const identityRows = rows(
-        (
-          await context.client.query(
-            "SELECT id, namespace_id, agent_id, kind, issuer, subject FROM occ.iam_identities ORDER BY id",
-          )
-        ).rows,
-      );
-      const roleRows = rows(
-        (
-          await context.client.query(
-            "SELECT id, namespace_id, name, permissions FROM occ.iam_roles ORDER BY id",
-          )
-        ).rows,
-      );
-      const groupRows = rows(
-        (
-          await context.client.query(
-            "SELECT id, namespace_id, name FROM occ.iam_groups ORDER BY id",
-          )
-        ).rows,
-      );
-      const membershipRows = rows(
-        (
-          await context.client.query(
-            `SELECT namespace_id, group_id, principal_id
+  /** Only a live token minted by the real guarded owner can read this projection.
+   * Never accepts a state snapshot or a caller-supplied transaction/current flag. */
+  async loadNativeIAMStateInTransaction(token: object): Promise<PersistedNativeIAMState> {
+    const context = this.#profileContexts.get(token);
+    if (context === undefined || context.profilePolicyLocked !== true)
+      throw new DependencyUnavailableError("The guarded native IAM unit is unavailable.");
+    context.lifetime.assertActive();
+    return this.nativeIAMState(context, context.profileQuery);
+  }
+
+  private async nativeIAMState(
+    context: TransactionContext,
+    query: PostgresClient["query"],
+    installationId?: string,
+  ): Promise<PersistedNativeIAMState> {
+    const installation = await this.currentInstallation(context);
+    if (installation === undefined) {
+      if (this.bootstrapNativeIAM !== undefined) return this.bootstrapNativeIAM;
+      throw new DependencyUnavailableError("The platform Installation has not been initialized.");
+    }
+    if (installationId !== undefined && installation.id !== installationId)
+      throw new ScopeViolationError("IAM state belongs to another Installation.");
+
+    const identityRows = rows(
+      (
+        await query(
+          "SELECT id, namespace_id, agent_id, kind, issuer, subject FROM occ.iam_identities ORDER BY id",
+        )
+      ).rows,
+    );
+    const roleRows = rows(
+      (await query("SELECT id, namespace_id, name, permissions FROM occ.iam_roles ORDER BY id"))
+        .rows,
+    );
+    const groupRows = rows(
+      (await query("SELECT id, namespace_id, name FROM occ.iam_groups ORDER BY id")).rows,
+    );
+    const membershipRows = rows(
+      (
+        await query(
+          `SELECT namespace_id, group_id, principal_id
              FROM occ.iam_group_memberships ORDER BY group_id, principal_id`,
-          )
-        ).rows,
-      );
-      const bindingRows = rows(
-        (
-          await context.client.query(
-            `SELECT id, namespace_id, identity_subject_id, group_subject_id, role_id,
+        )
+      ).rows,
+    );
+    const bindingRows = rows(
+      (
+        await query(
+          `SELECT id, namespace_id, identity_subject_id, group_subject_id, role_id,
                     resource_kind, resource_id, channel_administration
              FROM occ.iam_access_bindings ORDER BY id`,
-          )
-        ).rows,
-      );
-      const restrictionRows = rows(
-        (
-          await context.client.query(
-            `SELECT id, namespace_id, action, resource_kind, resource_id, effect
+        )
+      ).rows,
+    );
+    const restrictionRows = rows(
+      (
+        await query(
+          `SELECT id, namespace_id, action, resource_kind, resource_id, effect
              FROM occ.iam_restrictions ORDER BY id`,
-          )
-        ).rows,
-      );
-
-      const identities = identityRows.map((row): Identity => {
-        const id = text(row, "id");
-        const kind = text(row, "kind");
-        const namespaceId = optionalText(row, "namespace_id");
-        if (kind === "principal")
-          return immutableCopy({
-            id,
-            kind,
-            issuer: text(row, "issuer"),
-            subject: text(row, "subject"),
-          });
-        if (kind === "service_principal") {
-          const agentId = optionalText(row, "agent_id");
-          if (agentId !== undefined && namespaceId === undefined)
-            throw new DependencyUnavailableError("Persisted IAM identity has an invalid owner.");
-          return immutableCopy({
-            id,
-            kind,
-            ...(namespaceId === undefined ? {} : { namespaceId }),
-            ...(agentId === undefined ? {} : { agentId }),
-          });
-        }
-        throw new DependencyUnavailableError("Persisted IAM identity has an invalid owner.");
-      });
-
-      const roles = roleRows.map((row): Role => {
-        const namespaceId = optionalText(row, "namespace_id");
-        const name = optionalText(row, "name");
-        return immutableCopy({
-          id: text(row, "id"),
-          ...(namespaceId === undefined ? {} : { namespaceId }),
-          ...(name === undefined ? {} : { name }),
-          permissions: permissions(row.permissions),
-        });
-      });
-
-      const groups = groupRows.map((row): Group => {
-        const namespaceId = optionalText(row, "namespace_id");
-        return immutableCopy({
-          id: text(row, "id"),
-          ...(namespaceId === undefined ? {} : { namespaceId }),
-          name: text(row, "name"),
-        });
-      });
-
-      const memberships = membershipRows.map((row): GroupMembership => {
-        const namespaceId = optionalText(row, "namespace_id");
-        return immutableCopy({
-          ...(namespaceId === undefined ? {} : { namespaceId }),
-          groupId: text(row, "group_id"),
-          principalId: text(row, "principal_id"),
-        });
-      });
-
-      const bindings = bindingRows.map((row): AccessBinding => {
-        const namespaceId = optionalText(row, "namespace_id");
-        const resourceKind = optionalText(row, "resource_kind");
-        const resourceId = optionalText(row, "resource_id");
-        if (
-          (resourceKind === undefined) !== (resourceId === undefined) ||
-          (resourceKind !== undefined && !RESOURCE_KINDS.has(resourceKind))
         )
-          throw new DependencyUnavailableError("Persisted IAM binding has an invalid resource.");
-        const identitySubjectId = optionalText(row, "identity_subject_id");
-        const groupSubjectId = optionalText(row, "group_subject_id");
-        if ((identitySubjectId === undefined) === (groupSubjectId === undefined))
-          throw new DependencyUnavailableError("Persisted IAM binding has an ambiguous subject.");
-        const mapping =
-          row.channel_administration === null || row.channel_administration === undefined
-            ? undefined
-            : decodeChannelAdministrationMappingV1(row.channel_administration);
-        if (mapping?.kind === "invalid")
-          throw new DependencyUnavailableError("Persisted IAM channel administration is invalid.");
-        return immutableCopy({
-          id: text(row, "id"),
-          ...(namespaceId === undefined ? {} : { namespaceId }),
-          subjectKind: identitySubjectId === undefined ? "group" : "identity",
-          subjectId: identitySubjectId ?? groupSubjectId!,
-          roleId: text(row, "role_id"),
-          ...(resourceKind === undefined
-            ? {}
-            : { resourceKind: resourceKind as NonNullable<AccessBinding["resourceKind"]> }),
-          ...(resourceId === undefined ? {} : { resourceId }),
-          ...(mapping === undefined ? {} : { channelAdministration: mapping.value }),
-        });
-      });
+      ).rows,
+    );
 
-      const restrictions = restrictionRows.map((row): Restriction => {
-        const namespaceId = optionalText(row, "namespace_id");
-        const action = text(row, "action");
-        const resourceKind = text(row, "resource_kind");
-        const resourceId = optionalText(row, "resource_id");
-        if (
-          !PERMISSION_ACTIONS.has(action) ||
-          !RESOURCE_KINDS.has(resourceKind) ||
-          text(row, "effect") !== "deny"
-        )
-          throw new DependencyUnavailableError("Persisted IAM restriction is invalid.");
+    const identities = identityRows.map((row): Identity => {
+      const id = text(row, "id");
+      const kind = text(row, "kind");
+      const namespaceId = optionalText(row, "namespace_id");
+      if (kind === "principal")
         return immutableCopy({
-          id: text(row, "id"),
-          ...(namespaceId === undefined ? {} : { namespaceId }),
-          action: action as Restriction["action"],
-          resourceKind: resourceKind as Restriction["resourceKind"],
-          ...(resourceId === undefined ? {} : { resourceId }),
-          effect: "deny",
+          id,
+          kind,
+          issuer: text(row, "issuer"),
+          subject: text(row, "subject"),
         });
-      });
-
-      const state = { identities, groups, memberships, roles, bindings, restrictions };
-      this.validateIAMState(state, true);
-      return immutableCopy(state);
+      if (kind === "service_principal") {
+        const agentId = optionalText(row, "agent_id");
+        if (agentId !== undefined && namespaceId === undefined)
+          throw new DependencyUnavailableError("Persisted IAM identity has an invalid owner.");
+        return immutableCopy({
+          id,
+          kind,
+          ...(namespaceId === undefined ? {} : { namespaceId }),
+          ...(agentId === undefined ? {} : { agentId }),
+        });
+      }
+      throw new DependencyUnavailableError("Persisted IAM identity has an invalid owner.");
     });
+
+    const roles = roleRows.map((row): Role => {
+      const namespaceId = optionalText(row, "namespace_id");
+      const name = optionalText(row, "name");
+      return immutableCopy({
+        id: text(row, "id"),
+        ...(namespaceId === undefined ? {} : { namespaceId }),
+        ...(name === undefined ? {} : { name }),
+        permissions: permissions(row.permissions),
+      });
+    });
+
+    const groups = groupRows.map((row): Group => {
+      const namespaceId = optionalText(row, "namespace_id");
+      return immutableCopy({
+        id: text(row, "id"),
+        ...(namespaceId === undefined ? {} : { namespaceId }),
+        name: text(row, "name"),
+      });
+    });
+
+    const memberships = membershipRows.map((row): GroupMembership => {
+      const namespaceId = optionalText(row, "namespace_id");
+      return immutableCopy({
+        ...(namespaceId === undefined ? {} : { namespaceId }),
+        groupId: text(row, "group_id"),
+        principalId: text(row, "principal_id"),
+      });
+    });
+
+    const bindings = bindingRows.map((row): AccessBinding => {
+      const namespaceId = optionalText(row, "namespace_id");
+      const resourceKind = optionalText(row, "resource_kind");
+      const resourceId = optionalText(row, "resource_id");
+      if (
+        (resourceKind === undefined) !== (resourceId === undefined) ||
+        (resourceKind !== undefined && !RESOURCE_KINDS.has(resourceKind))
+      )
+        throw new DependencyUnavailableError("Persisted IAM binding has an invalid resource.");
+      const identitySubjectId = optionalText(row, "identity_subject_id");
+      const groupSubjectId = optionalText(row, "group_subject_id");
+      if ((identitySubjectId === undefined) === (groupSubjectId === undefined))
+        throw new DependencyUnavailableError("Persisted IAM binding has an ambiguous subject.");
+      const mapping =
+        row.channel_administration === null || row.channel_administration === undefined
+          ? undefined
+          : decodeChannelAdministrationMappingV1(row.channel_administration);
+      if (mapping?.kind === "invalid")
+        throw new DependencyUnavailableError("Persisted IAM channel administration is invalid.");
+      return immutableCopy({
+        id: text(row, "id"),
+        ...(namespaceId === undefined ? {} : { namespaceId }),
+        subjectKind: identitySubjectId === undefined ? "group" : "identity",
+        subjectId: identitySubjectId ?? groupSubjectId!,
+        roleId: text(row, "role_id"),
+        ...(resourceKind === undefined
+          ? {}
+          : { resourceKind: resourceKind as NonNullable<AccessBinding["resourceKind"]> }),
+        ...(resourceId === undefined ? {} : { resourceId }),
+        ...(mapping === undefined ? {} : { channelAdministration: mapping.value }),
+      });
+    });
+
+    const restrictions = restrictionRows.map((row): Restriction => {
+      const namespaceId = optionalText(row, "namespace_id");
+      const action = text(row, "action");
+      const resourceKind = text(row, "resource_kind");
+      const resourceId = optionalText(row, "resource_id");
+      if (
+        !PERMISSION_ACTIONS.has(action) ||
+        !RESOURCE_KINDS.has(resourceKind) ||
+        text(row, "effect") !== "deny"
+      )
+        throw new DependencyUnavailableError("Persisted IAM restriction is invalid.");
+      return immutableCopy({
+        id: text(row, "id"),
+        ...(namespaceId === undefined ? {} : { namespaceId }),
+        action: action as Restriction["action"],
+        resourceKind: resourceKind as Restriction["resourceKind"],
+        ...(resourceId === undefined ? {} : { resourceId }),
+        effect: "deny",
+      });
+    });
+
+    const state = { identities, groups, memberships, roles, bindings, restrictions };
+    this.validateIAMState(state, true);
+    return immutableCopy(state);
   }
 
   async seedNativeIAM(state: PersistedNativeIAMState): Promise<void> {
@@ -811,6 +830,79 @@ export class PostgresPlatformState implements PlatformStateStore {
     return this.execute(false, async (state) => work(state));
   }
 
+  /** Internal storage/policy unit. It does not authenticate an account; only the
+   * service's genuine account participant may turn it into a protected request. */
+  async workloadProfileTransaction<T>(
+    selection: DriverSelection,
+    work: (unit: GuardedWorkloadProfileUnit) => Promise<T>,
+    options: PlatformReadOptions,
+  ): Promise<T> {
+    if (
+      Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+      selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+      selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+    )
+      throw new DependencyUnavailableError("The actual guarded Driver selection is unavailable.");
+    const driver = selection.selectedDriver("iam");
+    const selected = selection.acquireGuardedSelection("iam", driver);
+    try {
+      return await this.execute(
+        false,
+        async (unit, context) => {
+          const policy = context.profilePhase.claimGuardedPolicy();
+          const installation = await this.requireInitialized(context);
+          const token = Object.freeze({});
+          context.profileToken = token;
+          this.#profileContexts.set(token, context);
+          const iam = bindNativeIAMTransaction(driver, this, token);
+          const guarded = createGuardedWorkloadProfileUnit({
+            installationId: installation.id,
+            signal: options.signal,
+            assertActive: () => context.lifetime.assertActive(),
+            assertSelection: () => {
+              selected.assertCurrent();
+              iam.assertCurrent();
+            },
+            accountQuery: (statement, parameters) => {
+              policy.assertPolicy();
+              return context.profileQuery(statement, parameters);
+            },
+            lockPolicy: async () => {
+              policy.assertPolicy();
+              await context.profileQuery("SELECT occ.lock_workload_profile_iam()");
+              context.lifetime.assertActive();
+              context.profilePolicyLocked = true;
+              policy.complete();
+            },
+            iam,
+            profiles: unit.workloadProfiles,
+            findAudit: async (id) => {
+              const result = rows(
+                (
+                  await context.profileQuery(
+                    "SELECT id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id, outcome, details FROM occ.audit_events WHERE id=$1",
+                    [id],
+                  )
+                ).rows,
+              );
+              if (result.length > 1)
+                throw new DependencyUnavailableError("The profile audit is ambiguous.");
+              return result[0] === undefined ? undefined : auditFromRow(result[0], installation.id);
+            },
+            appendAudit: (event) => this.appendAudit(context, event, context.profileQuery),
+          });
+          context.protectedProfile = guarded;
+          return work(guarded.unit);
+        },
+        options,
+        true,
+      );
+    } finally {
+      // execute has joined query cleanup and settled COMMIT/rollback before release.
+      selected.release();
+    }
+  }
+
   queryInTransaction(
     unit: PlatformReadView,
     statement: string,
@@ -863,6 +955,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     readOnly: boolean,
     work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
     options?: PlatformReadOptions,
+    profileReadCommitted = false,
   ): Promise<T> {
     // pg exposes no per-checkout cancellation. Its configured timeout actually removes
     // the waiter; join that bounded checkout before returning an interrupted read.
@@ -961,7 +1054,13 @@ export class PostgresPlatformState implements PlatformStateStore {
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
-      await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
+      await client.query(
+        profileReadCommitted
+          ? "BEGIN ISOLATION LEVEL READ COMMITTED"
+          : readOnly
+            ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+            : "BEGIN",
+      );
       started = true;
       if (options !== undefined) {
         // PostgreSQL also detects a disappeared client during a blocked query. The
@@ -993,11 +1092,13 @@ export class PostgresPlatformState implements PlatformStateStore {
       const activeContext = context;
       const running = Promise.resolve().then(() => work(unit!, activeContext));
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      await context?.protectedProfile?.finish();
       await lifetime.finish();
       await authorityGuard.finish();
       await journalGuard.finish();
       await profilePhase.guard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
+      context?.protectedProfile?.assertCurrent();
       committing = true;
       const acknowledgement = await raw.query("COMMIT");
       committing = false;
@@ -1010,6 +1111,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
+      try {
+        await context?.protectedProfile?.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
       await lifetime.finish();
       try {
         await authorityGuard.finish();
@@ -1037,6 +1143,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      context?.protectedProfile?.close();
+      if (context?.profileToken !== undefined) this.#profileContexts.delete(context.profileToken);
       journalGuard.close();
       lifetime.close();
       closed = true;
@@ -1089,6 +1197,35 @@ export class PostgresPlatformState implements PlatformStateStore {
         "The resource does not belong to the server-owned Installation.",
       );
     return installation;
+  }
+
+  private async appendAudit(
+    context: TransactionContext,
+    event: AuditEvent,
+    query: PostgresClient["query"],
+  ): Promise<void> {
+    await this.requireInstallation(context, event.installationId);
+    if (event.resource.namespaceId !== event.namespaceId)
+      throw new ScopeViolationError("The audit event and resource scopes do not match.");
+    const details = auditDetails(event);
+    await query(
+      `INSERT INTO occ.audit_events
+             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
+              outcome, details)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+      [
+        event.id,
+        event.occurredAt,
+        event.kind,
+        event.actorId,
+        event.action,
+        event.namespaceId ?? null,
+        event.resource.kind,
+        event.resource.id,
+        event.outcome,
+        details === undefined ? null : JSON.stringify(details),
+      ],
+    );
   }
 
   private repositories(context: TransactionContext): PlatformUnitOfWork {
@@ -1768,30 +1905,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       return immutableCopy({ canonicalPayload: row.canonical_payload, receipt: result.receipt });
     }
     const audit: PlatformAuditRepository = {
-      append: async (event) => {
-        await this.requireInstallation(context, event.installationId);
-        if (event.resource.namespaceId !== event.namespaceId)
-          throw new ScopeViolationError("The audit event and resource scopes do not match.");
-        const details = auditDetails(event);
-        await client.query(
-          `INSERT INTO occ.audit_events
-             (id, occurred_at, kind, actor_id, action, namespace_id, resource_kind, resource_id,
-              outcome, details)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
-          [
-            event.id,
-            event.occurredAt,
-            event.kind,
-            event.actorId,
-            event.action,
-            event.namespaceId ?? null,
-            event.resource.kind,
-            event.resource.id,
-            event.outcome,
-            details === undefined ? null : JSON.stringify(details),
-          ],
-        );
-      },
+      append: async (event) => this.appendAudit(context, event, client.query),
       list: async () => {
         const installation = await this.currentInstallation(context);
         if (installation === undefined) return Object.freeze([]);

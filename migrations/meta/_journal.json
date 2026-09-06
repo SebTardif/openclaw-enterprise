@@ -183,6 +183,13 @@
       "when": 1788675128246,
       "tag": "0025_workload_profile_preparation",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788681000000,
+      "tag": "0026_workload_profile_guard",
+      "breakpoints": true
     }
   ]
 }

@@ -195,15 +195,41 @@ export class WorkloadProfileUnitPhase {
   readonly guard = new WorkloadProfileTransactionGuard();
   private otherStarted = false;
   private preparationStarted = false;
+  private guardedPolicy = false;
+  private policyComplete = false;
+
+  /** This owner object never escapes through PlatformUnitOfWork. Ordinary callers
+   * cannot qualify borrowed SQL or acquire a protected policy phase with a flag. */
+  claimGuardedPolicy(): { complete(): void; assertPolicy(): void } {
+    if (this.guardedPolicy || this.otherStarted || this.preparationStarted)
+      throw new ScopeViolationError("The profile policy phase is unavailable.");
+    this.guardedPolicy = true;
+    return Object.freeze({
+      assertPolicy: () => {
+        if (this.policyComplete || this.preparationStarted)
+          throw new ScopeViolationError("The profile policy phase is closed.");
+      },
+      complete: () => {
+        if (this.policyComplete || this.preparationStarted)
+          throw new ScopeViolationError("The profile policy phase is closed.");
+        this.policyComplete = true;
+      },
+    });
+  }
 
   other<T>(work: () => Promise<T>): Promise<T> {
-    if (this.preparationStarted) return this.reject();
+    if (this.guardedPolicy || this.preparationStarted) return this.reject();
     this.otherStarted = true;
     return work();
   }
 
   private prepare<T>(work: () => Promise<T>): Promise<T> {
-    if (this.otherStarted || this.preparationStarted) return this.reject();
+    if (
+      this.otherStarted ||
+      this.preparationStarted ||
+      (this.guardedPolicy && !this.policyComplete)
+    )
+      return this.reject();
     this.preparationStarted = true;
     return work();
   }
