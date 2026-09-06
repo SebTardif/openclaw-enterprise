@@ -41,6 +41,7 @@
     "./lifecycle/status-reader-v1": "./src/lifecycle/status-reader-v1.ts",
     "./persistence/retained-store-preflight-v1": "./src/persistence/retained-store-preflight-v1.ts",
     "./containment/final-pod-comparison-v1": "./src/containment/final-pod-comparison-v1.ts",
+    "./runtime-activation-v1": "./src/runtime-activation-v1/index.ts",
     "./containment/evidence-evaluator-v1": "./src/containment/evidence-evaluator-v1.ts",
     "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts",
     "./credential-custody-v1/custody": "./src/credential-custody-v1/custody.ts",
