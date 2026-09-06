@@ -77,6 +77,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
   strict codecs; durable journal storage and channel/runtime integration remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,
   strict codecs, and adapter ports; protected backend and runtime integration remain required.
+- [Credential backend profile](credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
 - [Delegated authority library](delegation.md): internal root grant and model request
   constraints, with required authentication, currentness, and persistence integrations.
 - [External model egress packaging](egress.md): prepared images and isolated local
