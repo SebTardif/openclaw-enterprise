@@ -15,10 +15,15 @@
     "packages/occ/src/**",
     "apps/controller/src/worker/**"
   ],
-  "domainInfrastructure": ["packages/occ/src/state/**", "packages/occ/src/auth-persistence/**"],
+  "domainInfrastructure": [
+    "packages/occ/src/state/**",
+    "packages/occ/src/auth-persistence/**",
+    "packages/occ/src/schema/core-schema-boundary-v1.ts"
+  ],
   "implementationTargets": [
     "packages/occ/src/state/**",
     "packages/occ/src/auth-persistence/**",
+    "packages/occ/src/schema/core-schema-boundary-v1.ts",
     "apps/controller/src/**"
   ],
   "implementationPackages": [
