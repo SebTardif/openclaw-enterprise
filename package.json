@@ -45,12 +45,15 @@
     "test:native": "go -C components/runtime-security test -race ./... && go -C components/runtime-security vet ./..."
   },
   "devDependencies": {
+    "@openclaw-enterprise/contracts": "workspace:*",
+    "@openclaw-enterprise/occ": "workspace:*",
     "@types/node": "24.13.3",
     "@types/pg": "8.21.0",
     "drizzle-kit": "0.31.10",
     "pg": "8.23.0",
     "playwright": "1.62.1",
     "prettier": "3.9.4",
+    "typebox": "1.3.6",
     "typescript": "6.0.3"
   }
 }
