@@ -75,6 +75,8 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Direct Compute interruption preparation](direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
+- [Retirement purge manifest definitions](retirement-purge-manifest.md): validate immutable manifests and store progress; complete inventory, current authority, physical settlement, and deletion remain separate.
+- [Retirement purge journal definitions](retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Turn journal and completion interfaces](turn-journal.md): versioned types and
   strict codecs; durable journal storage and channel/runtime integration remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,
