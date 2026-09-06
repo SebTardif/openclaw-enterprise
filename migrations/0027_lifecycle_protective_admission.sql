@@ -294,9 +294,9 @@ BEGIN
     OR intent.namespace_id IS DISTINCT FROM admission.namespace_id
     OR intent.agent_id IS DISTINCT FROM admission.agent_id
     OR intent.generation IS DISTINCT FROM admission.lifecycle_generation
-    OR intent.desired_mode IS DISTINCT FROM CASE admission.kind WHEN 'disable' THEN 'disabled' ELSE 'stopped' END
+    OR intent.desired_mode IS DISTINCT FROM (CASE admission.kind WHEN 'disable' THEN 'disabled' ELSE 'stopped' END)
     OR admission.work_id=original_ref
-    OR admission.expected_generation IS DISTINCT FROM CASE WHEN intent.generation=1 THEN NULL ELSE intent.generation-1 END
+    OR admission.expected_generation IS DISTINCT FROM (CASE WHEN intent.generation=1 THEN NULL ELSE intent.generation-1 END)
     OR NOT EXISTS (SELECT 1 FROM occ.installation WHERE id=intent.installation_id)
     OR NOT EXISTS (SELECT 1 FROM occ.agent_runtime_intent_heads
       WHERE namespace_id=intent.namespace_id AND agent_id=intent.agent_id AND generation>=intent.generation)
@@ -341,7 +341,7 @@ BEGIN
     OR responsibility.installation_id IS DISTINCT FROM intent.installation_id
     OR responsibility.namespace_id IS DISTINCT FROM intent.namespace_id OR responsibility.agent_id IS DISTINCT FROM intent.agent_id
     OR responsibility.lifecycle_generation IS DISTINCT FROM intent.generation
-    OR responsibility.kind IS DISTINCT FROM CASE admission.kind WHEN 'disable' THEN 'protective-fence' ELSE 'retained-stop' END
+    OR responsibility.kind IS DISTINCT FROM (CASE admission.kind WHEN 'disable' THEN 'protective-fence' ELSE 'retained-stop' END)
     OR responsibility.predecessor_ref IS DISTINCT FROM previous.transition_ref
     OR responsibility.predecessor_generation IS DISTINCT FROM admission.expected_generation
     OR responsibility.created_at IS DISTINCT FROM intent.created_at OR responsibility.inventory_status<>'unresolved'

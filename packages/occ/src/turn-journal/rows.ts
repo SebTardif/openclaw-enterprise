@@ -208,12 +208,11 @@ export function parseIncomingLinkRow(
   });
 }
 
-/** NULL is the explicit accepted, predispatch state. It cannot be promoted to
- * a canonical attempt binding by reconstructing fields from the admission. */
-export function parseAttemptRow(row: TurnJournalRow): AttemptRecordV1 | null {
+/** Decode the canonical common/full record without reconstructing dispatch.
+ * Historical NULL conversion belongs exclusively to the reviewed migration. */
+export function parseAttemptRow(row: TurnJournalRow): AttemptRecordV1 {
   return read(() => {
     parseAttemptFirstReceivedAt(row);
-    if (row.record === null) return null;
     const record = parseTurnJournalV1("attempt", row.record);
     assertAttempt(row, record.binding.attempt);
     assertChannel(row, record.binding.identity.locator);

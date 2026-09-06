@@ -32,7 +32,7 @@
     "db:up": "docker compose -f compose.postgres.yaml up -d --wait",
     "db:down": "docker compose -f compose.postgres.yaml down",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node scripts/migrate-production.mjs --local",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "docker:test": "node --test tests/integration/docker-compute-real.test.mjs",

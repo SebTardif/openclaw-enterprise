@@ -1,19 +1,27 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createOccLogger, emitOccLogEvent } from "../apps/controller/src/logging.ts";
-import { loadOperationalLoggingConfiguration } from "../apps/controller/src/composition/installation-config.ts";
+import { MigrationExecutionError, runMigrations } from "./turn-journal-phase-upgrade.mjs";
 
 const databaseUrl = process.env.OCC_MIGRATION_DATABASE_URL;
 let pool;
 let logger = createOccLogger({ component: "occ-migration", level: "info", destination: "stderr" });
 
 try {
-  const logging = await loadOperationalLoggingConfiguration({ mode: "production" });
-  logger = createOccLogger({
-    component: "occ-migration",
-    level: logging.level,
-    destination: "stderr",
-  });
+  const args = process.argv.slice(2);
+  const local = args.length === 1 && args[0] === "--local";
+  if (args.length !== 0 && !local)
+    throw new Error("Usage: node scripts/migrate-production.mjs [--local]");
+  if (!local) {
+    const { loadOperationalLoggingConfiguration } =
+      await import("../apps/controller/src/composition/installation-config.ts");
+    const logging = await loadOperationalLoggingConfiguration({ mode: "production" });
+    logger = createOccLogger({
+      component: "occ-migration",
+      level: logging.level,
+      destination: "stderr",
+    });
+  }
   if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
     throw new Error("OCC_MIGRATION_DATABASE_URL must contain the dedicated migrator credential.");
   }
@@ -24,10 +32,8 @@ try {
 
   const dependency = createRequire(new URL("../packages/occ/package.json", import.meta.url));
   const { Pool } = dependency("pg");
-  const { drizzle } = dependency("drizzle-orm/node-postgres");
-  const { migrate } = dependency("drizzle-orm/node-postgres/migrator");
   pool = new Pool({ connectionString: databaseUrl, max: 1 });
-  await migrate(drizzle(pool), {
+  await runMigrations(pool, {
     migrationsFolder: fileURLToPath(new URL("../migrations", import.meta.url)),
   });
   process.stdout.write(`${JSON.stringify({ event: "migration.completed" })}\n`);
@@ -35,7 +41,10 @@ try {
 } catch (error) {
   emitOccLogEvent(logger, {
     event: "migration.failed",
-    code: "MIGRATION_FAILED",
+    code:
+      error instanceof MigrationExecutionError && error.outcome === "unknown"
+        ? "MIGRATION_COMMIT_UNKNOWN"
+        : "MIGRATION_FAILED",
   });
   process.exitCode = 1;
 } finally {
