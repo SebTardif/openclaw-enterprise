@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseRuntimeEffectsV1 } from "@openclaw-enterprise/contracts";
+import { parseRuntimeEffectsV1 } from "../../packages/contracts/src/index.ts";
 import {
   prepareRuntimeBindingCandidate,
   submitRuntimeBindingCandidate,

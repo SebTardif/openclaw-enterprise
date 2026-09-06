@@ -1,4 +1,4 @@
-import { canonicalRuntimeEffectRequestV1 } from "@openclaw-enterprise/contracts";
+import { canonicalRuntimeEffectRequestV1 } from "../../packages/contracts/src/index.ts";
 import {
   copy,
   uuid,

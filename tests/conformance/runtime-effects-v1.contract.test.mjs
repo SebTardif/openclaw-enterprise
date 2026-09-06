@@ -9,7 +9,7 @@ import {
   runtimeEffectEvidenceFreshV1,
   parseRuntimeEffectsResponseV1,
   RUNTIME_EFFECT_LIMITS_V1,
-} from "@openclaw-enterprise/contracts";
+} from "../../packages/contracts/src/index.ts";
 import {
   nextEffectAction,
   replacementBarrier,

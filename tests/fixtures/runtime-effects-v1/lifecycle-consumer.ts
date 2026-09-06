@@ -14,7 +14,7 @@ import {
   type ConditionalRouteV1,
   type RuntimeEvidenceProvenanceV1,
   type RuntimeGateGuardV1,
-} from "@openclaw-enterprise/contracts";
+} from "../../../packages/contracts/src/index.ts";
 
 /** Independent consumer: this classification cannot initiate or retry an effect. */
 export function nextEffectAction(
