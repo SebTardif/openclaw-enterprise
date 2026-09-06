@@ -83,6 +83,14 @@ payloads, request/reply objects, and unsafe strings before Pino writes the
 record. This source boundary is distinct from the Collector export filter in
 step 7.
 
+The [operational diagnostic adapter](../reference/operational-diagnostics.md)
+can also consume canonical lifecycle read values and projected security events
+through the original logger. It retains independent conditions and source times,
+with explicit local submission/suppression/failure counts. Its four fixed event
+classes have a matching Collector allowlist; actual authorized lifecycle and
+component-emitter invocation remains separately owned. Neither a local log call
+nor the operational copy replaces durable audit evidence or proves remote receipt.
+
 API and worker startup failures first pass through the shared fixed
 `startupDiagnostic` projection. The stderr logger adds only severity, timestamp,
 and service metadata to that diagnostic. Locally registered Kubernetes validation
