@@ -354,7 +354,20 @@ func main() {
 	defer stop()
 	go func() { <-ctx.Done(); os.Stdin.Close() }()
 	if err := run(ctx); err != nil {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"kind": "fatal", "error": "fixture_failed"})
+		// Report only fixed native diagnostic classes. Provider errors, paths and
+		// generated credential material are never part of fixture output.
+		code := "fixture_failed"
+		var sourceError *identity.Error
+		var peerError *servicepeer.Error
+		switch {
+		case errors.As(err, &sourceError):
+			code = "source/" + sourceError.Code
+		case errors.As(err, &peerError):
+			code = "peer/" + peerError.Code
+		case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.EACCES):
+			code = "local-permission-denied"
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"kind": "fatal", "error": code})
 		os.Exit(1)
 	}
 }

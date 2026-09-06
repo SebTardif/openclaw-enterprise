@@ -36,9 +36,11 @@ type fixtureProcess struct {
 func buildFixture(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "runtime-authority-service")
-	build := exec.Command("go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", binary, "../../tests/fixtures/runtime-authority-service/main.go")
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	build := exec.CommandContext(ctx, "go", "build", "-p=2", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", binary, "../../tests/fixtures/runtime-authority-service/main.go")
 	build.Dir = ".."
-	build.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off")
+	build.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOMAXPROCS=2")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build real Workload API/TLS fixture: %v\n%s", err, output)
 	}
@@ -48,7 +50,7 @@ func buildFixture(t *testing.T) string {
 func startFixture(t *testing.T, binary string) *fixtureProcess {
 	t.Helper()
 	command := exec.Command(binary)
-	command.Env = []string{}
+	command.Env = []string{"TMPDIR=" + os.TempDir()}
 	input, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -186,11 +188,31 @@ func bootstrap(t *testing.T, f *fixtureProcess) servicebridge.Bootstrap {
 }
 
 func newBridge(t *testing.T, f *fixtureProcess) *bridgeHarness {
+	return newBridgeWithPolicy(t, f, "read-operation-only-v1")
+}
+
+func newBridgeWithPolicy(t *testing.T, f *fixtureProcess, policy string) *bridgeHarness {
 	t.Helper()
 	input, writer := io.Pipe()
 	reader, output := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &bridgeHarness{fixture: f, input: writer, output: reader, cancel: cancel, done: make(chan error, 1), events: make(chan servicebridge.Event, 64), readDone: make(chan struct{}), boot: bootstrap(t, f), sequence: 1}
+	if policy == "initial-harness-bind-v1" {
+		profileRaw, err := base64.StdEncoding.DecodeString(h.boot.ProfileBase64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var profile servicebridge.Profile
+		if err = json.Unmarshal(profileRaw, &profile); err != nil {
+			t.Fatal(err)
+		}
+		profile.OperationPolicy = policy
+		profile.TransportProfileRef = "owned-child-stdio-initial-harness-bind-v1"
+		profileRaw = jsonBytes(t, profile)
+		h.boot.ProfileBase64, h.boot.ProfileDigest = base64.StdEncoding.EncodeToString(profileRaw), testDigest(profileRaw)
+	} else if policy != "read-operation-only-v1" {
+		t.Fatal("unknown test transport profile")
+	}
 	go func() { h.done <- servicebridge.Run(ctx, input, output) }()
 	go func() {
 		defer close(h.readDone)

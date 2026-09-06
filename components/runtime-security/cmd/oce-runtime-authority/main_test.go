@@ -37,8 +37,10 @@ func encode(raw []byte) []byte {
 func buildCommand(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "oce-runtime-authority")
-	build := exec.Command("go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", binary, ".")
-	build.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off")
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	build := exec.CommandContext(ctx, "go", "build", "-p=2", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", binary, ".")
+	build.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOMAXPROCS=2")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build actual command: %v\n%s", err, output)
 	}

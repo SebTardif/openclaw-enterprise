@@ -1,12 +1,18 @@
-# Authenticated runtime operation readback
+# Authenticated runtime authority requests
 
-The controller can expose the existing runtime authority `readOperation` method
-through a dedicated TLS listener. An independent service authenticates with its
-own X.509-SVID. The controller then reads the current protected service registry,
-checks the service's exact Agent scope, and returns only an exact historical
-operation accepted from that same service. No deploy, binding, evidence,
-retirement, restore, runtime selection or workload execution is enabled by this
-listener.
+The controller exposes selected runtime authority methods through a dedicated
+TLS listener. An independent service authenticates with its own X.509-SVID. The
+controller reads the current protected service registry and checks its exact
+Agent scope and admitted operation policy. The readback profile permits only
+`readOperation`. A separately admitted initial-bind profile also permits the
+existing `bind` request for an initial dedicated gVisor Harness binding.
+
+The bind service currently returns `rejected-before-effect` with
+`lookup-unavailable` when authoritative preparation, approved workload-profile
+and protected Compute inputs are unavailable. Authenticating a bind caller does
+not satisfy these predicates or write a runtime binding. Neither profile permits
+deploy, evidence submission, retirement, restore, runtime selection or workload
+execution.
 
 The implementation uses the existing [native service peer](native-service-peer.md)
 and [runtime authority](runtime-authority.md) components. It adds an actual
@@ -28,8 +34,21 @@ Agent target. Admission uses the current selected IAM driver and persists the
 registry change with its audit record. See [runtime authority](runtime-authority.md)
 for the management API and registry lifecycle.
 
-The selected first service profile grants `lifecycle-authority` for one exact
-Agent and `read-operation-only-v1`. The service receives a server-generated
+Both profiles use `lifecycle-authority` for one exact Agent. The operation policy
+constrains this role independently; the role name alone grants no method.
+
+| Operation policy          | Protected source transport profile          | Methods                                                                                                                                                      |
+| ------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `read-operation-only-v1`  | `owned-child-stdio-readback-v1`             | Exact original-service `readOperation`.                                                                                                                      |
+| `initial-harness-bind-v1` | `owned-child-stdio-initial-harness-bind-v1` | Initial Harness `bind` for `occ/kubernetes-gvisor` with `expectedBindingVersion: null`, and independently authorized exact original-service `readOperation`. |
+
+The administrator must explicitly select `operationPolicy: "initial-harness-bind-v1"`
+when admitting a service against the corresponding protected source. Omitting
+the field selects the readback profile and cannot admit an initial-bind source.
+The native parser rejects mixed policy/transport pairs. Ordinary listener
+configuration cannot upgrade an admitted service's operation privilege.
+
+The service receives a server-generated
 `runtime-service/<UUID>` reference. The technical source manifest cannot come
 from the peer or be replaced by ordinary API caller-key authentication. Source
 replacement or withdrawal invalidates every service still bound to the previous
@@ -66,6 +85,8 @@ binary path must equal the independently selected validator binary. The address
 must be an explicit IP literal and positive TCP port. This configuration supplies
 only the selected listener and existing service reference; it cannot supply a
 profile, role, trust bundle or authority grant.
+The same startup path selects either already-admitted service profile; its
+environment-variable name and closed configuration fields remain unchanged.
 
 The binary and configuration must be regular files owned by root or the
 controller user, without group or other write permission. Final symlinks are
@@ -100,7 +121,7 @@ Each connection carries one request and one bounded response. A frame has a
 four-byte unsigned big-endian byte length followed by UTF-8 JSON; the public
 payload limit is 65,536 bytes. Use compact canonical JSON with ordinary safe
 integer spellings, no duplicate object keys, and depth at most 32. The request's
-closed envelope is:
+closed readback envelope is:
 
 ```text
 {
@@ -126,6 +147,21 @@ Malformed, stale, unavailable, wrong-recipient or unauthenticated exchanges neve
 receive historical data. A connection failure is not permission to use a broader
 scope or another service identity.
 
+For the separately admitted initial-bind profile, the same envelope can instead
+contain `method: "bind"` and `operation: <BindRuntimeV1>`. The full existing closed
+bind schema is parsed before any context is created. Its target and binding must
+both name `harness`, the provider must be `occ/kubernetes-gvisor`, and
+`expectedBindingVersion` must be `null`. The response is the existing
+method-specific `BindingResultV1`. There is no new bind DTO, role field or
+caller-supplied context. The native dispatch and the actual service each enforce
+the admitted operation ceiling, including when the service is invoked internally.
+
+An accepted transport request reaches the real bind method once with its original
+parsed input and request reference. The current rejection creates no operation
+receipt. If a future guarded acceptor reports an uncertain commit, recovery must
+use an independently authorized exact original-service `readOperation`; neither
+an operation reference nor a lost response authorizes a broader retry.
+
 ## Current checks and bounds
 
 The controller never serializes a trusted context. Its factory creates opaque
@@ -140,6 +176,13 @@ existing before/after authority checks, followed by another fresh check before
 returning the result. The child rechecks actual source/trust/connection/time
 immediately before writing to the original TLS stream.
 
+The service also requires a private request-correspondence check against the
+factory-owned context and the original method, full parsed input, request
+reference, recipient and deadline. A captured context cannot be reused with
+changed bind bytes or a different method. This comparison supplies only another
+reason to deny; it neither authenticates the caller nor replaces fresh native and
+registry checks. A missing correspondence provider denies.
+
 | Bound                                | Selected behavior                                                                                                                                      |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Bootstrap and ready delivery         | Three seconds, including incomplete bootstrap input and blocked ready output.                                                                          |
@@ -147,7 +190,7 @@ immediately before writing to the original TLS stream.
 | Original public request              | Three seconds from before the first frame byte; an independent monotonic timer remains armed through parsing, inspection and response.                 |
 | Live source/certificate recheck      | One second, with additional checks before inspection and I/O.                                                                                          |
 | Maximum authenticated connection age | Thirty seconds, additionally capped by certificate expiry and the one-request deadline.                                                                |
-| Capacity                             | One active connection and one pending controller read; reconnect cannot replace work still cancelling.                                                 |
+| Capacity                             | One active connection and one pending controller request; reconnect cannot replace work still cancelling.                                              |
 | Internal frame                       | 131,072 bytes, with a three-second timer from the first partial-frame byte.                                                                            |
 | Blocked parent output                | Bounded write followed by channel shutdown; no unbounded message queue.                                                                                |
 | Child shutdown                       | Invalidate contexts first, close owned streams, send TERM, escalate to KILL after 250 ms, and observe exit within three seconds or report unavailable. |
@@ -173,8 +216,11 @@ latest observed check. Individual remote certificate revocation which does not
 change available local evidence is not detected. Neither fixture success nor
 the executable digest proves production SPIRE attestation, deployment mount
 custody, clock quality or universal revocation latency. Bytes already transmitted
-cannot be withdrawn. This readback path supplies no runtime effect guard or
-positive active-runtime decision.
+cannot be withdrawn. This path supplies no runtime effect guard or positive
+active-runtime decision. A future successful bind must compare current
+source/service/profile and preparation in the owning transaction, under lock
+ordering shared with withdrawal. The current outside-transaction checks do not
+establish that future commit serialization.
 
 ## Build and verification
 
@@ -187,6 +233,7 @@ chmod 0555 components/runtime-security/bin/oce-runtime-authority
 go -C components/runtime-security test -race ./servicebridge ./cmd/oce-runtime-authority
 go -C components/runtime-security vet ./servicebridge ./cmd/oce-runtime-authority
 node --test tests/integration/runtime-authority-authenticated-readback.test.mjs
+node --test tests/integration/runtime-authority-authenticated-bind.test.mjs
 ```
 
 The native tests initialize actual Sources through a controlled local Workload
