@@ -202,6 +202,14 @@ test("JSON CLI fails on missing pino without repairing the checkout", (t) => {
   const root = fixture(t);
   put(
     root,
+    "scripts/development-setup-requirements.mjs",
+    readFileSync(
+      new URL("../../scripts/development-setup-requirements.mjs", import.meta.url),
+      "utf8",
+    ),
+  );
+  put(
+    root,
     "scripts/check-development-setup.mjs",
     readFileSync(new URL("../../scripts/check-development-setup.mjs", import.meta.url), "utf8"),
   );

@@ -29,6 +29,12 @@ lifecycle hooks, or establish browser, database, credential or cluster readiness
 It probes the package-manager version without invoking a package command. Source exports are identified
 separately from Git worktrees.
 
+For an explicitly allocated tool or local endpoint, add `--requirements FILE`
+and optionally `--root PATH`. See [selected setup requirements](testing/development-setup.md)
+for the JSON contract, owner/action diagnostics and limits. Omitted requirements
+remain unselected; a matching protocol response does not establish database
+authentication/schema, cluster or workload acceptance.
+
 The workspace sets `verifyDepsBeforeRun: error`: supported pnpm `run` and `exec`
 commands stop on stale dependency state instead of installing packages or running
 preparation hooks. Valid commands may still refresh pnpm metadata, and explicit
