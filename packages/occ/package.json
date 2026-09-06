@@ -37,6 +37,8 @@
     "./lifecycle/handler-ports-v1": "./src/lifecycle/handler-ports-v1.ts",
     "./lifecycle/work-codec-v1": "./src/lifecycle/work-codec-v1.ts",
     "./lifecycle/work-preflight-v1": "./src/lifecycle/work-preflight-v1.ts",
+    "./lifecycle/status-projector-v1": "./src/lifecycle/status-projector-v1.ts",
+    "./lifecycle/status-reader-v1": "./src/lifecycle/status-reader-v1.ts",
     "./persistence/retained-store-preflight-v1": "./src/persistence/retained-store-preflight-v1.ts"
   },
   "types": "./src/index.ts",

@@ -1,0 +1,811 @@
+{
+  "format": "lifecycle-status-fixtures-v1",
+  "description": "Synthetic canonical test values; grouping metadata is not an API response.",
+  "mutationResults": [
+    {
+      "label": "accepted-minimal",
+      "value": {
+        "kind": "accepted",
+        "receipt": {
+          "disposition": "accepted",
+          "operation": {
+            "operationRef": "33333333-3333-4333-8333-333333333333",
+            "kind": "deploy",
+            "revisionSource": "saved-draft",
+            "lifecycleGeneration": 3,
+            "desiredMode": "running",
+            "acceptedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "label": "unchanged-minimal",
+      "value": {
+        "kind": "unchanged",
+        "receipt": {
+          "disposition": "unchanged",
+          "lifecycleGeneration": 4,
+          "desiredMode": "stopped"
+        }
+      }
+    },
+    {
+      "label": "conflict",
+      "value": {
+        "kind": "conflict"
+      }
+    },
+    {
+      "label": "commit-unknown",
+      "value": {
+        "kind": "commit-unknown"
+      }
+    }
+  ],
+  "readCases": [
+    {
+      "label": "no-head",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": null,
+          "requestedRevisionId": null,
+          "selectedRevisionId": null,
+          "servingRevisionId": null,
+          "observedLifecycleGeneration": null,
+          "phase": "pending",
+          "attempt": 0,
+          "step": "observe",
+          "reasonCode": "LIFECYCLE_UNINITIALIZED",
+          "retryAt": null,
+          "conditions": {
+            "accessDenied": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "routeRemoved": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "credentialRevocation": {
+              "status": "not-requested",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_REQUESTED"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "initial-protective-null-revision",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 1,
+            "desiredMode": "stopped",
+            "requestedRevisionId": null
+          },
+          "requestedRevisionId": null,
+          "selectedRevisionId": null,
+          "servingRevisionId": null,
+          "observedLifecycleGeneration": null,
+          "phase": "pending",
+          "attempt": 0,
+          "step": "observe",
+          "reasonCode": "NOT_OBSERVED",
+          "retryAt": null,
+          "conditions": {
+            "accessDenied": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "routeRemoved": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "credentialRevocation": {
+              "status": "not-requested",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_REQUESTED"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "distinct-requested-selected-serving",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "running",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 3,
+          "phase": "blocked",
+          "attempt": 2,
+          "step": "observe",
+          "reasonCode": "PREDECESSOR_UNRESOLVED",
+          "retryAt": "2026-01-01T00:11:00.000Z",
+          "conditions": {
+            "accessDenied": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "routeRemoved": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "credentialRevocation": {
+              "status": "not-requested",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_REQUESTED"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "stale-source-later-receipt",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "running",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 3,
+          "phase": "blocked",
+          "attempt": 2,
+          "step": "observe",
+          "reasonCode": "PREDECESSOR_UNRESOLVED",
+          "retryAt": "2026-01-01T00:11:00.000Z",
+          "conditions": {
+            "accessDenied": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "routeRemoved": {
+              "status": "pending",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "ROUTE_OUTCOME_UNKNOWN"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            },
+            "credentialRevocation": {
+              "status": "not-requested",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_REQUESTED"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "access-denied-termination-unknown",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "stopped",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 4,
+          "phase": "blocked",
+          "attempt": 2,
+          "step": "terminate-predecessor",
+          "reasonCode": "TERMINATION_UNKNOWN",
+          "retryAt": "2026-01-01T00:11:00.000Z",
+          "conditions": {
+            "accessDenied": {
+              "status": "confirmed",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "routeRemoved": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "TERMINATION_UNKNOWN"
+            },
+            "credentialRevocation": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "CREDENTIAL_OUTCOME_UNKNOWN"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "unresolved-possible-create",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "stopped",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 4,
+          "phase": "blocked",
+          "attempt": 2,
+          "step": "terminate-predecessor",
+          "reasonCode": "CREATE_OUTCOME_UNKNOWN",
+          "retryAt": "2026-01-01T00:11:00.000Z",
+          "conditions": {
+            "accessDenied": {
+              "status": "confirmed",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "routeRemoved": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "CREATE_OUTCOME_UNKNOWN"
+            },
+            "credentialRevocation": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "CREDENTIAL_OUTCOME_UNKNOWN"
+            },
+            "stateRetention": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": null,
+              "reasonCode": "NOT_OBSERVED"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "unknown"
+        }
+      }
+    },
+    {
+      "label": "stop-complete-credential-unknown",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "stopped",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 4,
+          "phase": "converged",
+          "attempt": 2,
+          "step": "terminate-predecessor",
+          "reasonCode": "NONE",
+          "retryAt": null,
+          "conditions": {
+            "accessDenied": {
+              "status": "confirmed",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "routeRemoved": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "executionTerminated": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "credentialRevocation": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "CREDENTIAL_OUTCOME_UNKNOWN"
+            },
+            "stateRetention": {
+              "status": "pending",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "STATE_UNAVAILABLE"
+            }
+          },
+          "serving": false,
+          "stopComplete": true,
+          "retention": "verification-pending"
+        }
+      }
+    },
+    {
+      "label": "retained-state-termination-unknown",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+          "agentId": "agt_22222222-2222-4222-8222-222222222222",
+          "head": {
+            "operationRef": "44444444-4444-4444-8444-444444444444",
+            "lifecycleGeneration": 4,
+            "desiredMode": "stopped",
+            "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555"
+          },
+          "requestedRevisionId": "rev_55555555-5555-4555-8555-555555555555",
+          "selectedRevisionId": "rev_66666666-6666-4666-8666-666666666666",
+          "servingRevisionId": "rev_77777777-7777-4777-8777-777777777777",
+          "observedLifecycleGeneration": 4,
+          "phase": "blocked",
+          "attempt": 2,
+          "step": "terminate-predecessor",
+          "reasonCode": "TERMINATION_UNKNOWN",
+          "retryAt": "2026-01-01T00:11:00.000Z",
+          "conditions": {
+            "accessDenied": {
+              "status": "confirmed",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "routeRemoved": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            },
+            "executionTerminated": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "TERMINATION_UNKNOWN"
+            },
+            "credentialRevocation": {
+              "status": "unknown",
+              "observedAt": null,
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "CREDENTIAL_OUTCOME_UNKNOWN"
+            },
+            "stateRetention": {
+              "status": "confirmed",
+              "observedAt": "2026-01-01T00:00:01.000Z",
+              "recordedAt": "2026-01-01T00:10:00.000Z",
+              "reasonCode": "NONE"
+            }
+          },
+          "serving": false,
+          "stopComplete": false,
+          "retention": "retained"
+        }
+      }
+    },
+    {
+      "label": "historical-accepted-operation-after-later-head",
+      "method": "readOperation",
+      "request": {
+        "schemaVersion": 1,
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222",
+        "operationRef": "33333333-3333-4333-8333-333333333333"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "operation": {
+            "operationRef": "33333333-3333-4333-8333-333333333333",
+            "kind": "deploy",
+            "revisionSource": "saved-draft",
+            "lifecycleGeneration": 3,
+            "desiredMode": "running",
+            "acceptedAt": "2026-01-01T00:00:00.000Z",
+            "requestedRevisionId": "rev_66666666-6666-4666-8666-666666666666"
+          },
+          "observation": {
+            "phase": "converged",
+            "attempt": 2,
+            "step": "publish",
+            "reasonCode": "NONE",
+            "retryAt": null,
+            "observedAt": "2026-01-01T00:00:01.000Z",
+            "recordedAt": "2026-01-01T00:10:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "label": "operation-with-stale-observation",
+      "method": "readOperation",
+      "request": {
+        "schemaVersion": 1,
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222",
+        "operationRef": "33333333-3333-4333-8333-333333333333"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "operation": {
+            "operationRef": "33333333-3333-4333-8333-333333333333",
+            "kind": "deploy",
+            "revisionSource": "saved-draft",
+            "lifecycleGeneration": 3,
+            "desiredMode": "running",
+            "acceptedAt": "2026-01-01T00:00:00.000Z",
+            "requestedRevisionId": "rev_66666666-6666-4666-8666-666666666666"
+          },
+          "observation": {
+            "phase": "blocked",
+            "attempt": 2,
+            "step": "observe",
+            "reasonCode": "DEPENDENCY_UNAVAILABLE",
+            "retryAt": "2026-01-01T00:11:00.000Z",
+            "observedAt": "2026-01-01T00:00:01.000Z",
+            "recordedAt": "2026-01-01T00:10:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "label": "bounded-partial-page-with-cursor",
+      "method": "listOperations",
+      "request": {
+        "schemaVersion": 1,
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222",
+        "afterGeneration": 2,
+        "limit": 10
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "operations": [
+            {
+              "operationRef": "33333333-3333-4333-8333-333333333333",
+              "kind": "deploy",
+              "revisionSource": "saved-draft",
+              "lifecycleGeneration": 3,
+              "desiredMode": "running",
+              "acceptedAt": "2026-01-01T00:00:00.000Z"
+            }
+          ],
+          "nextAfterGeneration": 3
+        }
+      }
+    },
+    {
+      "label": "ambiguous-discovery-without-accepted-locator",
+      "method": "listOperations",
+      "request": {
+        "schemaVersion": 1,
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222",
+        "afterGeneration": null,
+        "limit": 10
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "operations": [
+            {
+              "operationRef": "33333333-3333-4333-8333-333333333333",
+              "kind": "deploy",
+              "revisionSource": "saved-draft",
+              "lifecycleGeneration": 3,
+              "desiredMode": "running",
+              "acceptedAt": "2026-01-01T00:00:00.000Z"
+            },
+            {
+              "operationRef": "44444444-4444-4444-8444-444444444444",
+              "kind": "deploy",
+              "revisionSource": "saved-draft",
+              "lifecycleGeneration": 4,
+              "desiredMode": "running",
+              "acceptedAt": "2026-01-01T00:05:00.000Z"
+            }
+          ],
+          "nextAfterGeneration": null
+        }
+      }
+    },
+    {
+      "label": "empty-discovery-does-not-prove-rollback",
+      "method": "listOperations",
+      "request": {
+        "schemaVersion": 1,
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222",
+        "afterGeneration": 4,
+        "limit": 10
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "operations": [],
+          "nextAfterGeneration": null
+        }
+      }
+    },
+    {
+      "label": "capability-legacy",
+      "method": "readCapability",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "schemaVersion": 1,
+          "protocol": "lifecycle-control-v1",
+          "stage": "legacy",
+          "capabilityVersion": 1,
+          "supportedConsumerVersions": {
+            "api": null,
+            "worker": null,
+            "maintenance": null,
+            "receiving": null
+          }
+        }
+      }
+    },
+    {
+      "label": "capability-drain",
+      "method": "readCapability",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "schemaVersion": 1,
+          "protocol": "lifecycle-control-v1",
+          "stage": "drain",
+          "capabilityVersion": 1,
+          "supportedConsumerVersions": {
+            "api": 1,
+            "worker": 1,
+            "maintenance": null,
+            "receiving": 1
+          }
+        }
+      }
+    },
+    {
+      "label": "capability-live",
+      "method": "readCapability",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "read",
+        "value": {
+          "schemaVersion": 1,
+          "protocol": "lifecycle-control-v1",
+          "stage": "live",
+          "capabilityVersion": 1,
+          "supportedConsumerVersions": {
+            "api": 1,
+            "worker": 1,
+            "maintenance": 1,
+            "receiving": 1
+          }
+        }
+      }
+    },
+    {
+      "label": "not-found",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "rejected",
+        "code": "NOT_FOUND"
+      }
+    },
+    {
+      "label": "unavailable",
+      "method": "readStatus",
+      "request": {
+        "namespaceId": "ns_11111111-1111-4111-8111-111111111111",
+        "agentId": "agt_22222222-2222-4222-8222-222222222222"
+      },
+      "result": {
+        "kind": "unavailable"
+      }
+    }
+  ],
+  "historicalContext": {
+    "historicalCase": "historical-accepted-operation-after-later-head",
+    "laterStatusCase": "distinct-requested-selected-serving",
+    "meaning": "The exact historical operation remains readable; it does not establish the later head's outcome."
+  },
+  "discoveryContext": {
+    "case": "ambiguous-discovery-without-accepted-locator",
+    "acceptedOperationRef": null,
+    "meaning": "Multiple accepted operations do not identify a lost mutation response. Do not choose a row or retry a mutation automatically."
+  }
+}
