@@ -5,9 +5,21 @@ import {
   decodeWorkloadProfileManifest,
   WorkloadProfileManifestError,
 } from "../../packages/occ/src/workload-profiles/manifest.ts";
-import { deriveWorkloadProfileManifest } from "../../packages/occ/src/workload-profiles/projections.ts";
+import {
+  deriveWorkloadProfileManifest,
+  projectWorkloadProfileResourceAccountingV1,
+} from "../../packages/occ/src/workload-profiles/projections.ts";
+import {
+  parseRuntimeResourceAccountingV1,
+  validateRuntimeResourceAccountingV1,
+} from "@openclaw-enterprise/contracts/runtime-resource-accounting-v1";
 import { WorkloadProfileJsonError } from "../../packages/occ/src/workload-profiles/canonical.ts";
 import { workloadProfileManifestFixture } from "../fixtures/workload-profile.mjs";
+import {
+  envelope as accountingEnvelope,
+  selectedRequirements,
+} from "../fixtures/runtime-resource-accounting-v1/values.mjs";
+import { observation } from "../fixtures/runtime-resource-accounting-v1/observation.mjs";
 
 // This synthetic candidate exercises closed decoding and content identities.
 // Its unresolved artifacts and mechanisms do not admit an executable workload.
@@ -803,4 +815,242 @@ test("the synthetic manifest matches independently computed canonical and domain
     );
   }
   assert.deepEqual(plain(derive(fixture()).digests), expected);
+});
+
+// Static synthetic inputs exercise the existing accounting grammar only. They
+// are not an accepted profile, a real envelope selection, or runtime evidence.
+function staticAccounting(seed = accountingEnvelope()) {
+  for (const component of ["gateway", "harness"]) {
+    seed.observations[component] = {
+      status: "unavailable",
+      ownerRef: `fixture-${component}-observer`,
+      reason: "producer-port-unavailable",
+    };
+  }
+  return seed;
+}
+function selectedAccounting(seed = staticAccounting()) {
+  const value = fixture();
+  value.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting = {
+    status: "selected",
+    envelope: seed,
+  };
+  return value;
+}
+const selectedProjection = (value) => projectWorkloadProfileResourceAccountingV1(bytes(value));
+function rejectsAccounting(value) {
+  for (const operation of [decode, derive, selectedProjection]) {
+    assert.throws(
+      () => operation(value),
+      (error) =>
+        error instanceof WorkloadProfileManifestError || error instanceof WorkloadProfileJsonError,
+    );
+  }
+}
+
+test("static accounting selection retains the full immutable seed and original identity", () => {
+  const value = selectedAccounting();
+  const branch = value.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting;
+  const expectedSeed = parseRuntimeResourceAccountingV1(branch.envelope);
+  const decoded = decode(value);
+  const projected = selectedProjection(value);
+  assert.deepEqual(plain(projected), branch);
+  assert.deepEqual(projected.envelope, expectedSeed);
+  assert.equal(projected.envelope.envelopeRef, "fixture-envelope");
+  assert.equal(projected.envelope.envelopeVersion, 1);
+  frozen(projected);
+  branch.envelope.envelopeRef = "changed-after-projection";
+  assert.equal(projected.envelope.envelopeRef, "fixture-envelope");
+  assert.deepEqual(projectWorkloadProfileResourceAccountingV1(decoded.canonicalBytes), projected);
+  assert.deepEqual(
+    plain(selectedProjection(fixture())),
+    fixture().launchConfiguration.resourceEnvelope.podAndRuntimeAccounting,
+  );
+  const changedShape = selectedAccounting();
+  changedShape.target.component = "gateway";
+  rejectsAccounting(changedShape); // The accessor still validates the whole definition.
+});
+
+test("selected seed identity and content affect only the original enclosing projection domains", () => {
+  const value = selectedAccounting();
+  const baseline = derive(value);
+  const affected = [
+    "launchConfigurationDigest",
+    "manifestDigest",
+    "resourceEnvelopeDigest",
+    "runtimeProfileDigest",
+  ];
+  assert.deepEqual(changedDigests(derive(fixture()).digests, baseline.digests), affected);
+  for (const mutate of [
+    (seed) => {
+      seed.envelopeRef = "another-envelope";
+    },
+    (seed) => {
+      seed.envelopeVersion += 1;
+    },
+    (seed) => {
+      seed.harness.value.contributions[0].resources.cpuMilli.value.request += 1;
+    },
+    (seed) => {
+      seed.gateway.ownerRef = "another-static-owner";
+    },
+    (seed) => {
+      seed.observations.harness.ownerRef = "another-observer-owner";
+    },
+  ]) {
+    const changed = selectedAccounting();
+    mutate(changed.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting.envelope);
+    const result = derive(changed);
+    assert.deepEqual(changedDigests(baseline.digests, result.digests), affected);
+    assert.deepEqual(plain(result.unavailableDigests), unavailable);
+  }
+  // Independent standard JSON encoding confirms that the complete outer object,
+  // including its container quantities, remains under the original digest domain.
+  const sorted = (value) => {
+    if (Array.isArray(value)) return value.map(sorted);
+    if (value !== null && typeof value === "object")
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, sorted(value[key])]),
+      );
+    return value;
+  };
+  const domainHash = (value) =>
+    `sha256:${createHash("sha256")
+      .update("oce.workload-profile.resource-envelope.v1\n")
+      .update(JSON.stringify(sorted(value)))
+      .digest("hex")}`;
+  assert.equal(
+    baseline.digests.resourceEnvelopeDigest,
+    domainHash(value.launchConfiguration.resourceEnvelope),
+  );
+  assert.notEqual(
+    baseline.digests.resourceEnvelopeDigest,
+    domainHash(value.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting.envelope),
+  );
+  assert.deepEqual(plain(derive(reorderedObjects(value)).digests), plain(baseline.digests));
+});
+
+test("missing accounting budgets remain explicit and confer no admitted configuration", () => {
+  const value = selectedAccounting(staticAccounting(selectedRequirements()));
+  const result = derive(value);
+  const projected = selectedProjection(value);
+  assert.equal(projected.envelope.repositoryPreparation.status, "unavailable");
+  assert.equal(projected.envelope.harness.value.phases.status, "unavailable");
+  const validation = validateRuntimeResourceAccountingV1(projected.envelope);
+  assert.equal(validation.status, "incomplete");
+  assert.equal(validation.totals.node, null);
+  assert.deepEqual(plain(result.unavailableDigests), unavailable);
+  assert.ok(result.content.capabilities.every((entry) => entry.status === "non-executable"));
+  assert.deepEqual(plain(projected.envelope.effectiveResources), {
+    status: "unavailable",
+    reason: "producer-port-unavailable",
+  });
+  assert.equal(Object.hasOwn(projected, "totals"), false);
+  assert.equal(Object.hasOwn(projected, "result"), false);
+  // A schema-valid seed can still fail the separate arithmetic validator.
+  const infeasible = staticAccounting();
+  infeasible.harness.value.contributions[0].resources.cpuMilli.value.request = 201;
+  assert.equal(
+    validateRuntimeResourceAccountingV1(selectedProjection(selectedAccounting(infeasible)).envelope)
+      .status,
+    "invalid",
+  );
+});
+
+test("accounting selection rejects malformed, partial and observation-bearing seed variants", () => {
+  for (const mutate of [
+    (branch) => {
+      branch.status = "resolved";
+    },
+    (branch) => {
+      branch.extra = true;
+    },
+    (branch) => {
+      delete branch.envelope;
+    },
+    (branch) => {
+      delete branch.envelope.envelopeRef;
+    },
+    (branch) => {
+      branch.envelope.envelopeRef = "";
+    },
+    (branch) => {
+      branch.envelope.envelopeVersion = 0;
+    },
+    (branch) => {
+      branch.envelope.envelopeVersion = "1";
+    },
+    (branch) => {
+      delete branch.envelope.repositoryPreparation;
+    },
+    (branch) => {
+      delete branch.envelope.observations.gateway.ownerRef;
+    },
+    (branch) => {
+      branch.envelope.observations.harness.ownerRef = "";
+    },
+    (branch) => {
+      branch.envelope.observations.gateway.reason = "owner-input-missing";
+    },
+    (branch) => {
+      branch.envelope.observations.harness.reason = "evidence-unavailable";
+    },
+    (branch) => {
+      branch.envelope.observations.gateway = { status: "required", ownerRef: "owner" };
+    },
+    (branch) => {
+      branch.envelope.observations.harness = {
+        status: "unsupported",
+        ownerRef: "owner",
+        reason: "profile-unsupported",
+      };
+    },
+    (branch) => {
+      branch.envelope.observations.harness.observedAt = "2026-01-01T00:00:00.000Z";
+    },
+    (branch) => {
+      branch.envelope.observations.gateway.podUid = "observed-pod";
+    },
+    (branch) => {
+      branch.envelope.effectiveResources.status = "supplied";
+    },
+    (branch) => {
+      branch.envelope.result = "accounted";
+    },
+    (branch) => {
+      branch.envelope.totals = null;
+    },
+    (branch) => {
+      branch.envelope = validateRuntimeResourceAccountingV1(branch.envelope);
+    },
+  ]) {
+    const value = selectedAccounting();
+    mutate(value.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting);
+    rejectsAccounting(value);
+  }
+  for (const status of ["incomplete", "ambiguous", "unknown"]) {
+    const seed = staticAccounting();
+    seed.observations.harness = {
+      status: "supplied",
+      ownerRef: "fixture-observer",
+      value: {
+        schemaVersion: 1,
+        status,
+        input: observation().input,
+        reasonCode: "evidence-incomplete",
+      },
+    };
+    assert.doesNotThrow(() => parseRuntimeResourceAccountingV1(seed));
+    rejectsAccounting(selectedAccounting(seed));
+  }
+  const observed = staticAccounting();
+  observed.observations.harness = {
+    status: "supplied",
+    ownerRef: "fixture-observer",
+    value: observation(),
+  };
+  assert.doesNotThrow(() => parseRuntimeResourceAccountingV1(observed));
+  rejectsAccounting(selectedAccounting(observed));
 });
