@@ -65,6 +65,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Credential backend profile](reference/credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
+- [Repository preparation interfaces](reference/repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
 - [Lifecycle admission and durable work definitions](reference/lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](reference/lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](reference/lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
@@ -99,6 +100,7 @@ OpenClaw Enterprise is the open platform for managing agents.
   [production TUI attachment](flows/production-tui.md), and
   [shared platform startup](flows/platform-startup.md).
 - [Platform console requests](flows/platform-console.md).
+- [Lifecycle status fixture preview](flows/lifecycle-status-preview.md): inspect lifecycle observations and uncertain outcomes in a local preview; authenticated console hookup and installed operator verification remain separate.
 - [Channel configuration, mapping, and delivery](flows/channel-delivery.md):
   follow the current source without treating proposed intake/brokerage as implemented.
 - [Controller worker](flows/controller-worker.md),
