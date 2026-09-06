@@ -51,6 +51,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
+- [Allocation companion reader](allocation-companion-v1.md): inspect complete expected inventory, declared attempts and receipt history with bounded offline diagnostics; authentic acceptance remains separate.
 - [Native consumer measurement](native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Shared native interaction scenarios](shared-native-scenarios-v1.md): inspect labeled Slack/Teams traces and ordering/correlation findings; fixtures and declaration checks do not establish native execution or authority.
 - [Isolated upstream consumer preparation](isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.
@@ -69,6 +70,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
+- [Kubernetes resource normalization](kubernetes-resource-normalization.md): normalize supplied accounting and render selected resource plans; protected admission association, current workload correspondence, and effective allocation remain unavailable.
 - [Final Pod comparison contract](containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
 - [Final Pod comparator](final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
