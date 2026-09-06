@@ -15,6 +15,11 @@
     "channelInstallations",
     "configurations",
     "controllerWork",
+    "credentialInventoryMintClaims",
+    "credentialInventoryOperations",
+    "credentialInventoryRecords",
+    "credentialInventoryRevocationClaims",
+    "credentialInventorySnapshots",
     "iamAccessBindings",
     "iamGroupMemberships",
     "iamGroups",
@@ -1102,6 +1107,81 @@
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_mint_claims_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_mint_claims"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_operations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_operations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_records_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_records"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_revocation_claims_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_revocation_claims"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_snapshots_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_snapshots"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
       },
       "foreignColumns": ["id"],
       "onUpdate": "restrict",
