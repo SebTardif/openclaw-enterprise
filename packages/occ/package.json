@@ -50,7 +50,8 @@
     "./credential-custody-v1/backend": "./src/credential-custody-v1/backend.ts",
     "./credential-inventory-v1/inventory": "./src/credential-inventory-v1/inventory.ts",
     "./credential-inventory-v1/ports": "./src/credential-inventory-v1/ports.ts",
-    "./credential-inventory-v1/backend": "./src/credential-inventory-v1/backend.ts"
+    "./credential-inventory-v1/backend": "./src/credential-inventory-v1/backend.ts",
+    "./lifecycle/status-service-v1": "./src/lifecycle/status-service-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [

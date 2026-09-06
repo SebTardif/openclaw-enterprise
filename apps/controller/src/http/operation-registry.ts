@@ -268,6 +268,10 @@ const operationBodyExpectations = {
   putAgentWorkspaceFile: "required",
   listAgentRevisions: "none",
   getAgentRevision: "none",
+  getAgentLifecycleStatus: "none",
+  listAgentLifecycleOperations: "none",
+  getAgentLifecycleOperation: "none",
+  getAgentLifecycleCapability: "none",
 } satisfies {
   [Operation in OccApiRoute as Operation["operationId"]]: "body" extends keyof Operation["schema"]
     ? "required"

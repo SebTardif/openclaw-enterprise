@@ -6,6 +6,8 @@ import { namespaceApiRoutes } from "./namespace/routes.ts";
 export { namespaceApiRoutes, type NamespaceApiRoute } from "./namespace/routes.ts";
 import { agentApiRoutes } from "./agent/routes.ts";
 export { agentApiRoutes, type AgentApiRoute } from "./agent/routes.ts";
+import { lifecycleApiRoutes } from "./agent/lifecycle-routes.ts";
+export { lifecycleApiRoutes, type LifecycleApiRoute } from "./agent/lifecycle-routes.ts";
 import { configurationApiRoutes } from "./configuration/routes.ts";
 export { configurationApiRoutes, type ConfigurationApiRoute } from "./configuration/routes.ts";
 import {
@@ -361,6 +363,7 @@ export const occApiRoutes = [
   },
   agentApiRoutes[5],
   agentApiRoutes[6],
+  ...lifecycleApiRoutes,
 ] as const;
 
 export type OccApiRoute = (typeof occApiRoutes)[number];
