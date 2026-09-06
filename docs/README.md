@@ -59,6 +59,13 @@ OpenClaw Enterprise is the open platform for managing agents.
 
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
+- [Lifecycle admission and durable work definitions](reference/lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
+- [Schema and auth persistence boundary](reference/schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
+- [Audience observation contracts](reference/audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
+- [Runtime resource accounting](reference/runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
+- [Direct Compute interruption preparation](reference/direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
+- [Retained store preflight](reference/retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
+- [Same-build recovery preflight](reference/same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
 - [Delegated authority library](reference/delegation.md): root grant constraints,
