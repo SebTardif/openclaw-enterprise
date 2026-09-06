@@ -4,8 +4,43 @@ import test from "node:test";
 import {
   createRuntimeServiceTrustFixture,
   sourceRequest,
+  serviceRequest,
 } from "../fixtures/runtime-service-trust.mjs";
 import { signInToControllerApp } from "../helpers/auth-session.mjs";
+
+test("initial bind management selection cannot bypass the actual human session or exact closed source", async (t) => {
+  const f = await createRuntimeServiceTrustFixture({
+    sourceOverrides: {
+      transportProfileRef: "owned-child-stdio-initial-harness-bind-v1",
+    },
+  });
+  t.after(() => f.close());
+  const route = "/v1/runtime-service-trust/operations";
+  assert.equal((await f.request("POST", route, sourceRequest(f.source.sourceRef))).status, 200);
+  const body = serviceRequest(f, { operationPolicy: "initial-harness-bind-v1" });
+  assert.equal(
+    (await f.request("POST", route, body, { host: "127.0.0.1", origin: "http://127.0.0.1" }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await f.request("POST", route, body, { ...f.headers, origin: "http://foreign.invalid" }))
+      .status,
+    403,
+  );
+  for (const extra of [
+    { role: "compute-observer" },
+    { operationPolicy: "bind" },
+    { operationPolicy: "initial-harness-bind-v1\n" },
+  ])
+    assert.equal((await f.request("POST", route, { ...body, ...extra })).status, 400);
+  assert.equal(
+    (await f.request("POST", route, { ...body, agentId: `agt_${randomUUID()}` })).status,
+    404,
+  );
+  assert.equal((await f.request("POST", route, serviceRequest(f))).status, 404);
+  assert.equal((await f.request("GET", `${route}/${body.operationRef}`)).status, 404);
+});
 
 test("real registry routes require a current human session, Principal and exact administrator decision", async (t) => {
   const f = await createRuntimeServiceTrustFixture();

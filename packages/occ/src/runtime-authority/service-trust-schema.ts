@@ -16,6 +16,7 @@ export const RUNTIME_SERVICE_NATIVE_LIMITS = Object.freeze({
 } as const);
 
 /** Protected deployment input. This technical configuration grants no service identity. */
+export type RuntimeServiceOperationPolicy = "read-operation-only-v1" | "initial-harness-bind-v1";
 export interface RuntimeAuthoritySource {
   readonly schemaVersion: 1;
   readonly sourceRef: string;
@@ -28,14 +29,23 @@ export interface RuntimeAuthoritySource {
   readonly trustBundleSha256: string;
   readonly verifierProfileRef: string;
   readonly nativeExecutableSha256: string;
-  readonly transportProfileRef: "owned-child-stdio-readback-v1";
+  readonly transportProfileRef:
+    "owned-child-stdio-readback-v1" | "owned-child-stdio-initial-harness-bind-v1";
   readonly limits: typeof RUNTIME_SERVICE_NATIVE_LIMITS;
 }
-export interface RuntimeServiceNativeProfile extends RuntimeAuthoritySource {
-  readonly operationPolicy: "read-operation-only-v1";
+export type RuntimeServiceNativeProfile = RuntimeAuthoritySource & {
   readonly sourceConfigurationDigest: string;
   readonly peerSPIFFEId: string;
-}
+} & (
+    | {
+        readonly transportProfileRef: "owned-child-stdio-readback-v1";
+        readonly operationPolicy: "read-operation-only-v1";
+      }
+    | {
+        readonly transportProfileRef: "owned-child-stdio-initial-harness-bind-v1";
+        readonly operationPolicy: "initial-harness-bind-v1";
+      }
+  );
 
 interface RuntimeServiceTrustRequestBase {
   readonly schemaVersion: 1;
@@ -54,6 +64,8 @@ export type RuntimeServiceTrustRequest = RuntimeServiceTrustRequestBase &
         readonly namespaceId: string;
         readonly agentId: string;
         readonly peerSPIFFEId: string;
+        /** Absent only for the original closed readback admission. */
+        readonly operationPolicy?: "initial-harness-bind-v1";
       }
     | { readonly kind: "service-withdraw"; readonly serviceIdentityRef: string }
   );
@@ -185,13 +197,29 @@ const sourceProperties = {
     ),
   ),
 };
-export const RuntimeAuthoritySourceSchema = object(sourceProperties);
-export const RuntimeServiceNativeProfileSchema = object({
+const bindSourceProperties = {
   ...sourceProperties,
-  operationPolicy: literal("read-operation-only-v1"),
-  sourceConfigurationDigest: digest,
-  peerSPIFFEId: spiffe,
-});
+  transportProfileRef: literal("owned-child-stdio-initial-harness-bind-v1"),
+};
+export const RuntimeAuthoritySourceSchema: JsonSchema = {
+  anyOf: [object(sourceProperties), object(bindSourceProperties)],
+};
+export const RuntimeServiceNativeProfileSchema: JsonSchema = {
+  anyOf: [
+    object({
+      ...sourceProperties,
+      operationPolicy: literal("read-operation-only-v1"),
+      sourceConfigurationDigest: digest,
+      peerSPIFFEId: spiffe,
+    }),
+    object({
+      ...bindSourceProperties,
+      operationPolicy: literal("initial-harness-bind-v1"),
+      sourceConfigurationDigest: digest,
+      peerSPIFFEId: spiffe,
+    }),
+  ],
+};
 const requestBase = {
   schemaVersion: literal(1),
   operationRef: uuid,
@@ -211,6 +239,16 @@ export const RuntimeServiceTrustRequestSchema: JsonSchema = {
       peerSPIFFEId: spiffe,
     }),
     object({ ...requestBase, kind: literal("service-withdraw"), serviceIdentityRef: serviceRef }),
+    object({
+      ...requestBase,
+      kind: literal("service-admit"),
+      serviceIdentityRef: { anyOf: [serviceRef, { type: "null" }] },
+      sourceRef: ref,
+      namespaceId: id("ns"),
+      agentId: id("agt"),
+      peerSPIFFEId: spiffe,
+      operationPolicy: literal("initial-harness-bind-v1"),
+    }),
   ],
 };
 
@@ -472,7 +510,8 @@ export function parseRuntimeServiceTrustRecord(
         configuration.verifierProfileRef !== profile.verifierProfileRef ||
         configuration.permittedRecipientRef !== profile.recipientRef ||
         profile.sourceRef !== request.sourceRef ||
-        profile.peerSPIFFEId !== request.peerSPIFFEId
+        profile.peerSPIFFEId !== request.peerSPIFFEId ||
+        profile.operationPolicy !== (request.operationPolicy ?? "read-operation-only-v1")
       )
         reject();
     }

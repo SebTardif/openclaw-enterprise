@@ -2520,7 +2520,7 @@ Admit or withdraw an exact runtime service trust record
 
 **Content type:** `application/json`
 
-Schema: `object or object or object or object`.
+Schema: `object or object or object or object or object`.
 
 #### Responses
 

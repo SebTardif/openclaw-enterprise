@@ -5,6 +5,8 @@ import {
   RuntimeServiceTrustService,
   parseRuntimeServiceTrustRequest,
   parseRuntimeAuthoritySource,
+  parseRuntimeServiceNativeProfile,
+  runtimeServiceTrustDigest,
   ScopeViolationError,
   ResourceConflictError,
 } from "../../packages/occ/src/index.ts";
@@ -15,6 +17,117 @@ import {
   signal,
   technicalSource,
 } from "../fixtures/runtime-service-trust.mjs";
+
+test("initial bind profile selection is explicit and cannot cross the legacy source pair", async () => {
+  const legacy = await technicalSource();
+  const binding = parseRuntimeAuthoritySource({
+    ...legacy,
+    transportProfileRef: "owned-child-stdio-initial-harness-bind-v1",
+  });
+  for (const [source, operationPolicy] of [
+    [legacy, "read-operation-only-v1"],
+    [binding, "initial-harness-bind-v1"],
+  ]) {
+    const profile = {
+      ...source,
+      operationPolicy,
+      peerSPIFFEId: "spiffe://example.test/independent-service",
+      sourceConfigurationDigest: runtimeServiceTrustDigest(source),
+    };
+    assert.equal(parseRuntimeServiceNativeProfile(profile).operationPolicy, operationPolicy);
+    for (const other of [
+      "unknown",
+      operationPolicy === "initial-harness-bind-v1"
+        ? "read-operation-only-v1"
+        : "initial-harness-bind-v1",
+    ])
+      assert.throws(() => parseRuntimeServiceNativeProfile({ ...profile, operationPolicy: other }));
+  }
+  const f = {
+    source: binding,
+    owner: { namespace: { id: `ns_${randomUUID()}` }, agent: { id: `agt_${randomUUID()}` } },
+  };
+  const original = serviceRequest(f);
+  assert.equal(Object.hasOwn(parseRuntimeServiceTrustRequest(original), "operationPolicy"), false);
+  assert.equal(
+    parseRuntimeServiceTrustRequest({ ...original, operationPolicy: "initial-harness-bind-v1" })
+      .operationPolicy,
+    "initial-harness-bind-v1",
+  );
+  for (const policy of ["read-operation-only-v1", "bind", "initial-harness-bind-v1\n", null])
+    assert.throws(() => parseRuntimeServiceTrustRequest({ ...original, operationPolicy: policy }));
+});
+
+test("real source admission cannot implicitly admit an initial bind service", async (t) => {
+  const f = await createRuntimeServiceTrustFixture({
+    sourceOverrides: {
+      transportProfileRef: "owned-child-stdio-initial-harness-bind-v1",
+    },
+  });
+  t.after(() => f.close());
+  await f.trust.apply(sourceRequest(f.source.sourceRef), f.context, signal());
+  const request = serviceRequest(f);
+  // The old request shape selects readback only; it cannot inherit the source's bind policy.
+  await assert.rejects(f.trust.apply(request, f.context, signal()), ScopeViolationError);
+  assert.equal(
+    await f.state.read((view) =>
+      view.runtimeServiceTrust.findOperation(f.owner.installation.id, request.operationRef),
+    ),
+    undefined,
+  );
+  assert.equal(
+    (await f.state.transact((unit) => unit.audit.list())).filter(
+      (event) => event.details?.operationRef === request.operationRef,
+    ).length,
+    0,
+  );
+});
+
+test(
+  "native-validated initial bind admission exposes only its exact current registry policy",
+  {
+    skip: process.env.OCC_RUNTIME_AUTHORITY_TEST_BINARY
+      ? false
+      : "Select the actual native validator supporting both admitted profiles.",
+  },
+  async (t) => {
+    const f = await createRuntimeServiceTrustFixture({
+      sourceOverrides: {
+        transportProfileRef: "owned-child-stdio-initial-harness-bind-v1",
+      },
+    });
+    t.after(() => f.close());
+    await f.trust.apply(sourceRequest(f.source.sourceRef), f.context, signal());
+    const request = serviceRequest(f, { operationPolicy: "initial-harness-bind-v1" });
+    const admitted = await f.trust.apply(request, f.context, signal());
+    const ref = admitted.record.subjectRef;
+    const current = await f.trust.readCurrent(ref, signal());
+    assert.deepEqual(current.configuration, admitted.record.configuration);
+    assert.equal(current.operationPolicy, "initial-harness-bind-v1");
+    assert.equal(current.configuration.role, "lifecycle-authority");
+    assert.equal(current.configuration.allowedScope.kind, "agent");
+    await f.trust.apply(
+      {
+        schemaVersion: 1,
+        kind: "service-withdraw",
+        serviceIdentityRef: ref,
+        expectedVersion: 1,
+        operationRef: randomUUID(),
+      },
+      f.context,
+      signal(),
+    );
+    assert.equal(await f.trust.readCurrent(ref, signal()), undefined);
+    const replay = await f.trust.apply(request, f.context, signal());
+    assert.equal(replay.result, "exact-replay");
+    assert.deepEqual(replay.record, admitted.record);
+    assert.equal(await f.trust.readCurrent(ref, signal()), undefined);
+    await assert.rejects(
+      f.trust.apply({ ...request, operationPolicy: undefined }, f.context, signal()),
+      ScopeViolationError,
+    );
+  },
+);
 
 test("runtime trust schemas reject authority fields, fractional counters and accessors", async () => {
   const source = await technicalSource();
@@ -129,7 +242,7 @@ test(
     const request = serviceRequest(f);
     const admitted = await f.trust.apply(request, f.context, signal());
     const ref = admitted.record.subjectRef;
-    assert.equal((await f.trust.readCurrent(ref, signal())).serviceIdentityRef, ref);
+    assert.equal((await f.trust.readCurrent(ref, signal())).configuration.serviceIdentityRef, ref);
     const changed = new RuntimeServiceTrustService({
       ...f.options,
       sources: [{ ...f.source, verifierProfileRef: "verifier/replaced" }],
