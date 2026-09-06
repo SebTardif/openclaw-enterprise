@@ -47,6 +47,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 ## Development internals
 
+- [Admitted-undispatched journal interfaces](admitted-undispatched-journal.md): consume admission-phase status and cancellation definitions; durable producer amendments, current authority, and physical-stop or release proof remain separate.
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.

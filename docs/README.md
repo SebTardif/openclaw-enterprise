@@ -62,6 +62,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 
 ## Understand the code
 
+- [Admitted-undispatched journal interfaces](reference/admitted-undispatched-journal.md): consume admission-phase status and cancellation definitions; durable producer amendments, current authority, and physical-stop or release proof remain separate.
 - [Manual channel bindings](reference/channel-bindings.md): administer app, human, and exact Agent mappings.
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Credential backend profile](reference/credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
