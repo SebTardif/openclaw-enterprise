@@ -32,6 +32,7 @@
     "./audience-observation-v1": "./src/audience-observation-v1.ts",
     "./credential-authority-v1": "./src/credential-authority-v1.ts",
     "./credential-storage-v1": "./src/credential-storage-v1.ts",
+    "./credential-backend-profile-v1": "./src/credential-backend-profile-v1.ts",
     "./runtime-assignment": "./src/runtime-assignment.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
     "./runtime-identity-v1": "./src/runtime-identity-v1.ts",
