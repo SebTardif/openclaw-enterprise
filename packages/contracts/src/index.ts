@@ -107,6 +107,8 @@ export * from "./workspace-reservation-v1.ts";
 export * from "./runtime-effects-v1.ts";
 export * from "./completed-context-v1.ts";
 export * from "./turn-journal-v1.ts";
+export * from "./retirement-purge-manifest-v1.ts";
+export * from "./retirement-purge-journal-v1.ts";
 
 export * from "./channel-administration.ts";
 

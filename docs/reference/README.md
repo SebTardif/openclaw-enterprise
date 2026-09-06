@@ -47,6 +47,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 ## Development internals
 
+- [Admitted-undispatched journal interfaces](admitted-undispatched-journal.md): consume admission-phase status and cancellation definitions; durable producer amendments, current authority, and physical-stop or release proof remain separate.
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
@@ -75,6 +76,8 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Direct Compute interruption preparation](direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
+- [Retirement purge manifest definitions](retirement-purge-manifest.md): validate immutable manifests and store progress; complete inventory, current authority, physical settlement, and deletion remain separate.
+- [Retirement purge journal definitions](retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Turn journal and completion interfaces](turn-journal.md): versioned types and
   strict codecs; durable journal storage and channel/runtime integration remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,

@@ -156,8 +156,12 @@ for (const kind of ["failed", "interrupted", "outcome-unknown", "cancelled"]) {
     assert.equal(journalOutcomeTransitionAllowedV1(v.attemptRecord, operation), true);
     const candidate = completionInput();
     candidate.currentAttempt.outcome = operation.outcome;
-    if (kind === "outcome-unknown") candidate.currentAttempt.consumption = null;
-    assert.equal(journalCompletionMatchesV1(candidate), false);
+    if (kind === "outcome-unknown") {
+      candidate.currentAttempt.consumption = null;
+      assert.throws(() => journalCompletionMatchesV1(candidate), /Invalid turn journal/);
+    } else {
+      assert.equal(journalCompletionMatchesV1(candidate), false);
+    }
   });
 }
 test("cancel/outcome race requires exact version; completed outcome cannot regress", () => {
@@ -689,7 +693,7 @@ for (const [kind, value] of Object.entries({
   attemptState: { kind: "found", record: v.attemptRecord },
   completionState: { kind: "published", record: v.completion },
   completionHead: { kind: "completed", head: v.completion.head, checkpoint: v.checkpoint },
-  dispatchIntent: { kind: "recorded", record: v.attemptRecord },
+  dispatchIntent: { kind: "existing", record: v.attemptRecord },
   checkpointAllocation: { kind: "allocated", allocation: v.allocation },
   completionPublication: { kind: "published", record: v.completion },
   outcome: { kind: "recorded", record: v.attemptRecord },
@@ -814,15 +818,16 @@ test("exact prepared successful checkpoint can resolve an unknown original consu
       }),
       true,
     );
-    assert.equal(
-      journalCompletionMatchesV1({
-        currentAttempt: { ...currentAttempt, consumption: null },
-        currentHead: v.head,
-        allocation: v.allocation,
-        candidate: v.completion,
-        expectedAttemptVersion: 3,
-      }),
-      false,
+    assert.throws(
+      () =>
+        journalCompletionMatchesV1({
+          currentAttempt: { ...currentAttempt, consumption: null },
+          currentHead: v.head,
+          allocation: v.allocation,
+          candidate: v.completion,
+          expectedAttemptVersion: 3,
+        }),
+      /Invalid turn journal/,
     );
   }
   // Byte matching alone cannot replace the actual native/workspace provenance owner.

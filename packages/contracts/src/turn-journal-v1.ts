@@ -202,15 +202,22 @@ export interface JournalAdmissionProvenanceV1<Native> {
   ): Promise<VerifiedAdmissionObservationV1 | JournalDeniedV1 | JournalUnavailableV1>;
 }
 
-export type JournalAttemptBindingV1 = Readonly<{
+/** Immutable admission facts. This projection contains no dispatch authority,
+ * dispatch operation or borrowed request/turn expiry. */
+export type JournalCommonAttemptBindingV1 = Readonly<{
   attempt: ExactAttemptV1;
   identity: JournalAdmissionIdentityV1;
   reservation: WorkspaceReservationRefV1;
   expectedHead: ExpectedCompletionHeadV1;
-  dispatchOperationRef: string;
-  authorityDecisionRef: string;
-  expiresAt: JournalInstantV1;
 }>;
+/** Supplied only by actual dispatch provenance. The common phase never fills
+ * these fields from admission decision IDs, RPC references or deadlines. */
+export type JournalAttemptBindingV1 = JournalCommonAttemptBindingV1 &
+  Readonly<{
+    dispatchOperationRef: string;
+    authorityDecisionRef: string;
+    expiresAt: JournalInstantV1;
+  }>;
 export type AttemptOutcomeV1 =
   | Readonly<{ kind: "accepted-undispatched" }>
   | Readonly<{ kind: "dispatch-intent"; dispatchOperationRef: string }>
@@ -222,7 +229,25 @@ export type AttemptOutcomeV1 =
       stage: "before-dispatch" | "dispatch" | "execution" | "checkpoint";
       evidenceRef: string;
     }>;
-export type AttemptRecordV1 = Readonly<{
+export type AdmittedUndispatchedOutcomeV1 =
+  | Readonly<{ kind: "accepted-undispatched" }>
+  | Readonly<{
+      kind: "failed" | "interrupted" | "outcome-unknown" | "cancelled";
+      stage: "before-dispatch";
+      evidenceRef: string;
+    }>;
+/** Canonical committed ownership before any dispatch binding exists. Terminal
+ * outcomes keep the same common binding and reservation until trusted release. */
+export type AdmittedUndispatchedAttemptRecordV1 = Readonly<{
+  phase: "admitted-undispatched";
+  binding: JournalCommonAttemptBindingV1;
+  version: number;
+  consumption: null;
+  outcome: AdmittedUndispatchedOutcomeV1;
+}>;
+/** Existing full-binding wire shape is retained for genuine dispatch evidence.
+ * Early authorization may precede intent, but is never required at admission. */
+export type DispatchBoundAttemptRecordV1 = Readonly<{
   binding: JournalAttemptBindingV1;
   version: number;
   /** Immutable consumption survives running, cancellation and outcome uncertainty. */
@@ -232,6 +257,7 @@ export type AttemptRecordV1 = Readonly<{
   }> | null;
   outcome: AttemptOutcomeV1;
 }>;
+export type AttemptRecordV1 = AdmittedUndispatchedAttemptRecordV1 | DispatchBoundAttemptRecordV1;
 export type AttemptStateV1 =
   | Readonly<{ kind: "found"; record: AttemptRecordV1 }>
   | JournalAbsentV1
@@ -272,7 +298,17 @@ export interface PendingInitiationClaimV1 {
   readonly operation: ExactConsumptionOperationV1;
 }
 export type DispatchIntentResultV1 =
-  | Readonly<{ kind: "recorded" | "existing"; record: AttemptRecordV1 }>
+  | Readonly<{
+      kind: "recorded";
+      record: DispatchBoundAttemptRecordV1 &
+        Readonly<{
+          consumption: null;
+          outcome: Extract<AttemptOutcomeV1, { kind: "dispatch-intent" }>;
+        }>;
+    }>
+  /** An existing result retains actual intent or later progress; the result
+   * codec excludes accepted and before-dispatch outcomes despite early authority. */
+  | Readonly<{ kind: "existing"; record: DispatchBoundAttemptRecordV1 }>
   | JournalConflictV1
   | JournalDeniedV1
   | JournalUnavailableV1;
@@ -677,11 +713,14 @@ export const IncomingAdmissionLinkSchemaV1 = object({
   disposition: Type.Enum(["original", "duplicate", "conflict"]),
   auditIntentRef: ref,
 });
-const attemptBinding = object({
+export const JournalCommonAttemptBindingSchemaV1 = object({
   attempt: ExactAttemptSchemaV1,
   identity: JournalAdmissionIdentitySchemaV1,
   reservation: WorkspaceReservationRefSchemaV1,
   expectedHead: ExpectedCompletionHeadSchemaV1,
+});
+export const JournalAttemptBindingSchemaV1 = object({
+  ...JournalCommonAttemptBindingSchemaV1.properties,
   dispatchOperationRef: ref,
   authorityDecisionRef: ref,
   expiresAt: instant,
@@ -715,8 +754,22 @@ export const ExactConsumptionOperationSchemaV1 = object({
   claimantRef: ref,
   requestDigest: digest,
 });
-export const AttemptRecordSchemaV1 = object({
-  binding: attemptBinding,
+export const AdmittedUndispatchedAttemptRecordSchemaV1 = object({
+  phase: Type.Literal("admitted-undispatched"),
+  binding: JournalCommonAttemptBindingSchemaV1,
+  version,
+  consumption: Type.Null(),
+  outcome: Type.Union([
+    tag("accepted-undispatched"),
+    object({
+      kind: Type.Enum(["failed", "interrupted", "outcome-unknown", "cancelled"]),
+      stage: Type.Literal("before-dispatch"),
+      evidenceRef: ref,
+    }),
+  ]),
+});
+export const DispatchBoundAttemptRecordSchemaV1 = object({
+  binding: JournalAttemptBindingSchemaV1,
   version,
   consumption: Type.Union([
     Type.Null(),
@@ -724,6 +777,10 @@ export const AttemptRecordSchemaV1 = object({
   ]),
   outcome: attemptOutcome,
 });
+export const AttemptRecordSchemaV1 = Type.Union([
+  AdmittedUndispatchedAttemptRecordSchemaV1,
+  DispatchBoundAttemptRecordSchemaV1,
+]);
 export const ExactCheckpointAllocationSchemaV1 = object({
   schemaVersion: one,
   attempt: ExactAttemptSchemaV1,
@@ -813,6 +870,8 @@ export const TurnJournalSchemasV1 = Object.freeze({
   admissionIdentity: JournalAdmissionIdentitySchemaV1,
   admission: AdmissionRecordSchemaV1,
   incomingLink: IncomingAdmissionLinkSchemaV1,
+  commonAttemptBinding: JournalCommonAttemptBindingSchemaV1,
+  attemptBinding: JournalAttemptBindingSchemaV1,
   attempt: AttemptRecordSchemaV1,
   consumption: ExactConsumptionOperationSchemaV1,
   checkpointAllocation: ExactCheckpointAllocationSchemaV1,
@@ -830,6 +889,8 @@ export interface TurnJournalWireValuesV1 {
   admissionIdentity: JournalAdmissionIdentityV1;
   admission: AdmissionRecordV1;
   incomingLink: IncomingAdmissionLinkV1;
+  commonAttemptBinding: JournalCommonAttemptBindingV1;
+  attemptBinding: JournalAttemptBindingV1;
   attempt: AttemptRecordV1;
   consumption: ExactConsumptionOperationV1;
   checkpointAllocation: ExactCheckpointAllocationV1;
@@ -1032,6 +1093,11 @@ function checkIntrinsic(input: unknown): void {
     const consumption = record.consumption;
     const outcome = record.outcome;
     if (consumption && !same(consumption.operation.attempt, record.binding.attempt)) invalid();
+    if (
+      outcome.kind === "dispatch-intent" &&
+      ("phase" in record || outcome.dispatchOperationRef !== record.binding.dispatchOperationRef)
+    )
+      invalid();
     if (["accepted-undispatched", "dispatch-intent"].includes(outcome.kind) && consumption !== null)
       invalid();
     if (["consumed", "running", "completed"].includes(outcome.kind) && !consumption) invalid();
@@ -1043,6 +1109,12 @@ function checkIntrinsic(input: unknown): void {
     )
       invalid();
     if ("stage" in outcome && outcome.stage === "before-dispatch" && consumption !== null)
+      invalid();
+    if (
+      "stage" in outcome &&
+      (outcome.stage === "execution" || outcome.stage === "checkpoint") &&
+      consumption === null
+    )
       invalid();
   }
   if (
@@ -1426,9 +1498,22 @@ export function journalOutcomeTransitionAllowedV1(
   )
     return false;
   if (["failed", "cancelled", "interrupted"].includes(c.outcome.kind)) return false;
-  if (op.outcome.kind === "running") return c.outcome.kind === "consumed";
-  if (op.outcome.stage === "before-dispatch") return c.outcome.kind === "accepted-undispatched";
-  if (c.outcome.kind === "accepted-undispatched") return false;
+  if (op.outcome.kind === "running")
+    return !("phase" in c) && c.outcome.kind === "consumed" && c.consumption !== null;
+  if (op.outcome.stage === "before-dispatch")
+    return (
+      c.consumption === null &&
+      (c.outcome.kind === "accepted-undispatched" ||
+        (c.outcome.kind === "outcome-unknown" && c.outcome.stage === "before-dispatch"))
+    );
+  if ("phase" in c) return false;
+  if (
+    c.outcome.kind === "accepted-undispatched" ||
+    (c.outcome.kind === "outcome-unknown" && c.outcome.stage === "before-dispatch")
+  )
+    return false;
+  if (["execution", "checkpoint"].includes(op.outcome.stage) && c.consumption === null)
+    return false;
   if (c.outcome.kind === "outcome-unknown")
     return (
       op.outcome.kind === "outcome-unknown" ||
@@ -1450,6 +1535,52 @@ export function journalReleaseMatchesV1(
     same(c.binding.attempt, o.attempt) &&
     same(c.binding.reservation, o.reservation) &&
     same(c.binding.identity.workspace, o.workspace)
+  );
+}
+
+/** Compare the exact common-to-intent transition. A matching value still needs
+ * real current dispatch provenance and the original outer versioned mutation;
+ * this pure comparison does not initiate or create dispatch authority. */
+export function journalDispatchIntentMatchesV1(
+  current: AttemptRecordV1,
+  candidate: DispatchBoundAttemptRecordV1,
+  expectedAttemptVersion: number,
+): boolean {
+  const c = parseTurnJournalV1("attempt", current);
+  const next = parseTurnJournalV1("attempt", candidate);
+  if ("phase" in next) return false;
+  return (
+    c.version === expectedAttemptVersion &&
+    c.version < Number.MAX_SAFE_INTEGER &&
+    next.version === c.version + 1 &&
+    c.outcome.kind === "accepted-undispatched" &&
+    c.consumption === null &&
+    next.consumption === null &&
+    next.outcome.kind === "dispatch-intent" &&
+    same(c.binding.attempt, next.binding.attempt) &&
+    same(c.binding.identity, next.binding.identity) &&
+    same(c.binding.reservation, next.binding.reservation) &&
+    same(c.binding.expectedHead, next.binding.expectedHead) &&
+    ("phase" in c || same(c.binding, next.binding))
+  );
+}
+
+/** Value correspondence for cancellation before dispatch. The receiving owner
+ * must still prove current cancellation authority and locked no-intent/no-
+ * consumption facts; neither this result nor cancellation releases ownership. */
+export function journalCancellationBeforeDispatchMatchesV1(
+  current: AttemptRecordV1,
+  operation: ExactCancellationOperationV1,
+): boolean {
+  const c = parseTurnJournalV1("attempt", current);
+  const op = parseTurnJournalV1("cancellation", operation);
+  return (
+    c.version === op.expectedAttemptVersion &&
+    c.version < Number.MAX_SAFE_INTEGER &&
+    same(c.binding.attempt, op.attempt) &&
+    c.binding.identity.principalRef === op.originalPrincipalRef &&
+    c.outcome.kind === "accepted-undispatched" &&
+    c.consumption === null
   );
 }
 
@@ -1895,7 +2026,10 @@ export const TurnJournalResultSchemasV1 = Object.freeze({
     }),
   ]),
   dispatchIntent: Type.Union([
-    object({ kind: Type.Enum(["recorded", "existing"]), record: AttemptRecordSchemaV1 }),
+    object({
+      kind: Type.Enum(["recorded", "existing"]),
+      record: DispatchBoundAttemptRecordSchemaV1,
+    }),
     ...failures,
   ]),
   checkpointAllocationState: Type.Union([
@@ -2015,6 +2149,18 @@ export function parseTurnJournalResultV1<K extends keyof TurnJournalResultValues
     const value = snapshot(input);
     if (!Check(TurnJournalResultSchemasV1[kind] as TSchema, value)) invalid();
     checkIntrinsic(value);
+    if (kind === "dispatchIntent") {
+      const result = value as DispatchIntentResultV1;
+      if (result.kind === "recorded" || result.kind === "existing") {
+        const outcome = result.record.outcome;
+        if (
+          (result.kind === "recorded" && outcome.kind !== "dispatch-intent") ||
+          outcome.kind === "accepted-undispatched" ||
+          ("stage" in outcome && outcome.stage === "before-dispatch")
+        )
+          invalid();
+      }
+    }
     return frozen(value) as TurnJournalResultValuesV1[K];
   } catch {
     return invalid();
