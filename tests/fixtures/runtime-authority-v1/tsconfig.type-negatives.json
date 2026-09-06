@@ -12,7 +12,9 @@
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../../.build/runtime-authority-v1/type-negatives.tsbuildinfo"
   },
   "files": ["type-negatives.ts"]
 }

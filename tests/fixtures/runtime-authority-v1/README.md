@@ -23,6 +23,47 @@ node node_modules/typescript/bin/tsc --project tests/fixtures/runtime-authority-
 node node_modules/typescript/bin/tsc --project tests/fixtures/runtime-authority-v1/tsconfig.type-negatives.json
 ```
 
+## Incremental compiler checks
+
+Prepare dependencies and the upstream SDK separately, then inspect preparation
+with `node scripts/check-development-setup.mjs --json` before compiling. Each
+configuration checks its original source and declaration dependencies with the
+same strict options. Fixture checks use `noEmit`; package declaration builds and
+the workspace project references keep their existing commands and behavior.
+
+The first check writes TypeScript build information to
+`.build/runtime-authority-v1/<project>.tsbuildinfo`. Later checks reuse unchanged
+semantic diagnostics. TypeScript still reads current inputs and invalidates
+changed source, declarations, compiler options and affected consumers. The four
+project names are `producer`, `credential-consumer`, `run-consumer` and
+`type-negatives`; each owns a separate file.
+
+Keep these ignored files local to the current worktree. Serialize checks of the
+same project within a worktree, and never copy or share its build information or
+package `dist` with another worktree. A fresh compiler check can use an unused
+`--tsBuildInfoFile` path under that worktree's `.build` directory. Append
+`--extendedDiagnostics` to the commands above to observe parse, check and emit
+work; an unchanged incremental run can omit checking while still parsing inputs.
+Emitting build information does not mean fixture JavaScript or declarations were
+emitted.
+
+A successful `type-negatives` compile means all four `@ts-expect-error`
+assertions still reject their annotated inputs. If a declaration change makes an
+assertion valid, TypeScript reports an unused directive and the check fails.
+Both fresh and reused type errors return a nonzero status; cached failure output
+is not passing evidence.
+
+Run the compiler-cache regression with:
+
+```sh
+node --test tests/conformance/runtime-authority-incremental.test.mjs
+```
+
+It uses the four configurations in temporary, independently owned declaration
+projects to verify source/configuration/declaration invalidation, expected-negative
+errors and cache separation. The full fixtures above retain responsibility for
+checking the actual runtime authority and SDK types.
+
 The parsers reject unknown fields/versions/purposes, duplicate JSON keys, invalid
 codecs, intrinsically contradictory timestamps and incompatible result tags.
 Image entries use unique names in ascending ASCII order. Registry references and
