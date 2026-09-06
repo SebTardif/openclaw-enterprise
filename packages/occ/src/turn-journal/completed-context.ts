@@ -25,7 +25,7 @@ export interface CompletedContextJournalOptions {
   readonly store: TurnJournalStoreV1;
   /** The selected gateway adapter owns canonical bytes and its authenticated
    * receiver. This service cannot supply an alternative writer or verifier. */
-  readonly adapter: CompletedStateAdapterV1;
+  readonly adapter: Pick<CompletedStateAdapterV1, "prepareCompleted" | "verify">;
   readonly evidence: JournalEvidenceProvenanceV1;
   readonly now?: () => Date;
 }
