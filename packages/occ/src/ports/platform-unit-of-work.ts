@@ -1,3 +1,6 @@
+import { ScopeViolationError } from "../errors.ts";
+import { WorkloadProfileTransactionGuard } from "../workload-profiles/repository.ts";
+import type { WorkloadProfileRepository } from "./repositories/workload-profile.ts";
 import type { TurnJournalUnitOfWorkV1 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { bindRepository } from "./repository-factory.ts";
 import type { RepositoryTransactionLifetime } from "./transaction.ts";
@@ -19,6 +22,7 @@ import type { RuntimePreparationRepository } from "./repositories/runtime-prepar
 import type { RuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly workloadProfiles: WorkloadProfileRepository;
   readonly turnJournal?: TurnJournalUnitOfWorkV1;
   readonly channelBindings: ChannelBindingRepository;
   readonly runtimeAssignments: RuntimeAssignmentRepository;
@@ -41,8 +45,13 @@ export interface PlatformUnitOfWork extends PlatformReadView {
 export function bindPlatformUnitOfWork(
   repositories: PlatformUnitOfWork,
   lifetime: RepositoryTransactionLifetime,
+  profilePhase?: WorkloadProfileUnitPhase,
 ): PlatformUnitOfWork {
-  return Object.freeze({
+  const unit: PlatformUnitOfWork = Object.freeze({
+    workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, [
+      "findOperation",
+      "prepareOperation",
+    ]),
     ...(repositories.turnJournal
       ? {
           turnJournal: bindRepository(repositories.turnJournal, lifetime, [
@@ -174,4 +183,61 @@ export function bindPlatformUnitOfWork(
     audit: bindRepository(repositories.audit, lifetime, ["append", "list"]),
     operations: bindRepository(repositories.operations, lifetime, ["append", "list"]),
   });
+  return profilePhase === undefined ? unit : profilePhase.bind(unit);
+}
+
+/** Conservative isolation until an actual protected authority/IAM guard is composed.
+ * One preparation may acquire capacity -> operation -> Namespace locks. Unrelated
+ * work, raw borrowed SQL and a second preparation cannot straddle that sequence.
+ * Exact historical reads do not acquire those locks or confer current authority.
+ */
+export class WorkloadProfileUnitPhase {
+  readonly guard = new WorkloadProfileTransactionGuard();
+  private otherStarted = false;
+  private preparationStarted = false;
+
+  other<T>(work: () => Promise<T>): Promise<T> {
+    if (this.preparationStarted) return this.reject();
+    this.otherStarted = true;
+    return work();
+  }
+
+  private prepare<T>(work: () => Promise<T>): Promise<T> {
+    if (this.otherStarted || this.preparationStarted) return this.reject();
+    this.preparationStarted = true;
+    return work();
+  }
+
+  private reject<T>(): Promise<T> {
+    return this.guard.run(async () => {
+      throw new ScopeViolationError(
+        "Profile preparation requires an isolated ordered transaction.",
+      );
+    });
+  }
+
+  bind(unit: PlatformUnitOfWork): PlatformUnitOfWork {
+    const result = Object.fromEntries(
+      Object.entries(unit).map(([name, repository]) => [
+        name,
+        Object.freeze(
+          Object.fromEntries(
+            Object.entries(repository).map(([method, invoke]) => [
+              method,
+              (...args: unknown[]) => {
+                if (typeof invoke !== "function")
+                  throw new TypeError("A repository method is required.");
+                const work = () => Reflect.apply(invoke, repository, args) as Promise<unknown>;
+                if (name === "workloadProfiles")
+                  return method === "prepareOperation" ? this.prepare(work) : work();
+                if (name === "installations" && method !== "createInstallation") return work();
+                return this.other(work);
+              },
+            ]),
+          ),
+        ),
+      ]),
+    );
+    return Object.freeze(result) as unknown as PlatformUnitOfWork;
+  }
 }

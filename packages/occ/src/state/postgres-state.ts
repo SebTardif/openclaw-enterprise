@@ -1,3 +1,5 @@
+import { createPostgresWorkloadProfile } from "./postgres/workload-profile.ts";
+import { WorkloadProfileUnitPhase } from "../ports/platform-unit-of-work.ts";
 import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
@@ -129,6 +131,8 @@ interface TransactionContext {
   readonly lifetime: RepositoryTransactionLifetime;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly journalGuard: TurnJournalTransactionGuard;
+  readonly profilePhase: WorkloadProfileUnitPhase;
+  readonly profileQuery: PostgresClient["query"];
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -924,6 +928,8 @@ export class PostgresPlatformState implements PlatformStateStore {
     let context: TransactionContext | undefined;
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const journalGuard = new TurnJournalTransactionGuard();
+    const profilePhase = new WorkloadProfileUnitPhase();
+    let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
     };
@@ -935,20 +941,24 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw abortFailure();
       }
       const underlying = raw;
-      client = {
-        query: async (statement, parameters) => {
+      const query: PostgresClient["query"] = async (statement, parameters) => {
+        lifetime.assertActive();
+        if (closed || options?.signal.aborted) throw abortFailure();
+        const query = underlying.query(statement, parameters);
+        pending.add(query);
+        try {
+          const result = await query;
           lifetime.assertActive();
-          if (closed || options?.signal.aborted) throw abortFailure();
-          const query = underlying.query(statement, parameters);
-          pending.add(query);
-          try {
-            const result = await query;
-            lifetime.assertActive();
-            return result;
-          } finally {
-            pending.delete(query);
-          }
-        },
+          return result;
+        } finally {
+          pending.delete(query);
+        }
+      };
+      client = {
+        query: (statement, parameters) =>
+          trackProfileOrder
+            ? profilePhase.other(() => query(statement, parameters))
+            : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
@@ -970,11 +980,14 @@ export class PostgresPlatformState implements PlatformStateStore {
         lifetime,
         authorityGuard,
         journalGuard,
+        profilePhase,
+        profileQuery: query,
         client,
         installation: undefined,
         installationLoaded: false,
       };
-      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
+      trackProfileOrder = true;
+      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime, profilePhase);
       journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
@@ -983,6 +996,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       await lifetime.finish();
       await authorityGuard.finish();
       await journalGuard.finish();
+      await profilePhase.guard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
       committing = true;
       const acknowledgement = await raw.query("COMMIT");
@@ -1004,6 +1018,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       }
       try {
         await journalGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
+      try {
+        await profilePhase.guard.finish();
       } catch {
         /* Preserve the original failure. */
       }
@@ -1039,7 +1058,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     if (!context.installationLoaded) {
       const candidates = rows(
         (
-          await context.client.query(
+          await context.profileQuery(
             "SELECT id, name, created_at FROM occ.installation ORDER BY id LIMIT 2",
           )
         ).rows,
@@ -1911,6 +1930,37 @@ export class PostgresPlatformState implements PlatformStateStore {
       runtimeAssignments,
       context.authorityGuard,
     );
+    const profileRepository = createPostgresWorkloadProfile(
+      {
+        get scope() {
+          context.lifetime.assertActive();
+          if (!context.installation)
+            throw new ScopeViolationError(
+              "The server-owned Installation has not been initialized.",
+            );
+          return { installationId: context.installation.id };
+        },
+        transaction: context.lifetime,
+        query: { query: (statement, parameters) => context.profileQuery(statement, parameters) },
+      },
+      context.profilePhase.guard,
+    );
+    const workloadProfiles = {
+      findOperation: async (...args: Parameters<typeof profileRepository.findOperation>) => {
+        await this.requireInitialized(context);
+        return profileRepository.findOperation(...args);
+      },
+      prepareOperation: async (...args: Parameters<typeof profileRepository.prepareOperation>) => {
+        try {
+          await this.requireInitialized(context);
+          return await profileRepository.prepareOperation(...args);
+        } catch (error) {
+          return context.profilePhase.guard.run(async () => {
+            throw error;
+          });
+        }
+      },
+    };
     const runtimePreparation = createPostgresRuntimePreparation(
       {
         get scope() {
@@ -1956,6 +2006,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           );
     return {
       ...(turnJournal === undefined ? {} : { turnJournal }),
+      workloadProfiles,
       runtimePreparation,
       runtimeAuthority,
       runtimeServiceTrust,

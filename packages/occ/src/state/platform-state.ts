@@ -1,3 +1,6 @@
+import { createMemoryWorkloadProfile } from "./memory/workload-profile.ts";
+import type { StoredProfilePreparation, ProfileCapacity } from "../workload-profiles/types.ts";
+import { WorkloadProfileUnitPhase } from "../ports/platform-unit-of-work.ts";
 import { createMemoryRuntimePreparation } from "./memory/runtime-preparation.ts";
 import type { StoredRuntimePreparationOperation } from "../runtime-preparation/types.ts";
 import { RepositoryTransactionLifetime, type RepositoryTransaction } from "../ports/transaction.ts";
@@ -325,6 +328,8 @@ export interface InMemoryPlatformStateOptions {
 }
 
 interface PlatformSnapshot {
+  readonly workloadProfileOperations: Map<string, StoredProfilePreparation>;
+  readonly workloadProfileCapacities: Map<string, ProfileCapacity>;
   readonly channelInstallations: Map<string, Readonly<ChannelInstallation>>;
   readonly channelHumans: Map<string, Readonly<ChannelHumanBinding>>;
   readonly channelAgents: Map<string, Readonly<ChannelAgentBinding>>;
@@ -361,6 +366,8 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimeAdmissions: new Map(snapshot.runtimeAdmissions),
     runtimeAuthorityOperations: new Map(snapshot.runtimeAuthorityOperations),
     runtimePreparationOperations: new Map(snapshot.runtimePreparationOperations),
+    workloadProfileOperations: new Map(snapshot.workloadProfileOperations),
+    workloadProfileCapacities: new Map(snapshot.workloadProfileCapacities),
     runtimeServiceTrustRecords: new Map(snapshot.runtimeServiceTrustRecords),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
@@ -511,6 +518,7 @@ function repositories(
   snapshot: PlatformSnapshot,
   transaction: RepositoryTransaction,
   authorityGuard = new RuntimeAuthorityTransactionGuard(),
+  profilePhase = new WorkloadProfileUnitPhase(),
 ): PlatformUnitOfWork {
   const installations: InstallationRepository = {
     findInstallation: async (installationId) =>
@@ -1094,6 +1102,22 @@ function repositories(
     runtimeAssignments,
     authorityGuard,
   );
+  const workloadProfiles = createMemoryWorkloadProfile(
+    {
+      transaction,
+      get scope() {
+        if (!snapshot.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: snapshot.installation.id };
+      },
+      snapshot: {
+        operations: snapshot.workloadProfileOperations,
+        capacities: snapshot.workloadProfileCapacities,
+        namespaces: snapshot.namespaces,
+      },
+    },
+    profilePhase.guard,
+  );
   const runtimePreparation = createMemoryRuntimePreparation(
     {
       transaction,
@@ -1154,6 +1178,7 @@ function repositories(
   );
 
   return {
+    workloadProfiles,
     runtimePreparation,
     runtimeServiceTrust,
     runtimeAuthority,
@@ -1253,6 +1278,8 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimeAdmissions: new Map(),
     runtimeAuthorityOperations: new Map(),
     runtimePreparationOperations: new Map(),
+    workloadProfileOperations: new Map(),
+    workloadProfileCapacities: new Map(),
     runtimeServiceTrustRecords: new Map(),
     installation: undefined,
     namespaces: new Map(),
@@ -1329,16 +1356,22 @@ export class InMemoryPlatformState implements PlatformStateStore {
       release = resolve;
     });
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
+    const profilePhase = new WorkloadProfileUnitPhase();
     const lifetime = new RepositoryTransactionLifetime();
     try {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
       const result = await work(
-        bindPlatformUnitOfWork(repositories(working, lifetime, authorityGuard), lifetime),
+        bindPlatformUnitOfWork(
+          repositories(working, lifetime, authorityGuard, profilePhase),
+          lifetime,
+          profilePhase,
+        ),
       );
       await lifetime.finish();
       await authorityGuard.finish();
+      await profilePhase.guard.finish();
       await this.publishAudit(working.audit.slice(committedAuditCount));
       this.snapshot = working;
       return result;
@@ -1347,6 +1380,11 @@ export class InMemoryPlatformState implements PlatformStateStore {
       // Drain already-started authority writes before discarding the private snapshot.
       try {
         await authorityGuard.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
+      try {
+        await profilePhase.guard.finish();
       } catch {
         /* Preserve the original failure. */
       }

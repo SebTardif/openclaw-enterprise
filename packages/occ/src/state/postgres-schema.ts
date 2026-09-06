@@ -1,3 +1,4 @@
+import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import type {
   ChannelAdministrationMappingV1,
   HarnessExecutionMode,
@@ -1567,4 +1568,10 @@ export const runtimePreparationOperations = occSchema.table(
     ),
     check("runtime_preparation_record_object", sql`jsonb_typeof(${table.record})='object'`),
   ],
+);
+
+/** Inert preparation history; these records never confer admission authority. */
+export const { workloadProfileCapacity, workloadProfileOperations } = createWorkloadProfileTables(
+  occSchema,
+  { installation, namespaces },
 );

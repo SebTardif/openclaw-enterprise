@@ -9,6 +9,7 @@ import {
 } from "../../workload-profiles/repository.ts";
 import {
   profileOperationKey,
+  PROFILE_ALLOCATION_KINDS,
   type ProfileCapacity,
   type ProfileIdentityAllocator,
   type StoredProfilePreparation,
@@ -72,6 +73,17 @@ export function createMemoryWorkloadProfile(
           operationRef: record.operationRef,
         });
         if (context.snapshot.operations.has(key)) throw new ProfileOperationConflictError();
+        // Each future identity belongs to one immutable preparation in this Installation.
+        // Exact operation replay returned before insertion and does not reserve it again.
+        for (const retained of context.snapshot.operations.values()) {
+          if (
+            retained.scope.installationId === record.scope.installationId &&
+            PROFILE_ALLOCATION_KINDS.some(
+              (kind) => retained.allocated[kind] === record.allocated[kind],
+            )
+          )
+            throw new ProfileOperationConflictError();
+        }
         context.snapshot.operations.set(key, immutableCopy(record));
         context.snapshot.capacities.set(context.scope.installationId, immutableCopy(capacity));
       },

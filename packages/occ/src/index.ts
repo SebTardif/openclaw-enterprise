@@ -1,3 +1,9 @@
+export type * from "./ports/repositories/workload-profile.ts";
+export type {
+  ProfileOperationActor,
+  ProfileOperationLocator,
+  StoredProfilePreparation,
+} from "./workload-profiles/types.ts";
 import { ExactAuthorization } from "./application/authorization.ts";
 import { DriverSelection, type DriverFor } from "./application/driver-selection.ts";
 export * from "./runtime-authority/service-trust.ts";

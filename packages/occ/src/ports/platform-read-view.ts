@@ -1,3 +1,4 @@
+import type { WorkloadProfileReadRepository } from "./repositories/workload-profile.ts";
 import type { TurnJournalReadV1 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { bindRepository } from "./repository-factory.ts";
 import type { RepositoryTransactionLifetime } from "./transaction.ts";
@@ -18,6 +19,7 @@ import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
 
 export interface PlatformReadView {
+  readonly workloadProfiles: WorkloadProfileReadRepository;
   readonly turnJournal?: TurnJournalReadV1;
   readonly audit: PlatformAuditReadRepository;
   readonly operations: PlatformOperationReadRepository;
@@ -42,6 +44,7 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, ["findOperation"]),
     ...(repositories.turnJournal
       ? {
           turnJournal: bindRepository(repositories.turnJournal, lifetime, [

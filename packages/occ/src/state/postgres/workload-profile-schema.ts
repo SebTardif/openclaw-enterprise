@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   primaryKey,
+  uniqueIndex,
   text,
   type AnyPgColumn,
   type PgSchema,
@@ -109,6 +110,12 @@ export function createWorkloadProfileTables(
             sql`${allocated}->>${PROFILE_ALLOCATION_KINDS[index]!} <> ${allocated}->>${other}`,
           );
       return [
+        ...PROFILE_ALLOCATION_KINDS.map((kind) =>
+          uniqueIndex(`workload_profile_${kind}_unique`).on(
+            table.installationId,
+            sql`(${table.record}->'allocated'->>${sql.raw("'" + kind + "'")})`,
+          ),
+        ),
         // Account changes conflict with the original operation; they never create
         // a second allocation namespace under the same principal and operation.
         primaryKey({
