@@ -6,6 +6,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./turn-journal/store": "./src/turn-journal/store.ts",
+    "./turn-journal/postgres": "./src/turn-journal/postgres.ts",
+    "./turn-journal/completed-context": "./src/turn-journal/completed-context.ts",
     "./ports/platform-read-view": "./src/ports/platform-read-view.ts",
     "./ports/platform-unit-of-work": "./src/ports/platform-unit-of-work.ts",
     "./ports/provider-account-links": "./src/ports/provider-account-links.ts",

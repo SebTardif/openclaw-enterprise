@@ -1,3 +1,4 @@
+import type { TurnJournalReadV1 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { bindRepository } from "./repository-factory.ts";
 import type { RepositoryTransactionLifetime } from "./transaction.ts";
 import type { InstallationReadRepository } from "./repositories/installation.ts";
@@ -16,6 +17,7 @@ import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
 
 export interface PlatformReadView {
+  readonly turnJournal?: TurnJournalReadV1;
   readonly audit: PlatformAuditReadRepository;
   readonly operations: PlatformOperationReadRepository;
   readonly channelBindings: ChannelBindingReadRepository;
@@ -38,6 +40,23 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    ...(repositories.turnJournal
+      ? {
+          turnJournal: bindRepository(repositories.turnJournal, lifetime, [
+            "findAdmission",
+            "findAttempt",
+            "findCompletion",
+            "readHead",
+            "findDelivery",
+            "findCheckpointAllocation",
+            "findCancellation",
+            "findRelease",
+            "findNonTurnIntake",
+            "findIncomingLink",
+            "findRejectedAdmission",
+          ]),
+        }
+      : {}),
     audit: bindRepository(repositories.audit, lifetime, ["list"]),
     operations: bindRepository(repositories.operations, lifetime, ["list"]),
     channelBindings: bindRepository(repositories.channelBindings, lifetime, [

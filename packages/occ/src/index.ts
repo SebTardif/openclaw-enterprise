@@ -6,6 +6,26 @@ export * from "./runtime-authority/service.ts";
 export * from "./runtime-authority/repository.ts";
 import { ChannelBindingService } from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
+export {
+  TurnJournalStore,
+  type TurnJournalClock,
+  type TurnJournalInitiationAuthority,
+  type TurnJournalStoreOptions,
+} from "./turn-journal/store.ts";
+export {
+  createPostgresTurnJournal,
+  type PostgresTurnJournalContext,
+  type PostgresTurnJournalOptions,
+  type PostgresTurnJournalProvenance,
+} from "./turn-journal/postgres.ts";
+export {
+  CompletedContextJournalService,
+  type CompletedContextJournalOptions,
+  type ExactCheckpointPublication,
+  type PrepareCheckpointPublication,
+  type ReconcileCheckpointPublication,
+  type CompletedContextPublicationResult,
+} from "./turn-journal/completed-context.ts";
 import { MutationRunner } from "./application/mutation-runner.ts";
 import { selectRepositories } from "./application/mutation-context.ts";
 import {

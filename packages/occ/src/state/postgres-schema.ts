@@ -22,6 +22,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
+import { createTurnJournalTables } from "./postgres/turn-journal-schema.ts";
 
 export const occSchema = pgSchema("occ");
 
@@ -1509,3 +1510,15 @@ export const runtimeServiceTrustRecords = occSchema.table(
     ),
   ],
 );
+
+export const {
+  turnJournalOwners,
+  turnJournalKeys,
+  turnJournalIncomingLinks,
+  turnJournalAttempts,
+  turnJournalReservations,
+  turnJournalHeads,
+  turnJournalOperations,
+  turnJournalDeliveries,
+  turnJournalDeliveryAttempts,
+} = createTurnJournalTables(occSchema, { installation, agents, channelInstallations });
