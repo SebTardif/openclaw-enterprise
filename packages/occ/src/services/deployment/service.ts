@@ -31,7 +31,16 @@ import type {
   DeployAgentInput,
   DeployAgentAdmissionContext,
   HarnessResolver,
+  AcceptedDeployOperation,
+  AcceptedDeployOperationInput,
 } from "./port.ts";
+
+function isDeploymentOperationRef(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+  );
+}
 
 function validateDeployLocator(
   context: Pick<DeployAgentAdmissionContext, "transitionRef" | "requestId">,
@@ -39,9 +48,7 @@ function validateDeployLocator(
   if (
     context === undefined ||
     context === null ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-      context.transitionRef,
-    ) ||
+    !isDeploymentOperationRef(context.transitionRef) ||
     typeof context.requestId !== "string" ||
     context.requestId.length < 1 ||
     context.requestId.length > 200 ||
@@ -327,6 +334,61 @@ export class DeploymentService implements DeploymentServicePort {
         this.options.poisonAdmission(error);
         throw error;
       });
+  }
+
+  /** Read only an original committed deploy, independently of its current head or work outcome. */
+  async getAcceptedDeployOperation(
+    principalId: string,
+    input: AcceptedDeployOperationInput,
+  ): Promise<Readonly<AcceptedDeployOperation>> {
+    // Retain the same exact primitives through both authorization checks and storage reads.
+    const { namespaceId, agentId, operationRef } = input;
+    if (
+      !isNonEmptyString(namespaceId) ||
+      !isNonEmptyString(agentId) ||
+      !isDeploymentOperationRef(operationRef)
+    )
+      throw new ScopeViolationError("The exact deployment operation locator is invalid.");
+    if (this.options.hasActiveTransaction())
+      throw new DependencyUnavailableError(
+        "Deployment operation readback requires a fresh read transaction.",
+      );
+    const resource = { kind: "agent" as const, id: agentId, namespaceId };
+    await this.options.authorization.authorize(principalId, "read", resource);
+    let operation: Readonly<AcceptedDeployOperation> | undefined;
+    try {
+      operation = await this.options.recoveryRead(async (view) => {
+        if ((await view.installations.getInstallation())?.id !== this.options.installationId)
+          return undefined;
+        if ((await view.agents.findAgent(namespaceId, agentId)) === undefined) return undefined;
+        const scope = { namespaceId, agentId };
+        const intent = await view.runtimeAssignments.findRuntimeIntent(scope, operationRef);
+        if (intent === undefined || intent.desiredMode !== "running") return undefined;
+        // Stored attribution proves original acceptance; it does not authorize this reader.
+        const revision = await view.runtimeAdmissions.findCommittedAdmission(scope, operationRef, {
+          actorId: intent.actorId,
+          requestId: intent.requestId,
+        });
+        if (revision === undefined || revision.id !== intent.revisionId) return undefined;
+        // The original admission proof requires the deploy audit and original reconcile work.
+        // This format's sole deploy writer admits saved draft, never retained-revision resume.
+        return immutableCopy({
+          operationRef,
+          kind: "deploy" as const,
+          revisionSource: "saved-draft" as const,
+          lifecycleGeneration: intent.generation,
+          desiredMode: "running" as const,
+          acceptedAt: intent.createdAt,
+          requestedRevisionId: revision.id,
+        });
+      });
+    } catch {
+      throw new DependencyUnavailableError("The deployment operation could not be verified.");
+    }
+    await this.options.authorization.authorize(principalId, "read", resource);
+    if (operation === undefined)
+      throw new ScopeViolationError("The accepted deployment does not belong to the exact Agent.");
+    return operation;
   }
 
   /** Resolve only this retained admission after its failed transaction has unwound. */

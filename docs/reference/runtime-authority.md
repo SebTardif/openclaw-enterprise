@@ -81,6 +81,53 @@ retirement, while service disclosure stays denied until that narrow guard exists
 There is no provider allocation, route selection, registrar write, runtime start,
 credential issuance, context restore or physical teardown in this component.
 
+## Preparing an observed binding candidate
+
+The OCC `runtime-authority/binding-candidate.ts` consumer uses the accepted
+`RuntimeEffectAdmissionV1` and `RuntimeEffectsV1` ports. It does not start a
+runtime or implement those producers. `prepareRuntimeBindingCandidate` accepts
+an initial unbound Harness assignment, its retained materialization child and
+exact expected gate. It checks the current gate and retained child, discovers
+the exact Deployment, observes that same candidate, and checks the gate again.
+Incomplete, ambiguous, changed, stale or unavailable inputs produce a sanitized
+`RuntimeBindingCandidateError` without submitting a binding.
+
+The proposal preserves the complete immutable binding and original observation
+clock. Create-effect correlation comes from discovery's dedicated evidence;
+ownership and protected execution correspondence retain their separate
+observation references. Different opaque resourceVersions between successive
+reads are allowed only for the same exact object UID. The consumer checks the
+declared runtime-profile/configuration correspondence and agreement between
+desired, delivered and effective policy observations. It does not invent a
+derivation for composite profile or image-set digests, authenticate evidence,
+or turn a `complete` response into current permission.
+
+The preparation owner must durably retain the returned canonical `BindRuntimeV1`
+before calling `submitRuntimeBindingCandidate`. Submission invokes only the
+existing authority port, validates returned operation and binding identity, and
+retains `commit-unknown` with the original exact readback locator when a possibly
+submitted response cannot be established. It never retries, allocates a new
+assignment, or recollects evidence under the original operation ID. The caller
+must recover using that original retained proposal, even after later intent or
+runtime changes.
+
+Production reconciliation does not yet invoke this consumer. The current
+preparation gate, protected Compute observation and profile/evidence acceptor
+must be integrated before binding can succeed. The authority service continues
+to deny mutation submissions, and the native readback-only profile is unchanged.
+Gate snapshots are necessary checks, not substitutes for the authoritative
+acceptance transaction. Writable preparation still needs its actual prior-writer
+barrier; neither this consumer nor binding grants serving, identity readiness,
+restore, model or repository access.
+
+Verify the consumer with `node --test
+tests/conformance/runtime-binding-candidate.test.mjs`. Its synthetic port vectors
+test correlation and failure handling. The actual in-memory service case verifies
+denial with unchanged stored assignment when accepting producers are absent.
+These checks do not establish Kubernetes, runsc, authentication or termination
+evidence. Each port implementation owns bounded cancellation and resource cleanup;
+the consumer supplies the original remaining deadline and cancellation signal.
+
 ## Operator-admitted service trust
 
 `RuntimeServiceTrustService` owns one append-only registry in the existing OCC

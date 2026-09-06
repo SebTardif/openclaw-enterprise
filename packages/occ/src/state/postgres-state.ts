@@ -4,6 +4,7 @@ import type { ProviderAccountLinks } from "../ports/provider-account-links.ts";
 import { createPostgresProviderAccountLinks } from "./postgres/provider-account-links.ts";
 import { createPostgresNamespaceRepository } from "./postgres/namespaces.ts";
 import { createPostgresConfigurationRepository } from "./postgres/configurations.ts";
+import { createPostgresSecretRepository } from "./postgres/secrets.ts";
 import { createPostgresChannelBindingRepository } from "./postgres/channel-bindings.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -35,7 +36,6 @@ import type {
   Principal,
   Restriction,
   Role,
-  Secret,
   SecretBindings,
   ServiceAccount,
   ServiceAccountCredential,
@@ -74,7 +74,6 @@ import type {
   PlatformStateStore,
   PlatformReadOptions,
   PlatformUnitOfWork,
-  SecretRepository,
   ServiceAccountRepository,
 } from "./platform-state.ts";
 import {
@@ -280,22 +279,6 @@ function serviceAccountFromRow(row: PostgresRow): Readonly<ServiceAccount> {
     namespaceId: text(row, "namespace_id"),
     name: text(row, "name"),
     ...(credential === null ? {} : { credential }),
-  });
-}
-
-function secretFromRow(row: PostgresRow): Readonly<Secret> {
-  return immutableCopy({
-    id: text(row, "id"),
-    namespaceId: text(row, "namespace_id"),
-    name: text(row, "name"),
-    driverId: text(row, "driver_id"),
-    backendRef: {
-      namespaceName: text(row, "backend_namespace_name"),
-      name: text(row, "backend_name"),
-      key: text(row, "backend_key"),
-      uid: text(row, "backend_uid"),
-    },
-    createdAt: timestamp(row, "created_at"),
   });
 }
 
@@ -1140,27 +1123,6 @@ export class PostgresPlatformState implements PlatformStateStore {
       requireInitialized: () => this.requireInitialized(context),
     });
 
-    const findSecret = async (
-      namespaceId: string,
-      secretId: string,
-      lock = false,
-    ): Promise<Readonly<Secret> | undefined> => {
-      const found = rows(
-        (
-          await client.query(
-            `SELECT s.id, s.namespace_id, s.name, s.driver_id,
-                    s.backend_namespace_name, s.backend_name, s.backend_key, s.backend_uid,
-                    s.created_at
-             FROM occ.secrets AS s
-             JOIN occ.namespaces AS n ON n.id = s.namespace_id AND n.deleted_at IS NULL
-             WHERE s.namespace_id = $1 AND s.id = $2${lock ? " FOR UPDATE OF s" : ""}`,
-            [namespaceId, secretId],
-          )
-        ).rows,
-      )[0];
-      return found === undefined ? undefined : secretFromRow(found);
-    };
-
     const validateSecretBindingsAvailable = async (
       namespaceId: string,
       bindings: SecretBindings | undefined,
@@ -1200,96 +1162,21 @@ export class PostgresPlatformState implements PlatformStateStore {
       timestamp,
     });
 
-    const secrets: SecretRepository = {
-      findSecret,
-      lockSecret: async (namespaceId, secretId) => findSecret(namespaceId, secretId, true),
-      createSecret: async (secret) => {
-        await this.requireInitialized(context);
-        const namespace = await namespaces.lockNamespace(secret.namespaceId);
-        if (
-          namespace === undefined ||
-          (namespace.status !== "provisioning" && namespace.status !== "ready")
-        )
-          throw new ScopeViolationError("The Secret belongs to an unavailable Namespace.");
-        await client.query(
-          `INSERT INTO occ.secrets
-           (id, namespace_id, name, driver_id, backend_namespace_name, backend_name,
-            backend_key, backend_uid, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            secret.id,
-            secret.namespaceId,
-            secret.name,
-            secret.driverId,
-            secret.backendRef.namespaceName,
-            secret.backendRef.name,
-            secret.backendRef.key,
-            secret.backendRef.uid,
-            secret.createdAt,
-          ],
-        );
-        return immutableCopy(secret);
+    const secrets = createPostgresSecretRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
       },
-      hasReferences: async (namespaceId, secretId) => {
-        if ((await findSecret(namespaceId, secretId)) === undefined) return false;
-        const found = rows(
-          (
-            await client.query(
-              `SELECT EXISTS (
-                 SELECT 1
-                 FROM occ.configurations AS c,
-                      jsonb_each(COALESCE(c.secret_bindings, '{}'::jsonb)) AS binding(env, value)
-                 WHERE c.namespace_id = $1
-                   AND binding.value #>> '{source,kind}' = 'secret'
-                   AND binding.value #>> '{source,namespaceId}' = $1
-                   AND binding.value #>> '{source,id}' = $2
-               ) OR EXISTS (
-                 SELECT 1
-                 FROM occ.agents AS a
-                 JOIN occ.agent_revisions AS r
-                   ON r.namespace_id = a.namespace_id
-                  AND r.agent_id = a.id
-                  AND r.id = a.active_revision_id,
-                      jsonb_each(COALESCE(r.admitted_spec->'secret_bindings', '{}'::jsonb))
-                        AS binding(env, value)
-                 WHERE a.namespace_id = $1
-                   AND binding.value #>> '{source,kind}' = 'secret'
-                   AND binding.value #>> '{source,namespaceId}' = $1
-                   AND binding.value #>> '{source,id}' = $2
-               ) OR EXISTS (
-                 SELECT 1
-                 FROM occ.controller_work AS w
-                 JOIN occ.agent_revisions AS r
-                   ON r.namespace_id = w.namespace_id
-                  AND r.agent_id = w.agent_id
-                  AND r.id = w.revision_id,
-                      jsonb_each(COALESCE(r.admitted_spec->'secret_bindings', '{}'::jsonb))
-                        AS binding(env, value)
-                 WHERE w.namespace_id = $1
-                   AND w.state IN ('queued', 'claimed')
-                   AND binding.value #>> '{source,kind}' = 'secret'
-                   AND binding.value #>> '{source,namespaceId}' = $1
-                   AND binding.value #>> '{source,id}' = $2
-               ) AS present`,
-              [namespaceId, secretId],
-            )
-          ).rows,
-        )[0];
-        return found?.present === true;
-      },
-      deleteSecret: async (namespaceId, secretId) => {
-        if ((await findSecret(namespaceId, secretId)) === undefined) return false;
-        if (await secrets.hasReferences(namespaceId, secretId))
-          throw new ScopeViolationError("The Secret is referenced by active platform state.");
-        const deleted = await client.query(
-          `DELETE FROM occ.secrets AS s USING occ.namespaces AS n
-           WHERE s.namespace_id = $1 AND s.id = $2
-             AND n.id = s.namespace_id AND n.deleted_at IS NULL`,
-          [namespaceId, secretId],
-        );
-        return deleted.rowCount === 1;
-      },
-    };
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => client.query(statement, parameters) },
+      requireInitialized: () => this.requireInitialized(context),
+      namespaces,
+      rows,
+      text,
+      timestamp,
+    });
 
     const findServiceAccount = async (
       namespaceId: string,
