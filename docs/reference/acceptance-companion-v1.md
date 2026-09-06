@@ -99,26 +99,44 @@ not replace the primary leaf or inflate execution counts.
 
 The receipt preserves separate dimensions:
 
-| Field                       | Meaning                                                                                                                                                             |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `collection`                | `missing`, `received` or `rejected`; collection status is independent of a declared assertion outcome                                                               |
-| `outcome`                   | Explicit `pass`, `fail`, `blocked`, `skipped`, `unrun`, `unknown` or `not_applicable`; null only for a missing collection                                           |
-| `procedure`                 | Explicitly missing, or frozen with its own procedure-domain digest                                                                                                  |
-| `result`                    | Explicitly missing, or present with a result-domain digest                                                                                                          |
-| `execution`                 | Explicitly unrun, or observed with the actual declared execution class, executor/tool bindings and clocks                                                           |
-| `execution.capture`         | Missing, or claimed with protected executor and source/attempt binding references; never authenticated by this decoder                                              |
-| `review`                    | Missing, or recorded with a separate review digest, exact input/result digests, independent reviewer, optional personal human reviewer, coordinator and disposition |
-| `custody`                   | Protected holder, access/retention policy digests, retention deadline and complete/partial/rejected/unknown redaction disposition                                   |
-| `invalidation`              | Current or invalidated with replacement input and review rationale                                                                                                  |
-| `previousReceipt` / `reuse` | Immutable history and explicit reuse with the original observation time and review rationale                                                                        |
+| Field                       | Meaning                                                                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collection`                | `missing`, `received` or `rejected`; collection status is independent of a declared assertion outcome                                                                  |
+| `outcome`                   | Explicit `pass`, `fail`, `blocked`, `skipped`, `unrun`, `unknown` or `not_applicable`; null only for a missing collection                                              |
+| `procedure`                 | Explicitly missing, or frozen with its own procedure-domain digest                                                                                                     |
+| `result`                    | Explicitly missing, or present with a result-domain digest                                                                                                             |
+| `execution`                 | Unrun, observed with known start/end/duration, or end-unavailable with an observed start; non-unrun branches retain declared class, executor/tool and capture bindings |
+| `execution.capture`         | Missing, or claimed with protected executor and source/attempt binding references; never authenticated by this decoder                                                 |
+| `review`                    | Missing, or recorded with a separate review digest, exact input/result digests, independent reviewer, optional personal human reviewer, coordinator and disposition    |
+| `custody`                   | Protected holder, access/retention policy digests, retention deadline and complete/partial/rejected/unknown redaction disposition                                      |
+| `invalidation`              | Current or invalidated with replacement input and review rationale                                                                                                     |
+| `previousReceipt` / `reuse` | Immutable history and explicit reuse with the original observation time and review rationale                                                                           |
 
 All fields are required. Explicit missing records, null outcome, `unrun`,
 `unknown`, `blocked` and rejected collection are distinct. Omitted or unknown
 fields never receive defaults. A missing collection has no outcome, execution,
 result, checks, observations or review. A producer can report unrun/blocked work
 with a missing procedure. A declared pass or fail requires an observed execution
-and a present result. An observed execution requires frozen procedure identity.
+and a present result. Every non-unrun execution requires frozen procedure identity.
 An allocated required leaf cannot be declared not applicable.
+
+An observed launch whose end observation and complete duration are unavailable
+uses `execution.state: "end-unavailable"`, with overall `unknown` or `blocked`.
+This closed branch requires its original `started` clock and capture declaration;
+it accepts no `ended`, `monotonicClockRef` or `monotonicDurationMs` fields, including
+null or zero substitutes. It does not label launched work unrun. Missing result
+or authentic capture evidence stays explicitly missing. A recorded reviewer must
+differ from the executor for either non-unrun branch, while all provenance
+remains unverified. Partial successful subchecks cannot change the overall
+unknown/blocked declaration into a pass.
+
+The existing `observed` branch requires genuinely available start/end/duration
+for the explicitly selected execution or observation procedure. Its known end
+does not imply native terminal state or physical termination. An ended wrapper
+or bounded observation procedure supplies only its own end; it cannot substitute
+for an unavailable target execution end. Receipt time, cancellation acknowledgment,
+a missing tool handle and clock uncertainty likewise supply no missing endpoint
+or duration. Historical execution clocks are not reinterpreted as window closes.
 
 The actual class stays `source`, `unit`, `static`, `render`, `smoke`, `probe` or
 `live`. Every required leaf's target class remains live. Preliminary source/unit
@@ -185,6 +203,19 @@ registry canonicalization. Consumers must use the exported schema identities,
 not substitute a differently serialized schema. Source/dependency changes that
 change these bytes change the schema identity and require a reviewed interface
 successor; there is no automatic migration or fallback.
+
+The end-unavailable branch is a receipt-definition successor within
+`producer-receipt/v1`, identified by the new mandatory receipt schema digest.
+Its digest is
+`56f6853bf9d61cf3e3118ec7fe0efa96cae59dd50c3abe58a8cb9bb3d5d32760`.
+It is incompatible with the earlier receipt digest
+`b7964df399d61f90f1c79808e3f68fb6e7f5a1c25c4c37055e903fcd2fdef62a`:
+the current reader rejects that identity, and the prior reader rejects the new
+one. There is no dual-identity fallback or automatic migration. Preserve old
+source definitions, reviews and serialized evidence bytes; never rewrite an old
+receipt and retain its original identity. The companion definition and its digest
+`04e70c36d36645ad67262e32042af8481acb827fbdf2c960a678f91dd0ba4253`
+remain unchanged.
 
 Only the exact version and schema digest are supported. Unknown fields and enums
 fail closed, including inside nested objects. A newer writer needs a reviewed
