@@ -20,8 +20,11 @@ import type { RuntimeAssignmentRepository } from "./repositories/runtime-assignm
 import type { RuntimeAuthorityRepository } from "../runtime-authority/repository.ts";
 import type { RuntimePreparationRepository } from "./repositories/runtime-preparation.ts";
 import type { RuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
+import type { LifecycleAdmissionRepository } from "./repositories/lifecycle-admission.ts";
+import type { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly lifecycleAdmissions: LifecycleAdmissionRepository;
   readonly workloadProfiles: WorkloadProfileRepository;
   readonly turnJournal?: TurnJournalUnitOfWorkV1;
   readonly channelBindings: ChannelBindingRepository;
@@ -46,8 +49,13 @@ export function bindPlatformUnitOfWork(
   repositories: PlatformUnitOfWork,
   lifetime: RepositoryTransactionLifetime,
   profilePhase?: WorkloadProfileUnitPhase,
+  lifecyclePhase?: LifecycleAdmissionUnitPhase,
 ): PlatformUnitOfWork {
   const unit: PlatformUnitOfWork = Object.freeze({
+    lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
+      "findCommitted",
+      "applyProtective",
+    ]),
     workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, [
       "findOperation",
       "prepareOperation",
@@ -183,7 +191,8 @@ export function bindPlatformUnitOfWork(
     audit: bindRepository(repositories.audit, lifetime, ["append", "list"]),
     operations: bindRepository(repositories.operations, lifetime, ["append", "list"]),
   });
-  return profilePhase === undefined ? unit : profilePhase.bind(unit);
+  const profiled = profilePhase === undefined ? unit : profilePhase.bind(unit);
+  return lifecyclePhase === undefined ? profiled : lifecyclePhase.bind(profiled);
 }
 
 /** Conservative isolation until an actual protected authority/IAM guard is composed.

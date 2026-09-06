@@ -1,4 +1,5 @@
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
+import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
 import type {
   ChannelAdministrationMappingV1,
   HarnessExecutionMode,
@@ -16,6 +17,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  smallint,
   text,
   timestamp,
   unique,
@@ -664,6 +666,14 @@ export const controllerWork = occSchema.table(
     namespaceTarget: text("namespace_target"),
     runtimeTransitionRef: text("runtime_transition_ref"),
     lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }),
+    workSchemaVersion: smallint("work_schema_version").$type<0 | 1>().notNull().default(0),
+    handler: text("handler").$type<"ReconcileAgentLifecycleV1">(),
+    legacyRuntimeTransitionRef: text("legacy_runtime_transition_ref").generatedAlwaysAs(
+      sql`CASE WHEN work_schema_version = 0 THEN runtime_transition_ref ELSE NULL END`,
+    ),
+    lifecycleOperationRef: text("lifecycle_operation_ref").generatedAlwaysAs(
+      sql`CASE WHEN work_schema_version = 1 THEN runtime_transition_ref ELSE NULL END`,
+    ),
     state: text("state").notNull().default("queued"),
     availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
@@ -687,7 +697,7 @@ export const controllerWork = occSchema.table(
         table.namespaceId,
         table.agentId,
         table.revisionId,
-        table.runtimeTransitionRef,
+        table.legacyRuntimeTransitionRef,
         table.lifecycleGeneration,
       ],
       foreignColumns: [
@@ -700,11 +710,36 @@ export const controllerWork = occSchema.table(
     })
       .onUpdate("restrict")
       .onDelete("restrict"),
+    foreignKey({
+      name: "controller_work_lifecycle_admission_owner",
+      columns: [
+        table.namespaceId,
+        table.agentId,
+        table.lifecycleGeneration,
+        table.lifecycleOperationRef,
+      ],
+      foreignColumns: [
+        agentLifecycleAdmissions.namespaceId,
+        agentLifecycleAdmissions.agentId,
+        agentLifecycleAdmissions.lifecycleGeneration,
+        agentLifecycleAdmissions.operationRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
     check(
       "controller_work_runtime_pair_valid",
-      sql`(${table.runtimeTransitionRef} IS NULL AND ${table.lifecycleGeneration} IS NULL)
-        OR (${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
-          AND ${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
+      sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND (
+          (${table.runtimeTransitionRef} IS NULL AND ${table.lifecycleGeneration} IS NULL)
+          OR (${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
+            AND ${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
+            AND ${table.namespaceTarget} IS NULL
+            AND ${table.runtimeTransitionRef} ~ ${runtimeReferencePattern}
+            AND ${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991)))
+        OR (${table.workSchemaVersion} = 1 AND ${table.handler} IS NOT NULL
+          AND ${table.handler} = 'ReconcileAgentLifecycleV1'
+          AND ${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
+          AND ${table.agentId} IS NOT NULL
           AND ${table.namespaceTarget} IS NULL
           AND ${table.runtimeTransitionRef} ~ ${runtimeReferencePattern}
           AND ${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991)`,
@@ -731,13 +766,15 @@ export const controllerWork = occSchema.table(
     ),
     check(
       "controller_work_namespace_target_valid",
-      sql`(
-        (${table.agentId} IS NULL AND ${table.revisionId} IS NULL
-          AND ${table.namespaceTarget} IS NOT NULL
-          AND ${table.namespaceTarget} IN ('ready', 'deleted'))
-        OR (${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
-          AND ${table.namespaceTarget} IS NULL)
-      )`,
+      sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND (
+          (${table.agentId} IS NULL AND ${table.revisionId} IS NULL
+            AND ${table.namespaceTarget} IS NOT NULL
+            AND ${table.namespaceTarget} IN ('ready', 'deleted'))
+          OR (${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
+            AND ${table.namespaceTarget} IS NULL)))
+        OR (${table.workSchemaVersion} = 1 AND ${table.handler} IS NOT NULL
+          AND ${table.handler} = 'ReconcileAgentLifecycleV1'
+          AND ${table.agentId} IS NOT NULL AND ${table.namespaceTarget} IS NULL)`,
     ),
     check(
       "controller_work_claim_state",
@@ -916,7 +953,8 @@ export const agentRuntimeIntents = occSchema.table(
     agentId: text("agent_id").notNull(),
     generation: bigint("generation", { mode: "number" }).notNull(),
     desiredMode: text("desired_mode").$type<"running" | "disabled" | "stopped">().notNull(),
-    revisionId: text("revision_id").notNull(),
+    revisionId: text("revision_id"),
+    admissionVersion: smallint("admission_version").$type<0 | 1>().notNull().default(0),
     actorId: text("actor_id").notNull(),
     requestId: text("request_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
@@ -972,6 +1010,11 @@ export const agentRuntimeIntents = occSchema.table(
     check(
       "runtime_intents_mode_valid",
       sql`${table.desiredMode} IN ('running', 'disabled', 'stopped')`,
+    ),
+    check(
+      "runtime_intents_admission_version_valid",
+      sql`(${table.admissionVersion} = 0 AND ${table.revisionId} IS NOT NULL)
+        OR (${table.admissionVersion} = 1 AND ${table.desiredMode} IN ('disabled', 'stopped'))`,
     ),
     check(
       "runtime_intents_actor_id_valid",
@@ -1575,3 +1618,19 @@ export const { workloadProfileCapacity, workloadProfileOperations } = createWork
   occSchema,
   { installation, namespaces },
 );
+
+export const {
+  agentLifecycleAdmissions,
+  runtimeCleanupResponsibilities,
+  runtimeCleanupResponsibilityAllocations,
+  auditExportOutbox,
+  lifecycleCapabilities,
+} = createLifecycleAdmissionTables(occSchema, {
+  installation,
+  namespaces,
+  agents,
+  agentRuntimeIntents,
+  controllerWork,
+  auditEvents,
+  runtimeAssignmentAllocations,
+});

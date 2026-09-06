@@ -1,3 +1,5 @@
+import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
+import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
 import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
 import { DriverSelection } from "../application/driver-selection.ts";
 import { createGuardedWorkloadProfileUnit } from "./postgres/workload-profile-guard.ts";
@@ -138,6 +140,8 @@ interface TransactionContext {
   readonly lifetime: RepositoryTransactionLifetime;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly journalGuard: TurnJournalTransactionGuard;
+  readonly lifecyclePhase: LifecycleAdmissionUnitPhase;
+  readonly lifecycleQuery: PostgresClient["query"];
   readonly profilePhase: WorkloadProfileUnitPhase;
   readonly profileQuery: PostgresClient["query"];
   readonly client: PostgresClient;
@@ -171,18 +175,25 @@ function runtimeIntentFromRow(row: PostgresRow): Readonly<RuntimeIntent> {
   const desiredMode = text(row, "desired_mode");
   if (desiredMode !== "running" && desiredMode !== "disabled" && desiredMode !== "stopped")
     throw new DependencyUnavailableError("The stored runtime intent mode is invalid.");
-  return immutableCopy({
+  const revisionId = optionalText(row, "revision_id") ?? null;
+  if (
+    (desiredMode === "running" || Number(row.admission_version ?? 0) === 0) &&
+    revisionId === null
+  )
+    throw new DependencyUnavailableError("The stored runtime revision is missing.");
+  const identity = {
     namespaceId: text(row, "namespace_id"),
     agentId: text(row, "agent_id"),
     installationId: text(row, "installation_id"),
     transitionRef: text(row, "transition_ref"),
     generation: runtimeGeneration(row, "generation"),
-    desiredMode,
-    revisionId: text(row, "revision_id"),
     actorId: text(row, "actor_id"),
     requestId: text(row, "request_id"),
     createdAt: timestamp(row, "created_at"),
-  });
+  };
+  return desiredMode === "running"
+    ? immutableCopy({ ...identity, desiredMode, revisionId: text(row, "revision_id") })
+    : immutableCopy({ ...identity, desiredMode, revisionId });
 }
 function revisionAdmissionFromRow(row: PostgresRow): Readonly<RevisionRuntimeAdmission> {
   return immutableCopy({
@@ -1022,6 +1033,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const journalGuard = new TurnJournalTransactionGuard();
     const profilePhase = new WorkloadProfileUnitPhase();
+    const lifecyclePhase = new LifecycleAdmissionUnitPhase();
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
@@ -1050,7 +1062,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       client = {
         query: (statement, parameters) =>
           trackProfileOrder
-            ? profilePhase.other(() => query(statement, parameters))
+            ? lifecyclePhase.legacyQuery(() =>
+                profilePhase.other(() => query(statement, parameters)),
+              )
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
@@ -1080,20 +1094,29 @@ export class PostgresPlatformState implements PlatformStateStore {
         authorityGuard,
         journalGuard,
         profilePhase,
+        lifecyclePhase,
+        lifecycleQuery: query,
         profileQuery: query,
         client,
         installation: undefined,
         installationLoaded: false,
       };
       trackProfileOrder = true;
-      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime, profilePhase);
+      unit = bindPlatformUnitOfWork(
+        this.repositories(context),
+        lifetime,
+        profilePhase,
+        lifecyclePhase,
+      );
       journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
       const running = Promise.resolve().then(() => work(unit!, activeContext));
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      lifecyclePhase.closeAdmissions();
       await context?.protectedProfile?.finish();
       await lifetime.finish();
+      await lifecyclePhase.finish();
       await authorityGuard.finish();
       await journalGuard.finish();
       await profilePhase.guard.finish();
@@ -1111,12 +1134,18 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
+      lifecyclePhase.closeAdmissions();
       try {
         await context?.protectedProfile?.finish();
       } catch {
         /* Preserve the original failure. */
       }
       await lifetime.finish();
+      try {
+        await lifecyclePhase.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
       try {
         await authorityGuard.finish();
       } catch {
@@ -1143,6 +1172,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      lifecyclePhase.closeAdmissions();
       context?.protectedProfile?.close();
       if (context?.profileToken !== undefined) this.#profileContexts.delete(context.profileToken);
       journalGuard.close();
@@ -1764,7 +1794,10 @@ export class PostgresPlatformState implements PlatformStateStore {
     async function saveRuntimeIntent(
       scope: RuntimeScope,
       expected: number,
-      next: Pick<RuntimeIntent, "desiredMode" | "revisionId">,
+      next: {
+        readonly desiredMode: "running" | "disabled" | "stopped";
+        readonly revisionId: string;
+      },
       transitionRef: string,
       attribution: RuntimeIntentAttribution,
     ): Promise<Readonly<RuntimeIntent>> {
@@ -1851,7 +1884,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             AND work.namespace_id = admission.namespace_id AND work.agent_id = admission.agent_id
             AND work.revision_id = admission.revision_id AND work.runtime_transition_ref = admission.runtime_transition_ref
             AND work.lifecycle_generation = admission.lifecycle_generation AND work.actor_id = intent.actor_id
-            AND work.namespace_target IS NULL
+            AND work.namespace_target IS NULL AND work.work_schema_version=0
            JOIN occ.audit_events audit ON audit.id = admission.audit_event_id
            WHERE admission.namespace_id = $1 AND admission.agent_id = $2
              AND admission.runtime_transition_ref = $3 AND intent.actor_id = $4 AND intent.request_id = $5
@@ -2118,7 +2151,24 @@ export class PostgresPlatformState implements PlatformStateStore {
             },
             this.turnJournal,
           );
+    const lifecycleAdmissions = createPostgresLifecycleAdmission({
+      get scope() {
+        context.lifetime.assertActive();
+        if (!context.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
+      },
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => context.lifecycleQuery(statement, parameters) },
+      phase: context.lifecyclePhase,
+      requireInitialized: () => this.requireInitialized(context),
+      appendAudit: (event) => this.appendAudit(context, event, context.lifecycleQuery),
+      intentFromRow: runtimeIntentFromRow,
+      allocationFromRow: runtimeAllocationFromRow,
+      auditFromRow,
+    });
     return {
+      lifecycleAdmissions,
       ...(turnJournal === undefined ? {} : { turnJournal }),
       workloadProfiles,
       runtimePreparation,
@@ -2190,7 +2240,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               await client.query(
                 `SELECT namespace_id, agent_id, revision_id, actor_id, namespace_target,
                         runtime_transition_ref, lifecycle_generation
-                 FROM occ.controller_work ORDER BY created_at, idempotency_key`,
+                 FROM occ.controller_work WHERE work_schema_version=0 ORDER BY created_at, idempotency_key`,
               )
             ).rows,
           );
