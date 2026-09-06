@@ -1,0 +1,9 @@
+# Preparation Job definition fixtures
+
+These examples import the actual contracts package exports. `producer.ts` forms a closed plan/original reservation and calls the supplied real producer port; the four consumer files type-check exact receipt/currentness, lifecycle/readback, identity and retained-store usage, including current canonical admission membership before and after closure awaits. They contain no provider implementation or authority factory. `negative.ts` checks that Job/Deployment/Harness types, cleanup/release requests and credential-owned nominal handles remain incompatible.
+
+Each of the six `*.tsconfig.json` entrypoints compiles independently with strict mode, exact optional properties, unchecked-index checks and `skipLibCheck: false`. It follows only the selected public subpath declaration closure. It neither loads the broad upstream SDK barrel nor changes existing declarations.
+
+`vectors.mjs` contains synthetic data, reusing accepted repository-preparation fixture constructors. It computes digests with the actual exported codecs. The conformance test asserts decisions from those codecs, including exact parent/Pod/runtime identity, distinct checkout and provider digests, original deadlines, stale sources, wrong guards, incomplete producer coverage, delayed child creation and unknown submissions. Race-shaped records prove definition discrimination; they do not execute a Kubernetes race or authenticate the referenced producers. A suspended root and listed terminated Pods alone cannot represent complete writer exclusion.
+
+Run the commands in the [reference page](../../../docs/reference/preparation-job.md#bounds-and-validation) after explicit dependency preparation. Test and compiler commands never install packages. Live Job, identity, admission, runsc and staging-store proof belongs to the actual qualified producer implementation.

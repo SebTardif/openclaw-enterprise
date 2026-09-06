@@ -35,6 +35,8 @@
     "./credential-backend-profile-v1": "./src/credential-backend-profile-v1.ts",
     "./repository-preparation-v1": "./src/repository-preparation-v1.ts",
     "./repository-preparation-codec-v1": "./src/repository-preparation-codec-v1.ts",
+    "./preparation-job-v1": "./src/preparation-job-v1.ts",
+    "./preparation-job-codec-v1": "./src/preparation-job-codec-v1.ts",
     "./runtime-assignment": "./src/runtime-assignment.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
     "./runtime-identity-v1": "./src/runtime-identity-v1.ts",
