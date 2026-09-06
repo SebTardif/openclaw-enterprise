@@ -90,6 +90,12 @@ importers:
         specifier: 1.3.6
         version: 1.3.6
 
+  apps/gateway:
+    dependencies:
+      openclaw:
+        specifier: link:../../.build/upstream-sdk/openclaw
+        version: link:../../.build/upstream-sdk/openclaw
+
   packages/audit:
     dependencies:
       '@openclaw-enterprise/contracts':
