@@ -145,6 +145,40 @@ Docker; its image build uses `--network=none`. The existing controller Dockerfil
 installs production dependencies during its separately selected image build.
 It is not part of `pnpm build:mvp` or `pnpm build:dataplane`.
 
+### Controller Go compiler cache
+
+The controller image target supplies `GO_BUILD_CACHE_SCOPE` to the root Dockerfile.
+Its value is a SHA-256 of the canonical worktree directory: aliases of the same
+directory share a namespace, and separate worktrees use separate namespaces.
+The host path itself is not included in the build argument. Moving a worktree
+changes its namespace. This partition controls cache reuse; it is not an access
+control boundary against other clients of the same Docker builder.
+
+The two native Go build commands mount the same compiler cache, scoped by that
+namespace, the selected `GO_BASE_IMAGE` reference and `TARGETPLATFORM`.
+`sharing=locked` serializes writers to that cache. The existing module-download
+layer, readonly module checks, compiler flags, executable outputs and license
+collection remain in place. Go validates compiler cache entries against its own
+source, dependency and build-option identities. BuildKit may evict entries;
+cache availability changes compilation work, not the required outputs.
+
+Direct Docker and Compose callers that omit `GO_BUILD_CACHE_SCOPE` retain their
+ordinary Go cache behavior. To opt in for a direct Docker invocation, obtain the
+current worktree's scope with:
+
+```sh
+node --input-type=module -e 'import { goBuildCacheScope } from "./scripts/build-mvp.mjs"; console.log(goBuildCacheScope())'
+```
+
+Pass that value as `--build-arg GO_BUILD_CACHE_SCOPE=<scope>` alongside the
+existing pinned base arguments. Use a distinct scope for each worktree on a
+shared builder. The cache mount stays in BuildKit storage and is not copied
+into the controller runtime image. Source-level checks do not establish cache
+hits or a speedup; compare actual builds on matched inputs and verify their
+resulting executable artifacts.
+
+### Prepared runtime image
+
 The image graph takes a separately prepared OpenClaw/Codex runtime image. It
 checks that its exact digest reference is present in the local Docker engine
 and matches the Linux host architecture. It does not rebuild, pull, or substitute
