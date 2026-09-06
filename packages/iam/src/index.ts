@@ -39,6 +39,62 @@ export interface NativeIAMStateStore {
   loadNativeIAMState(): Promise<NativeIAMState>;
 }
 
+/** Only the real store may recognize a live guarded-unit token. No caller snapshot. */
+export interface NativeIAMTransactionalStateStore extends NativeIAMStateStore {
+  loadNativeIAMStateInTransaction(token: object): Promise<NativeIAMState>;
+}
+
+export interface NativeIAMTransactionView {
+  lookupIdentity(input: IdentityLookup): Promise<Identity | undefined>;
+  authorize(request: AuthorizationRequest): Promise<AuthorizationDecision>;
+  assertCurrent(): void;
+}
+
+const nativeInstances = new WeakMap<
+  object,
+  {
+    readonly store: NativeIAMStateStore;
+    readonly id: string;
+    readonly implementation: string;
+  }
+>();
+
+/** Runtime instance/store custody, independent of writable TS-private properties.
+ * The store must recognize the token and hold the policy locks for every load.
+ * This is an internal policy view; it never authenticates a request or account. */
+export function bindNativeIAMTransaction(
+  driver: unknown,
+  store: NativeIAMTransactionalStateStore,
+  token: object,
+): NativeIAMTransactionView {
+  const retained =
+    typeof driver === "object" && driver !== null ? nativeInstances.get(driver) : undefined;
+  const assertCurrent = (): void => {
+    if (
+      retained === undefined ||
+      retained.store !== store ||
+      Object.getPrototypeOf(driver) !== NativeIAMDriver.prototype ||
+      (driver as NativeIAMDriver).id !== retained.id ||
+      (driver as NativeIAMDriver).implementation !== retained.implementation ||
+      (driver as NativeIAMDriver).capability !== "iam"
+    )
+      throw new TypeError("The exact native IAM instance/store is unavailable.");
+  };
+  assertCurrent();
+  const load = async (): Promise<NativeIAMState> => {
+    assertCurrent();
+    const state = await store.loadNativeIAMStateInTransaction(token);
+    assertCurrent();
+    return state;
+  };
+  return Object.freeze({
+    assertCurrent,
+    lookupIdentity: async (input: IdentityLookup) => lookupNativeIdentity(input, await load()),
+    authorize: async (request: AuthorizationRequest) =>
+      authorizeNativeState(request, await load(), retained!.id),
+  });
+}
+
 export interface NativeIAMDriverOptions {
   readonly id?: string;
   readonly implementation?: string;
@@ -688,7 +744,7 @@ export class NativeIAMDriver implements IAMDriver {
   readonly id: string;
   readonly capability = "iam" as const;
   readonly implementation: string;
-  private readonly state: NativeIAMStateStore;
+  readonly #state: NativeIAMStateStore;
 
   constructor(state: NativeIAMStateStore, options: NativeIAMDriverOptions = {}) {
     this.id = options.id ?? "occ-native-iam";
@@ -698,54 +754,17 @@ export class NativeIAMDriver implements IAMDriver {
       throw new TypeError("Native IAM Driver implementation must be nonempty.");
     if (!state || typeof state.loadNativeIAMState !== "function")
       throw new TypeError("Native IAM Driver requires a platform state store.");
-    this.state = state;
+    this.#state = state;
+    nativeInstances.set(this, { store: state, id: this.id, implementation: this.implementation });
   }
 
   async lookupIdentity(input: IdentityLookup): Promise<Identity | undefined> {
-    if (
-      typeof input !== "object" ||
-      input === null ||
-      Object.hasOwn(input, "installationId") ||
-      (input.servicePrincipalId === undefined
-        ? !isNonEmptyString(input.issuer) || !isNonEmptyString(input.subject)
-        : !isNonEmptyString(input.servicePrincipalId) ||
-          input.issuer !== undefined ||
-          input.subject !== undefined)
-    )
-      return undefined;
-    if (!optionalNonempty(input.namespaceId)) return undefined;
-
-    const state = await this.state.loadNativeIAMState();
-    try {
-      validateNativeIAMState(state);
-    } catch (error) {
-      if (error instanceof ChannelAdministrationStateError) throw error;
-      return undefined;
-    }
-
-    const matches = state.identities.filter((identity) => {
-      if (identity.namespaceId !== undefined && identity.namespaceId !== input.namespaceId)
-        return false;
-      if (input.servicePrincipalId !== undefined)
-        return identity.kind === "service_principal" && identity.id === input.servicePrincipalId;
-      if (!("issuer" in identity) || !("subject" in identity)) return false;
-      return identity.issuer === input.issuer && identity.subject === input.subject;
-    });
-
-    const identity = matches.length === 1 ? matches[0] : undefined;
-    return identity === undefined ? undefined : (Object.freeze({ ...identity }) as Identity);
+    if (!validNativeLookup(input)) return undefined;
+    return lookupNativeIdentity(input, await this.#state.loadNativeIAMState());
   }
 
   async authorize(request: AuthorizationRequest): Promise<AuthorizationDecision> {
-    const state = await this.state.loadNativeIAMState();
-    try {
-      validateNativeIAMState(state);
-    } catch (error) {
-      if (error instanceof ChannelAdministrationStateError) throw error;
-      return decision(this.id, false, "The native IAM policy is invalid.");
-    }
-    const result = evaluateValidatedAuthorization(request, state, this.id);
-    return withChannelAdministrationEvidence(state, request, result);
+    return authorizeNativeState(request, await this.#state.loadNativeIAMState(), this.id);
   }
 }
 
@@ -756,4 +775,58 @@ export function createNativeIAMDriver(
   options: NativeIAMDriverOptions = {},
 ): NativeIAMDriver {
   return new NativeIAMDriver(state, options);
+}
+
+function validNativeLookup(input: IdentityLookup): boolean {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    Object.hasOwn(input, "installationId") ||
+    (input.servicePrincipalId === undefined
+      ? !isNonEmptyString(input.issuer) || !isNonEmptyString(input.subject)
+      : !isNonEmptyString(input.servicePrincipalId) ||
+        input.issuer !== undefined ||
+        input.subject !== undefined)
+  )
+    return false;
+  if (!optionalNonempty(input.namespaceId)) return false;
+
+  return true;
+}
+
+function lookupNativeIdentity(input: IdentityLookup, state: NativeIAMState): Identity | undefined {
+  if (!validNativeLookup(input)) return undefined;
+  try {
+    validateNativeIAMState(state);
+  } catch (error) {
+    if (error instanceof ChannelAdministrationStateError) throw error;
+    return undefined;
+  }
+
+  const matches = state.identities.filter((identity) => {
+    if (identity.namespaceId !== undefined && identity.namespaceId !== input.namespaceId)
+      return false;
+    if (input.servicePrincipalId !== undefined)
+      return identity.kind === "service_principal" && identity.id === input.servicePrincipalId;
+    if (!("issuer" in identity) || !("subject" in identity)) return false;
+    return identity.issuer === input.issuer && identity.subject === input.subject;
+  });
+
+  const identity = matches.length === 1 ? matches[0] : undefined;
+  return identity === undefined ? undefined : (Object.freeze({ ...identity }) as Identity);
+}
+
+function authorizeNativeState(
+  request: AuthorizationRequest,
+  state: NativeIAMState,
+  driverId: string,
+): AuthorizationDecision {
+  try {
+    validateNativeIAMState(state);
+  } catch (error) {
+    if (error instanceof ChannelAdministrationStateError) throw error;
+    return decision(driverId, false, "The native IAM policy is invalid.");
+  }
+  const result = evaluateValidatedAuthorization(request, state, driverId);
+  return withChannelAdministrationEvidence(state, request, result);
 }
