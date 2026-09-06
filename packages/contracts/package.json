@@ -54,7 +54,9 @@
     "./acceptance-companion-v1": "./src/acceptance-companion-v1.ts",
     "./acceptance-companion-codec-v1": "./src/acceptance-companion-codec-v1.ts",
     "./containment-controls-v1": "./src/containment-controls-v1.ts",
-    "./containment-controls-codec-v1": "./src/containment-controls-codec-v1.ts"
+    "./containment-controls-codec-v1": "./src/containment-controls-codec-v1.ts",
+    "./native-measurement-v1": "./src/native-measurement-v1.ts",
+    "./native-measurement-codec-v1": "./src/native-measurement-codec-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
