@@ -1,0 +1,172 @@
+{
+  "options": {
+    "authentication": {
+      "mode": "inCluster"
+    },
+    "images": {
+      "gateway": "gateway:local",
+      "agent": "agent:local",
+      "requireImmutableDigest": false
+    },
+    "resources": {
+      "gateway": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "250m",
+          "memory": "128Mi"
+        }
+      },
+      "agent": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "250m",
+          "memory": "128Mi"
+        }
+      },
+      "namespace": {
+        "quota": {
+          "pods": "10"
+        },
+        "containerDefaults": {
+          "requests": {
+            "cpu": "100m",
+            "memory": "64Mi"
+          },
+          "limits": {
+            "cpu": "250m",
+            "memory": "128Mi"
+          }
+        }
+      }
+    },
+    "network": {
+      "dns": {
+        "namespace": "kube-system",
+        "podLabels": {
+          "app": "dns"
+        }
+      },
+      "gatewayPort": 8080
+    },
+    "servicePrincipalCredentials": {
+      "mode": "disabled"
+    },
+    "runtime": {
+      "transportSecretPrefix": "transport",
+      "modelSecretPrefix": "model",
+      "gatewayStorageClassName": "local-path"
+    },
+    "gatewayRouting": {
+      "hostname": "agents.example.internal",
+      "gatewayName": "oce-agent-gateways",
+      "gatewayNamespace": "openclaw-system",
+      "envoyNamespace": "envoy-gateway-system"
+    }
+  },
+  "tenant": {
+    "id": "ns_00000000-0000-4000-8000-000000000016",
+    "name": "Lifecycle conformance tenant",
+    "status": "ready",
+    "createdAt": "2026-09-05T00:00:00.000Z"
+  },
+  "revision": {
+    "id": "revision-lifecycle-1",
+    "namespaceId": "ns_00000000-0000-4000-8000-000000000016",
+    "agentId": "agent-lifecycle",
+    "revision": 1,
+    "configurationId": "cfg_00000000-0000-4000-8000-000000000016",
+    "configurationKind": "agent",
+    "configurationGeneration": 1,
+    "configuration": {
+      "gateway": {
+        "trustedProxies": ["10.42.0.0/16"],
+        "allowRealIpFallback": true,
+        "auth": {
+          "mode": "trusted-proxy",
+          "trustedProxy": {
+            "userHeader": "x-occ-identity",
+            "allowUsers": ["occ-workspace-files"]
+          },
+          "identityScopes": {
+            "occ-workspace-files": ["operator.admin"]
+          }
+        }
+      },
+      "logging": {
+        "level": "info",
+        "consoleLevel": "info",
+        "consoleStyle": "json",
+        "redactSensitive": "tools"
+      },
+      "diagnostics": {
+        "otel": {
+          "logs": false
+        }
+      }
+    },
+    "harness": {
+      "id": "codex",
+      "version": "1.0.0",
+      "mode": "dedicated"
+    },
+    "compute": {
+      "id": "lifecycle-conformance",
+      "implementation": "kubernetes-local"
+    },
+    "servicePrincipalId": "service-principal-lifecycle",
+    "createdAt": "2026-09-05T00:00:00.000Z"
+  },
+  "successor": {
+    "id": "revision-lifecycle-2",
+    "namespaceId": "ns_00000000-0000-4000-8000-000000000016",
+    "agentId": "agent-lifecycle",
+    "revision": 2,
+    "configurationId": "cfg_00000000-0000-4000-8000-000000000016",
+    "configurationKind": "agent",
+    "configurationGeneration": 2,
+    "configuration": {
+      "gateway": {
+        "trustedProxies": ["10.42.0.0/16"],
+        "allowRealIpFallback": true,
+        "auth": {
+          "mode": "trusted-proxy",
+          "trustedProxy": {
+            "userHeader": "x-occ-identity",
+            "allowUsers": ["occ-workspace-files"]
+          },
+          "identityScopes": {
+            "occ-workspace-files": ["operator.admin"]
+          }
+        }
+      },
+      "logging": {
+        "level": "info",
+        "consoleLevel": "info",
+        "consoleStyle": "json",
+        "redactSensitive": "tools"
+      },
+      "diagnostics": {
+        "otel": {
+          "logs": false
+        }
+      }
+    },
+    "harness": {
+      "id": "codex",
+      "version": "1.0.0",
+      "mode": "dedicated"
+    },
+    "compute": {
+      "id": "lifecycle-conformance",
+      "implementation": "kubernetes-local"
+    },
+    "servicePrincipalId": "service-principal-lifecycle",
+    "createdAt": "2026-09-05T00:00:00.000Z"
+  }
+}

@@ -80,13 +80,13 @@ test("reconcile checks ownership before patching and preserves revision routing 
 
   observed = structuredClone(desired);
   observed.spec.selector = { "openclaw.dev/revision": "new-revision" };
-  await driver.reconcile(desired, ownership, namespace, {
-    serviceSelector: { "openclaw.dev/revision": "old-revision" },
+  await driver.reconcileServiceForSelector(desired, ownership, namespace, {
+    "openclaw.dev/revision": "old-revision",
   });
   assert.equal(patches.length, 0, "a stale revision must not deactivate its replacement");
 
-  await driver.reconcile(desired, ownership, namespace, {
-    serviceSelector: { "openclaw.dev/revision": "new-revision" },
+  await driver.reconcileServiceForSelector(desired, ownership, namespace, {
+    "openclaw.dev/revision": "new-revision",
   });
   assert.equal(patches.length, 1);
   assert.deepEqual(patches[0].body, desired);

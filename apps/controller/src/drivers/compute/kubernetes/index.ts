@@ -1,3 +1,14 @@
+import { KubernetesOwnership, OwnershipFailure, verifyNamespaceOwnership } from "./ownership.ts";
+export { kubernetesNamespaceName, resolveKubernetesNamespace } from "./ownership.ts";
+import type {
+  KubernetesRecord,
+  ManagedKubernetesObject,
+  ReadableResourceKind,
+} from "./ownership.ts";
+import { KubernetesConditionalMutations } from "./conditional-mutations.ts";
+import { KubernetesReadiness, IsolationFailure } from "./readiness.ts";
+import { KubernetesRouting } from "./routing.ts";
+import { KubernetesCleanup } from "./cleanup.ts";
 import * as KubernetesIdentity from "./resources/identity.ts";
 import * as KubernetesNetwork from "./resources/network.ts";
 import * as KubernetesGateway from "./resources/gateway.ts";
@@ -7,11 +18,9 @@ import * as KubernetesSecretProjection from "./resources/secret-projection.ts";
 import * as KubernetesHarness from "./resources/harness.ts";
 import type { Ownership } from "./resources/identity.ts";
 import { ConfigurationFailure } from "./resources/identity.ts";
-import { MANAGER } from "./resources/identity.ts";
 import { TOKEN_PATH } from "./resources/identity.ts";
 import { AGENT_REVISION_ANNOTATION } from "./resources/identity.ts";
 import { AGENT_REVISION_ID_ANNOTATION } from "./resources/identity.ts";
-import { GVISOR_RUNTIME_CLASS } from "./resources/identity.ts";
 export { GVISOR_RUNTIME_CLASS } from "./resources/identity.ts";
 import { required } from "./resources/identity.ts";
 import type { KubernetesWorkloadPeer } from "./resources/network.ts";
@@ -19,7 +28,6 @@ export type { KubernetesWorkloadPeer } from "./resources/network.ts";
 import type { KubernetesGatewayRoutingOptions } from "./resources/gateway.ts";
 export type { KubernetesGatewayRoutingOptions } from "./resources/gateway.ts";
 import type { GatewayConfigurationSnapshot } from "./resources/gateway.ts";
-import { CONFIGURATION_DOCUMENT } from "./resources/gateway.ts";
 import { CONFIGURATION_VOLUME } from "./resources/gateway.ts";
 import { GATEWAY_API_VERSION } from "./resources/gateway.ts";
 import { SHARED_WORKSPACE_VOLUME } from "./resources/storage.ts";
@@ -29,27 +37,16 @@ import type { ChannelRequirements } from "./resources/channel-policy.ts";
 import { channelProxy } from "./resources/channel-policy.ts";
 import { SERVICE_ACCOUNT_TOKEN_KEY } from "./resources/secret-projection.ts";
 import { SERVICE_ACCOUNT_WORKSPACE_KEY } from "./resources/secret-projection.ts";
-import {
-  asRecord,
-  immutableCopy,
-  isNonEmptyString,
-  numericErrorStatus,
-  sha256Hex,
-} from "@openclaw-enterprise/utils";
+import { asRecord, immutableCopy, numericErrorStatus, sha256Hex } from "@openclaw-enterprise/utils";
 import { isAbsolute } from "node:path";
 import type {
   AppsV1Api,
   CoreV1Api,
   DiscoveryV1Api,
-  KubernetesObject,
   KubernetesObjectApi,
   NetworkingV1Api,
-  V1ConfigMap,
   V1NetworkPolicyPeer,
-  V1ObjectMeta,
-  V1DeleteOptions,
   V1ResourceRequirements,
-  V1ServiceAccount,
   V1VolumeMount,
 } from "@kubernetes/client-node";
 import type {
@@ -73,20 +70,6 @@ import type {
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
-
-type KubernetesRecord = Record<string, unknown>;
-type ManagedResourceKind =
-  | "Namespace"
-  | "ConfigMap"
-  | "ServiceAccount"
-  | "Service"
-  | "ResourceQuota"
-  | "LimitRange"
-  | "PersistentVolumeClaim"
-  | "Deployment"
-  | "NetworkPolicy"
-  | "HTTPRoute";
-type ReadableResourceKind = ManagedResourceKind | "Pod" | "Secret";
 
 interface KubernetesApiClients {
   readonly core: CoreV1Api;
@@ -140,26 +123,6 @@ export interface KubernetesComputeDriverOptions {
   readonly gatewayRouting?: KubernetesGatewayRoutingOptions;
 }
 
-interface ManagedKubernetesObject<Kind extends ReadableResourceKind = ManagedResourceKind>
-  extends
-    KubernetesObject,
-    Pick<V1ConfigMap, "binaryData" | "data" | "immutable">,
-    Pick<V1ServiceAccount, "automountServiceAccountToken"> {
-  readonly apiVersion: string;
-  readonly kind: Kind;
-  readonly metadata: V1ObjectMeta & { readonly name: string };
-  readonly spec?: KubernetesRecord;
-  readonly status?: KubernetesRecord;
-}
-
-interface ReconcilePrecondition {
-  readonly serviceSelector?: Readonly<Record<string, string>>;
-}
-
-class OwnershipFailure extends Error {}
-class IsolationFailure extends ConfigurationFailure {}
-
-const FIELD_MANAGER = "openclaw-enterprise-compute";
 const APPLY_CONTENT_TYPE = "application/apply-patch+yaml";
 const REQUEST_TIMEOUT_MS = 10_000;
 const RESOURCE_REQUIREMENTS_SCHEMA = Object.freeze({
@@ -248,91 +211,6 @@ function validateKubernetesResourceName(value: string, description: string): voi
   ) {
     throw new ConfigurationFailure(`${description} must be a DNS-safe Kubernetes resource name.`);
   }
-}
-
-function labelsToSelector(labels: Readonly<Record<string, string>>): string {
-  return Object.entries(labels)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(",");
-}
-
-export function kubernetesNamespaceName(namespaceId: string): string {
-  const id = required(namespaceId, "Platform Namespace ID");
-  const slug =
-    id
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 46)
-      .replace(/-+$/g, "") || "ns";
-  return `oce-${slug}-${sha256Hex(id, 12)}`;
-}
-
-function verifiedKubernetesNamespace(
-  metadata: V1ObjectMeta | undefined,
-  namespaceId: string,
-): { readonly name: string; readonly external: boolean } {
-  const name = metadata?.name;
-  const labels = metadata?.labels;
-  const annotations = metadata?.annotations;
-  if (
-    typeof name !== "string" ||
-    name.length === 0 ||
-    labels?.["openclaw.dev/namespace"] !== namespaceId ||
-    annotations?.["openclaw.dev/namespace-id"] !== namespaceId
-  ) {
-    throw new OwnershipFailure(
-      `Refusing an unowned Kubernetes namespace for tenant ${namespaceId}.`,
-    );
-  }
-  const external = annotations["openclaw.dev/namespace-lifecycle"] === "external";
-  if (!external) {
-    if (
-      name !== kubernetesNamespaceName(namespaceId) ||
-      labels["app.kubernetes.io/managed-by"] !== MANAGER
-    ) {
-      throw new OwnershipFailure(
-        `Refusing Kubernetes namespace ${name} without external ownership.`,
-      );
-    }
-  } else {
-    for (const mode of ["enforce", "audit", "warn"]) {
-      if (labels[`pod-security.kubernetes.io/${mode}`] !== "restricted") {
-        throw new OwnershipFailure(
-          `Existing Kubernetes namespace ${name} requires restricted Pod Security.`,
-        );
-      }
-    }
-  }
-  return { name, external };
-}
-
-export async function resolveKubernetesNamespace(
-  client: CoreV1Api,
-  namespaceId: string,
-): Promise<{ readonly name: string; readonly external: boolean }> {
-  const observed = await client.listNamespace({
-    labelSelector: `openclaw.dev/namespace=${namespaceId}`,
-    timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
-  });
-  if (!Array.isArray(observed?.items)) {
-    throw new OwnershipFailure("Kubernetes namespace discovery returned invalid resources.");
-  }
-  if (observed.items.length > 1) {
-    throw new OwnershipFailure(`Multiple Kubernetes namespaces claim tenant ${namespaceId}.`);
-  }
-  if (observed.items.length === 0) {
-    return { name: kubernetesNamespaceName(namespaceId), external: false };
-  }
-  const namespace = observed.items[0];
-  const placement = verifiedKubernetesNamespace(namespace?.metadata, namespaceId);
-  if (
-    placement.external &&
-    (namespace?.status?.phase !== "Active" || namespace.metadata?.deletionTimestamp !== undefined)
-  ) {
-    throw new OwnershipFailure(`Existing Kubernetes namespace ${placement.name} must be active.`);
-  }
-  return placement;
 }
 
 export class KubernetesComputeDriver implements ComputeDriver {
@@ -440,6 +318,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly sandboxDriver: SandboxDriver | undefined;
   private lifecycle: ComputeLifecycleDispatcher;
   private lifecycleStarted = false;
+  private readonly ownership: KubernetesOwnership;
+  private readonly mutations: KubernetesConditionalMutations;
+  private readonly readiness: KubernetesReadiness;
+  private readonly routing: KubernetesRouting;
+  private readonly cleanup: KubernetesCleanup;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
     ReturnType<typeof import("@kubernetes/client-node").setHeaderOptions> | undefined;
@@ -638,6 +521,60 @@ export class KubernetesComputeDriver implements ComputeDriver {
     this.options = immutableCopy(options);
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
+    this.ownership = new KubernetesOwnership(
+      {
+        clients: () => this.clients(),
+        request: (operation, options) => this.request(operation, options),
+        get: (kind, name, namespace) => this.get(kind, name, namespace),
+        patchOptions: () => this.patchOptions,
+      },
+      () => this.gatewayMembershipLabels(),
+    );
+    this.mutations = new KubernetesConditionalMutations({
+      clients: () => this.clients(),
+      request: (operation, options) => this.request(operation, options),
+      getOwned: (kind, name, namespace, ownership) =>
+        this.getOwned(kind, name, namespace, ownership),
+      patchOptions: () => this.patchOptions,
+    });
+    this.readiness = new KubernetesReadiness(
+      {
+        clients: () => this.clients(),
+        request: (operation, options) => this.request(operation, options),
+        getOwned: (kind, name, namespace, ownership) =>
+          this.getOwned(kind, name, namespace, ownership),
+      },
+      this.options.isolationProfile,
+    );
+    this.routing = new KubernetesRouting(
+      {
+        clients: () => this.clients(),
+        request: (operation, options) => this.request(operation, options),
+        getOwned: (kind, name, namespace, ownership) =>
+          this.getOwned(kind, name, namespace, ownership),
+        reconcile: (desired, ownership, namespace) => this.reconcile(desired, ownership, namespace),
+      },
+      {
+        gatewayRouting: this.options.gatewayRouting,
+        gatewayPort: this.options.network.gatewayPort,
+      },
+    );
+    this.cleanup = new KubernetesCleanup(
+      {
+        clients: () => this.clients(),
+        request: (operation, options) => this.request(operation, options),
+        getOwned: (kind, name, namespace, ownership) =>
+          this.getOwned(kind, name, namespace, ownership),
+        gatewayRouteForRevision: (name, ownership, namespace, revisionId) =>
+          this.routing.gatewayRouteForRevision(name, ownership, namespace, revisionId),
+        deleteGatewayRoute: (name, ownership, namespace, revisionId) =>
+          this.routing.deleteGatewayRoute(name, ownership, namespace, revisionId),
+      },
+      {
+        runtimeEnabled: this.options.runtime !== undefined,
+        gatewayStorageClassName: this.options.runtime?.gatewayStorageClassName,
+      },
+    );
   }
 
   setLifecycleDrivers(drivers: readonly Driver[]): void {
@@ -1472,13 +1409,13 @@ export class KubernetesComputeDriver implements ComputeDriver {
       agentId: revision.agentId,
       servicePrincipalId: revision.servicePrincipalId,
     };
-    await this.reconcile(
+    await this.reconcileServiceForSelector(
       this.service(agentName, ownership, namespace, {
         "app.kubernetes.io/name": `${agentName}-inactive`,
       }),
       ownership,
       namespace,
-      { serviceSelector: { "openclaw.dev/revision": revision.id } },
+      { "openclaw.dev/revision": revision.id },
     );
   }
 
@@ -1554,80 +1491,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async removeRetiredGateway(revision: AgentRevision, namespace: string): Promise<void> {
-    const name = `gateway-${sha256Hex(revision.agentId, 12)}`;
-    const ownership = { namespaceId: revision.namespaceId, agentId: revision.agentId };
-    const gateway = await this.getOwned("Deployment", name, namespace, ownership);
-    if (gateway === undefined) {
-      const route = await this.gatewayRouteForRevision(name, ownership, namespace, revision.id);
-      if (route === undefined) return;
-      if (this.options.runtime !== undefined) {
-        await this.deleteGatewayPrivateStateClaim(ownership, namespace);
-      }
-      if (revision.harness.mode === "dedicated") {
-        await this.deleteSharedWorkspaceClaim(ownership, namespace);
-      }
-      await this.deleteGatewayRoute(name, ownership, namespace, revision.id);
-      await this.deleteGateway(name, ownership, namespace);
-      return;
-    }
-    const annotations = gateway.metadata.annotations ?? {};
-    if (annotations[AGENT_REVISION_ID_ANNOTATION] === revision.id) {
-      if (this.options.runtime !== undefined) {
-        await this.deleteGatewayPrivateStateClaim(ownership, namespace);
-      }
-      if (revision.harness.mode === "dedicated") {
-        await this.deleteSharedWorkspaceClaim(ownership, namespace);
-      }
-      await this.deleteGatewayRoute(name, ownership, namespace, revision.id);
-      await this.deleteGateway(name, ownership, namespace);
-    }
-  }
-
-  private async deleteGatewayRoute(
-    name: string,
-    ownership: Ownership,
-    namespace: string,
-    revisionId: string,
-  ): Promise<void> {
-    const existing = await this.gatewayRouteForRevision(name, ownership, namespace, revisionId);
-    if (existing === undefined) return;
-    if (existing.metadata.uid === undefined) {
-      throw new OwnershipFailure(
-        `HTTPRoute ${name} UID must be explicitly observed before delete.`,
-      );
-    }
-    const clients = await this.clients();
-    await this.request(
-      () =>
-        clients.objects.delete(
-          {
-            apiVersion: GATEWAY_API_VERSION,
-            kind: "HTTPRoute",
-            metadata: { name, namespace },
-          },
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          { preconditions: { uid: existing.metadata.uid } } as V1DeleteOptions,
-        ),
-      { mutating: true },
-    );
-  }
-
-  private async gatewayRouteForRevision(
-    name: string,
-    ownership: Ownership,
-    namespace: string,
-    revisionId: string,
-  ): Promise<ManagedKubernetesObject<"HTTPRoute"> | undefined> {
-    if (this.options.gatewayRouting === undefined) return undefined;
-    const existing = await this.getOwned("HTTPRoute", name, namespace, ownership);
-    if (existing === undefined) return undefined;
-    return existing.metadata.annotations?.[AGENT_REVISION_ID_ANNOTATION] === revisionId
-      ? existing
-      : undefined;
+    return this.cleanup.removeRetiredGateway(revision, namespace);
   }
 
   private async deleteGateway(
@@ -1635,251 +1499,45 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ownership: Ownership,
     namespace: string,
   ): Promise<void> {
-    const clients = await this.clients();
-    for (const kind of ["Service", "ServiceAccount", "Deployment"] as const) {
-      const existing = await this.getOwned(kind, name, namespace, ownership);
-      if (existing === undefined) continue;
-      const request = {
-        name,
-        namespace,
-        ...(existing.metadata.uid === undefined
-          ? {}
-          : { body: { preconditions: { uid: existing.metadata.uid } } }),
-      };
-      await this.request(
-        async () => {
-          if (kind === "Deployment") {
-            await clients.apps.deleteNamespacedDeployment(request);
-          } else if (kind === "Service") {
-            await clients.core.deleteNamespacedService(request);
-          } else {
-            await clients.core.deleteNamespacedServiceAccount(request);
-          }
-        },
-        { mutating: true },
-      );
-    }
+    return this.cleanup.deleteGateway(name, ownership, namespace);
   }
 
   private async resolveNamespace(
     namespaceId: string,
   ): Promise<{ readonly name: string; readonly external: boolean }> {
-    const clients = await this.clients();
-    return this.request(() => resolveKubernetesNamespace(clients.core, namespaceId));
+    return this.ownership.resolveNamespace(namespaceId);
   }
 
   private verifyAdoptableNamespace(
     namespace: ManagedKubernetesObject<"Namespace">,
     ownership: Ownership,
   ): boolean {
-    const labels = namespace.metadata.labels ?? {};
-    const annotations = namespace.metadata.annotations ?? {};
-    if (annotations["openclaw.dev/namespace-lifecycle"] !== "external") {
-      throw new OwnershipFailure(
-        `Existing Kubernetes namespace ${namespace.metadata.name} requires external ownership.`,
-      );
-    }
-    for (const mode of ["enforce", "audit", "warn"]) {
-      if (labels[`pod-security.kubernetes.io/${mode}`] !== "restricted") {
-        throw new OwnershipFailure(
-          `Existing Kubernetes namespace ${namespace.metadata.name} requires restricted Pod Security.`,
-        );
-      }
-    }
-    const existingLabel = labels["openclaw.dev/namespace"];
-    const existingId = annotations["openclaw.dev/namespace-id"];
-    if (
-      (existingLabel !== undefined && existingLabel !== ownership.namespaceId) ||
-      (existingId !== undefined && existingId !== ownership.namespaceId)
-    ) {
-      throw new OwnershipFailure(
-        `Existing Kubernetes namespace ${namespace.metadata.name} belongs to another tenant.`,
-      );
-    }
-    const requiredLabels = this.gatewayMembershipLabels();
-    const hasGatewayMembership = Object.entries(requiredLabels).every(
-      ([key, value]) => labels[key] === value,
-    );
-    return (
-      existingLabel === ownership.namespaceId &&
-      existingId === ownership.namespaceId &&
-      hasGatewayMembership
-    );
+    return this.ownership.verifyAdoptableNamespace(namespace, ownership);
   }
 
   private async verifyUniqueExistingNamespace(name: string, ownership: Ownership): Promise<void> {
-    const clients = await this.clients();
-    const observed = await this.request(() =>
-      clients.core.listNamespace({
-        labelSelector: `openclaw.dev/namespace=${ownership.namespaceId}`,
-        timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
-      }),
-    );
-    if (
-      !Array.isArray(observed?.items) ||
-      observed.items.length > 1 ||
-      (observed.items.length === 1 && observed.items[0]?.metadata?.name !== name)
-    ) {
-      throw new OwnershipFailure(
-        `Another Kubernetes namespace already claims tenant ${ownership.namespaceId}.`,
-      );
-    }
+    return this.ownership.verifyUniqueExistingNamespace(name, ownership);
   }
 
   private async claimExistingNamespace(
     namespace: ManagedKubernetesObject<"Namespace">,
     ownership: Ownership,
   ): Promise<void> {
-    if (this.verifyAdoptableNamespace(namespace, ownership)) return;
-    const resourceVersion = namespace.metadata.resourceVersion;
-    if (typeof resourceVersion !== "string" || resourceVersion.length === 0) {
-      throw new OwnershipFailure(
-        `Existing Kubernetes namespace ${namespace.metadata.name} requires a resource version.`,
-      );
-    }
-    const clients = await this.clients();
-    try {
-      await this.request(
-        () =>
-          clients.core.patchNamespace(
-            {
-              name: namespace.metadata.name,
-              body: {
-                apiVersion: "v1",
-                kind: "Namespace",
-                metadata: {
-                  name: namespace.metadata.name,
-                  resourceVersion,
-                  labels: {
-                    "openclaw.dev/namespace": ownership.namespaceId,
-                    ...this.gatewayMembershipLabels(),
-                  },
-                  annotations: { "openclaw.dev/namespace-id": ownership.namespaceId },
-                },
-              },
-              fieldManager: FIELD_MANAGER,
-              force: false,
-            },
-            this.patchOptions,
-          ),
-        { mutating: true },
-      );
-    } catch (error) {
-      if (numericErrorStatus(error) !== 409) throw error;
-      const current = await this.get("Namespace", namespace.metadata.name);
-      if (current === undefined) {
-        throw new OwnershipFailure(
-          `Existing Kubernetes namespace ${namespace.metadata.name} does not exist.`,
-        );
-      }
-      if (!this.verifyAdoptableNamespace(current, ownership)) throw error;
-    }
-    const current = await this.get("Namespace", namespace.metadata.name);
-    if (current === undefined) {
-      throw new OwnershipFailure(
-        `Existing Kubernetes namespace ${namespace.metadata.name} does not exist.`,
-      );
-    }
-    this.verifyNamespaceOwnership(current, ownership, true);
+    return this.ownership.claimExistingNamespace(namespace, ownership);
   }
 
   private async verifyExistingNetworkPolicies(
     namespace: string,
     ownership: Ownership,
   ): Promise<void> {
-    const clients = await this.clients();
-    const observed = asRecord(
-      await this.request(() =>
-        clients.networking.listNamespacedNetworkPolicy({
-          namespace,
-          timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
-        }),
-      ),
-    );
-    if (!Array.isArray(observed?.items)) {
-      throw new OwnershipFailure(
-        `The existing Kubernetes namespace ${namespace} returned invalid NetworkPolicies.`,
-      );
-    }
-    for (const item of observed.items) {
-      const policy = asRecord(item);
-      const metadata = asRecord(policy?.metadata);
-      if (
-        policy === undefined ||
-        metadata === undefined ||
-        typeof metadata.name !== "string" ||
-        metadata.name.length === 0 ||
-        metadata.namespace !== namespace ||
-        (policy.kind !== undefined && policy.kind !== "NetworkPolicy")
-      ) {
-        throw new OwnershipFailure(
-          `The existing Kubernetes namespace ${namespace} returned an invalid NetworkPolicy.`,
-        );
-      }
-      this.verifyOwnership(
-        {
-          ...policy,
-          apiVersion: typeof policy.apiVersion === "string" ? policy.apiVersion : "v1",
-          kind: "NetworkPolicy",
-          metadata: { ...metadata, name: metadata.name },
-        } as ManagedKubernetesObject<"NetworkPolicy">,
-        ownership,
-      );
-    }
+    return this.ownership.verifyExistingNetworkPolicies(namespace, ownership);
   }
 
   private async deleteOwnedNamespaceResources(
     namespace: string,
     ownership: Ownership,
   ): Promise<boolean> {
-    const clients = await this.clients();
-    const infrastructure = [
-      ["ResourceQuota", "openclaw-quota"],
-      ["LimitRange", "openclaw-limits"],
-      ["NetworkPolicy", "allow-dns"],
-      ["NetworkPolicy", "allow-gateway-ingress"],
-      ["NetworkPolicy", "default-deny"],
-    ] as const;
-    const resources: ManagedKubernetesObject<"ResourceQuota" | "LimitRange" | "NetworkPolicy">[] =
-      [];
-    for (const [kind, name] of infrastructure) {
-      const existing = await this.getOwned(kind, name, namespace, ownership);
-      if (existing !== undefined) resources.push(existing);
-    }
-
-    for (const resource of resources) {
-      const request = {
-        name: resource.metadata.name,
-        namespace,
-        ...(resource.metadata.uid === undefined
-          ? {}
-          : { body: { preconditions: { uid: resource.metadata.uid } } }),
-      };
-      try {
-        await this.request(
-          async () => {
-            if (resource.kind === "ResourceQuota") {
-              await clients.core.deleteNamespacedResourceQuota(request);
-            } else if (resource.kind === "LimitRange") {
-              await clients.core.deleteNamespacedLimitRange(request);
-            } else {
-              await clients.networking.deleteNamespacedNetworkPolicy(request);
-            }
-          },
-          { mutating: true },
-        );
-      } catch (error) {
-        if (numericErrorStatus(error) !== 404) throw error;
-      }
-      const remaining = await this.getOwned(
-        resource.kind,
-        resource.metadata.name,
-        namespace,
-        ownership,
-      );
-      if (remaining !== undefined) return false;
-    }
-    return true;
+    return this.cleanup.deleteOwnedNamespaceResources(namespace, ownership);
   }
 
   private async clients(): Promise<KubernetesApiClients> {
@@ -1988,132 +1646,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     labels: Readonly<Record<string, string>>,
     requiredRuntimeClass?: string,
   ): Promise<boolean> {
-    const clients = await this.clients();
-    const pods = asRecord(
-      await this.request(() =>
-        clients.core.listNamespacedPod({
-          namespace,
-          // Observe every Pod the active Agent Service could route to, even if an
-          // additional provider requirement label is missing or contradictory.
-          labelSelector: labelsToSelector({
-            "openclaw.dev/agent": revision.agentId,
-            "openclaw.dev/revision": revision.id,
-            "openclaw.dev/workload-role": "agent",
-          }),
-          timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
-        }),
-      ),
-    );
-    currentComputeAbortSignal()?.throwIfAborted();
-    const invalidObservation = () =>
-      new Error(
-        "The Kubernetes client returned an invalid or incomplete provider Harness Pod list.",
-      );
-    const listMetadata = asRecord(pods?.metadata);
-    if (
-      !Array.isArray(pods?.items) ||
-      (pods.apiVersion !== undefined && pods.apiVersion !== "v1") ||
-      (pods.kind !== undefined && pods.kind !== "PodList") ||
-      (pods.metadata !== undefined && listMetadata === undefined) ||
-      (listMetadata?.continue !== undefined && listMetadata.continue !== "") ||
-      (listMetadata?._continue !== undefined && listMetadata._continue !== "") ||
-      (listMetadata?.remainingItemCount !== undefined && listMetadata.remainingItemCount !== 0)
-    ) {
-      throw invalidObservation();
-    }
-    let candidates = 0;
-    let candidateReady = false;
-    let conflictingLabels = false;
-    // Validate the whole observation before trusting uniqueness, including entries after a Ready Pod.
-    for (const item of pods.items) {
-      const pod = asRecord(item);
-      const metadata = asRecord(pod?.metadata);
-      const podLabels = asRecord(metadata?.labels);
-      const status = asRecord(pod?.status);
-      if (
-        pod === undefined ||
-        (pod.apiVersion !== undefined && pod.apiVersion !== "v1") ||
-        (pod.kind !== undefined && pod.kind !== "Pod") ||
-        metadata === undefined ||
-        !isNonEmptyString(metadata.name) ||
-        !isNonEmptyString(metadata.namespace) ||
-        (metadata.labels !== undefined && podLabels === undefined) ||
-        Object.values(podLabels ?? {}).some((value) => typeof value !== "string") ||
-        (pod.status !== undefined && status === undefined) ||
-        (status?.conditions !== undefined && !Array.isArray(status.conditions))
-      ) {
-        throw invalidObservation();
-      }
-      const deletedAt = metadata.deletionTimestamp;
-      if (
-        deletedAt !== undefined &&
-        !(
-          (deletedAt instanceof Date && Number.isFinite(deletedAt.getTime())) ||
-          (typeof deletedAt === "string" &&
-            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
-              deletedAt,
-            ) &&
-            Number.isFinite(Date.parse(deletedAt)))
-        )
-      ) {
-        throw invalidObservation();
-      }
-      const conditionTypes = new Set<string>();
-      let ready = false;
-      for (const condition of (status?.conditions ?? []) as unknown[]) {
-        const observed = asRecord(condition);
-        if (
-          observed === undefined ||
-          !isNonEmptyString(observed.type) ||
-          typeof observed.status !== "string" ||
-          !["True", "False", "Unknown"].includes(observed.status) ||
-          conditionTypes.has(observed.type)
-        ) {
-          throw invalidObservation();
-        }
-        conditionTypes.add(observed.type);
-        if (observed.type === "Ready") ready = observed.status === "True";
-      }
-      if (
-        metadata.namespace !== namespace ||
-        podLabels?.["openclaw.dev/agent"] !== revision.agentId ||
-        podLabels?.["openclaw.dev/revision"] !== revision.id ||
-        podLabels?.["openclaw.dev/workload-role"] !== "agent"
-      ) {
-        continue;
-      }
-      if (
-        deletedAt !== undefined &&
-        (requiredRuntimeClass === undefined ||
-          status?.phase === "Succeeded" ||
-          status?.phase === "Failed")
-      ) {
-        continue;
-      }
-      if (requiredRuntimeClass !== undefined) {
-        // A Pod selected by this revision's route must be contained on a runtime
-        // violation even when its additional ownership labels also contradict expectations.
-        if (asRecord(pod.spec)?.runtimeClassName !== requiredRuntimeClass) {
-          throw new IsolationFailure(
-            "gVisor Alpha Pod lost its required RuntimeClass; refusing fallback.",
-          );
-        }
-        ready = ready && status?.phase === "Running";
-      }
-      // Deletion intent is not termination: verify a nonterminal Pod's runtime
-      // above before excluding it from readiness, since it may still write shared data.
-      if (deletedAt !== undefined) continue;
-      if (Object.entries(labels).some(([key, value]) => podLabels?.[key] !== value)) {
-        if (requiredRuntimeClass === undefined) throw invalidObservation();
-        // Inspect the remaining candidates before reporting label drift so an
-        // earlier conflict cannot mask a later Pod's explicit runtime violation.
-        conflictingLabels = true;
-      }
-      candidates += 1;
-      candidateReady = ready;
-    }
-    if (conflictingLabels) throw invalidObservation();
-    return candidates === 1 && candidateReady;
+    return this.readiness.providerHarnessReady(revision, namespace, labels, requiredRuntimeClass);
   }
 
   private harnessRequirementsFromDeployment(
@@ -2296,48 +1829,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     gatewayName: string,
     namespace: string,
   ): Promise<boolean> {
-    const clients = await this.clients();
-    const deployment = await this.getOwned("Deployment", gatewayName, namespace, ownership);
-    if (deployment === undefined) return false;
-    if (deployment.spec?.replicas !== 1) return false;
-    if (!this.deploymentReady(deployment)) return false;
-    const service = await this.getOwned("Service", gatewayName, namespace, ownership);
-    if (service === undefined) return false;
-    const slices = asRecord(
-      await this.request(() =>
-        clients.discovery.listNamespacedEndpointSlice({
-          namespace,
-          labelSelector: `kubernetes.io/service-name=${gatewayName}`,
-          timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
-        }),
-      ),
-    );
-    const items = Array.isArray(slices?.items) ? slices.items : [];
-    return items.some((item) => {
-      const slice = asRecord(item);
-      const metadata = asRecord(slice?.metadata);
-      if (asRecord(metadata?.labels)?.["kubernetes.io/service-name"] !== gatewayName) return false;
-      if (service.metadata.uid !== undefined) {
-        const references = Array.isArray(metadata?.ownerReferences) ? metadata.ownerReferences : [];
-        if (
-          !references.some((reference) => {
-            const owner = asRecord(reference);
-            return (
-              owner?.kind === "Service" &&
-              owner.name === gatewayName &&
-              owner.uid === service.metadata.uid
-            );
-          })
-        )
-          return false;
-      }
-      return (
-        Array.isArray(slice?.endpoints) &&
-        slice.endpoints.some(
-          (endpoint: unknown) => asRecord(asRecord(endpoint)?.conditions)?.ready === true,
-        )
-      );
-    });
+    return this.readiness.gatewayReady(ownership, gatewayName, namespace);
   }
 
   private async withIsolationContainment<T>(
@@ -2462,87 +1954,18 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async verifyIsolationProfile(): Promise<void> {
-    if (this.options.isolationProfile === undefined) return;
-    const clients = await this.clients();
-    let runtimeClass: KubernetesRecord | undefined;
-    try {
-      runtimeClass = asRecord(
-        await this.request(() =>
-          clients.objects.read({
-            apiVersion: "node.k8s.io/v1",
-            kind: "RuntimeClass",
-            metadata: { name: GVISOR_RUNTIME_CLASS },
-          }),
-        ),
-      );
-    } catch (error) {
-      if (numericErrorStatus(error) === 404) {
-        throw new IsolationFailure("gVisor Alpha RuntimeClass is missing; refusing fallback.");
-      }
-      throw error;
-    }
-    const metadata = asRecord(runtimeClass?.metadata);
-    if (
-      runtimeClass?.apiVersion !== "node.k8s.io/v1" ||
-      runtimeClass.kind !== "RuntimeClass" ||
-      metadata?.name !== GVISOR_RUNTIME_CLASS ||
-      metadata.namespace !== undefined ||
-      metadata.deletionTimestamp !== undefined ||
-      runtimeClass.handler !== GVISOR_RUNTIME_CLASS
-    ) {
-      throw new IsolationFailure(
-        "gVisor Alpha requires the exact oce-gvisor-systrap RuntimeClass and handler; refusing fallback.",
-      );
-    }
+    return this.readiness.verifyIsolationProfile();
   }
 
   private async dedicatedDeploymentReady(
     deployment: ManagedKubernetesObject,
     namespace: string,
   ): Promise<boolean> {
-    if (this.options.isolationProfile === undefined) return this.deploymentReady(deployment);
-    await this.verifyIsolationProfile();
-    const template = asRecord(deployment.spec?.template);
-    const spec = asRecord(template?.spec);
-    if (spec?.runtimeClassName !== GVISOR_RUNTIME_CLASS) {
-      throw new IsolationFailure("gVisor Alpha workload lost its required RuntimeClass.");
-    }
-    const labels: Record<string, string> = {
-      ...deployment.metadata.labels,
-      "app.kubernetes.io/name": deployment.metadata.name,
-      "openclaw.dev/workload-role": "agent",
-    };
-    const templateLabels = asRecord(asRecord(template?.metadata)?.labels);
-    if (Object.entries(labels).some(([key, value]) => templateLabels?.[key] !== value)) {
-      throw new IsolationFailure("gVisor Alpha workload labels do not match its ownership.");
-    }
-    // Inspect placement even during a rollout: an unready Deployment can still have a live unsafe Pod.
-    const podsReady = await this.providerHarnessReady(
-      {
-        agentId: required(labels["openclaw.dev/agent"], "gVisor workload Agent ID"),
-        id: required(labels["openclaw.dev/revision"], "gVisor workload revision ID"),
-      },
-      namespace,
-      labels,
-      GVISOR_RUNTIME_CLASS,
-    );
-    return this.deploymentReady(deployment) && podsReady;
+    return this.readiness.dedicatedDeploymentReady(deployment, namespace);
   }
 
   private deploymentReady(deployment: ManagedKubernetesObject): boolean {
-    const replicas = deployment.spec?.replicas;
-    const generation = deployment.metadata.generation;
-    const observed = deployment.status?.observedGeneration;
-    const ready = deployment.status?.readyReplicas;
-    return (
-      typeof replicas === "number" &&
-      replicas > 0 &&
-      typeof generation === "number" &&
-      typeof observed === "number" &&
-      observed >= generation &&
-      typeof ready === "number" &&
-      ready >= replicas
-    );
+    return this.readiness.deploymentReady(deployment);
   }
 
   private ownershipMetadata(ownership: Ownership): {
@@ -2552,39 +1975,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return KubernetesIdentity.ownershipMetadata(ownership);
   }
 
-  private verifyOwnership(
-    object: ManagedKubernetesObject<ReadableResourceKind>,
-    ownership: Ownership,
-  ): void {
-    const expected = this.ownershipMetadata(ownership);
-    for (const [key, value] of Object.entries(expected.labels)) {
-      if (object.metadata.labels?.[key] !== value) {
-        throw new OwnershipFailure(
-          `Refusing unowned Kubernetes ${object.kind} ${object.metadata.name}.`,
-        );
-      }
-    }
-    for (const [key, value] of Object.entries(expected.annotations)) {
-      if (object.metadata.annotations?.[key] !== value) {
-        throw new OwnershipFailure(
-          `Refusing unowned Kubernetes ${object.kind} ${object.metadata.name}.`,
-        );
-      }
-    }
-  }
-
   private verifyNamespaceOwnership(
     namespace: ManagedKubernetesObject<"Namespace">,
     ownership: Ownership,
     external: boolean,
   ): void {
-    const observed = verifiedKubernetesNamespace(namespace.metadata, ownership.namespaceId);
-    if (observed.external !== external) {
-      throw new OwnershipFailure(
-        `Refusing changed Kubernetes Namespace ownership for ${namespace.metadata.name}.`,
-      );
-    }
-    if (!external) this.verifyOwnership(namespace, ownership);
+    return verifyNamespaceOwnership(namespace, ownership, external);
   }
 
   private manifest<Kind extends ReadableResourceKind>(
@@ -2622,65 +2018,16 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return KubernetesGateway.gatewayMembershipLabels(this.options.gatewayRouting);
   }
 
-  private gatewayRouteName(agentId: string): string {
-    return KubernetesGateway.gatewayRouteName(agentId);
-  }
-
   private gatewayRoutePath(revision: AgentRevision): string {
-    return KubernetesGateway.gatewayRoutePath(revision);
+    return this.routing.gatewayRoutePath(revision);
   }
 
   private gatewayRoutingHostname(routing: KubernetesGatewayRoutingOptions): string {
-    return KubernetesGateway.gatewayRoutingHostname(routing);
+    return this.routing.gatewayRoutingHostname(routing);
   }
 
   private verifyGatewayRoutingConfiguration(revision: AgentRevision): void {
-    if (this.options.gatewayRouting === undefined) return;
-    const gateway = asRecord(revision.configuration.gateway);
-    const auth = asRecord(gateway?.auth);
-    const trustedProxy = asRecord(auth?.trustedProxy);
-    const trustedProxies = gateway?.trustedProxies;
-    if (auth?.mode !== "trusted-proxy") {
-      throw new ConfigurationFailure(
-        "Gateway routing requires native trusted-proxy authentication.",
-      );
-    }
-    if ("token" in (auth ?? {})) {
-      throw new ConfigurationFailure("Gateway routing native configuration must omit auth.token.");
-    }
-    if (trustedProxy?.userHeader !== "x-occ-identity") {
-      throw new ConfigurationFailure(
-        "Gateway routing requires native trustedProxy.userHeader x-occ-identity.",
-      );
-    }
-    if (
-      !Array.isArray(trustedProxy.allowUsers) ||
-      !trustedProxy.allowUsers.includes("occ-workspace-files")
-    ) {
-      throw new ConfigurationFailure(
-        "Gateway routing requires native trustedProxy.allowUsers to include occ-workspace-files.",
-      );
-    }
-    const identityScopes = asRecord(auth?.identityScopes);
-    const workspaceFileScopes = identityScopes?.["occ-workspace-files"];
-    if (!Array.isArray(workspaceFileScopes) || !workspaceFileScopes.includes("operator.admin")) {
-      throw new ConfigurationFailure(
-        "Gateway routing requires native identityScopes to grant operator.admin.",
-      );
-    }
-    if (gateway?.allowRealIpFallback !== true) {
-      throw new ConfigurationFailure(
-        "Gateway routing requires native allowRealIpFallback to be enabled.",
-      );
-    }
-    if (
-      !Array.isArray(trustedProxies) ||
-      !trustedProxies.some((proxy) => typeof proxy === "string" && proxy.trim().length > 0)
-    ) {
-      throw new ConfigurationFailure(
-        "Gateway routing requires explicitly configured native trustedProxies.",
-      );
-    }
+    return this.routing.verifyGatewayRoutingConfiguration(revision);
   }
 
   private gatewayRoute(
@@ -2689,18 +2036,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespace: string,
     service: ManagedKubernetesObject<"Service">,
   ): ManagedKubernetesObject<"HTTPRoute"> | undefined {
-    return KubernetesGateway.gatewayRoute(
-      {
-        ...(this.options.gatewayRouting === undefined
-          ? {}
-          : { gatewayRouting: this.options.gatewayRouting }),
-        gatewayPort: this.options.network.gatewayPort,
-      },
-      revision,
-      ownership,
-      namespace,
-      service,
-    );
+    return this.routing.gatewayRoute(revision, ownership, namespace, service);
   }
 
   private async reconcileGatewayRoute(
@@ -2708,12 +2044,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ownership: Ownership,
     namespace: string,
   ): Promise<void> {
-    if (this.options.gatewayRouting === undefined) return;
-    const name = this.gatewayRouteName(revision.agentId);
-    const service = await this.getOwned("Service", name, namespace, ownership);
-    if (service === undefined) return;
-    const route = this.gatewayRoute(revision, ownership, namespace, service);
-    if (route !== undefined) await this.reconcile(route, ownership, namespace);
+    return this.routing.reconcileGatewayRoute(revision, ownership, namespace);
   }
 
   private sharedWorkspaceClaimName(agentId: string): string {
@@ -2745,27 +2076,6 @@ export class KubernetesComputeDriver implements ComputeDriver {
     );
   }
 
-  private verifyPersistentVolumeClaim(
-    claim: ManagedKubernetesObject,
-    desired: ManagedKubernetesObject,
-  ): void {
-    const accessModes = Array.isArray(claim.spec?.accessModes) ? claim.spec.accessModes : [];
-    const expectedModes = Array.isArray(desired.spec?.accessModes) ? desired.spec.accessModes : [];
-    const requests = asRecord(asRecord(claim.spec?.resources)?.requests);
-    const expectedRequests = asRecord(asRecord(desired.spec?.resources)?.requests);
-    if (
-      claim.metadata.deletionTimestamp !== undefined ||
-      accessModes.length !== expectedModes.length ||
-      accessModes.some((mode, index) => mode !== expectedModes[index]) ||
-      requests?.storage !== expectedRequests?.storage ||
-      (claim.spec?.volumeMode ?? "Filesystem") !== (desired.spec?.volumeMode ?? "Filesystem") ||
-      (desired.spec?.storageClassName !== undefined &&
-        claim.spec?.storageClassName !== desired.spec.storageClassName)
-    ) {
-      throw new OwnershipFailure(`Refusing invalid PersistentVolumeClaim ${claim.metadata.name}.`);
-    }
-  }
-
   private sharedWorkspaceVolumeMounts(role: SharedWorkspaceRole): V1VolumeMount[] {
     return KubernetesStorage.sharedWorkspaceVolumeMounts(role);
   }
@@ -2791,47 +2101,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
     );
   }
 
-  private async deleteSharedWorkspaceClaim(ownership: Ownership, namespace: string): Promise<void> {
-    const agentId = required(ownership.agentId, "Shared workspace Agent ID");
-    await this.deletePersistentVolumeClaim(
-      this.sharedWorkspaceClaim(agentId, ownership, namespace),
-      ownership,
-      namespace,
-    );
-  }
-
   private async deleteGatewayPrivateStateClaim(
     ownership: Ownership,
     namespace: string,
   ): Promise<void> {
-    const agentId = required(ownership.agentId, "Gateway private state Agent ID");
-    await this.deletePersistentVolumeClaim(
-      this.gatewayPrivateStateClaim(agentId, ownership, namespace),
-      ownership,
-      namespace,
-    );
-  }
-
-  private async deletePersistentVolumeClaim(
-    desired: ManagedKubernetesObject<"PersistentVolumeClaim">,
-    ownership: Ownership,
-    namespace: string,
-  ): Promise<void> {
-    const name = desired.metadata.name;
-    const existing = await this.getOwned("PersistentVolumeClaim", name, namespace, ownership);
-    if (existing === undefined || existing.metadata.deletionTimestamp !== undefined) return;
-    this.verifyPersistentVolumeClaim(existing, desired);
-    const uid = required(existing.metadata.uid, "PersistentVolumeClaim UID");
-    const clients = await this.clients();
-    await this.request(
-      () =>
-        clients.core.deleteNamespacedPersistentVolumeClaim({
-          name,
-          namespace,
-          body: { preconditions: { uid } },
-        }),
-      { mutating: true },
-    );
+    return this.cleanup.deleteGatewayPrivateStateClaim(ownership, namespace);
   }
 
   private agentAuthenticationNetworkPolicy(
@@ -2951,7 +2225,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ownership: Ownership,
     namespace: string,
     selector: Record<string, string>,
-  ): ManagedKubernetesObject {
+  ): ManagedKubernetesObject<"Service"> {
     return KubernetesNetwork.service(
       {
         gatewayPort: this.options.network.gatewayPort,
@@ -2968,128 +2242,21 @@ export class KubernetesComputeDriver implements ComputeDriver {
     desired: ManagedKubernetesObject,
     ownership: Ownership,
     namespace?: string,
-    precondition?: ReconcilePrecondition,
   ): Promise<void> {
-    const clients = await this.clients();
-    const existing = await this.getOwned(desired.kind, desired.metadata.name, namespace, ownership);
-    if (precondition !== undefined && desired.kind !== "Service") {
-      throw new ConfigurationFailure(
-        `Unsupported Kubernetes reconcile precondition for ${desired.kind}.`,
-      );
-    }
-    if (existing === undefined && precondition !== undefined) return;
-    if (existing !== undefined) {
-      if (precondition?.serviceSelector !== undefined) {
-        const selector = asRecord(existing.spec?.selector);
-        if (
-          Object.entries(precondition.serviceSelector).some(
-            ([name, value]) => selector?.[name] !== value,
-          )
-        ) {
-          return;
-        }
-      }
-      if (desired.kind === "ConfigMap") {
-        const annotations = desired.metadata.annotations ?? {};
-        if (
-          existing.immutable !== true ||
-          Object.entries(annotations).some(
-            ([name, value]) => existing.metadata.annotations?.[name] !== value,
-          ) ||
-          existing.data?.[CONFIGURATION_DOCUMENT] !== desired.data?.[CONFIGURATION_DOCUMENT] ||
-          Object.keys(existing.data ?? {}).length !== 1 ||
-          Object.keys(existing.binaryData ?? {}).length !== 0
-        ) {
-          throw new OwnershipFailure(
-            `Refusing invalid immutable Kubernetes ConfigMap ${desired.metadata.name}.`,
-          );
-        }
-        return;
-      }
-      if (desired.kind === "PersistentVolumeClaim") {
-        this.verifyPersistentVolumeClaim(existing, desired);
-        return;
-      }
-    }
-    const request = {
-      name: desired.metadata.name,
-      body: desired,
-      fieldManager: FIELD_MANAGER,
-      force: false,
-    };
-    await this.request(
-      async () => {
-        switch (desired.kind) {
-          case "Namespace":
-            await clients.core.patchNamespace(request, this.patchOptions);
-            return;
-          case "ConfigMap":
-            await clients.core.patchNamespacedConfigMap(
-              { ...request, namespace: required(namespace, "ConfigMap namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "ServiceAccount":
-            await clients.core.patchNamespacedServiceAccount(
-              { ...request, namespace: required(namespace, "ServiceAccount namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "Service":
-            await clients.core.patchNamespacedService(
-              { ...request, namespace: required(namespace, "Service namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "ResourceQuota":
-            await clients.core.patchNamespacedResourceQuota(
-              { ...request, namespace: required(namespace, "ResourceQuota namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "LimitRange":
-            await clients.core.patchNamespacedLimitRange(
-              { ...request, namespace: required(namespace, "LimitRange namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "PersistentVolumeClaim":
-            await clients.core.patchNamespacedPersistentVolumeClaim(
-              { ...request, namespace: required(namespace, "PersistentVolumeClaim namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "Deployment":
-            await clients.apps.patchNamespacedDeployment(
-              { ...request, namespace: required(namespace, "Deployment namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "NetworkPolicy":
-            await clients.networking.patchNamespacedNetworkPolicy(
-              { ...request, namespace: required(namespace, "NetworkPolicy namespace") },
-              this.patchOptions,
-            );
-            return;
-          case "HTTPRoute":
-            await clients.objects.patch(
-              desired,
-              undefined,
-              undefined,
-              FIELD_MANAGER,
-              false,
-              APPLY_CONTENT_TYPE,
-            );
-            return;
-          default: {
-            const unsupported: never = desired.kind;
-            throw new ConfigurationFailure(
-              `Unsupported managed Kubernetes resource ${unsupported}.`,
-            );
-          }
-        }
-      },
-      { mutating: true },
+    return this.mutations.reconcile(desired, ownership, namespace);
+  }
+
+  private async reconcileServiceForSelector(
+    desired: ManagedKubernetesObject<"Service">,
+    ownership: Ownership,
+    namespace: string,
+    serviceSelector: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    return this.mutations.reconcileServiceForSelector(
+      desired,
+      ownership,
+      namespace,
+      serviceSelector,
     );
   }
 
@@ -3099,9 +2266,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespace: string | undefined,
     ownership: Ownership,
   ): Promise<ManagedKubernetesObject<Kind> | undefined> {
-    const object = await this.get(kind, name, namespace);
-    if (object !== undefined) this.verifyOwnership(object, ownership);
-    return object;
+    return this.ownership.getOwned(kind, name, namespace, ownership);
   }
 
   private async get<Kind extends ReadableResourceKind>(
