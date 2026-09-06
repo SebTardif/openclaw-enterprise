@@ -1,0 +1,860 @@
+{
+  "schemaVersion": 1,
+  "status": "synthetic comparison coverage; no admission or runtime qualification",
+  "ruleFamilies": [
+    {
+      "id": "R01",
+      "fieldGroup": "images-and-pull-policy",
+      "fixtures": [
+        {
+          "id": "R01-complete",
+          "outcome": "conforming",
+          "description": "Every selected role has the same explicit digest-pinned image and pull policy as its expected object."
+        },
+        {
+          "id": "R01-pinned-identity-preserved",
+          "outcome": "conforming",
+          "description": "An explicit admitted digest reference is compared without case rewriting or registry lookup. The selected synthetic main/init association stays the same."
+        },
+        {
+          "id": "R01-main-image",
+          "outcome": "nonconforming",
+          "description": "Change main image digest."
+        },
+        {
+          "id": "R01-init-pull",
+          "outcome": "nonconforming",
+          "description": "Change init pull policy."
+        },
+        {
+          "id": "R01-missing-actual-image",
+          "outcome": "nonconforming",
+          "description": "Remove actual image."
+        },
+        {
+          "id": "R01-template-image",
+          "outcome": "nonconforming",
+          "description": "Change only controller template image."
+        },
+        {
+          "id": "R01-unknown-pull-enum",
+          "outcome": "nonconforming",
+          "description": "Supply unsupported actual pull enum."
+        },
+        {
+          "id": "R01-missing-expected-image",
+          "outcome": "unknown",
+          "description": "Remove expected image: static-input-unavailable."
+        },
+        {
+          "id": "R01-mutable-expected-image",
+          "outcome": "unknown",
+          "description": "Expected identity depends on an unresolved mutable tag: normalization-unavailable, never conforming."
+        }
+      ]
+    },
+    {
+      "id": "R02",
+      "fieldGroup": "ordered-commands-and-arguments",
+      "fixtures": [
+        {
+          "id": "R02-ordered",
+          "outcome": "conforming",
+          "description": "Explicit command and arguments match byte-for-byte and in order."
+        },
+        {
+          "id": "R02-empty-args",
+          "outcome": "conforming",
+          "description": "Explicit empty argument arrays match when admitted in both trees."
+        },
+        {
+          "id": "R02-reordered",
+          "outcome": "nonconforming",
+          "description": "Swap two arguments."
+        },
+        {
+          "id": "R02-command-path",
+          "outcome": "nonconforming",
+          "description": "Change executable path."
+        },
+        {
+          "id": "R02-null-vs-empty",
+          "outcome": "nonconforming",
+          "description": "Actual null does not equal explicit empty args."
+        },
+        {
+          "id": "R02-absent-vs-empty",
+          "outcome": "nonconforming",
+          "description": "Actual omitted args do not equal explicit empty args."
+        },
+        {
+          "id": "R02-unresolved-inheritance",
+          "outcome": "unknown",
+          "description": "Missing expected entrypoint/argv depends on OCI configuration not represented by resolved expected fields: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R03",
+      "fieldGroup": "init-main-ephemeral-containers",
+      "fixtures": [
+        {
+          "id": "R03-complete",
+          "outcome": "conforming",
+          "description": "One complete main, one complete init and explicit no-ephemeral selection match."
+        },
+        {
+          "id": "R03-explicit-role-records",
+          "outcome": "conforming",
+          "description": "All present selected container records are evaluated using the same closed executable-field policy."
+        },
+        {
+          "id": "R03-sidecar",
+          "outcome": "nonconforming",
+          "description": "Add an unapproved regular container."
+        },
+        {
+          "id": "R03-init-addition",
+          "outcome": "nonconforming",
+          "description": "Add a second init."
+        },
+        {
+          "id": "R03-ephemeral-addition",
+          "outcome": "nonconforming",
+          "description": "Add an ephemeral container."
+        },
+        {
+          "id": "R03-duplicate-name",
+          "outcome": "nonconforming",
+          "description": "Duplicate a container name."
+        },
+        {
+          "id": "R03-missing-main",
+          "outcome": "nonconforming",
+          "description": "Remove the required main container."
+        },
+        {
+          "id": "R03-missing-expected-role",
+          "outcome": "unknown",
+          "description": "Expected main/role inventory is absent or ambiguous: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R04",
+      "fieldGroup": "probes-and-lifecycle-hooks",
+      "fixtures": [
+        {
+          "id": "R04-no-hooks",
+          "outcome": "conforming",
+          "description": "Both usable objects omit unselected hooks."
+        },
+        {
+          "id": "R04-explicit-hooks",
+          "outcome": "conforming",
+          "description": "Matching supported explicit probe and lifecycle records are traversed."
+        },
+        {
+          "id": "R04-exec-probe",
+          "outcome": "nonconforming",
+          "description": "Change readiness exec command."
+        },
+        {
+          "id": "R04-hook",
+          "outcome": "nonconforming",
+          "description": "Add preStop/postStart action."
+        },
+        {
+          "id": "R04-timing",
+          "outcome": "nonconforming",
+          "description": "Change period, timeout or threshold."
+        },
+        {
+          "id": "R04-handler-union",
+          "outcome": "nonconforming",
+          "description": "Supply multiple mutually exclusive action handlers."
+        },
+        {
+          "id": "R04-header-secret",
+          "outcome": "nonconforming",
+          "description": "Change a header value and verify sanitized finding only."
+        },
+        {
+          "id": "R04-unknown-nested",
+          "outcome": "nonconforming",
+          "description": "Add an unknown nested probe field."
+        }
+      ]
+    },
+    {
+      "id": "R05",
+      "fieldGroup": "environment-and-source-selectors",
+      "fixtures": [
+        {
+          "id": "R05-literal",
+          "outcome": "conforming",
+          "description": "Exact closed literal environment matches."
+        },
+        {
+          "id": "R05-typed-source",
+          "outcome": "conforming",
+          "description": "Exact admitted typed source locator and optional flag match."
+        },
+        {
+          "id": "R05-literal-change",
+          "outcome": "nonconforming",
+          "description": "Change PATH/HOME/config literal."
+        },
+        {
+          "id": "R05-secret-source",
+          "outcome": "nonconforming",
+          "description": "Substitute secret/config source name or key."
+        },
+        {
+          "id": "R05-envfrom-addition",
+          "outcome": "nonconforming",
+          "description": "Add an envFrom source."
+        },
+        {
+          "id": "R05-conflicting-source",
+          "outcome": "nonconforming",
+          "description": "Supply literal and source simultaneously."
+        },
+        {
+          "id": "R05-duplicate-name",
+          "outcome": "nonconforming",
+          "description": "Duplicate environment key."
+        },
+        {
+          "id": "R05-redaction",
+          "outcome": "nonconforming",
+          "description": "Secret sentinel in value and arbitrary unknown key never appears in findings, errors or serialized result."
+        },
+        {
+          "id": "R05-unresolved-source",
+          "outcome": "unknown",
+          "description": "Expected environment/source inventory is unresolved: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R06",
+      "fieldGroup": "process-security-and-identity",
+      "fixtures": [
+        {
+          "id": "R06-restricted-explicit",
+          "outcome": "conforming",
+          "description": "Explicit selected restricted identity/context fields match."
+        },
+        {
+          "id": "R06-token-shape",
+          "outcome": "conforming",
+          "description": "Exact admitted projected account token shape matches with automount disabled."
+        },
+        {
+          "id": "R06-uid",
+          "outcome": "nonconforming",
+          "description": "Change process UID/GID."
+        },
+        {
+          "id": "R06-group",
+          "outcome": "nonconforming",
+          "description": "Add supplemental group or change policy."
+        },
+        {
+          "id": "R06-capability",
+          "outcome": "nonconforming",
+          "description": "Add capability or remove drop ALL."
+        },
+        {
+          "id": "R06-privilege",
+          "outcome": "nonconforming",
+          "description": "Enable privileged/allowPrivilegeEscalation or writable root."
+        },
+        {
+          "id": "R06-seccomp",
+          "outcome": "nonconforming",
+          "description": "Change seccomp profile/type."
+        },
+        {
+          "id": "R06-host-namespace",
+          "outcome": "nonconforming",
+          "description": "Enable host namespace/share process override."
+        },
+        {
+          "id": "R06-proc-sysctl-device",
+          "outcome": "nonconforming",
+          "description": "Add unsupported device/proc/sysctl widening."
+        },
+        {
+          "id": "R06-service-account",
+          "outcome": "nonconforming",
+          "description": "Change account or automount flag."
+        },
+        {
+          "id": "R06-interface",
+          "outcome": "nonconforming",
+          "description": "Change an admitted listener port/hostPort/interface field."
+        },
+        {
+          "id": "R06-missing-expected-identity",
+          "outcome": "unknown",
+          "description": "Expected effective identity/security context is incomplete: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R07",
+      "fieldGroup": "mounts-volumes-and-propagation",
+      "fixtures": [
+        {
+          "id": "R07-directional",
+          "outcome": "conforming",
+          "description": "Synthetic workspace RW, sessions RO and skills RO projections match exact source and mount paths."
+        },
+        {
+          "id": "R07-init-home-only",
+          "outcome": "conforming",
+          "description": "Init has only its expected runtime-home mount."
+        },
+        {
+          "id": "R07-direction",
+          "outcome": "nonconforming",
+          "description": "Promote a RO projection to RW."
+        },
+        {
+          "id": "R07-claim",
+          "outcome": "nonconforming",
+          "description": "Change claim/source association."
+        },
+        {
+          "id": "R07-whole-claim",
+          "outcome": "nonconforming",
+          "description": "Remove subPath or broaden mount."
+        },
+        {
+          "id": "R07-shadow",
+          "outcome": "nonconforming",
+          "description": "Add duplicate/overlapping shadow mount."
+        },
+        {
+          "id": "R07-propagation",
+          "outcome": "nonconforming",
+          "description": "Change propagation or subPathExpr."
+        },
+        {
+          "id": "R07-private-state",
+          "outcome": "nonconforming",
+          "description": "Add gateway-private or hostPath/admin socket volume."
+        },
+        {
+          "id": "R07-projected-token",
+          "outcome": "nonconforming",
+          "description": "Change token audience/expiration/path/defaultMode."
+        },
+        {
+          "id": "R07-unresolved-volume-name",
+          "outcome": "nonconforming",
+          "description": "Reference an absent/ambiguous volume."
+        },
+        {
+          "id": "R07-stores-due",
+          "outcome": "unknown",
+          "description": "Required stores authority is unavailable: stage-binding-unavailable, even with matching raw mounts."
+        }
+      ]
+    },
+    {
+      "id": "R08",
+      "fieldGroup": "resources-overhead-and-defaults",
+      "fixtures": [
+        {
+          "id": "R08-explicit-budgets",
+          "outcome": "conforming",
+          "description": "All explicit required init/main resource dimensions and admitted Pod/overhead shape match."
+        },
+        {
+          "id": "R08-zero-vs-absent",
+          "outcome": "conforming",
+          "description": "Explicit permitted zero remains a value, distinct from absence."
+        },
+        {
+          "id": "R08-init-default",
+          "outcome": "nonconforming",
+          "description": "Change/remove actual init budget."
+        },
+        {
+          "id": "R08-ephemeral",
+          "outcome": "nonconforming",
+          "description": "Change ephemeral storage."
+        },
+        {
+          "id": "R08-pod-overhead",
+          "outcome": "nonconforming",
+          "description": "Change Pod budget/overhead despite unchanged main budget."
+        },
+        {
+          "id": "R08-quantity-spelling",
+          "outcome": "nonconforming",
+          "description": "1000m and 1 do not silently become equal."
+        },
+        {
+          "id": "R08-unknown-dimension",
+          "outcome": "nonconforming",
+          "description": "Add unknown resource/default/resize dimension."
+        },
+        {
+          "id": "R08-missing-expected-budget",
+          "outcome": "unknown",
+          "description": "Missing expected init/main dimension: static-input-unavailable."
+        },
+        {
+          "id": "R08-unresolved-accounting-input",
+          "outcome": "unknown",
+          "description": "Producer marks unresolved accounting/default expectation unavailable; matching partial tree cannot pass."
+        }
+      ]
+    },
+    {
+      "id": "R09",
+      "fieldGroup": "dns-hosts-and-service-links",
+      "fixtures": [
+        {
+          "id": "R09-explicit",
+          "outcome": "conforming",
+          "description": "Exact synthetic resolver/search/hosts/service-link records match."
+        },
+        {
+          "id": "R09-resolver",
+          "outcome": "nonconforming",
+          "description": "Substitute nameserver."
+        },
+        {
+          "id": "R09-search",
+          "outcome": "nonconforming",
+          "description": "Add search suffix or DNS option."
+        },
+        {
+          "id": "R09-hosts",
+          "outcome": "nonconforming",
+          "description": "Change host alias."
+        },
+        {
+          "id": "R09-service-links",
+          "outcome": "nonconforming",
+          "description": "Enable service links."
+        },
+        {
+          "id": "R09-dns-enum",
+          "outcome": "nonconforming",
+          "description": "Unsupported DNS policy never passes even if expected policy is otherwise complete."
+        },
+        {
+          "id": "R09-missing-expected-dns",
+          "outcome": "unknown",
+          "description": "Required expected DNS/service settings unresolved: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R10",
+      "fieldGroup": "restart-termination-and-controller-update",
+      "fixtures": [
+        {
+          "id": "R10-explicit-defaults",
+          "outcome": "conforming",
+          "description": "Explicit admitted Always and complete selected RollingUpdate records match."
+        },
+        {
+          "id": "R10-restart",
+          "outcome": "nonconforming",
+          "description": "Change restart policy."
+        },
+        {
+          "id": "R10-termination",
+          "outcome": "nonconforming",
+          "description": "Change grace/message/deadline fields."
+        },
+        {
+          "id": "R10-strategy",
+          "outcome": "nonconforming",
+          "description": "Change update strategy or its values."
+        },
+        {
+          "id": "R10-replicas",
+          "outcome": "nonconforming",
+          "description": "Change replicas."
+        },
+        {
+          "id": "R10-unknown-restart-rule",
+          "outcome": "nonconforming",
+          "description": "Introduce unsupported restart rule/enum."
+        },
+        {
+          "id": "R10-missing-expected-default",
+          "outcome": "unknown",
+          "description": "Expected behavior relies on unresolved omitted lifecycle default: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R11",
+      "fieldGroup": "placement-and-runtime",
+      "fixtures": [
+        {
+          "id": "R11-placement",
+          "outcome": "conforming",
+          "description": "Exact supported runtimeClass/node/selector/affinity/toleration shape matches."
+        },
+        {
+          "id": "R11-runtime-class",
+          "outcome": "nonconforming",
+          "description": "Change RuntimeClass."
+        },
+        {
+          "id": "R11-node",
+          "outcome": "nonconforming",
+          "description": "Change node/selector."
+        },
+        {
+          "id": "R11-affinity",
+          "outcome": "nonconforming",
+          "description": "Change affinity/selector operator/term."
+        },
+        {
+          "id": "R11-toleration",
+          "outcome": "nonconforming",
+          "description": "Broaden toleration."
+        },
+        {
+          "id": "R11-scheduler-priority",
+          "outcome": "nonconforming",
+          "description": "Change scheduler/priority/preemption."
+        },
+        {
+          "id": "R11-unknown-feature",
+          "outcome": "nonconforming",
+          "description": "Add an unsupported scheduling/resource-claim feature."
+        },
+        {
+          "id": "R11-missing-expected-runtime",
+          "outcome": "unknown",
+          "description": "Expected runtime/placement descriptor unresolved: static-input-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R12",
+      "fieldGroup": "approved-annotations",
+      "fixtures": [
+        {
+          "id": "R12-exact-set",
+          "outcome": "conforming",
+          "description": "Same exact approved annotation entries in different object-key order match."
+        },
+        {
+          "id": "R12-unknown-key",
+          "outcome": "nonconforming",
+          "description": "Add unapproved annotation."
+        },
+        {
+          "id": "R12-override",
+          "outcome": "nonconforming",
+          "description": "Change runtime/policy/config annotation value."
+        },
+        {
+          "id": "R12-template-only",
+          "outcome": "nonconforming",
+          "description": "Change annotation only on Deployment template."
+        },
+        {
+          "id": "R12-secret-key-redaction",
+          "outcome": "nonconforming",
+          "description": "Secret sentinel in unknown annotation key/value is not emitted."
+        }
+      ]
+    },
+    {
+      "id": "R13",
+      "fieldGroup": "api-managed-diagnostics-and-raw-presence",
+      "fixtures": [
+        {
+          "id": "R13-key-order",
+          "outcome": "conforming",
+          "description": "Reorder ordinary object keys without value changes."
+        },
+        {
+          "id": "R13-named-diagnostics",
+          "outcome": "conforming",
+          "description": "Each of the four individually declared diagnostic changes is comparison-equivalent."
+        },
+        {
+          "id": "R13-empty-exclusions",
+          "outcome": "conforming",
+          "description": "Equal raw diagnostics with empty exclusions match."
+        },
+        {
+          "id": "R13-undeclared-diagnostic",
+          "outcome": "nonconforming",
+          "description": "Change diagnostic not selected for exclusion."
+        },
+        {
+          "id": "R13-identity",
+          "outcome": "nonconforming",
+          "description": "Change nonexcluded object identity/version/owner chain."
+        },
+        {
+          "id": "R13-status",
+          "outcome": "nonconforming",
+          "description": "Change supplied status/exec image identity."
+        },
+        {
+          "id": "R13-unknown-actual",
+          "outcome": "nonconforming",
+          "description": "Unknown actual key at every nested object context denies."
+        },
+        {
+          "id": "R13-null-absence",
+          "outcome": "nonconforming",
+          "description": "Null, absent, empty map and empty array remain distinct."
+        },
+        {
+          "id": "R13-template-exclusion",
+          "outcome": "nonconforming",
+          "description": "An exclusion for Pod metadata does not silently exclude template metadata."
+        },
+        {
+          "id": "R13-unknown-both",
+          "outcome": "unknown",
+          "description": "Same unknown field on both actual and expected is unusable, never conforming: normalization-unavailable."
+        },
+        {
+          "id": "R13-unsupported-expected-enum",
+          "outcome": "unknown",
+          "description": "Same unsupported enum on both is normalization-unavailable."
+        }
+      ]
+    },
+    {
+      "id": "R14",
+      "fieldGroup": "stage-and-result-binding",
+      "fixtures": [
+        {
+          "id": "R14-candidate-no-future-id",
+          "outcome": "conforming",
+          "description": "Complete synthetic candidate with providerObjects/execution not-due and no future Pod/runsc/SVID passes comparison."
+        },
+        {
+          "id": "R14-observed-bound",
+          "outcome": "conforming",
+          "description": "Complete original bound-instance observation and exact supplied raw UID/RV/profile correspondence can pass."
+        },
+        {
+          "id": "R14-observed-preallocated",
+          "outcome": "conforming",
+          "description": "Complete actual preallocated-candidate observation remains distinct from pre-persistence stage."
+        },
+        {
+          "id": "R14-candidate-operations",
+          "outcome": "conforming",
+          "description": "All four declared candidate operations compare supplied complete objects; no API integration is claimed."
+        },
+        {
+          "id": "R14-bound-field-mismatch",
+          "outcome": "nonconforming",
+          "description": "Valid exact stage/binding but actual raw field mismatch produces bounded nonconforming."
+        },
+        {
+          "id": "R14-missing-static",
+          "outcome": "unknown",
+          "description": "Unavailable static expectation remains unknown even if partial documents match."
+        },
+        {
+          "id": "R14-missing-profile-use",
+          "outcome": "unknown",
+          "description": "Absent use remains unknown."
+        },
+        {
+          "id": "R14-missing-expected-ref",
+          "outcome": "unknown",
+          "description": "Missing expected content locator remains unknown."
+        },
+        {
+          "id": "R14-common-due",
+          "outcome": "unknown",
+          "description": "Parameterize each common required server authority unavailable."
+        },
+        {
+          "id": "R14-observed-due",
+          "outcome": "unknown",
+          "description": "Parameterize providerObjects/execution unavailable when observed."
+        },
+        {
+          "id": "R14-noncomplete-observation",
+          "outcome": "unknown",
+          "description": "Every original noncomplete Runtime status remains unknown."
+        },
+        {
+          "id": "R14-unavailable-precedence",
+          "outcome": "unknown",
+          "description": "Due-unavailable plus raw mismatch remains unknown, retaining unavailable reason."
+        },
+        {
+          "id": "R14-normalization-unavailable",
+          "outcome": "unknown",
+          "description": "Unusable required expected normalization remains unknown."
+        }
+      ]
+    }
+  ],
+  "boundaryChecks": [
+    {
+      "id": "B01-schema-version",
+      "description": "schema/comparison/normalization version substitution"
+    },
+    {
+      "id": "B02-stage",
+      "description": "candidate later-bindings supplied or observed not-due"
+    },
+    {
+      "id": "B03-owner",
+      "description": "wrong original authority label"
+    },
+    {
+      "id": "B04-profile",
+      "description": "mismatched manifest/admission/version/scope/component configuration or original three binding-role digests"
+    },
+    {
+      "id": "B05-target",
+      "description": "substituted exact target or candidate request/result binding"
+    },
+    {
+      "id": "B06-observed-identity",
+      "description": "UID/resourceVersion/cluster/namespace mismatch while preserving original earlier expected RV semantics"
+    },
+    {
+      "id": "B07-exchange",
+      "description": "detached result binding/purpose or forged conforming result with unavailable expectation"
+    },
+    {
+      "id": "B08-raw-kind",
+      "description": "unsupported API/kind, including ReplicaSet supplied through Pod/Deployment-only contract"
+    },
+    {
+      "id": "B09-safe-input",
+      "description": "accessor/proxy/cycle/exotic alias/oversized input rejected by original decoder without callback or value reflection"
+    },
+    {
+      "id": "B10-findings",
+      "description": "closed redacted code/path, deterministic ordering, max64 and no mismatch-to-pass truncation"
+    },
+    {
+      "id": "B11-input-immutability",
+      "description": "deep frozen original snapshot and untouched caller trees after comparison"
+    },
+    {
+      "id": "B12-isolation",
+      "description": "Five separate strict compiles, four public-subpath producer/consumer projects and exact module/runtime import inventory include no application/provider/store/canonical graph."
+    }
+  ],
+  "integrationOwnedCases": [
+    {
+      "id": "current-use",
+      "description": "Original accepting adapter checks actual terminal withdrawal, current admission and guarded consumption."
+    },
+    {
+      "id": "before-execution",
+      "description": "Original admission integration owns create/update/generated workload/patch/apply/ephemeral paths, mutators/defaulting, protected writers and service failure denial."
+    },
+    {
+      "id": "actual-proofs",
+      "description": "Original protected producers supply authentic current profile, identity, handler, credential exclusion and writer-barrier evidence."
+    }
+  ],
+  "completenessCases": [
+    {
+      "id": "C01-probe-defaults",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C02-selector-labels",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C03-status-identity",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C04-object-name",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C05-object-namespace",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C06-resource-source",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C07-probe-port",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C08-downward-source",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C09-observed-name",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C10-selector-expression",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C11-duplicate-port-name",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    },
+    {
+      "id": "C12-namespace-correspondence",
+      "outcomes": [
+        "nonconforming for actual-only change",
+        "unknown for same-on-both incomplete expectation"
+      ]
+    }
+  ]
+}

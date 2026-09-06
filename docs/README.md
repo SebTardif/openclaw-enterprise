@@ -11,6 +11,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
 - [Acceptance companions and producer receipts](reference/acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
+- [Native consumer measurement](reference/native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Security events](reference/security-events.md): versioned projection, audit access, and retention contracts; production emitters and durable sinks remain unimplemented.
 - [Operational diagnostic records](reference/operational-diagnostics.md): submit bounded lifecycle and security projections to Pino; production invocation, durable audit delivery, and Collector verification remain separate.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
@@ -69,8 +70,10 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Schema and auth persistence boundary](reference/schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](reference/audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](reference/runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
-- [Final Pod comparison contract](reference/containment-admission.md): consume Harness admission-contract declarations and structural decoders; comparator and expectation adapter remain unimplemented, and physical isolation and provider qualification remain separate.
+- [Final Pod comparison contract](reference/containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
+- [Final Pod comparator](reference/final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](reference/containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
+- [Containment evidence and fault requests](reference/containment-evidence-v1.md): compare supplied control evidence and retain exact fault-request readback; current authority, durable fault persistence, and physical stop remain separate.
 - [Direct Compute interruption preparation](reference/direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](reference/retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](reference/same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
