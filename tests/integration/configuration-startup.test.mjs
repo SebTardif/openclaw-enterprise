@@ -253,12 +253,26 @@ test("production embedded and dedicated replacements preserve their active Servi
     assert.equal(service.spec.ports[0].name, embedded ? "http" : "websocket");
 
     const serviceWrites = [];
-    computeDriver.reconcile = async (manifest) => {
-      assert.equal(manifest.kind, "Service");
-      assert.equal(manifest.metadata.name, name);
-      service.spec.selector = structuredClone(manifest.spec.selector);
-      serviceWrites.push(structuredClone(manifest.spec.selector));
-    };
+    // Record only SDK reads and writes so actual ownership and conditional
+    // selector checks decide whether the Service may change.
+    computeDriver.apiClients = Promise.resolve({
+      core: {
+        async readNamespacedService(request) {
+          assert.deepEqual(request, { name, namespace: kubernetesNamespaceName(namespaceId) });
+          return structuredClone(service);
+        },
+        async patchNamespacedService(request) {
+          assert.equal(request.name, name);
+          assert.equal(request.namespace, kubernetesNamespaceName(namespaceId));
+          assert.equal(request.force, false);
+          assert.equal(request.fieldManager, "openclaw-enterprise-compute");
+          assert.equal(request.body.kind, "Service");
+          assert.equal(request.body.metadata.name, name);
+          service.spec.selector = structuredClone(request.body.spec.selector);
+          serviceWrites.push(structuredClone(request.body.spec.selector));
+        },
+      },
+    });
     computeDriver.prepareRevision = async (revision) => ({
       namespaceId: revision.namespaceId,
       agentId: revision.agentId,
@@ -426,6 +440,36 @@ test("production embedded and dedicated replacements preserve their active Servi
     }
 
     const inactiveSelector = { "app.kubernetes.io/name": `${name}-inactive` };
+    if (!embedded) {
+      // A failed candidate cannot withdraw its predecessor's serving route.
+      await computeDriver.deactivateRevision(candidate);
+      assert.deepEqual(service.spec.selector, activeSelector);
+      assert.deepEqual(serviceWrites, []);
+
+      // Separately observe the route after candidate activation: an older
+      // revision cannot withdraw it, but its selected revision can.
+      const candidateSelector = {
+        "app.kubernetes.io/name": `${name}-rev-${shortHash(candidate.id, 12)}`,
+        "openclaw.dev/agent": agentId,
+        "openclaw.dev/revision": candidate.id,
+        "openclaw.dev/workload-role": "agent",
+      };
+      service.spec.selector = computeDriver.service(
+        name,
+        ownership,
+        kubernetesNamespaceName(namespaceId),
+        candidateSelector,
+      ).spec.selector;
+      await computeDriver.deactivateRevision(predecessor);
+      assert.deepEqual(service.spec.selector, candidateSelector);
+      assert.deepEqual(serviceWrites, []);
+      await computeDriver.deactivateRevision(candidate);
+      assert.deepEqual(service.spec.selector, inactiveSelector);
+      assert.deepEqual(serviceWrites, [inactiveSelector]);
+    }
+
+    // Initial preparation leaves an inactive Service in both modes. The
+    // dedicated write above belongs to explicit withdrawal, not preparation.
     if (embedded) {
       // Embedded preparation already fences its gateway; the worker must never rewrite it pre-CAS.
       service.spec.selector = computeDriver.service(
@@ -435,6 +479,7 @@ test("production embedded and dedicated replacements preserve their active Servi
         inactiveSelector,
       ).spec.selector;
     }
+    const writesBeforeInitial = structuredClone(serviceWrites);
     const initial = await reconciler.observeRevision(
       execution,
       candidate,
@@ -446,6 +491,7 @@ test("production embedded and dedicated replacements preserve their active Servi
     assert.equal(initial.outcome, "success");
     assert.equal(initial.code, "REVISION_ACTIVATED");
     assert.equal(Object.hasOwn(initial, "expectedActiveRevisionId"), false);
+    assert.deepEqual(serviceWrites, writesBeforeInitial);
     assert.deepEqual(serviceWrites, embedded ? [] : [inactiveSelector]);
     assert.deepEqual(service.spec.selector, inactiveSelector);
   }
