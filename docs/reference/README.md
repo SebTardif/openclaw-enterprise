@@ -56,6 +56,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Lifecycle admission and durable work definitions](lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
+- [Lifecycle work codec and preflight](lifecycle-work-preflight.md): encode inert work data and inspect original work through read-only preflight; queue/handler installation and actual accepting-use guards remain separate.
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
