@@ -33,13 +33,16 @@
     "./credential-storage-v1": "./src/credential-storage-v1.ts",
     "./runtime-assignment": "./src/runtime-assignment.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
+    "./workload-profile-v1": "./src/workload-profile-v1.ts",
     "./completed-context-v1": "./src/completed-context-v1.ts",
     "./turn-journal-v1": "./src/turn-journal-v1.ts",
     "./channel-bindings": "./src/channel-bindings.ts",
     "./api/common": "./src/api/common.ts",
     "./api/resources": "./src/api/resources.ts",
     "./api/routes": "./src/api/routes.ts",
-    "./api/channel-bindings": "./src/api/channel-bindings.ts"
+    "./api/channel-bindings": "./src/api/channel-bindings.ts",
+    "./api/workload-profile/resources": "./src/api/workload-profile/resources.ts",
+    "./api/workload-profile/routes": "./src/api/workload-profile/routes.ts"
   },
   "types": "./src/index.ts",
   "files": [
