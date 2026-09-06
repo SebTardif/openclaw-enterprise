@@ -39,7 +39,9 @@
     "./lifecycle/work-preflight-v1": "./src/lifecycle/work-preflight-v1.ts",
     "./lifecycle/status-projector-v1": "./src/lifecycle/status-projector-v1.ts",
     "./lifecycle/status-reader-v1": "./src/lifecycle/status-reader-v1.ts",
-    "./persistence/retained-store-preflight-v1": "./src/persistence/retained-store-preflight-v1.ts"
+    "./persistence/retained-store-preflight-v1": "./src/persistence/retained-store-preflight-v1.ts",
+    "./containment/evidence-evaluator-v1": "./src/containment/evidence-evaluator-v1.ts",
+    "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
