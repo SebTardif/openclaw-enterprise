@@ -58,6 +58,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Hosted gateway composition](hosted-gateway.md): programmatic local Slack/Teams
   lifecycle ownership; protected executable startup remains unavailable.
 - [Retained runtime preparation](runtime-preparation.md): internal plans, immutable request bytes and exact recovery.
+- [Repository preparation interfaces](repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
 - [Lifecycle admission and durable work definitions](lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
