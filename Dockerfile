@@ -8,8 +8,17 @@ WORKDIR /src
 COPY components/runtime-security/go.mod components/runtime-security/go.sum ./
 RUN go mod download
 COPY components/runtime-security/ ./
-RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-security ./cmd/oce-runtime-security
-RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-authority ./cmd/oce-runtime-authority
+# An explicit worktree namespace enables compiler reuse across source changes.
+# Keep direct callers' ordinary Go cache behavior when the scope is omitted.
+ARG GO_BUILD_CACHE_SCOPE
+ARG GO_BASE_IMAGE
+ARG TARGETPLATFORM
+RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARGETPLATFORM},target=/var/cache/oce-go-build,sharing=locked \
+    if [ -n "$GO_BUILD_CACHE_SCOPE" ]; then export GOCACHE=/var/cache/oce-go-build; fi; \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-security ./cmd/oce-runtime-security
+RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARGETPLATFORM},target=/var/cache/oce-go-build,sharing=locked \
+    if [ -n "$GO_BUILD_CACHE_SCOPE" ]; then export GOCACHE=/var/cache/oce-go-build; fi; \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-authority ./cmd/oce-runtime-authority
 RUN chmod 0555 /out/oce-runtime-authority
 RUN sh licenses/collect.sh /out/licenses
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   CommandFailure,
   executionOrder,
+  goBuildCacheScope,
   runCommand,
   verifyFile,
 } from "../../scripts/build-mvp.mjs";
@@ -234,6 +235,29 @@ test("controller images require a pinned Go build input before any prerequisite 
   }
 });
 
+test("Go compiler cache namespaces follow canonical worktree directories", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-build-cache-scope-"));
+  try {
+    const first = join(directory, "first worktree");
+    const second = join(directory, "second worktree");
+    await mkdir(first);
+    await mkdir(second);
+    const scope = goBuildCacheScope(first);
+    assert.match(scope, /^[a-f0-9]{64}$/);
+    assert.equal(goBuildCacheScope(join(first, ".")), scope);
+    assert.notEqual(goBuildCacheScope(second), scope);
+    if (process.platform !== "win32") {
+      const alias = join(directory, "worktree alias");
+      await symlink(first, alias, "dir");
+      assert.equal(goBuildCacheScope(alias), scope);
+    }
+    // An absent checkout cannot silently inherit some other directory's cache.
+    assert.throws(() => goBuildCacheScope(join(directory, "missing")), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("the image command preserves both controller base digests and isolates egress inputs", async () => {
   const nodeImage = `node:24@sha256:${"a".repeat(64)}`;
   const goImage = `golang:1.26@sha256:${"b".repeat(64)}`;
@@ -249,19 +273,21 @@ test("the image command preserves both controller base digests and isolates egre
           "-e",
           `import { imageBuildArguments } from ${JSON.stringify(moduleUrl)}; process.stdout.write(JSON.stringify(imageBuildArguments(${JSON.stringify(kind)}, "output.image-id")));`,
         ],
-        { capture: true, env: { ...process.env, PATH: "", ...environment } },
+        { cwd: tmpdir(), capture: true, env: { ...process.env, PATH: "", ...environment } },
       ),
     );
   const controller = await inspect("controller", {
     OCC_BUILD_CONTROLLER_TAG: "controller:local",
     OCC_BUILD_NODE_BASE_IMAGE: nodeImage,
     OCC_BUILD_GO_BASE_IMAGE: goImage,
+    GO_BUILD_CACHE_SCOPE: "ambient-scope-must-not-select-another-worktrees-cache",
   });
   const buildArguments = (args) =>
     args.filter((_, index) => index > 0 && args[index - 1] === "--build-arg");
   assert.deepEqual(buildArguments(controller), [
     `NODE_BASE_IMAGE=${nodeImage}`,
     `GO_BASE_IMAGE=${goImage}`,
+    `GO_BUILD_CACHE_SCOPE=${goBuildCacheScope()}`,
   ]);
   assert.equal(controller[controller.indexOf("--target") + 1], "runtime");
   const egress = await inspect("egress", {
