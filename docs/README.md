@@ -53,6 +53,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   and revision activation.
 - [Runtime authority interfaces](reference/runtime-authority.md): immutable bindings,
   purpose-specific results, trusted-context requirements, and contract verification.
+- [Runtime activation](reference/runtime-activation-v1.md): bounded conditional routing,
+  exact predecessor cleanup and original-operation recovery.
 - [Channels and delivery](reference/channels.md): current direct-channel topology,
   binding versus admission, state ownership, and Slack/Teams verification limits.
 - [Security controls](reference/security.md), [settings](reference/settings.md),
