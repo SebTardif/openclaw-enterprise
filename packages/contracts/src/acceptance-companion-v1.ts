@@ -4324,6 +4324,14 @@ const execution = Type.Union([
     monotonicDurationMs: Type.Integer({ minimum: 0, maximum: 604_800_000 }),
     capture: authenticCaptureClaim,
   }),
+  closed({
+    state: Type.Literal("end-unavailable"),
+    executionClass,
+    executorRef: opaque,
+    tool: digest("tool"),
+    started: clock,
+    capture: authenticCaptureClaim,
+  }),
 ]);
 const review = Type.Union([
   missing,

@@ -173,3 +173,29 @@ export function syntheticReceipt(companionBytes: Uint8Array): ProducerReceiptV1 
     reuse: null,
   };
 }
+
+/** Fictional observed launch with no observed end; no native process is started. */
+export function syntheticEndUnavailableReceipt(companionBytes: Uint8Array): ProducerReceiptV1 {
+  const receipt = syntheticReceipt(companionBytes);
+  const execution = receipt.execution;
+  if (execution.state !== "observed") throw new Error("unexpected-synthetic-execution");
+  return {
+    ...receipt,
+    outcome: "unknown",
+    reasonCode: "synthetic-end-unavailable",
+    execution: {
+      state: "end-unavailable",
+      executionClass: execution.executionClass,
+      executorRef: execution.executorRef,
+      tool: execution.tool,
+      started: execution.started,
+      capture: {
+        state: "claimed",
+        authorityRef: "synthetic-capture",
+        executorBinding: digest("evidence", "synthetic-executor-binding"),
+        sourceAttemptBinding: digest("evidence", "synthetic-source-attempt"),
+      },
+    },
+    checks: receipt.checks.map((check) => ({ ...check, outcome: "unknown" })),
+  };
+}

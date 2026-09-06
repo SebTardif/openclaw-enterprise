@@ -31,6 +31,7 @@ import {
   encode,
   syntheticCompanion,
   syntheticReceipt,
+  syntheticEndUnavailableReceipt,
 } from "../fixtures/acceptance-companion-v1/producer.ts";
 import { readClaim } from "../fixtures/acceptance-companion-v1/consumer.ts";
 
@@ -107,6 +108,7 @@ test("independent reader retains unit versus live and physical termination unkno
   assert.deepEqual(readClaim(bytes, encode(receipt)), {
     outcome: "pass",
     declaredClass: "unit",
+    executionState: "observed",
     authentication: "unverified",
   });
   receipt.execution.executionClass = "live";
@@ -558,4 +560,123 @@ test("redaction, independent rejection and invalidation remain separate from a d
   assert.equal(decoded.authentication, "unverified");
   receipt.invalidation.replacementInput = receipt.inputManifest;
   reject(decodeClaim(receipt), "inconsistent-receipt");
+});
+
+test("Q1 retains observed launch and unavailable end separately from unrun and physical settlement", () => {
+  const bytes = specBytes();
+  const started = claim().execution.started;
+  for (const outcome of ["unknown", "blocked"]) {
+    const receipt = syntheticEndUnavailableReceipt(bytes);
+    receipt.outcome = outcome;
+    const encoded = encode(receipt);
+    const joined = bindProducerReceiptV1(bytes, encoded);
+    assert.equal(joined.ok, true);
+    assert.equal(joined.authentication, "unverified");
+    assert.equal(joined.receipt.value.execution.state, "end-unavailable");
+    assert.deepEqual(joined.receipt.value.execution.started, started);
+    assert.equal(joined.receipt.value.execution.capture.state, "claimed");
+    assert.equal(joined.receipt.value.observations[0].state, "unknown");
+    for (const key of ["ended", "monotonicClockRef", "monotonicDurationMs"]) {
+      assert.equal(Object.hasOwn(joined.receipt.value.execution, key), false);
+    }
+    assert.deepEqual(joined.receipt.originalBytes(), encoded);
+    assert.deepEqual(readClaim(bytes, encoded), {
+      outcome,
+      declaredClass: "unit",
+      executionState: "end-unavailable",
+      authentication: "unverified",
+    });
+  }
+});
+
+test("Q1 refuses completion outcomes, unrun relabeling and missing collection for observed launch", () => {
+  for (const outcome of ["pass", "fail", "unrun", "skipped", "not_applicable", null]) {
+    const receipt = syntheticEndUnavailableReceipt(specBytes());
+    receipt.outcome = outcome;
+    reject(decodeClaim(receipt), "inconsistent-receipt");
+  }
+  const missing = syntheticEndUnavailableReceipt(specBytes());
+  missing.collection = "missing";
+  missing.outcome = null;
+  reject(decodeClaim(missing), "inconsistent-receipt");
+  const relabeled = syntheticEndUnavailableReceipt(specBytes());
+  relabeled.execution.state = "unrun";
+  reject(decodeClaim(relabeled), "invalid-shape");
+});
+
+test("Q1 refuses invented unavailable clocks, duration values and missing launch fields", () => {
+  for (const field of ["ended", "monotonicClockRef", "monotonicDurationMs"]) {
+    for (const value of [null, 0, "2026-01-01T00:00:01.000Z", claim().execution.ended]) {
+      const receipt = syntheticEndUnavailableReceipt(specBytes());
+      receipt.execution[field] = value;
+      reject(decodeClaim(receipt), "invalid-shape");
+    }
+  }
+  for (const field of ["started", "capture"]) {
+    const receipt = syntheticEndUnavailableReceipt(specBytes());
+    delete receipt.execution[field];
+    reject(decodeClaim(receipt), "invalid-shape");
+  }
+  const extra = structuredClone(syntheticEndUnavailableReceipt(specBytes()));
+  extra.execution.started.receiptTimeInstead = extra.receivedAt;
+  reject(decodeClaim(extra), "invalid-shape");
+});
+
+test("Q1 requires frozen procedure and valid start while preserving missing result and capture", () => {
+  const missingProcedure = syntheticEndUnavailableReceipt(specBytes());
+  missingProcedure.procedure = { state: "missing" };
+  reject(decodeClaim(missingProcedure), "inconsistent-receipt");
+  const badClock = structuredClone(syntheticEndUnavailableReceipt(specBytes()));
+  badClock.execution.started.observedAt = "2026-02-30T00:00:00.000Z";
+  reject(decodeClaim(badClock), "inconsistent-receipt");
+  const missingEvidence = syntheticEndUnavailableReceipt(specBytes());
+  missingEvidence.result = { state: "missing" };
+  missingEvidence.execution.capture = { state: "missing" };
+  const decoded = decodeClaim(missingEvidence);
+  assert.equal(decoded.ok, true);
+  assert.equal(decoded.value.outcome, "unknown");
+  assert.equal(decoded.authentication, "unverified");
+});
+
+test("Q1 applies independent-review checks and never promotes partial successful subchecks", () => {
+  const bytes = specBytes();
+  const receipt = syntheticEndUnavailableReceipt(bytes);
+  receipt.checks[0].outcome = "pass";
+  receipt.review = {
+    state: "recorded",
+    digest: evidence("review"),
+    inputManifest: receipt.inputManifest,
+    result: receipt.result.digest,
+    reviewerRef: receipt.execution.executorRef,
+    humanReviewerRef: null,
+    coordinatorRef: "synthetic-coordinator",
+    disposition: "unknown",
+    unresolvedFindings: [],
+  };
+  reject(decodeClaim(receipt), "inconsistent-receipt");
+  receipt.review.reviewerRef = "synthetic-independent-reviewer";
+  const joined = bindProducerReceiptV1(bytes, encode(receipt));
+  assert.equal(joined.ok, true);
+  assert.equal(joined.receipt.value.checks[0].outcome, "pass");
+  assert.equal(joined.receipt.value.outcome, "unknown");
+  assert.equal(joined.receipt.value.execution.state, "end-unavailable");
+  assert.equal(joined.authentication, "unverified");
+});
+
+test("Q1 receipt-definition successor refuses the old identity and preserves companion identity", () => {
+  const previous = "b7964df399d61f90f1c79808e3f68fb6e7f5a1c25c4c37055e903fcd2fdef62a";
+  assert.notEqual(ACCEPTANCE_SCHEMA_DIGESTS_V1.receipt, previous);
+  assert.equal(
+    ACCEPTANCE_SCHEMA_DIGESTS_V1.companion,
+    "04e70c36d36645ad67262e32042af8481acb827fbdf2c960a678f91dd0ba4253",
+  );
+  const legacy = claim();
+  legacy.schemaDigest = previous;
+  const legacyBytes = encode(legacy);
+  const retained = legacyBytes.slice();
+  reject(decodeProducerReceiptV1(legacyBytes), "schema-mismatch");
+  assert.deepEqual(legacyBytes, retained);
+  const current = syntheticEndUnavailableReceipt(specBytes());
+  assert.equal(current.schemaVersion, "producer-receipt/v1");
+  assert.equal(decodeClaim(current).ok, true);
 });

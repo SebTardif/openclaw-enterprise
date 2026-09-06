@@ -290,17 +290,25 @@ function receiptConsistency(value: ProducerReceiptV1): void {
     value.execution.state !== "unrun"
   )
     throw "inconsistent-receipt";
+  if (
+    value.execution.state === "end-unavailable" &&
+    value.outcome !== "unknown" &&
+    value.outcome !== "blocked"
+  )
+    throw "inconsistent-receipt";
   if (value.outcome === "not_applicable" && leaf.required) throw "metadata-mismatch";
-  if (value.execution.state === "observed") {
+  if (value.execution.state !== "unrun") {
     if (value.procedure.state !== "frozen") throw "inconsistent-receipt";
     const start = time(value.execution.started.observedAt);
-    const end = time(value.execution.ended.observedAt);
-    // Different clocks retain uncertainty; their wall values cannot establish ordering.
-    if (
-      value.execution.started.clockRef === value.execution.ended.clockRef &&
-      end + value.execution.ended.uncertaintyMs < start - value.execution.started.uncertaintyMs
-    )
-      throw "inconsistent-receipt";
+    if (value.execution.state === "observed") {
+      const end = time(value.execution.ended.observedAt);
+      // Different clocks retain uncertainty; their wall values cannot establish ordering.
+      if (
+        value.execution.started.clockRef === value.execution.ended.clockRef &&
+        end + value.execution.ended.uncertaintyMs < start - value.execution.started.uncertaintyMs
+      )
+        throw "inconsistent-receipt";
+    }
   }
   const subjects = new Set<string>();
   for (const check of value.checks) {
@@ -341,7 +349,7 @@ function receiptConsistency(value: ProducerReceiptV1): void {
     )
       throw "inconsistent-receipt";
     if (
-      value.execution.state === "observed" &&
+      value.execution.state !== "unrun" &&
       value.review.reviewerRef === value.execution.executorRef
     )
       throw "inconsistent-receipt";

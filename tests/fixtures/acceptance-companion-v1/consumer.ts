@@ -1,6 +1,7 @@
 import type {
   AcceptanceClassV1,
   AcceptanceOutcomeV1,
+  ProducerReceiptV1,
 } from "@openclaw-enterprise/contracts/acceptance-companion-v1";
 import {
   bindProducerReceiptV1,
@@ -15,6 +16,7 @@ export function readClaim(
   | {
       outcome: AcceptanceOutcomeV1 | null;
       declaredClass: AcceptanceClassV1 | null;
+      executionState: ProducerReceiptV1["execution"]["state"];
       authentication: "unverified";
     }
   | { error: string } {
@@ -23,9 +25,19 @@ export function readClaim(
   const value = binding.receipt.value;
   return {
     outcome: value.outcome,
-    declaredClass: value.execution.state === "observed" ? value.execution.executionClass : null,
+    declaredClass: value.execution.state === "unrun" ? null : value.execution.executionClass,
+    executionState: value.execution.state,
     authentication: binding.authentication,
   };
+}
+
+export function cannotInventEnd(
+  execution: Extract<ProducerReceiptV1["execution"], { state: "end-unavailable" }>,
+): void {
+  // @ts-expect-error An unavailable end has no timestamp to read or manufacture.
+  void execution.ended;
+  // @ts-expect-error An unavailable duration is not a numeric measurement.
+  void execution.monotonicDurationMs;
 }
 
 export function cannotMutate(companion: Uint8Array): void {
