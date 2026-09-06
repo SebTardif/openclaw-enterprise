@@ -60,6 +60,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
   lifecycle ownership; protected executable startup remains unavailable.
 - [Retained runtime preparation](runtime-preparation.md): internal plans, immutable request bytes and exact recovery.
 - [Repository preparation interfaces](repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
+- [Preparation Job interfaces](preparation-job.md): versioned preparation identity, Job and Pod lineage, conditional effect observations, and retained staging handoff; definitions do not establish live provider authority.
 - [Lifecycle admission and durable work definitions](lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
@@ -68,6 +69,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
+- [Kubernetes resource normalization](kubernetes-resource-normalization.md): normalize supplied accounting and render selected resource plans; protected admission association, current workload correspondence, and effective allocation remain unavailable.
 - [Final Pod comparison contract](containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
 - [Final Pod comparator](final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
