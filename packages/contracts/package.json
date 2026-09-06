@@ -49,7 +49,8 @@
     "./lifecycle-admission-v1": "./src/lifecycle-admission-v1.ts",
     "./lifecycle-observation-v1": "./src/lifecycle-observation-v1.ts",
     "./completed-state-v1": "./src/completed-state-v1.ts",
-    "./runtime-effects-v1": "./src/runtime-effects-v1.ts"
+    "./runtime-effects-v1": "./src/runtime-effects-v1.ts",
+    "./containment-admission-v1": "./src/containment-admission-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
