@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "../../..",
+    "outDir": "../../../.build/repository-preparation-v1/declarations"
+  },
+  "files": [
+    "../../../packages/contracts/src/repository-preparation-v1.ts",
+    "../../../packages/contracts/src/repository-preparation-codec-v1.ts"
+  ],
+  "include": []
+}
