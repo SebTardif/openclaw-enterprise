@@ -1,3 +1,4 @@
+import { createMemoryRevisionRepository } from "./memory/revisions.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { legacyOperations } from "../lifecycle/protective-admission-v1.ts";
 import { createMemoryLifecycleAdmission } from "./memory/lifecycle-admission.ts";
@@ -41,10 +42,7 @@ export type {
 } from "../ports/repositories/namespace.ts";
 import type { AgentReadRepository, AgentRepository } from "../ports/repositories/agent.ts";
 export type { AgentReadRepository, AgentRepository } from "../ports/repositories/agent.ts";
-import type {
-  AgentRevisionReadRepository,
-  AgentRevisionRepository,
-} from "../ports/repositories/revision.ts";
+import type { AgentRevisionReadRepository } from "../ports/repositories/revision.ts";
 export type {
   AgentRevisionReadRepository,
   AgentRevisionRepository,
@@ -773,52 +771,28 @@ function repositories(
     },
   };
 
-  const revisions: AgentRevisionRepository = {
-    findRevision: async (namespaceId, agentId, revisionId) => {
-      if (snapshot.namespaces.get(namespaceId)?.deletedAt !== undefined) return undefined;
-      const candidate = snapshot.revisions
-        .get(agentKey(namespaceId, agentId))
-        ?.find((revision) => revision.id === revisionId);
-      return candidate?.namespaceId === namespaceId && candidate.agentId === agentId
-        ? immutableCopy(candidate)
-        : undefined;
+  const revisions = createMemoryRevisionRepository({
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    listRevisions: async (namespaceId, agentId) =>
-      Object.freeze(
-        snapshot.namespaces.get(namespaceId)?.deletedAt === undefined
-          ? (snapshot.revisions.get(agentKey(namespaceId, agentId)) ?? [])
-              .filter(
-                (revision) => revision.namespaceId === namespaceId && revision.agentId === agentId,
-              )
-              .map((revision) => immutableCopy(revision))
-          : [],
-      ),
-    createRevision: async (revision) => {
-      assertInitialized(snapshot);
-      assertAdmittedAgentRevision(revision);
-      const owner = await agents.findAgent(revision.namespaceId, revision.agentId);
-      if (
-        owner === undefined ||
-        owner.servicePrincipalId !== revision.servicePrincipalId ||
-        owner.providerId !== revision.providerId ||
-        revision.serviceAccount?.id !== owner.serviceAccountId
-      )
-        throw new ScopeViolationError("The AgentRevision belongs to an unavailable Agent.");
-      const secretBindings = normalizedSecretBindings(revision.secretBindings);
-      await assertSecretBindingsAvailable(secrets, revision.namespaceId, secretBindings);
-      const key = agentKey(revision.namespaceId, revision.agentId);
-      const previous = snapshot.revisions.get(key) ?? [];
-      if (previous.some((existing) => existing.id === revision.id))
-        throw new ResourceConflictError("The server generated an existing AgentRevision identity.");
-      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
-      const saved = immutableCopy({
-        ...withoutSecretBindings,
-        ...(secretBindings === undefined ? {} : { secretBindings }),
-      });
-      snapshot.revisions.set(key, Object.freeze([...previous, saved]));
-      return immutableCopy(saved);
+    snapshot: {
+      get installation() {
+        return snapshot.installation;
+      },
+      namespaces: snapshot.namespaces,
+      revisions: snapshot.revisions,
     },
-  };
+    agents,
+    revisionKey: agentKey,
+    assertInitialized: () => assertInitialized(snapshot),
+    assertAdmittedAgentRevision,
+    normalizedSecretBindings,
+    assertSecretBindingsAvailable: (namespaceId, bindings) =>
+      assertSecretBindingsAvailable(secrets, namespaceId, bindings),
+  });
 
   const runtimeOwner = async (scope: RuntimeScope, writing = false) => {
     const namespace = await namespaces.findNamespace(scope.namespaceId);

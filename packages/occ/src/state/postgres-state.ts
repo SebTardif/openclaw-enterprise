@@ -1,3 +1,4 @@
+import { createPostgresRevisionRepository } from "./postgres/revisions.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
 import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
@@ -88,7 +89,6 @@ import type {
   RuntimeScope,
   RuntimeIntentAttribution,
   AgentRepository,
-  AgentRevisionRepository,
   InstallationRepository,
   PlatformAuditSink,
   PlatformOperation,
@@ -1982,94 +1982,22 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
 
-    const revisions: AgentRevisionRepository = {
-      findRevision: async (namespaceId, agentId, revisionId) => {
-        const found = rows(
-          (
-            await client.query(
-              `SELECT r.id, r.namespace_id, r.agent_id, r.revision_number, r.provider_id,
-                      r.admitted_spec,
-                      r.admitted_at, a.service_principal_id
-               FROM occ.agent_revisions AS r
-               JOIN occ.agents AS a ON a.namespace_id = r.namespace_id AND a.id = r.agent_id
-               JOIN occ.namespaces AS n ON n.id = r.namespace_id AND n.deleted_at IS NULL
-               WHERE r.namespace_id = $1 AND r.agent_id = $2 AND r.id = $3`,
-              [namespaceId, agentId, revisionId],
-            )
-          ).rows,
-        )[0];
-        return found === undefined ? undefined : revisionFromRow(found);
+    const revisions = createPostgresRevisionRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
       },
-      listRevisions: async (namespaceId, agentId) => {
-        const found = rows(
-          (
-            await client.query(
-              `SELECT r.id, r.namespace_id, r.agent_id, r.revision_number, r.provider_id,
-                      r.admitted_spec,
-                      r.admitted_at, a.service_principal_id
-               FROM occ.agent_revisions AS r
-               JOIN occ.agents AS a ON a.namespace_id = r.namespace_id AND a.id = r.agent_id
-               JOIN occ.namespaces AS n ON n.id = r.namespace_id AND n.deleted_at IS NULL
-               WHERE r.namespace_id = $1 AND r.agent_id = $2 ORDER BY r.revision_number`,
-              [namespaceId, agentId],
-            )
-          ).rows,
-        );
-        return Object.freeze(found.map((row) => revisionFromRow(row)));
-      },
-      createRevision: async (revision) => {
-        await this.requireInitialized(context);
-        const owner = await agents.findAgent(revision.namespaceId, revision.agentId);
-        if (
-          owner === undefined ||
-          owner.servicePrincipalId !== revision.servicePrincipalId ||
-          owner.providerId !== revision.providerId ||
-          revision.serviceAccount?.id !== owner.serviceAccountId
-        )
-          throw new ScopeViolationError("The AgentRevision belongs to an unavailable Agent.");
-        const secretBindings =
-          revision.secretBindings === undefined
-            ? undefined
-            : secretBindingsFromState(revision.secretBindings, revision.namespaceId);
-        await validateSecretBindingsAvailable(revision.namespaceId, secretBindings);
-        await client.query(
-          `INSERT INTO occ.agent_revisions
-           (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec, admitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
-          [
-            revision.id,
-            revision.namespaceId,
-            revision.agentId,
-            revision.revision,
-            revision.providerId,
-            JSON.stringify({
-              configuration_id: revision.configurationId,
-              configuration_kind: revision.configurationKind,
-              configuration_generation: revision.configurationGeneration,
-              draft_spec: revision.configuration,
-              harness: revision.harness,
-              compute: revision.compute,
-              ...(revision.sandboxDriverId === undefined
-                ? {}
-                : { sandbox_driver_id: revision.sandboxDriverId }),
-              ...(revision.secretDriverId === undefined
-                ? {}
-                : { secret_driver_id: revision.secretDriverId }),
-              ...(secretBindings === undefined ? {} : { secret_bindings: secretBindings }),
-              ...(revision.serviceAccount === undefined
-                ? {}
-                : { service_account: revision.serviceAccount }),
-            }),
-            revision.createdAt,
-          ],
-        );
-        const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
-        return immutableCopy({
-          ...withoutSecretBindings,
-          ...(secretBindings === undefined ? {} : { secretBindings }),
-        });
-      },
-    };
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => client.query(statement, parameters) },
+      requireInitialized: () => this.requireInitialized(context),
+      agents,
+      rows,
+      revisionFromRow,
+      secretBindingsFromState,
+      validateSecretBindingsAvailable,
+    });
 
     const runtimeOwner = async (scope: RuntimeScope, writing = false) => {
       const installation = await this.currentInstallation(context);
