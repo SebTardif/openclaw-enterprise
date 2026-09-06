@@ -81,6 +81,8 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Direct Compute interruption preparation](reference/direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](reference/retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](reference/same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
+- [Retirement purge manifest definitions](reference/retirement-purge-manifest.md): validate immutable manifests and store progress; complete inventory, current authority, physical settlement, and deletion remain separate.
+- [Retirement purge journal definitions](reference/retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
 - [Delegated authority library](reference/delegation.md): root grant constraints,
