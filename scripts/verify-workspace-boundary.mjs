@@ -4,7 +4,11 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const activeApplications = ["controller"];
+const activeApplications = ["controller", "gateway"];
+const applicationEntrypoints = {
+  controller: ["index.ts", "server.mjs"],
+  gateway: ["composition.ts", "main.mjs"],
+};
 const activePackages = ["utils", "contracts", "occ", "iam", "audit"];
 const activeSourceRoots = [
   ...activeApplications.map((name) => `apps/${name}/src`),
@@ -84,7 +88,7 @@ const sources = (
   await Promise.all(activeSourceRoots.map((path) => sourceFiles(join(repositoryRoot, path))))
 ).flat();
 for (const name of activeApplications) {
-  for (const entrypoint of ["index.ts", "server.mjs"]) {
+  for (const entrypoint of applicationEntrypoints[name]) {
     assert.ok(
       sources.includes(join(repositoryRoot, "apps", name, "src", entrypoint)),
       `The ${name} application must provide its ${entrypoint} entrypoint.`,
@@ -108,6 +112,6 @@ for (const source of sources) {
 
 process.stdout.write(
   "Workspace boundary verified: " +
-    `${activeApplications.length} application, ${activePackages.length} packages, ` +
+    `${activeApplications.length} applications, ${activePackages.length} packages, ` +
     `${sources.length} sources, legacy excluded.\n`,
 );

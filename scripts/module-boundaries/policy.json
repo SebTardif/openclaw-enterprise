@@ -1,9 +1,10 @@
 {
   "version": 1,
   "description": "Checks active application/package source, including newly added leaves. Tests intentionally access implementation source and are outside this architecture graph. Package manifests own supported exports. Run node scripts/verify-module-boundaries.mjs; --json includes the complete graph. TypeScript must already be installed. Temporary exceptions must match an actual diagnostic exactly and are rejected when stale.",
-  "sourceRoots": ["apps/controller/src", "packages"],
+  "sourceRoots": ["apps/controller/src", "apps/gateway/src", "packages"],
   "packages": [
     "apps/controller",
+    "apps/gateway",
     "packages/utils",
     "packages/contracts",
     "packages/occ",

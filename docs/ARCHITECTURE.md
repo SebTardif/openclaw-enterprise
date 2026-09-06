@@ -101,13 +101,14 @@ so HTTP response mapping does not depend on the Kubernetes Configuration Driver.
 
 The main implementation boundaries are:
 
-| Component            | Responsibility                                              |
-| -------------------- | ----------------------------------------------------------- |
-| `apps/controller`    | HTTP API, admission, composition, and controller worker.    |
-| `packages/contracts` | Platform resources, Driver contracts, and API schemas.      |
-| `packages/occ`       | Platform ownership, lifecycle, persistence, and work queue. |
-| `packages/iam`       | Identity lookup and exact-resource authorization.           |
-| `packages/audit`     | Attributable audit events and sensitive-value sanitization. |
+| Component            | Responsibility                                               |
+| -------------------- | ------------------------------------------------------------ |
+| `apps/controller`    | HTTP API, admission, composition, and controller worker.     |
+| `apps/gateway`       | Programmatic local Slack/Teams hosted lifecycle composition. |
+| `packages/contracts` | Platform resources, Driver contracts, and API schemas.       |
+| `packages/occ`       | Platform ownership, lifecycle, persistence, and work queue.  |
+| `packages/iam`       | Identity lookup and exact-resource authorization.            |
+| `packages/audit`     | Attributable audit events and sensitive-value sanitization.  |
 
 See the [controller worker](reference/controller.md), [authentication](reference/authentication.md),
 and [API reference](reference/api.md) for operational details.
@@ -206,6 +207,11 @@ See [Agent management](reference/agents.md) and the
 [Harness execution topology](flows/harness-execution-topology.md).
 
 ## Channels and delivery state
+
+The [`apps/gateway` application](reference/hosted-gateway.md) composes the local
+Slack and Teams hosted channel lifecycle for programmatic consumers. Protected
+executable startup remains unavailable while its admitted startup consumer is
+missing. Production process-owner composition is not implemented.
 
 The Kubernetes channel profile runs native Slack and Teams configuration in
 each Agent's dedicated gateway, with gateway-only channel credentials and private

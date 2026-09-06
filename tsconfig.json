@@ -6,7 +6,8 @@
     { "path": "./packages/occ" },
     { "path": "./packages/iam" },
     { "path": "./packages/audit" },
-    { "path": "./apps/controller" }
+    { "path": "./apps/controller" },
+    { "path": "./apps/gateway" }
   ],
   "exclude": ["legacy", "legacy/**", "node_modules", "**/node_modules", "**/dist"]
 }

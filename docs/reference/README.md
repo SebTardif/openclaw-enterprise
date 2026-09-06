@@ -49,6 +49,9 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
+- [Runtime identity ports](runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.
+- [Hosted gateway composition](hosted-gateway.md): programmatic local Slack/Teams
+  lifecycle ownership; protected executable startup remains unavailable.
 - [Retained runtime preparation](runtime-preparation.md): internal plans, immutable request bytes and exact recovery.
 - [Lifecycle admission and durable work definitions](lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.

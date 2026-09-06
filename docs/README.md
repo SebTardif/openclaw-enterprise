@@ -76,6 +76,10 @@ OpenClaw Enterprise is the open platform for managing agents.
   connection, dispatch, and cancellation ownership in the adapter components.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
+- [Runtime identity ports](reference/runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.
+- [Hosted gateway composition](reference/hosted-gateway.md): programmatic local
+  Slack/Teams lifecycle ownership; protected executable startup and production
+  process-owner composition remain unavailable.
 - [Docker Compose development](flows/docker-compose-development.md),
   [production startup](flows/production-startup.md),
   [production TUI attachment](flows/production-tui.md), and

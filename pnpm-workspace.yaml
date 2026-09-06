@@ -3,6 +3,7 @@ verifyDepsBeforeRun: error
 
 packages:
   - apps/controller
+  - apps/gateway
   - packages/utils
   - packages/contracts
   - packages/occ
