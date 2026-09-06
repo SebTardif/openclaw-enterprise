@@ -1,0 +1,82 @@
+{
+  "schema": "oce.runtime-packages/v1",
+  "status": "prepared",
+  "platform": "linux/amd64",
+  "nativeCodexVersion": "0.153.0",
+  "registry": "https://registry.npmjs.org/",
+  "packages": [
+    {
+      "name": "openclaw",
+      "version": "0.0.0-fixture",
+      "archive": "artifacts/openclaw.tgz",
+      "integrity": "sha512-UgnYeyhfPqSxRYyMdOarVK+cs3/33375T334/KZ/ZTDyq1In9nWhB4nSRtio8xiLA5NdLMZJErXKvsgLdTrCWA=="
+    },
+    {
+      "name": "@openclaw/ai",
+      "version": "0.0.0-fixture",
+      "archive": "artifacts/openclaw-ai.tgz",
+      "integrity": "sha512-XXz4qnXCz1Yd6PqM2KcM0uuaEeEVxfmgZ0GHojZeDHw2dKNX/6hshDmVxhqji8947JrqNb9vmcOY1Nme5tmb1Q=="
+    },
+    {
+      "name": "@openclaw/slack",
+      "version": "0.0.0-fixture",
+      "archive": "artifacts/openclaw-slack.tgz",
+      "integrity": "sha512-FDpfyy0z0I4AXlMPWC5vDpo/87k+QXy3RxBpLy85VrwmZKXtI4vVKCha0/9n+eVXs/mV7pCPDqabl6Gc2Q0MRQ=="
+    },
+    {
+      "name": "@openclaw/msteams",
+      "version": "0.0.0-fixture",
+      "archive": "artifacts/openclaw-msteams.tgz",
+      "integrity": "sha512-3T9oTEpXHM0OPzYhXL5Cp3HjqadL2QTeKIm1ArLIdzlqmlrcSKLsrdYZZgeKNeLus+i8FVlTypSwAHV+BbARnw=="
+    },
+    {
+      "name": "@openclaw/codex",
+      "version": "0.0.0-fixture",
+      "archive": "artifacts/openclaw-codex.tgz",
+      "integrity": "sha512-wj4Hsy7YTEegWGT6kb+tnC/vTkrJXN80aAwvURSl/GDrD4R2DfZzI7x/IarvOMIB9d4i2+28syew22m5Wu1j6A=="
+    }
+  ],
+  "files": [
+    {
+      "path": "package.json",
+      "bytes": 436,
+      "sha256": "77ee1a59ba560a6d7fa088d01f888342de5f0d5e2e306fd6a6b5ded45e8367f0"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 2152,
+      "sha256": "2b9259b98bc5c0e392d02fb8b49c9c44c1a0509b74c3baa7c1dbe1ba3f2a771b"
+    },
+    {
+      "path": "artifacts/openclaw.tgz",
+      "bytes": 209,
+      "sha256": "2cac4ac22185252f0f2d1809978bb7c6efb7558b4fbae10d1e217b130b904de1"
+    },
+    {
+      "path": "artifacts/openclaw-ai.tgz",
+      "bytes": 214,
+      "sha256": "b23621d0267275c834fc3321cba9ba391e89c5321a8ebd78baf687468cb8b49a"
+    },
+    {
+      "path": "artifacts/openclaw-slack.tgz",
+      "bytes": 216,
+      "sha256": "cf27fa3f93eb779a172b50eb63c8d440613f733115a43b7f4fc424353a34468d"
+    },
+    {
+      "path": "artifacts/openclaw-msteams.tgz",
+      "bytes": 215,
+      "sha256": "8e6e6f4877c64483d970502fb723c9a9efd72745a23e7bdd12fc01957578dfc6"
+    },
+    {
+      "path": "artifacts/openclaw-codex.tgz",
+      "bytes": 215,
+      "sha256": "f19a35603c9e1ff5ae4b009e78cd8d6843d5988b819f6eda53b533864c40e6ee"
+    }
+  ],
+  "lifecycleActionsExecuted": [],
+  "registryPolicyViolations": [],
+  "applicablePatches": [],
+  "provenance": {
+    "evidence": "fictional fixture only; no installed implementation"
+  }
+}

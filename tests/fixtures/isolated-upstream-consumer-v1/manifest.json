@@ -1,0 +1,2862 @@
+{
+  "schema": "oce.isolated-upstream-consumer/v1",
+  "evidenceKind": "fixture",
+  "producer": {
+    "enterpriseCommit": "1111111111111111111111111111111111111111",
+    "upstreamCommit": "2222222222222222222222222222222222222222",
+    "codexCommit": "3333333333333333333333333333333333333333",
+    "codexVersion": "0.153.0",
+    "gatewayProtocol": 4,
+    "nativeStateSchema": 15,
+    "nativeAgentSchema": 19,
+    "adapterSchema": 1,
+    "contextFormat": "completed-context-text-v1",
+    "nativeImportContract": 1,
+    "nativeImportAdapterDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "artifactLedgerRef": "fixture:artifact-ledger"
+  },
+  "nativeDistribution": "changed",
+  "artifacts": [
+    {
+      "id": "prepared",
+      "role": "preparation",
+      "state": "supplied",
+      "path": "prepared-context/preparation.json",
+      "bytes": 2716,
+      "sha256": "cdf5d36d151a24529a83558dcdd27f119fba3ab15181645d70686df2b98be916",
+      "reason": null
+    },
+    {
+      "id": "package-manifest",
+      "role": "configuration",
+      "state": "supplied",
+      "path": "prepared-context/package.json",
+      "bytes": 436,
+      "sha256": "77ee1a59ba560a6d7fa088d01f888342de5f0d5e2e306fd6a6b5ded45e8367f0",
+      "reason": null
+    },
+    {
+      "id": "package-lock",
+      "role": "lock",
+      "state": "supplied",
+      "path": "prepared-context/package-lock.json",
+      "bytes": 2152,
+      "sha256": "2b9259b98bc5c0e392d02fb8b49c9c44c1a0509b74c3baa7c1dbe1ba3f2a771b",
+      "reason": null
+    },
+    {
+      "id": "archive-openclaw",
+      "role": "archive",
+      "state": "supplied",
+      "path": "prepared-context/artifacts/openclaw.tgz",
+      "bytes": 209,
+      "sha256": "2cac4ac22185252f0f2d1809978bb7c6efb7558b4fbae10d1e217b130b904de1",
+      "reason": null
+    },
+    {
+      "id": "archive-openclaw-ai",
+      "role": "archive",
+      "state": "supplied",
+      "path": "prepared-context/artifacts/openclaw-ai.tgz",
+      "bytes": 214,
+      "sha256": "b23621d0267275c834fc3321cba9ba391e89c5321a8ebd78baf687468cb8b49a",
+      "reason": null
+    },
+    {
+      "id": "archive-openclaw-slack",
+      "role": "archive",
+      "state": "supplied",
+      "path": "prepared-context/artifacts/openclaw-slack.tgz",
+      "bytes": 216,
+      "sha256": "cf27fa3f93eb779a172b50eb63c8d440613f733115a43b7f4fc424353a34468d",
+      "reason": null
+    },
+    {
+      "id": "archive-openclaw-msteams",
+      "role": "archive",
+      "state": "supplied",
+      "path": "prepared-context/artifacts/openclaw-msteams.tgz",
+      "bytes": 215,
+      "sha256": "8e6e6f4877c64483d970502fb723c9a9efd72745a23e7bdd12fc01957578dfc6",
+      "reason": null
+    },
+    {
+      "id": "archive-openclaw-codex",
+      "role": "archive",
+      "state": "supplied",
+      "path": "prepared-context/artifacts/openclaw-codex.tgz",
+      "bytes": 215,
+      "sha256": "f19a35603c9e1ff5ae4b009e78cd8d6843d5988b819f6eda53b533864c40e6ee",
+      "reason": null
+    },
+    {
+      "id": "canonical",
+      "role": "canonical-context",
+      "state": "supplied",
+      "path": "canonical-context.utf8",
+      "bytes": 843,
+      "sha256": "039c84a64daed3dd773eaa844ebc7a61da61f5362c315c5b01e2b86f1ced4ce5",
+      "reason": null
+    },
+    {
+      "id": "declaration-gateway-host",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "declaration-channel-inbound",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "declaration-slack-hosted",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "declaration-msteams-hosted",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "declaration-codex-hosted-harness",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "exports",
+      "role": "exports",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "closure",
+      "role": "dependency-closure",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "quiet-capability",
+      "role": "quiet-capability",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "quiet-receipt",
+      "role": "quiet-receipt",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "configuration",
+      "role": "configuration",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "native",
+      "role": "native-executable",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "image",
+      "role": "gateway-image",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "producer-receipt",
+      "role": "producer-receipt",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "toolchain",
+      "role": "toolchain",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original owner input not supplied; fictional preparation does not replace it."
+    },
+    {
+      "id": "declaration-completed-state",
+      "role": "declarations",
+      "state": "missing",
+      "path": null,
+      "bytes": null,
+      "sha256": null,
+      "reason": "Original public completed-state data and codec declaration input is not supplied by this fictional fixture."
+    }
+  ],
+  "declarations": [
+    {
+      "import": "openclaw/plugin-sdk/gateway-host",
+      "artifactId": "declaration-gateway-host",
+      "exportsArtifactId": "exports",
+      "dependencyArtifactIds": ["closure"]
+    },
+    {
+      "import": "openclaw/plugin-sdk/channel-inbound",
+      "artifactId": "declaration-channel-inbound",
+      "exportsArtifactId": "exports",
+      "dependencyArtifactIds": ["closure"]
+    },
+    {
+      "import": "openclaw/plugin-sdk/slack-hosted",
+      "artifactId": "declaration-slack-hosted",
+      "exportsArtifactId": "exports",
+      "dependencyArtifactIds": ["closure"]
+    },
+    {
+      "import": "openclaw/plugin-sdk/msteams-hosted",
+      "artifactId": "declaration-msteams-hosted",
+      "exportsArtifactId": "exports",
+      "dependencyArtifactIds": ["closure"]
+    },
+    {
+      "import": "openclaw/plugin-sdk/codex-hosted-harness",
+      "artifactId": "declaration-codex-hosted-harness",
+      "exportsArtifactId": "exports",
+      "dependencyArtifactIds": ["closure"]
+    }
+  ],
+  "canonicalContext": {
+    "artifactId": "canonical",
+    "sha256": "039c84a64daed3dd773eaa844ebc7a61da61f5362c315c5b01e2b86f1ced4ce5",
+    "itemCount": 2
+  },
+  "quiet": {
+    "state": "unavailable",
+    "capabilityArtifactId": "quiet-capability",
+    "receiptArtifactId": "quiet-receipt",
+    "purpose": "completed-context-restore",
+    "expectedReceipt": null
+  },
+  "preparedContext": {
+    "directory": "prepared-context",
+    "artifactId": "prepared"
+  },
+  "environment": [],
+  "profiles": {
+    "slack": {
+      "format": "native-measurement-profile-v1",
+      "revision": 1,
+      "decision": {
+        "state": "selected",
+        "decisionDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "evidenceKind": "fixture",
+      "subject": {
+        "producer": {
+          "enterpriseCommit": "1111111111111111111111111111111111111111",
+          "upstreamCommit": "2222222222222222222222222222222222222222",
+          "codexCommit": "3333333333333333333333333333333333333333",
+          "codexVersion": "0.153.0",
+          "gatewayProtocol": 4,
+          "nativeStateSchema": 15,
+          "nativeAgentSchema": 19,
+          "adapterSchema": 1,
+          "contextFormat": "completed-context-text-v1",
+          "nativeImportContract": 1,
+          "nativeImportAdapterDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "artifactLedgerRef": "fixture:artifact-ledger"
+        },
+        "artifacts": {
+          "declarations": {
+            "state": "unknown"
+          },
+          "exports": {
+            "state": "unknown"
+          },
+          "package": {
+            "state": "unknown"
+          },
+          "dependencyClosure": {
+            "state": "unknown"
+          },
+          "nativeExecutable": {
+            "state": "unknown"
+          },
+          "gatewayImage": {
+            "state": "unknown"
+          },
+          "effectiveConfiguration": {
+            "state": "unknown"
+          },
+          "capabilities": {
+            "state": "unknown"
+          },
+          "toolchain": {
+            "state": "unknown"
+          },
+          "producerReceipt": {
+            "state": "unknown"
+          }
+        },
+        "generatedClients": {
+          "state": "unselected"
+        }
+      },
+      "clock": {
+        "kind": "single-observer-monotonic",
+        "unit": "microseconds",
+        "originRef": "fixture:observer-clock",
+        "resolutionUs": 1
+      },
+      "workload": {
+        "workloadDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "channel": "slack",
+        "agents": 1,
+        "participants": 2,
+        "threads": 2,
+        "executableConcurrency": 1,
+        "executableQueue": 0,
+        "inputUtf8Bytes": 1024,
+        "resultUtf8Bytes": 2048,
+        "outputCaptureBytes": 4096,
+        "attachments": 0,
+        "tokenStreaming": false,
+        "model": "fixture"
+      },
+      "cases": [
+        {
+          "id": "startup-ready",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "transport-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "admitted-turn-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "completed-result",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "status",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "busy",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "shutdown",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "reconnect-ready",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "cancel-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "cancel-settlement",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "writer-termination",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "reconnect-retention",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "unselected"
+          },
+          "resourceTolerance": {
+            "state": "selected",
+            "maximumGrowth": {
+              "rssBytes": 1024,
+              "fileDescriptors": 0,
+              "sockets": 0,
+              "listeners": 0,
+              "timers": 0,
+              "childProcesses": 0
+            },
+            "settleWindowUs": 1000
+          }
+        },
+        {
+          "id": "cancel-retention",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "unselected"
+          },
+          "resourceTolerance": {
+            "state": "selected",
+            "maximumGrowth": {
+              "rssBytes": 1024,
+              "fileDescriptors": 0,
+              "sockets": 0,
+              "listeners": 0,
+              "timers": 0,
+              "childProcesses": 0
+            },
+            "settleWindowUs": 1000
+          }
+        },
+        {
+          "id": "model-service",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        }
+      ],
+      "resourceProfile": {
+        "candidate": {
+          "gatewayCpuMillicores": 500,
+          "gatewayMemoryBytes": 536870912,
+          "nativeCpuMillicores": 2000,
+          "nativeMemoryBytes": 2147483648,
+          "state": "unselected",
+          "requestLimitMeaning": "unselected"
+        },
+        "expectation": {
+          "state": "selected",
+          "profileDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "roles": {
+            "gateway": {
+              "cpuMillicores": {
+                "request": 250,
+                "limit": 1000
+              },
+              "memoryBytes": {
+                "request": 536870912,
+                "limit": 1073741824
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 268435456,
+                  "limit": 1073741824
+                }
+              }
+            },
+            "harness": {
+              "cpuMillicores": {
+                "request": 500,
+                "limit": 2000
+              },
+              "memoryBytes": {
+                "request": 1073741824,
+                "limit": 4294967296
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 1073741824,
+                  "limit": 4294967296
+                }
+              }
+            },
+            "privateStateInit": {
+              "cpuMillicores": {
+                "request": 100,
+                "limit": 500
+              },
+              "memoryBytes": {
+                "request": 67108864,
+                "limit": 268435456
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 1048576,
+                  "limit": 2097152
+                }
+              }
+            }
+          }
+        },
+        "observed": {
+          "state": "unknown"
+        }
+      }
+    },
+    "teams": {
+      "format": "native-measurement-profile-v1",
+      "revision": 1,
+      "decision": {
+        "state": "selected",
+        "decisionDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "evidenceKind": "fixture",
+      "subject": {
+        "producer": {
+          "enterpriseCommit": "1111111111111111111111111111111111111111",
+          "upstreamCommit": "2222222222222222222222222222222222222222",
+          "codexCommit": "3333333333333333333333333333333333333333",
+          "codexVersion": "0.153.0",
+          "gatewayProtocol": 4,
+          "nativeStateSchema": 15,
+          "nativeAgentSchema": 19,
+          "adapterSchema": 1,
+          "contextFormat": "completed-context-text-v1",
+          "nativeImportContract": 1,
+          "nativeImportAdapterDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "artifactLedgerRef": "fixture:artifact-ledger"
+        },
+        "artifacts": {
+          "declarations": {
+            "state": "unknown"
+          },
+          "exports": {
+            "state": "unknown"
+          },
+          "package": {
+            "state": "unknown"
+          },
+          "dependencyClosure": {
+            "state": "unknown"
+          },
+          "nativeExecutable": {
+            "state": "unknown"
+          },
+          "gatewayImage": {
+            "state": "unknown"
+          },
+          "effectiveConfiguration": {
+            "state": "unknown"
+          },
+          "capabilities": {
+            "state": "unknown"
+          },
+          "toolchain": {
+            "state": "unknown"
+          },
+          "producerReceipt": {
+            "state": "unknown"
+          }
+        },
+        "generatedClients": {
+          "state": "unselected"
+        }
+      },
+      "clock": {
+        "kind": "single-observer-monotonic",
+        "unit": "microseconds",
+        "originRef": "fixture:observer-clock",
+        "resolutionUs": 1
+      },
+      "workload": {
+        "workloadDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "channel": "teams",
+        "agents": 1,
+        "participants": 2,
+        "threads": 2,
+        "executableConcurrency": 1,
+        "executableQueue": 0,
+        "inputUtf8Bytes": 1024,
+        "resultUtf8Bytes": 2048,
+        "outputCaptureBytes": 4096,
+        "attachments": 0,
+        "tokenStreaming": false,
+        "model": "fixture"
+      },
+      "cases": [
+        {
+          "id": "startup-ready",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "transport-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "admitted-turn-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "completed-result",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "status",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "busy",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "shutdown",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "reconnect-ready",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "cancel-ack",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "cancel-settlement",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "writer-termination",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        },
+        {
+          "id": "reconnect-retention",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "unselected"
+          },
+          "resourceTolerance": {
+            "state": "selected",
+            "maximumGrowth": {
+              "rssBytes": 1024,
+              "fileDescriptors": 0,
+              "sockets": 0,
+              "listeners": 0,
+              "timers": 0,
+              "childProcesses": 0
+            },
+            "settleWindowUs": 1000
+          }
+        },
+        {
+          "id": "cancel-retention",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "unselected"
+          },
+          "resourceTolerance": {
+            "state": "selected",
+            "maximumGrowth": {
+              "rssBytes": 1024,
+              "fileDescriptors": 0,
+              "sockets": 0,
+              "listeners": 0,
+              "timers": 0,
+              "childProcesses": 0
+            },
+            "settleWindowUs": 1000
+          }
+        },
+        {
+          "id": "model-service",
+          "applicability": "required",
+          "cycles": 2,
+          "warmupPerCycle": 1,
+          "samplesPerCycle": 2,
+          "latencyBudget": {
+            "state": "selected",
+            "p95Us": 5000,
+            "maxUs": 10000
+          },
+          "resourceTolerance": {
+            "state": "unselected"
+          }
+        }
+      ],
+      "resourceProfile": {
+        "candidate": {
+          "gatewayCpuMillicores": 500,
+          "gatewayMemoryBytes": 536870912,
+          "nativeCpuMillicores": 2000,
+          "nativeMemoryBytes": 2147483648,
+          "state": "unselected",
+          "requestLimitMeaning": "unselected"
+        },
+        "expectation": {
+          "state": "selected",
+          "profileDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "roles": {
+            "gateway": {
+              "cpuMillicores": {
+                "request": 250,
+                "limit": 1000
+              },
+              "memoryBytes": {
+                "request": 536870912,
+                "limit": 1073741824
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 268435456,
+                  "limit": 1073741824
+                }
+              }
+            },
+            "harness": {
+              "cpuMillicores": {
+                "request": 500,
+                "limit": 2000
+              },
+              "memoryBytes": {
+                "request": 1073741824,
+                "limit": 4294967296
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 1073741824,
+                  "limit": 4294967296
+                }
+              }
+            },
+            "privateStateInit": {
+              "cpuMillicores": {
+                "request": 100,
+                "limit": 500
+              },
+              "memoryBytes": {
+                "request": 67108864,
+                "limit": 268435456
+              },
+              "ephemeralStorageBytes": {
+                "state": "selected",
+                "values": {
+                  "request": 1048576,
+                  "limit": 2097152
+                }
+              }
+            }
+          }
+        },
+        "observed": {
+          "state": "unknown"
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "preparation.artifacts",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": [
+        "prepared",
+        "package-manifest",
+        "package-lock",
+        "archive-openclaw",
+        "archive-openclaw-ai",
+        "archive-openclaw-slack",
+        "archive-openclaw-msteams",
+        "archive-openclaw-codex"
+      ],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "preparation.declarations",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": [
+        "declaration-gateway-host",
+        "exports",
+        "closure",
+        "declaration-channel-inbound",
+        "declaration-slack-hosted",
+        "declaration-msteams-hosted",
+        "declaration-codex-hosted-harness",
+        "declaration-completed-state"
+      ],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "preparation.quiet",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["quiet-capability", "quiet-receipt", "canonical"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "preparation.context",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["canonical"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B1.effective-configuration",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B1.missing-assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B1.conflicting-override",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.unauthenticated",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.management",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.expired-revoked",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.foreign",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.forwarded",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B2.control-positive",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B3.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B3.same-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B3.untrusted-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B3.saved-state",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B3.service-allowlist",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B4.assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B4.network-storage",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B4.safe-logs",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.local-login",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.scoped-browse",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.revisions-channel-edits",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.foreign-stale",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.native-slack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B6.native-teams",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "slack.startup-ready",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "startup-ready",
+        "endpoints": ["observer-gateway-launch-requested", "same-gateway-readiness-observed"]
+      }
+    },
+    {
+      "id": "slack.transport-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "transport-ack",
+        "endpoints": [
+          "observer-provider-transport-request-submitted",
+          "provider-transport-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.admitted-turn-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "admitted-turn-ack",
+        "endpoints": [
+          "observer-gateway-turn-request-submitted",
+          "canonical-admitted-attempt-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.completed-result",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "completed-result",
+        "endpoints": [
+          "native-completed-result-received",
+          "checkpoint-gated-provider-create-confirmed"
+        ]
+      }
+    },
+    {
+      "id": "slack.status",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "status",
+        "endpoints": [
+          "observer-protected-status-request-submitted",
+          "authorized-status-response-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.busy",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "busy",
+        "endpoints": ["observer-overlap-request-submitted", "busy-response-observed"]
+      }
+    },
+    {
+      "id": "slack.shutdown",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "shutdown",
+        "endpoints": ["observer-gateway-shutdown-requested", "same-gateway-process-exit-observed"]
+      }
+    },
+    {
+      "id": "slack.reconnect-ready",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "reconnect-ready",
+        "endpoints": [
+          "observer-harness-disconnect-observed",
+          "original-attempt-reconciliation-complete"
+        ]
+      }
+    },
+    {
+      "id": "slack.cancel-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "cancel-ack",
+        "endpoints": [
+          "observer-protected-cancel-request-submitted",
+          "native-interrupt-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.cancel-settlement",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "cancel-settlement",
+        "endpoints": [
+          "observer-protected-cancel-request-submitted",
+          "trusted-original-attempt-settlement-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.writer-termination",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "writer-termination",
+        "endpoints": [
+          "observer-exact-writer-stop-requested",
+          "physical-writer-termination-observed"
+        ]
+      }
+    },
+    {
+      "id": "slack.reconnect-retention",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "reconnect-retention",
+        "endpoints": [
+          "settled-pre-reconnect-baseline",
+          "settled-post-reconnect-resource-observation"
+        ]
+      }
+    },
+    {
+      "id": "slack.cancel-retention",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "cancel-retention",
+        "endpoints": ["settled-pre-cancel-baseline", "settled-post-cancel-resource-observation"]
+      }
+    },
+    {
+      "id": "slack.model-service",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "slack",
+        "caseId": "model-service",
+        "endpoints": ["observer-model-request-submitted", "model-response-complete"]
+      }
+    },
+    {
+      "id": "teams.startup-ready",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "startup-ready",
+        "endpoints": ["observer-gateway-launch-requested", "same-gateway-readiness-observed"]
+      }
+    },
+    {
+      "id": "teams.transport-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "transport-ack",
+        "endpoints": [
+          "observer-provider-transport-request-submitted",
+          "provider-transport-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.admitted-turn-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "admitted-turn-ack",
+        "endpoints": [
+          "observer-gateway-turn-request-submitted",
+          "canonical-admitted-attempt-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.completed-result",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "completed-result",
+        "endpoints": [
+          "native-completed-result-received",
+          "checkpoint-gated-provider-create-confirmed"
+        ]
+      }
+    },
+    {
+      "id": "teams.status",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "status",
+        "endpoints": [
+          "observer-protected-status-request-submitted",
+          "authorized-status-response-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.busy",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "busy",
+        "endpoints": ["observer-overlap-request-submitted", "busy-response-observed"]
+      }
+    },
+    {
+      "id": "teams.shutdown",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "shutdown",
+        "endpoints": ["observer-gateway-shutdown-requested", "same-gateway-process-exit-observed"]
+      }
+    },
+    {
+      "id": "teams.reconnect-ready",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "reconnect-ready",
+        "endpoints": [
+          "observer-harness-disconnect-observed",
+          "original-attempt-reconciliation-complete"
+        ]
+      }
+    },
+    {
+      "id": "teams.cancel-ack",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "cancel-ack",
+        "endpoints": [
+          "observer-protected-cancel-request-submitted",
+          "native-interrupt-ack-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.cancel-settlement",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "cancel-settlement",
+        "endpoints": [
+          "observer-protected-cancel-request-submitted",
+          "trusted-original-attempt-settlement-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.writer-termination",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "writer-termination",
+        "endpoints": [
+          "observer-exact-writer-stop-requested",
+          "physical-writer-termination-observed"
+        ]
+      }
+    },
+    {
+      "id": "teams.reconnect-retention",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "reconnect-retention",
+        "endpoints": [
+          "settled-pre-reconnect-baseline",
+          "settled-post-reconnect-resource-observation"
+        ]
+      }
+    },
+    {
+      "id": "teams.cancel-retention",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "cancel-retention",
+        "endpoints": ["settled-pre-cancel-baseline", "settled-post-cancel-resource-observation"]
+      }
+    },
+    {
+      "id": "teams.model-service",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-artifact-or-runtime-operator",
+        "reason": "Exact command and actual inputs have not been supplied."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": {
+        "channel": "teams",
+        "caseId": "model-service",
+        "endpoints": ["observer-model-request-submitted", "model-response-complete"]
+      }
+    },
+    {
+      "id": "optional.browser-chat",
+      "required": false,
+      "selected": false,
+      "reason": "Disabled by the selected management-only/native-channel scope.",
+      "inputIds": ["configuration"],
+      "command": {
+        "state": "missing",
+        "owner": "original-operator",
+        "reason": "Optional disabled scope."
+      },
+      "substitutes": [],
+      "measurement": null
+    },
+    {
+      "id": "optional.attachments",
+      "required": false,
+      "selected": false,
+      "reason": "Disabled by the selected management-only/native-channel scope.",
+      "inputIds": ["configuration"],
+      "command": {
+        "state": "missing",
+        "owner": "original-operator",
+        "reason": "Optional disabled scope."
+      },
+      "substitutes": [],
+      "measurement": null
+    },
+    {
+      "id": "optional.token-streaming",
+      "required": false,
+      "selected": false,
+      "reason": "Disabled by the selected management-only/native-channel scope.",
+      "inputIds": ["configuration"],
+      "command": {
+        "state": "missing",
+        "owner": "original-operator",
+        "reason": "Optional disabled scope."
+      },
+      "substitutes": [],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B1.effective-configuration",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B1.missing-assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B1.conflicting-override",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.unauthenticated",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.management",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.expired-revoked",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.foreign",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.forwarded",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B2.control-positive",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B3.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B3.same-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B3.untrusted-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B3.saved-state",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B3.service-allowlist",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B4.assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B4.network-storage",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.restart.B4.safe-logs",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B1.effective-configuration",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B1.missing-assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B1.conflicting-override",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.unauthenticated",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.management",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.expired-revoked",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.foreign",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.forwarded",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B2.control-positive",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B3.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B3.same-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B3.untrusted-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B3.saved-state",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B3.service-allowlist",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B4.assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B4.network-storage",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.new-host.B4.safe-logs",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B1.effective-configuration",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B1.missing-assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B1.conflicting-override",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.unauthenticated",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.management",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.expired-revoked",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.foreign",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.forwarded",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B2.control-positive",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B3.inventory",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B3.same-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B3.untrusted-origin",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B3.saved-state",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B3.service-allowlist",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B4.assets",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B4.network-storage",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    },
+    {
+      "id": "B5.image-route-config.B4.safe-logs",
+      "required": true,
+      "selected": true,
+      "reason": null,
+      "inputIds": ["configuration", "native", "image"],
+      "command": {
+        "state": "missing",
+        "owner": "original-runtime-operator",
+        "reason": "Repeat this boundary case against the exact replacement tuple; actual inputs unavailable."
+      },
+      "substitutes": ["fictional-format-fixture"],
+      "measurement": null
+    }
+  ],
+  "browser": {
+    "managementOnly": true,
+    "browserChatExposed": false
+  },
+  "completedStateDeclaration": {
+    "import": "openclaw/plugin-sdk/completed-state",
+    "artifactId": "declaration-completed-state",
+    "exportsArtifactId": "exports",
+    "dependencyArtifactIds": ["closure"]
+  }
+}

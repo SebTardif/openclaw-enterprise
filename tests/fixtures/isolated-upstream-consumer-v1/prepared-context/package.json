@@ -1,0 +1,13 @@
+{
+  "name": "fictional-isolated-consumer",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "openclaw": "file:./artifacts/openclaw.tgz",
+    "@openclaw/ai": "file:./artifacts/openclaw-ai.tgz",
+    "@openclaw/slack": "file:./artifacts/openclaw-slack.tgz",
+    "@openclaw/msteams": "file:./artifacts/openclaw-msteams.tgz",
+    "@openclaw/codex": "file:./artifacts/openclaw-codex.tgz",
+    "@openai/codex": "0.153.0"
+  }
+}
