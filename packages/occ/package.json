@@ -32,7 +32,8 @@
     "./ports/transaction-errors": "./src/ports/transaction-errors.ts",
     "./ports/transaction": "./src/ports/transaction.ts",
     "./lifecycle/ports-v1": "./src/lifecycle/ports-v1.ts",
-    "./lifecycle/work-v1": "./src/lifecycle/work-v1.ts"
+    "./lifecycle/work-v1": "./src/lifecycle/work-v1.ts",
+    "./lifecycle/handler-ports-v1": "./src/lifecycle/handler-ports-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [

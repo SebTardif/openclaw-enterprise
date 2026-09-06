@@ -44,7 +44,8 @@
     "./api/channel-bindings": "./src/api/channel-bindings.ts",
     "./api/workload-profile/resources": "./src/api/workload-profile/resources.ts",
     "./api/workload-profile/routes": "./src/api/workload-profile/routes.ts",
-    "./lifecycle-admission-v1": "./src/lifecycle-admission-v1.ts"
+    "./lifecycle-admission-v1": "./src/lifecycle-admission-v1.ts",
+    "./lifecycle-observation-v1": "./src/lifecycle-observation-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
