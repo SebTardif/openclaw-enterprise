@@ -342,4 +342,28 @@ mod tests {
             .unwrap();
         assert!(observer.finish().unwrap());
     }
+
+    #[test]
+    fn crd43_bytewise_unicode_lifecycle_preserves_terminal_boundary() {
+        let mut observer = Observer::new();
+        let initial = concat!(
+            ": heartbeat\r\n\r\n",
+            "event: response.created\r\n",
+            "data: {\"type\":\"response.created\",\"sequence_number\":0,\r\n",
+            "data: \"response\":{\"id\":\"resp_unicode\",\"status\":\"in_progress\"}}\r\n\r\n",
+            "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,",
+            "\"item_id\":\"msg_unicode\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello, 世界 🌍\"}\n\n"
+        );
+        // One-byte delivery splits every multibyte UTF-8 character and CRLF.
+        // The actual observer must retain partial bytes without ending work.
+        for byte in initial.as_bytes() {
+            observer.push(std::slice::from_ref(byte)).unwrap();
+        }
+        assert!(!observer.ended());
+        let terminal = "data: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_unicode\",\"status\":\"completed\"}}\n\n";
+        for byte in terminal.as_bytes() {
+            observer.push(std::slice::from_ref(byte)).unwrap();
+        }
+        assert!(observer.finish().unwrap());
+    }
 }

@@ -258,6 +258,14 @@ struct Observed {
     receipts: Vec<String>,
     admissions: usize,
     elapsed: Duration,
+    attempts: usize,
+    dispatches: usize,
+    releases: usize,
+    handler_error: Option<String>,
+    provider_observed_close: bool,
+    paused_progress: Option<(usize, usize)>,
+    bound_flow: Option<Value>,
+    released_flow: Option<Value>,
 }
 fn transport_fixture(scenario: Scenario, raw: String, fragmented: bool) -> Observed {
     transport_with_ingress(scenario, raw, fragmented, false)
@@ -267,6 +275,15 @@ fn transport_with_ingress(
     raw: String,
     fragmented: bool,
     secure_ingress: bool,
+) -> Observed {
+    transport_with_controls(scenario, raw, fragmented, secure_ingress, None)
+}
+fn transport_with_controls(
+    scenario: Scenario,
+    raw: String,
+    fragmented: bool,
+    secure_ingress: bool,
+    normal: Option<NormalStream>,
 ) -> Observed {
     let dir = Dir::new();
     let certs = certificates(if matches!(scenario, Scenario::WrongCertificate) {
@@ -286,11 +303,21 @@ fn transport_with_ingress(
     let upstream_done = Arc::new(AtomicBool::new(false));
     let stop = upstream_done.clone();
     let server = certs.server.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempted = attempts.clone();
+    let progress = Arc::new(StreamProgress::default());
+    let producer_progress = progress.clone();
+    let provider_observed_close = Arc::new(AtomicBool::new(false));
+    let provider_closed = provider_observed_close.clone();
+    let (first_seen, first_received) = std::sync::mpsc::sync_channel(1);
     let receiver = thread::spawn(move || {
         let start = Instant::now();
         let socket = loop {
             match listener.accept() {
-                Ok((socket, _)) => break socket,
+                Ok((socket, _)) => {
+                    attempted.fetch_add(1, Ordering::Relaxed);
+                    break socket;
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     if stop.load(Ordering::Acquire) || start.elapsed() > Duration::from_secs(8) {
                         return Vec::new();
@@ -300,6 +327,14 @@ fn transport_with_ingress(
                 Err(_) => return Vec::new(),
             }
         };
+        if normal.is_some() {
+            socket.set_nodelay(true).unwrap();
+        }
+        if matches!(normal, Some(NormalStream::PausedReader)) {
+            socket2::SockRef::from(&socket)
+                .set_send_buffer_size(64 * 1024)
+                .unwrap();
+        }
         socket
             .set_read_timeout(Some(Duration::from_secs(4)))
             .unwrap();
@@ -326,6 +361,16 @@ fn transport_with_ingress(
                     })
                     .unwrap();
                 if received.len() >= end + 4 + len {
+                    if let Some(normal) = normal {
+                        normal_provider_stream(
+                            &mut tls,
+                            normal,
+                            &first_received,
+                            &producer_progress,
+                            &provider_closed,
+                        );
+                        break;
+                    }
                     let response=match scenario{Scenario::JsonTerminalBait=>b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n: alive\n\n\r\n".as_slice(),Scenario::Redirect=>b"HTTP/1.1 302 Found\r\nLocation: https://attacker.example\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n".as_slice(),Scenario::TruncatedResponse=>b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 100\r\n\r\ndata:x".as_slice(),_=>b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n: alive\n\n\r\n".as_slice()};
                     let _ = tls.write_all(response);
                     let _ = tls.flush();
@@ -354,18 +399,54 @@ fn transport_with_ingress(
                 }
             }
         }
+        if normal.is_some() {
+            // Keep observing this listener until the exchange has ended so a
+            // second connect cannot hide in its backlog after the first stream.
+            loop {
+                let ended_before_accept = stop.load(Ordering::Acquire);
+                match listener.accept() {
+                    Ok((socket, _)) => {
+                        attempted.fetch_add(1, Ordering::Relaxed);
+                        drop(socket);
+                        // A second observed connection already fails the one-
+                        // attempt assertion; do not accept an unbounded backlog.
+                        break;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        // The snapshot precedes accept: completion therefore
+                        // requires a backlog observation after the end signal.
+                        if ended_before_accept || start.elapsed() >= Duration::from_secs(8) {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
         received
     });
     let receipts = Arc::new(Mutex::new(Vec::new()));
     let admissions = Arc::new(AtomicUsize::new(0));
     let observed = receipts.clone();
     let counted = admissions.clone();
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    let dispatched = dispatches.clone();
+    let releases = Arc::new(AtomicUsize::new(0));
+    let released = releases.clone();
+    let bound_flow = Arc::new(Mutex::new(None));
+    let released_flow = Arc::new(Mutex::new(None));
+    let recorded_bind = bound_flow.clone();
+    let recorded_release = released_flow.clone();
     let mut reservation = String::new();
     let mut digest = String::new();
     let mut before = 0;
     let mut expires = 0;
     let authority = WireServer::spawn(service.authority.path.clone(), move |request| {
         let method = request["method"].as_str().unwrap();
+        if method == "dispatch" {
+            dispatched.fetch_add(1, Ordering::Relaxed);
+        }
         if method == "complete" {
             observed
                 .lock()
@@ -378,8 +459,17 @@ fn transport_with_ingress(
             reservation = request["reservation_ref"].as_str().unwrap().to_owned();
             digest = request["request_sha256"].as_str().unwrap().to_owned();
             assert_eq!(request["workload_credential"], "workload-only-canary");
-            before = now() + 5000;
-            expires = before + 55_000;
+            let n = now();
+            before = n + if matches!(normal, Some(NormalStream::IdleDeadline)) {
+                1000
+            } else {
+                5000
+            };
+            expires = if matches!(normal, Some(NormalStream::IdleDeadline)) {
+                n + 1200
+            } else {
+                before + 55_000
+            };
         }
         if matches!(
             (scenario, method),
@@ -397,7 +487,14 @@ fn transport_with_ingress(
         let n = now();
         json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1","authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,"operation_id":"operation-a","reservation_ref":reservation,"request_sha256":digest,"assignment_id":ASSIGNMENT,"generation":1,"policy_version":1,"provider_binding_ref":"provider-test","credential_binding":descriptor(),"operation_state":state,"dispatch_before_ms":before,"operation_expires_at_ms":expires,"server_time_ms":n,"valid_until_ms":(n+4000).min(if state=="accepted"{before}else{expires})})
     });
-    let dns = WireServer::spawn(service.dns.path.clone(), |request| {
+    let dns = WireServer::spawn(service.dns.path.clone(), move |request| {
+        if request["method"] == "release" {
+            released.fetch_add(1, Ordering::Relaxed);
+            *recorded_release.lock().unwrap() = Some(request.clone());
+        }
+        if request["method"] == "bind" {
+            *recorded_bind.lock().unwrap() = Some(request.clone());
+        }
         let mut v = timed();
         for key in [
             "operation_id",
@@ -428,41 +525,60 @@ fn transport_with_ingress(
     let addr = listener.local_addr().unwrap();
     let worker = thread::spawn(move || {
         let (s, _) = listener.accept().unwrap();
+        if matches!(normal, Some(NormalStream::PausedReader)) {
+            // Bound the real mediator-to-client kernel queue in this controlled
+            // fixture so it cannot absorb the stream while the client pauses.
+            socket2::SockRef::from(&s)
+                .set_send_buffer_size(4096)
+                .unwrap();
+        }
         service.handle(s)
     });
     let start = Instant::now();
-    let client = TcpStream::connect(addr).unwrap();
-    client
-        .set_read_timeout(Some(Duration::from_secs(8)))
-        .unwrap();
-    trait TestIo: Read + Write {}
-    impl<T: Read + Write> TestIo for T {}
-    let mut client: Box<dyn TestIo> = if let Some(incoming) = incoming {
-        let mut roots = RootCertStore::empty();
-        for certificate in CertificateDer::pem_slice_iter(incoming.root_pem.as_bytes()) {
-            roots.add(certificate.unwrap()).unwrap();
-        }
-        let mut config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        config.alpn_protocols = vec![b"http/1.1".to_vec()];
-        let connection =
-            rustls::ClientConnection::new(Arc::new(config), "localhost".try_into().unwrap())
-                .unwrap();
-        Box::new(StreamOwned::new(connection, client))
+    let (bytes, paused_progress) = if let Some(normal) = normal {
+        normal_client(
+            addr,
+            incoming.as_ref().unwrap(),
+            &raw,
+            normal,
+            first_seen,
+            progress,
+        )
     } else {
-        Box::new(client)
+        let client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        trait TestIo: Read + Write {}
+        impl<T: Read + Write> TestIo for T {}
+        let mut client: Box<dyn TestIo> = if let Some(incoming) = incoming {
+            let mut roots = RootCertStore::empty();
+            for certificate in CertificateDer::pem_slice_iter(incoming.root_pem.as_bytes()) {
+                roots.add(certificate.unwrap()).unwrap();
+            }
+            let mut config = ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            let connection =
+                rustls::ClientConnection::new(Arc::new(config), "localhost".try_into().unwrap())
+                    .unwrap();
+            Box::new(StreamOwned::new(connection, client))
+        } else {
+            Box::new(client)
+        };
+        if fragmented {
+            for c in raw.as_bytes().chunks(3) {
+                client.write_all(c).unwrap();
+            }
+        } else {
+            client.write_all(raw.as_bytes()).unwrap();
+        }
+        let mut bytes = Vec::new();
+        let _ = client.read_to_end(&mut bytes);
+        (bytes, None)
     };
-    if fragmented {
-        for c in raw.as_bytes().chunks(3) {
-            client.write_all(c).unwrap();
-        }
-    } else {
-        client.write_all(raw.as_bytes()).unwrap();
-    }
-    let mut bytes = Vec::new();
-    let _ = client.read_to_end(&mut bytes);
-    let _ = worker.join().unwrap();
+    let handler_error = worker.join().unwrap().err().map(|error| error.to_string());
     upstream_done.store(true, Ordering::Release);
     let received = receiver.join().unwrap();
     let observed = Observed {
@@ -471,6 +587,14 @@ fn transport_with_ingress(
         receipts: receipts.lock().unwrap().clone(),
         admissions: admissions.load(Ordering::Relaxed),
         elapsed: start.elapsed(),
+        attempts: attempts.load(Ordering::Relaxed),
+        dispatches: dispatches.load(Ordering::Relaxed),
+        releases: releases.load(Ordering::Relaxed),
+        handler_error,
+        provider_observed_close: provider_observed_close.load(Ordering::Acquire),
+        paused_progress,
+        bound_flow: bound_flow.lock().unwrap().clone(),
+        released_flow: released_flow.lock().unwrap().clone(),
     };
     drop(authority);
     drop(dns);
@@ -726,4 +850,425 @@ fn real_incoming_tls_partial_clienthello_hits_acquisition_deadline() {
     assert!(worker.join().unwrap().is_err());
     assert!(start.elapsed() >= Duration::from_secs(4));
     assert!(start.elapsed() < Duration::from_secs(7));
+}
+
+// These cases extend the retained local transport harness. Scripted control
+// replies remain inputs; assertions cover the actual owned HTTP/TLS lifecycle.
+#[derive(Clone, Copy)]
+enum NormalStream {
+    Completed,
+    Failed,
+    Incomplete,
+    TerminalWithoutHttpEnd,
+    ClientClose,
+    IdleDeadline,
+    PausedReader,
+}
+const CRD43_INITIAL: &str = concat!(
+    ": ordinary heartbeat\r\n\r\n",
+    "event: response.created\r\n",
+    "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_crd43\",\"status\":\"in_progress\"}}\r\n\r\n",
+    "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"item_id\":\"msg_crd43\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello, 世界 🌍\"}\n\n"
+);
+#[derive(Default)]
+struct StreamProgress {
+    written: AtomicUsize,
+    writing: AtomicBool,
+}
+const CRD43_PADDING_EVENTS: usize = 512;
+const CRD43_PADDING_BYTES: usize = 16 * 1024;
+
+fn crd43_terminal(normal: NormalStream) -> String {
+    let status = match normal {
+        NormalStream::Failed => "failed",
+        NormalStream::Incomplete => "incomplete",
+        _ => "completed",
+    };
+    format!("event: response.{status}\ndata: {{\"type\":\"response.{status}\",\"sequence_number\":2,\"response\":{{\"id\":\"resp_crd43\",\"status\":\"{status}\"}}}}\n\n")
+}
+fn crd43_write_chunk(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    data: &[u8],
+) -> io::Result<()> {
+    tls.write_all(format!("{:x}\r\n", data.len()).as_bytes())?;
+    tls.write_all(data)?;
+    tls.write_all(b"\r\n")?;
+    tls.flush()
+}
+fn normal_provider_stream(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+    normal: NormalStream,
+    first_received: &std::sync::mpsc::Receiver<()>,
+    progress: &StreamProgress,
+    observed_close: &AtomicBool,
+) {
+    tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
+    // Split actual upstream HTTP data across UTF-8, SSE and CRLF boundaries.
+    // No terminal is available until the downstream has seen this first phase.
+    for chunk in CRD43_INITIAL.as_bytes().chunks(3) {
+        crd43_write_chunk(tls, chunk).unwrap();
+    }
+    first_received.recv_timeout(Duration::from_secs(3)).unwrap();
+    if matches!(
+        normal,
+        NormalStream::ClientClose | NormalStream::IdleDeadline
+    ) {
+        let closed = match tls.read(&mut [0; 1]) {
+            Ok(0) => true,
+            Err(e) => matches!(
+                e.kind(),
+                io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::UnexpectedEof
+            ),
+            _ => false,
+        };
+        observed_close.store(closed, Ordering::Release);
+        return;
+    }
+    if matches!(normal, NormalStream::PausedReader) {
+        // Reuse one bounded event buffer. The downstream stops polling while
+        // these writes run; no harness gate delays the provider's data writes.
+        let mut padding = vec![b'z'; CRD43_PADDING_BYTES];
+        padding[0] = b':';
+        let n = padding.len();
+        padding[n - 2..].copy_from_slice(b"\n\n");
+        for _ in 0..CRD43_PADDING_EVENTS {
+            progress.writing.store(true, Ordering::Release);
+            let written = crd43_write_chunk(tls, &padding);
+            progress.writing.store(false, Ordering::Release);
+            written.unwrap();
+            progress.written.fetch_add(padding.len(), Ordering::Release);
+        }
+    }
+    for chunk in crd43_terminal(normal).as_bytes().chunks(2) {
+        crd43_write_chunk(tls, chunk).unwrap();
+    }
+    if matches!(normal, NormalStream::TerminalWithoutHttpEnd) {
+        // The client must observe the valid terminal before the provider closes
+        // its TLS leg without the required HTTP ending. Flush alone is not proof.
+        first_received.recv_timeout(Duration::from_secs(3)).unwrap();
+    } else {
+        tls.write_all(b"0\r\n\r\n").unwrap();
+    }
+    tls.conn.send_close_notify();
+    tls.flush().unwrap();
+}
+
+fn normal_client(
+    address: std::net::SocketAddr,
+    certificates: &Certificates,
+    raw: &str,
+    normal: NormalStream,
+    first_seen: std::sync::mpsc::SyncSender<()>,
+    progress: Arc<StreamProgress>,
+) -> (Vec<u8>, Option<(usize, usize)>) {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    use hyper_util::rt::TokioIo;
+    let mut roots = RootCertStore::empty();
+    for certificate in CertificateDer::pem_slice_iter(certificates.root_pem.as_bytes()) {
+        roots.add(certificate.unwrap()).unwrap();
+    }
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let body = raw.split_once("\r\n\r\n").unwrap().1.as_bytes().to_vec();
+    let socket = TcpStream::connect(address).unwrap();
+    socket.set_nodelay(true).unwrap();
+    if matches!(normal, NormalStream::PausedReader) {
+        socket2::SockRef::from(&socket)
+            .set_recv_buffer_size(64 * 1024)
+            .unwrap();
+    }
+    socket.set_nonblocking(true).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            let socket = tokio::net::TcpStream::from_std(socket).unwrap();
+            let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+                .connect("localhost".try_into().unwrap(), socket)
+                .await
+                .unwrap();
+            let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+                .await
+                .unwrap();
+            let driver = tokio::spawn(connection);
+            let request = hyper::Request::builder()
+                .method("POST")
+                .uri("/v1/responses")
+                .header("host", "localhost:8443")
+                .header("authorization", "Bearer workload-only-canary")
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(body)))
+                .unwrap();
+            let mut response = sender.send_request(request).await.unwrap();
+            assert_eq!(response.status(), hyper::StatusCode::OK);
+            drop(sender);
+            let mut bytes = Vec::new();
+            let mut first = false;
+            let mut terminal_seen = false;
+            let mut paused_progress = None;
+            let clean = matches!(
+                normal,
+                NormalStream::Completed
+                    | NormalStream::Failed
+                    | NormalStream::Incomplete
+                    | NormalStream::PausedReader
+            );
+            let mut body_error = false;
+            while let Some(frame) = response.body_mut().frame().await {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        assert!(
+                            !clean,
+                            "ordinary complete response must have clean HTTP framing: {error}"
+                        );
+                        body_error = true;
+                        break;
+                    }
+                };
+                let data = frame.into_data().unwrap();
+                assert!(bytes.len() + data.len() <= 9 * 1024 * 1024);
+                bytes.extend_from_slice(&data);
+                if !first && bytes.len() >= CRD43_INITIAL.len() {
+                    assert_eq!(&bytes[..CRD43_INITIAL.len()], CRD43_INITIAL.as_bytes());
+                    first = true;
+                    first_seen.send(()).unwrap();
+                    if matches!(normal, NormalStream::ClientClose) {
+                        break;
+                    }
+                    if matches!(normal, NormalStream::PausedReader) {
+                        let pause_deadline = Instant::now() + Duration::from_secs(1);
+                        let mut last = 0;
+                        let mut quiet_since = Instant::now();
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                            let current = progress.written.load(Ordering::Acquire);
+                            if current != last {
+                                last = current;
+                                quiet_since = Instant::now();
+                            }
+                            if current > 0
+                                && progress.writing.load(Ordering::Acquire)
+                                && quiet_since.elapsed() >= Duration::from_millis(150)
+                            {
+                                paused_progress = Some((last, current));
+                                break;
+                            }
+                            assert!(
+                                Instant::now() < pause_deadline,
+                                "no bounded outstanding-write pause observed: completed_bytes={current}, writing={}, quiet_ms={}, elapsed_pause_ms={}",
+                                progress.writing.load(Ordering::Acquire), quiet_since.elapsed().as_millis(),
+                                (Duration::from_secs(1) - pause_deadline.saturating_duration_since(Instant::now())).as_millis()
+                            );
+                        }
+                    }
+                }
+                if matches!(normal, NormalStream::TerminalWithoutHttpEnd)
+                    && !terminal_seen
+                    && bytes.ends_with(crd43_terminal(normal).as_bytes())
+                {
+                    terminal_seen = true;
+                    first_seen.send(()).unwrap();
+                }
+            }
+            assert!(first);
+            if matches!(normal, NormalStream::TerminalWithoutHttpEnd) {
+                assert!(terminal_seen && body_error);
+            }
+            drop(response);
+            if clean {
+                assert!(!body_error);
+                tokio::time::timeout(Duration::from_secs(2), driver)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            } else {
+                driver.abort();
+                let _ = driver.await;
+            }
+            (bytes, paused_progress)
+        })
+        .await
+        .expect("ordinary local stream exceeded its fixture bound")
+    })
+}
+
+#[test]
+fn crd43_phased_unicode_stream_requires_terminal_and_clean_http() {
+    for normal in [
+        NormalStream::Completed,
+        NormalStream::Failed,
+        NormalStream::Incomplete,
+    ] {
+        let observed =
+            transport_with_controls(Scenario::Allowed, wire(&body()), false, true, Some(normal));
+        assert_eq!(
+            observed.response,
+            format!("{}{}", CRD43_INITIAL, crd43_terminal(normal))
+        );
+        assert_eq!(observed.receipts, vec!["completed"]);
+        crd43_assert_one_owned_flow(&observed);
+        assert!(observed.handler_error.is_none());
+        // Failed/incomplete establish an ended response, not a successful model outcome.
+    }
+}
+
+#[test]
+fn crd43_client_close_preserves_unknown_and_one_upstream_attempt() {
+    let observed = transport_with_controls(
+        Scenario::Allowed,
+        wire(&body()),
+        false,
+        true,
+        Some(NormalStream::ClientClose),
+    );
+    assert_eq!(observed.response, CRD43_INITIAL);
+    assert_eq!(observed.receipts, vec!["unknown"]);
+    crd43_assert_one_owned_flow(&observed);
+    assert!(observed.provider_observed_close);
+    assert!(observed.elapsed < Duration::from_secs(3));
+    for sink in [
+        &observed.response,
+        observed.handler_error.as_deref().unwrap_or(""),
+    ] {
+        assert!(!sink.contains("provider-secret-canary"));
+        assert!(!sink.contains("workload-only-canary"));
+    }
+}
+
+#[test]
+fn crd43_idle_stream_ends_at_original_operation_deadline() {
+    let observed = transport_with_controls(
+        Scenario::Allowed,
+        wire(&body()),
+        false,
+        true,
+        Some(NormalStream::IdleDeadline),
+    );
+    assert_eq!(observed.response, CRD43_INITIAL);
+    assert_eq!(observed.receipts, vec!["unknown"]);
+    crd43_assert_one_owned_flow(&observed);
+    assert!(observed.provider_observed_close);
+    assert!(observed.elapsed >= Duration::from_millis(1000));
+    assert!(observed.elapsed < Duration::from_secs(3));
+}
+
+#[test]
+fn crd43_reader_pause_constrains_provider_then_resumes_exact_stream() {
+    let observed = transport_with_controls(
+        Scenario::Allowed,
+        wire(&body()),
+        false,
+        true,
+        Some(NormalStream::PausedReader),
+    );
+    let (before, after) = observed.paused_progress.unwrap();
+    assert!(before > 0 && before < CRD43_PADDING_EVENTS * CRD43_PADDING_BYTES);
+    assert_eq!(
+        before, after,
+        "provider writes must stop progressing while the client is paused"
+    );
+    assert!(observed.response.starts_with(CRD43_INITIAL));
+    assert!(observed
+        .response
+        .ends_with(&crd43_terminal(NormalStream::PausedReader)));
+    assert_eq!(
+        observed.response.len(),
+        CRD43_INITIAL.len()
+            + CRD43_PADDING_EVENTS * CRD43_PADDING_BYTES
+            + crd43_terminal(NormalStream::PausedReader).len()
+    );
+    let middle = &observed.response.as_bytes()[CRD43_INITIAL.len()
+        ..observed.response.len() - crd43_terminal(NormalStream::PausedReader).len()];
+    let mut expected = vec![b'z'; CRD43_PADDING_BYTES];
+    expected[0] = b':';
+    expected[CRD43_PADDING_BYTES - 2..].copy_from_slice(b"\n\n");
+    let mut chunks = middle.chunks_exact(CRD43_PADDING_BYTES);
+    for chunk in &mut chunks {
+        assert_eq!(chunk, expected.as_slice());
+    }
+    assert!(chunks.remainder().is_empty());
+    assert_eq!(observed.receipts, vec!["completed"]);
+    crd43_assert_one_owned_flow(&observed);
+}
+
+#[test]
+fn crd43_valid_tls_incomplete_body_times_out_without_exposing_canaries() {
+    let complete = wire(&body());
+    let body_start = complete.find("\r\n\r\n").unwrap() + 4;
+    // A normal client pauses after valid TLS and headers with its request body
+    // still unfinished. The actual acquisition deadline must stop the exchange.
+    let observed = transport_with_ingress(
+        Scenario::Allowed,
+        complete[..body_start + 8].to_owned(),
+        true,
+        true,
+    );
+    assert_eq!(
+        (observed.admissions, observed.dispatches, observed.attempts),
+        (0, 0, 0)
+    );
+    assert!(observed.upstream.is_empty());
+    assert!(observed.receipts.is_empty());
+    assert!(observed.elapsed >= Duration::from_secs(4));
+    assert!(observed.elapsed < Duration::from_secs(7));
+    assert!(observed.handler_error.is_some());
+    // Enumerated sinks are the actual downstream response and typed handler
+    // diagnostic. CLI logs, runtime history and external traces are not captured.
+    for sink in [
+        &observed.response,
+        observed.handler_error.as_deref().unwrap(),
+    ] {
+        assert!(!sink.contains("provider-secret-canary"));
+        assert!(!sink.contains("workload-only-canary"));
+    }
+}
+
+fn crd43_assert_one_owned_flow(observed: &Observed) {
+    assert_eq!(
+        (
+            observed.admissions,
+            observed.dispatches,
+            observed.attempts,
+            observed.releases
+        ),
+        (1, 1, 1, 1)
+    );
+    // Compare the actual outbound release with the actual selected bind tuple;
+    // this assertion does not invent an authority or DNS authorization decision.
+    let mut expected = observed.bound_flow.clone().unwrap();
+    expected["method"] = json!("release");
+    expected["flow_ref"] = json!("f".repeat(64));
+    assert_eq!(observed.released_flow.as_ref(), Some(&expected));
+}
+
+#[test]
+fn crd43_provider_terminal_without_http_end_preserves_unknown() {
+    let observed = transport_with_controls(
+        Scenario::Allowed,
+        wire(&body()),
+        false,
+        true,
+        Some(NormalStream::TerminalWithoutHttpEnd),
+    );
+    assert_eq!(
+        observed.response,
+        format!(
+            "{}{}",
+            CRD43_INITIAL,
+            crd43_terminal(NormalStream::TerminalWithoutHttpEnd)
+        )
+    );
+    assert_eq!(observed.receipts, vec!["unknown"]);
+    assert!(observed.handler_error.is_some());
+    crd43_assert_one_owned_flow(&observed);
 }
