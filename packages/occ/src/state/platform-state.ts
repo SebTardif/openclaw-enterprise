@@ -5,6 +5,7 @@ import { createMemoryChannelBindingRepository } from "./memory/channel-bindings.
 import { createMemoryNamespaceRepository } from "./memory/namespaces.ts";
 import { createMemoryConfigurationRepository } from "./memory/configurations.ts";
 import { createMemorySecretRepository } from "./memory/secrets.ts";
+import { createMemoryServiceAccountRepository } from "./memory/service-accounts.ts";
 export { validateChannelBindingList } from "./channel-binding-validation.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -47,10 +48,7 @@ export type {
 } from "../ports/repositories/configuration.ts";
 import type { SecretReadRepository } from "../ports/repositories/secret.ts";
 export type { SecretReadRepository, SecretRepository } from "../ports/repositories/secret.ts";
-import type {
-  ServiceAccountReadRepository,
-  ServiceAccountRepository,
-} from "../ports/repositories/service-account.ts";
+import type { ServiceAccountReadRepository } from "../ports/repositories/service-account.ts";
 export type {
   ServiceAccountReadRepository,
   ServiceAccountRepository,
@@ -606,83 +604,26 @@ function repositories(
     secretBindingsReference,
   });
 
-  const serviceAccounts: ServiceAccountRepository = {
-    findServiceAccount: async (namespaceId, serviceAccountId) => {
-      if (snapshot.namespaces.get(namespaceId)?.deletedAt !== undefined) return undefined;
-      const account = snapshot.serviceAccounts.get(agentKey(namespaceId, serviceAccountId));
-      return account === undefined ? undefined : immutableCopy(account);
+  const serviceAccounts = createMemoryServiceAccountRepository({
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    listServiceAccounts: async (namespaceId) => {
-      if (snapshot.namespaces.get(namespaceId)?.deletedAt !== undefined) return Object.freeze([]);
-      return Object.freeze(
-        Array.from(snapshot.serviceAccounts.values())
-          .filter((account) => account.namespaceId === namespaceId)
-          .sort(
-            (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
-          )
-          .map((account) => immutableCopy(account)),
-      );
+    snapshot: {
+      get installation() {
+        return snapshot.installation;
+      },
+      serviceAccounts: snapshot.serviceAccounts,
+      namespaces: snapshot.namespaces,
+      agents: snapshot.agents,
     },
-    findServiceAccountProviderBinding: async () => undefined,
-    createServiceAccount: async (account) => {
-      assertInitialized(snapshot);
-      if (
-        !serviceAccountIdentifier.test(account.id) ||
-        typeof account.name !== "string" ||
-        account.name.length < 1 ||
-        account.name.length > 200 ||
-        account.name !== account.name.trim() ||
-        /[\x00-\x1f\x7f]/.test(account.name) ||
-        (account.credential !== undefined && !validCredential(account.credential))
-      )
-        throw new ScopeViolationError("The ServiceAccount or its credential reference is invalid.");
-      const namespace = await namespaces.lockNamespace(account.namespaceId);
-      if (
-        namespace === undefined ||
-        (namespace.status !== "provisioning" && namespace.status !== "ready")
-      )
-        throw new ScopeViolationError("The ServiceAccount belongs to an unavailable Namespace.");
-      const key = agentKey(account.namespaceId, account.id);
-      if (
-        snapshot.serviceAccounts.has(key) ||
-        Array.from(snapshot.serviceAccounts.values()).some(
-          (existing) =>
-            existing.id === account.id ||
-            (existing.namespaceId === account.namespaceId && existing.name === account.name),
-        )
-      )
-        throw new ResourceConflictError(
-          "A ServiceAccount with this identity or name already exists.",
-        );
-      const saved = immutableCopy(account);
-      snapshot.serviceAccounts.set(key, saved);
-      return immutableCopy(saved);
-    },
-    lockServiceAccount: async (namespaceId, serviceAccountId) =>
-      serviceAccounts.findServiceAccount(namespaceId, serviceAccountId),
-    updateCredential: async (namespaceId, serviceAccountId, credential) => {
-      if (!validCredential(credential))
-        throw new ScopeViolationError("The ServiceAccount credential reference is invalid.");
-      const current = await serviceAccounts.findServiceAccount(namespaceId, serviceAccountId);
-      if (current === undefined) return undefined;
-      const updated = immutableCopy({ ...current, credential });
-      snapshot.serviceAccounts.set(agentKey(namespaceId, serviceAccountId), updated);
-      return immutableCopy(updated);
-    },
-    deleteServiceAccount: async (namespaceId, serviceAccountId) => {
-      if ((await serviceAccounts.findServiceAccount(namespaceId, serviceAccountId)) === undefined)
-        return false;
-      if (
-        Array.from(snapshot.agents.values()).some(
-          (agent) =>
-            agent.namespaceId === namespaceId && agent.serviceAccountId === serviceAccountId,
-        )
-      )
-        throw new ScopeViolationError("The ServiceAccount is referenced by an Agent.");
-      snapshot.serviceAccounts.delete(agentKey(namespaceId, serviceAccountId));
-      return true;
-    },
-  };
+    namespaces,
+    resourceKey: agentKey,
+    isServiceAccountIdentifier: (value) => serviceAccountIdentifier.test(value),
+    validCredential,
+  });
 
   const agents: AgentRepository = {
     findAgent: async (namespaceId, agentId) => {

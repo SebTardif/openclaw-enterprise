@@ -147,6 +147,32 @@ provider, not IAM, Compute, OCC, or the Harness.
 - Expired token: Execution fails closed; automated refresh and rotation are
   not implemented.
 
+## Repository checks
+
+The [memory repository](../../packages/occ/src/state/memory/service-accounts.ts)
+and [PostgreSQL repository](../../packages/occ/src/state/postgres/service-accounts.ts)
+borrow the owning transaction's working snapshot or guarded client. They preserve
+account metadata, credential references, current Agent associations, and the
+existing transaction lifetime. Private provider-binding reads remain supplied by
+the transaction owner. Credential updates leave admitted revision snapshots intact.
+
+Run the focused storage checks from the repository root:
+
+```sh
+node scripts/test-files.mjs -- tests/conformance/service-account-repository-memory.test.mjs
+node scripts/test-files.mjs -- tests/integration/postgres-service-account-repository.test.mjs
+```
+
+The PostgreSQL command requires `OCC_SERVICE_ACCOUNT_REPOSITORY_TEST_DATABASE_URL`
+for a separately prepared, fresh disposable database using the limited application
+role described in the [PostgreSQL test environment](settings.md#postgresql-test-environment).
+Its first case requires no Installation or controller work, verifies bootstrap
+rollback, and then initializes supported fixtures. The suite never resets state
+or claims queue work; repeating it requires fresh database state. An absent
+selector skips its live database cases. These checks cover storage ownership,
+real row locks, closed handles, cancellation, and account/resource/work/audit
+rollback. They do not establish provider effects or live credential delivery.
+
 ## Evidence and related references
 
 The [controller domain operations](../../packages/occ/src/index.ts) own account
