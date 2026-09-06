@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -351,7 +351,7 @@ test(
     );
     await fixture.startCollector({
       receiverPath: join(fixture.directory, "receiver.yaml"),
-      publish: ["127.0.0.1::4318"],
+      publish: ["127.0.0.1::4318", "127.0.0.1::8888"],
     });
     const receiverAddress = await fixture.port(4318);
     await waitFor(async () =>
@@ -455,5 +455,139 @@ test(
     ]) {
       assert.equal(serialized.includes(internal), false, `${internal} must not leak downstream`);
     }
+
+    // The original canonical fixture supplies lifecycle values; this test owns
+    // only actual adapter/Collector transport, never an authorized status producer.
+    const fixturePath =
+      process.env.OCC_TEST_LIFECYCLE_DIAGNOSTIC_FIXTURES ??
+      join(root, "tests/fixtures/lifecycle-status-projector-v1/sanitized.json");
+    const canonicalBytes = await readFile(fixturePath);
+    assert.ok(canonicalBytes.length <= 2 * 1024 * 1024);
+    if (process.env.OCC_TEST_LIFECYCLE_DIAGNOSTIC_FIXTURES) {
+      const digest = process.env.OCC_TEST_LIFECYCLE_DIAGNOSTIC_FIXTURE_SHA256;
+      assert.match(digest ?? "", /^[0-9a-f]{64}$/);
+      assert.equal(createHash("sha256").update(canonicalBytes).digest("hex"), digest);
+    }
+    const canonical = JSON.parse(canonicalBytes);
+    assert.ok(Array.isArray(canonical.readCases) && canonical.readCases.length <= 100);
+    const { default: pino } = await import("pino");
+    const { createOperationalDiagnosticsV1 } =
+      await import("../../apps/controller/src/diagnostics/operational-diagnostics-v1.ts");
+    const { projectSecurityEvent } = await import("@openclaw-enterprise/contracts/security-events");
+    const { fixture: eventFixture } = await import("../fixtures/security-events/cases.mjs");
+    const diagnosticRecords = [];
+    const diagnosticLogger = pino(
+      {
+        base: {},
+        level: "info",
+        formatters: { level: (label) => ({ severity: label.toUpperCase() }) },
+      },
+      {
+        write(chunk) {
+          diagnosticRecords.push(JSON.parse(String(chunk)));
+          return true;
+        },
+      },
+    );
+    const diagnostics = createOperationalDiagnosticsV1(diagnosticLogger);
+    for (const entry of canonical.readCases) {
+      if (entry.result.kind !== "read") continue;
+      if (entry.method === "readStatus")
+        assert.equal(
+          diagnostics.emitLifecycleStatus(entry.request, entry.result.value).submitted,
+          6,
+        );
+      if (entry.method === "readOperation")
+        assert.equal(
+          diagnostics.emitLifecycleOperation(entry.request, entry.result.value).submitted,
+          1,
+        );
+    }
+    const projectedInput = eventFixture();
+    assert.equal(
+      diagnostics.emitSecurityEvent(
+        projectSecurityEvent(projectedInput.audit, projectedInput.context),
+      ).submitted,
+      1,
+    );
+    assert.ok(diagnosticRecords.some((record) => record.event === "diagnostics.lifecycle"));
+    assert.ok(diagnosticRecords.some((record) => record.event === "diagnostics.operation"));
+    const canary = `UNTRUSTED_DIAGNOSTIC_FRAGMENT_${fixture.suffix}`;
+    const unsafeFields = {
+      ...diagnosticRecords.at(-1),
+      reasonCode: canary,
+      observedAt: canary,
+      observedAtAvailable: true,
+      details: canary,
+    };
+    const transportTime = String(BigInt(Date.now()) * 1000000n);
+    const diagnosticPayload = structuredClone(payload);
+    diagnosticPayload.resourceLogs[0].scopeLogs[0].logRecords = [
+      ...diagnosticRecords,
+      unsafeFields,
+      {
+        ...diagnosticRecords.at(-1),
+        diagnosticSchema: "unsupported",
+        event: "diagnostics.security",
+      },
+      { ...diagnosticRecords.at(-1), event: "diagnostics.unknown" },
+    ].map((record) => ({
+      timeUnixNano: transportTime,
+      body: { stringValue: JSON.stringify(record) },
+      attributes: [{ key: "log.iostream", value: { stringValue: "stdout" } }],
+    }));
+
+    // The real exporter is unavailable while these records enter its existing
+    // bounded queue. Submission and queue presence are not remote delivery.
+    await docker(["stop", "--time", "5", fixture.backend]);
+    const diagnosticResponse = await fetch(`http://${receiverAddress}/v1/logs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(diagnosticPayload),
+    });
+    assert.equal(diagnosticResponse.status, 200);
+    const metricsAddress = (await fixture.port(8888)).trim();
+    await waitFor(async () =>
+      /otelcol_exporter_queue_size[^\n]* [1-9]/.test(
+        await (await fetch(`http://${metricsAddress}/metrics`)).text(),
+      ),
+    );
+    await docker(["start", fixture.backend]);
+    const expectedCount = 1 + diagnosticRecords.length + 1;
+    await waitFor(async () => (await records()).length === expectedCount);
+    const exportedDiagnostics = (await records()).slice(1);
+    assert.equal(JSON.stringify(exportedDiagnostics).includes(canary), false);
+    for (const entry of exportedDiagnostics) {
+      assert.equal(entry.resource["service.instance.id"], podUid);
+      assert.equal(entry.record.timeUnixNano, transportTime);
+      assert.ok(entry.record.body.stringValue.startsWith("diagnostics."));
+    }
+    const sourceTimes = diagnosticRecords
+      .filter((record) => typeof record.observedAt === "string")
+      .map((record) => record.observedAt);
+    assert.ok(sourceTimes.length > 0);
+    for (const time of sourceTimes)
+      assert.ok(
+        exportedDiagnostics.some((entry) => entry.attributes["diagnostic.observed_at"] === time),
+      );
+    assert.ok(
+      exportedDiagnostics.some((entry) =>
+        entry.record.attributes.some(
+          (attribute) =>
+            attribute.key === "diagnostic.observed_at_available" &&
+            attribute.value.boolValue === false,
+        ),
+      ),
+    );
+    assert.ok(
+      exportedDiagnostics.some(
+        (entry) => entry.attributes["diagnostic.lifecycle_generation"] !== undefined,
+      ),
+    );
+    assert.ok(
+      exportedDiagnostics.some(
+        (entry) => entry.attributes["diagnostic.condition_status"] === "unknown",
+      ),
+    );
   },
 );
