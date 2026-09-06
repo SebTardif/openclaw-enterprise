@@ -6,6 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./auth-persistence/schema-auth-boundary-v1": "./src/auth-persistence/schema-auth-boundary-v1.ts",
+    "./schema/core-schema-boundary-v1": "./src/schema/core-schema-boundary-v1.ts",
     "./services/workload-profile/port": "./src/services/workload-profile/port.ts",
     "./workload-profiles/canonical": "./src/workload-profiles/canonical.ts",
     "./turn-journal/store": "./src/turn-journal/store.ts",
