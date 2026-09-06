@@ -3,7 +3,7 @@ import {
   canonicalRuntimeEffectRequestV1,
   canonicalRuntimeFenceRequestV1,
   canonicalRuntimeFaultRequestV1,
-} from "@openclaw-enterprise/contracts";
+} from "../../../packages/contracts/src/index.ts";
 
 // Representation fixtures only. None of these synthetic records is provider,
 // authenticated currentness, PostgreSQL, runsc or physical-termination evidence.
