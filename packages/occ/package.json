@@ -46,7 +46,10 @@
     "./credential-custody-v1/custody": "./src/credential-custody-v1/custody.ts",
     "./credential-custody-v1/ports": "./src/credential-custody-v1/ports.ts",
     "./credential-custody-v1/cache": "./src/credential-custody-v1/cache.ts",
-    "./credential-custody-v1/backend": "./src/credential-custody-v1/backend.ts"
+    "./credential-custody-v1/backend": "./src/credential-custody-v1/backend.ts",
+    "./credential-inventory-v1/inventory": "./src/credential-inventory-v1/inventory.ts",
+    "./credential-inventory-v1/ports": "./src/credential-inventory-v1/ports.ts",
+    "./credential-inventory-v1/backend": "./src/credential-inventory-v1/backend.ts"
   },
   "types": "./src/index.ts",
   "files": [
