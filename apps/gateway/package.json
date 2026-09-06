@@ -10,6 +10,7 @@
     "typecheck": "tsc --build tsconfig.json --pretty false"
   },
   "dependencies": {
+    "@openclaw-enterprise/contracts": "workspace:*",
     "openclaw": "link:../../.build/upstream-sdk/openclaw"
   }
 }

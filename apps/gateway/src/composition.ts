@@ -1,3 +1,4 @@
+import type { GatewayStartupCloseV1 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 import type {
   GatewayHostConfigurationV1,
   GatewayHostDependenciesV1,
@@ -24,7 +25,10 @@ export type GatewayCompositionFactories = Readonly<{
   teams: typeof createMSTeamsHostedIngress;
 }>;
 
+export type GatewayCompositionClose = Readonly<{ cleanup: GatewayStartupCloseV1["cleanup"] }>;
+
 export type GatewayComposition = Readonly<{
+  close(): Promise<GatewayCompositionClose>;
   slack: SlackGatewayModule["native"];
   start(): ReturnType<typeof startGatewayHostV1>;
 }>;
@@ -81,13 +85,45 @@ export function createGatewayComposition(
     return module;
   });
   let started = false;
+  let closed = false;
+  let host: ReturnType<typeof startGatewayHostV1> | undefined;
+  let closePromise: Promise<GatewayCompositionClose> | undefined;
   return Object.freeze({
     /** Retain only these existing native ports when wiring the genuine Slack receiver. */
     slack: slack.native,
     start() {
-      if (started) throw unavailable();
+      if (started || closed) throw unavailable();
       started = true;
-      return startHost(configuration, { ...policies, modules });
+      host = startHost(configuration, { ...policies, modules });
+      return host;
+    },
+    close() {
+      closed = true;
+      // Publish the one close join before calling an owner that could reenter it.
+      closePromise ??= Promise.resolve().then(async (): Promise<GatewayCompositionClose> => {
+        if (host) {
+          // Once returned, the actual host owns its module cleanup. Runtime also
+          // retains this same host and quiesces it before waiting for readiness.
+          try {
+            const result = await host.close();
+            return {
+              cleanup:
+                result.cleanup === "finished" || result.cleanup === "failed"
+                  ? result.cleanup
+                  : "unknown",
+            };
+          } catch {
+            return { cleanup: "failed" };
+          }
+        }
+        // No host took ownership, including a synchronous start failure. Invoke
+        // every constructed module's original close and join all late settlement.
+        const results = await Promise.allSettled(modules.map(async (module) => module.close()));
+        return {
+          cleanup: results.every((result) => result.status === "fulfilled") ? "finished" : "failed",
+        };
+      });
+      return closePromise;
     },
   });
 }
@@ -104,4 +140,16 @@ export async function loadGatewayCompositionFactories(): Promise<GatewayComposit
     slack: slack.createSlackHostedAdapterV1,
     teams: teams.createMSTeamsHostedIngress,
   });
+}
+
+/**
+ * Fixed preparation adapter captured once by the protected startup owner.
+ * Preparation starts no transport; the owner retains the synchronous host returned
+ * by start() before awaiting readiness and joins that host on revocation.
+ */
+export async function prepareGatewayComposition(
+  input: GatewayCompositionInput,
+): Promise<GatewayComposition> {
+  const factories = await loadGatewayCompositionFactories();
+  return createGatewayComposition(input, factories);
 }

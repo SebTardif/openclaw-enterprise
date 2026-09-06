@@ -1,14 +1,24 @@
 import { requireAdmittedGatewayConfiguration } from "./admitted-configuration.ts";
 
-/** The fixed executable remains unavailable until the real startup consumer exists. */
+/** Use the original enrollment once; Runtime retains the complete local lifetime. */
 export async function main() {
   try {
-    requireAdmittedGatewayConfiguration();
-    // TODO: Wire the actual admitted startup consumer to the fixed composition.
-    // Until both are connected, even a returned value cannot enable this entrypoint.
-    throw new Error("Hosted gateway composition is not connected");
+    const { usePort, recipient, startup } = requireAdmittedGatewayConfiguration();
+    const result = await usePort.start(recipient, startup);
+    if (result.kind !== "started") throw new Error("Hosted gateway startup unavailable");
+
+    // Waiting does not request shutdown. The owner closes and joins pending/late
+    // work; external process supervision retains physical termination responsibility.
+    const closed = result.lifetime.closed;
+    if (!closed || typeof closed.then !== "function") {
+      throw new Error("Hosted gateway lifetime unavailable");
+    }
+    const outcome = await closed;
+    if (outcome.cleanup !== "finished" || outcome.termination !== "unknown") {
+      throw new Error("Hosted gateway cleanup unavailable");
+    }
   } catch {
-    process.stderr.write("Hosted gateway unavailable: admitted startup is not connected.\n");
+    process.stderr.write("Hosted gateway unavailable: startup or cleanup is not confirmed.\n");
     process.exitCode = 1;
   }
 }

@@ -1,7 +1,9 @@
-/** No environment variable or parsed JSON can stand in for admitted startup. */
-export function requireAdmittedGatewayConfiguration(): never {
-  // TODO: Consume the protected startup owner's accepted contract, including its
-  // prebound material/currentness and exact module owners, before enabling startup.
-  // The deployment binding has not been supplied; do not invent its serialized shape.
+import type { GatewayStartupEnrollmentV1 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
+
+/** Only the protected bootstrap owner may supply the original local enrollment. */
+export function requireAdmittedGatewayConfiguration(): GatewayStartupEnrollmentV1 {
+  // TODO: Connect the genuine authenticated startup bootstrap and its prebound
+  // configuration/material owners. Parsed JSON, argv, environment variables and
+  // caller-provided objects cannot enroll a recipient or manufacture its handles.
   throw new Error("Hosted gateway admitted startup is unavailable");
 }
