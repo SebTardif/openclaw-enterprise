@@ -3,7 +3,7 @@ import {
   canonicalRuntimeEffectRequestV1,
   canonicalRuntimeFenceRequestV1,
   canonicalRuntimeFaultRequestV1,
-} from "../../../packages/contracts/src/index.ts";
+} from "../../../packages/contracts/src/runtime-effects-v1.ts";
 
 // Representation fixtures only. None of these synthetic records is provider,
 // authenticated currentness, PostgreSQL, runsc or physical-termination evidence.
