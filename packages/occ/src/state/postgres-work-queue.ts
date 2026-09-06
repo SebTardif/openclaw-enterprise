@@ -1,39 +1,19 @@
 import { isNonEmptyString, isPositiveSafeInteger } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
+import type {
+  ControllerWorkState,
+  ControllerWork,
+  ClaimedWork,
+  WorkClaim,
+} from "../ports/repositories/work.ts";
+export type { ControllerWorkState, ControllerWork, ClaimedWork, WorkClaim };
 
 export interface PostgresQueryClient {
   query(
     text: string,
     values?: readonly unknown[],
   ): Promise<{ rows: unknown[]; rowCount: number | null }>;
-}
-
-export type ControllerWorkState = "queued" | "claimed" | "succeeded" | "failed_permanent";
-
-export interface ControllerWork {
-  readonly idempotencyKey: string;
-  readonly namespaceId: string;
-  readonly agentId?: string;
-  readonly revisionId?: string;
-  readonly runtimeTransitionRef?: string;
-  readonly lifecycleGeneration?: number;
-  readonly actorId: string;
-  readonly namespaceTarget?: "ready" | "deleted";
-  readonly state: ControllerWorkState;
-  readonly availableAt: Date;
-  readonly attemptCount: number;
-  readonly claimToken?: string;
-  readonly leaseExpiresAt?: Date;
-  readonly completedAt?: Date;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
-}
-
-export interface ClaimedWork extends ControllerWork {
-  readonly state: "claimed";
-  readonly claimToken: string;
-  readonly leaseExpiresAt: Date;
 }
 
 export interface EnqueueWork {
@@ -46,11 +26,6 @@ export interface EnqueueWork {
   readonly actorId: string;
   readonly namespaceTarget?: "ready" | "deleted";
   readonly availableAt?: Date | string;
-}
-
-export interface WorkClaim {
-  readonly idempotencyKey: string;
-  readonly claimToken: string;
 }
 
 export interface ClaimRequest {
