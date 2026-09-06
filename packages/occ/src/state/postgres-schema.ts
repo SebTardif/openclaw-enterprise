@@ -1,5 +1,6 @@
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
+import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import type {
   ChannelAdministrationMappingV1,
   HarnessExecutionMode,
@@ -1634,3 +1635,11 @@ export const {
   auditEvents,
   runtimeAssignmentAllocations,
 });
+
+export const {
+  credentialInventoryRecords,
+  credentialInventoryOperations,
+  credentialInventoryMintClaims,
+  credentialInventoryRevocationClaims,
+  credentialInventorySnapshots,
+} = createCredentialInventoryTablesV1(occSchema, { installation, agents });
