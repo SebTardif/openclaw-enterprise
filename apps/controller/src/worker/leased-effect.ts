@@ -25,8 +25,9 @@ export class LeasedEffects {
   }
 
   async renew(context: WorkerClaimContext): Promise<void> {
-    if ((await this.options.queue.heartbeat(context.claim)) === undefined)
-      throw new WorkClaimLostError();
+    if (context.signal.aborted) throw new WorkClaimLostError();
+    const renewed = await this.options.queue.heartbeat(context.claim);
+    if (context.signal.aborted || renewed === undefined) throw new WorkClaimLostError();
   }
 
   async run<T>(context: WorkerClaimContext, effect: () => Promise<T>): Promise<T> {
@@ -41,10 +42,12 @@ export class LeasedEffects {
       operation.abort(new WorkClaimLostError());
     };
     context.signal.addEventListener("abort", abandon, { once: true });
+    if (context.signal.aborted) abandon();
     const heartbeat = setInterval(
       () => {
         pending = pending.then(async () => {
-          if ((await this.options.queue.heartbeat(context.claim)) === undefined) abandon();
+          if (lost) return;
+          await this.renew(context);
         });
         pending.catch(() => {
           abandon();
@@ -54,7 +57,11 @@ export class LeasedEffects {
     );
     heartbeat.unref();
     try {
-      return await this.options.withAbortSignal(operation.signal, effect);
+      if (lost) throw new WorkClaimLostError();
+      return await this.options.withAbortSignal(operation.signal, () => {
+        if (lost || context.signal.aborted) throw new WorkClaimLostError();
+        return effect();
+      });
     } finally {
       clearInterval(heartbeat);
       context.signal.removeEventListener("abort", abandon);
