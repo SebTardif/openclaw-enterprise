@@ -266,6 +266,30 @@ serializes deployments to different Agents in the same Namespace. Admission
 currently reads the full revision history to allocate the next revision number;
 history reads are unpaginated and their cost grows with retained history.
 
+The internal `controller.deployment.getAcceptedDeployOperation` reader accepts
+an exact Namespace, Agent, and retained operation locator. It checks the
+current selected IAM Driver's `read` permission on that Agent before reading
+and again before returning. A reader does not need the original deployer's
+grants or permission to read revision contents. The result contains only
+`operationRef`, `kind`, `revisionSource`, `lifecycleGeneration`, `desiredMode`,
+`acceptedAt`, and `requestedRevisionId`; it includes no revision document,
+actor, request, audit, work, credential, or runtime details.
+
+This reader recognizes the original deploy-admission format by verifying its
+exact retained revision, intent, deploy audit, and original reconciliation
+work together. Its fixed `deploy` and `saved-draft` values describe that
+format; an arbitrary running intent does not establish a deploy operation.
+`acceptedAt` is the stored intent creation time, not a measured database commit
+time. Later draft changes, head advancement, or terminal work leave the
+original acceptance readable. Reads use a fresh storage snapshot and reject
+calls inside an active mutation. Missing proof does not establish that an
+in-flight transaction rolled back or permit an automatic retry.
+
+This compatible reader does not expose an HTTP lifecycle route or report
+runtime observations, convergence, or current execution authority. Its IAM
+checks retain the existing read policy; they do not supply the account and
+semantic currentness protocol required for live lifecycle control.
+
 The worker checks each revision's retained original intent association before
 its first Compute call. Later head advancement preserves the older association
 and the existing supersession and active-maintenance behavior. Historical

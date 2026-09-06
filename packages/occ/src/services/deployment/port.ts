@@ -43,6 +43,8 @@ export type DeploymentRepositories = MutationRepositoryOperations<
 /** Fresh storage reads only; recovery must never join the failed ambient unit. */
 export const DEPLOYMENT_RECOVERY_REPOSITORIES = {
   installations: ["getInstallation"],
+  agents: ["findAgent"],
+  runtimeAssignments: ["findRuntimeIntent"],
   runtimeAdmissions: ["findCommittedAdmission"],
 } as const;
 
@@ -80,11 +82,33 @@ export interface DeploymentCommands {
 }
 
 export interface DeploymentQueries {
+  /** Compatible reader for the original deploy-admission format, not live runtime status. */
+  getAcceptedDeployOperation(
+    principalId: string,
+    input: AcceptedDeployOperationInput,
+  ): Promise<Readonly<AcceptedDeployOperation>>;
   recoverDeployAgent(
     principalId: string,
     input: DeployAgentInput,
     admission: Pick<DeployAgentAdmissionContext, "transitionRef" | "requestId">,
   ): Promise<Readonly<AgentRevision>>;
+}
+
+export interface AcceptedDeployOperationInput {
+  readonly namespaceId: string;
+  readonly agentId: string;
+  readonly operationRef: string;
+}
+
+/** The immutable fields permitted after an exact Agent read check. */
+export interface AcceptedDeployOperation {
+  readonly operationRef: string;
+  readonly kind: "deploy";
+  readonly revisionSource: "saved-draft";
+  readonly lifecycleGeneration: number;
+  readonly desiredMode: "running";
+  readonly acceptedAt: string;
+  readonly requestedRevisionId: string;
 }
 
 export interface DeploymentServicePort extends DeploymentCommands, DeploymentQueries {}
