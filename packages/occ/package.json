@@ -6,6 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./services/workload-profile/port": "./src/services/workload-profile/port.ts",
+    "./workload-profiles/canonical": "./src/workload-profiles/canonical.ts",
     "./turn-journal/store": "./src/turn-journal/store.ts",
     "./turn-journal/postgres": "./src/turn-journal/postgres.ts",
     "./turn-journal/completed-context": "./src/turn-journal/completed-context.ts",

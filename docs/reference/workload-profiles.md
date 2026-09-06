@@ -1,0 +1,31 @@
+# Workload profile contracts and retained preparations
+
+Workload profile support currently provides closed selection contracts, a strict canonical byte codec, and storage adapters for inert preparation records. The operator service is unavailable, and its route definitions are not registered in the controller. Retaining a candidate does not approve it, authorize deployment, select Compute, or establish current runtime protection.
+
+An immutable selection names `manifestRef`, `manifestDigest`, `admissionRef`, and `admissionVersion`. A runtime use additionally identifies its Installation, Namespace, `harness` component, five immutable profile roles, canonical format, and admitted configuration digest. These references identify intended bytes; current authorization must be checked separately when accepting or using them. Agent draft and revision integration remains unavailable. Existing bodyless deployment behavior is unchanged, and `Agent.providerId` continues to select the model provider.
+
+The canonical JSON utility accepts UTF-8 bytes, rejects duplicate object keys, and sorts ASCII property names. It preserves Unicode scalar values and array order. It rejects malformed UTF-8, unpaired surrogates, negative numbers, fractions, exponent notation, unsafe integers, and null manifest content. Operator envelopes permit their explicitly declared null first-admission expectation. The owning closed schema must still validate every field; lexical validity does not validate a complete manifest.
+
+Both input and canonical output are bounded to 65,536 bytes. The codec also limits nesting to 32 containers, a container to 1,024 entries, and a document to 8,192 value nodes. Separate digest domains bind manifest content, its named subdocuments, client intent, and server-allocated operation identities. Hashes from different domains are not interchangeable.
+
+The preparation repository retains exact canonical client intent, its digest, original account and principal correspondence, the once-allocated identity bundle, and a separate operation digest. Its internal storage key is Installation, original principal, and caller-known operation UUID; the account must also match. Exact replay reuses the retained IDs and time. Reusing that key with different bytes conflicts. Another actor cannot adopt or read its retained operation.
+
+Preparation records are explicitly inert. They do not contain an approval, current authority, or a runtime receipt. The repository checks the exact scoped prior operation before allocating IDs. It serializes capacity before operation identity and Namespace access, limits unresolved ordinary preparations to 32, and caps ordinary history plus terminal reservations at 4,096 slots. Exact replay and readback consume no new slots. Unknown outcomes and abandoned history must not be evicted to recover capacity.
+
+Memory storage borrows an isolated working snapshot and transaction lifetime. It does not provide a shared account/IAM authority gate. PostgreSQL storage borrows the owning transaction connection; schema composition, migrations, restricted-role grants and owner-enforced immutability must be installed before that adapter is available in the controller. The adapters do not start or commit transactions. Their owner must finish the profile transaction guard before committing so that caught repository errors roll back the unit.
+
+The unregistered operator contracts define the following eventual paths:
+
+| Method and path                                              | Purpose                                                                                             |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `POST /api/workload-profile-operations`                      | Retain the caller's exact preparation and allocated identities.                                     |
+| `POST /api/workload-profile-operations/:operationRef/accept` | Accept an exact retained preparation with a fresh current authority check; the request is bodyless. |
+| `GET /api/workload-profile-operations/:operationRef`         | Read an original-actor operation under current read authority.                                      |
+| `GET /api/workload-profiles/:admissionRef`                   | Read a sanitized retained profile.                                                                  |
+| `POST /api/workload-profiles/:admissionRef/withdraw`         | Atomically consume an admission-owned reserved terminal template.                                   |
+
+Every mutation acknowledgement is limited to its operation reference, action and exact scope. It must not expose retained manifest content, allocated identities, accounts, grants or audit records under mutation authority alone. An uncertain commit returns only the preknown operation locator and `exact-readback-only`; recovery must resolve that actor's own durable operation before any retry. Retained reads require current `read` and `administer` permission on the Installation plus the registered management class. A fresh protective withdrawal does not require an additional read permission.
+
+Terminal withdrawal and active admission are not implemented by inert preparation storage. The required terminal template belongs to the admission, contains preallocated closure identities, and reserves capacity independently of actor-owned pending preparations. Its atomic consumption must bind the current withdrawing actor without adopting an abandoned actor's operation. A durable profile invalidation request is a dedicated outbox record, not a runtime fence, physical stop, or proof of termination.
+
+Enabling the service requires actual maintained account/session custody, current selected IAM and semantic entitlement checks held through commit, and the complete selected manifest dictionary. Active profile admission and profile-backed deployment additionally require connected current-use guards for allocation, preparation and binding, plus the actual invalidation consumer. Storage, metadata, a startup flag, or an observation cannot supply those missing capabilities.
