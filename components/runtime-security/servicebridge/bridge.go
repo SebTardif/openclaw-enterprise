@@ -1,6 +1,7 @@
 package servicebridge
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -139,8 +140,8 @@ func decodeBase64(value string, max int) ([]byte, error) {
 }
 
 // Run owns both pipes and every resource it creates. Returning means its native
-// source, listener, connection and worker have been closed and joined. The only
-// application method is readOperation; there is no runtime mutation channel.
+// source, listener, connection and worker have been closed and joined. The
+// protected admitted profile bounds dispatch; it cannot establish bind eligibility.
 func Run(parent context.Context, input io.ReadCloser, output io.WriteCloser) error {
 	if parent == nil || input == nil || output == nil {
 		return errProtocol
@@ -365,7 +366,7 @@ func (b *bridge) serve(raw net.Conn) {
 		return
 	}
 	var request Request
-	if decodeStrict(requestRaw, &request) != nil || request.SchemaVersion != 1 || request.Method != "readOperation" {
+	if decodeStrict(requestRaw, &request) != nil || request.SchemaVersion != 1 || !b.operationAllowed(request) {
 		return
 	}
 	requested, err := parseTime(request.Deadline)
@@ -445,6 +446,33 @@ func (b *bridge) serve(raw net.Conn) {
 		}
 		b.emit("completed", x, "", "")
 	}
+}
+
+// The native side independently enforces the admitted operation ceiling before
+// emitting a request. OCC's canonical closed method schema then parses the full
+// original payload before any context is constructed; these discriminators do
+// not replace that parser or the service's current registry/policy checks.
+func (b *bridge) operationAllowed(request Request) bool {
+	if request.Method == "readOperation" {
+		return b.profile.OperationPolicy == "read-operation-only-v1" || b.profile.OperationPolicy == "initial-harness-bind-v1"
+	}
+	if request.Method != "bind" || b.profile.OperationPolicy != "initial-harness-bind-v1" {
+		return false
+	}
+	var operation, target, binding map[string]json.RawMessage
+	if json.Unmarshal(request.Operation, &operation) != nil ||
+		json.Unmarshal(operation["target"], &target) != nil ||
+		json.Unmarshal(operation["binding"], &binding) != nil {
+		return false
+	}
+	// Map lookup is case-sensitive; encoding/json struct matching would admit
+	// differently spelled discriminator names before the canonical TS parser.
+	equal := func(raw json.RawMessage, expected string) bool {
+		return bytes.Equal(bytes.TrimSpace(raw), []byte(expected))
+	}
+	return equal(operation["kind"], `"bind"`) && equal(operation["expectedBindingVersion"], "null") &&
+		equal(target["component"], `"harness"`) && equal(binding["component"], `"harness"`) &&
+		equal(binding["provider"], `"occ/kubernetes-gvisor"`)
 }
 
 func (b *bridge) command(command Command) error {

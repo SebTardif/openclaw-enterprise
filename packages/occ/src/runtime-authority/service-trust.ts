@@ -24,7 +24,10 @@ import type {
 } from "../state/platform-state.ts";
 import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import { RuntimeAuthorityTransactionGuard } from "./repository.ts";
-import type { RuntimeAuthorityCurrentTrustReader } from "./service.ts";
+import type {
+  RuntimeAuthorityCurrentTrust,
+  RuntimeAuthorityCurrentTrustReader,
+} from "./service.ts";
 import {
   canonicalRuntimeServiceTrust,
   parseRuntimeAuthoritySource,
@@ -359,7 +362,7 @@ export class RuntimeServiceTrustService implements RuntimeAuthorityCurrentTrustR
             unavailable();
           const profile = parseRuntimeServiceNativeProfile({
             ...source,
-            operationPolicy: "read-operation-only-v1",
+            operationPolicy: request.operationPolicy ?? "read-operation-only-v1",
             peerSPIFFEId: request.peerSPIFFEId,
             sourceConfigurationDigest: admitted.sourceConfigurationDigest,
           });
@@ -482,7 +485,13 @@ export class RuntimeServiceTrustService implements RuntimeAuthorityCurrentTrustR
   async readCurrent(
     serviceIdentityRef: string,
     signal: AbortSignal,
-  ): Promise<Readonly<RuntimeServiceTrustConfigurationV1> | undefined> {
-    return (await this.readCurrentRecord(serviceIdentityRef, signal))?.admission.configuration;
+  ): Promise<Readonly<RuntimeAuthorityCurrentTrust> | undefined> {
+    const record = await this.readCurrentRecord(serviceIdentityRef, signal);
+    return record === undefined
+      ? undefined
+      : immutableCopy({
+          configuration: record.admission.configuration,
+          operationPolicy: record.admission.profile.operationPolicy,
+        });
   }
 }

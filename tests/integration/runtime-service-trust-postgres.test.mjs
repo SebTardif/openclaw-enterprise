@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import pg from "pg";
 import {
   PostgresPlatformState,
+  OpenClawController,
   RuntimeServiceTrustService,
   ResourceConflictError,
   AuthorizationDeniedError,
@@ -26,6 +27,19 @@ const options = {
   skip: databaseUrl ? false : "Select real limited-role registry PostgreSQL.",
   timeout: 60000,
 };
+function appWithTrust(f, trust) {
+  // Each app owns its one-use controller admission verifier. The same actual
+  // selected IAM/configuration drivers and original auth store remain in use.
+  const controller = new OpenClawController(f.owner.installation, {
+    state: f.state,
+    recordOperations: false,
+  });
+  controller.registerDriver(f.iam);
+  controller.selectDriver("iam", f.iam.id);
+  controller.registerDriver(f.appOptions.configurationDriver);
+  controller.selectDriver("configuration", f.appOptions.configurationDriver.id);
+  return createFastifyApp({ ...f.appOptions, controller, runtimeServiceTrust: trust });
+}
 async function until(check, timeout = 1500) {
   const end = performance.now() + timeout;
   while (performance.now() < end) {
@@ -179,11 +193,9 @@ test(
           connectionTimeoutMillis: 250,
         });
         const blocker = await pool.connect();
-        const bindingId = f.seed.bindings[0].id;
+        const roleId = f.seed.bindings[0].roleId;
         const saved = (
-          await administrativePool.query("SELECT * FROM occ.iam_access_bindings WHERE id=$1", [
-            bindingId,
-          ])
+          await administrativePool.query("SELECT * FROM occ.iam_roles WHERE id=$1", [roleId])
         ).rows[0];
         assert.ok(saved);
         try {
@@ -202,26 +214,20 @@ test(
               ).rowCount === 1,
           );
           // Explicit administrator-side fixture policy change, not a product grant-management API.
-          // Only this test's preprovisioned binding is withdrawn and restored below.
-          await administrativePool.query("DELETE FROM occ.iam_access_bindings WHERE id=$1", [
-            bindingId,
-          ]);
+          // Only this test's preprovisioned Role permissions are withdrawn and restored;
+          // the mapped binding retains its immutable identity.
+          await administrativePool.query(
+            "UPDATE occ.iam_roles SET permissions='[]'::jsonb WHERE id=$1",
+            [roleId],
+          );
           await blocker.query("ROLLBACK");
           await assert.rejects(replay, (error) => error instanceof AuthorizationDeniedError);
         } finally {
           await blocker.query("ROLLBACK");
           blocker.release();
           await administrativePool.query(
-            "INSERT INTO occ.iam_access_bindings(id,namespace_id,identity_subject_id,group_subject_id,role_id,resource_kind,resource_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING",
-            [
-              saved.id,
-              saved.namespace_id,
-              saved.identity_subject_id,
-              saved.group_subject_id,
-              saved.role_id,
-              saved.resource_kind,
-              saved.resource_id,
-            ],
+            "UPDATE occ.iam_roles SET permissions=$2::jsonb WHERE id=$1",
+            [saved.id, JSON.stringify(saved.permissions)],
           );
           await administrativePool.end();
         }
@@ -580,7 +586,7 @@ test(
     t.after(() => faultPool.end());
     const faultState = new PostgresPlatformState(faultPool);
     const trust = new RuntimeServiceTrustService({ ...f.options, state: faultState });
-    const app = createFastifyApp({ ...f.appOptions, runtimeServiceTrust: trust });
+    const app = appWithTrust(f, trust);
     t.after(() => app.close());
     await app.ready();
     const request = sourceRequest(f.source.sourceRef);
@@ -623,5 +629,259 @@ test(
       ).kind,
       "source-withdraw",
     );
+  },
+);
+
+test(
+  "initial bind profile uses real operator admission, exact COMMIT recovery and closed SQL policy",
+  {
+    ...options,
+    skip:
+      databaseUrl && process.env.OCC_RUNTIME_AUTHORITY_TEST_BINARY
+        ? false
+        : "Select limited PostgreSQL and the actual native validator supporting initial bind.",
+  },
+  async (t) => {
+    const pool = new pg.Pool({
+      connectionString: databaseUrl,
+      max: 8,
+      connectionTimeoutMillis: 250,
+    });
+    t.after(() => pool.end());
+    const state = new PostgresPlatformState(pool);
+    const f = await createRuntimeServiceTrustFixture({
+      state,
+      pool,
+      sourceOverrides: {
+        transportProfileRef: "owned-child-stdio-initial-harness-bind-v1",
+      },
+    });
+    t.after(() => f.close());
+    const route = "/v1/runtime-service-trust/operations";
+    assert.equal((await f.request("POST", route, sourceRequest(f.source.sourceRef))).status, 200);
+    const request = serviceRequest(f, { operationPolicy: "initial-harness-bind-v1" });
+    const proxy = await runtimeCommitAckProxy(databaseUrl);
+    t.after(() => proxy.close());
+    const faultPool = new pg.Pool({
+      connectionString: proxy.url,
+      max: 2,
+      connectionTimeoutMillis: 250,
+    });
+    t.after(() => faultPool.end());
+    const faultState = new PostgresPlatformState(faultPool);
+    const faultTrust = new RuntimeServiceTrustService({ ...f.options, state: faultState });
+    const app = appWithTrust(f, faultTrust);
+    t.after(() => app.close());
+    await app.ready();
+    // The actual HTTP writer loses the real PostgreSQL COMMIT acknowledgement after
+    // native syntax validation and operator authorization; recovery uses the original ID.
+    proxy.arm();
+    const response = await app.inject({
+      method: "POST",
+      url: route,
+      headers: f.headers,
+      payload: request,
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(proxy.observedCommit, true);
+    assert.deepEqual(response.json().data, {
+      result: "commit-unknown",
+      operationRef: request.operationRef,
+      nextAction: "exact-readback-only",
+    });
+    const recovered = await f.request("GET", `${route}/${request.operationRef}`);
+    assert.equal(recovered.status, 200);
+    const accepted = recovered.data;
+    assert.equal(accepted.profile.operationPolicy, "initial-harness-bind-v1");
+    const active = await f.trust.readCurrent(accepted.subjectRef, signal());
+    assert.equal(active.operationPolicy, "initial-harness-bind-v1");
+    assert.deepEqual(JSON.parse(JSON.stringify(active.configuration)), accepted.configuration);
+    assert.equal((await f.request("POST", route, request)).data.result, "exact-replay");
+    const changedRequest = { ...request };
+    delete changedRequest.operationPolicy;
+    assert.equal((await f.request("POST", route, changedRequest)).status, 409);
+    await t.test(
+      "caught new-profile admission failure rolls back its record and success audit",
+      async () => {
+        const good = serviceRequest(f, { operationPolicy: "initial-harness-bind-v1" });
+        await assert.rejects(
+          state.transact(async (unit) => {
+            const admitted = await f.trust.applyInTransaction(unit, good, f.context, signal());
+            assert.equal(admitted.record.profile.operationPolicy, "initial-harness-bind-v1");
+            await assert.rejects(
+              f.trust.applyInTransaction(
+                unit,
+                {
+                  ...serviceRequest(f, { operationPolicy: "initial-harness-bind-v1" }),
+                  actorId: "forged",
+                },
+                f.context,
+                signal(),
+              ),
+            );
+          }),
+        );
+        assert.equal(
+          (
+            await pool.query(
+              "SELECT 1 FROM occ.runtime_service_trust_records WHERE operation_ref=$1",
+              [good.operationRef],
+            )
+          ).rowCount,
+          0,
+        );
+        assert.equal(
+          (
+            await pool.query("SELECT 1 FROM occ.audit_events WHERE details->>'operationRef'=$1", [
+              good.operationRef,
+            ])
+          ).rowCount,
+          0,
+        );
+      },
+    );
+    const auditTemplate = (
+      await pool.query("SELECT * FROM occ.audit_events WHERE id=$1", [accepted.auditId])
+    ).rows[0];
+    async function directNext(change) {
+      const nextRequest = serviceRequest(f, {
+        serviceIdentityRef: accepted.subjectRef,
+        expectedVersion: 1,
+        operationPolicy: "initial-harness-bind-v1",
+      });
+      const record = {
+        ...structuredClone(accepted),
+        operationRef: nextRequest.operationRef,
+        recordVersion: 2,
+        auditId: `aud_${randomUUID()}`,
+        committedAt: new Date().toISOString(),
+      };
+      record.configuration.configurationVersion = 2;
+      record.configuration.serviceTrustProfileRef = `runtime-service-profile/${randomUUID()}`;
+      change?.(record, nextRequest);
+      record.canonicalRequest = canonicalRuntimeServiceTrust(nextRequest);
+      record.requestDigest = runtimeServiceTrustDigest(nextRequest);
+      record.configuration.serviceTrustProfileDigest = runtimeServiceTrustDigest(record.profile);
+      const audit = structuredClone(auditTemplate);
+      audit.id = record.auditId;
+      audit.occurred_at = record.committedAt;
+      Object.assign(audit.details, {
+        operationRef: record.operationRef,
+        subjectRef: record.subjectRef,
+        recordVersion: 2,
+        requestDigest: record.requestDigest,
+      });
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "INSERT INTO occ.audit_events(id,occurred_at,kind,actor_id,action,namespace_id,resource_kind,resource_id,outcome,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)",
+          [
+            audit.id,
+            audit.occurred_at,
+            audit.kind,
+            audit.actor_id,
+            audit.action,
+            audit.namespace_id,
+            audit.resource_kind,
+            audit.resource_id,
+            audit.outcome,
+            JSON.stringify(audit.details),
+          ],
+        );
+        await client.query(
+          "INSERT INTO occ.runtime_service_trust_records(installation_id,subject_kind,subject_ref,record_version,operation_ref,actor_id,audit_id,canonical_request,request_digest,committed_at,record) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
+          [
+            record.installationId,
+            record.subjectKind,
+            record.subjectRef,
+            record.recordVersion,
+            record.operationRef,
+            record.actorId,
+            record.auditId,
+            record.canonicalRequest,
+            record.requestDigest,
+            record.committedAt,
+            JSON.stringify(record),
+          ],
+        );
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    }
+    // A successful rollback-only control establishes that each following negative
+    // reaches the same real limited-role SQL path with otherwise valid attribution.
+    await t.test("valid next policy record reaches the SQL constraint", () => directNext());
+    for (const [name, change] of [
+      [
+        "crossed source and operation policy",
+        (record) => {
+          record.profile.operationPolicy = "read-operation-only-v1";
+        },
+      ],
+      [
+        "bind privilege omitted from original operator request",
+        (_record, input) => {
+          delete input.operationPolicy;
+        },
+      ],
+      [
+        "arbitrary request operation privilege",
+        (_record, input) => {
+          input.operationPolicy = "bind";
+        },
+      ],
+      [
+        "wider service role",
+        (record) => {
+          record.configuration.role = "compute-observer";
+        },
+      ],
+      [
+        "installation-wide service scope",
+        (record) => {
+          record.configuration.allowedScope = {
+            kind: "installation",
+            installationId: record.installationId,
+          };
+        },
+      ],
+    ])
+      await t.test(name, () =>
+        assert.rejects(directNext(change), (error) => error.code === "23514"),
+      );
+    await f.trust.apply(
+      {
+        schemaVersion: 1,
+        kind: "service-withdraw",
+        serviceIdentityRef: accepted.subjectRef,
+        expectedVersion: 1,
+        operationRef: randomUUID(),
+      },
+      f.context,
+      signal(),
+    );
+    assert.equal(await f.trust.readCurrent(accepted.subjectRef, signal()), undefined);
+    assert.deepEqual((await f.request("POST", route, request)).data.record, accepted);
+    assert.equal(await f.trust.readCurrent(accepted.subjectRef, signal()), undefined);
+    const resumed = await f.request(
+      "POST",
+      route,
+      serviceRequest(f, {
+        serviceIdentityRef: accepted.subjectRef,
+        expectedVersion: 2,
+        operationPolicy: "initial-harness-bind-v1",
+      }),
+    );
+    assert.equal(resumed.status, 200);
+    const current = await f.trust.readCurrentRecord(accepted.subjectRef, signal());
+    assert.equal(current.admission.recordVersion, 3);
+    if (process.env.OCC_RUNTIME_SERVICE_BIND_RESTART_RECEIPT)
+      await writeFile(
+        process.env.OCC_RUNTIME_SERVICE_BIND_RESTART_RECEIPT,
+        JSON.stringify({ record: accepted, source: f.source, current }, null, 2) + "\n",
+        { flag: "wx" },
+      );
   },
 );

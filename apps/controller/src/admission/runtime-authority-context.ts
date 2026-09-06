@@ -1,14 +1,17 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  canonicalRuntimeAuthorityMutationV1,
   parseRuntimeAuthorityJsonV1,
   parseRuntimeAuthorityV1,
+  parseRuntimeMutationResultV1,
   type RuntimeAuthorityCallBoundsV1,
   type RuntimeAuthorityContextFactoryV1,
   type RuntimeAuthorityTrustedContextV1,
   type RuntimeAuthorityTransportBindingV1,
   type RuntimeAuthorityVerifiedServiceV1,
   type ExactAuthorityOperationV1,
+  type BindRuntimeV1,
 } from "@openclaw-enterprise/contracts";
 import {
   canonicalRuntimeServiceTrust,
@@ -70,11 +73,16 @@ interface Exchange {
   readonly binding: RuntimeAuthorityTransportBindingV1;
   readonly abort: AbortController;
   readonly requestRef: string;
+  readonly request: NativeOperation | undefined;
   readonly started: number;
   readonly remaining: number;
   readonly timer: ReturnType<typeof setTimeout>;
   closed: boolean;
 }
+
+type NativeOperation =
+  | { readonly method: "readOperation"; readonly operation: ExactAuthorityOperationV1 }
+  | { readonly method: "bind"; readonly operation: BindRuntimeV1 };
 
 export interface NativeRuntimeReadbackOptions {
   readonly binaryPath: string;
@@ -357,14 +365,47 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
     recipientRef: options.recipientRef,
     clock: { now: () => new Date(), monotonicMilliseconds: () => performance.now() },
     contextFactory: factory,
+    requestBinding: {
+      matchesRequest(method, input, call) {
+        const exchange = contexts.get(call.context);
+        // Correspondence is an additional denial check, not authentication or
+        // current authority. Only this child's original parsed request and its
+        // factory-owned context can match; no caller-supplied digest is trusted.
+        if (!exchange || !bounds(exchange, call) || exchange.request?.method !== method)
+          return false;
+        try {
+          if (exchange.request.method === "bind") {
+            const parsed = parseRuntimeAuthorityV1("bind", input);
+            // The existing mutation canonicalizer includes arrays and all effect
+            // data, but deliberately excludes correlation. Compare that separately.
+            return (
+              parsed.requestRef === exchange.requestRef &&
+              canonicalRuntimeAuthorityMutationV1(exchange.request.operation) ===
+                canonicalRuntimeAuthorityMutationV1(parsed)
+            );
+          }
+          const parsed = parseRuntimeAuthorityV1("exactOperation", input);
+          return (
+            canonicalRuntimeServiceTrust(exchange.request.operation) ===
+            canonicalRuntimeServiceTrust(parsed)
+          );
+        } catch {
+          return false;
+        }
+      },
+    },
     currentTrust: {
       async readCurrent(serviceIdentityRef, signal) {
         if (serviceIdentityRef !== options.serviceIdentityRef) throw nativeUnavailable();
-        return (await current(signal, true)).admission.configuration;
+        const { admission } = await current(signal, true);
+        return {
+          configuration: admission.configuration,
+          operationPolicy: admission.profile.operationPolicy,
+        };
       },
     },
   });
-  const handle = async (exchange: Exchange, operation: ExactAuthorityOperationV1) => {
+  const handle = async (exchange: Exchange, request: NativeOperation) => {
     const call = {
       requestRef: exchange.requestRef,
       recipientRef: options.recipientRef,
@@ -373,10 +414,18 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
     };
     try {
       const context = await factory.authenticate(exchange.transport, configuration, call);
-      const result = await authority.readOperation(operation, { ...call, context });
+      // The parsed original request is retained on this exchange. Neither a
+      // second public message nor a callback can choose a different service call.
+      const result =
+        request.method === "bind"
+          ? await authority.bind(request.operation, { ...call, context })
+          : await authority.readOperation(request.operation, { ...call, context });
       if (!bounds(exchange, call)) return;
       await inspectNative(exchange, call);
-      const safe = parseRuntimeAuthorityV1("operationState", result);
+      const safe =
+        request.method === "bind"
+          ? parseRuntimeMutationResultV1("bind", result)
+          : parseRuntimeAuthorityV1("operationState", result);
       if (!bounds(exchange, call)) return;
       await command(
         "result",
@@ -464,7 +513,7 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
           throw nativeUnavailable();
         const requestBytes = nativePayload(event.payloadBase64);
         if (nativeDigest(requestBytes) !== event.requestDigest) throw nativeUnavailable();
-        let operation: ExactAuthorityOperationV1 | undefined;
+        let operation: NativeOperation | undefined;
         try {
           const request = closedNativeObject(nativeJson(requestBytes), [
             "schemaVersion",
@@ -475,14 +524,31 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
           const requestedDeadline = nativeTimestamp(request.deadline);
           if (
             request.schemaVersion !== 1 ||
-            request.method !== "readOperation" ||
             Date.parse(event.deadline) > Date.parse(requestedDeadline)
           )
             throw nativeUnavailable();
-          operation = parseRuntimeAuthorityJsonV1(
-            "exactOperation",
-            JSON.stringify(request.operation),
-          );
+          if (request.method === "readOperation") {
+            operation = {
+              method: "readOperation",
+              operation: parseRuntimeAuthorityJsonV1(
+                "exactOperation",
+                JSON.stringify(request.operation),
+              ),
+            };
+          } else if (
+            request.method === "bind" &&
+            profile.operationPolicy === "initial-harness-bind-v1"
+          ) {
+            const bind = parseRuntimeAuthorityJsonV1("bind", JSON.stringify(request.operation));
+            if (
+              bind.target.component !== "harness" ||
+              bind.binding.provider !== "occ/kubernetes-gvisor" ||
+              bind.binding.component !== "harness" ||
+              bind.expectedBindingVersion !== null
+            )
+              throw nativeUnavailable();
+            operation = { method: "bind", operation: bind };
+          } else throw nativeUnavailable();
         } catch {
           /* Public input is rejected on its original exchange, without a context. */
         }
@@ -494,7 +560,8 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
           abort,
           transport: Object.freeze({}),
           binding: Object.freeze({}) as RuntimeAuthorityTransportBindingV1,
-          requestRef: operation?.requestRef ?? "",
+          requestRef: operation?.operation.requestRef ?? "",
+          request: operation,
           started: performance.now(),
           remaining,
           closed: false,

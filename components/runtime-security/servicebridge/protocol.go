@@ -1,5 +1,5 @@
 // Package servicebridge owns the bounded native side of the controller's
-// authenticated historical-read channel. It grants no runtime operation.
+// authenticated service channel. Admission and runtime effects remain OCC-owned.
 package servicebridge
 
 import (
@@ -68,8 +68,9 @@ func ValidateProfile(raw []byte) (Profile, error) {
 	}
 	own, ownErr := spiffeid.FromString(p.OwnSPIFFEID)
 	peer, peerErr := spiffeid.FromString(p.PeerSPIFFEID)
-	if p.SchemaVersion != 1 || p.OperationPolicy != "read-operation-only-v1" ||
-		p.TransportProfileRef != "owned-child-stdio-readback-v1" ||
+	readback := p.OperationPolicy == "read-operation-only-v1" && p.TransportProfileRef == "owned-child-stdio-readback-v1"
+	initialBind := p.OperationPolicy == "initial-harness-bind-v1" && p.TransportProfileRef == "owned-child-stdio-initial-harness-bind-v1"
+	if p.SchemaVersion != 1 || (!readback && !initialBind) ||
 		ownErr != nil || peerErr != nil || own.Path() == "" || peer.Path() == "" ||
 		own.String() != p.OwnSPIFFEID || peer.String() != p.PeerSPIFFEID ||
 		own.TrustDomain() != peer.TrustDomain() || own.TrustDomain().String() != p.TrustDomain ||

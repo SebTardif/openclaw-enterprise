@@ -8,9 +8,11 @@ versioned evidence, purpose-specific currentness, and retained operation receipt
 OCC now persists immutable runtime binding, separately versioned evidence,
 retirement and exact operation receipts in its existing memory and PostgreSQL
 state adapters. The local service boundary denies mutations and positive purpose
-resolution until its trusted transport, observation and acceptance dependencies
-are integrated. An optional controller-owned native transport supports authenticated
-exact historical readback after explicit human operator admission. It does not
+resolution until its observation and acceptance dependencies are integrated.
+An optional controller-owned native transport supports authenticated exact
+historical readback and a separately admitted initial Harness bind request after
+explicit human operator admission. The bind service still rejects unavailable
+authoritative inputs without writing a binding. This transport does not
 implement runtime effects. Current controller deployment
 behavior is described in [Controller reconciliation](controller.md).
 
@@ -63,13 +65,16 @@ Internal scoped readback exposes the retained record without asserting currentne
 `RuntimeAuthorityService` implements the local interface and requires explicit
 server Installation, recipient and trusted clock configuration. Its optional
 context-factory and current service-registry dependencies have no default trusted
-grant: an absent dependency denies. The configured native readback composition
+grant: an absent dependency denies. The configured native composition
 supplies the actual protected child context and current PostgreSQL registry. Ordinary JSON, service-key admission
 and claimed role fields cannot supply a trusted runtime context. It enforces the
-interface's role ceiling and exact scope before a potential operation read, and
+interface's role ceiling, current admitted operation policy and exact scope before a potential operation read, and
 rechecks current context/registry state before returning an original-service
 receipt. The entire read is bounded by the caller deadline and the three-second
-lookup ceiling. These code paths do not establish deployment-qualified timing.
+lookup ceiling. A private request-correspondence dependency compares the method
+and complete parsed input with the native owner's original protected exchange;
+missing or changed correspondence denies. It supplies no authentication or
+operation grant. These code paths do not establish deployment-qualified timing.
 
 The service currently rejects all mutation submissions and returns no positive
 purpose result. Required protected Compute/verifier observation, admitted profile,
@@ -158,9 +163,28 @@ exact `namespaceId` and `agentId`, and the intended `peerSPIFFEId`. The server
 allocates the service identity and immutable profile references. Re-admission
 names the existing service identity and advances its retained version.
 
-The first profile permits only `lifecycle-authority` within one exact Agent and
-only the native `read-operation-only-v1` transport policy. It does not create an
-IAM Principal, enroll a workload, or grant runtime mutation or purpose resolution.
+Both admitted profiles permit only `lifecycle-authority` within one exact Agent.
+The original request shape selects `read-operation-only-v1`, paired with
+`owned-child-stdio-readback-v1`. It still permits only exact original-service
+`readOperation`. Its retained bytes and request shape remain unchanged.
+
+A service admission with the explicit field
+`operationPolicy: "initial-harness-bind-v1"` requires the protected source
+`transportProfileRef: "owned-child-stdio-initial-harness-bind-v1"`. This separately
+versioned profile permits an initial Harness `bind` with provider
+`occ/kubernetes-gvisor` and `expectedBindingVersion: null`, plus independently
+authorized original-service `readOperation`. A source file alone cannot select
+that privilege; the current human administrator must admit it. Crossed profile
+pairs, omitted bind-policy selection, arbitrary policies, broader roles and
+installation-wide scopes deny. Evidence writes, retirement, purpose resolution,
+gateway binding and replacement binding are outside both profiles.
+
+Native dispatch and the actual service each enforce this operation ceiling.
+The initial bind reaches the service with its original request custody, but
+returns `rejected-before-effect` / `lookup-unavailable` while current preparation,
+approved workload profiles and protected Compute observations remain absent.
+Neither profile creates an IAM Principal, enrolls a workload, grants successful
+runtime binding or permits serving, restoration, model or credential use.
 The real native validator checks the resolved source/profile syntax before
 service admission; the later real TLS handshake proves peer possession. Full
 transport configuration and executable custody are described in
@@ -184,6 +208,11 @@ when an old configuration's bytes later reappear. Withdrawal, missing state,
 corruption, an unavailable database or a mismatched loaded source denies new use.
 A controller restart constructs new child/context incarnations from fresh state;
 retained receipts and startup files cannot restore a prior live context.
+The private current-reader result carries the original configuration and its
+registry-backed operation policy separately; the closed runtime trust DTO is
+unchanged. These current reads do not serialize a future successful bind with
+withdrawal: that acceptor still requires all current predicates in the owning
+transaction under shared lock ordering.
 
 Bounded reads require a PostgreSQL pool with a positive connection timeout no
 larger than 250 ms and ordinary non-pipelined clients without asynchronous

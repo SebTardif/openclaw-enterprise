@@ -21,6 +21,7 @@ import {
   type RuntimeServiceTrustConfigurationV1,
 } from "@openclaw-enterprise/contracts";
 import type { PlatformStateStore } from "../state/platform-state.ts";
+import type { RuntimeServiceOperationPolicy } from "./service-trust-schema.ts";
 import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import {
   RuntimeAuthorityConflictError,
@@ -57,15 +58,31 @@ export async function commitRuntimeAuthorityMutation(
 
 /** Narrow dependency on the actual current protected service registry. No implementation or
  * default trust record is supplied. A pinned historical configuration is insufficient. */
+export interface RuntimeAuthorityCurrentTrust {
+  readonly configuration: Readonly<RuntimeServiceTrustConfigurationV1>;
+  readonly operationPolicy: RuntimeServiceOperationPolicy;
+}
 export interface RuntimeAuthorityCurrentTrustReader {
   readCurrent(
     serviceIdentityRef: string,
     signal: AbortSignal,
-  ): Promise<Readonly<RuntimeServiceTrustConfigurationV1> | undefined>;
+  ): Promise<Readonly<RuntimeAuthorityCurrentTrust> | undefined>;
 }
+type RuntimeAuthorityCaller = Readonly<RuntimeAuthorityVerifiedServiceV1> & {
+  readonly operationPolicy: RuntimeServiceOperationPolicy;
+};
 export interface RuntimeAuthorityClock {
   now(): Date;
   monotonicMilliseconds(): number;
+}
+/** Additional request correspondence only, never authentication or an operation grant.
+ * The native owner compares its protected exchange and original request bytes. */
+export interface RuntimeAuthorityRequestBindingVerifier {
+  matchesRequest(
+    method: "bind" | "readOperation",
+    input: BindRuntimeV1 | ExactAuthorityOperationV1,
+    call: AuthorityCallV1,
+  ): boolean;
 }
 export interface RuntimeAuthorityServiceOptions {
   readonly store: PlatformStateStore;
@@ -74,6 +91,7 @@ export interface RuntimeAuthorityServiceOptions {
   readonly clock: RuntimeAuthorityClock;
   readonly contextFactory?: Pick<RuntimeAuthorityContextFactoryV1<unknown>, "inspect">;
   readonly currentTrust?: RuntimeAuthorityCurrentTrustReader;
+  readonly requestBinding?: RuntimeAuthorityRequestBindingVerifier;
 }
 function sameConfiguration(
   left: RuntimeServiceTrustConfigurationV1,
@@ -100,8 +118,8 @@ function sameConfiguration(
   );
 }
 
-/** No transport/context producer or purpose guard is integrated. This service exposes actual
- * denial and exact original-service operation readback only when all read dependencies exist.
+/** Authenticated service profiles constrain calls independently of role ceilings. Exact
+ * original-service readback is available; binding and purpose guards remain unintegrated.
  * Stored binding/evidence is never sufficient for a positive purpose result. */
 export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
   private readonly options: RuntimeAuthorityServiceOptions;
@@ -157,9 +175,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
       // arbitrary dependency that ignores cancellation must not delay this deadline.
     }
   }
-  private async caller(
-    call: AuthorityCallV1,
-  ): Promise<Readonly<RuntimeAuthorityVerifiedServiceV1> | undefined> {
+  private async caller(call: AuthorityCallV1): Promise<RuntimeAuthorityCaller | undefined> {
     const { contextFactory, currentTrust, clock } = this.options;
     if (
       !contextFactory ||
@@ -196,12 +212,16 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
       !validBounds() ||
       !current ||
       !again ||
+      (current.operationPolicy !== "read-operation-only-v1" &&
+        current.operationPolicy !== "initial-harness-bind-v1") ||
+      current.configuration.role !== "lifecycle-authority" ||
+      current.configuration.allowedScope.kind !== "agent" ||
       again.transportBinding !== verified.transportBinding ||
-      !sameConfiguration(verified.configuration, current) ||
-      !sameConfiguration(again.configuration, current)
+      !sameConfiguration(verified.configuration, current.configuration) ||
+      !sameConfiguration(again.configuration, current.configuration)
     )
       return undefined;
-    return again;
+    return { ...again, operationPolicy: current.operationPolicy };
   }
   private scopeAllowed(
     verified: RuntimeAuthorityVerifiedServiceV1,
@@ -218,9 +238,16 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
   private async mutation(
     input: RuntimeMutationV1,
     call: AuthorityCallV1,
+    method: RuntimeMutationV1["kind"],
   ): Promise<RuntimeMutationResultV1> {
     try {
       const request = parseRuntimeAuthorityV1("mutation", input);
+      if (request.kind !== method)
+        return {
+          schemaVersion: 1,
+          result: "rejected-before-effect",
+          reasonCode: "operation-denied",
+        };
       const verified = await this.bounded(call, (boundedCall) => this.caller(boundedCall));
       if (
         !verified ||
@@ -233,12 +260,21 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
         request.kind === "record-evidence"
           ? `record-evidence:${request.evidence.kind}`
           : request.kind;
-      if (!(policy.mutations as readonly string[]).includes(permission))
+      if (
+        !(policy.mutations as readonly string[]).includes(permission) ||
+        verified.operationPolicy !== "initial-harness-bind-v1" ||
+        request.kind !== "bind" ||
+        request.target.component !== "harness" ||
+        request.binding.provider !== "occ/kubernetes-gvisor" ||
+        request.expectedBindingVersion !== null
+      )
         return {
           schemaVersion: 1,
           result: "rejected-before-effect",
           reasonCode: "operation-denied",
         };
+      if (!this.options.requestBinding?.matchesRequest("bind", request, call))
+        return { schemaVersion: 1, result: "rejected-before-effect", reasonCode: "scope-hidden" };
       // TODO(runtime authority acceptor): bind independent observation/profile proofs and
       // preparation/selection/responsibility CAS to this exact platform unit before wiring
       // writes. Plain service admission and fixture records cannot supply those predicates.
@@ -256,16 +292,19 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
     }
   }
   async bind(input: BindRuntimeV1, call: AuthorityCallV1): Promise<BindingResultV1> {
-    return parseRuntimeMutationResultV1("bind", await this.mutation(input, call));
+    return parseRuntimeMutationResultV1("bind", await this.mutation(input, call, "bind"));
   }
   async recordEvidence(
     input: RuntimeEvidenceInputV1,
     call: AuthorityCallV1,
   ): Promise<EvidenceResultV1> {
-    return parseRuntimeMutationResultV1("record-evidence", await this.mutation(input, call));
+    return parseRuntimeMutationResultV1(
+      "record-evidence",
+      await this.mutation(input, call, "record-evidence"),
+    );
   }
   async retire(input: RetireAssignmentV1, call: AuthorityCallV1): Promise<RetirementResultV1> {
-    return parseRuntimeMutationResultV1("retire", await this.mutation(input, call));
+    return parseRuntimeMutationResultV1("retire", await this.mutation(input, call, "retire"));
   }
   async resolve(
     input: ResolveAssignmentRequestV1,
@@ -279,6 +318,9 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
         !verified ||
         request.requestRef !== call.requestRef ||
         !this.scopeAllowed(verified, request) ||
+        // Neither admitted operation profile permits purpose resolution.
+        verified.operationPolicy === "read-operation-only-v1" ||
+        verified.operationPolicy === "initial-harness-bind-v1" ||
         !(
           RUNTIME_AUTHORITY_ROLE_POLICY_V1[verified.configuration.role]
             .purposes as readonly string[]
@@ -322,6 +364,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
           !verified ||
           request.requestRef !== call.requestRef ||
           !this.scopeAllowed(verified, request) ||
+          !this.options.requestBinding?.matchesRequest("readOperation", request, boundedCall) ||
           RUNTIME_AUTHORITY_ROLE_POLICY_V1[verified.configuration.role].operationRead !==
             "original-service"
         )
@@ -352,8 +395,10 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
         const rechecked = await this.caller(boundedCall);
         if (
           !rechecked ||
+          rechecked.operationPolicy !== verified.operationPolicy ||
           rechecked.transportBinding !== verified.transportBinding ||
-          !sameConfiguration(rechecked.configuration, verified.configuration)
+          !sameConfiguration(rechecked.configuration, verified.configuration) ||
+          !this.options.requestBinding?.matchesRequest("readOperation", request, boundedCall)
         )
           return { schemaVersion: 1, result: "not-visible", reasonCode: "scope-hidden" };
         if (!stored)

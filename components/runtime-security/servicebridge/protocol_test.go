@@ -53,6 +53,31 @@ func TestProfileValidationIsPureAndPreservesExactInput(t *testing.T) {
 	}
 }
 
+func TestProfileRequiresExplicitInitialBindTransportPair(t *testing.T) {
+	for _, test := range []struct {
+		policy, transport string
+		valid             bool
+	}{
+		{"read-operation-only-v1", "owned-child-stdio-readback-v1", true},
+		{"initial-harness-bind-v1", "owned-child-stdio-initial-harness-bind-v1", true},
+		{"initial-harness-bind-v1", "owned-child-stdio-readback-v1", false},
+		{"read-operation-only-v1", "owned-child-stdio-initial-harness-bind-v1", false},
+	} {
+		t.Run(test.policy+"/"+test.transport, func(t *testing.T) {
+			profile := profileValue()
+			profile.OperationPolicy, profile.TransportProfileRef = test.policy, test.transport
+			parsed, err := servicebridge.ValidateProfile(jsonBytes(t, profile))
+			if test.valid {
+				if err != nil || parsed != profile {
+					t.Fatal("explicit supported profile changed or was rejected")
+				}
+			} else if err == nil {
+				t.Fatal("cross-profile operation privilege was accepted")
+			}
+		})
+	}
+}
+
 func TestProfileRejectsUnsupportedIdentitiesLimitsAndMappings(t *testing.T) {
 	for _, test := range []struct {
 		name   string
