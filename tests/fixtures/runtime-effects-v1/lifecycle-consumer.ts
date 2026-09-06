@@ -14,7 +14,7 @@ import {
   type ConditionalRouteV1,
   type RuntimeEvidenceProvenanceV1,
   type RuntimeGateGuardV1,
-} from "../../../packages/contracts/src/index.ts";
+} from "../../../packages/contracts/src/runtime-effects-v1.ts";
 
 /** Independent consumer: this classification cannot initiate or retry an effect. */
 export function nextEffectAction(
