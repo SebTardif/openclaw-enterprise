@@ -1,0 +1,76 @@
+{
+  "schema": "oce.shared-native-scenarios/v1",
+  "evidenceKind": "synthetic-dispatched-committed-trace",
+  "runtimeQualified": false,
+  "evidenceAuthenticated": false,
+  "selectedSdk": {
+    "sourceCommit": "ae2265c60527ad07174250131ebbf65dec9401a6",
+    "sourceTree": "a56670c31976631023940663e3cb6200c2cca644",
+    "archiveSha256": "e2a5aeceba22e2bf5d5cfa9b8f6a47dc07c2ce08445c799874fe40d5f90d25d7",
+    "packageManifestSha256": "1982353788165755597459e657fe96e53380afd48cfb5610dca52ae3e3b7dd9d",
+    "profileSha256": "b7aceebe86f243f3554b3c1660f76fe5b02d88465d60a7b669c2ada5cdbec006",
+    "packageLayoutInventorySha256": "3f81368161e39059ec00f90dd91325d2c9e2c6c3017dfa608d54f3c6af9cb0c8",
+    "dependencyLockSha256": "25baebd8225a0faa174e3d2eb498af3904b7254acc4629cb6ef870a1db6d5ea7",
+    "declarationPreparationManifestSha256": "ce24dfc7ef291600ff7c0ef75d0e1b659ad9cdd01ee011ac0cc654658ce38137",
+    "publicDeclarations": [
+      {
+        "subpath": "openclaw/plugin-sdk/channel-inbound",
+        "exportTarget": "dist/plugin-sdk/channel-inbound.d.ts",
+        "sha256": "b7d8fc8074b0dfbfd48c56634e56535a4ea4d2897fd7dcef3c058b28230bb558"
+      },
+      {
+        "subpath": "openclaw/plugin-sdk/slack-hosted",
+        "exportTarget": "dist/plugin-sdk/slack-hosted.d.ts",
+        "sha256": "f76e4c5516876b1244e8e8bd05426357f072d663a5a21e12f789ff3d2f283775"
+      },
+      {
+        "subpath": "openclaw/plugin-sdk/msteams-hosted",
+        "exportTarget": "dist/plugin-sdk/msteams-hosted.d.ts",
+        "sha256": "619404d1736a08c15344aef1829c38cfe4b230c71f61beaa4a919aa6f7e75654"
+      },
+      {
+        "subpath": "openclaw/plugin-sdk/codex-hosted-harness",
+        "exportTarget": "dist/plugin-sdk/codex-hosted-harness.d.ts",
+        "sha256": "3e1a5c9ab6d10b640733d9ba0b0696b411d42c23779d27a2da3997c1e654e12b"
+      }
+    ]
+  },
+  "requiredCaseIds": [
+    "slack/same-thread-follow-up",
+    "slack/different-thread-follow-up",
+    "slack/same-thread-overlap",
+    "slack/different-thread-overlap",
+    "slack/sticky-busy-retry",
+    "slack/duplicate-replay",
+    "slack/changed-payload-conflict",
+    "slack/immutable-output-binding",
+    "msteams/same-thread-follow-up",
+    "msteams/different-thread-follow-up",
+    "msteams/same-thread-overlap",
+    "msteams/different-thread-overlap",
+    "msteams/sticky-busy-retry",
+    "msteams/duplicate-replay",
+    "msteams/changed-payload-conflict",
+    "msteams/immutable-output-binding",
+    "cross-platform/slack-first",
+    "cross-platform/msteams-first",
+    "slack/logical-twin-message-first",
+    "slack/logical-twin-mention-first"
+  ],
+  "substitutions": [
+    "injected-admission-labels",
+    "synthetic-dispatched-committed-traces",
+    "synthetic-writer-intervals",
+    "separately-labeled-occ-checkpoint-observations",
+    "opaque-payload-references-no-message-content"
+  ],
+  "unrunPaths": [
+    "actual-current-SDK-runtime-codecs",
+    "actual-native-Slack-Teams-adapters",
+    "active-steer-collect-direct-session",
+    "live-reconnect-replacement",
+    "native-interception-tool-paths",
+    "admitted-undispatched-journal",
+    "quiet-import-and-external-restore"
+  ]
+}
