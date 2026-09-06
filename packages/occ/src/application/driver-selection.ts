@@ -18,11 +18,19 @@ import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { DependencyUnavailableError, DriverSelectionError } from "../errors.ts";
 import { validateSelectedProviderDrivers } from "../providers.ts";
 
-interface RegisteredDriver {
+export interface RegisteredDriver {
   readonly driver: Driver;
   readonly capability: DriverCapability;
   readonly id: string;
   readonly implementation: string;
+}
+
+/** A process-local selection hold; it grants no resource or account authority. */
+export interface GuardedDriverSelection<Capability extends DriverCapability> {
+  readonly capability: Capability;
+  readonly registration: Readonly<RegisteredDriver> | undefined;
+  assertCurrent(): void;
+  release(): void;
 }
 
 type DriverByCapability = {
@@ -108,8 +116,10 @@ function driverHasValidLifecycleHooks(driver: Driver): boolean {
 
 /** Registration and selection belong to startup composition, not resource consumers. */
 export class DriverSelection {
-  private readonly registry = new Map<string, RegisteredDriver>();
-  private readonly selections = new Map<DriverCapability, RegisteredDriver>();
+  readonly #registry = new Map<string, RegisteredDriver>();
+  readonly #selections = new Map<DriverCapability, RegisteredDriver>();
+  readonly #selectionLeases = new Set<object>();
+  #applyingSelection = false;
 
   registerDriver(driver: Driver): Driver {
     if (
@@ -121,12 +131,12 @@ export class DriverSelection {
       !driverHasValidLifecycleHooks(driver)
     )
       throw new DriverSelectionError("The Driver does not satisfy its exact capability contract.");
-    const key = this.driverKey(driver.capability, driver.id);
-    if (this.registry.has(key))
+    const key = this.#driverKey(driver.capability, driver.id);
+    if (this.#registry.has(key))
       throw new DriverSelectionError(
         "A Driver is already registered for this exact capability and identity.",
       );
-    this.registry.set(
+    this.#registry.set(
       key,
       Object.freeze({
         driver,
@@ -146,12 +156,67 @@ export class DriverSelection {
       throw new DriverSelectionError(
         "The Driver capability or implementation identity is invalid.",
       );
-    const selected = this.registry.get(this.driverKey(selectedCapability, driverId));
-    if (!selected || !this.unchangedDriver(selected))
+    const selected = this.#registry.get(this.#driverKey(selectedCapability, driverId));
+    if (!selected || !this.#unchangedDriver(selected))
       throw new DriverSelectionError(
         "No registered Driver matches the exact selected capability and identity.",
       );
-    return this.applyDriverSelection(selectedCapability, selected);
+    return this.#applyDriverSelection(selectedCapability, selected);
+  }
+
+  /** Hold through the owning unit's terminal cleanup, including an unknown commit. */
+  acquireGuardedSelection<Capability extends DriverCapability>(
+    selectedCapability: Capability,
+    expectedInstance: DriverFor<Capability> | undefined,
+  ): GuardedDriverSelection<Capability> {
+    if (!isDriverCapability(selectedCapability) || this.#applyingSelection)
+      throw new DriverSelectionError("A guarded Driver selection cannot be acquired now.");
+    const selected = this.#selections.get(selectedCapability);
+    if (selected?.driver !== expectedInstance)
+      throw new DriverSelectionError("The expected Driver is not the current selection.");
+
+    // Install the hold before reading external Driver properties. Validation cannot
+    // replace a selection through a reentrant call while acquisition is in progress.
+    const token = Object.freeze({});
+    this.#selectionLeases.add(token);
+    let invalidated = false;
+    const ownsSelection = (): boolean =>
+      this.#selectionLeases.has(token) &&
+      !this.#applyingSelection &&
+      this.#selections.get(selectedCapability) === selected &&
+      (selected === undefined ||
+        this.#registry.get(this.#driverKey(selected.capability, selected.id)) === selected);
+    const assertCurrent = (): void => {
+      try {
+        if (
+          invalidated ||
+          !ownsSelection() ||
+          (selected !== undefined && !this.#unchangedDriver(selected)) ||
+          invalidated ||
+          !ownsSelection()
+        )
+          throw new DriverSelectionError("The guarded Driver selection is no longer current.");
+      } catch (error) {
+        // Driver properties can run synchronous code. Recheck custody after them,
+        // and never revive a lease once its validation has failed.
+        invalidated = true;
+        throw error;
+      }
+    };
+    try {
+      assertCurrent();
+      return Object.freeze({
+        capability: selectedCapability,
+        registration: selected,
+        assertCurrent,
+        release: () => {
+          this.#selectionLeases.delete(token);
+        },
+      });
+    } catch (error) {
+      this.#selectionLeases.delete(token);
+      throw error;
+    }
   }
 
   selectedDriver<Capability extends DriverCapability>(
@@ -159,8 +224,8 @@ export class DriverSelection {
   ): DriverFor<Capability> {
     if (!isDriverCapability(selectedCapability))
       throw new DriverSelectionError("The requested Driver capability is invalid.");
-    const selected = this.selections.get(selectedCapability);
-    if (!selected || !this.unchangedDriver(selected))
+    const selected = this.#selections.get(selectedCapability);
+    if (!selected || !this.#unchangedDriver(selected))
       throw new DriverSelectionError(
         "The selected Driver is unavailable or no longer matches its capability.",
       );
@@ -168,7 +233,7 @@ export class DriverSelection {
   }
 
   async validateProviderConfiguration(providers: readonly ProviderDefinition[]): Promise<void> {
-    validateSelectedProviderDrivers(providers, this.selections.get("service_account")?.driver);
+    validateSelectedProviderDrivers(providers, this.#selections.get("service_account")?.driver);
   }
 
   secretDriver(expectedId?: string): SecretDriver {
@@ -193,7 +258,7 @@ export class DriverSelection {
   }
 
   serviceAccountDriver(): ServiceAccountDriver | undefined {
-    if (!this.selections.has("service_account")) return undefined;
+    if (!this.#selections.has("service_account")) return undefined;
     try {
       return this.selectedDriver("service_account");
     } catch {
@@ -202,7 +267,7 @@ export class DriverSelection {
   }
 
   sandboxDriver(): SandboxDriver | undefined {
-    if (!this.selections.has("sandbox")) return undefined;
+    if (!this.#selections.has("sandbox")) return undefined;
     try {
       return this.selectedDriver("sandbox");
     } catch {
@@ -210,42 +275,57 @@ export class DriverSelection {
     }
   }
 
-  private driverKey(selectedCapability: DriverCapability, driverId: string): string {
+  #driverKey(selectedCapability: DriverCapability, driverId: string): string {
     return `${selectedCapability}\u0000${driverId}`;
   }
 
-  private applyDriverSelection<Capability extends DriverCapability>(
+  #applyDriverSelection<Capability extends DriverCapability>(
     selectedCapability: Capability,
     selected: RegisteredDriver,
   ): DriverFor<Capability> {
-    const proposed = new Map(this.selections);
-    proposed.set(selectedCapability, selected);
-    const lifecycleDrivers = this.lifecycleDrivers(proposed);
-    const compute = proposed.get("compute");
-    if (compute !== undefined) {
-      if (!this.unchangedDriver(compute))
-        throw new DriverSelectionError("The selected compute Driver identity has changed.");
-      const selectedCompute = compute.driver as ComputeDriver;
-      if (typeof selectedCompute.setLifecycleDrivers === "function") {
-        selectedCompute.setLifecycleDrivers(lifecycleDrivers);
-      } else if (lifecycleDrivers.length > 0) {
-        throw new DriverSelectionError(
-          "The selected compute Driver cannot accept selected lifecycle Drivers.",
-        );
-      }
+    if (this.#applyingSelection)
+      throw new DriverSelectionError("A Driver selection change is already in progress.");
+    if (this.#selectionLeases.size > 0) {
+      if (this.#selections.get(selectedCapability) === selected)
+        return selected.driver as DriverFor<Capability>;
+      throw new DriverSelectionError("A guarded unit currently holds the Driver selection.");
     }
 
-    this.selections.set(selectedCapability, selected);
-    return selected.driver as DriverFor<Capability>;
+    // Lifecycle installation calls external synchronous Driver code. Acquisition
+    // must not pin the old map from inside that hook before this change completes.
+    this.#applyingSelection = true;
+    try {
+      const proposed = new Map(this.#selections);
+      proposed.set(selectedCapability, selected);
+      const lifecycleDrivers = this.#lifecycleDrivers(proposed);
+      const compute = proposed.get("compute");
+      if (compute !== undefined) {
+        if (!this.#unchangedDriver(compute))
+          throw new DriverSelectionError("The selected compute Driver identity has changed.");
+        const selectedCompute = compute.driver as ComputeDriver;
+        if (typeof selectedCompute.setLifecycleDrivers === "function") {
+          selectedCompute.setLifecycleDrivers(lifecycleDrivers);
+        } else if (lifecycleDrivers.length > 0) {
+          throw new DriverSelectionError(
+            "The selected compute Driver cannot accept selected lifecycle Drivers.",
+          );
+        }
+      }
+
+      this.#selections.set(selectedCapability, selected);
+      return selected.driver as DriverFor<Capability>;
+    } finally {
+      this.#applyingSelection = false;
+    }
   }
 
-  private lifecycleDrivers(
+  #lifecycleDrivers(
     selections: ReadonlyMap<DriverCapability, RegisteredDriver>,
   ): readonly Driver[] {
     const drivers: Driver[] = [];
     for (const [selectedCapability, selected] of selections) {
       if (selectedCapability === "compute") continue;
-      if (!this.unchangedDriver(selected))
+      if (!this.#unchangedDriver(selected))
         throw new DriverSelectionError(
           "A selected lifecycle Driver no longer matches its registered identity.",
         );
@@ -254,7 +334,7 @@ export class DriverSelection {
     return Object.freeze(drivers);
   }
 
-  private unchangedDriver(selected: RegisteredDriver): boolean {
+  #unchangedDriver(selected: RegisteredDriver): boolean {
     return (
       selected.driver.id === selected.id &&
       selected.driver.capability === selected.capability &&
