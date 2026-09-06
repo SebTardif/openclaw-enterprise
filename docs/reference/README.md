@@ -70,6 +70,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
+- [Kubernetes resource normalization](kubernetes-resource-normalization.md): normalize supplied accounting and render selected resource plans; protected admission association, current workload correspondence, and effective allocation remain unavailable.
 - [Final Pod comparison contract](containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
 - [Final Pod comparator](final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
