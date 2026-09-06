@@ -24,12 +24,14 @@ import {
   SignInQuotaFailure,
   type SignInQuotaStore,
 } from "./sign-in-quota.ts";
+import { durableSessionRevocation, safeAuthDependencyLogger } from "./storage-failures.ts";
 
 export const OCC_BETTER_AUTH_ISSUER_PREFIX = "occ:installation:";
 export const OCC_AUTH_COOKIE_PREFIX = "openclaw_occ";
 export const OCC_SERVICE_KEY_HEADER = "x-api-key";
 const SERVICE_KEY_CONFIG = "occ-service";
-type ControllerBetterAuth = Auth<BetterAuthOptions & { plugins: ReturnType<typeof apiKey>[] }>;
+type ControllerAuthPlugins = (ReturnType<typeof apiKey> | typeof durableSessionRevocation)[];
+type ControllerBetterAuth = Auth<BetterAuthOptions & { plugins: ControllerAuthPlugins }>;
 
 export interface ServiceKey {
   readonly id: string;
@@ -387,11 +389,12 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
     options.secret,
     options.installationId,
   );
-  const auth = betterAuth<BetterAuthOptions & { plugins: ReturnType<typeof apiKey>[] }>({
+  const auth = betterAuth<BetterAuthOptions & { plugins: ControllerAuthPlugins }>({
     appName: "OpenClaw Enterprise Controller",
     baseURL: options.baseURL,
     basePath: "/auth",
     secret: options.secret,
+    logger: safeAuthDependencyLogger,
     database:
       options.database ??
       memoryAdapter(
@@ -404,6 +407,7 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
         },
       ),
     plugins: [
+      durableSessionRevocation,
       apiKey({
         configId: SERVICE_KEY_CONFIG,
         defaultPrefix: "occ_",

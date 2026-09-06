@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AuthAccountRoleNotFoundError } from "../../apps/controller/src/auth/index.ts";
@@ -23,6 +23,7 @@ import {
   signInToControllerApp,
 } from "../helpers/auth-session.mjs";
 import { createTestConfigurationDriver } from "../helpers/configuration-driver.mjs";
+import { assertStartupFailureRecord } from "../helpers/startup-failure-record.mjs";
 
 const repository = fileURLToPath(new URL("../..", import.meta.url));
 const entrypoint = fileURLToPath(new URL("../../apps/controller/src/server.mjs", import.meta.url));
@@ -47,7 +48,9 @@ async function availableLoopbackPort() {
 
 function childEnvironment(port, overrides = {}) {
   const environment = {
-    ...process.env,
+    // Keep inherited database, startup YAML and Node loader settings out of
+    // these independently selected startup failures.
+    PATH: process.env.PATH,
     NODE_ENV: "development",
     OCC_HOST: "127.0.0.1",
     OCC_PORT: String(port),
@@ -71,41 +74,84 @@ function startChild(port, overrides = {}) {
     env: childEnvironment(port, overrides),
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let output = "";
+  const closed = once(child, "close");
+  let stdout = "";
+  let stderr = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
-    output += chunk;
+    stdout += chunk;
   });
   child.stderr.on("data", (chunk) => {
-    output += chunk;
+    stderr += chunk;
   });
 
-  return { child, output: () => output };
+  return { child, closed, stdout: () => stdout, stderr: () => stderr };
 }
 
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-
-  const exited = once(child, "exit");
-  child.kill("SIGTERM");
+async function stopChild({ child, closed }) {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
   const forced = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }, 1_000);
   forced.unref();
+  let settlementDeadline;
 
   try {
-    await exited;
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => {
+        settlementDeadline = setTimeout(
+          () => reject(new Error("Startup child did not close after termination")),
+          3_000,
+        );
+      }),
+    ]);
   } finally {
     clearTimeout(forced);
+    clearTimeout(settlementDeadline);
   }
 }
 
-async function assertUnsafeStartupRejected() {
+function observeLoopbackListener(port) {
+  let stopped = false;
+  let timer;
+  let socket;
+  const listening = new Promise((resolve, reject) => {
+    const probe = () => {
+      socket = createConnection({ host: "127.0.0.1", port });
+      socket.setTimeout(250, () => socket.destroy());
+      socket.once("connect", () => {
+        resolve();
+        socket.destroy();
+      });
+      socket.once("error", (error) => {
+        if (error.code !== "ECONNREFUSED") reject(error);
+      });
+      socket.once("close", () => {
+        if (!stopped) timer = setTimeout(probe, 25);
+      });
+    };
+    probe();
+  });
+  return {
+    listening,
+    stop() {
+      stopped = true;
+      clearTimeout(timer);
+      socket?.destroy();
+    },
+  };
+}
+
+async function assertUnsafeStartupRejected(t) {
   const configuredDatabase = { OCC_DATABASE_URL: "postgresql://127.0.0.1:1/openclaw" };
   for (const [description, overrides] of [
     ["missing development database", {}],
-    ["production mode", { ...configuredDatabase, NODE_ENV: "production", OCC_HOST: "192.0.2.10" }],
+    [
+      "production without Installation configuration",
+      { ...configuredDatabase, NODE_ENV: "production", OCC_HOST: "192.0.2.10" },
+    ],
     ["nonloopback bind", { ...configuredDatabase, OCC_HOST: "192.0.2.10" }],
     ["unsafe container bind", { ...configuredDatabase, OCC_HOST: "0.0.0.0" }],
     ["low-entropy auth secret", { ...configuredDatabase, OCC_AUTH_SECRET: "insecure" }],
@@ -114,28 +160,49 @@ async function assertUnsafeStartupRejected() {
       "nonloopback auth base URL",
       { ...configuredDatabase, OCC_AUTH_BASE_URL: "http://192.0.2.10:3000" },
     ],
-    ["missing development email", { ...configuredDatabase, OPENCLAW_DEV_EMAIL: "" }],
-    ["missing development password", { ...configuredDatabase, OPENCLAW_DEV_PASSWORD: "" }],
+    // Retired identity variables cannot enable startup without working persistence.
+    [
+      "unavailable database with empty legacy email",
+      { ...configuredDatabase, OPENCLAW_DEV_EMAIL: "" },
+    ],
+    [
+      "unavailable database with empty legacy password",
+      { ...configuredDatabase, OPENCLAW_DEV_PASSWORD: "" },
+    ],
   ]) {
     const port = await availableLoopbackPort();
+    const startedAt = performance.now();
     const processState = startChild(port, overrides);
+    const listener = observeLoopbackListener(port);
     let deadline;
 
     try {
+      // Cold loading of the real composition graph has taken 8–11 seconds
+      // before startup validation. Bound this subprocess's import and startup
+      // phases together; a timeout remains a failure, not evidence of listening.
+      const startupDeadlineMs = 20_000;
       const result = await Promise.race([
-        once(processState.child, "exit"),
+        processState.closed,
+        listener.listening.then(() => assert.fail(`${description} opened a loopback listener`)),
         new Promise((_, reject) => {
           deadline = setTimeout(
-            () => reject(new Error(`${description} unexpectedly started listening`)),
-            5_000,
+            () => reject(new Error(`${description} did not settle within ${startupDeadlineMs} ms`)),
+            startupDeadlineMs,
           );
         }),
       ]);
-      const [exitCode] = result;
-      assert.notEqual(exitCode, 0, `${description} must fail closed:\n${processState.output()}`);
+      const [exitCode, signal] = result;
+      assert.equal(exitCode, 1, `${description} must exit with the startup failure code`);
+      assert.equal(signal, null, `${description} must reject startup without a termination signal`);
+      assert.equal(processState.stdout(), "", `${description} must fail before serving`);
+      assertStartupFailureRecord(processState.stderr(), "api");
+      t.diagnostic(
+        `${description}: natural exit 1 after ${Math.round(performance.now() - startedAt)} ms`,
+      );
     } finally {
       clearTimeout(deadline);
-      await stopChild(processState.child);
+      listener.stop();
+      await stopChild(processState);
     }
   }
 }
@@ -1383,8 +1450,8 @@ test("bootstrap fails closed when IAM omits structured authorization evidence", 
   assert.deepEqual(fixture.auditSink.events, []);
 });
 
-test("OCC development subprocess requires PostgreSQL-backed startup", async () => {
-  await assertUnsafeStartupRejected();
+test("OCC development subprocess requires PostgreSQL-backed startup", async (t) => {
+  await assertUnsafeStartupRejected(t);
 });
 
 test("bodyless OCC routes reject request payloads before IAM or domain side effects", async () => {
