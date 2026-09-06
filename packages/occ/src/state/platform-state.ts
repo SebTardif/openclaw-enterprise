@@ -2,6 +2,7 @@ import { RepositoryTransactionLifetime, type RepositoryTransaction } from "../po
 import { createMemoryChannelBindingRepository } from "./memory/channel-bindings.ts";
 import { createMemoryNamespaceRepository } from "./memory/namespaces.ts";
 import { createMemoryConfigurationRepository } from "./memory/configurations.ts";
+import { createMemorySecretRepository } from "./memory/secrets.ts";
 export { validateChannelBindingList } from "./channel-binding-validation.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -42,7 +43,7 @@ export type {
   ConfigurationReadRepository,
   ConfigurationRepository,
 } from "../ports/repositories/configuration.ts";
-import type { SecretReadRepository, SecretRepository } from "../ports/repositories/secret.ts";
+import type { SecretReadRepository } from "../ports/repositories/secret.ts";
 export type { SecretReadRepository, SecretRepository } from "../ports/repositories/secret.ts";
 import type {
   ServiceAccountReadRepository,
@@ -577,78 +578,29 @@ function repositories(
       assertSecretBindingsAvailable(secrets, namespaceId, bindings),
   });
 
-  const secrets: SecretRepository = {
-    findSecret: async (namespaceId, secretId) => {
-      if (snapshot.namespaces.get(namespaceId)?.deletedAt !== undefined) return undefined;
-      const secret = snapshot.secrets.get(agentKey(namespaceId, secretId));
-      return secret === undefined ? undefined : immutableCopy(secret);
+  const secrets = createMemorySecretRepository({
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    lockSecret: async (namespaceId, secretId) => secrets.findSecret(namespaceId, secretId),
-    createSecret: async (secret) => {
-      assertInitialized(snapshot);
-      assertSecret(secret);
-      const namespace = await namespaces.lockNamespace(secret.namespaceId);
-      if (
-        namespace === undefined ||
-        (namespace.status !== "provisioning" && namespace.status !== "ready")
-      )
-        throw new ScopeViolationError("The Secret belongs to an unavailable Namespace.");
-      const key = agentKey(secret.namespaceId, secret.id);
-      if (
-        snapshot.secrets.has(key) ||
-        Array.from(snapshot.secrets.values()).some((existing) => existing.id === secret.id)
-      )
-        throw new ResourceConflictError("The server generated an existing Secret identity.");
-      if (
-        Array.from(snapshot.secrets.values()).some(
-          (existing) =>
-            existing.namespaceId === secret.namespaceId && existing.name === secret.name,
-        )
-      )
-        throw new ResourceConflictError("A Secret with this name already exists in the Namespace.");
-      const saved = immutableCopy(secret);
-      snapshot.secrets.set(key, saved);
-      return immutableCopy(saved);
+    snapshot: {
+      get installation() {
+        return snapshot.installation;
+      },
+      secrets: snapshot.secrets,
+      namespaces: snapshot.namespaces,
+      configurations: snapshot.configurations,
+      agents: snapshot.agents,
+      revisions: snapshot.revisions,
+      operations: snapshot.operations,
     },
-    hasReferences: async (namespaceId, secretId) => {
-      if ((await secrets.findSecret(namespaceId, secretId)) === undefined) return false;
-      return (
-        Array.from(snapshot.configurations.values()).some(
-          (configuration) =>
-            configuration.namespaceId === namespaceId &&
-            secretBindingsReference(configuration.secretBindings, namespaceId, secretId),
-        ) ||
-        Array.from(snapshot.agents.values()).some((agent) => {
-          const activeRevision = (
-            snapshot.revisions.get(agentKey(namespaceId, agent.id)) ?? []
-          ).find((revision) => revision.id === agent.activeRevisionId);
-          return (
-            agent.namespaceId === namespaceId &&
-            activeRevision !== undefined &&
-            secretBindingsReference(activeRevision.secretBindings, namespaceId, secretId)
-          );
-        }) ||
-        snapshot.operations.some((operation) => {
-          if (operation.kind !== "agent_revision" || operation.namespaceId !== namespaceId)
-            return false;
-          const revision = Array.from(snapshot.revisions.values())
-            .flat()
-            .find(
-              (candidate) =>
-                candidate.namespaceId === namespaceId && candidate.id === operation.resourceId,
-            );
-          return secretBindingsReference(revision?.secretBindings, namespaceId, secretId);
-        })
-      );
-    },
-    deleteSecret: async (namespaceId, secretId) => {
-      if ((await secrets.findSecret(namespaceId, secretId)) === undefined) return false;
-      if (await secrets.hasReferences(namespaceId, secretId))
-        throw new ScopeViolationError("The Secret is referenced by active platform state.");
-      snapshot.secrets.delete(agentKey(namespaceId, secretId));
-      return true;
-    },
-  };
+    namespaces,
+    resourceKey: agentKey,
+    assertSecret,
+    secretBindingsReference,
+  });
 
   const serviceAccounts: ServiceAccountRepository = {
     findServiceAccount: async (namespaceId, serviceAccountId) => {
