@@ -1,0 +1,443 @@
+{
+  "format": "native-measurement-profile-v1",
+  "revision": 1,
+  "decision": {
+    "state": "selected",
+    "decisionDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "evidenceKind": "fixture",
+  "subject": {
+    "producer": {
+      "enterpriseCommit": "1111111111111111111111111111111111111111",
+      "upstreamCommit": "2222222222222222222222222222222222222222",
+      "codexCommit": "3333333333333333333333333333333333333333",
+      "codexVersion": "0.153.0",
+      "gatewayProtocol": 4,
+      "nativeStateSchema": 15,
+      "nativeAgentSchema": 19,
+      "adapterSchema": 1,
+      "contextFormat": "completed-context-text-v1",
+      "nativeImportContract": 1,
+      "nativeImportAdapterDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+      "artifactLedgerRef": "fixture:artifact-ledger"
+    },
+    "artifacts": {
+      "declarations": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "exports": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "package": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "dependencyClosure": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "nativeExecutable": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "gatewayImage": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "effectiveConfiguration": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "capabilities": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "toolchain": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "producerReceipt": {
+        "state": "known",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "generatedClients": {
+      "state": "unselected"
+    }
+  },
+  "clock": {
+    "kind": "single-observer-monotonic",
+    "unit": "microseconds",
+    "originRef": "fixture:observer-clock",
+    "resolutionUs": 1
+  },
+  "workload": {
+    "workloadDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "channel": "slack",
+    "agents": 1,
+    "participants": 2,
+    "threads": 2,
+    "executableConcurrency": 1,
+    "executableQueue": 0,
+    "inputUtf8Bytes": 1024,
+    "resultUtf8Bytes": 2048,
+    "outputCaptureBytes": 4096,
+    "attachments": 0,
+    "tokenStreaming": false,
+    "model": "fixture"
+  },
+  "cases": [
+    {
+      "id": "startup-ready",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "transport-ack",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "admitted-turn-ack",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "completed-result",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "status",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "busy",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "shutdown",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "reconnect-ready",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "cancel-ack",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "cancel-settlement",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "writer-termination",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    },
+    {
+      "id": "reconnect-retention",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "unselected"
+      },
+      "resourceTolerance": {
+        "state": "selected",
+        "maximumGrowth": {
+          "rssBytes": 1024,
+          "fileDescriptors": 0,
+          "sockets": 0,
+          "listeners": 0,
+          "timers": 0,
+          "childProcesses": 0
+        },
+        "settleWindowUs": 1000
+      }
+    },
+    {
+      "id": "cancel-retention",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "unselected"
+      },
+      "resourceTolerance": {
+        "state": "selected",
+        "maximumGrowth": {
+          "rssBytes": 1024,
+          "fileDescriptors": 0,
+          "sockets": 0,
+          "listeners": 0,
+          "timers": 0,
+          "childProcesses": 0
+        },
+        "settleWindowUs": 1000
+      }
+    },
+    {
+      "id": "model-service",
+      "applicability": "required",
+      "cycles": 2,
+      "warmupPerCycle": 1,
+      "samplesPerCycle": 2,
+      "latencyBudget": {
+        "state": "selected",
+        "p95Us": 5000,
+        "maxUs": 10000
+      },
+      "resourceTolerance": {
+        "state": "unselected"
+      }
+    }
+  ],
+  "resourceProfile": {
+    "candidate": {
+      "gatewayCpuMillicores": 500,
+      "gatewayMemoryBytes": 536870912,
+      "nativeCpuMillicores": 2000,
+      "nativeMemoryBytes": 2147483648,
+      "state": "unselected",
+      "requestLimitMeaning": "unselected"
+    },
+    "expectation": {
+      "state": "selected",
+      "profileDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "roles": {
+        "gateway": {
+          "cpuMillicores": {
+            "request": 250,
+            "limit": 1000
+          },
+          "memoryBytes": {
+            "request": 536870912,
+            "limit": 1073741824
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 268435456,
+              "limit": 1073741824
+            }
+          }
+        },
+        "harness": {
+          "cpuMillicores": {
+            "request": 500,
+            "limit": 2000
+          },
+          "memoryBytes": {
+            "request": 1073741824,
+            "limit": 4294967296
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 1073741824,
+              "limit": 4294967296
+            }
+          }
+        },
+        "privateStateInit": {
+          "cpuMillicores": {
+            "request": 100,
+            "limit": 500
+          },
+          "memoryBytes": {
+            "request": 67108864,
+            "limit": 268435456
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 1048576,
+              "limit": 2097152
+            }
+          }
+        }
+      }
+    },
+    "observed": {
+      "state": "observed",
+      "effectiveConfigurationDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bindingDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "nativeMappingDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "roles": {
+        "gateway": {
+          "cpuMillicores": {
+            "request": 250,
+            "limit": 1000
+          },
+          "memoryBytes": {
+            "request": 536870912,
+            "limit": 1073741824
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 268435456,
+              "limit": 1073741824
+            }
+          }
+        },
+        "harness": {
+          "cpuMillicores": {
+            "request": 500,
+            "limit": 2000
+          },
+          "memoryBytes": {
+            "request": 1073741824,
+            "limit": 4294967296
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 1073741824,
+              "limit": 4294967296
+            }
+          }
+        },
+        "privateStateInit": {
+          "cpuMillicores": {
+            "request": 100,
+            "limit": 500
+          },
+          "memoryBytes": {
+            "request": 67108864,
+            "limit": 268435456
+          },
+          "ephemeralStorageBytes": {
+            "state": "selected",
+            "values": {
+              "request": 1048576,
+              "limit": 2097152
+            }
+          }
+        }
+      }
+    }
+  }
+}
