@@ -34,6 +34,7 @@
     "./credential-storage-v1": "./src/credential-storage-v1.ts",
     "./runtime-assignment": "./src/runtime-assignment.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
+    "./runtime-identity-v1": "./src/runtime-identity-v1.ts",
     "./workload-profile-v1": "./src/workload-profile-v1.ts",
     "./completed-context-v1": "./src/completed-context-v1.ts",
     "./turn-journal-v1": "./src/turn-journal-v1.ts",
