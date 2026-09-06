@@ -1,3 +1,12 @@
+import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
+import { legacyOperations } from "../lifecycle/protective-admission-v1.ts";
+import { createMemoryLifecycleAdmission } from "./memory/lifecycle-admission.ts";
+import type { LifecycleAdmissionAssociationV1 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
+import type {
+  StoredPlatformWork,
+  RuntimeCleanupResponsibilityV1,
+  PendingAuditExportV1,
+} from "../ports/repositories/lifecycle-admission.ts";
 import { createMemoryWorkloadProfile } from "./memory/workload-profile.ts";
 import type { StoredProfilePreparation, ProfileCapacity } from "../workload-profiles/types.ts";
 import { WorkloadProfileUnitPhase } from "../ports/platform-unit-of-work.ts";
@@ -328,6 +337,9 @@ export interface InMemoryPlatformStateOptions {
 }
 
 interface PlatformSnapshot {
+  readonly lifecycleAdmissions: Map<string, Readonly<LifecycleAdmissionAssociationV1>>;
+  readonly cleanupResponsibilities: Map<string, Readonly<RuntimeCleanupResponsibilityV1>>;
+  readonly auditExports: Map<string, Readonly<PendingAuditExportV1>>;
   readonly workloadProfileOperations: Map<string, StoredProfilePreparation>;
   readonly workloadProfileCapacities: Map<string, ProfileCapacity>;
   readonly channelInstallations: Map<string, Readonly<ChannelInstallation>>;
@@ -348,7 +360,7 @@ interface PlatformSnapshot {
   readonly agents: Map<string, Readonly<Agent>>;
   readonly revisions: Map<string, readonly Readonly<AgentRevision>[]>;
   readonly audit: Readonly<AuditEvent>[];
-  readonly operations: Readonly<PlatformOperation>[];
+  readonly operations: StoredPlatformWork[];
 }
 
 function agentKey(namespaceId: string, agentId: string): string {
@@ -357,6 +369,9 @@ function agentKey(namespaceId: string, agentId: string): string {
 
 function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
   return {
+    lifecycleAdmissions: new Map(snapshot.lifecycleAdmissions),
+    cleanupResponsibilities: new Map(snapshot.cleanupResponsibilities),
+    auditExports: new Map(snapshot.auditExports),
     channelInstallations: new Map(snapshot.channelInstallations),
     channelHumans: new Map(snapshot.channelHumans),
     channelAgents: new Map(snapshot.channelAgents),
@@ -519,6 +534,7 @@ function repositories(
   transaction: RepositoryTransaction,
   authorityGuard = new RuntimeAuthorityTransactionGuard(),
   profilePhase = new WorkloadProfileUnitPhase(),
+  lifecyclePhase = new LifecycleAdmissionUnitPhase(),
 ): PlatformUnitOfWork {
   const installations: InstallationRepository = {
     findInstallation: async (installationId) =>
@@ -604,7 +620,9 @@ function repositories(
       configurations: snapshot.configurations,
       agents: snapshot.agents,
       revisions: snapshot.revisions,
-      operations: snapshot.operations,
+      get operations() {
+        return legacyOperations(snapshot.operations);
+      },
     },
     namespaces,
     resourceKey: agentKey,
@@ -947,7 +965,7 @@ function repositories(
   async function saveIntent(
     scope: RuntimeScope,
     expected: number,
-    next: Pick<RuntimeIntent, "desiredMode" | "revisionId">,
+    next: { readonly desiredMode: "running" | "disabled" | "stopped"; readonly revisionId: string },
     transitionRef: string,
     attribution: RuntimeIntentAttribution,
   ): Promise<Readonly<RuntimeIntent>> {
@@ -958,6 +976,8 @@ function repositories(
       throw new ScopeViolationError("The runtime owner or revision is unavailable.");
     const key = agentKey(scope.namespaceId, scope.agentId);
     const head = await runtimeAssignments.findRuntimeIntentHead(scope);
+    if (head !== undefined && snapshot.lifecycleAdmissions.has(head.transitionRef))
+      throw new ResourceConflictError("Legacy intent cannot supersede a protective admission.");
     if (
       (head?.generation ?? 0) !== expected ||
       !Number.isSafeInteger(expected + 1) ||
@@ -1018,7 +1038,7 @@ function repositories(
         intent.revisionId,
       );
       const agent = await agents.findAgent(scope.namespaceId, scope.agentId);
-      const operation = snapshot.operations.find(
+      const operation = legacyOperations(snapshot.operations).find(
         (item) =>
           item.kind === "agent_revision" &&
           item.resourceId === intent.revisionId &&
@@ -1177,7 +1197,20 @@ function repositories(
     authorityGuard,
   );
 
+  const lifecycleAdmissions = createMemoryLifecycleAdmission({
+    transaction,
+    phase: lifecyclePhase,
+    snapshot,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
+    },
+    resourceKey: agentKey,
+    appendAudit: (event) => audit.append(event),
+  });
   return {
+    lifecycleAdmissions,
     workloadProfiles,
     runtimePreparation,
     runtimeServiceTrust,
@@ -1219,7 +1252,7 @@ function repositories(
           throw new ScopeViolationError(
             "Namespace work does not match its exact lifecycle target.",
           );
-        const duplicate = snapshot.operations.find(
+        const duplicate = legacyOperations(snapshot.operations).find(
           (existing) =>
             existing.kind === operation.kind &&
             existing.resourceId === operation.resourceId &&
@@ -1258,10 +1291,19 @@ function repositories(
               );
           }
         }
-        snapshot.operations.push(immutableCopy(operation));
+        const workId = `${operation.kind}:${operation.resourceId}:${operation.action}${operation.kind === "namespace" ? `:${operation.target}` : ""}`;
+        if (
+          snapshot.operations.some(
+            (entry) => entry.version === 1 && entry.work.input.workId === workId,
+          )
+        )
+          throw new ResourceConflictError("Controller work already belongs to another protocol.");
+        snapshot.operations.push(immutableCopy({ version: 0, operation }));
       },
       list: async () =>
-        Object.freeze(snapshot.operations.map((operation) => immutableCopy(operation))),
+        Object.freeze(
+          legacyOperations(snapshot.operations).map((operation) => immutableCopy(operation)),
+        ),
     },
   };
 }
@@ -1269,6 +1311,9 @@ function repositories(
 /** Process-local, single-writer state. No restart or multi-process durability. */
 export class InMemoryPlatformState implements PlatformStateStore {
   private snapshot: PlatformSnapshot = {
+    lifecycleAdmissions: new Map(),
+    cleanupResponsibilities: new Map(),
+    auditExports: new Map(),
     channelInstallations: new Map(),
     channelHumans: new Map(),
     channelAgents: new Map(),
@@ -1299,7 +1344,9 @@ export class InMemoryPlatformState implements PlatformStateStore {
   }
 
   pendingOperations(): readonly Readonly<PlatformOperation>[] {
-    return Object.freeze(this.snapshot.operations.map((operation) => immutableCopy(operation)));
+    return Object.freeze(
+      legacyOperations(this.snapshot.operations).map((operation) => immutableCopy(operation)),
+    );
   }
 
   async read<T>(
@@ -1357,6 +1404,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     });
     const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const profilePhase = new WorkloadProfileUnitPhase();
+    const lifecyclePhase = new LifecycleAdmissionUnitPhase();
     const lifetime = new RepositoryTransactionLifetime();
     try {
       await previous;
@@ -1364,19 +1412,32 @@ export class InMemoryPlatformState implements PlatformStateStore {
       const committedAuditCount = working.audit.length;
       const result = await work(
         bindPlatformUnitOfWork(
-          repositories(working, lifetime, authorityGuard, profilePhase),
+          repositories(working, lifetime, authorityGuard, profilePhase, lifecyclePhase),
           lifetime,
           profilePhase,
+          lifecyclePhase,
         ),
       );
+      lifecyclePhase.closeAdmissions();
       await lifetime.finish();
+      await lifecyclePhase.finish();
       await authorityGuard.finish();
       await profilePhase.guard.finish();
-      await this.publishAudit(working.audit.slice(committedAuditCount));
+      await this.publishAudit(
+        working.audit
+          .slice(committedAuditCount)
+          .filter((event) => !working.auditExports.has(event.id)),
+      );
       this.snapshot = working;
       return result;
     } catch (error) {
+      lifecyclePhase.closeAdmissions();
       await lifetime.finish();
+      try {
+        await lifecyclePhase.finish();
+      } catch {
+        /* Preserve the original failure. */
+      }
       // Drain already-started authority writes before discarding the private snapshot.
       try {
         await authorityGuard.finish();
@@ -1390,6 +1451,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
       }
       throw error;
     } finally {
+      lifecyclePhase.closeAdmissions();
       lifetime.close();
       release?.();
     }

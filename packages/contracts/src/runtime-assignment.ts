@@ -6,14 +6,17 @@ export interface RuntimeIntentAttribution {
   readonly actorId: string;
   readonly requestId: string;
 }
-export interface RuntimeIntent extends RuntimeScope, RuntimeIntentAttribution {
+interface RuntimeIntentBase extends RuntimeScope, RuntimeIntentAttribution {
   readonly installationId: string;
   readonly transitionRef: string;
   readonly generation: number;
-  readonly desiredMode: "running" | "disabled" | "stopped";
-  readonly revisionId: string;
   readonly createdAt: string;
 }
+export type RuntimeIntent = RuntimeIntentBase &
+  (
+    | { readonly desiredMode: "running"; readonly revisionId: string }
+    | { readonly desiredMode: "disabled" | "stopped"; readonly revisionId: string | null }
+  );
 export interface RuntimeProfileRefs {
   readonly providerProfileRef: string;
   readonly runtimeProfileRef: string;

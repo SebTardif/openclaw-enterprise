@@ -29,7 +29,7 @@ export interface RuntimeAssignmentRepository extends RuntimeAssignmentReadReposi
   advanceRuntimeIntent(
     scope: RuntimeScope,
     expectedGeneration: number,
-    next: Pick<RuntimeIntent, "desiredMode" | "revisionId">,
+    next: { readonly desiredMode: "running" | "disabled" | "stopped"; readonly revisionId: string },
     transitionRef: string,
     attribution: RuntimeIntentAttribution,
   ): Promise<Readonly<RuntimeIntent>>;

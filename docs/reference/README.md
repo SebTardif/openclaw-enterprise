@@ -51,6 +51,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
   compilation, artifact identity, and runtime verification limits.
 - [Acceptance companions and producer receipts](acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
 - [Native consumer measurement](native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
+- [Isolated upstream consumer preparation](isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.
 - [Operational diagnostic records](operational-diagnostics.md): submit bounded lifecycle and security projections to Pino; production invocation, durable audit delivery, and Collector verification remain separate.
 - [Runtime identity ports](runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.
 - [Hosted gateway composition](hosted-gateway.md): programmatic local Slack/Teams
@@ -67,6 +68,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Final Pod comparison contract](containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
 - [Final Pod comparator](final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
+- [Containment evidence and fault requests](containment-evidence-v1.md): compare supplied control evidence and retain exact fault-request readback; current authority, durable fault persistence, and physical stop remain separate.
 - [Direct Compute interruption preparation](direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
