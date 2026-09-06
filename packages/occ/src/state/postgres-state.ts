@@ -1,3 +1,4 @@
+import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
 import type { ProviderAccountLinks } from "../ports/provider-account-links.ts";
@@ -1993,6 +1994,24 @@ export class PostgresPlatformState implements PlatformStateStore {
       runtimeAssignments,
       context.authorityGuard,
     );
+    const runtimePreparation = createPostgresRuntimePreparation(
+      {
+        get scope() {
+          context.lifetime.assertActive();
+          if (context.installation === undefined)
+            throw new ScopeViolationError(
+              "The server-owned Installation has not been initialized.",
+            );
+          return { installationId: context.installation.id };
+        },
+        transaction: { assertActive: () => context.lifetime.assertActive() },
+        query: { query: (statement, parameters) => client.query(statement, parameters) },
+      },
+      runtimeAssignments,
+      runtimeAdmissions,
+      runtimeAuthority,
+      context.authorityGuard,
+    );
     const turnJournal =
       this.turnJournal === undefined
         ? undefined
@@ -2020,6 +2039,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           );
     return {
       ...(turnJournal === undefined ? {} : { turnJournal }),
+      runtimePreparation,
       runtimeAuthority,
       runtimeServiceTrust,
       channelBindings: serializeChannelBindingMutations(channelBindings),
