@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import {
   access,
   copyFile,
@@ -344,6 +344,11 @@ function imageInputs(kind) {
   return { controller, tag, base, goBase };
 }
 
+export function goBuildCacheScope(root = repositoryRoot) {
+  // Aliases of one checkout reuse its cache without exposing the host path.
+  return createHash("sha256").update(realpathSync(root)).digest("hex");
+}
+
 export function imageBuildArguments(kind, idFile) {
   const { controller, tag, base, goBase } = imageInputs(kind);
   const dockerfile = controller ? "Dockerfile" : "deploy/egress/Dockerfile";
@@ -361,7 +366,15 @@ export function imageBuildArguments(kind, idFile) {
     "--build-arg",
     `${controller ? "NODE_BASE_IMAGE" : "EGRESS_BASE_IMAGE"}=${base}`,
   ];
-  if (controller) args.push("--build-arg", `GO_BASE_IMAGE=${goBase}`, "--target", "runtime");
+  if (controller)
+    args.push(
+      "--build-arg",
+      `GO_BASE_IMAGE=${goBase}`,
+      "--build-arg",
+      `GO_BUILD_CACHE_SCOPE=${goBuildCacheScope()}`,
+      "--target",
+      "runtime",
+    );
   else args.push("--network=none");
   args.push(".");
   return args;
