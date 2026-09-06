@@ -5,7 +5,22 @@ import { DriverSelection } from "../application/driver-selection.ts";
 import { createGuardedWorkloadProfileUnit } from "./postgres/workload-profile-guard.ts";
 import type { GuardedWorkloadProfileUnit } from "../services/workload-profile/port.ts";
 import { createPostgresWorkloadProfile } from "./postgres/workload-profile.ts";
-import { WorkloadProfileUnitPhase } from "../ports/platform-unit-of-work.ts";
+import {
+  CredentialInventoryOwnerPhaseV1,
+  WorkloadProfileUnitPhase,
+} from "../ports/platform-unit-of-work.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { QueryRepositoryFactoryContext } from "../ports/repository-factory.ts";
+import type {
+  CredentialInventoryTransactionV1,
+  CredentialInventoryTransactionOwnerV1,
+  CredentialInventoryAcceptingOwnerV1,
+  InventoryScopeV1,
+  InventoryMutationV1,
+  InventoryReadV1,
+  InventoryCommitV1,
+} from "../credential-inventory-v1/ports.ts";
+import type { CredentialStorageCallBoundsV1 } from "@openclaw-enterprise/contracts/credential-storage-v1";
 import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
@@ -133,6 +148,8 @@ export interface PersistedNativeIAMPrincipalSeed {
 export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
 interface TransactionContext {
+  readonly credential?: CredentialInventoryExecutionV1;
+  readonly credentialQuery: PostgresClient["query"];
   profilePolicyLocked?: boolean;
   profileToken?: object;
   protectedProfile?: ReturnType<typeof createGuardedWorkloadProfileUnit>;
@@ -147,6 +164,75 @@ interface TransactionContext {
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
+}
+
+type CredentialAcceptanceModeV1 = keyof CredentialInventoryAcceptingOwnerV1;
+type CredentialAcceptanceInputV1 = InventoryMutationV1 | InventoryReadV1;
+type CredentialAcceptanceAuthorityV1 = Parameters<
+  CredentialInventoryAcceptingOwnerV1[CredentialAcceptanceModeV1]
+>[1];
+
+/** Private obligations of the genuine producers. No positive implementation or
+ * public configuration entry is supplied while their correspondence is absent. */
+interface CredentialInventoryOwnerParticipantsV1 {
+  /** This owner context is not directly PostgresCredentialInventoryContextV1.
+   * Genuine composition also supplies assertPreparing(stage), assertWriting and
+   * recordEffect on the same tracked query/lifetime and authentic invocation.
+   * The backend scope helper is an alternative to the owner's preparation,
+   * never a second upstream-lock pass; a structural cast supplies none of these. */
+  bind(
+    context: QueryRepositoryFactoryContext & {
+      readonly inventoryScope: InventoryScopeV1;
+      readonly commitRef: string;
+      readonly phase: { assertActive(): void; poison(error: unknown): void };
+    },
+  ): CredentialInventoryBoundParticipantV1;
+  acknowledgedAt(): string;
+}
+
+interface CredentialInventoryBoundParticipantV1 {
+  readonly repository: CredentialInventoryTransactionV1;
+  readonly acceptingOwner: CredentialInventoryAcceptingOwnerV1;
+  /** Authenticate/enroll using the genuine upstream account/policy order. This
+   * does not complete acceptance; the accepting owner rechecks after our locks. */
+  enroll(
+    mode: CredentialAcceptanceModeV1,
+    input: CredentialAcceptanceInputV1,
+    authority: CredentialAcceptanceAuthorityV1,
+  ): Promise<void>;
+  prepareCommit(): Promise<void>;
+  assertCommitReady(): void;
+  close(): void;
+  /** Separate participant leases outlive query teardown and outcome settlement. */
+  release(): void;
+}
+
+interface CredentialInventoryExecutionV1 {
+  readonly phase: CredentialInventoryOwnerPhaseV1;
+  readonly prepareCommit: () => Promise<void>;
+  readonly assertCommitReady: () => void;
+  readonly observeAcknowledgment: () => void;
+  readonly close: () => void;
+  disposition: "not-sent" | "sent" | "acknowledged";
+  establishedNoCommit: boolean;
+}
+
+interface CredentialInventoryOwnerBindingV1 {
+  readonly transactions: CredentialInventoryTransactionOwnerV1;
+  readonly acceptingOwner: CredentialInventoryAcceptingOwnerV1;
+}
+
+interface CredentialInventoryEnrollmentV1 {
+  readonly phase: CredentialInventoryOwnerPhaseV1;
+  readonly context: TransactionContext;
+  readonly scope: InventoryScopeV1;
+  readonly participant: CredentialInventoryBoundParticipantV1;
+  transaction?: CredentialInventoryTransactionV1;
+  accepted?: {
+    readonly mode: CredentialAcceptanceModeV1;
+    readonly input: CredentialAcceptanceInputV1;
+  };
+  active: boolean;
 }
 
 const PERMISSION_ACTIONS = new Set([
@@ -433,16 +519,22 @@ function databaseError(error: unknown): Error {
   return error;
 }
 
-function commitOutcomeUnknown(error: unknown): boolean {
+function commitRejectionEstablishesNoCommit(error: unknown): boolean {
   const code =
     error instanceof Error && "code" in error && typeof error.code === "string"
       ? error.code
       : undefined;
+  // Only explicit rollback or constraint rejection from the COMMIT request
+  // establishes no commit. Other codes, including 40003, remain uncertain.
   return (
-    code === undefined ||
-    !/^[0-9A-Z]{5}$/.test(code) ||
-    code.startsWith("08") ||
-    code.startsWith("57")
+    code === "40001" ||
+    code === "40P01" ||
+    code === "23001" ||
+    code === "23502" ||
+    code === "23503" ||
+    code === "23505" ||
+    code === "23514" ||
+    code === "23P01"
   );
 }
 
@@ -537,6 +629,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
   readonly #profileContexts = new WeakMap<object, TransactionContext>();
+  readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
     this.pool = pool;
@@ -914,6 +1007,275 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
   }
 
+  /** TODO: Connect the actual account, accepting-audit and protected-custody
+   * participants after their same-client lock/completion handoff is available. */
+  private bindCredentialInventoryOwnersV1(
+    participants?: CredentialInventoryOwnerParticipantsV1,
+  ): CredentialInventoryOwnerBindingV1 {
+    const enrolled = new WeakMap<
+      CredentialInventoryTransactionV1,
+      CredentialInventoryEnrollmentV1
+    >();
+    const current = this.#credentialExecution;
+    const unavailable = () =>
+      new DependencyUnavailableError("The credential owner is unavailable.");
+    const sameScope = (a: InventoryScopeV1, b: InventoryScopeV1) =>
+      a.installationId === b.installationId &&
+      a.namespaceId === b.namespaceId &&
+      a.agentId === b.agentId;
+
+    const accept = (
+      mode: CredentialAcceptanceModeV1,
+      input: CredentialAcceptanceInputV1,
+      authority: CredentialAcceptanceAuthorityV1,
+      transaction: CredentialInventoryTransactionV1,
+    ): Promise<boolean> => {
+      const origin = current.getStore();
+      const record = enrolled.get(transaction);
+      if (origin === undefined || record !== origin || !record.active) {
+        const error = unavailable();
+        origin?.phase.poison(error);
+        const rejected = Promise.reject<boolean>(error);
+        void rejected.catch(() => {});
+        return rejected;
+      }
+      return record.phase.runAcceptance(async () => {
+        const acceptedInput = immutableCopy(input);
+        if (!sameScope(acceptedInput.scope, record.scope)) throw unavailable();
+        // Original authority authenticates the invocation before capacity locks;
+        // its final accepting call below rechecks canonical state after waits.
+        await record.participant.enroll(mode, acceptedInput, authority);
+        const query: PostgresClient["query"] = async (statement, parameters) => {
+          record.phase.assertOperationActive();
+          const result = await record.context.credentialQuery(statement, parameters);
+          record.phase.assertOperationActive();
+          return result;
+        };
+        const installation = rows(
+          (
+            await query("SELECT id FROM occ.installation WHERE id = $1 FOR NO KEY UPDATE", [
+              record.scope.installationId,
+            ])
+          ).rows,
+        );
+        if (installation.length !== 1 || installation[0]?.id !== record.scope.installationId)
+          throw unavailable();
+        const namespace = rows(
+          (
+            await query("SELECT id FROM occ.namespaces WHERE id = $1 FOR UPDATE", [
+              record.scope.namespaceId,
+            ])
+          ).rows,
+        );
+        if (namespace.length !== 1 || namespace[0]?.id !== record.scope.namespaceId)
+          throw unavailable();
+        const agent = rows(
+          (
+            await query(
+              "SELECT id FROM occ.agents WHERE namespace_id = $1 AND id = $2 FOR UPDATE",
+              [record.scope.namespaceId, record.scope.agentId],
+            )
+          ).rows,
+        );
+        if (agent.length !== 1 || agent[0]?.id !== record.scope.agentId) throw unavailable();
+        const method = record.participant.acceptingOwner[mode];
+        const accepted: unknown = await Reflect.apply(method, record.participant.acceptingOwner, [
+          acceptedInput,
+          authority,
+          transaction,
+        ]);
+        if (typeof accepted !== "boolean") throw unavailable();
+        if (accepted) record.accepted = { mode, input: acceptedInput };
+        return accepted;
+      });
+    };
+    const acceptingOwner = Object.freeze<CredentialInventoryAcceptingOwnerV1>({
+      acceptCurrent: (input, authority, transaction) =>
+        accept("acceptCurrent", input, authority, transaction),
+      acceptMitigation: (input, authority, transaction) =>
+        accept("acceptMitigation", input, authority, transaction),
+      acceptRead: (input, authority, transaction) =>
+        accept("acceptRead", input, authority, transaction),
+    });
+    const readMethods = new Set<keyof CredentialInventoryTransactionV1>([
+      "findOperation",
+      "findRecord",
+      "liveCounts",
+      "listLive",
+      "findMintClaim",
+      "findRevocationClaim",
+      "findSnapshot",
+    ]);
+    const methods = [
+      ...readMethods,
+      "appendOperation",
+      "insertRecord",
+      "replaceRecord",
+      "insertMintClaim",
+      "appendRevocationClaim",
+      "insertSnapshot",
+      "retainToken",
+      "loadRevocationToken",
+      "appendAudit",
+    ] as const;
+    const transactions: CredentialInventoryTransactionOwnerV1 = Object.freeze({
+      run: async <T>(
+        scope: InventoryScopeV1,
+        bounds: CredentialStorageCallBoundsV1,
+        work: (transaction: CredentialInventoryTransactionV1) => Promise<T>,
+      ): Promise<InventoryCommitV1<T>> => {
+        const ambient = current.getStore();
+        if (ambient !== undefined) {
+          ambient.phase.poison(unavailable());
+          return { kind: "unavailable" };
+        }
+        // Missing genuine participants never enter a callback, pool or positive
+        // phase. This is not a metadata-backed replacement for their authority.
+        if (participants === undefined || bounds.signal.aborted) return { kind: "unavailable" };
+        const phase = new CredentialInventoryOwnerPhaseV1();
+        const fixedScope = Object.freeze({ ...scope });
+        let record: CredentialInventoryEnrollmentV1 | undefined;
+        let participant: CredentialInventoryBoundParticipantV1 | undefined;
+        let acknowledgedAt: string | undefined;
+        let value: T | undefined;
+        let failed = false;
+        const execution: CredentialInventoryExecutionV1 = {
+          phase,
+          disposition: "not-sent",
+          establishedNoCommit: false,
+          prepareCommit: async () => {
+            if (participant === undefined) throw unavailable();
+            await participant.prepareCommit();
+          },
+          assertCommitReady: () => {
+            if (participant === undefined) throw unavailable();
+            participant.assertCommitReady();
+          },
+          observeAcknowledgment: () => {
+            const observed = participants.acknowledgedAt();
+            if (
+              !Number.isFinite(Date.parse(observed)) ||
+              new Date(observed).toISOString() !== observed
+            )
+              throw unavailable();
+            acknowledgedAt = observed;
+          },
+          close: () => {
+            if (record !== undefined) {
+              record.active = false;
+              if (record.transaction !== undefined) enrolled.delete(record.transaction);
+            }
+            participant?.close();
+          },
+        };
+        try {
+          value = await this.execute(
+            false,
+            async (_unit, context) => {
+              const installation = await this.currentInstallation(context, context.credentialQuery);
+              if (installation === undefined || installation.id !== fixedScope.installationId)
+                throw unavailable();
+              const commitRef = randomUUID();
+              const assertOperation = () => {
+                context.lifetime.assertActive();
+                phase.assertOperationActive();
+              };
+              participant = participants.bind({
+                scope: { installationId: installation.id, namespaceId: fixedScope.namespaceId },
+                inventoryScope: fixedScope,
+                commitRef,
+                transaction: { assertActive: assertOperation },
+                phase: { assertActive: assertOperation, poison: (error) => phase.poison(error) },
+                query: {
+                  query: async (statement, parameters) => {
+                    assertOperation();
+                    const result = await context.credentialQuery(statement, parameters);
+                    assertOperation();
+                    return result;
+                  },
+                },
+              });
+              const bound: CredentialInventoryEnrollmentV1 = {
+                phase,
+                context,
+                scope: fixedScope,
+                participant,
+                active: true,
+              };
+              record = bound;
+              const projection: Record<string, unknown> = {
+                commitRef,
+                assertActive: function (this: CredentialInventoryTransactionV1) {
+                  if (this !== bound.transaction || !bound.active || current.getStore() !== bound) {
+                    const error = unavailable();
+                    phase.poison(error);
+                    throw error;
+                  }
+                  context.lifetime.assertActive();
+                  phase.assertActive();
+                },
+              };
+              for (const method of methods) {
+                projection[method] = function (
+                  this: CredentialInventoryTransactionV1,
+                  ...args: unknown[]
+                ) {
+                  const origin = current.getStore();
+                  if (this !== bound.transaction || origin !== bound || !bound.active) {
+                    const error = unavailable();
+                    origin?.phase.poison(error);
+                    return phase.rejectOutward(error);
+                  }
+                  return phase.runOperation(async () => {
+                    const accepted = bound.accepted;
+                    if (accepted === undefined) throw unavailable();
+                    if (
+                      accepted.mode === "acceptRead" &&
+                      !readMethods.has(method) &&
+                      !(method === "insertSnapshot" && "filter" in accepted.input)
+                    )
+                      throw unavailable();
+                    if (method === "loadRevocationToken" && accepted.mode !== "acceptMitigation")
+                      throw unavailable();
+                    const implementation = bound.participant.repository[method];
+                    if (typeof implementation !== "function") throw unavailable();
+                    return Reflect.apply(implementation, bound.participant.repository, args);
+                  });
+                };
+              }
+              const transaction = Object.freeze(
+                projection,
+              ) as unknown as CredentialInventoryTransactionV1;
+              bound.transaction = transaction;
+              enrolled.set(transaction, bound);
+              return current.run(bound, () => phase.runTransition(() => work(transaction)));
+            },
+            { signal: bounds.signal, timeoutMs: 3000 },
+            false,
+            execution,
+          );
+        } catch {
+          failed = true;
+        } finally {
+          // execute has joined its raw queries and revoked private capability
+          // correspondence before these separate participant leases are released.
+          try {
+            participant?.release();
+          } catch {
+            failed = true;
+          }
+        }
+        if (failed || acknowledgedAt === undefined) {
+          return execution.disposition !== "not-sent" && !execution.establishedNoCommit
+            ? { kind: "commit-unknown" }
+            : { kind: "unavailable" };
+        }
+        return { kind: "committed", value: value as T, acknowledgedAt };
+      },
+    });
+    return Object.freeze({ transactions, acceptingOwner });
+  }
+
   queryInTransaction(
     unit: PlatformReadView,
     statement: string,
@@ -922,6 +1284,10 @@ export class PostgresPlatformState implements PlatformStateStore {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
+    if (context.credential !== undefined)
+      return context.credential.phase.rejectOutward(
+        new ScopeViolationError("Credential inventory requires an isolated owner transaction."),
+      );
     return context.lifetime.run(() => context.client.query(statement, parameters));
   }
 
@@ -967,7 +1333,15 @@ export class PostgresPlatformState implements PlatformStateStore {
     work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
     options?: PlatformReadOptions,
     profileReadCommitted = false,
+    credential?: CredentialInventoryExecutionV1,
   ): Promise<T> {
+    const ambientCredential = this.#credentialExecution.getStore();
+    if (ambientCredential !== undefined)
+      return ambientCredential.phase.rejectOutward(
+        new ScopeViolationError(
+          "Credential inventory cannot open an ambient or mixed transaction.",
+        ),
+      );
     // pg exposes no per-checkout cancellation. Its configured timeout actually removes
     // the waiter; join that bounded checkout before returning an interrupted read.
     const acquisitionTimeout = this.pool.options?.connectionTimeoutMillis;
@@ -994,6 +1368,19 @@ export class PostgresPlatformState implements PlatformStateStore {
     let expired = false;
     let closed = false;
     let released = false;
+    let primaryFailure = false;
+    let cleanupFailed = false;
+    let cleanupFailure: unknown;
+    const cleanup = (work: () => void) => {
+      try {
+        work();
+      } catch (error) {
+        if (!cleanupFailed) {
+          cleanupFailed = true;
+          cleanupFailure = error;
+        }
+      }
+    };
     let raw: PostgresClient | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let rejectAbort: ((error: Error) => void) | undefined;
@@ -1006,10 +1393,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       }
     };
     const abort = () => {
+      credential?.phase.poison(abortFailure());
       lifetime.close();
       expired = true;
       closed = true;
-      release(true);
+      cleanup(() => release(true));
       rejectAbort?.(abortFailure());
     };
     const cancelled =
@@ -1026,7 +1414,8 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
     let client: PostgresClient | undefined;
     let started = false;
-    let committing = false;
+    let commitDisposition: "not-sent" | "sent" | "acknowledged" = "not-sent";
+    let establishedNoCommit = false;
     let discardClient = false;
     let unit: PlatformUnitOfWork | undefined;
     let context: TransactionContext | undefined;
@@ -1062,14 +1451,20 @@ export class PostgresPlatformState implements PlatformStateStore {
       client = {
         query: (statement, parameters) =>
           trackProfileOrder
-            ? lifecyclePhase.legacyQuery(() =>
-                profilePhase.other(() => query(statement, parameters)),
-              )
+            ? credential !== undefined
+              ? credential.phase.rejectOutward(
+                  new ScopeViolationError(
+                    "Credential inventory requires an isolated owner transaction.",
+                  ),
+                )
+              : lifecyclePhase.legacyQuery(() =>
+                  profilePhase.other(() => query(statement, parameters)),
+                )
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
       await client.query(
-        profileReadCommitted
+        profileReadCommitted || credential !== undefined
           ? "BEGIN ISOLATION LEVEL READ COMMITTED"
           : readOnly
             ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
@@ -1090,6 +1485,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query("SET LOCAL client_connection_check_interval = '100ms'");
       }
       context = {
+        ...(credential === undefined ? {} : { credential }),
+        credentialQuery: query,
         lifetime,
         authorityGuard,
         journalGuard,
@@ -1107,12 +1504,19 @@ export class PostgresPlatformState implements PlatformStateStore {
         lifetime,
         profilePhase,
         lifecyclePhase,
+        credential?.phase,
       );
       journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
       const running = Promise.resolve().then(() => work(unit!, activeContext));
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      if (credential !== undefined) {
+        credential.phase.closeAdmissions();
+        await credential.phase.drainAccepted();
+        await credential.phase.runFinalization(credential.prepareCommit);
+        await credential.phase.drainAccepted();
+      }
       lifecyclePhase.closeAdmissions();
       await context?.protectedProfile?.finish();
       await lifetime.finish();
@@ -1122,25 +1526,56 @@ export class PostgresPlatformState implements PlatformStateStore {
       await profilePhase.guard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
       context?.protectedProfile?.assertCurrent();
-      committing = true;
-      const acknowledgement = await raw.query("COMMIT");
-      committing = false;
-      started = false;
-      if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT")
+      credential?.assertCommitReady();
+      credential?.phase.assertCommitReady();
+      commitDisposition = "sent";
+      if (credential !== undefined) credential.disposition = "sent";
+      let acknowledgement;
+      try {
+        acknowledgement = await raw.query("COMMIT");
+      } catch (error) {
+        establishedNoCommit = commitRejectionEstablishesNoCommit(error);
+        throw error;
+      }
+      if (!("command" in acknowledgement) || acknowledgement.command !== "COMMIT") {
+        establishedNoCommit =
+          "command" in acknowledgement && acknowledgement.command === "ROLLBACK";
+        if (credential !== undefined) credential.establishedNoCommit = establishedNoCommit;
+        if (establishedNoCommit) started = false;
         throw new DependencyUnavailableError("The database transaction did not commit.");
+      }
+      commitDisposition = "acknowledged";
+      if (credential !== undefined) credential.disposition = "acknowledged";
+      started = false;
+      credential?.observeAcknowledgment();
       // Claims stay provisional through every nested callback and uncertain COMMIT.
       // This marker performs no external work; initiation waits for the outer return.
       if (!readOnly) journalGuard.confirmCommitted();
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
+      primaryFailure = true;
+      if (credential !== undefined) {
+        credential.establishedNoCommit = establishedNoCommit;
+        credential.phase.closeAdmissions();
+        credential.phase.poison(error);
+        try {
+          await credential.phase.drainAccepted();
+        } catch (firstFailure) {
+          error = firstFailure;
+        }
+      }
       lifecyclePhase.closeAdmissions();
       try {
         await context?.protectedProfile?.finish();
       } catch {
         /* Preserve the original failure. */
       }
-      await lifetime.finish();
+      try {
+        await lifetime.finish();
+      } catch {
+        /* Preserve the original failure and continue drains. */
+      }
       try {
         await lifecyclePhase.finish();
       } catch {
@@ -1168,38 +1603,50 @@ export class PostgresPlatformState implements PlatformStateStore {
           discardClient = true;
         }
       }
-      const unknownCommit = committing && !readOnly && commitOutcomeUnknown(error);
+      const unknownCommit =
+        !readOnly &&
+        !establishedNoCommit &&
+        (commitDisposition === "acknowledged" || commitDisposition === "sent");
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
-      lifecyclePhase.closeAdmissions();
-      context?.protectedProfile?.close();
+      cleanup(() => credential?.phase.closeAdmissions());
+      cleanup(() => lifecyclePhase.closeAdmissions());
+      cleanup(() => context?.protectedProfile?.close());
       if (context?.profileToken !== undefined) this.#profileContexts.delete(context.profileToken);
-      journalGuard.close();
-      lifetime.close();
+      cleanup(() => credential?.close());
+      cleanup(() => credential?.phase.close());
+      cleanup(() => journalGuard.close());
+      cleanup(() => lifetime.close());
       closed = true;
-      if (timer !== undefined) clearTimeout(timer);
-      options?.signal.removeEventListener("abort", abort);
+      cleanup(() => {
+        if (timer !== undefined) clearTimeout(timer);
+      });
+      cleanup(() => options?.signal.removeEventListener("abort", abort));
       if (unit !== undefined) this.contexts.delete(unit);
       if (context?.readView !== undefined) this.contexts.delete(context.readView);
-      release(discardClient || expired);
+      cleanup(() => release(discardClient || expired));
       // Destroying an active pg client rejects active/queued queries. Join their rejection
       // before reporting cancellation, and forbid any later callback from reusing it.
       await Promise.allSettled([...pending]);
-      raw?.removeListener?.("error", onTransportError);
+      cleanup(() => raw?.removeListener?.("error", onTransportError));
+      if (cleanupFailed && !primaryFailure) {
+        const possibleCommit =
+          !readOnly && commitDisposition !== "not-sent" && !establishedNoCommit;
+        throw possibleCommit
+          ? new PostgresCommitOutcomeUnknownError()
+          : databaseError(cleanupFailure);
+      }
     }
   }
 
   private async currentInstallation(
     context: TransactionContext,
+    query: PostgresClient["query"] = context.profileQuery,
   ): Promise<Readonly<Installation> | undefined> {
     if (!context.installationLoaded) {
       const candidates = rows(
-        (
-          await context.profileQuery(
-            "SELECT id, name, created_at FROM occ.installation ORDER BY id LIMIT 2",
-          )
-        ).rows,
+        (await query("SELECT id, name, created_at FROM occ.installation ORDER BY id LIMIT 2")).rows,
       );
       if (candidates.length > 1)
         throw new DependencyUnavailableError("The platform Installation is ambiguous.");

@@ -18,6 +18,47 @@ import type { RuntimeServiceTrustReadRepository } from "../runtime-authority/ser
 import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
 import type { LifecycleAdmissionReadRepository } from "./repositories/lifecycle-admission.ts";
+import type { CredentialInventoryTransactionV1 } from "../credential-inventory-v1/ports.ts";
+
+export type CredentialInventorySafeReadV1 = Pick<
+  CredentialInventoryTransactionV1,
+  | "findOperation"
+  | "findRecord"
+  | "liveCounts"
+  | "listLive"
+  | "findMintClaim"
+  | "findRevocationClaim"
+  | "findSnapshot"
+>;
+
+/** Internal projection of an already accepted transaction. The supplied owner
+ * assertion and original methods retain exact scope/lifetime correspondence;
+ * this helper neither authenticates nor adds access to PlatformReadView. */
+export function createCredentialInventoryReadProjectionV1(
+  transaction: CredentialInventoryTransactionV1,
+  assertAcceptedRead: () => void,
+): CredentialInventorySafeReadV1 {
+  const methods = [
+    "findOperation",
+    "findRecord",
+    "liveCounts",
+    "listLive",
+    "findMintClaim",
+    "findRevocationClaim",
+    "findSnapshot",
+  ] as const;
+  return Object.freeze(
+    Object.fromEntries(
+      methods.map((method) => [
+        method,
+        (...args: unknown[]) => {
+          assertAcceptedRead();
+          return Reflect.apply(transaction[method], transaction, args);
+        },
+      ]),
+    ),
+  ) as unknown as CredentialInventorySafeReadV1;
+}
 
 export interface PlatformReadView {
   readonly lifecycleAdmissions: LifecycleAdmissionReadRepository;
