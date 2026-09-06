@@ -42,7 +42,11 @@
     "./persistence/retained-store-preflight-v1": "./src/persistence/retained-store-preflight-v1.ts",
     "./containment/final-pod-comparison-v1": "./src/containment/final-pod-comparison-v1.ts",
     "./containment/evidence-evaluator-v1": "./src/containment/evidence-evaluator-v1.ts",
-    "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts"
+    "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts",
+    "./credential-custody-v1/custody": "./src/credential-custody-v1/custody.ts",
+    "./credential-custody-v1/ports": "./src/credential-custody-v1/ports.ts",
+    "./credential-custody-v1/cache": "./src/credential-custody-v1/cache.ts",
+    "./credential-custody-v1/backend": "./src/credential-custody-v1/backend.ts"
   },
   "types": "./src/index.ts",
   "files": [
