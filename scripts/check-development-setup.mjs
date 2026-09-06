@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { findPackageJSON } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkSelectedRequirements } from "./development-setup-requirements.mjs";
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const json = (path) => JSON.parse(readFileSync(path, "utf8"));
@@ -358,19 +359,57 @@ export function checkDevelopmentSetup(root) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.some((arg) => arg !== "--json") || args.length > 1) {
-    console.error("Usage: node scripts/check-development-setup.mjs [--json]");
+  const options = {};
+  let valid = true;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!["--json", "--root", "--requirements"].includes(arg) || Object.hasOwn(options, arg)) {
+      valid = false;
+      break;
+    }
+    if (arg === "--json") options[arg] = true;
+    else if (!args[i + 1] || args[i + 1].startsWith("--")) {
+      valid = false;
+      break;
+    } else options[arg] = args[++i];
+  }
+  if (!valid) {
+    console.error(
+      "Usage: node scripts/check-development-setup.mjs [--json] [--root PATH] [--requirements FILE]",
+    );
     process.exitCode = 2;
   } else {
     try {
-      const report = checkDevelopmentSetup(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
-      if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+      const started = performance.now();
+      const root = options["--root"]
+        ? resolve(options["--root"])
+        : resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const report = checkDevelopmentSetup(root);
+      if (options["--requirements"]) {
+        let selection;
+        try {
+          if (statSync(options["--requirements"]).size <= 65536)
+            selection = JSON.parse(readFileSync(options["--requirements"], "utf8"));
+        } catch {
+          /* An invalid selection is a diagnostic failure, never an omitted gate. */
+        }
+        report.selectedRequirements = await checkSelectedRequirements(root, selection);
+        if (report.selectedRequirements.status !== "prepared") report.status = "unprepared";
+        report.durationMs = Math.round(performance.now() - started);
+        report.scope =
+          "Local Node/pnpm workspace metadata and SDK identity; explicit selected requirements have separate evidence limits. No integration, database authentication/schema, cluster or workload acceptance.";
+      }
+      if (options["--json"]) console.log(JSON.stringify(report, null, 2));
       else {
         console.log(
           `Development setup: ${report.status} (${report.durationMs} ms; ${report.checkout}).`,
         );
         for (const check of report.checks.filter((item) => item.status !== "ok"))
           console.log(`${check.status}: ${check.id}: ${check.message}\n  ${check.action}`);
+        for (const check of report.selectedRequirements?.checks ?? [])
+          console.log(
+            `${check.status}: ${check.id}: ${check.reason}\n  Owner: ${check.owner}\n  Setup action: ${check.action}\n  Evidence: ${check.evidence.level}`,
+          );
         console.log(report.scope);
       }
       process.exitCode = report.status === "prepared" ? 0 : 1;
