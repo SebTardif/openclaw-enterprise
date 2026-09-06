@@ -17,8 +17,10 @@ import type { RuntimePreparationReadRepository } from "./repositories/runtime-pr
 import type { RuntimeServiceTrustReadRepository } from "../runtime-authority/service-trust.ts";
 import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
+import type { LifecycleAdmissionReadRepository } from "./repositories/lifecycle-admission.ts";
 
 export interface PlatformReadView {
+  readonly lifecycleAdmissions: LifecycleAdmissionReadRepository;
   readonly workloadProfiles: WorkloadProfileReadRepository;
   readonly turnJournal?: TurnJournalReadV1;
   readonly audit: PlatformAuditReadRepository;
@@ -44,6 +46,9 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
+      "findCommitted",
+    ]),
     workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, ["findOperation"]),
     ...(repositories.turnJournal
       ? {

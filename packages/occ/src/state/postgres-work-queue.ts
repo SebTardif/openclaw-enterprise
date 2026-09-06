@@ -66,6 +66,7 @@ export interface PostgresWorkQueueOptions {
 }
 
 interface WorkRow {
+  readonly work_schema_version: number;
   readonly idempotency_key: string;
   readonly namespace_id: string;
   readonly agent_id: string | null;
@@ -131,6 +132,8 @@ function asRow(value: unknown): WorkRow {
 
 function asWork(value: unknown): ControllerWork {
   const row = asRow(value);
+  if (row.work_schema_version !== 0)
+    throw new ScopeViolationError("The controller work protocol is unsupported by this queue.");
   return Object.freeze({
     idempotencyKey: row.idempotency_key,
     namespaceId: row.namespace_id,
@@ -290,10 +293,10 @@ export class PostgresWorkQueue {
     const inserted = await this.client.query(
       `INSERT INTO occ.controller_work (
          idempotency_key, namespace_id, agent_id, revision_id, actor_id, namespace_target,
-         runtime_transition_ref, lifecycle_generation,
+         runtime_transition_ref, lifecycle_generation, work_schema_version,
          state, available_at, attempt_count, created_at, updated_at
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $8::text, $9::bigint,
+         $1, $2, $3, $4, $5, $6, $8::text, $9::bigint, 0,
          'queued', COALESCE($7::timestamptz, clock_timestamp()), 0,
          clock_timestamp(), clock_timestamp()
        )
@@ -324,7 +327,7 @@ export class PostgresWorkQueue {
           OR lifecycle_generation IS DISTINCT FROM $8::bigint AS owner_conflict,
           namespace_target IS DISTINCT FROM $6::text AS target_conflict
        FROM occ.controller_work
-       WHERE idempotency_key = $1`,
+       WHERE work_schema_version=0 AND idempotency_key = $1`,
       [
         idempotencyKey,
         namespaceId,
@@ -385,7 +388,7 @@ export class PostgresWorkQueue {
                lease_expires_at = clock_timestamp() + $3::double precision * interval '1 millisecond',
                updated_at = clock_timestamp()
            FROM candidate
-           WHERE work.idempotency_key = candidate.idempotency_key
+           WHERE work.work_schema_version=0 AND work.idempotency_key = candidate.idempotency_key
            RETURNING work.*`,
           [claimToken, this.maxAttempts, this.leaseDurationMs],
         );
@@ -405,7 +408,7 @@ export class PostgresWorkQueue {
       `UPDATE occ.controller_work
        SET lease_expires_at = clock_timestamp() + $3::double precision * interval '1 millisecond',
            updated_at = clock_timestamp()
-       WHERE idempotency_key = $1
+       WHERE work_schema_version=0 AND idempotency_key = $1
          AND state = 'claimed'
          AND claim_token = $2::uuid
          AND lease_expires_at > clock_timestamp()
@@ -439,7 +442,7 @@ export class PostgresWorkQueue {
              lease_expires_at = NULL,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
-         WHERE idempotency_key = $1
+         WHERE work_schema_version=0 AND idempotency_key = $1
            AND state = 'claimed'
            AND claim_token = $2::uuid
            AND lease_expires_at > clock_timestamp()
@@ -465,7 +468,7 @@ export class PostgresWorkQueue {
              claim_token = NULL,
              lease_expires_at = NULL,
              updated_at = clock_timestamp()
-         WHERE idempotency_key = $1
+         WHERE work_schema_version=0 AND idempotency_key = $1
            AND state = 'claimed'
            AND claim_token = $2::uuid
            AND lease_expires_at > clock_timestamp()
@@ -510,7 +513,7 @@ export class PostgresWorkQueue {
                ELSE NULL
              END,
              updated_at = clock_timestamp()
-         WHERE idempotency_key = $1
+         WHERE work_schema_version=0 AND idempotency_key = $1
            AND state = 'claimed'
            AND claim_token = $2::uuid
            AND lease_expires_at > clock_timestamp()
@@ -540,7 +543,7 @@ export class PostgresWorkQueue {
              lease_expires_at = NULL,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
-         WHERE idempotency_key = $1
+         WHERE work_schema_version=0 AND idempotency_key = $1
            AND state = 'claimed'
            AND claim_token = $2::uuid
            AND lease_expires_at > clock_timestamp()
@@ -588,7 +591,7 @@ export class PostgresWorkQueue {
              END,
              updated_at = clock_timestamp()
          FROM candidates
-         WHERE work.idempotency_key = candidates.idempotency_key
+         WHERE work.work_schema_version=0 AND work.idempotency_key = candidates.idempotency_key
          RETURNING work.*
        ), ${INSERT_EVIDENCE_SQL}`,
       [
@@ -618,7 +621,7 @@ export class PostgresWorkQueue {
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
          FROM candidates
-         WHERE work.idempotency_key = candidates.idempotency_key
+         WHERE work.work_schema_version=0 AND work.idempotency_key = candidates.idempotency_key
          RETURNING work.*
        ), ${INSERT_EVIDENCE_SQL}`,
       [requestedLimit, this.maxAttempts, "failure", "MAX_ATTEMPTS_EXHAUSTED"],
@@ -647,9 +650,9 @@ export class PostgresWorkQueue {
   }
 
   private namespaceFilter(alias?: string): string {
-    if (this.workKind === "all") return "";
     const prefix = alias === undefined ? "" : `${alias}.`;
-    return `AND ${prefix}namespace_target IS NOT NULL
+    if (this.workKind === "all") return `AND ${prefix}work_schema_version=0`;
+    return `AND ${prefix}work_schema_version=0 AND ${prefix}namespace_target IS NOT NULL
             AND ${prefix}agent_id IS NULL
             AND ${prefix}revision_id IS NULL`;
   }

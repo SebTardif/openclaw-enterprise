@@ -100,17 +100,8 @@ export const LifecycleIntentSchemaV1 = Type.Union([
     revisionId: Type.Union([revisionId, Type.Null()]),
   }),
 ]);
-/** A nullable protective definition of the same intent; installed RuntimeIntent
- * storage remains nonnullable. Never cast this type into that installed port.
- * Only authoritative history can establish that no revision has yet been selected. */
-export type LifecycleIntentV1 = Omit<RuntimeIntent, "desiredMode" | "revisionId"> &
-  (
-    | { readonly desiredMode: "running"; readonly revisionId: RuntimeIntent["revisionId"] }
-    | {
-        readonly desiredMode: "disabled" | "stopped";
-        readonly revisionId: RuntimeIntent["revisionId"] | null;
-      }
-  );
+/** The canonical intent. Only retained history establishes unselected null lineage. */
+export type LifecycleIntentV1 = RuntimeIntent;
 
 const headProperties = { operationRef, lifecycleGeneration: generation };
 /** Nonnull head subdocument only. The enclosing read port represents no head as
