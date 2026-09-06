@@ -42,6 +42,13 @@ import {
 } from "./storage.ts";
 import type { ChannelRequirements } from "./channel-policy.ts";
 import {
+  assertKubernetesResourceComparison,
+  assertKubernetesConfiguredQuota,
+  snapshotKubernetesWorkloadResourcePlan,
+  type KubernetesWorkloadResourcePlan,
+  type KubernetesNamespaceResourceComparison,
+} from "./revision-resource-plan.ts";
+import {
   AGENT_TRANSPORT_TOKEN_KEY,
   GATEWAY_TOKEN_KEY,
   MODEL_API_KEY,
@@ -57,6 +64,8 @@ export interface WorkloadResources {
 export interface WorkloadOptions {
   readonly isolationProfile?: "gvisor-systrap";
   readonly resources: { readonly gateway: WorkloadResources; readonly agent: WorkloadResources };
+  readonly resourcePlan?: KubernetesWorkloadResourcePlan;
+  readonly namespaceResources?: KubernetesNamespaceResourceComparison;
   readonly network: { readonly gatewayPort: number };
   readonly servicePrincipalCredentials:
     | { readonly mode: "disabled" }
@@ -116,11 +125,35 @@ export function deployment(
   const runtime = options.runtime;
   const dedicated = !embedded;
   const privateHome = runtime !== undefined || dedicated;
+  const resourcePlan =
+    options.resourcePlan === undefined
+      ? undefined
+      : snapshotKubernetesWorkloadResourcePlan(options.resourcePlan);
+  if (resourcePlan !== undefined) {
+    if (resourcePlan.component !== (role === "agent" ? "harness" : "gateway")) {
+      throw new ConfigurationFailure(
+        "The resource selection belongs to another workload component.",
+      );
+    }
+    if (embedded || !privateHome) {
+      throw new ConfigurationFailure("The selected resource plan requires a dedicated workload.");
+    }
+    assertKubernetesResourceComparison(
+      resourcePlan.application,
+      role === "gateway" ? options.resources.gateway : options.resources.agent,
+    );
+    assertKubernetesConfiguredQuota(resourcePlan, options.namespaceResources);
+  }
   const volumes: V1Volume[] = [];
   const volumeMounts: V1VolumeMount[] = [];
   const variables: V1EnvVar[] = [];
   const initContainers = privateHome
-    ? [privateStateInitContainer(options.runtime !== undefined, role, image, embedded)]
+    ? [
+        {
+          ...privateStateInitContainer(options.runtime !== undefined, role, image, embedded),
+          ...(resourcePlan === undefined ? {} : { resources: resourcePlan.privateStateInit }),
+        },
+      ]
     : [];
   if (configuration !== undefined) {
     volumes.push({
@@ -186,8 +219,21 @@ export function deployment(
   }
   if (privateHome) {
     volumes.push(
-      { name: "runtime-state", emptyDir: { sizeLimit: RUNTIME_STATE_VOLUME_SIZE } },
-      { name: "runtime-temporary", emptyDir: { sizeLimit: "64Mi" } },
+      {
+        name: "runtime-state",
+        emptyDir: {
+          sizeLimit:
+            resourcePlan === undefined
+              ? RUNTIME_STATE_VOLUME_SIZE
+              : String(resourcePlan.runtimeHomeBytes),
+        },
+      },
+      {
+        name: "runtime-temporary",
+        emptyDir: {
+          sizeLimit: resourcePlan === undefined ? "64Mi" : String(resourcePlan.temporaryBytes),
+        },
+      },
     );
     volumeMounts.push(
       { name: "runtime-state", mountPath: "/home/node" },
@@ -375,7 +421,12 @@ export function deployment(
                   : { httpGet: { path: "/readyz", port } }),
                 periodSeconds: 2,
               },
-              resources: role === "gateway" ? options.resources.gateway : options.resources.agent,
+              resources:
+                resourcePlan === undefined
+                  ? role === "gateway"
+                    ? options.resources.gateway
+                    : options.resources.agent
+                  : resourcePlan.application,
               securityContext: {
                 allowPrivilegeEscalation: false,
                 readOnlyRootFilesystem: true,

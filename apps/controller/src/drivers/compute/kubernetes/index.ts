@@ -20,6 +20,13 @@ import * as KubernetesStorage from "./resources/storage.ts";
 import * as KubernetesChannelPolicy from "./resources/channel-policy.ts";
 import * as KubernetesSecretProjection from "./resources/secret-projection.ts";
 import * as KubernetesHarness from "./resources/harness.ts";
+import {
+  assertKubernetesResourcePolicyAvailable,
+  projectKubernetesResourceDiagnostics,
+  type KubernetesResourcePolicy,
+  type KubernetesWorkloadResourcePlan,
+} from "./resources/revision-resource-plan.ts";
+import { normalizeResourceRequirements } from "./resources/resource-normalization.ts";
 import type { Ownership } from "./resources/identity.ts";
 import { ConfigurationFailure } from "./resources/identity.ts";
 import { TOKEN_PATH } from "./resources/identity.ts";
@@ -143,13 +150,21 @@ const RESOURCE_REQUIREMENTS_SCHEMA = Object.freeze({
       type: "object",
       required: ["cpu", "memory"],
       additionalProperties: false,
-      properties: { cpu: { type: "string" }, memory: { type: "string" } },
+      properties: {
+        cpu: { type: "string" },
+        memory: { type: "string" },
+        "ephemeral-storage": { type: "string" },
+      },
     },
     limits: {
       type: "object",
       required: ["cpu", "memory"],
       additionalProperties: false,
-      properties: { cpu: { type: "string" }, memory: { type: "string" } },
+      properties: {
+        cpu: { type: "string" },
+        memory: { type: "string" },
+        "ephemeral-storage": { type: "string" },
+      },
     },
   },
 });
@@ -188,6 +203,9 @@ function validateResources(value: V1ResourceRequirements, description: string): 
   required(requests.memory, `${description} memory request`);
   required(limits.cpu, `${description} CPU limit`);
   required(limits.memory, `${description} memory limit`);
+  if (normalizeResourceRequirements(value).status === "invalid") {
+    throw new ConfigurationFailure(`${description} resource quantities are invalid.`);
+  }
 }
 
 function validatePeer(value: KubernetesWorkloadPeer, description: string): void {
@@ -333,6 +351,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly routing: KubernetesRouting;
   private readonly cleanup: KubernetesCleanup;
   private readonly runtimeObservations: KubernetesRuntimeObservations;
+  private readonly resourcePolicy: KubernetesResourcePolicy;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
     ReturnType<typeof import("@kubernetes/client-node").setHeaderOptions> | undefined;
@@ -514,6 +533,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly lifecycleDrivers?: readonly Driver[];
       readonly sandboxDriver?: SandboxDriver;
       readonly runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies;
+      readonly resourcePolicy?: KubernetesResourcePolicy;
     } = {},
   ) {
     KubernetesComputeDriver.validateConfiguration(options);
@@ -530,6 +550,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new ConfigurationFailure("gVisor Alpha cannot be combined with a SandboxDriver.");
     }
     this.options = immutableCopy(options);
+    const resourcePolicy = selection.resourcePolicy ?? { mode: "configured" };
+    if (resourcePolicy.mode !== "configured" && resourcePolicy.mode !== "admitted") {
+      throw new ConfigurationFailure("The Kubernetes resource policy is unsupported.");
+    }
+    this.resourcePolicy = immutableCopy(resourcePolicy);
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
     this.runtimeObservations = new KubernetesRuntimeObservations(
@@ -612,6 +637,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     call: RuntimeReadCallV1,
   ): Promise<RuntimeObservationResultV1> {
     return this.runtimeObservations.observe(input, call);
+  }
+
+  resourceDiagnostics(
+    input: Parameters<typeof projectKubernetesResourceDiagnostics>[0],
+  ): ReturnType<typeof projectKubernetesResourceDiagnostics> {
+    return projectKubernetesResourceDiagnostics(input);
   }
 
   async preflight(): Promise<void> {
@@ -888,6 +919,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       revision.servicePrincipalId.trim().length === 0
     )
       return result;
+    assertKubernetesResourcePolicyAvailable(this.resourcePolicy);
     required(revision.agentId, "Agent ID");
     required(revision.id, "AgentRevision ID");
     required(revision.configurationId, "Agent Configuration ID");
@@ -1223,6 +1255,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ) {
       throw new ConfigurationFailure("AgentRevision is pinned to another Compute implementation.");
     }
+    assertKubernetesResourcePolicyAvailable(this.resourcePolicy);
     if (
       this.options.isolationProfile !== undefined &&
       (revision.harness.mode !== "dedicated" || revision.sandboxDriverId !== undefined)
@@ -2222,6 +2255,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     serviceAccount?: AgentRevision["serviceAccount"],
     enabledChannels: readonly ChannelRequirements[] = [],
     secretEnvironment: readonly SecretEnvironmentProjection[] = [],
+    resourcePlan?: KubernetesWorkloadResourcePlan,
   ): ManagedKubernetesObject {
     return KubernetesHarness.deployment(
       {
@@ -2229,6 +2263,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
           ? {}
           : { isolationProfile: this.options.isolationProfile }),
         resources: { gateway: this.options.resources.gateway, agent: this.options.resources.agent },
+        namespaceResources: this.options.resources.namespace,
+        ...(resourcePlan === undefined ? {} : { resourcePlan }),
         network: { gatewayPort: this.options.network.gatewayPort },
         servicePrincipalCredentials: this.options.servicePrincipalCredentials,
         ...(this.options.runtime === undefined ? {} : { runtime: this.options.runtime }),

@@ -11,6 +11,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
 - [Release evidence harness](reference/release-evidence.md): inspect required gates and collect bounded observations; component fixtures and live release acceptance remain pending.
 - [Acceptance companions and producer receipts](reference/acceptance-companion-v1.md): validate offline assertion and receipt bindings; records remain unauthenticated, and authentic execution and release acceptance remain separate.
+- [Allocation companion reader](reference/allocation-companion-v1.md): inspect complete expected inventory, declared attempts and receipt history with bounded offline diagnostics; authentic acceptance remains separate.
 - [Native consumer measurement](reference/native-measurement-v1.md): validate supplied measurement profiles and evaluate recorded results; numeric selection, authenticated observations, and runtime qualification remain separate.
 - [Shared native interaction scenarios](reference/shared-native-scenarios-v1.md): inspect labeled Slack/Teams traces and ordering/correlation findings; fixtures and declaration checks do not establish native execution or authority.
 - [Isolated upstream consumer preparation](reference/isolated-upstream-consumer-v1.md): validate selected artifacts and reconcile recorded cases; installed conformance and runtime qualification remain separate.
@@ -53,6 +54,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   and revision activation.
 - [Runtime authority interfaces](reference/runtime-authority.md): immutable bindings,
   purpose-specific results, trusted-context requirements, and contract verification.
+- [Runtime activation](reference/runtime-activation-v1.md): bounded conditional routing,
+  exact predecessor cleanup and original-operation recovery.
 - [Channels and delivery](reference/channels.md): current direct-channel topology,
   binding versus admission, state ownership, and Slack/Teams verification limits.
 - [Security controls](reference/security.md), [settings](reference/settings.md),
@@ -67,6 +70,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Credential backend profile](reference/credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
 - [Repository preparation interfaces](reference/repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
+- [Preparation Job interfaces](reference/preparation-job.md): versioned preparation identity, Job and Pod lineage, conditional effect observations, and retained staging handoff; definitions do not establish live provider authority.
 - [Lifecycle admission and durable work definitions](reference/lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](reference/lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](reference/lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
@@ -75,6 +79,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Schema and auth persistence boundary](reference/schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
 - [Audience observation contracts](reference/audience-observation.md): parse Slack and Teams observation contracts; live complete-reader and account authority producers remain separate.
 - [Runtime resource accounting](reference/runtime-resource-accounting-v1.md): validate supplied resource arithmetic and bounded deadlines; effective resource observation and measured capacity remain unavailable.
+- [Kubernetes resource normalization](reference/kubernetes-resource-normalization.md): normalize supplied accounting and render selected resource plans; protected admission association, current workload correspondence, and effective allocation remain unavailable.
 - [Final Pod comparison contract](reference/containment-admission.md): consume Harness declarations and structural decoders; the original expectation adapter remains unimplemented, and current admission authority and physical enforcement remain separate.
 - [Final Pod comparator](reference/final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](reference/containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.

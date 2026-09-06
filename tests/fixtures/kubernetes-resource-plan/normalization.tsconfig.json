@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.common.json",
+  "files": ["normalization-producer.ts"]
+}

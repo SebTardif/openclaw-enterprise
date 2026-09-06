@@ -11,6 +11,19 @@ import {
 
 type Content = WorkloadProfileManifestContentV1;
 type Launch = Content["launchConfiguration"];
+export type WorkloadProfileResourceAccountingSelectionV1 =
+  Launch["resourceEnvelope"]["podAndRuntimeAccounting"];
+
+/** Exact static selection from a fully decoded candidate, including its original
+ * envelope ref/version and all supplied or missing inputs. This adds no digest
+ * domain, accounting result, admitted-profile association or runtime authority. */
+export function projectWorkloadProfileResourceAccountingV1(
+  input: Uint8Array,
+): WorkloadProfileResourceAccountingSelectionV1 {
+  return decodeWorkloadProfileManifest(input).content.launchConfiguration.resourceEnvelope
+    .podAndRuntimeAccounting;
+}
+
 type Artifact<R extends WorkloadProfileManifestArtifactV1["role"]> = Extract<
   WorkloadProfileManifestArtifactV1,
   { readonly role: R }
