@@ -134,7 +134,9 @@ export function createSchemaMetadataTools({
     return {
       exports: Object.keys(schema).sort(),
       schema: schema.occSchema.schemaName,
-      tables: Object.fromEntries(schemaTables(schema).map(([name, table]) => [name, normalizeTable(table)])),
+      tables: Object.fromEntries(
+        schemaTables(schema).map(([name, table]) => [name, normalizeTable(table)]),
+      ),
     };
   }
 

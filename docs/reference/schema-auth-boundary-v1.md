@@ -2,9 +2,10 @@
 
 `SchemaAuthBoundaryV1` defines the database and schema types that OCC supplies to
 the controller's auth composition. It preserves the existing PostgreSQL pool,
-canonical schema objects and BetterAuth adapter options. This version publishes
-types and compile fixtures; it does not install a new database factory or move
-table declarations.
+canonical schema objects and BetterAuth adapter options. The definitions now have
+an [OCC-owned binding producer](postgres-auth-binding.md) and extracted core table
+modules. The existing controller auth composition retains its original producer
+until that composition adopts the supported factory.
 
 ## Supported imports
 
@@ -40,10 +41,17 @@ and perform no installation.
 
 ## Canonical objects and references
 
-[postgres-schema.ts](../../packages/occ/src/state/postgres-schema.ts) owns the
-existing `occSchema = pgSchema("occ")`, `collatedText`, `identifierPatterns` and
-table definitions. The auth factory currently passes the **same complete module
-namespace object** to `drizzle(pool, { schema })` and to `drizzleAdapter`.
+[shared.ts](../../packages/occ/src/state/schema/shared.ts) owns the single
+`occSchema = pgSchema("occ")`, `collatedText` and `identifierPatterns` definitions.
+The five core table modules import those shared values directly.
+[postgres-schema.ts](../../packages/occ/src/state/postgres-schema.ts) imports and
+reexports the original public root and table names while retaining every other
+domain declaration and factory invocation. The existing auth composition
+uses this **complete module namespace object** for `drizzle(pool, { schema })`.
+The supported producer supplies the same namespace with the explicit
+`drizzle({ client: pool, schema })` overload, so a structural pool cannot be
+mistaken for Drizzle configuration. The controller supplies the binding's exact
+schema object to `drizzleAdapter`.
 A five-table projection cannot replace that runtime input: quota tables and all
 other existing exports remain part of the schema namespace.
 
@@ -81,7 +89,7 @@ those factories or comparison against the migrated PostgreSQL schema.
 
 The binding producer accepts the existing caller-selected `PostgresPool`. Actual
 startup supplies a `pg.Pool`; the current public pool interface intentionally
-exposes fewer methods. A later producer must handle that existing Drizzle type
+exposes fewer methods. The binding producer handles that existing Drizzle type
 crossing internally, without strengthening callers' requirements or exposing an
 `unknown` database or schema.
 
@@ -100,18 +108,19 @@ turn that sequence into an ambient cross-auth/OCC transaction.
 
 ## Implementation destinations and acceptance
 
-The later OCC-owned binding implementation belongs at
-`packages/occ/src/auth-persistence/postgres-auth-binding.ts`. BetterAuth assembly,
+The OCC-owned binding implementation is
+[`createPostgresAuthBinding`](../../packages/occ/src/auth-persistence/postgres-auth-binding.ts).
+BetterAuth assembly,
 plugins, quota injection, logging and redaction remain in the existing
 [controller auth composition](../../apps/controller/src/auth/index.ts).
 
-The separate core extraction destinations are
+The core declarations are in
 `packages/occ/src/state/schema/shared.ts`, `installation.ts`, `namespace.ts`,
-`configuration.ts`, `secret.ts` and `service-account.ts`. Each existing declaration
-must move once, preserving its exact object and shared root. The canonical
-`postgres-schema.ts` aggregate must continue to expose the same complete module
-shape. Do not copy tables, spread-clone them, construct another schema root,
-replace a foreign-key target or invoke an existing domain factory twice.
+`configuration.ts`, `secret.ts` and `service-account.ts`. Each declaration appears
+once, preserving its exact object and shared root. The canonical
+`postgres-schema.ts` aggregate exposes the same complete module shape. Tables
+must not be copied or spread-cloned, foreign-key targets replaced, or existing
+domain factories invoked twice.
 
 Aggregate wiring and supported exports stay with the composition owner.
 [drizzle.config.ts](../../drizzle.config.ts), migrations and generated snapshots
@@ -136,7 +145,17 @@ The implementation acceptance checks must establish:
 - Actual auth, quota and OCC transaction behavior on PostgreSQL, including
   rollback and existing account compensation at the adopting composition.
 
+After explicit dependency preparation, run
+`node --test tests/conformance/core-schema-extraction.test.mjs` for actual
+root/table/column identity, original core metadata and inbound foreign-key
+correspondence. The fixture was captured from the original complete schema using
+Drizzle metadata, including references from domains outside this extraction.
+[Factory conformance](../../tests/conformance/postgres-auth-binding.test.mjs)
+checks actual construction and failures plus separate public consumer projects.
+
 Structural TypeScript compatibility cannot prove runtime identity, pool lifetime,
 transaction isolation or migrated schema equivalence. The definition fixtures
-prove their compile contracts and the absence of runtime exports only. Runtime
-factory, extraction and database acceptance remain separate requirements.
+prove their compile contracts and the absence of runtime exports only. Factory
+and extraction conformance perform no database execution. Actual auth, quota and
+OCC transactions and integrated application teardown remain acceptance work for
+the adopting controller composition.

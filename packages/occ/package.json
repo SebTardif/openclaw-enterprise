@@ -43,7 +43,8 @@
     "./containment/final-pod-comparison-v1": "./src/containment/final-pod-comparison-v1.ts",
     "./runtime-activation-v1": "./src/runtime-activation-v1/index.ts",
     "./containment/evidence-evaluator-v1": "./src/containment/evidence-evaluator-v1.ts",
-    "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts"
+    "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts",
+    "./auth-persistence/postgres-auth-binding": "./src/auth-persistence/postgres-auth-binding.ts"
   },
   "types": "./src/index.ts",
   "files": [

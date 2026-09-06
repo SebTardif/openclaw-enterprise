@@ -121,9 +121,7 @@
           "name": "installation_id_format",
           "value": {
             "sql": "\"occ\".\"installation\".\"id\" ~ $1",
-            "params": [
-              "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ]
+            "params": ["^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
           }
         },
         {
@@ -292,9 +290,7 @@
           "name": "namespaces_id_format",
           "value": {
             "sql": "\"occ\".\"namespaces\".\"id\" ~ $1",
-            "params": [
-              "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ]
+            "params": ["^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
           }
         },
         {
@@ -476,10 +472,7 @@
       "uniqueConstraints": [
         {
           "name": "configurations_namespace_id_id_unique",
-          "columns": [
-            "namespace_id",
-            "id"
-          ],
+          "columns": ["namespace_id", "id"],
           "nullsNotDistinct": false
         }
       ],
@@ -495,9 +488,7 @@
           "name": "configurations_id_format",
           "value": {
             "sql": "\"occ\".\"configurations\".\"id\" ~ $1",
-            "params": [
-              "^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ]
+            "params": ["^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
           }
         },
         {
@@ -523,16 +514,12 @@
             "schema": "occ",
             "name": "configurations"
           },
-          "columns": [
-            "namespace_id"
-          ],
+          "columns": ["namespace_id"],
           "foreignTable": {
             "schema": "occ",
             "name": "namespaces"
           },
-          "foreignColumns": [
-            "id"
-          ],
+          "foreignColumns": ["id"],
           "onUpdate": "restrict",
           "onDelete": "restrict"
         }
@@ -720,18 +707,12 @@
       "uniqueConstraints": [
         {
           "name": "secrets_namespace_id_id_unique",
-          "columns": [
-            "namespace_id",
-            "id"
-          ],
+          "columns": ["namespace_id", "id"],
           "nullsNotDistinct": false
         },
         {
           "name": "secrets_namespace_id_name_unique",
-          "columns": [
-            "namespace_id",
-            "name"
-          ],
+          "columns": ["namespace_id", "name"],
           "nullsNotDistinct": false
         }
       ],
@@ -775,9 +756,7 @@
           "name": "secrets_id_format",
           "value": {
             "sql": "\"occ\".\"secrets\".\"id\" ~ $1",
-            "params": [
-              "^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ]
+            "params": ["^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
           }
         },
         {
@@ -803,16 +782,12 @@
             "schema": "occ",
             "name": "secrets"
           },
-          "columns": [
-            "namespace_id"
-          ],
+          "columns": ["namespace_id"],
           "foreignTable": {
             "schema": "occ",
             "name": "namespaces"
           },
-          "foreignColumns": [
-            "id"
-          ],
+          "foreignColumns": ["id"],
           "onUpdate": "restrict",
           "onDelete": "restrict"
         }
@@ -905,18 +880,12 @@
       "uniqueConstraints": [
         {
           "name": "service_accounts_namespace_id_id_unique",
-          "columns": [
-            "namespace_id",
-            "id"
-          ],
+          "columns": ["namespace_id", "id"],
           "nullsNotDistinct": false
         },
         {
           "name": "service_accounts_namespace_id_name_unique",
-          "columns": [
-            "namespace_id",
-            "name"
-          ],
+          "columns": ["namespace_id", "name"],
           "nullsNotDistinct": false
         }
       ],
@@ -932,9 +901,7 @@
           "name": "service_accounts_id_format",
           "value": {
             "sql": "\"occ\".\"service_accounts\".\"id\" ~ $1",
-            "params": [
-              "^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ]
+            "params": ["^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
           }
         },
         {
@@ -960,16 +927,12 @@
             "schema": "occ",
             "name": "service_accounts"
           },
-          "columns": [
-            "namespace_id"
-          ],
+          "columns": ["namespace_id"],
           "foreignTable": {
             "schema": "occ",
             "name": "namespaces"
           },
-          "foreignColumns": [
-            "id"
-          ],
+          "foreignColumns": ["id"],
           "onUpdate": "restrict",
           "onDelete": "restrict"
         }
@@ -985,16 +948,12 @@
         "schema": "occ",
         "name": "agent_lifecycle_admissions"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1004,16 +963,12 @@
         "schema": "occ",
         "name": "agent_runtime_intents"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1023,18 +978,12 @@
         "schema": "occ",
         "name": "agents"
       },
-      "columns": [
-        "namespace_id",
-        "configuration_id"
-      ],
+      "columns": ["namespace_id", "configuration_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "configurations"
       },
-      "foreignColumns": [
-        "namespace_id",
-        "id"
-      ],
+      "foreignColumns": ["namespace_id", "id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1044,16 +993,12 @@
         "schema": "occ",
         "name": "agents"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1063,18 +1008,12 @@
         "schema": "occ",
         "name": "agents"
       },
-      "columns": [
-        "namespace_id",
-        "service_account_id"
-      ],
+      "columns": ["namespace_id", "service_account_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "service_accounts"
       },
-      "foreignColumns": [
-        "namespace_id",
-        "id"
-      ],
+      "foreignColumns": ["namespace_id", "id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1084,16 +1023,12 @@
         "schema": "occ",
         "name": "audit_export_outbox"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1103,16 +1038,12 @@
         "schema": "occ",
         "name": "channel_agent_bindings"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1122,16 +1053,12 @@
         "schema": "occ",
         "name": "channel_human_bindings"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1141,16 +1068,12 @@
         "schema": "occ",
         "name": "channel_installations"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1160,16 +1083,12 @@
         "schema": "occ",
         "name": "configurations"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1179,16 +1098,12 @@
         "schema": "occ",
         "name": "controller_work"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1198,16 +1113,12 @@
         "schema": "occ",
         "name": "iam_access_bindings"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1217,16 +1128,12 @@
         "schema": "occ",
         "name": "iam_group_memberships"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1236,16 +1143,12 @@
         "schema": "occ",
         "name": "iam_groups"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1255,16 +1158,12 @@
         "schema": "occ",
         "name": "iam_identities"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1274,16 +1173,12 @@
         "schema": "occ",
         "name": "iam_restrictions"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1293,16 +1188,12 @@
         "schema": "occ",
         "name": "iam_roles"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1312,16 +1203,12 @@
         "schema": "occ",
         "name": "lifecycle_capabilities"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1331,16 +1218,12 @@
         "schema": "occ",
         "name": "runtime_cleanup_responsibilities"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1350,16 +1233,12 @@
         "schema": "occ",
         "name": "runtime_service_trust_records"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1369,16 +1248,12 @@
         "schema": "occ",
         "name": "secrets"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1388,18 +1263,12 @@
         "schema": "occ",
         "name": "service_account_driver_bindings"
       },
-      "columns": [
-        "namespace_id",
-        "service_account_id"
-      ],
+      "columns": ["namespace_id", "service_account_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "service_accounts"
       },
-      "foreignColumns": [
-        "namespace_id",
-        "id"
-      ],
+      "foreignColumns": ["namespace_id", "id"],
       "onUpdate": "restrict",
       "onDelete": "cascade"
     },
@@ -1409,16 +1278,12 @@
         "schema": "occ",
         "name": "service_accounts"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1428,16 +1293,12 @@
         "schema": "occ",
         "name": "turn_journal_attempts"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1447,16 +1308,12 @@
         "schema": "occ",
         "name": "turn_journal_deliveries"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1466,16 +1323,12 @@
         "schema": "occ",
         "name": "turn_journal_delivery_attempts"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1485,16 +1338,12 @@
         "schema": "occ",
         "name": "turn_journal_heads"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1504,16 +1353,12 @@
         "schema": "occ",
         "name": "turn_journal_incoming_links"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1523,16 +1368,12 @@
         "schema": "occ",
         "name": "turn_journal_keys"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1542,16 +1383,12 @@
         "schema": "occ",
         "name": "turn_journal_operations"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1561,16 +1398,12 @@
         "schema": "occ",
         "name": "turn_journal_owners"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1580,16 +1413,12 @@
         "schema": "occ",
         "name": "turn_journal_reservations"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1599,16 +1428,12 @@
         "schema": "occ",
         "name": "workload_profile_capacity"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1618,16 +1443,12 @@
         "schema": "occ",
         "name": "workload_profile_operations"
       },
-      "columns": [
-        "installation_id"
-      ],
+      "columns": ["installation_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     },
@@ -1637,16 +1458,12 @@
         "schema": "occ",
         "name": "workload_profile_operations"
       },
-      "columns": [
-        "namespace_id"
-      ],
+      "columns": ["namespace_id"],
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
       },
-      "foreignColumns": [
-        "id"
-      ],
+      "foreignColumns": ["id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     }

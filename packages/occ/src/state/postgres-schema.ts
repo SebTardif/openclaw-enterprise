@@ -1,22 +1,25 @@
+import { occSchema, collatedText, identifierPatterns } from "./schema/shared.ts";
+import { installation } from "./schema/installation.ts";
+import { namespaces } from "./schema/namespace.ts";
+import { configurations } from "./schema/configuration.ts";
+import { secrets } from "./schema/secret.ts";
+import { serviceAccounts } from "./schema/service-account.ts";
+export { occSchema, installation, namespaces, configurations, secrets, serviceAccounts };
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
 import type {
   ChannelAdministrationMappingV1,
   HarnessExecutionMode,
-  SecretBindings,
-  ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
   check,
-  customType,
   foreignKey,
   index,
   integer,
   jsonb,
-  pgSchema,
   smallint,
   text,
   timestamp,
@@ -26,150 +29,6 @@ import {
 } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 import { createTurnJournalTables } from "./postgres/turn-journal-schema.ts";
-
-export const occSchema = pgSchema("occ");
-
-const collatedText = customType<{ data: string; driverData: string }>({
-  dataType() {
-    return 'text COLLATE "C"';
-  },
-});
-
-const identifierPatterns = {
-  installation: "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  namespace: "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  configuration: "^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  serviceAccount: "^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  agent: "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  revision: "^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  secret: "^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-  audit: "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-} as const;
-
-export const installation = occSchema.table(
-  "installation",
-  {
-    id: text("id").primaryKey(),
-    name: collatedText("name").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    check("installation_id_format", sql`${table.id} ~ ${identifierPatterns.installation}`),
-    check("installation_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
-    check(
-      "installation_name_normalized",
-      sql`${table.name} = btrim(${table.name}) AND ${table.name} !~ '[[:cntrl:]]'`,
-    ),
-    uniqueIndex("installation_one_row").on(sql`true`),
-  ],
-);
-
-export const namespaces = occSchema.table(
-  "namespaces",
-  {
-    id: text("id").primaryKey(),
-    name: collatedText("name").notNull().unique(),
-    existingNamespace: text("existing_namespace"),
-    status: text("status").notNull().default("provisioning"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-  },
-  (table) => [
-    uniqueIndex("namespaces_existing_namespace_unique")
-      .on(table.existingNamespace)
-      .where(sql`${table.existingNamespace} IS NOT NULL AND ${table.deletedAt} IS NULL`),
-    check("namespaces_id_format", sql`${table.id} ~ ${identifierPatterns.namespace}`),
-    check(
-      "namespaces_status_valid",
-      sql`${table.status} IN ('provisioning', 'ready', 'failed', 'deleting')`,
-    ),
-    check("namespaces_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
-    check(
-      "namespaces_existing_namespace_valid",
-      sql`${table.existingNamespace} IS NULL OR (
-        char_length(${table.existingNamespace}) BETWEEN 1 AND 63
-        AND ${table.existingNamespace} ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
-      )`,
-    ),
-    check(
-      "namespaces_name_normalized",
-      sql`${table.name} = btrim(${table.name}) AND ${table.name} !~ '[[:cntrl:]]'`,
-    ),
-    check(
-      "namespaces_tombstone_valid",
-      sql`${table.deletedAt} IS NULL OR (${table.status} = 'deleting' AND ${table.deletedAt} >= ${table.createdAt})`,
-    ),
-  ],
-);
-
-export const configurations = occSchema.table(
-  "configurations",
-  {
-    id: text("id").primaryKey(),
-    namespaceId: text("namespace_id")
-      .notNull()
-      .references(() => namespaces.id, { onDelete: "restrict", onUpdate: "restrict" }),
-    kind: text("kind").$type<"agent">().notNull(),
-    generation: bigint("generation", { mode: "number" }).notNull(),
-    secretBindings: jsonb("secret_bindings").$type<SecretBindings>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    unique("configurations_namespace_id_id_unique").on(table.namespaceId, table.id),
-    check("configurations_id_format", sql`${table.id} ~ ${identifierPatterns.configuration}`),
-    check("configurations_kind_valid", sql`${table.kind} = 'agent'`),
-    check(
-      "configurations_generation_valid",
-      sql`${table.generation} BETWEEN 1 AND 9007199254740991`,
-    ),
-    check(
-      "configurations_secret_bindings_valid",
-      sql`${table.secretBindings} IS NULL OR occ.secret_bindings_are_valid(${table.secretBindings}, ${table.namespaceId})`,
-    ),
-  ],
-);
-
-export const serviceAccounts = occSchema.table(
-  "service_accounts",
-  {
-    id: text("id").primaryKey(),
-    namespaceId: text("namespace_id")
-      .notNull()
-      .references(() => namespaces.id, { onDelete: "restrict", onUpdate: "restrict" }),
-    name: collatedText("name").notNull(),
-    credential: jsonb("credential").$type<ServiceAccountCredential>(),
-  },
-  (table) => [
-    unique("service_accounts_namespace_id_id_unique").on(table.namespaceId, table.id),
-    unique("service_accounts_namespace_id_name_unique").on(table.namespaceId, table.name),
-    check("service_accounts_id_format", sql`${table.id} ~ ${identifierPatterns.serviceAccount}`),
-    check("service_accounts_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
-    check(
-      "service_accounts_name_normalized",
-      sql`${table.name} = btrim(${table.name}) AND ${table.name} !~ '[[:cntrl:]]'`,
-    ),
-    check(
-      "service_accounts_credential_valid",
-      sql`${table.credential} IS NULL OR (
-        jsonb_typeof(${table.credential}) = 'object'
-        AND (${table.credential} ?& ARRAY['kind', 'secretRef'])
-        AND (${table.credential} - 'kind' - 'secretRef') = '{}'::jsonb
-        AND jsonb_typeof(${table.credential}->'kind') = 'string'
-        AND (${table.credential}->>'kind') IN ('api_key', 'oauth_access_token', 'access_token')
-        AND jsonb_typeof(${table.credential}->'secretRef') = 'object'
-        AND ((${table.credential}->'secretRef') ?& ARRAY['name', 'key'])
-        AND ((${table.credential}->'secretRef') - 'name' - 'key') = '{}'::jsonb
-        AND jsonb_typeof(${table.credential} #> '{secretRef,name}') = 'string'
-        AND char_length(${table.credential} #>> '{secretRef,name}') BETWEEN 1 AND 253
-        AND (${table.credential} #>> '{secretRef,name}') ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
-        AND jsonb_typeof(${table.credential} #> '{secretRef,key}') = 'string'
-        AND char_length(${table.credential} #>> '{secretRef,key}') BETWEEN 1 AND 253
-        AND (${table.credential} #>> '{secretRef,key}') ~ '^[-._a-zA-Z0-9]+$'
-        AND (${table.credential} #>> '{secretRef,key}') NOT IN ('.', '..')
-      )`,
-    ),
-  ],
-);
 
 export const serviceAccountDriverBindings = occSchema.table(
   "service_account_driver_bindings",
@@ -283,57 +142,6 @@ export const agents = occSchema.table(
     })
       .onUpdate("restrict")
       .onDelete("restrict"),
-  ],
-);
-
-export const secrets = occSchema.table(
-  "secrets",
-  {
-    id: text("id").primaryKey(),
-    namespaceId: text("namespace_id")
-      .notNull()
-      .references(() => namespaces.id, { onDelete: "restrict", onUpdate: "restrict" }),
-    name: collatedText("name").notNull(),
-    driverId: text("driver_id").notNull(),
-    backendNamespaceName: text("backend_namespace_name").notNull(),
-    backendName: text("backend_name").notNull(),
-    backendKey: text("backend_key").notNull(),
-    backendUid: text("backend_uid").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  },
-  (table): PgTableExtraConfigValue[] => [
-    unique("secrets_namespace_id_id_unique").on(table.namespaceId, table.id),
-    unique("secrets_namespace_id_name_unique").on(table.namespaceId, table.name),
-    check("secrets_id_format", sql`${table.id} ~ ${identifierPatterns.secret}`),
-    check("secrets_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
-    check(
-      "secrets_name_normalized",
-      sql`${table.name} = btrim(${table.name}) AND ${table.name} !~ '[[:cntrl:]]'`,
-    ),
-    check(
-      "secrets_driver_id_valid",
-      sql`char_length(${table.driverId}) BETWEEN 1 AND 200 AND ${table.driverId} = btrim(${table.driverId})`,
-    ),
-    check(
-      "secrets_backend_namespace_name_valid",
-      sql`char_length(${table.backendNamespaceName}) BETWEEN 1 AND 63
-        AND ${table.backendNamespaceName} ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'`,
-    ),
-    check(
-      "secrets_backend_name_valid",
-      sql`char_length(${table.backendName}) BETWEEN 1 AND 253
-        AND ${table.backendName} ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'`,
-    ),
-    check(
-      "secrets_backend_key_valid",
-      sql`char_length(${table.backendKey}) BETWEEN 1 AND 253
-        AND ${table.backendKey} ~ '^[-._a-zA-Z0-9]+$'
-        AND ${table.backendKey} NOT IN ('.', '..')`,
-    ),
-    check(
-      "secrets_backend_uid_valid",
-      sql`${table.backendUid} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
-    ),
   ],
 );
 
