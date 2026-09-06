@@ -3,8 +3,11 @@ import { immutableCopy } from "@openclaw-enterprise/utils";
 import { WORKLOAD_PROFILE_LIMITS_V1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
 import type { WorkloadProfileRepository } from "../ports/repositories/workload-profile.ts";
+import { decodeWorkloadProfileJson } from "./canonical.ts";
+import { deriveWorkloadProfileManifest } from "./projections.ts";
 import {
   PROFILE_ALLOCATION_KINDS,
+  InvalidProfileOperationError,
   createProfilePreparation,
   decodeStoredProfilePreparation,
   normalizeProfilePreparation,
@@ -16,8 +19,38 @@ import {
   type ProfileIdentityAllocator,
   type ProfileOperationActor,
   type ProfileOperationLocator,
+  type NormalizedProfilePreparation,
   type StoredProfilePreparation,
 } from "./types.ts";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: true });
+
+/** The envelope already claims canonical content. Normalize through the closed
+ * dictionary, then require exact bytes rather than rewriting the caller's intent.
+ * Computable projections identify this inert candidate; they confer no authority. */
+function validateManifest(normalized: NormalizedProfilePreparation): void {
+  const { request } = normalized;
+  const manifest = deriveWorkloadProfileManifest(encoder.encode(request.manifest.canonicalUtf8));
+  if (
+    decoder.decode(manifest.canonicalBytes) !== request.manifest.canonicalUtf8 ||
+    manifest.digests.manifestDigest !== request.manifest.manifestDigest ||
+    manifest.content.target.component !== request.component
+  )
+    throw new InvalidProfileOperationError();
+}
+
+/** Historical lexical records also pass the current closed content boundary.
+ * A self-consistent operation digest cannot substitute for manifest validation. */
+function validatedStoredPreparation(input: unknown): StoredProfilePreparation {
+  const record = decodeStoredProfilePreparation(input);
+  const intent = decodeWorkloadProfileJson(
+    encoder.encode(record.canonicalClientIntent),
+    "operator-envelope",
+  ).value;
+  validateManifest(normalizeProfilePreparation(intent));
+  return record;
+}
 
 export class ProfileOperationConflictError extends ResourceConflictError {
   constructor() {
@@ -106,12 +139,13 @@ export function createWorkloadProfileRepository(
         if (backend.installationId() !== locator.installationId) return undefined;
         const stored = await backend.operation(locator);
         if (stored === undefined) return undefined;
-        const record = decodeStoredProfilePreparation(stored);
+        const record = validatedStoredPreparation(stored);
         return exact(record, locator) ? immutableCopy(record) : undefined;
       }),
     prepareOperation: (input: unknown, attribution: ProfileOperationActor) =>
       guard.run(async () => {
         const normalized = normalizeProfilePreparation(input);
+        validateManifest(normalized);
         const actor = profileActor(attribution);
         const installationId = backend.installationId();
         profileInstallation(installationId);
@@ -121,7 +155,7 @@ export function createWorkloadProfileRepository(
         await backend.lockOperation(locator);
         const prior = await backend.operation(locator);
         if (prior !== undefined) {
-          const record = decodeStoredProfilePreparation(prior);
+          const record = validatedStoredPreparation(prior);
           if (
             !exact(record, locator) ||
             record.canonicalClientIntent !== normalized.canonicalClientIntent ||

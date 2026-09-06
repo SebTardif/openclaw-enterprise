@@ -5,6 +5,7 @@ import {
   profileStorageFixture,
   inertProfileRequest,
   profileActorFixture,
+  workloadProfileManifestFixture,
 } from "../fixtures/workload-profile.mjs";
 import {
   PROFILE_ALLOCATION_KINDS,
@@ -12,11 +13,30 @@ import {
   InvalidProfileOperationError,
   profileAllocatedIdentities,
   profileActor,
+  createProfilePreparation,
+  normalizeProfilePreparation,
 } from "../../packages/occ/src/workload-profiles/types.ts";
 import {
   ProfileOperationConflictError,
   ProfileOperationCapacityError,
+  createWorkloadProfileRepository,
+  WorkloadProfileTransactionGuard,
 } from "../../packages/occ/src/workload-profiles/repository.ts";
+import {
+  canonicalizeWorkloadProfileJson,
+  workloadProfileDigest,
+} from "../../packages/occ/src/workload-profiles/canonical.ts";
+
+function requestWithContent(request, content, manifestDigest) {
+  return {
+    ...request,
+    manifest: {
+      ...request.manifest,
+      canonicalUtf8: new TextDecoder().decode(canonicalizeWorkloadProfileJson(content)),
+      manifestDigest: manifestDigest ?? workloadProfileDigest("manifestDigest", content),
+    },
+  };
+}
 
 test("inert preparation retains canonical request and stable identities without approval", async () => {
   const f = profileStorageFixture();
@@ -276,4 +296,181 @@ test("retained decoder recomputes exact operation and client-intent bindings", a
   });
   assert.throws(() => decodeStoredProfilePreparation(accessor));
   assert.equal(invoked, 0);
+});
+
+for (const [name, mutate] of [
+  ["lexical object without the manifest dictionary", () => ({ candidate: "unqualified" })],
+  [
+    "foreign Compute backend",
+    (m) => {
+      m.target.provider = "occ/other";
+      return m;
+    },
+  ],
+  [
+    "foreign artifact reference",
+    (m) => {
+      m.launchConfiguration.runtime.artifactRole = "gateway";
+      return m;
+    },
+  ],
+  [
+    "foreign container mount",
+    (m) => {
+      m.launchConfiguration.mountPolicy.entries[0].container = "gateway";
+      return m;
+    },
+  ],
+  [
+    "new platform image in an unresolved slot",
+    (m) => {
+      m.launchConfiguration.containers[0].imagePlatformDigest = `sha256:${"a".repeat(64)}`;
+      return m;
+    },
+  ],
+  [
+    "caller-resolved server descriptor",
+    (m) => {
+      m.launchConfiguration.serverBindingParameters.deploymentScope.installationId = `ins_${randomUUID()}`;
+      return m;
+    },
+  ],
+  [
+    "unexpected capability",
+    (m) => {
+      m.capabilities.push({ ...m.capabilities[0], id: "execute" });
+      return m;
+    },
+  ],
+  [
+    "positive capability status",
+    (m) => {
+      m.capabilities[0].status = "executable";
+      return m;
+    },
+  ],
+  [
+    "reordered canonical artifact set",
+    (m) => {
+      m.artifactSet.reverse();
+      return m;
+    },
+  ],
+  [
+    "reordered canonical claim set",
+    (m) => {
+      m.evidenceRequirements.requiredClaims.reverse();
+      return m;
+    },
+  ],
+]) {
+  test(`closed manifest ${name} fails before ID allocation or retention`, async () => {
+    const f = profileStorageFixture();
+    const content = mutate(workloadProfileManifestFixture());
+    const request = requestWithContent(f.request, content);
+    await assert.rejects(f.transact((repo) => repo.prepareOperation(request, f.actor)));
+    assert.equal(f.allocations, 0);
+    assert.equal(f.clockReads, 0);
+    assert.equal(f.snapshot.operations.size, 0);
+    assert.equal(f.snapshot.capacities.size, 0);
+  });
+}
+
+test("a different candidate digest domain cannot be retained as manifest identity", async () => {
+  const f = profileStorageFixture();
+  const content = workloadProfileManifestFixture();
+  const request = requestWithContent(
+    f.request,
+    content,
+    workloadProfileDigest("artifactSetDigest", content.artifactSet),
+  );
+  await assert.rejects(f.transact((repo) => repo.prepareOperation(request, f.actor)));
+  assert.equal(f.allocations, 0);
+  assert.equal(f.snapshot.operations.size, 0);
+});
+
+test("caught closed-manifest failure rolls back earlier valid preparation in the same unit", async () => {
+  const f = profileStorageFixture();
+  await assert.rejects(
+    f.transact(async (repo) => {
+      await repo.prepareOperation(f.request, f.actor);
+      const bad = requestWithContent(
+        { ...f.request, operationRef: randomUUID() },
+        { candidate: "unqualified" },
+      );
+      await assert.rejects(repo.prepareOperation(bad, f.actor));
+    }),
+  );
+  assert.equal(f.allocations, PROFILE_ALLOCATION_KINDS.length);
+  assert.equal(f.clockReads, 1);
+  assert.equal(f.snapshot.operations.size, 0);
+  assert.equal(f.snapshot.capacities.size, 0);
+});
+
+test("changed valid documentary bytes conflict on exact replay without replacing retained content", async () => {
+  const f = profileStorageFixture();
+  const first = await f.transact((repo) => repo.prepareOperation(f.request, f.actor));
+  const content = workloadProfileManifestFixture();
+  content.artifactSet[0].image.required = "A different documentary requirement.";
+  const changed = requestWithContent(f.request, content);
+  await assert.rejects(
+    f.transact((repo) => repo.prepareOperation(changed, f.actor)),
+    ProfileOperationConflictError,
+  );
+  const retained = await f.transact((repo) => repo.findOperation(f.locator()));
+  assert.deepEqual(retained, first);
+  assert.equal(f.allocations, PROFILE_ALLOCATION_KINDS.length);
+  assert.equal(f.clockReads, 1);
+});
+
+test("repository readback and replay reject coherent retained records with an invalid manifest", async () => {
+  const f = profileStorageFixture();
+  const first = await f.transact((repo) => repo.prepareOperation(f.request, f.actor));
+  const invalidRequest = requestWithContent(f.request, { candidate: "historical-lexical-content" });
+  const invalidRecord = createProfilePreparation(
+    f.installationId,
+    f.actor,
+    normalizeProfilePreparation(invalidRequest),
+    first.allocated,
+    first.preparedAt,
+  );
+  // The older lexical record codec accepts these internally coherent outer bytes.
+  // The actual repository must still apply the closed manifest boundary on reads.
+  assert.deepEqual(decodeStoredProfilePreparation(invalidRecord), invalidRecord);
+  for (const access of [
+    (repo) => repo.findOperation(f.locator()),
+    (repo) => repo.prepareOperation(f.request, f.actor),
+  ]) {
+    const guard = new WorkloadProfileTransactionGuard();
+    let inserts = 0;
+    let allocations = 0;
+    const repo = createWorkloadProfileRepository(
+      {
+        installationId: () => f.installationId,
+        lockCapacity: async () => {},
+        lockOperation: async () => {},
+        operation: async () => invalidRecord,
+        namespaceExists: async () => true,
+        capacity: async () => ({
+          ordinaryOperations: 1,
+          pendingOrdinaryOperations: 1,
+          terminalSlots: 0,
+        }),
+        insert: async () => {
+          inserts++;
+        },
+      },
+      guard,
+      {
+        allocate: () => {
+          allocations++;
+          return randomUUID();
+        },
+      },
+    );
+    await assert.rejects(access(repo));
+    await assert.rejects(guard.finish());
+    assert.equal(allocations, 0);
+    assert.equal(inserts, 0);
+  }
 });
