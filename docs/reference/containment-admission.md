@@ -6,8 +6,9 @@ and its Deployment with an exact expected shape. It exports versioned input,
 result and comparator declarations, closed structural decoders, bounded raw JSON
 values and independent compiling producer and consumer examples.
 
-The comparator implementation and the original producer's expectation adapter
-are not implemented by this module. Successful decoding establishes structural
+The separate [final Pod comparator](final-pod-comparison.md) implements bounded,
+pure comparison through this contract. The original producer's expectation
+adapter remains unimplemented. Successful decoding establishes structural
 validity and intrinsic correspondence. A `conforming` value remains supplied
 comparison data: it establishes neither current profile admission, authenticated
 observation, Kubernetes enforcement, runtime eligibility nor a prior-writer
@@ -118,7 +119,7 @@ only recognized names in this contract are:
 - `controller.metadata.managedFields`
 
 The list may be empty, and duplicate entries fail. Raw values remain present
-regardless of the declared exclusions. The later comparator applies accepted
+regardless of the declared exclusions. The separate comparator applies accepted
 normalization rules. Whole metadata/status exclusion, UID/resource-version
 exclusion and arbitrary field-path exclusions are unsupported. Changing this
 finite vocabulary requires a reviewed version change.
@@ -126,8 +127,10 @@ finite vocabulary requires a reviewed version change.
 ## Outcomes and decoding
 
 `ContainmentAdmissionComparatorV1.compare` declares an asynchronous in-process
-port. There is no supplied evaluator, RPC endpoint or default implementation.
-The three decoders are:
+port. The separate `FinalPodContainmentComparatorV1` implementation evaluates
+supplied content; it provides no RPC endpoint or production admission hookup.
+See [final Pod comparison](final-pod-comparison.md) for its supported field policy,
+comparison outcomes and verification limits. The three structural decoders are:
 
 ```ts
 import {
