@@ -20,6 +20,9 @@ exercise local sequencing, exact correspondence, uncertainty preservation and
 per-call isolation. Manually aborting a signal is not a lost PostgreSQL lease;
 advancing the injected clock is not live expiry or restart evidence. Returning
 after a local timeout does not prove a provider cancelled or joined its work.
+Exact-deadline inspecting peers check that the original caller deadline remains
+unchanged across gate and cleanup calls, while the guard still enforces its
+separate local wait limit. They do not reproduce or verify native authentication.
 No test proves Compute fencing, physical termination, durable cleanup, queue
 finalization, SDK operation, dispatcher adoption or production integration.
 

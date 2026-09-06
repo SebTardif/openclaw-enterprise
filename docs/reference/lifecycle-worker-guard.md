@@ -54,9 +54,12 @@ original-actor/reference/profile authority, exact responsibility, generation,
 UID/resourceVersion and writer conditions. The guard adds no generic readiness
 or preparation purpose to the assignment resolver.
 
-Each read is bounded by the earlier caller deadline and the existing three-second
-lookup ceiling. Each provider wait uses the earlier caller deadline and
-ten-second provider ceiling. `maxWaitMs` may tighten these limits. Worker
+Each local read wait is bounded by the earlier caller deadline and the existing
+three-second lookup ceiling. Each provider wait uses the earlier caller deadline
+and ten-second provider ceiling. `maxWaitMs` may tighten these local limits.
+Forwarded calls preserve the original authenticated deadline, context and
+correlation exactly; local timers and cancellation enforce the tighter wait
+without changing the exchange identity. Worker
 cancellation retains the original `WorkClaimLostError` classification. A timeout
 or cancellation bounds this caller's wait; it does not establish that a peer
 stopped, rolled back or never submitted a request.

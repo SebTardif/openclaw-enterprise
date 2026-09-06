@@ -474,7 +474,7 @@ for (const phase of ["before-submit", "before-return"]) {
   });
 }
 
-test("bounded peer calls preserve caller context and correlation while tightening their deadline", async () => {
+test("bounded peer calls preserve the original authority deadline and correlation", async () => {
   const s = setup(undefined, { maxWaitMs: 400 });
   await s.guard.run(s.context, s.request);
   for (const [kind, , bounded] of s.events) {
@@ -484,9 +484,88 @@ test("bounded peer calls preserve caller context and correlation while tightenin
     assert.equal(bounded.recipientRef, s.context.call.recipientRef);
     assert.ok(bounded.signal instanceof AbortSignal);
     assert.notEqual(bounded.signal, s.context.call.signal);
-    assert.equal(bounded.deadline, "2026-01-01T00:00:01.400Z");
+    assert.equal(bounded.deadline, s.context.call.deadline);
   }
 });
+
+function inspectOriginalCall(received, original) {
+  // This controlled check exercises forwarding only. It does not authenticate
+  // the context sentinel or implement the native service-context inspector.
+  assert.equal(received.context, original.context);
+  assert.equal(received.requestRef, original.requestRef);
+  assert.equal(received.recipientRef, original.recipientRef);
+  assert.equal(received.deadline, original.deadline);
+  assert.ok(received.signal instanceof AbortSignal);
+  assert.notEqual(received.signal, original.signal);
+}
+
+for (const slow of [false, true]) {
+  test(`exact-deadline gate inspection ${slow ? "still observes the local three-second bound" : "accepts the unchanged longer caller deadline"}`, async () => {
+    const s = setup();
+    assert.ok(Date.parse(s.context.call.deadline) - s.state.time.getTime() > 3_000);
+    let inspections = 0;
+    s.options.admission.readGate = async (_input, received) => {
+      inspectOriginalCall(received, s.context.call);
+      inspections += 1;
+      if (slow) s.state.time = new Date(s.state.time.getTime() + 3_001);
+      return gateObservation(s.request);
+    };
+    const result = await s.guard.run(s.context, s.request);
+    sameEffect(result, s.request);
+    if (slow) {
+      assert.equal(result.kind, "blocked");
+      assert.equal(result.reason, "deadline-exceeded");
+      assert.equal(inspections, 1);
+      noSubmission(s);
+    } else {
+      assert.equal(result.kind, "unresolved");
+      assert.equal(result.observation.status, "unknown");
+      assert.equal(inspections, 2);
+      assert.equal(count(s, "create"), 1);
+    }
+  });
+}
+
+for (const slow of [false, true]) {
+  test(`exact-deadline cleanup inspection ${slow ? "still observes the local three-second bound" : "accepts the unchanged longer caller deadline"}`, async () => {
+    const s = cleanupSetup();
+    const originalCall = call();
+    assert.ok(Date.parse(originalCall.deadline) - s.state.time.getTime() > 3_000);
+    let gateInspections = 0;
+    let authorityInspections = 0;
+    s.options.admission.readGate = async (_input, received) => {
+      inspectOriginalCall(received, originalCall);
+      gateInspections += 1;
+      return gateObservation(s.cleanupRequest);
+    };
+    s.options.assignments.resolve = async (_input, received) => {
+      inspectOriginalCall(received, originalCall);
+      authorityInspections += 1;
+      if (slow) s.state.time = new Date(s.state.time.getTime() + 3_001);
+      return s.authority.value;
+    };
+    const result = await s.guard.cleanup(
+      s.original,
+      s.cleanupRequest,
+      s.authority.input,
+      originalCall,
+    );
+    sameEffect(result, s.cleanupRequest);
+    if (slow) {
+      assert.equal(result.kind, "blocked");
+      assert.equal(result.reason, "deadline-exceeded");
+      assert.equal(gateInspections, 1);
+      assert.equal(authorityInspections, 1);
+      noSubmission(s);
+    } else {
+      assert.equal(result.kind, "unresolved");
+      assert.equal(result.observation.status, "unknown");
+      assert.equal(gateInspections, 3);
+      assert.equal(authorityInspections, 2);
+      assert.equal(count(s, "cleanup"), 1);
+    }
+  });
+}
 
 for (const phase of ["before-submit", "before-return"]) {
   test(`gate clock uncertainty ${phase} cannot be discarded after a lifecycle await`, async () => {

@@ -153,9 +153,10 @@ export class LifecycleEffectGuard {
     const duration = deadline - startedAt;
     if (duration <= 0) throw new Refused("deadline-exceeded");
     const controller = new AbortController();
+    // The authenticated exchange binds the original deadline exactly. Local
+    // timers and checks tighten our wait without changing that authenticated boundary.
     const bounded = {
       ...call,
-      deadline: new Date(deadline).toISOString(),
       signal: controller.signal,
     };
     let rejectAbort: (error: Error) => void = () => {};
