@@ -5,6 +5,7 @@ import { createPostgresProviderAccountLinks } from "./postgres/provider-account-
 import { createPostgresNamespaceRepository } from "./postgres/namespaces.ts";
 import { createPostgresConfigurationRepository } from "./postgres/configurations.ts";
 import { createPostgresSecretRepository } from "./postgres/secrets.ts";
+import { createPostgresServiceAccountRepository } from "./postgres/service-accounts.ts";
 import { createPostgresChannelBindingRepository } from "./postgres/channel-bindings.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -37,8 +38,6 @@ import type {
   Restriction,
   Role,
   SecretBindings,
-  ServiceAccount,
-  ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
   decodeChannelAdministrationMappingV1,
@@ -74,7 +73,6 @@ import type {
   PlatformStateStore,
   PlatformReadOptions,
   PlatformUnitOfWork,
-  ServiceAccountRepository,
 } from "./platform-state.ts";
 import {
   PostgresWorkQueue,
@@ -269,16 +267,6 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     ...(serviceAccountId === undefined ? {} : { serviceAccountId }),
     ...(activeRevisionId === undefined ? {} : { activeRevisionId }),
     createdAt: timestamp(row, "created_at"),
-  });
-}
-
-function serviceAccountFromRow(row: PostgresRow): Readonly<ServiceAccount> {
-  const credential = row.credential as ServiceAccountCredential | null;
-  return immutableCopy({
-    id: text(row, "id"),
-    namespaceId: text(row, "namespace_id"),
-    name: text(row, "name"),
-    ...(credential === null ? {} : { credential }),
   });
 }
 
@@ -1178,42 +1166,19 @@ export class PostgresPlatformState implements PlatformStateStore {
       timestamp,
     });
 
-    const findServiceAccount = async (
-      namespaceId: string,
-      serviceAccountId: string,
-      lock = false,
-    ): Promise<Readonly<ServiceAccount> | undefined> => {
-      const found = rows(
-        (
-          await client.query(
-            `SELECT s.id, s.namespace_id, s.name, s.credential
-             FROM occ.service_accounts AS s
-             JOIN occ.namespaces AS n ON n.id = s.namespace_id AND n.deleted_at IS NULL
-             WHERE s.namespace_id = $1 AND s.id = $2${lock ? " FOR UPDATE OF s" : ""}`,
-            [namespaceId, serviceAccountId],
-          )
-        ).rows,
-      )[0];
-      return found === undefined ? undefined : serviceAccountFromRow(found);
-    };
-
-    const serviceAccounts: ServiceAccountRepository = {
-      findServiceAccount,
-      listServiceAccounts: async (namespaceId) =>
-        Object.freeze(
-          rows(
-            (
-              await client.query(
-                `SELECT s.id, s.namespace_id, s.name, s.credential
-                 FROM occ.service_accounts AS s
-                 JOIN occ.namespaces AS n ON n.id = s.namespace_id AND n.deleted_at IS NULL
-                 WHERE s.namespace_id = $1
-                 ORDER BY s.name, s.id`,
-                [namespaceId],
-              )
-            ).rows,
-          ).map(serviceAccountFromRow),
-        ),
+    const serviceAccounts = createPostgresServiceAccountRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (context.installation === undefined)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
+      },
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => client.query(statement, parameters) },
+      requireInitialized: () => this.requireInitialized(context),
+      namespaces,
+      rows,
+      text,
       findServiceAccountProviderBinding: async (namespaceId, serviceAccountId) => {
         const found = rows(
           (
@@ -1236,55 +1201,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               credentialIssued: found.credential_issued === true,
             });
       },
-      lockServiceAccount: async (namespaceId, serviceAccountId) =>
-        findServiceAccount(namespaceId, serviceAccountId, true),
-      createServiceAccount: async (account) => {
-        await this.requireInitialized(context);
-        const namespace = await namespaces.lockNamespace(account.namespaceId);
-        if (
-          namespace === undefined ||
-          (namespace.status !== "provisioning" && namespace.status !== "ready")
-        )
-          throw new ScopeViolationError("The ServiceAccount belongs to an unavailable Namespace.");
-        await client.query(
-          `INSERT INTO occ.service_accounts
-           (id, namespace_id, name, credential)
-           VALUES ($1, $2, $3, $4::jsonb)`,
-          [
-            account.id,
-            account.namespaceId,
-            account.name,
-            account.credential === undefined ? null : JSON.stringify(account.credential),
-          ],
-        );
-        return immutableCopy(account);
-      },
-      updateCredential: async (namespaceId, serviceAccountId, credential) => {
-        const updated = rows(
-          (
-            await client.query(
-              `UPDATE occ.service_accounts AS s
-               SET credential = $3::jsonb
-               FROM occ.namespaces AS n
-               WHERE s.namespace_id = $1 AND s.id = $2
-                 AND n.id = s.namespace_id AND n.deleted_at IS NULL
-               RETURNING s.id, s.namespace_id, s.name, s.credential`,
-              [namespaceId, serviceAccountId, JSON.stringify(credential)],
-            )
-          ).rows,
-        )[0];
-        return updated === undefined ? undefined : serviceAccountFromRow(updated);
-      },
-      deleteServiceAccount: async (namespaceId, serviceAccountId) => {
-        const deleted = await client.query(
-          `DELETE FROM occ.service_accounts AS s USING occ.namespaces AS n
-           WHERE s.namespace_id = $1 AND s.id = $2
-             AND n.id = s.namespace_id AND n.deleted_at IS NULL`,
-          [namespaceId, serviceAccountId],
-        );
-        return deleted.rowCount === 1;
-      },
-    };
+    });
 
     const findAgent = async (
       namespaceId: string,
