@@ -12,6 +12,7 @@ import type { ChannelBindingReadRepository } from "./repositories/channel-bindin
 import type { RuntimeAdmissionReadRepository } from "./repositories/runtime-admission.ts";
 import type { RuntimeAssignmentReadRepository } from "./repositories/runtime-assignment.ts";
 import type { RuntimeAuthorityReadRepository } from "../runtime-authority/repository.ts";
+import type { RuntimePreparationReadRepository } from "./repositories/runtime-preparation.ts";
 import type { RuntimeServiceTrustReadRepository } from "../runtime-authority/service-trust.ts";
 import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
@@ -24,6 +25,7 @@ export interface PlatformReadView {
   readonly runtimeAssignments: RuntimeAssignmentReadRepository;
   readonly runtimeAdmissions: RuntimeAdmissionReadRepository;
   readonly runtimeAuthority: RuntimeAuthorityReadRepository;
+  readonly runtimePreparation: RuntimePreparationReadRepository;
   readonly runtimeServiceTrust: RuntimeServiceTrustReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
@@ -82,6 +84,11 @@ export function createPlatformReadView(
       "findAssignment",
       "listEvidence",
       "findOperation",
+    ]),
+    runtimePreparation: bindRepository(repositories.runtimePreparation, lifetime, [
+      "findPreparation",
+      "findOperation",
+      "listHistory",
     ]),
     runtimeServiceTrust: bindRepository(repositories.runtimeServiceTrust, lifetime, [
       "findOperation",

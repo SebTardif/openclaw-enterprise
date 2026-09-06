@@ -15,6 +15,7 @@ import type { ChannelBindingRepository } from "./repositories/channel-bindings.t
 import type { RuntimeAdmissionRepository } from "./repositories/runtime-admission.ts";
 import type { RuntimeAssignmentRepository } from "./repositories/runtime-assignment.ts";
 import type { RuntimeAuthorityRepository } from "../runtime-authority/repository.ts";
+import type { RuntimePreparationRepository } from "./repositories/runtime-preparation.ts";
 import type { RuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 
 export interface PlatformUnitOfWork extends PlatformReadView {
@@ -23,6 +24,7 @@ export interface PlatformUnitOfWork extends PlatformReadView {
   readonly runtimeAssignments: RuntimeAssignmentRepository;
   readonly runtimeAdmissions: RuntimeAdmissionRepository;
   readonly runtimeAuthority: RuntimeAuthorityRepository;
+  readonly runtimePreparation: RuntimePreparationRepository;
   readonly runtimeServiceTrust: RuntimeServiceTrustRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
@@ -104,6 +106,12 @@ export function bindPlatformUnitOfWork(
       "listEvidence",
       "findOperation",
       "appendMutation",
+    ]),
+    runtimePreparation: bindRepository(repositories.runtimePreparation, lifetime, [
+      "findPreparation",
+      "findOperation",
+      "listHistory",
+      "retain",
     ]),
     runtimeServiceTrust: bindRepository(repositories.runtimeServiceTrust, lifetime, [
       "findOperation",

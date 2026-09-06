@@ -1,3 +1,5 @@
+import { createMemoryRuntimePreparation } from "./memory/runtime-preparation.ts";
+import type { StoredRuntimePreparationOperation } from "../runtime-preparation/types.ts";
 import { RepositoryTransactionLifetime, type RepositoryTransaction } from "../ports/transaction.ts";
 import { createMemoryChannelBindingRepository } from "./memory/channel-bindings.ts";
 import { createMemoryNamespaceRepository } from "./memory/namespaces.ts";
@@ -333,6 +335,7 @@ interface PlatformSnapshot {
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
   readonly runtimeAdmissions: Map<string, Readonly<RevisionRuntimeAdmission>>;
   readonly runtimeAuthorityOperations: Map<string, StoredRuntimeAuthorityOperation>;
+  readonly runtimePreparationOperations: Map<string, StoredRuntimePreparationOperation>;
   readonly runtimeServiceTrustRecords: Map<string, Readonly<RuntimeServiceTrustRecord>>;
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
@@ -359,6 +362,7 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimeAllocations: new Map(snapshot.runtimeAllocations),
     runtimeAdmissions: new Map(snapshot.runtimeAdmissions),
     runtimeAuthorityOperations: new Map(snapshot.runtimeAuthorityOperations),
+    runtimePreparationOperations: new Map(snapshot.runtimePreparationOperations),
     runtimeServiceTrustRecords: new Map(snapshot.runtimeServiceTrustRecords),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
@@ -1149,6 +1153,24 @@ function repositories(
     runtimeAssignments,
     authorityGuard,
   );
+  const runtimePreparation = createMemoryRuntimePreparation(
+    {
+      transaction,
+      get scope() {
+        if (!snapshot.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: snapshot.installation.id };
+      },
+      snapshot: {
+        operations: snapshot.runtimePreparationOperations,
+        allocations: snapshot.runtimeAllocations,
+      },
+    },
+    runtimeAssignments,
+    runtimeAdmissions,
+    runtimeAuthority,
+    authorityGuard,
+  );
   const audit: PlatformAuditRepository = {
     async append(event) {
       if (event.installationId !== snapshot.installation?.id)
@@ -1191,6 +1213,7 @@ function repositories(
   );
 
   return {
+    runtimePreparation,
     runtimeServiceTrust,
     runtimeAuthority,
     channelBindings: serializeChannelBindingMutations(channelBindings),
@@ -1288,6 +1311,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimeAllocations: new Map(),
     runtimeAdmissions: new Map(),
     runtimeAuthorityOperations: new Map(),
+    runtimePreparationOperations: new Map(),
     runtimeServiceTrustRecords: new Map(),
     installation: undefined,
     namespaces: new Map(),

@@ -1522,3 +1522,49 @@ export const {
   turnJournalDeliveries,
   turnJournalDeliveryAttempts,
 } = createTurnJournalTables(occSchema, { installation, agents, channelInstallations });
+
+/** Internal immutable preparation history; retention never grants provider admission. */
+export const runtimePreparationOperations = occSchema.table(
+  "runtime_preparation_operations",
+  {
+    operationRef: text("operation_ref").primaryKey(),
+    preparationRef: text("preparation_ref").notNull(),
+    installationId: text("installation_id").notNull(),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    assignmentRef: text("assignment_ref").notNull(),
+    localVersion: bigint("local_version", { mode: "number" }).notNull(),
+    operationKind: text("operation_kind").notNull(),
+    childEffectRef: text("child_effect_ref").unique("runtime_preparation_child_effect_unique"),
+    bindingOperationRef: text("binding_operation_ref").unique(
+      "runtime_preparation_binding_operation_unique",
+    ),
+    canonicalRequest: text("canonical_request").notNull(),
+    record: jsonb("record").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "runtime_preparation_allocation_owner",
+      columns: [table.installationId, table.namespaceId, table.agentId, table.assignmentRef],
+      foreignColumns: [
+        runtimeAssignmentAllocations.installationId,
+        runtimeAssignmentAllocations.namespaceId,
+        runtimeAssignmentAllocations.agentId,
+        runtimeAssignmentAllocations.assignmentRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("runtime_preparation_version_unique").on(table.preparationRef, table.localVersion),
+    check("runtime_preparation_version", sql`${table.localVersion} BETWEEN 1 AND 9007199254740991`),
+    check(
+      "runtime_preparation_kind",
+      sql`${table.operationKind} IN ('retain-plan','retain-child','retain-binding','supersede-plan','close')`,
+    ),
+    check(
+      "runtime_preparation_request_size",
+      sql`octet_length(${table.canonicalRequest}) BETWEEN 1 AND 1048576`,
+    ),
+    check("runtime_preparation_record_object", sql`jsonb_typeof(${table.record})='object'`),
+  ],
+);

@@ -49,6 +49,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
+- [Retained runtime preparation](runtime-preparation.md): internal plans, immutable request bytes and exact recovery.
 - [Turn journal and completion interfaces](turn-journal.md): versioned types and
   strict codecs; durable journal storage and channel/runtime integration remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,
