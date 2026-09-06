@@ -73,6 +73,9 @@ The request and result types come directly from the existing runtime authority
 leaf. Independent registrar, cleanup and permitted preparation services continue
 to use their own actual service contexts at that authority port; the workload
 guard is not inserted as a target-SVID requirement into those paths.
+This independent service authentication does not waive an operation's current
+preparation/responsibility or applicable human, turn and resource checks. The
+actor-revocation exception applies specifically to exact retained cleanup.
 
 The current controller's admitted historical-readback and initial-bind profiles
 do not permit purpose resolution. Its authority implementation preserves

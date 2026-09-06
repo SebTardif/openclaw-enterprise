@@ -299,7 +299,10 @@ export type RuntimeIdentityOpenStreamResultV1 =
  * Human/session/common audience/resource/turn/attempt checks and an actual effect fence remain
  * separate at each consumer. An observed current result alone never executes an operation.
  * Independent registration/cleanup/preparation services use the existing authority with their
- * own real service contexts; they do NOT require the target's SVID/proof or a live original actor.
+ * own real service contexts; they do NOT require the target's SVID/proof merely to authenticate
+ * the independent service. Exact cleanup may survive original-actor revocation; this does not
+ * waive another operation's current preparation/responsibility or separate human/turn/resource
+ * checks.
  */
 export interface RuntimeIdentityPurposeGuardV1 {
   check(
