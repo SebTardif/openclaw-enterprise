@@ -29,6 +29,11 @@ import {
 import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
 import { createConfigurationOperationHandlers } from "./routes/configuration.ts";
 import { createAgentOperationHandlers } from "./routes/agent.ts";
+import {
+  createLifecycleStatusOperationHandlersV1,
+  type LifecycleStatusHttpDependenciesV1,
+} from "./routes/lifecycle-status.ts";
+import { createLifecycleStatusServiceV1 } from "@openclaw-enterprise/occ/lifecycle/status-service-v1";
 import { createNamespaceOperationHandlers } from "./routes/namespace.ts";
 import { createSecretOperationHandlers } from "./routes/secret.ts";
 import { createServiceAccountOperationHandlers } from "./routes/service-account.ts";
@@ -106,6 +111,9 @@ import {
 } from "./gateway/contracts.ts";
 
 export interface ControllerAppOptions {
+  /** Optional qualified private-call and current lifecycle read producers.
+   * Absent producers leave the read endpoints unavailable. */
+  readonly lifecycleStatus?: LifecycleStatusHttpDependenciesV1;
   readonly runtimeServiceTrust?: RuntimeServiceTrustService;
   readonly controller?: OpenClawController;
   readonly createController?: (installation: Installation) => OpenClawController;
@@ -1703,6 +1711,16 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         return revision;
       },
     });
+    // TODO: Supply the qualified current-account request bridge and authorized
+    // lifecycle repository/observation reader when those producers are available.
+    const lifecycleStatusService = createLifecycleStatusServiceV1({
+      resolveInstallationId: () => controller?.installation.id,
+      resolveSource: () => options.lifecycleStatus?.source,
+    });
+    const lifecycleStatusHandlers = createLifecycleStatusOperationHandlersV1({
+      resolveService: () => lifecycleStatusService,
+      resolveReadCall: async (request) => options.lifecycleStatus?.resolveReadCall(request),
+    });
     const handlers = {
       createChannelInstallation: perform,
       listChannelInstallations: perform,
@@ -1745,6 +1763,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       putAgentWorkspaceFile: perform,
       listAgentRevisions: agentHandlers.listAgentRevisions,
       getAgentRevision: agentHandlers.getAgentRevision,
+      getAgentLifecycleStatus: lifecycleStatusHandlers.getAgentLifecycleStatus,
+      listAgentLifecycleOperations: lifecycleStatusHandlers.listAgentLifecycleOperations,
+      getAgentLifecycleOperation: lifecycleStatusHandlers.getAgentLifecycleOperation,
+      getAgentLifecycleCapability: lifecycleStatusHandlers.getAgentLifecycleCapability,
     };
     registerProtectedOperations(routes, handlers, { admit, resolveIdentity });
     registerBootstrapOperation(routes, bootstrapOperation, perform, {

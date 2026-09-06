@@ -1,4 +1,8 @@
 import {
+  parseRuntimeResourceAccountingV1,
+  type RuntimeResourceAccountingEnvelopeV1,
+} from "@openclaw-enterprise/contracts/runtime-resource-accounting-v1";
+import {
   canonicalizeWorkloadProfileJson,
   decodeWorkloadProfileJson,
   type WorkloadProfileJsonValue,
@@ -151,6 +155,32 @@ function unresolved<const C extends string>(code: C) {
     required: documentary,
   });
 }
+
+// A static selection retains original accounting inputs, never an observation or
+// the accounting validator's result. Feasibility and current admission are separate.
+const staticAccountingEnvelope: Rule<RuntimeResourceAccountingEnvelopeV1> = (input) => {
+  let envelope: RuntimeResourceAccountingEnvelopeV1;
+  try {
+    envelope = parseRuntimeResourceAccountingV1(input);
+  } catch {
+    return reject("invalid-value");
+  }
+  for (const component of ["gateway", "harness"] as const) {
+    const observation = envelope.observations[component];
+    if (observation.status !== "unavailable" || observation.reason !== "producer-port-unavailable")
+      reject("invalid-value");
+  }
+  return envelope;
+};
+const unresolvedAccounting = unresolved("L10");
+const selectedAccounting = object({
+  status: literal("selected"),
+  envelope: staticAccountingEnvelope,
+});
+const podAndRuntimeAccounting: Rule<
+  Value<typeof unresolvedAccounting> | Value<typeof selectedAccounting>
+> = (input) =>
+  asObject(input).status === "unresolved" ? unresolvedAccounting(input) : selectedAccounting(input);
 
 function serverBound<const A extends string, const S extends string, const V extends string>(
   authority: A,
@@ -496,7 +526,7 @@ const launchConfiguration = object({
       }),
     }),
     hostPodTaskCapCandidate: literal(256),
-    podAndRuntimeAccounting: unresolved("L10"),
+    podAndRuntimeAccounting,
   }),
   serverBindingParameters: object({
     deploymentScope: serverBound(
@@ -738,8 +768,9 @@ function checkReferences(content: WorkloadProfileManifestContentV1): void {
     reject("invalid-reference");
 }
 
-/** Validate the selected unresolved definition and normalize only its declared
- * sets. All static missing inputs remain missing. Successful decoding does not
+/** Validate the candidate definition and normalize only its declared sets.
+ * Missing inputs remain missing, including those in a selected accounting seed.
+ * Successful decoding does not
  * authenticate documentary/source claims, admit a profile, resolve server-bound
  * values or establish qualification/currentness. A canonical transport envelope
  * must separately compare these normalized bytes with its claimed content. */
