@@ -103,6 +103,9 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Hosted gateway composition](reference/hosted-gateway.md): programmatic local
   Slack/Teams lifecycle ownership; protected executable startup and production
   process-owner composition remain unavailable.
+- [Protected Installation Gateway startup](reference/gateway-startup-v1.md): original
+  command ownership, provider submission and local lifetime; mandatory production
+  authority, material and physical-settlement inputs remain separate.
 - [Docker Compose development](flows/docker-compose-development.md),
   [production startup](flows/production-startup.md),
   [production TUI attachment](flows/production-tui.md), and
