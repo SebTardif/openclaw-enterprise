@@ -29,12 +29,13 @@ if (mode !== undefined) assert.ok(["rollback", "commit"].includes(mode));
 const candidateEntry = Object.freeze({
   idx: 30,
   version: "7",
-  when: 1788735485501,
+  when: 1788767620617,
   tag: "0030_turn_journal_status_reconciliation",
   breakpoints: true,
 });
 const candidateHash = "a59c47ab858f6f660dfaca363e6c820521001df5cd92dfda53c762fb8d7d73b1";
-const journalHash = "ec3e7e82adf8de497033dbfd618057952de0413bb68fceaeba3e9c331737bf15";
+const journalHash = "e854e6db2e15fe30d9daf43f0b1d4846677217c0bb5e5901c5589637f346c54c";
+const checkoutJournalHash = "2df6652623dad2e6c3d25bdc58225b2b7fb61b97536e3cda573dc67e97ca57fb";
 const legacyAcceptanceHash = "8753fa7b738950135c361b05519cacf6cb3211ef8666004a04359d9ec28fc915";
 const legacyInventoryHash = "1018f432b0bf50b084504d841bd6b3b3c0a51571f432ee27d8ecd51a901e6304";
 const legacyCommit = "49ca9e3350b19364a4be25cf60b73d1733a3c37a";
@@ -137,6 +138,24 @@ async function originalLegacySource() {
   return fixture;
 }
 
+// The allocated folder stops at the amendment. The source checkout also has
+// later migrations; pin that complete checkout without applying its later tail
+// to the separately prepared pre-status database.
+function reviewedJournalPrefix(provided, original) {
+  assert.equal(sha256(original), checkoutJournalHash, "Current checkout journal changed.");
+  assert.equal(sha256(provided), journalHash, "Selected status-upgrade prefix changed.");
+  const checkout = JSON.parse(original);
+  const selectedJournal = JSON.parse(provided);
+  assert.equal(checkout.entries.length, 34);
+  assert.equal(selectedJournal.entries.length, 31);
+  assert.deepEqual(selectedJournal, {
+    ...checkout,
+    entries: checkout.entries.slice(0, 31),
+  });
+  assert.deepEqual(selectedJournal.entries.at(-1), candidateEntry);
+  return selectedJournal;
+}
+
 async function reviewedCatalog() {
   const migrationsFolder = required("MIGRATIONS_FOLDER");
   assert.ok(isAbsolute(migrationsFolder));
@@ -144,13 +163,7 @@ async function reviewedCatalog() {
   assert.equal(required("SQL_SHA256"), candidateHash);
   const provided = await readFile(resolve(migrationsFolder, "meta/_journal.json"));
   const original = await readFile(new URL("../../migrations/meta/_journal.json", import.meta.url));
-  assert.equal(sha256(provided), journalHash);
-  assert.equal(
-    sha256(original),
-    journalHash,
-    "The original root must compose the actual reviewed 0029 and 0030 catalog first.",
-  );
-  assert.deepEqual(JSON.parse(provided), JSON.parse(original));
+  reviewedJournalPrefix(provided, original);
   const catalog = readMigrationCatalog(migrationsFolder);
   assert.equal(catalog.length, 31);
   assert.deepEqual(catalog.at(-1).entry, candidateEntry);
@@ -194,6 +207,79 @@ async function reviewedCatalog() {
     drizzle: dependency("drizzle-orm/node-postgres").drizzle,
   };
 }
+
+// These cases exercise the same metadata gate used before any pool is created.
+// They read the actual checkout and never invoke a database or migration runner.
+test("status upgrade catalog metadata preserves the selected migration boundary", async (t) => {
+  const original = await readFile(new URL("../../migrations/meta/_journal.json", import.meta.url));
+  const checkout = JSON.parse(original);
+  const encode = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+  const selectedJournal = { ...checkout, entries: checkout.entries.slice(0, 31) };
+  const provided = encode(selectedJournal);
+
+  await t.test("accepts the exact 31-entry prefix of the actual 34-entry checkout", () => {
+    const accepted = reviewedJournalPrefix(provided, original);
+    assert.equal(accepted.entries.length, 31);
+    assert.deepEqual(accepted.entries.at(-1), candidateEntry);
+    assert.deepEqual(accepted.entries.slice(0, -1), checkout.entries.slice(0, 30));
+  });
+  await t.test("refuses the complete checkout as the selected upgrade folder", () => {
+    assert.throws(
+      () => reviewedJournalPrefix(original, original),
+      /Selected status-upgrade prefix changed/,
+    );
+  });
+  await t.test("refuses a 31-entry journal presented as the current checkout", () => {
+    assert.throws(
+      () => reviewedJournalPrefix(provided, provided),
+      /Current checkout journal changed/,
+    );
+  });
+  await t.test("refuses a change in the checkout tail after the selected amendment", () => {
+    const changed = JSON.parse(original);
+    changed.entries[33].when++;
+    assert.throws(
+      () => reviewedJournalPrefix(provided, encode(changed)),
+      /Current checkout journal changed/,
+    );
+  });
+  await t.test("refuses the historical uncomposed amendment timestamp", () => {
+    const changed = JSON.parse(provided);
+    changed.entries[30].when = 1788735485501;
+    assert.throws(
+      () => reviewedJournalPrefix(encode(changed), original),
+      /Selected status-upgrade prefix changed/,
+    );
+  });
+  await t.test("refuses an altered entry before the selected amendment", () => {
+    const changed = JSON.parse(provided);
+    changed.entries[29].when++;
+    assert.throws(
+      () => reviewedJournalPrefix(encode(changed), original),
+      /Selected status-upgrade prefix changed/,
+    );
+  });
+  await t.test("refuses a selected prefix that omits the amendment", () => {
+    assert.throws(
+      () =>
+        reviewedJournalPrefix(
+          encode({ ...checkout, entries: checkout.entries.slice(0, 30) }),
+          original,
+        ),
+      /Selected status-upgrade prefix changed/,
+    );
+  });
+  await t.test("refuses a selected prefix that appends a later migration", () => {
+    assert.throws(
+      () =>
+        reviewedJournalPrefix(
+          encode({ ...checkout, entries: checkout.entries.slice(0, 32) }),
+          original,
+        ),
+      /Selected status-upgrade prefix changed/,
+    );
+  });
+});
 
 function pairedTarget(value, name) {
   const url = new URL(value);
