@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerHooks } from "node:module";
@@ -11,11 +12,17 @@ registerHooks({
     return next(specifier, context);
   },
 });
-const { gatewayStartupCommandDigestV1, GatewayStartupOwnerPhaseV1 } = await import(ownerUrl);
+const {
+  canonicalGatewayStartupValueV1,
+  gatewayStartupCommandDigestV1,
+  GatewayStartupOwnerPhaseV1,
+} = await import(ownerUrl);
 const { RepositoryTransactionLifetime } =
   await import("../../packages/occ/src/ports/transaction.ts");
-const { createInstallationServiceRegistrationReaderV1 } =
-  await import("../../apps/controller/src/admission/installation-service-registration.ts");
+const {
+  createInstallationServiceRegistrationReaderV1,
+  createInstallationServiceMaterialRegistrationReaderV1,
+} = await import("../../apps/controller/src/admission/installation-service-registration.ts");
 
 const ref = (recordRef) => ({ recordRef, recordVersion: 1 });
 const object = (name) => ({ name, uid: name + "-uid", resourceVersion: "1" });
@@ -60,7 +67,7 @@ function fixture(options = {}) {
     incarnationRef: "local-recipient-one",
     observation: ref("observation-one"),
   };
-  const command = {
+  const startupCommand = {
     schemaVersion: 1,
     kind: "consume-startup",
     operationRef: "consume-one",
@@ -68,6 +75,21 @@ function fixture(options = {}) {
     expectedHead: { version: 2, startup, recordVersion: 2 },
     recipient,
   };
+  const command = options.material
+    ? {
+        schemaVersion: 1,
+        purpose: "read-selected-channel-material",
+        use: "startup-slack-pair",
+        startup,
+        selection: binding.selection,
+        recipient: recipient.recipient,
+        consumedClaim: {
+          operationRef: "consume-one",
+          operationDigest: gatewayStartupCommandDigestV1(startupCommand),
+          afterRecordVersion: 3,
+        },
+      }
+    : startupCommand;
   const identity = {
     clusterRef: "cluster-one",
     namespaceUid: "namespace-uid",
@@ -114,6 +136,12 @@ function fixture(options = {}) {
     maximumObservationAgeMs: 10000,
     clockUncertaintyMs: 10,
   };
+  if (options.material)
+    selection.material = {
+      purpose: command.purpose,
+      use: command.use,
+      consumedClaim: command.consumedClaim,
+    };
   const now = Date.now(),
     timed = { observedAtMs: now, expiresAtMs: now + 5000 };
   const registration = {
@@ -205,7 +233,7 @@ function fixture(options = {}) {
           nativeConfiguration: structuredClone(nativeConfiguration),
           gatewaySpiffeId: entry.spiffeId,
           controllerSpiffeId: selection.controllerSpiffeId,
-          commandDigest: gatewayStartupCommandDigestV1(input),
+          commandDigest: options.material ? "" : gatewayStartupCommandDigestV1(input),
           operationProfile: "installation-gateway-startup-v1",
           transportProfile: "owned-child-stdio-installation-gateway-startup-v1",
           expiresAtMs: now + 10000,
@@ -214,6 +242,14 @@ function fixture(options = {}) {
             if (sourceAbort.signal.aborted) throw new Error("controlled native loss");
           },
         };
+        if (options.material) {
+          delete inspection.commandDigest;
+          inspection.requestDigest = createHash("sha256")
+            .update(canonicalGatewayStartupValueV1(input))
+            .digest("hex");
+          inspection.operationProfile = "installation-channel-material-v1";
+          inspection.transportProfile = "owned-child-stdio-installation-channel-material-v1";
+        }
         inspection = options.native?.(inspection) ?? inspection;
         return inspection;
       },
@@ -259,7 +295,11 @@ function fixture(options = {}) {
   const expectedAssociation = options.expectedAssociation
     ? options.expectedAssociation(structuredClone(association))
     : association;
-  const reader = createInstallationServiceRegistrationReaderV1(participants, expectedAssociation);
+  const reader = (
+    options.material
+      ? createInstallationServiceMaterialRegistrationReaderV1
+      : createInstallationServiceRegistrationReaderV1
+  )(participants, expectedAssociation);
   return {
     reader,
     command,
@@ -859,6 +899,170 @@ test("retained tuple invalidation denies without releasing before owner terminal
   lease.assertCurrent();
   f.nativeInspection().nativeConfiguration.sourceConfigurationDigest = "sha256:" + "e".repeat(64);
   assert.throws(() => lease.assertCurrent(), /Installation service registration unavailable/);
+  assert.deepEqual(f.released, []);
+  await lease.release();
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+});
+
+test("separate material reader uses the same current registration/process leases", async () => {
+  const f = fixture({ material: true });
+  const lease = await f.acquire();
+  assert.equal(lease.assertCurrent(), undefined);
+  assert.deepEqual(f.acquired, ["registry", "registrar", "process"]);
+  f.closeUnit();
+  assert.equal(lease.assertCurrent(), undefined);
+  f.sourceAbort.abort();
+  assert.throws(() => lease.assertCurrent(), /unavailable/);
+  assert.deepEqual(f.released, []);
+  await lease.release();
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+});
+for (const [name, change] of [
+  [
+    "missing selected material purpose",
+    (v) => {
+      delete v.material;
+    },
+  ],
+  [
+    "wrong purpose",
+    (v) => {
+      v.material.purpose = "read-current";
+    },
+  ],
+  [
+    "wrong selected use",
+    (v) => {
+      v.material.use = "teams-invocation-token";
+    },
+  ],
+  [
+    "wrong consumed operation",
+    (v) => {
+      v.material.consumedClaim.operationRef = "other";
+    },
+  ],
+  [
+    "wrong consumed digest",
+    (v) => {
+      v.material.consumedClaim.operationDigest = "e".repeat(64);
+    },
+  ],
+  [
+    "wrong consumed record",
+    (v) => {
+      v.material.consumedClaim.afterRecordVersion++;
+    },
+  ],
+  [
+    "extra selected flag",
+    (v) => {
+      v.material.verified = true;
+    },
+  ],
+  [
+    "wrong native source tuple",
+    (v) => {
+      v.nativeConfiguration.configurationVersion++;
+    },
+  ],
+])
+  test("material " + name + " denies before external registrar/process reads", async () => {
+    const f = fixture({
+      material: true,
+      selection(value) {
+        change(value);
+        return value;
+      },
+    });
+    await assert.rejects(f.acquire(), /unavailable/);
+    assert.deepEqual(f.acquired, ["registry"]);
+    assert.deepEqual(f.released, ["registry"]);
+  });
+for (const [name, change] of [
+  [
+    "old startup profile",
+    (v) => {
+      v.operationProfile = "installation-gateway-startup-v1";
+    },
+  ],
+  [
+    "old startup transport",
+    (v) => {
+      v.transportProfile = "owned-child-stdio-installation-gateway-startup-v1";
+    },
+  ],
+  [
+    "wrong original request digest",
+    (v) => {
+      v.requestDigest = "d".repeat(64);
+    },
+  ],
+  [
+    "legacy expected source",
+    (v) => {
+      v.source = v.expectedSourceConfiguration;
+      delete v.nativeConfiguration;
+    },
+  ],
+])
+  test("material native " + name + " denies before current registry", async () => {
+    const f = fixture({
+      material: true,
+      native(v) {
+        change(v);
+        return v;
+      },
+    });
+    await assert.rejects(f.acquire(), /unavailable/);
+    assert.deepEqual(f.acquired, []);
+  });
+test("material closed request cannot be cast into an old startup reader", async () => {
+  const startup = fixture(),
+    material = fixture({ material: true });
+  await assert.rejects(startup.acquire(material.command), /unavailable/);
+  await assert.rejects(material.acquire(startup.command), /unavailable/);
+  assert.deepEqual(startup.acquired, []);
+  assert.deepEqual(material.acquired, []);
+});
+test("material lease survives genuine phase acquisition and waits for terminal cleanup", async () => {
+  const p = genuinePhase();
+  let value;
+  try {
+    await p.phase.runCommand(async () => {
+      value = await acquireInPhase(p, { material: true });
+      return p.completion;
+    });
+    await p.phase.drainAccepted();
+    assert.equal(value.lease.assertCurrent(), undefined);
+    assert.deepEqual(p.phase.finalize(), p.completion);
+    p.phase.markCommitDispatched();
+    value.f.revoke();
+    assert.throws(() => value.lease.assertCurrent(), /unavailable/);
+    assert.deepEqual(value.f.released, []);
+    // Currentness is revoked, but successful owned cleanup is not itself a failed close.
+    await p.phase.finishTerminal("commit-unknown");
+    assert.deepEqual(value.f.released, ["process", "registrar", "registry"]);
+  } finally {
+    await p.phase.finishTerminal("commit-unknown").catch(() => undefined);
+    await p.lifetime.finish();
+  }
+});
+
+test("material reader refuses a new deadline beyond the five-second call ceiling", async () => {
+  const f = fixture({ material: true });
+  const bounds = { ...f.bounds, deadline: new Date(Date.now() + 10000).toISOString() };
+  await assert.rejects(
+    f.reader.acquire(f.original, f.command, bounds, f.unit, f.io),
+    /unavailable/,
+  );
+  assert.deepEqual(f.acquired, []);
+});
+test("material native proof correspondence cannot mutate after lease acquisition", async () => {
+  const f = fixture({ material: true });
+  const lease = await f.acquire();
+  f.nativeInspection().requestDigest = "e".repeat(64);
+  assert.throws(() => lease.assertCurrent(), /unavailable/);
   assert.deepEqual(f.released, []);
   await lease.release();
   assert.deepEqual(f.released, ["process", "registrar", "registry"]);

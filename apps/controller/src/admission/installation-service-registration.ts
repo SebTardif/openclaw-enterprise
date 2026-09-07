@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { parseGatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/occ/gateway-startup-v1/material-delivery";
+import type { GatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
 import { isDeepStrictEqual } from "node:util";
 import {
   canonicalGatewayStartupValueV1,
@@ -90,26 +93,52 @@ export type InstallationServiceNativeInspectionV1 = Readonly<{
  * Ports are installed by the original trusted native/registration/Compute owners.
  * This module supplies no inspector, registrar, current writer or execution observer.
  */
-export interface InstallationServiceRegistrationParticipantsV1 {
+type NativeEvidence = Omit<
+  InstallationServiceNativeInspectionV1,
+  "commandDigest" | "operationProfile" | "transportProfile"
+>;
+
+/** Dedicated original material child evidence; old startup proofs do not select it. */
+export type InstallationServiceMaterialNativeInspectionV1 = NativeEvidence &
+  Readonly<{
+    requestDigest: string;
+    operationProfile: "installation-channel-material-v1";
+    transportProfile: "owned-child-stdio-installation-channel-material-v1";
+  }>;
+/** Same protected current registry writer, with the exact selected material use and claim. */
+export type InstallationServiceMaterialSelectionV1 = InstallationServiceRegistrationSelectionV1 &
+  Readonly<{
+    material: Readonly<{
+      purpose: "read-selected-channel-material";
+      use: GatewayMaterialDeliveryRequestV1["use"];
+      consumedClaim: GatewayMaterialDeliveryRequestV1["consumedClaim"];
+    }>;
+  }>;
+
+interface RegistrationParticipants<
+  C,
+  N extends NativeEvidence,
+  S extends InstallationServiceRegistrationSelectionV1,
+> {
   native: {
     inspectOriginal(
       original: object,
-      command: Command,
+      command: C,
       bounds: GatewayStartupCommandBoundsV1,
-    ): InstallationServiceNativeInspectionV1 | undefined;
+    ): N | undefined;
   };
   registry: {
     acquire(
-      native: InstallationServiceNativeInspectionV1,
-      command: Command,
+      native: N,
+      command: C,
       bounds: GatewayStartupCommandBoundsV1,
       unit: GatewayStartupOwnerUnitV1,
       io: GatewayStartupAcceptedOperationV1,
-    ): Promise<Lease<InstallationServiceRegistrationSelectionV1>>;
+    ): Promise<Lease<S>>;
   };
   registrar: {
     acquire(
-      selection: InstallationServiceRegistrationSelectionV1,
+      selection: S,
       bounds: GatewayStartupCommandBoundsV1,
     ): Promise<
       Lease<
@@ -125,8 +154,8 @@ export interface InstallationServiceRegistrationParticipantsV1 {
   };
   process: {
     acquire(
-      selection: InstallationServiceRegistrationSelectionV1,
-      command: Command,
+      selection: S,
+      command: C,
       bounds: GatewayStartupCommandBoundsV1,
       unit: GatewayStartupOwnerUnitV1,
       io: GatewayStartupAcceptedOperationV1,
@@ -143,6 +172,17 @@ export interface InstallationServiceRegistrationParticipantsV1 {
     >;
   };
 }
+
+export type InstallationServiceRegistrationParticipantsV1 = RegistrationParticipants<
+  Command,
+  InstallationServiceNativeInspectionV1,
+  InstallationServiceRegistrationSelectionV1
+>;
+export type InstallationServiceMaterialRegistrationParticipantsV1 = RegistrationParticipants<
+  GatewayMaterialDeliveryRequestV1,
+  InstallationServiceMaterialNativeInspectionV1,
+  InstallationServiceMaterialSelectionV1
+>;
 
 const unavailable = () => new Error("Installation service registration unavailable");
 function snapshot<T>(value: T): T {
@@ -319,9 +359,19 @@ function processBinding(
  * Acquire within the original Runtime unit/io protocol. No new transaction,
  * account fallback, positive observation cache, native invocation or lock order.
  */
-export function createInstallationServiceRegistrationReaderV1(
-  participants: InstallationServiceRegistrationParticipantsV1 | undefined,
+function createRegistrationReader<
+  C,
+  N extends NativeEvidence,
+  S extends InstallationServiceRegistrationSelectionV1,
+>(
+  participants: RegistrationParticipants<C, N, S> | undefined,
   expectedAssociation: GatewayInstallationServiceAssociationV1 | undefined,
+  rules: Readonly<{
+    parse(input: C): C;
+    nativeMatches(native: N, command: C): boolean;
+    commandBinding(command: C, selection: S): void;
+    maximumCallMs?: number;
+  }>,
 ) {
   // Fixed constructor configuration is rechecked against real current selection
   // in the original transaction; it cannot establish current authority alone.
@@ -336,27 +386,21 @@ export function createInstallationServiceRegistrationReaderV1(
   return Object.freeze({
     async acquire(
       original: object,
-      input: Command,
+      input: C,
       bounds: GatewayStartupCommandBoundsV1,
       unit: GatewayStartupOwnerUnitV1,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<GatewayStartupOwnerLeaseV1> {
       try {
         if (!inspect || !registry || !registrar || !process || !expected) throw unavailable();
-        const parsed = parseGatewayStartupCommandV1(input);
-        if (
-          parsed.kind !== "consume-startup" &&
-          parsed.kind !== "read-current" &&
-          parsed.kind !== "read-operation"
-        )
-          throw unavailable();
-        const command: Command = parsed;
+        const command = rules.parse(input);
         const deadline = Date.parse(bounds.deadline);
         if (
           !(bounds.signal instanceof AbortSignal) ||
           bounds.signal.aborted ||
           !Number.isFinite(deadline) ||
-          deadline <= Date.now()
+          deadline <= Date.now() ||
+          (rules.maximumCallMs !== undefined && deadline - Date.now() > rules.maximumCallMs)
         )
           throw unavailable();
         const native = inspect(original, command, bounds);
@@ -369,9 +413,7 @@ export function createInstallationServiceRegistrationReaderV1(
         if (
           !native ||
           !(native.signal instanceof AbortSignal) ||
-          native.operationProfile !== "installation-gateway-startup-v1" ||
-          native.transportProfile !== "owned-child-stdio-installation-gateway-startup-v1" ||
-          native.commandDigest !== gatewayStartupCommandDigestV1(command) ||
+          !rules.nativeMatches(native, command) ||
           !Number.isSafeInteger(native.expiresAtMs)
         )
           throw unavailable();
@@ -385,7 +427,7 @@ export function createInstallationServiceRegistrationReaderV1(
         const releases: (() => Promise<void>)[] = [];
         const fences: (() => undefined)[] = [];
         const timed: Timed[] = [];
-        let selection: InstallationServiceRegistrationSelectionV1 | undefined;
+        let selection: S | undefined;
         let releasing: Promise<void> | undefined;
         let acquisition: Promise<void> | undefined;
         let stopped = false;
@@ -429,6 +471,7 @@ export function createInstallationServiceRegistrationReaderV1(
           // leases remain current through the original phase terminal cleanup.
           if (!handedOff) io.assertActive();
           fence(() => native.assertCurrent());
+          if (!rules.nativeMatches(native, command)) throw unavailable();
           if (
             !isDeepStrictEqual(
               captureNativeConfiguration(native.nativeConfiguration),
@@ -514,7 +557,7 @@ export function createInstallationServiceRegistrationReaderV1(
             selection.endpoints.controller.spiffeId !== native.controllerSpiffeId
           )
             throw unavailable();
-          commandBinding(command, selection);
+          rules.commandBinding(command, selection);
           const entry = adopt(await registrar(selection, bounds));
           timed.push(entry);
           assert();
@@ -554,6 +597,71 @@ export function createInstallationServiceRegistrationReaderV1(
       } catch {
         throw unavailable();
       }
+    },
+  });
+}
+
+/** Original startup-only profile; none of its three commands carries material. */
+export function createInstallationServiceRegistrationReaderV1(
+  participants: InstallationServiceRegistrationParticipantsV1 | undefined,
+  expectedAssociation: GatewayInstallationServiceAssociationV1 | undefined,
+) {
+  return createRegistrationReader<
+    Command,
+    InstallationServiceNativeInspectionV1,
+    InstallationServiceRegistrationSelectionV1
+  >(participants, expectedAssociation, {
+    parse(input): Command {
+      const parsed = parseGatewayStartupCommandV1(input);
+      if (
+        parsed.kind !== "consume-startup" &&
+        parsed.kind !== "read-current" &&
+        parsed.kind !== "read-operation"
+      )
+        throw unavailable();
+      return parsed;
+    },
+    nativeMatches: (native, command) =>
+      native.operationProfile === "installation-gateway-startup-v1" &&
+      native.transportProfile === "owned-child-stdio-installation-gateway-startup-v1" &&
+      native.commandDigest === gatewayStartupCommandDigestV1(command),
+    commandBinding,
+  });
+}
+
+/**
+ * Separate selected material purpose, within the SAME original unit/io and lease
+ * lifecycle. This does not create a current owner, registration, native proof or
+ * durable attempt disposition; missing authentic participants remain unavailable.
+ */
+export function createInstallationServiceMaterialRegistrationReaderV1(
+  participants: InstallationServiceMaterialRegistrationParticipantsV1 | undefined,
+  expectedAssociation: GatewayInstallationServiceAssociationV1 | undefined,
+) {
+  return createRegistrationReader<
+    GatewayMaterialDeliveryRequestV1,
+    InstallationServiceMaterialNativeInspectionV1,
+    InstallationServiceMaterialSelectionV1
+  >(participants, expectedAssociation, {
+    parse: parseGatewayMaterialDeliveryRequestV1,
+    maximumCallMs: 5000,
+    nativeMatches: (native, request) =>
+      native.operationProfile === "installation-channel-material-v1" &&
+      native.transportProfile === "owned-child-stdio-installation-channel-material-v1" &&
+      native.requestDigest ===
+        createHash("sha256").update(canonicalGatewayStartupValueV1(request)).digest("hex"),
+    commandBinding(request, selection) {
+      if (
+        !isDeepStrictEqual(request.startup, selection.binding.startup) ||
+        !isDeepStrictEqual(request.selection, selection.binding.selection) ||
+        !isDeepStrictEqual(request.recipient, selection.recipient.recipient) ||
+        !selection.material ||
+        Object.keys(selection.material).sort().join() !== "consumedClaim,purpose,use" ||
+        selection.material.purpose !== request.purpose ||
+        selection.material.use !== request.use ||
+        !isDeepStrictEqual(selection.material.consumedClaim, request.consumedClaim)
+      )
+        throw unavailable();
     },
   });
 }

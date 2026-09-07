@@ -6,6 +6,7 @@ import {
   parseGatewayStartupBindingV1,
   parseGatewayStartupCommandV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
+import type { GatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
 import type {
   GatewayStartupBindingV1,
   GatewayStartupCloseV1,
@@ -129,6 +130,8 @@ type State = {
   timer: ReturnType<typeof setTimeout>;
   used: boolean;
   busy: boolean;
+  materialBusy: boolean;
+  startupMaterialAttempted: boolean;
   current?: GatewayStartupCurrentV1;
   closeTask?: Promise<Cleanup>;
 };
@@ -316,6 +319,8 @@ export function createGatewayStartupServiceSourceV1(
             ),
             used: false,
             busy: false,
+            materialBusy: false,
+            startupMaterialAttempted: false,
           };
           state = s;
           active.add(s);
@@ -357,6 +362,70 @@ export function createGatewayStartupServiceSourceV1(
     },
     assertCurrent(handle: GatewayStartupServiceHandleV1): undefined {
       return assert(get(handle));
+    },
+    /** Original absolute Source remainder. Reading it never renews the connection. */
+    remainingSourceMs(handle: GatewayStartupServiceHandleV1): number {
+      const s = get(handle);
+      return Math.max(0, s.expiresAtMs - Date.now());
+    },
+    /**
+     * Nonsecret operands from this receiver's confirmed consume only. This is data,
+     * not a disclosure permit or proof of current Controller-side registration.
+     * Material calls use their separate authenticated connection and purpose.
+     */
+    materialRequest(
+      handle: GatewayStartupServiceHandleV1,
+      use: GatewayMaterialDeliveryRequestV1["use"],
+    ): GatewayMaterialDeliveryRequestV1 {
+      const s = get(handle);
+      if (
+        !s.used ||
+        !s.current ||
+        !recordMatches(s, s.current) ||
+        !s.current.claim ||
+        (use !== "startup-slack-pair" && use !== "teams-invocation-token")
+      )
+        throw unavailable();
+      const request: GatewayMaterialDeliveryRequestV1 = {
+        schemaVersion: 1,
+        purpose: "read-selected-channel-material",
+        use,
+        startup: s.binding.startup,
+        selection: s.binding.selection,
+        consumedClaim: {
+          operationRef: s.current.claim.command.operationRef,
+          operationDigest: s.current.claim.command.operationDigest,
+          afterRecordVersion: s.current.claim.afterRecordVersion,
+        },
+        recipient: s.command.recipient.recipient,
+      };
+      assert(s);
+      return copy(request);
+    },
+    /**
+     * Reserve before yielding and join original material work in Source shutdown.
+     * This is local custody only: the Controller still verifies the consumed claim,
+     * current process and selected use. It is not a durable cross-process replay store.
+     */
+    withMaterialCall<T>(
+      handle: GatewayStartupServiceHandleV1,
+      use: GatewayMaterialDeliveryRequestV1["use"],
+      work: (request: GatewayMaterialDeliveryRequestV1, signal: AbortSignal) => Promise<T>,
+    ): Promise<T> {
+      const s = get(handle);
+      const request = api.materialRequest(handle, use);
+      if (s.materialBusy || (use === "startup-slack-pair" && s.startupMaterialAttempted))
+        return Promise.reject(unavailable());
+      s.materialBusy = true;
+      if (use === "startup-slack-pair") s.startupMaterialAttempted = true;
+      return track(s, async () => {
+        try {
+          assert(s);
+          return await work(request, s.abort.signal);
+        } finally {
+          s.materialBusy = false;
+        }
+      });
     },
     async recheckCurrent(handle: GatewayStartupServiceHandleV1): Promise<void> {
       const s = get(handle);

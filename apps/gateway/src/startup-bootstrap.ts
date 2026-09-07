@@ -14,6 +14,13 @@ import type {
 
 type Cleanup = GatewayStartupCloseV1["cleanup"];
 type Material = Pick<GatewayStartupLocalGrantV1, "borrowMaterial">;
+/** Fixed original assembler; no caller-selected Source, registration or material refs. */
+export interface GatewayStartupConfirmedMaterialFactoryV1 {
+  bind(
+    source: GatewayStartupServiceSourceV1,
+    parent: GatewayStartupServiceHandleV1,
+  ): Promise<Material & Readonly<{ close(): Promise<Cleanup> }>>;
+}
 type State = { readonly handle: GatewayStartupServiceHandleV1; enrolled: boolean };
 
 /**
@@ -25,6 +32,7 @@ export function createGatewayStartupBootstrapV1(
   service: GatewayStartupServiceSourceV1,
   material: Material | undefined,
   adapter: GatewayStartupFixedAdapterV1,
+  confirmedMaterial: GatewayStartupConfirmedMaterialFactoryV1 | undefined = undefined,
 ) {
   const open = service.open.bind(service);
   const consume = service.consume.bind(service);
@@ -33,8 +41,37 @@ export function createGatewayStartupBootstrapV1(
   const assert = service.assertCurrent.bind(service);
   const recheck = service.recheckCurrent.bind(service);
   const readClaim = service.readClaim.bind(service);
-  const release = service.close.bind(service);
-  const borrow = material?.borrowMaterial.bind(material);
+  const releaseSource = service.close.bind(service);
+  const bindMaterial = confirmedMaterial?.bind.bind(confirmedMaterial);
+  // Two competing suppliers cannot select material by racing each other.
+  const suppliersConflict = material !== undefined && confirmedMaterial !== undefined;
+  let borrow = material?.borrowMaterial.bind(material);
+  let materialAcquisition: Promise<void> | undefined;
+  let materialReturned = false;
+  let releaseMaterial: (() => Promise<Cleanup>) | undefined;
+  let releasedMaterial: Promise<Cleanup> | undefined;
+  let released: Promise<Cleanup> | undefined;
+  const release = (): Promise<Cleanup> => {
+    if (!released) {
+      const sourceClose = releaseSource();
+      released = (async () => {
+        await materialAcquisition?.catch(() => undefined);
+        if (releaseMaterial)
+          releasedMaterial ??= Promise.resolve()
+            .then(releaseMaterial)
+            .then(
+              (value) => (value === "finished" || value === "failed" ? value : "unknown"),
+              () => "unknown",
+            );
+        const sourceResult = await sourceClose;
+        const materialResult =
+          (await releasedMaterial) ?? (materialReturned ? "unknown" : "finished");
+        if (sourceResult === "unknown" || materialResult === "unknown") return "unknown";
+        return sourceResult === "failed" || materialResult === "failed" ? "failed" : "finished";
+      })();
+    }
+    return released;
+  };
   const originals = new WeakMap<object, State>();
   const pending = new Set<Promise<unknown>>();
   let attempted = false;
@@ -50,6 +87,7 @@ export function createGatewayStartupBootstrapV1(
         // Consume this same-instance local handoff before yielding, independently of
         // the single already-confirmed durable Runtime claim.
         state.enrolled = true;
+        const originalBorrow = borrow;
         const handle = state.handle;
         try {
           assert(handle);
@@ -73,7 +111,7 @@ export function createGatewayStartupBootstrapV1(
               assert(handle);
               // Runtime registers the returned lease before its next fence. If
               // this settles after revocation, its original owner joins cleanup.
-              return await borrow();
+              return await originalBorrow();
             },
             close: release,
           });
@@ -89,7 +127,8 @@ export function createGatewayStartupBootstrapV1(
 
   return Object.freeze({
     enroll(): Promise<GatewayStartupEnrollmentV1 | undefined> {
-      if (attempted || stopped || !borrow) return Promise.resolve(undefined);
+      if (attempted || stopped || suppliersConflict || (!borrow && !bindMaterial))
+        return Promise.resolve(undefined);
       attempted = true;
       attempt = Promise.resolve().then(async () => {
         try {
@@ -106,6 +145,21 @@ export function createGatewayStartupBootstrapV1(
           if (result.kind !== "confirmed" || stopped) {
             await release();
             return undefined;
+          }
+          assert(handle);
+          if (bindMaterial) {
+            materialAcquisition = Promise.resolve().then(async () => {
+              assert(handle);
+              const bound = await bindMaterial(service, handle);
+              materialReturned = true;
+              // Own late cleanup before reading any other returned operand.
+              releaseMaterial = bound.close.bind(bound);
+              const originalBorrow = bound.borrowMaterial.bind(bound);
+              assert(handle);
+              if (stopped) throw new Error("Gateway bootstrap unavailable");
+              borrow = originalBorrow;
+            });
+            await materialAcquisition;
           }
           assert(handle);
           const original = Object.freeze({});

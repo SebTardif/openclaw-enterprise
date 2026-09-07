@@ -118,7 +118,9 @@ function fixture(options = {}) {
     preparedClose = 0,
     starts = 0,
     consumed = 0,
-    borrowed = 0;
+    borrowed = 0,
+    bound = 0,
+    boundClose = 0;
   const connection = {
     binding,
     consumeCommand,
@@ -220,11 +222,48 @@ function fixture(options = {}) {
   };
   const bootstrap = createGatewayStartupBootstrapV1(
     service,
-    options.missingMaterial ? undefined : material,
+    options.missingMaterial || options.boundMaterial ? undefined : material,
     adapter,
+    options.boundMaterial
+      ? {
+          async bind(originalSource, parent) {
+            bound++;
+            assert.equal(originalSource, service);
+            assert.equal(consumed, 1);
+            assert.equal(
+              originalSource.materialRequest(parent, "startup-slack-pair").consumedClaim
+                .operationRef,
+              "consume-one",
+            );
+            if (options.bindWait) await options.bindWait();
+            const boundMaterial = {
+              ...material,
+              async close() {
+                boundClose++;
+                return "finished";
+              },
+            };
+            if (options.boundCloser === "missing") boundMaterial.close = undefined;
+            if (options.boundCloser === "non-callable") boundMaterial.close = 17;
+            if (options.boundCloser === "throwing accessor")
+              Object.defineProperty(boundMaterial, "close", {
+                get() {
+                  throw new Error("controlled inaccessible bound closer");
+                },
+              });
+            return boundMaterial;
+          },
+        }
+      : undefined,
   );
   return {
     bootstrap,
+    get bound() {
+      return bound;
+    },
+    get boundClose() {
+      return boundClose;
+    },
     service,
     nativeAbort,
     events,
@@ -393,3 +432,60 @@ test("missing fixed material producer refuses before service authentication", as
   assert.deepEqual(f.events, []);
   await f.bootstrap.close();
 });
+
+test("bound material factory receives only the original confirmed parent", async () => {
+  const f = fixture({ boundMaterial: true });
+  try {
+    const enrollment = await f.bootstrap.enroll();
+    assert.ok(enrollment);
+    assert.equal(f.bound, 1);
+    assert.equal(f.borrowed, 0);
+    const result = await enrollment.usePort.start(enrollment.recipient, enrollment.startup);
+    assert.equal(result.kind, "started");
+    await result.lifetime.close();
+    assert.equal(f.boundClose, 1);
+  } finally {
+    await f.bootstrap.close();
+  }
+  assert.equal(f.boundClose, 1);
+});
+test("unknown consume cannot invoke the confirmed material factory", async () => {
+  const f = fixture({ boundMaterial: true, unknown: true });
+  assert.equal(await f.bootstrap.enroll(), undefined);
+  assert.equal(f.bound, 0);
+  await f.bootstrap.close();
+});
+test("close retains a late material factory result and releases it once", async () => {
+  let settle;
+  const gate = new Promise((resolve) => {
+    settle = resolve;
+  });
+  const f = fixture({ boundMaterial: true, bindWait: () => gate });
+  const enrollment = f.bootstrap.enroll();
+  await until(() => f.bound === 1);
+  let closed = false;
+  const close = f.bootstrap.close().then(() => {
+    closed = true;
+  });
+  await delay(5);
+  assert.equal(closed, false);
+  settle();
+  assert.equal(await enrollment, undefined);
+  await close;
+  assert.equal(f.boundClose, 1);
+  assert.equal(f.borrowed, 0);
+});
+
+for (const boundCloser of ["missing", "non-callable", "throwing accessor"])
+  test(
+    "returned bound material with " + boundCloser + " closer retains unknown custody",
+    async () => {
+      const f = fixture({ boundMaterial: true, boundCloser });
+      assert.equal(await f.bootstrap.enroll(), undefined);
+      assert.equal(f.bound, 1);
+      assert.equal(f.boundClose, 0);
+      assert.equal(await f.bootstrap.close(), "unknown");
+      assert.equal(await f.bootstrap.close(), "unknown");
+      assert.equal(f.borrowed, 0);
+    },
+  );

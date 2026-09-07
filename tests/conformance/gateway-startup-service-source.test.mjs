@@ -414,3 +414,78 @@ test("public current-read failures preserve denial versus unavailable and end th
     });
   }
 });
+
+test("material metadata is derived only from the original confirmed receiver", async () => {
+  const f = fixture();
+  try {
+    const handle = await f.source.open();
+    assert.throws(() => f.source.materialRequest(handle, "startup-slack-pair"), /unavailable/);
+    assert.equal((await f.source.consume(handle)).kind, "confirmed");
+    const request = f.source.materialRequest(handle, "startup-slack-pair");
+    assert.deepEqual(request, {
+      schemaVersion: 1,
+      purpose: "read-selected-channel-material",
+      use: "startup-slack-pair",
+      startup: f.record.acceptance.binding.startup,
+      selection: f.record.acceptance.binding.selection,
+      consumedClaim: {
+        operationRef: f.record.claim.command.operationRef,
+        operationDigest: f.record.claim.command.operationDigest,
+        afterRecordVersion: f.record.claim.afterRecordVersion,
+      },
+      recipient: f.record.claim.recipient.recipient,
+    });
+    assert.ok(Object.isFrozen(request) && Object.isFrozen(request.consumedClaim));
+    assert.throws(() => f.source.materialRequest({}, "startup-slack-pair"), /unavailable/);
+    assert.throws(() => f.source.materialRequest(handle, "read-current"), /unavailable/);
+    assert.ok(f.source.remainingSourceMs(handle) > 0);
+    assert.deepEqual(f.commands, ["consume-startup"]);
+  } finally {
+    await f.source.close();
+  }
+});
+
+test("Source reserves initial material once, rejects overlap and joins its owned work", async () => {
+  const f = fixture();
+  let settle;
+  try {
+    const handle = await f.source.open();
+    await f.source.consume(handle);
+    const held = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const one = f.source.withMaterialCall(handle, "startup-slack-pair", () => held);
+    await assert.rejects(
+      f.source.withMaterialCall(handle, "teams-invocation-token", async () => undefined),
+      /unavailable/,
+    );
+    settle();
+    await one;
+    await assert.rejects(
+      f.source.withMaterialCall(handle, "startup-slack-pair", async () => undefined),
+      /unavailable/,
+    );
+    let settleTeams;
+    const teams = f.source.withMaterialCall(
+      handle,
+      "teams-invocation-token",
+      () =>
+        new Promise((resolve) => {
+          settleTeams = resolve;
+        }),
+    );
+    await tickUntil(() => !!settleTeams);
+    let closed = false;
+    const close = f.source.close().then(() => {
+      closed = true;
+    });
+    await delay(5);
+    assert.equal(closed, false);
+    settleTeams();
+    await teams;
+    await close;
+  } finally {
+    settle?.();
+    await f.source.close();
+  }
+});
