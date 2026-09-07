@@ -49,6 +49,12 @@ export type InstallationServiceProcessIdentityV1 = Readonly<{
   executionIncarnationRef: string;
   recipientIncarnationRef: string;
 }>;
+/** Actual native child configuration, distinct from a selected registry record. */
+export type InstallationServiceNativeConfigurationV1 = Readonly<{
+  sourceRef: string;
+  configurationVersion: number;
+  sourceConfigurationDigest: string;
+}>;
 /** Protected registry selection, supplied by its actual current writer. Values alone are not a grant. */
 export type InstallationServiceRegistrationSelectionV1 = Readonly<{
   binding: GatewayStartupBindingV1;
@@ -56,6 +62,8 @@ export type InstallationServiceRegistrationSelectionV1 = Readonly<{
   registration: GatewayStartupRecordRefV1;
   /** Immutable original Source-configuration record and version. */
   source: GatewayStartupRecordRefV1;
+  /** Exact native tuple mapped to source by the same protected current writer. */
+  nativeConfiguration: InstallationServiceNativeConfigurationV1;
   endpoints: GatewayInstallationServiceEndpointsV1;
   entry: InstallationServiceRegistrationEntryV1;
   controllerSpiffeId: string;
@@ -64,8 +72,10 @@ export type InstallationServiceRegistrationSelectionV1 = Readonly<{
   clockUncertaintyMs: number;
 }>;
 export type InstallationServiceNativeInspectionV1 = Readonly<{
-  /** The original native association sourceConfiguration record/version. */
-  source: GatewayStartupRecordRefV1;
+  /** Expected association metadata only; it is not observed native authority. */
+  expectedSourceConfiguration: GatewayStartupRecordRefV1;
+  /** Original child/profile/bootstrap tuple, maintained by the native fence. */
+  nativeConfiguration: InstallationServiceNativeConfigurationV1;
   gatewaySpiffeId: string;
   controllerSpiffeId: string;
   commandDigest: string;
@@ -207,6 +217,27 @@ function captureAssociation(value: GatewayInstallationServiceAssociationV1) {
   }
 }
 
+function captureNativeConfiguration(value: InstallationServiceNativeConfigurationV1) {
+  const result = snapshot(value);
+  if (
+    !result ||
+    typeof result !== "object" ||
+    Array.isArray(result) ||
+    Object.keys(result).sort().join() !==
+      "configurationVersion,sourceConfigurationDigest,sourceRef" ||
+    typeof result.sourceRef !== "string" ||
+    result.sourceRef.length < 1 ||
+    result.sourceRef.length > 512 ||
+    /[\u0000-\u001f\u007f]/u.test(result.sourceRef) ||
+    !Number.isSafeInteger(result.configurationVersion) ||
+    result.configurationVersion < 1 ||
+    typeof result.sourceConfigurationDigest !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(result.sourceConfigurationDigest)
+  )
+    throw unavailable();
+  return deepFreeze(result);
+}
+
 function exactEntry(value: InstallationServiceRegistrationEntryV1) {
   for (const item of [value.entryId, value.spiffeId, value.parentId]) {
     if (typeof item !== "string" || !item.length || item.length > 2048) throw unavailable();
@@ -344,6 +375,12 @@ export function createInstallationServiceRegistrationReaderV1(
           !Number.isSafeInteger(native.expiresAtMs)
         )
           throw unavailable();
+        // The native producer must bind this tuple to its actual original child.
+        // The registry later supplies the independent authoritative record mapping.
+        const nativeConfiguration = captureNativeConfiguration(native.nativeConfiguration);
+        const expectedSourceConfiguration = deepFreeze(
+          snapshot(native.expectedSourceConfiguration),
+        );
         const pending = new Set<Promise<unknown>>();
         const releases: (() => Promise<void>)[] = [];
         const fences: (() => undefined)[] = [];
@@ -392,6 +429,14 @@ export function createInstallationServiceRegistrationReaderV1(
           // leases remain current through the original phase terminal cleanup.
           if (!handedOff) io.assertActive();
           fence(() => native.assertCurrent());
+          if (
+            !isDeepStrictEqual(
+              captureNativeConfiguration(native.nativeConfiguration),
+              nativeConfiguration,
+            ) ||
+            !isDeepStrictEqual(native.expectedSourceConfiguration, expectedSourceConfiguration)
+          )
+            throw unavailable();
           for (const check of fences) fence(check);
           for (const time of timed) fresh(time, now);
           if (bounds.signal.aborted || native.signal.aborted) throw unavailable();
@@ -448,7 +493,11 @@ export function createInstallationServiceRegistrationReaderV1(
             selection.binding.startup.installationId !== unit.installationId ||
             selection.entry.spiffeId !== native.gatewaySpiffeId ||
             selection.controllerSpiffeId !== native.controllerSpiffeId ||
-            !isDeepStrictEqual(selection.source, native.source)
+            !isDeepStrictEqual(selection.source, expectedSourceConfiguration) ||
+            !isDeepStrictEqual(
+              captureNativeConfiguration(selection.nativeConfiguration),
+              nativeConfiguration,
+            )
           )
             throw unavailable();
           const currentAssociation = captureAssociation({

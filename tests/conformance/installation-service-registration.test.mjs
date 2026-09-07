@@ -89,11 +89,17 @@ function fixture(options = {}) {
       { type: "k8s", value: "container-name:gateway" },
     ],
   };
+  const nativeConfiguration = {
+    sourceRef: "native-controller-source",
+    configurationVersion: 11,
+    sourceConfigurationDigest: "sha256:" + "d".repeat(64),
+  };
   const selection = {
     binding,
     recipient,
     registration: ref("registration-one"),
     source: ref("source-one"),
+    nativeConfiguration: structuredClone(nativeConfiguration),
     endpoints: {
       gateway: { serviceRef: "gateway-service-one", spiffeId: "spiffe://example.test/gateway" },
       controller: {
@@ -188,13 +194,15 @@ function fixture(options = {}) {
       if (options.release) await options.release(name);
     },
   });
+  let inspection;
   const participants = {
     native: {
       inspectOriginal(value, input, suppliedBounds) {
         if (!originals.has(value) || suppliedBounds !== bounds) return undefined;
         if (options.inspect) return options.inspect(value, input);
-        return {
-          source: selection.source,
+        inspection = {
+          expectedSourceConfiguration: structuredClone(selection.source),
+          nativeConfiguration: structuredClone(nativeConfiguration),
           gatewaySpiffeId: entry.spiffeId,
           controllerSpiffeId: selection.controllerSpiffeId,
           commandDigest: gatewayStartupCommandDigestV1(input),
@@ -206,6 +214,8 @@ function fixture(options = {}) {
             if (sourceAbort.signal.aborted) throw new Error("controlled native loss");
           },
         };
+        inspection = options.native?.(inspection) ?? inspection;
+        return inspection;
       },
     },
     registry: {
@@ -264,6 +274,7 @@ function fixture(options = {}) {
     released,
     sourceAbort,
     requestAbort,
+    nativeInspection: () => inspection,
     revoke() {
       current = false;
     },
@@ -679,4 +690,176 @@ test("expected association is closed fixed configuration and missing selection i
   });
   await assert.rejects(f.acquire(), /unavailable/);
   assert.deepEqual(f.acquired, []);
+});
+
+test("native tuple and selected source record are independently mapped with distinct versions", async () => {
+  const f = fixture();
+  assert.notEqual(f.selection.source.recordRef, f.selection.nativeConfiguration.sourceRef);
+  assert.notEqual(
+    f.selection.source.recordVersion,
+    f.selection.nativeConfiguration.configurationVersion,
+  );
+  const lease = await f.acquire();
+  lease.assertCurrent();
+  await lease.release();
+  assert.deepEqual(f.acquired, ["registry", "registrar", "process"]);
+});
+
+test("selected native configuration requires every exact original tuple operand", async (t) => {
+  const mutations = [
+    [
+      "missing tuple",
+      (v) => {
+        delete v.nativeConfiguration;
+      },
+    ],
+    [
+      "source identifier",
+      (v) => {
+        v.nativeConfiguration.sourceRef = "different-native-source";
+      },
+    ],
+    [
+      "bootstrap version",
+      (v) => {
+        v.nativeConfiguration.configurationVersion++;
+      },
+    ],
+    [
+      "source configuration digest",
+      (v) => {
+        v.nativeConfiguration.sourceConfigurationDigest = "sha256:" + "e".repeat(64);
+      },
+    ],
+    [
+      "record reference is not native source",
+      (v) => {
+        v.nativeConfiguration.sourceRef = v.source.recordRef;
+      },
+    ],
+    [
+      "record version is not native version",
+      (v) => {
+        v.nativeConfiguration.configurationVersion = v.source.recordVersion;
+      },
+    ],
+    [
+      "extra tuple field",
+      (v) => {
+        v.nativeConfiguration.claimedCurrent = true;
+      },
+    ],
+    [
+      "malformed digest",
+      (v) => {
+        v.nativeConfiguration.sourceConfigurationDigest = "d".repeat(64);
+      },
+    ],
+  ];
+  for (const [name, mutate] of mutations) {
+    await t.test(name, async () => {
+      const f = fixture({
+        selection(value) {
+          mutate(value);
+          return value;
+        },
+      });
+      await assert.rejects(f.acquire(), /Installation service registration unavailable/);
+      assert.deepEqual(f.acquired, ["registry"]);
+      assert.deepEqual(f.released, ["registry"]);
+    });
+  }
+});
+
+test("native original inspection rejects legacy reference-only and malformed configuration", async (t) => {
+  const mutations = [
+    [
+      "legacy source only",
+      (v) => {
+        v.source = v.expectedSourceConfiguration;
+        delete v.expectedSourceConfiguration;
+        delete v.nativeConfiguration;
+      },
+    ],
+    [
+      "missing expected association record",
+      (v) => {
+        delete v.expectedSourceConfiguration;
+      },
+    ],
+    [
+      "missing actual child tuple",
+      (v) => {
+        delete v.nativeConfiguration;
+      },
+    ],
+    [
+      "unbounded source ref",
+      (v) => {
+        v.nativeConfiguration.sourceRef = "s".repeat(513);
+      },
+    ],
+    [
+      "source ref control",
+      (v) => {
+        v.nativeConfiguration.sourceRef = "native\nsource";
+      },
+    ],
+    [
+      "invalid original version",
+      (v) => {
+        v.nativeConfiguration.configurationVersion = 0;
+      },
+    ],
+    [
+      "invalid original digest",
+      (v) => {
+        v.nativeConfiguration.sourceConfigurationDigest = "claimed";
+      },
+    ],
+    [
+      "extra tuple authority flag",
+      (v) => {
+        v.nativeConfiguration.verified = true;
+      },
+    ],
+  ];
+  for (const [name, mutate] of mutations) {
+    await t.test(name, async () => {
+      const f = fixture({
+        native(value) {
+          mutate(value);
+          return value;
+        },
+      });
+      await assert.rejects(f.acquire(), /Installation service registration unavailable/);
+      assert.deepEqual(f.acquired, []);
+    });
+  }
+});
+
+test("native tuple change during a pending original provider invalidates and joins its lease", async () => {
+  let resume;
+  const wait = new Promise((resolve) => {
+    resume = resolve;
+  });
+  const f = fixture({ processWait: () => wait });
+  const result = f.acquire();
+  await until(() => f.acquired.includes("process"));
+  f.nativeInspection().nativeConfiguration.configurationVersion++;
+  resume();
+  await assert.rejects(result, /Installation service registration unavailable/);
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+});
+
+test("retained tuple invalidation denies without releasing before owner terminal cleanup", async () => {
+  const f = fixture();
+  const lease = await f.acquire();
+  f.closeUnit();
+  lease.assertCurrent();
+  f.nativeInspection().nativeConfiguration.sourceConfigurationDigest = "sha256:" + "e".repeat(64);
+  assert.throws(() => lease.assertCurrent(), /Installation service registration unavailable/);
+  assert.deepEqual(f.released, []);
+  await lease.release();
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
 });
