@@ -14,8 +14,9 @@ around the public `openclaw/plugin-sdk/gateway-host`, `slack-hosted` and
 not supply human authorization, journal provenance, admitted startup or an
 Installation process supervisor.
 
-The executable is intentionally unavailable while the protected startup consumer
-is missing. With Node 24, this command exits with status 1 and a fixed diagnostic:
+The fixed startup consumer is implemented, but the executable remains unavailable
+until the genuine protected bootstrap supplies its original local enrollment.
+With Node 24, the current unbound command exits with status 1 and a fixed diagnostic:
 
 ```sh
 node apps/gateway/src/main.mjs
@@ -24,8 +25,12 @@ node apps/gateway/src/main.mjs
 It does not read channel credentials from the environment, accept startup JSON,
 load native packages or start a listener. `admitted-configuration.ts` marks the
 missing protected startup binding; it defines no provisional wire schema. The
-entrypoint must be connected to the real producer and fixed composition before
-deployment is supported.
+entrypoint calls the original sealed startup port once, using only its enrolled
+recipient and startup handles. A started result retains its owner lifetime; main
+awaits `lifetime.closed` without requesting immediate shutdown. Denied, unavailable
+or recovery-required results fail without retry or disclosure of the operation
+locator. Failed or unknown local cleanup also fails. The genuine bootstrap,
+material and currentness producers must be connected before deployment is supported.
 
 ## Compose actual dependencies
 
@@ -41,6 +46,20 @@ entrypoints. Trusted composition passes those actual exported functions to the
 wrappers. Channel content and startup JSON cannot choose a module path. Calling
 the loader is not startup admission or evidence that all official plugin runtime
 artifacts are installed.
+
+`prepareGatewayComposition` is the fixed adapter captured by the protected startup
+owner. It loads the fixed factories and returns an owned prepared handle before
+any transport starts. The handle's single-use `start()` returns the host
+synchronously so its owner can retain it and register revocation before waiting
+for readiness. A revoked owner quiesces/closes immediately, even while readiness
+is pending, and retains late results until cleanup settles.
+
+The prepared handle's idempotent `close()` prevents a later start and joins all
+constructed module closes before host ownership. Once start returns a host,
+cleanup delegates to that host's close owner. Its `{ cleanup }` result describes
+local cleanup only. If preparation rejects before returning a handle, the actual
+material owner retains pre-transfer resource and late-preparation cleanup; that
+producer responsibility must not be inferred from the adapter's types.
 
 Prepare the composition before invoking its single-use `start()` method. Its
 Slack projection exposes only the existing inspect and output ports for wiring
@@ -137,8 +156,8 @@ official plugin runtime artifacts. Missing public exports, plugin runtime files
 or the protected startup binding are setup or implementation failures; do not
 repair them by importing private source paths or weakening checks.
 
-The current executable diagnostic means the admitted startup consumer is not yet
-connected. Native module unavailability indicates a failed selection, currentness
+The executable's fixed diagnostic means startup or local cleanup is not confirmed.
+In the current unbound deployment, the missing protected bootstrap is the cause. Native module unavailability indicates a failed selection, currentness
 check or lifecycle transition. Keep details in the owning component's bounded
 diagnostics without logging credentials, untrusted event bodies or raw provider
-errors. Successful local cleanup still leaves process termination to Compute.
+errors. Successful local cleanup still leaves physical termination and nonoverlapping replacement to the actual external process owner.

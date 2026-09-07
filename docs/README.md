@@ -139,3 +139,5 @@ OpenClaw Enterprise is the open platform for managing agents.
 [Channel-hosting roadmap](../specs/22-channel-hosting-roadmap.md): proposed stages
 from direct gateways to durable intake, shared-app brokerage, and optional
 stronger availability; not current feature or release acceptance.
+
+- [Authorized turn status and cancellation](reference/turn-management-v1.md)

@@ -44,6 +44,7 @@
     "./workload-profile-v1": "./src/workload-profile-v1.ts",
     "./completed-context-v1": "./src/completed-context-v1.ts",
     "./turn-journal-v1": "./src/turn-journal-v1.ts",
+    "./turn-management-v1": "./src/turn-management-v1.ts",
     "./retirement-purge-manifest-v1": "./src/retirement-purge-manifest-v1.ts",
     "./retirement-purge-journal-v1": "./src/retirement-purge-journal-v1.ts",
     "./channel-bindings": "./src/channel-bindings.ts",

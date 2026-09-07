@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "skipLibCheck": false,
+    "allowImportingTsExtensions": true,
+    "preserveSymlinks": true,
+    "types": ["node", "ws"],
+    "typeRoots": ["../../../node_modules/@types"]
+  },
+  "files": ["consumers.ts"],
+  "include": []
+}
