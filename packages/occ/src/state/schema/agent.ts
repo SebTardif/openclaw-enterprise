@@ -37,6 +37,7 @@ export function createAgentTables(
       servicePrincipalId: text("service_principal_id").notNull(),
       serviceAccountId: text("service_account_id"),
       activeRevisionId: text("active_revision_id"),
+      workloadProfileSelection: jsonb("workload_profile_selection"),
       createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     },
     (table): PgTableExtraConfigValue[] => {
@@ -52,6 +53,10 @@ export function createAgentTables(
         ),
         check("agents_id_format", sql`${table.id} ~ ${identifierPatterns.agent}`),
         check("agents_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
+        check(
+          "agents_workload_profile_selection",
+          sql`${table.workloadProfileSelection} IS NULL OR occ.workload_profile_selection_valid_v1(${table.workloadProfileSelection})`,
+        ),
         check(
           "agents_execution_mode_valid",
           sql`${table.executionMode} IN ('embedded', 'dedicated')`,
@@ -135,6 +140,10 @@ export function createAgentTables(
       ),
       check("agent_revisions_spec_object", sql`jsonb_typeof(${table.admittedSpec}) = 'object'`),
       check(
+        "agent_revisions_workload_profile_use",
+        sql`NOT (${table.admittedSpec} ? 'workload_profile_use') OR occ.revision_workload_profile_use_valid_v2(${table.admittedSpec}->'workload_profile_use',${table.namespaceId})`,
+      ),
+      check(
         "agent_revisions_credential_selection",
         sql`NOT (${table.admittedSpec} ? 'credential_workload_selection') OR occ.revision_credential_selection_valid_v1(${table.admittedSpec}->'credential_workload_selection',${table.namespaceId},${table.agentId},${table.id})`,
       ),
@@ -147,7 +156,7 @@ export function createAgentTables(
         AND (${table.admittedSpec}
           - 'configuration_id' - 'configuration_kind' - 'configuration_generation'
           - 'draft_spec' - 'harness' - 'compute' - 'sandbox_driver_id'
-          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection') = '{}'::jsonb
+          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection' - 'workload_profile_use') = '{}'::jsonb
         AND jsonb_typeof(${table.admittedSpec}->'configuration_id') = 'string'
         AND (${table.admittedSpec}->>'configuration_id') ~ ${identifierPatterns.configuration}
         AND jsonb_typeof(${table.admittedSpec}->'configuration_kind') = 'string'

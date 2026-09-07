@@ -90,7 +90,10 @@ export function createPlatformReadView(
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
       "findCommitted",
     ]),
-    workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, ["findOperation"]),
+    workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, [
+      "findOperation",
+      "readProfile",
+    ]),
     ...(repositories.turnJournal
       ? {
           turnJournal: bindRepository(repositories.turnJournal, lifetime, [
@@ -126,6 +129,7 @@ export function createPlatformReadView(
       "findRuntimeAllocation",
     ]),
     runtimeAdmissions: bindRepository(repositories.runtimeAdmissions, lifetime, [
+      "findCommittedDeployCommand",
       "findRevisionAdmission",
       "findCommittedAdmission",
     ]),

@@ -42,6 +42,7 @@ import {
   AGENT_REPOSITORIES,
   type ActiveAgentRevisionSelection,
   type AgentServicePort,
+  type AgentServiceOptions,
   type CreateAgentInput,
   type UpdateAgentInput,
 } from "./services/agent/port.ts";
@@ -52,6 +53,7 @@ import {
   type DeployAgentAdmissionContext,
   type DeployAgentInput,
   type DeploymentServicePort,
+  type DeploymentServiceOptions,
   type HarnessResolver,
 } from "./services/deployment/port.ts";
 import { DeploymentService } from "./services/deployment/service.ts";
@@ -255,6 +257,10 @@ export {
 export const BOOTSTRAP_DEFAULT_NAMESPACE_NAME = "default";
 
 export interface ControllerOptions {
+  /** Server-owned original request/enrollment/use composition. Omission leaves
+   * selected draft/deploy commands unavailable; it supplies no default authority. */
+  readonly workloadProfiles?: NonNullable<AgentServiceOptions["workloadProfiles"]> &
+    NonNullable<DeploymentServiceOptions["workloadProfiles"]>;
   readonly authorize?: (
     request: AuthorizationRequest,
   ) => AuthorizationDecision | Promise<AuthorizationDecision>;
@@ -371,7 +377,16 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+    const workloadProfiles =
+      options.workloadProfiles === undefined
+        ? undefined
+        : Object.freeze({
+            invocations: options.workloadProfiles.invocations,
+            enrollment: options.workloadProfiles.enrollment,
+            use: options.workloadProfiles.use,
+          });
     this.agent = new AgentService({
+      ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
       repositories: this.mutations.forRepositories(AGENT_REPOSITORIES),
       authorization: {
         authorize: (principalId, action, resource) => this.authorize(principalId, action, resource),
@@ -385,6 +400,7 @@ export class OpenClawController {
       now: () => this.timestamp(),
     });
     this.deployment = new DeploymentService({
+      ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
       installationId: this.installation.id,
       isRuntimeAdmissionAudit,
       repositories: this.mutations.forRepositories(DEPLOYMENT_REPOSITORIES),

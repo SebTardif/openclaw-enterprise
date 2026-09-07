@@ -1,4 +1,5 @@
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
+import type { LifecycleDeployCommandV2 } from "@openclaw-enterprise/contracts/lifecycle-deploy-v2";
 import type {
   RuntimeScope,
   RuntimeIntentAttribution,
@@ -12,6 +13,13 @@ export interface RevisionRuntimeAdmission extends RuntimeScope {
 }
 
 export interface RuntimeAdmissionReadRepository {
+  /** Caller must authorize the original command operands before disclosing replay.
+   * This read retains the original request attribution; it accepts no new request ID. */
+  findCommittedDeployCommand(
+    scope: RuntimeScope,
+    command: LifecycleDeployCommandV2,
+    actorId: string,
+  ): Promise<Readonly<AgentRevision> | undefined>;
   findRevisionAdmission(
     scope: RuntimeScope,
     revisionId: string,
@@ -24,5 +32,10 @@ export interface RuntimeAdmissionReadRepository {
 }
 
 export interface RuntimeAdmissionRepository extends RuntimeAdmissionReadRepository {
-  recordAdmission(admission: RevisionRuntimeAdmission): Promise<void>;
+  /** Acquire before draft/head lookup. The same owner retains the lock until terminal cleanup. */
+  lockDeployCommand(scope: RuntimeScope, operationRef: string): Promise<void>;
+  recordAdmission(
+    admission: RevisionRuntimeAdmission,
+    deploy?: Readonly<{ command: LifecycleDeployCommandV2; actorId: string }>,
+  ): Promise<void>;
 }

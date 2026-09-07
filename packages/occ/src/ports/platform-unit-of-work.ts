@@ -66,6 +66,9 @@ export function bindPlatformUnitOfWork(
     workloadProfiles: bindRepository(repositories.workloadProfiles, lifetime, [
       "findOperation",
       "prepareOperation",
+      "accept",
+      "withdraw",
+      "readProfile",
     ]),
     ...(repositories.turnJournal
       ? {
@@ -121,6 +124,8 @@ export function bindPlatformUnitOfWork(
       "allocateUnboundRuntime",
     ]),
     runtimeAdmissions: bindRepository(repositories.runtimeAdmissions, lifetime, [
+      "lockDeployCommand",
+      "findCommittedDeployCommand",
       "findRevisionAdmission",
       "findCommittedAdmission",
       "recordAdmission",
@@ -497,13 +502,22 @@ export class WorkloadProfileUnitPhase {
   private preparationStarted = false;
   private guardedPolicy = false;
   private policyComplete = false;
+  private mutationPolicy = false;
+  private mutationOperation: (() => void) | undefined;
 
   /** This owner object never escapes through PlatformUnitOfWork. Ordinary callers
    * cannot qualify borrowed SQL or acquire a protected policy phase with a flag. */
-  claimGuardedPolicy(): { complete(): void; assertPolicy(): void } {
+  claimGuardedPolicy(
+    mode: "profile" | "mutation" = "profile",
+    assertMutationOperation?: () => void,
+  ): { complete(): void; assertPolicy(): void } {
     if (this.guardedPolicy || this.otherStarted || this.preparationStarted)
       throw new ScopeViolationError("The profile policy phase is unavailable.");
     this.guardedPolicy = true;
+    this.mutationPolicy = mode === "mutation";
+    if (this.mutationPolicy && typeof assertMutationOperation !== "function")
+      throw new ScopeViolationError("The original mutation operation is unavailable.");
+    this.mutationOperation = assertMutationOperation;
     return Object.freeze({
       assertPolicy: () => {
         if (this.policyComplete || this.preparationStarted)
@@ -518,7 +532,12 @@ export class WorkloadProfileUnitPhase {
   }
 
   other<T>(work: () => Promise<T>): Promise<T> {
-    if (this.guardedPolicy || this.preparationStarted) return this.reject();
+    if (
+      (this.guardedPolicy && (!this.mutationPolicy || !this.policyComplete)) ||
+      this.preparationStarted
+    )
+      return this.reject();
+    if (this.mutationPolicy) this.mutationOperation!();
     this.otherStarted = true;
     return work();
   }
@@ -526,6 +545,7 @@ export class WorkloadProfileUnitPhase {
   private prepare<T>(work: () => Promise<T>): Promise<T> {
     if (
       this.otherStarted ||
+      this.mutationPolicy ||
       this.preparationStarted ||
       (this.guardedPolicy && !this.policyComplete)
     )
@@ -555,8 +575,21 @@ export class WorkloadProfileUnitPhase {
                   throw new TypeError("A repository method is required.");
                 const work = () => Reflect.apply(invoke, repository, args) as Promise<unknown>;
                 if (name === "workloadProfiles")
-                  return method === "prepareOperation" ? this.prepare(work) : work();
-                if (name === "installations" && method !== "createInstallation") return work();
+                  return this.mutationPolicy
+                    ? this.reject()
+                    : method === "prepareOperation"
+                      ? this.prepare(work)
+                      : method === "accept" || method === "withdraw"
+                        ? this.guardedPolicy && !this.mutationPolicy && this.policyComplete
+                          ? this.prepare(work)
+                          : this.reject()
+                        : work();
+                if (
+                  name === "installations" &&
+                  method !== "createInstallation" &&
+                  !this.mutationPolicy
+                )
+                  return work();
                 return this.other(work);
               },
             ]),

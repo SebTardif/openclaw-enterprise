@@ -1,4 +1,5 @@
 import { decodeCredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
+import { decodeWorkloadProfileUseV2 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 import type { Installation } from "@openclaw-enterprise/contracts/resources/installation";
 import type { SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
@@ -90,6 +91,16 @@ export const createPostgresRevisionRepository: RepositoryFactory<
       return Object.freeze(found.map((row) => revisionFromRow(row)));
     },
     createRevision: async (revision, credentialWorkloadSelection) => {
+      const useDescriptor = Object.getOwnPropertyDescriptor(revision, "workloadProfileUse");
+      if (useDescriptor !== undefined && (!("value" in useDescriptor) || !useDescriptor.enumerable))
+        throw new ScopeViolationError("The revision workload profile Use must be data.");
+      const decodedUse =
+        useDescriptor?.value === undefined
+          ? undefined
+          : decodeWorkloadProfileUseV2(useDescriptor.value);
+      if (decodedUse?.kind === "invalid")
+        throw new ScopeViolationError("The revision workload profile Use is invalid.");
+      const use = decodedUse?.value;
       revision = immutableCopy(revision);
       const decoded =
         credentialWorkloadSelection === undefined
@@ -99,6 +110,14 @@ export const createPostgresRevisionRepository: RepositoryFactory<
         throw new ScopeViolationError("The revision credential record is invalid.");
       const credential = decoded?.value;
       await requireInitialized();
+      if (
+        use !== undefined &&
+        (use.installationId !== context.scope.installationId ||
+          use.namespaceId !== revision.namespaceId)
+      )
+        throw new ScopeViolationError(
+          "The revision workload profile Use belongs to another scope.",
+        );
       if (
         credential !== undefined &&
         (credential.scope.installationId !== context.scope.installationId ||
@@ -137,6 +156,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
             draft_spec: revision.configuration,
             harness: revision.harness,
             compute: revision.compute,
+            ...(use === undefined ? {} : { workload_profile_use: use }),
             ...(credential === undefined ? {} : { credential_workload_selection: credential }),
             ...(revision.sandboxDriverId === undefined
               ? {}
@@ -167,6 +187,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
           draft_spec: revision.configuration,
           harness: revision.harness,
           compute: revision.compute,
+          ...(use === undefined ? {} : { workload_profile_use: use }),
           ...(revision.sandboxDriverId === undefined
             ? {}
             : { sandbox_driver_id: revision.sandboxDriverId }),

@@ -1,3 +1,4 @@
+import type { WorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type { Agent, HarnessExecutionMode } from "@openclaw-enterprise/contracts/resources/agent";
 
 export interface AgentReadRepository {
@@ -15,6 +16,7 @@ export interface AgentRepository extends AgentReadRepository {
     executionMode?: HarnessExecutionMode,
     serviceAccountId?: string | null,
     providerId?: string | null,
+    workloadProfileSelection?: WorkloadProfileSelectionV1,
   ): Promise<Readonly<Agent> | undefined>;
   compareAndSetActiveRevision(
     namespaceId: string,
