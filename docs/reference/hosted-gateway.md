@@ -77,6 +77,35 @@ revocation and material custody remain the actual producer's responsibility.
 Keep secrets out of configuration evidence and diagnostics. Dedicated Harness
 credentials stay with the Harness.
 
+The Gateway material client is constructed with
+`createGatewayChannelMaterialClientV1(source, options)`. Capture the original
+startup Source and protected native deployment configuration once; configuration
+records cannot enroll a Source handle or establish current authority. Its
+`open(parent, request, bounds)` consumes the existing material-client port used
+by `createGatewayStartupMaterialServiceSourceV1`. It checks the original parent,
+exact consumed request and recipient, verifies the selected executable, and
+starts only the fixed `channel-material-client` mode with owned pipes and an
+empty inherited environment. The actual binary, protected parent directories,
+SPIFFE/SPIRE configuration, registration and material producers remain required.
+
+Each constructed client admits one active child without a queue or automatic
+retry. The original Source deadline/cancellation and the dedicated five-second
+ceiling cannot be renewed by a connection or result. The existing native wire
+bounds and exact peer/exchange/challenge/request correlation apply. Payload views
+remain borrowed until the actual consumer callback settles, including late
+settlement after cancellation; retirement clears the owned backing before the
+completion ACK. `withPayload` returns with its original pipe open so the Source
+consumer can perform its final currentness check. Explicit `close()` then sends
+EOF and joins the child. A pending join retains ownership and capacity; a timeout
+is not proof of cleanup. The ACK is transport settlement, not provider use,
+durable journal responsibility or new serving authority.
+
+Controlled filesystem/pipe fixtures exercise this client's local lifetime and
+refusal behavior. They do not establish an authenticated native/TLS exchange,
+installed discovery, selected channel-material delivery or live provider
+qualification. The actual admitted composition must supply all original owners
+before enabling this path.
+
 The actual protected startup producer must bind the Installation, Namespace,
 Agent, revision, assignment, generations, profiles and state paths. The existing
 unbound allocation and mapping-only channel resolver do not establish current

@@ -68,7 +68,8 @@
     "./native-measurement-codec-v1": "./src/native-measurement-codec-v1.ts",
     "./api/agent/lifecycle-routes": "./src/api/agent/lifecycle-routes.ts",
     "./gateway-startup-v1": "./src/gateway-startup-v1.ts",
-    "./gateway-material-delivery-v1": "./src/gateway-material-delivery-v1.ts"
+    "./gateway-material-delivery-v1": "./src/gateway-material-delivery-v1.ts",
+    "./credential-workload-selection-v1": "./src/credential-workload-selection-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
