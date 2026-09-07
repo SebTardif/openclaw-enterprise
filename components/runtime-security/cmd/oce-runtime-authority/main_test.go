@@ -172,3 +172,114 @@ func TestActualCommandCancellationClosesIncompleteInput(t *testing.T) {
 		})
 	}
 }
+
+// Separate material modes are not additions to any startup/readback policy.
+func TestActualChannelMaterialProfileModes(t *testing.T) {
+	binary := buildCommand(t)
+	server := validProfile()
+	server.OperationPolicy = "installation-channel-material-v1"
+	server.TransportProfileRef = "owned-child-stdio-installation-channel-material-v1"
+	server.Limits.MaxConnectionAgeMs = 5000
+	server.Limits.RequestTimeoutMs = 5000
+	client := server
+	client.OwnSPIFFEID, client.PeerSPIFFEID = server.PeerSPIFFEID, server.OwnSPIFFEID
+	for _, tc := range []struct {
+		name, mode string
+		profile    servicebridge.Profile
+		want       string
+	}{
+		{"server", "validate-channel-material-server-profile", server, "valid"},
+		{"client", "validate-channel-material-client-profile", client, "valid"},
+		{"client cannot be server", "validate-channel-material-server-profile", client, "invalid"},
+		{"server cannot be client", "validate-channel-material-client-profile", server, "invalid"},
+		{"old profile cannot become material", "validate-channel-material-server-profile", validProfile(), "invalid"},
+		{"material cannot become old profile", "validate-profile", server, "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, tc.mode)
+			command.Env = []string{}
+			command.Stdin = bytes.NewReader(encode(raw))
+			var stdout, stderr bytes.Buffer
+			command.Stdout = &stdout
+			command.Stderr = &stderr
+			err = command.Run()
+			if (err == nil) != (tc.want == "valid") || ctx.Err() != nil || stderr.Len() != 0 {
+				t.Fatal("material validation did not settle with its fixed disposition")
+			}
+			reader := bytes.NewReader(stdout.Bytes())
+			result, err := servicebridge.ReadFrame(reader, servicebridge.MaxRequestBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var value map[string]any
+			if json.Unmarshal(result, &value) != nil || len(value) != 2 || value["schemaVersion"] != float64(1) || value["result"] != tc.want || reader.Len() != 0 {
+				t.Fatal("unexpected material profile result")
+			}
+		})
+	}
+}
+
+func TestActualChannelMaterialCancellationJoinsIncompleteInput(t *testing.T) {
+	binary := buildCommand(t)
+	for _, mode := range []string{"validate-channel-material-server-profile", "validate-channel-material-client-profile", "channel-material-serve", "channel-material-client"} {
+		t.Run(mode, func(t *testing.T) {
+			command := exec.Command(binary, mode)
+			command.Env = []string{}
+			input, err := command.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			command.Stdout = &stdout
+			command.Stderr = &stderr
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- command.Wait() }()
+			settled := false
+			t.Cleanup(func() {
+				input.Close()
+				if !settled {
+					command.Process.Kill()
+					<-done
+				}
+			})
+			if _, err := input.Write([]byte{0, 0, 1, 0, '{'}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-done:
+				settled = true
+				t.Fatal("material mode did not await partial input")
+			case <-time.After(100 * time.Millisecond):
+			}
+			if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				settled = true
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+					t.Fatal("material cancellation lacked normal failure exit")
+				}
+				status, ok := exit.Sys().(syscall.WaitStatus)
+				if !ok || status.Signaled() || !status.Exited() || status.ExitStatus() != 1 {
+					t.Fatal("material process failed to join normally")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("material cancellation did not settle")
+			}
+			if stderr.Len() != 0 {
+				t.Fatal("material cancellation emitted diagnostics")
+			}
+		})
+	}
+}

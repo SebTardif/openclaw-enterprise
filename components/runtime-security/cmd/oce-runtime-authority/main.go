@@ -105,6 +105,48 @@ func run(args []string) int {
 			return 1
 		}
 		return 0
+	case "validate-channel-material-server-profile", "validate-channel-material-client-profile":
+		timer := time.AfterFunc(3*time.Second, func() { input.Close(); output.Close() })
+		defer timer.Stop()
+		interrupted := context.AfterFunc(ctx, func() { input.Close(); output.Close() })
+		defer interrupted()
+		raw, err := servicebridge.ReadFrame(input, servicebridge.MaterialMetadataBytes)
+		var extra [1]byte
+		if err == nil {
+			n, end := input.Read(extra[:])
+			if n != 0 || end != io.EOF {
+				err = os.ErrInvalid
+			}
+		}
+		result := "invalid"
+		if err == nil {
+			if args[0] == "validate-channel-material-client-profile" {
+				_, err = servicebridge.ValidateChannelMaterialClientProfile(raw)
+			} else {
+				_, err = servicebridge.ValidateChannelMaterialServerProfile(raw)
+			}
+			if err == nil {
+				result = "valid"
+			}
+		}
+		reply, _ := json.Marshal(struct {
+			SchemaVersion int    `json:"schemaVersion"`
+			Result        string `json:"result"`
+		}{1, result})
+		if servicebridge.WriteFrame(output, reply, servicebridge.MaterialMetadataBytes) != nil || result != "valid" {
+			return 1
+		}
+		return 0
+	case "channel-material-serve":
+		if servicebridge.RunChannelMaterialServer(ctx, input, output) != nil {
+			return 1
+		}
+		return 0
+	case "channel-material-client":
+		if servicebridge.RunChannelMaterialClient(ctx, input, output) != nil {
+			return 1
+		}
+		return 0
 	default:
 		return 2
 	}
