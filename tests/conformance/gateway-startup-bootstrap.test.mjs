@@ -133,14 +133,12 @@ function fixture(options = {}) {
       if (command.kind === "consume-startup") {
         consumed++;
         if (options.consumeWait) await options.consumeWait();
-        if (options.unknown) return { kind: "unknown" };
+        if (options.unknown) return { kind: "recovery-required", operation: record.claim.command };
       }
+      // Controlled native boundary returns the genuine Runtime public result shape.
       return {
-        kind: "committed",
-        response: {
-          kind: command.kind === "consume-startup" ? "consumed" : "current",
-          record,
-        },
+        kind: command.kind === "consume-startup" ? "consumed" : "current",
+        record,
       };
     },
     async close() {

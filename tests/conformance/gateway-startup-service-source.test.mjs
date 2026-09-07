@@ -128,12 +128,10 @@ function fixture(overrides = {}) {
       assert.ok(bounds.signal instanceof AbortSignal);
       assert.ok(Date.parse(bounds.deadline) <= connection.expiresAtMs);
       if (overrides.execute) return overrides.execute(command, bounds, record);
+      // Controlled native boundary returns the genuine Runtime public result shape.
       return {
-        kind: "committed",
-        response: {
-          kind: command.kind === "consume-startup" ? "consumed" : "current",
-          record,
-        },
+        kind: command.kind === "consume-startup" ? "consumed" : "current",
+        record,
       };
     },
     async close() {
@@ -216,8 +214,13 @@ test("copied and foreign handles cannot use the original Source", async () => {
   }
 });
 
-test("unknown COMMIT closes the source and cannot be retried or read as current", async () => {
-  const f = fixture({ execute: async () => ({ kind: "unknown" }) });
+test("Runtime recovery-required closes the source and cannot be retried or read as current", async () => {
+  const f = fixture({
+    execute: async (_command, _bounds, record) => ({
+      kind: "recovery-required",
+      operation: record.claim.command,
+    }),
+  });
   const handle = await f.source.open();
   assert.equal((await f.source.consume(handle)).kind, "unknown");
   assert.equal((await f.source.consume(handle)).kind, "denied");
@@ -245,7 +248,7 @@ test("a mismatched recipient or claim head cannot confirm consume", async (t) =>
         execute: async (_command, _bounds, input) => {
           const record = structuredClone(input);
           change(record);
-          return { kind: "committed", response: { kind: "consumed", record } };
+          return { kind: "consumed", record };
         },
       });
       const handle = await f.source.open();
@@ -264,7 +267,7 @@ test("connection loss initiates close before joining a late consume result", asy
   const f = fixture({
     execute: async (_command, _bounds, record) => {
       await gate;
-      return { kind: "committed", response: { kind: "consumed", record } };
+      return { kind: "consumed", record };
     },
   });
   const handle = await f.source.open();
@@ -337,4 +340,77 @@ test("missing native producer is explicit unavailable with zero native acquisiti
   const source = createGatewayStartupServiceSourceV1(undefined);
   assert.equal(await source.open(), undefined);
   assert.equal(await source.close(), "finished");
+});
+
+test("public consume failures stay terminal without claiming a committed wrapper", async (t) => {
+  for (const kind of ["denied", "unavailable"]) {
+    await t.test(kind, async () => {
+      const f = fixture({ execute: async () => ({ kind }) });
+      const handle = await f.source.open();
+      assert.equal((await f.source.consume(handle)).kind, kind);
+      assert.equal((await f.source.consume(handle)).kind, "denied");
+      assert.equal(await f.source.readClaim(handle), "unavailable");
+      assert.deepEqual(f.commands, ["consume-startup"]);
+      await f.source.close();
+      assert.equal(f.closed, 1);
+    });
+  }
+});
+
+test("internal transaction wrappers and wrong public success cannot confirm consume", async (t) => {
+  for (const make of [
+    (record) => ({ kind: "committed", response: { kind: "consumed", record } }),
+    (record) => ({ kind: "current", record }),
+    () => ({ kind: "rolled-back", response: { kind: "denied" } }),
+  ]) {
+    await t.test("unexpected result", async () => {
+      const f = fixture({ execute: async (_command, _bounds, record) => make(record) });
+      const handle = await f.source.open();
+      assert.equal((await f.source.consume(handle)).kind, "unknown");
+      assert.equal((await f.source.consume(handle)).kind, "denied");
+      assert.deepEqual(f.commands, ["consume-startup"]);
+      await f.source.close();
+      assert.equal(f.closed, 1);
+    });
+  }
+});
+
+test("a lost public consume result closes the original source without retry", async () => {
+  const f = fixture({
+    execute: async () => {
+      throw new Error("controlled lost result");
+    },
+  });
+  const handle = await f.source.open();
+  assert.equal((await f.source.consume(handle)).kind, "unknown");
+  assert.equal(await f.source.readClaim(handle), "unavailable");
+  assert.equal((await f.source.consume(handle)).kind, "denied");
+  assert.deepEqual(f.commands, ["consume-startup"]);
+  await f.source.close();
+  assert.equal(f.closed, 1);
+});
+
+test("public current-read failures preserve denial versus unavailable and end the lifetime", async (t) => {
+  for (const kind of ["denied", "unavailable", "recovery-required"]) {
+    await t.test(kind, async () => {
+      const f = fixture({
+        execute: async (command, _bounds, record) => {
+          if (command.kind === "consume-startup") return { kind: "consumed", record };
+          return kind === "recovery-required"
+            ? { kind, operation: record.claim.command }
+            : { kind };
+        },
+      });
+      const handle = await f.source.open();
+      assert.equal((await f.source.consume(handle)).kind, "confirmed");
+      assert.equal(
+        await f.source.readClaim(handle),
+        kind === "recovery-required" ? "unknown" : kind,
+      );
+      assert.equal(await f.source.readClaim(handle), "unavailable");
+      assert.deepEqual(f.commands, ["consume-startup", "read-current"]);
+      await f.source.close();
+      assert.equal(f.closed, 1);
+    });
+  }
 });

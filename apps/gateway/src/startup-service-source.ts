@@ -15,7 +15,8 @@ import type {
   GatewayStartupCommandV1,
   GatewayStartupCurrentV1,
   GatewayStartupRecipientBindingV1,
-  GatewayStartupTransactionResultV1,
+  GatewayStartupOwnerSuccessV1,
+  GatewayStartupOwnerFailureV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
 
 export const gatewayStartupOperationProfile = "installation-gateway-startup-v1";
@@ -42,7 +43,7 @@ export interface GatewayStartupNativeConnectionV1 {
   execute(
     command: GatewayStartupServiceCommandV1,
     bounds: GatewayStartupCommandBoundsV1,
-  ): Promise<GatewayStartupTransactionResultV1>;
+  ): Promise<GatewayStartupOwnerSuccessV1 | GatewayStartupOwnerFailureV1>;
   close(): Promise<Cleanup>;
 }
 export interface GatewayStartupNativeProducerV1 {
@@ -378,16 +379,18 @@ export function createGatewayStartupServiceSourceV1(
       s.used = true;
       try {
         const result = await exchange(s, s.command);
-        if (result.kind === "unknown") {
+        // The actual native bridge returns the Runtime owner's public result.
+        // Recovery or transport uncertainty cannot enroll or repeat consume.
+        if (result.kind === "recovery-required") {
           await closeState(s);
           return Object.freeze({ kind: "unknown" });
         }
-        if (result.kind !== "committed" || result.response.kind !== "consumed") {
+        if (result.kind === "denied" || result.kind === "unavailable") {
           await closeState(s);
-          return Object.freeze({ kind: "denied" });
+          return Object.freeze({ kind: result.kind });
         }
-        if (!recordMatches(s, result.response.record)) throw unavailable();
-        s.current = result.response.record;
+        if (result.kind !== "consumed" || !recordMatches(s, result.record)) throw unavailable();
+        s.current = result.record;
         assert(s);
         return Object.freeze({ kind: "confirmed", binding: s.binding });
       } catch {
@@ -415,15 +418,15 @@ export function createGatewayStartupServiceSourceV1(
           recipient: s.command.recipient,
         });
         const result = await exchange(s, command);
-        if (result.kind === "unknown") {
+        if (result.kind === "recovery-required") {
           void closeState(s);
           return "unknown";
         }
-        if (
-          result.kind !== "committed" ||
-          result.response.kind !== "current" ||
-          !recordMatches(s, result.response.record)
-        ) {
+        if (result.kind === "denied" || result.kind === "unavailable") {
+          void closeState(s);
+          return result.kind;
+        }
+        if (result.kind !== "current" || !recordMatches(s, result.record)) {
           void closeState(s);
           return "denied";
         }
