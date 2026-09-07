@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true
+  },
+  "include": [
+    "consumer.ts",
+    "../../../packages/occ/src/gateway-startup-v1/owner.ts",
+    "../../../packages/occ/src/gateway-startup-v1/installation-service.ts",
+    "../../../packages/occ/src/gateway-startup-v1/postgres.ts",
+    "../../../packages/occ/src/state/postgres/gateway-startup-schema.ts",
+    "../../../apps/gateway/src/startup-lifetime.ts"
+  ]
+}

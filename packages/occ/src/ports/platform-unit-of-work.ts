@@ -52,6 +52,7 @@ export function bindPlatformUnitOfWork(
   profilePhase?: WorkloadProfileUnitPhase,
   lifecyclePhase?: LifecycleAdmissionUnitPhase,
   credentialPhase?: CredentialInventoryOwnerPhaseV1,
+  rejectIsolated?: (error: unknown) => never,
 ): PlatformUnitOfWork {
   const unit: PlatformUnitOfWork = Object.freeze({
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
@@ -195,7 +196,29 @@ export function bindPlatformUnitOfWork(
   });
   const profiled = profilePhase === undefined ? unit : profilePhase.bind(unit);
   const lifecycle = lifecyclePhase === undefined ? profiled : lifecyclePhase.bind(profiled);
-  return credentialPhase === undefined ? lifecycle : credentialPhase.bind(lifecycle);
+  const credential = credentialPhase === undefined ? lifecycle : credentialPhase.bind(lifecycle);
+  if (rejectIsolated === undefined) return credential;
+  // Internal owner isolation only; this projection creates no authority.
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(credential).map(([name, repository]) => [
+        name,
+        Object.freeze(
+          Object.fromEntries(
+            Object.keys(repository).map((method) => [
+              method,
+              () =>
+                rejectIsolated(
+                  new ScopeViolationError(
+                    "The isolated owner transaction forbids outward repositories.",
+                  ),
+                ),
+            ]),
+          ),
+        ),
+      ]),
+    ),
+  ) as unknown as PlatformUnitOfWork;
 }
 
 /** Internal execution control only. Exact transaction enrollment, authentic

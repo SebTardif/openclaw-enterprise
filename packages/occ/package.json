@@ -52,7 +52,9 @@
     "./credential-inventory-v1/ports": "./src/credential-inventory-v1/ports.ts",
     "./credential-inventory-v1/backend": "./src/credential-inventory-v1/backend.ts",
     "./lifecycle/status-service-v1": "./src/lifecycle/status-service-v1.ts",
-    "./auth-persistence/postgres-auth-binding": "./src/auth-persistence/postgres-auth-binding.ts"
+    "./auth-persistence/postgres-auth-binding": "./src/auth-persistence/postgres-auth-binding.ts",
+    "./gateway-startup-v1/owner": "./src/gateway-startup-v1/owner.ts",
+    "./gateway-startup-v1/installation-service": "./src/gateway-startup-v1/installation-service.ts"
   },
   "types": "./src/index.ts",
   "files": [

@@ -8,6 +8,7 @@ export { occSchema, installation, namespaces, configurations, secrets, serviceAc
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
 import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
+import { createGatewayStartupTablesV1 } from "./postgres/gateway-startup-schema.ts";
 import type {
   ChannelAdministrationMappingV1,
   HarnessExecutionMode,
@@ -1451,3 +1452,9 @@ export const {
   credentialInventoryRevocationClaims,
   credentialInventorySnapshots,
 } = createCredentialInventoryTablesV1(occSchema, { installation, agents });
+
+/** Exact original parents; durable transition guards live in migration 0029. */
+export const { gatewayStartupHeads, gatewayStartupOperations } = createGatewayStartupTablesV1(
+  occSchema,
+  { installation, auditEvents },
+);

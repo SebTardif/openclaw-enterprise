@@ -197,7 +197,7 @@ func newBridgeWithPolicy(t *testing.T, f *fixtureProcess, policy string) *bridge
 	reader, output := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &bridgeHarness{fixture: f, input: writer, output: reader, cancel: cancel, done: make(chan error, 1), events: make(chan servicebridge.Event, 64), readDone: make(chan struct{}), boot: bootstrap(t, f), sequence: 1}
-	if policy == "initial-harness-bind-v1" {
+	if policy == "initial-harness-bind-v1" || policy == "installation-gateway-startup-v1" {
 		profileRaw, err := base64.StdEncoding.DecodeString(h.boot.ProfileBase64)
 		if err != nil {
 			t.Fatal(err)
@@ -208,6 +208,9 @@ func newBridgeWithPolicy(t *testing.T, f *fixtureProcess, policy string) *bridge
 		}
 		profile.OperationPolicy = policy
 		profile.TransportProfileRef = "owned-child-stdio-initial-harness-bind-v1"
+		if policy == "installation-gateway-startup-v1" {
+			profile.TransportProfileRef = "owned-child-stdio-installation-gateway-startup-v1"
+		}
 		profileRaw = jsonBytes(t, profile)
 		h.boot.ProfileBase64, h.boot.ProfileDigest = base64.StdEncoding.EncodeToString(profileRaw), testDigest(profileRaw)
 	} else if policy != "read-operation-only-v1" {
