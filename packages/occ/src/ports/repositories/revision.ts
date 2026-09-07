@@ -1,3 +1,4 @@
+import type { CredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 
 export interface AgentRevisionReadRepository {
@@ -10,5 +11,8 @@ export interface AgentRevisionReadRepository {
 }
 
 export interface AgentRevisionRepository extends AgentRevisionReadRepository {
-  createRevision(revision: AgentRevision): Promise<Readonly<AgentRevision>>;
+  createRevision(
+    revision: AgentRevision,
+    credentialWorkloadSelection?: CredentialWorkloadSelectionV1,
+  ): Promise<Readonly<AgentRevision>>;
 }
