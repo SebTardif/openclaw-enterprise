@@ -6,7 +6,7 @@ import {
   type ChannelAdministrationEvidenceV1,
 } from "@openclaw-enterprise/contracts";
 import { immutableCopy } from "@openclaw-enterprise/utils";
-import type { NativeIAMState } from "./index.ts";
+import type { NativeIAMState } from "./state.ts";
 
 /** Corrupt semantic registration is an unavailable producer, not an ordinary denied grant. */
 export class ChannelAdministrationStateError extends TypeError {}
