@@ -50,18 +50,6 @@
       "bindings": ["*"]
     },
     {
-      "rule": "internal-root-barrel",
-      "from": "packages/iam/src/channel-administration.ts",
-      "to": "packages/iam/src/index.ts",
-      "specifier": "./index.ts",
-      "kind": "import",
-      "typeOnly": true,
-      "bindings": ["type:NativeIAMState"],
-      "owner": "Native IAM state contracts",
-      "removeWhen": "Move NativeIAMState into an owning leaf contract and update the root and channel-administration helper to consume that leaf.",
-      "reason": "Native IAM snapshot contracts are currently declared in the package root, which imports the channel-administration helper."
-    },
-    {
       "rule": "domain-to-implementation",
       "from": "packages/occ/src/channel-bindings.ts",
       "to": "packages/occ/src/state/platform-state.ts",
