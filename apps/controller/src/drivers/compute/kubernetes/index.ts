@@ -1,3 +1,7 @@
+import {
+  KubernetesWorkloadProfileCapability,
+  type KubernetesRendererSource,
+} from "./workload-profile-capability.ts";
 import { KubernetesOwnership, OwnershipFailure, verifyNamespaceOwnership } from "./ownership.ts";
 export { kubernetesNamespaceName, resolveKubernetesNamespace } from "./ownership.ts";
 import type {
@@ -25,7 +29,10 @@ import * as KubernetesGateway from "./resources/gateway.ts";
 import * as KubernetesStorage from "./resources/storage.ts";
 import * as KubernetesChannelPolicy from "./resources/channel-policy.ts";
 import * as KubernetesSecretProjection from "./resources/secret-projection.ts";
-import * as KubernetesHarness from "./resources/harness.ts";
+import {
+  FixedWorkloadRenderer,
+  type FixedWorkloadInput,
+} from "./resources/fixed-workload-renderer.ts";
 import {
   assertKubernetesResourcePolicyAvailable,
   projectKubernetesResourceDiagnostics,
@@ -359,6 +366,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly runtimeObservations: KubernetesRuntimeObservations;
   private readonly installationProcess: KubernetesInstallationProcess;
   private readonly agentGatewaySelected: boolean;
+  private readonly workloadRenderer: FixedWorkloadRenderer;
+  private readonly workloadProfileCapability: KubernetesWorkloadProfileCapability;
   private readonly resourcePolicy: KubernetesResourcePolicy;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
@@ -544,6 +553,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly installationProcessDependencies?: KubernetesInstallationProcessDependencies;
       readonly agentGatewayDependencies?: KubernetesAgentGatewayDependencies;
       readonly resourcePolicy?: KubernetesResourcePolicy;
+      readonly workloadProfileRendererSource?: KubernetesRendererSource;
     } = {},
   ) {
     KubernetesComputeDriver.validateConfiguration(options);
@@ -560,6 +570,24 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new ConfigurationFailure("gVisor Alpha cannot be combined with a SandboxDriver.");
     }
     this.options = immutableCopy(options);
+    this.workloadRenderer = new FixedWorkloadRenderer(
+      {
+        ...(this.options.isolationProfile === undefined
+          ? {}
+          : { isolationProfile: this.options.isolationProfile }),
+        resources: { gateway: this.options.resources.gateway, agent: this.options.resources.agent },
+        namespaceResources: this.options.resources.namespace,
+        network: { gatewayPort: this.options.network.gatewayPort },
+        servicePrincipalCredentials: this.options.servicePrincipalCredentials,
+        ...(this.options.runtime === undefined ? {} : { runtime: this.options.runtime }),
+      },
+      { gateway: this.options.images.gateway, harness: this.options.images.agent },
+    );
+    this.workloadProfileCapability = new KubernetesWorkloadProfileCapability(
+      this,
+      this.workloadRenderer,
+      selection.workloadProfileRendererSource,
+    );
     const resourcePolicy = selection.resourcePolicy ?? { mode: "configured" };
     if (resourcePolicy.mode !== "configured" && resourcePolicy.mode !== "admitted") {
       throw new ConfigurationFailure("The Kubernetes resource policy is unsupported.");
@@ -670,6 +698,25 @@ export class KubernetesComputeDriver implements ComputeDriver {
 
   getAgentGatewayProcessParticipant(): GatewayProcessParticipantV2 {
     return this.installationProcess.agent;
+  }
+
+  /** Partial renderer only. Original composition also verifies that this exact
+   * Driver is the factory-selected object before authentic source enrollment. */
+  getWorkloadProfileCapability(): KubernetesWorkloadProfileCapability {
+    return this.workloadProfileCapability;
+  }
+
+  /** Pure construction for the original protected launch owner. It uses this
+   * selected instance's renderer and grants no admission or provider authority. */
+  renderAdmittedGatewayTemplate(
+    input: Omit<FixedWorkloadInput, "component" | "embedded">,
+    runtimeClassName: string,
+  ) {
+    return KubernetesGateway.fixedAdmittedGatewayTemplate(
+      this.workloadRenderer,
+      input,
+      runtimeClassName,
+    );
   }
 
   async preflight(): Promise<void> {
@@ -2294,33 +2341,23 @@ export class KubernetesComputeDriver implements ComputeDriver {
     secretEnvironment: readonly SecretEnvironmentProjection[] = [],
     resourcePlan?: KubernetesWorkloadResourcePlan,
   ): ManagedKubernetesObject {
-    return KubernetesHarness.deployment(
-      {
-        ...(this.options.isolationProfile === undefined
-          ? {}
-          : { isolationProfile: this.options.isolationProfile }),
-        resources: { gateway: this.options.resources.gateway, agent: this.options.resources.agent },
-        namespaceResources: this.options.resources.namespace,
-        ...(resourcePlan === undefined ? {} : { resourcePlan }),
-        network: { gatewayPort: this.options.network.gatewayPort },
-        servicePrincipalCredentials: this.options.servicePrincipalCredentials,
-        ...(this.options.runtime === undefined ? {} : { runtime: this.options.runtime }),
-      },
+    return this.workloadRenderer.deployment({
       name,
       ownership,
       namespace,
       image,
       serviceAccountName,
-      role,
+      component: role,
       environment,
       loggingLevel,
-      configuration,
+      ...(configuration === undefined ? {} : { configuration }),
       embedded,
-      workloadServicePrincipalId,
-      serviceAccount,
+      ...(workloadServicePrincipalId === undefined ? {} : { workloadServicePrincipalId }),
+      ...(serviceAccount === undefined ? {} : { serviceAccount }),
       enabledChannels,
       secretEnvironment,
-    );
+      ...(resourcePlan === undefined ? {} : { resourcePlan }),
+    });
   }
 
   private service(

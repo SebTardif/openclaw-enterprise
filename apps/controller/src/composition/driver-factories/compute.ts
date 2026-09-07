@@ -1,3 +1,8 @@
+import type {
+  KubernetesRendererSource,
+  KubernetesWorkloadProfileCapability,
+} from "../../drivers/compute/kubernetes/workload-profile-capability.ts";
+
 import { asRecord } from "@openclaw-enterprise/utils";
 import type {
   ComputeDriver,
@@ -16,6 +21,19 @@ import {
   type ConfigurationRecord,
   type SelectedDriverConfiguration,
 } from "../startup-config/schema.ts";
+
+const selectedRendererContributions = new WeakMap<
+  ComputeDriver,
+  KubernetesWorkloadProfileCapability
+>();
+
+/** Exact object association from the original factory. External packages and
+ * separately constructed lookalikes have no built-in renderer contribution. */
+export function selectedComputeWorkloadProfileCapability(
+  driver: ComputeDriver,
+): KubernetesWorkloadProfileCapability | undefined {
+  return selectedRendererContributions.get(driver);
+}
 
 export function selectComputeDriver(
   selection: ConfigurationRecord,
@@ -54,22 +72,27 @@ export function createComputeDriver(
   configurationDriver: ConfigurationDriver,
   sandboxDriver?: SandboxDriver,
   driverPackage?: LoadedDriverPackage,
+  workloadProfileRendererSource?: KubernetesRendererSource,
 ): ComputeDriver {
-  return driverPackage === undefined
-    ? new KubernetesComputeDriver(
-        selection.configuration as unknown as KubernetesComputeDriverOptions,
-        {
-          id: selection.id,
-          implementation: selection.implementation,
-          lifecycleDrivers: [configurationDriver],
-          ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
-        },
-      )
-    : (createExternalDriver(
-        driverPackage.module,
-        selection,
-        "compute",
-        undefined,
-        currentComputeAbortSignal,
-      ) as ComputeDriver);
+  if (driverPackage !== undefined) {
+    return createExternalDriver(
+      driverPackage.module,
+      selection,
+      "compute",
+      undefined,
+      currentComputeAbortSignal,
+    ) as ComputeDriver;
+  }
+  const driver = new KubernetesComputeDriver(
+    selection.configuration as unknown as KubernetesComputeDriverOptions,
+    {
+      id: selection.id,
+      implementation: selection.implementation,
+      lifecycleDrivers: [configurationDriver],
+      ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
+      ...(workloadProfileRendererSource === undefined ? {} : { workloadProfileRendererSource }),
+    },
+  );
+  selectedRendererContributions.set(driver, driver.getWorkloadProfileCapability());
+  return driver;
 }
