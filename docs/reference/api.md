@@ -1269,6 +1269,11 @@ List authorized Agents in one exact Namespace
 | `data[].namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data[].providerId` | `string or null` | Yes | — |
 | `data[].serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileSelection` | `object` | No | — |
+| `data[].workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1336,6 +1341,11 @@ Create a Namespace-owned Agent
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection` | `object` | No | — |
+| `data.workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1384,6 +1394,11 @@ Get an exact Namespace-owned Agent
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection` | `object` | No | — |
+| `data.workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1421,6 +1436,11 @@ Replace an exact Namespace-owned Agent's editable draft
 | `executionMode` | `"embedded" or "dedicated"` | No | — |
 | `providerId` | `string or null` | No | — |
 | `serviceAccountId` | `string or null` | No | — |
+| `workloadProfileSelection` | `object` | No | — |
+| `workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
 #### Responses
 
@@ -1451,6 +1471,11 @@ Replace an exact Namespace-owned Agent's editable draft
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection` | `object` | No | — |
+| `data.workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1476,6 +1501,30 @@ Admit an immutable revision from the Agent's saved draft
 | `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `expectedDraft` | `object` | Yes | — |
+| `expectedDraft.configurationGeneration` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `expectedDraft.configurationId` | `string` | Yes | pattern: `^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `expectedDraft.executionMode` | `"embedded" or "dedicated"` | Yes | — |
+| `expectedDraft.providerId` | `string or null` | Yes | — |
+| `expectedDraft.serviceAccountId` | `string or null` | Yes | — |
+| `expectedDraft.workloadProfileSelection` | `object` | Yes | — |
+| `expectedDraft.workloadProfileSelection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `expectedDraft.workloadProfileSelection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `expectedDraft.workloadProfileSelection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `expectedDraft.workloadProfileSelection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `expectedLifecycleGeneration` | `null or integer` | Yes | — |
+| `operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `revisionSource` | `"saved-draft"` | Yes | — |
+| `schemaVersion` | `2` | Yes | — |
+
 #### Responses
 
 | Status | Meaning |
@@ -1486,6 +1535,8 @@ Admit an immutable revision from the Agent's saved draft
 | `403` | Forbidden |
 | `404` | Not Found |
 | `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
 | `500` | Internal Server Error |
 | `503` | Service Unavailable |
 
@@ -1494,32 +1545,8 @@ Admit an immutable revision from the Agent's saved draft
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `data` | `object` | Yes | — |
-| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.compute` | `object` | Yes | — |
-| `data.compute.id` | `string` | Yes | min length: 1 |
-| `data.compute.implementation` | `string` | Yes | min length: 1 |
-| `data.configuration` | `object<string, SafeJsonValue>` | Yes | A native OpenClaw configuration document. |
-| `data.configurationGeneration` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
-| `data.configurationId` | `string` | Yes | pattern: `^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.configurationKind` | `"agent"` | Yes | — |
-| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
-| `data.harness` | `object` | Yes | — |
-| `data.harness.id` | `string` | Yes | min length: 1 |
-| `data.harness.mode` | `"embedded" or "dedicated"` | Yes | — |
-| `data.harness.version` | `string` | Yes | min length: 1 |
-| `data.id` | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.providerId` | `string or null` | Yes | — |
-| `data.revision` | `integer` | Yes | minimum: 1 |
-| `data.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
-| `data.secretDriverId` | `string` | No | min length: 1 |
-| `data.serviceAccount` | `object` | No | — |
-| `data.serviceAccount.credential` | `object` | Yes | — |
-| `data.serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |
-| `data.serviceAccount.credential.secretRef` | `object` | Yes | — |
-| `data.serviceAccount.credential.secretRef.key` | `string` | Yes | max length: 253; pattern: `^(?![.]{1,2}$)[-._a-zA-Z0-9]+$` |
-| `data.serviceAccount.credential.secretRef.name` | `string` | Yes | max length: 253; pattern: `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:[.][a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$` |
-| `data.serviceAccount.id` | `string` | Yes | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.disposition` | `"accepted"` | Yes | — |
+| `data.operation` | `object or object or object or object` | Yes | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1620,6 +1647,232 @@ Create or replace an allowed workspace file for one active Agent
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
+## Agent lifecycle
+
+### `GET /namespaces/{namespaceId}/agents/{agentId}/lifecycle`
+
+Read lifecycle status for an exact Agent
+
+**Operation ID:** `getAgentLifecycleStatus`
+
+**Permissions:** Requires read permission on the requested Agent.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `agent` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.attempt` | `integer` | Yes | minimum: 0; maximum: 9007199254740991 |
+| `data.conditions` | `object` | Yes | — |
+| `data.conditions.accessDenied` | `object` | Yes | — |
+| `data.conditions.accessDenied.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.accessDenied.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.conditions.accessDenied.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.accessDenied.status` | `"confirmed" or "pending" or "unknown" or "not-requested"` | Yes | — |
+| `data.conditions.credentialRevocation` | `object` | Yes | — |
+| `data.conditions.credentialRevocation.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.credentialRevocation.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.conditions.credentialRevocation.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.credentialRevocation.status` | `"confirmed" or "pending" or "unknown" or "not-requested"` | Yes | — |
+| `data.conditions.executionTerminated` | `object` | Yes | — |
+| `data.conditions.executionTerminated.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.executionTerminated.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.conditions.executionTerminated.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.executionTerminated.status` | `"confirmed" or "pending" or "unknown" or "not-requested"` | Yes | — |
+| `data.conditions.routeRemoved` | `object` | Yes | — |
+| `data.conditions.routeRemoved.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.routeRemoved.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.conditions.routeRemoved.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.routeRemoved.status` | `"confirmed" or "pending" or "unknown" or "not-requested"` | Yes | — |
+| `data.conditions.stateRetention` | `object` | Yes | — |
+| `data.conditions.stateRetention.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.stateRetention.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.conditions.stateRetention.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.conditions.stateRetention.status` | `"confirmed" or "pending" or "unknown" or "not-requested"` | Yes | — |
+| `data.head` | `object or object or null` | Yes | — |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.observedLifecycleGeneration` | `integer or null` | Yes | — |
+| `data.phase` | `"pending" or "reconciling" or "blocked" or "converged" or "superseded"` | Yes | — |
+| `data.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.requestedRevisionId` | `string or null` | Yes | — |
+| `data.retention` | `"retained" or "verification-pending" or "unknown"` | Yes | — |
+| `data.retryAt` | `string (date-time) or null` | Yes | — |
+| `data.selectedRevisionId` | `string or null` | Yes | — |
+| `data.serving` | `boolean` | Yes | — |
+| `data.servingRevisionId` | `string or null` | Yes | — |
+| `data.step` | `"observe" or "deny-predecessor" or "terminate-predecessor" or "prepare" or "activate" or "publish" or "cleanup"` | Yes | — |
+| `data.stopComplete` | `boolean` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /namespaces/{namespaceId}/agents/{agentId}/lifecycle/capability`
+
+Read lifecycle compatibility for an exact Agent
+
+**Operation ID:** `getAgentLifecycleCapability`
+
+**Permissions:** Requires read permission on the requested Agent.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `agent` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.capabilityVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.protocol` | `"lifecycle-control-v1"` | Yes | — |
+| `data.schemaVersion` | `1` | Yes | — |
+| `data.stage` | `"legacy" or "drain" or "live"` | Yes | — |
+| `data.supportedConsumerVersions` | `object` | Yes | — |
+| `data.supportedConsumerVersions.api` | `1 or null` | Yes | — |
+| `data.supportedConsumerVersions.maintenance` | `1 or null` | Yes | — |
+| `data.supportedConsumerVersions.receiving` | `1 or null` | Yes | — |
+| `data.supportedConsumerVersions.worker` | `1 or null` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /namespaces/{namespaceId}/agents/{agentId}/lifecycle/operations`
+
+List lifecycle operations for an exact Agent
+
+**Operation ID:** `listAgentLifecycleOperations`
+
+**Permissions:** Requires read permission on the requested Agent.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `agent` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `limit` | query | `string` | No | min length: 1; max length: 3; pattern: `^(?:[1-9][0-9]?\|100)(?![\s\S])`; default: "20" |
+| `afterGeneration` | query | `string` | No | min length: 1; max length: 16; pattern: `^[1-9][0-9]{0,15}(?![\s\S])` |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.nextAfterGeneration` | `integer or null` | Yes | — |
+| `data.operations` | `array<object or object or object or object>` | Yes | max items: 100 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /namespaces/{namespaceId}/agents/{agentId}/lifecycle/operations/{operationRef}`
+
+Read an exact historical Agent lifecycle operation
+
+**Operation ID:** `getAgentLifecycleOperation`
+
+**Permissions:** Requires read permission on the requested Agent.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `agent` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `operationRef` | path | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.observation` | `object` | Yes | — |
+| `data.observation.attempt` | `integer` | Yes | minimum: 0; maximum: 9007199254740991 |
+| `data.observation.observedAt` | `string (date-time) or null` | Yes | — |
+| `data.observation.phase` | `"pending" or "reconciling" or "blocked" or "converged" or "superseded"` | Yes | — |
+| `data.observation.reasonCode` | `"NONE" or "LIFECYCLE_UNINITIALIZED" or "NOT_OBSERVED" or "NOT_REQUESTED" or "AUTHORITY_DENIED" or "DEPENDENCY_UNAVAILABLE" or "PROFILE_UNAVAILABLE" or "PREDECESSOR_UNRESOLVED" or "CREATE_OUTCOME_UNKNOWN" or "AMBIGUOUS_PROVIDER_INSTANCE" or "ROUTE_OUTCOME_UNKNOWN" or "TERMINATION_UNKNOWN" or "CREDENTIAL_OUTCOME_UNKNOWN" or "STATE_UNAVAILABLE" or "RESTORE_OUTCOME_UNKNOWN" or "SUPERSEDED" or "RECONCILIATION_EXHAUSTED"` | Yes | — |
+| `data.observation.recordedAt` | `string (date-time) or null` | Yes | — |
+| `data.observation.retryAt` | `string (date-time) or null` | Yes | — |
+| `data.observation.step` | `"observe" or "deny-predecessor" or "terminate-predecessor" or "prepare" or "activate" or "publish" or "cleanup"` | Yes | — |
+| `data.operation` | `object or object or object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
 ## Agent revisions
 
 ### `GET /namespaces/{namespaceId}/agents/{agentId}/revisions`
@@ -1685,6 +1938,38 @@ List authorized immutable revisions for one exact Agent
 | `data[].serviceAccount.credential.secretRef.key` | `string` | Yes | max length: 253; pattern: `^(?![.]{1,2}$)[-._a-zA-Z0-9]+$` |
 | `data[].serviceAccount.credential.secretRef.name` | `string` | Yes | max length: 253; pattern: `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:[.][a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$` |
 | `data[].serviceAccount.id` | `string` | Yes | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse` | `object` | No | — |
+| `data[].workloadProfileUse.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.admittedConfigurationDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.canonicalFormat` | `"oce.workload-profile.canonical-json.v1"` | Yes | — |
+| `data[].workloadProfileUse.component` | `"gateway-harness-pair"` | Yes | — |
+| `data[].workloadProfileUse.installationId` | `string` | Yes | min length: 40; max length: 40; pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.namespaceId` | `string` | Yes | min length: 39; max length: 39; pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.containment` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.containment.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.profileRefs.containment.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs.containment.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.profileRefs.identity` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.identity.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.profileRefs.identity.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs.identity.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.profileRefs.provider` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.provider.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.profileRefs.provider.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs.provider.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.profileRefs.runtime` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.runtime.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.profileRefs.runtime.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs.runtime.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.profileRefs.storage` | `object` | Yes | — |
+| `data[].workloadProfileUse.profileRefs.storage.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data[].workloadProfileUse.profileRefs.storage.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].workloadProfileUse.profileRefs.storage.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].workloadProfileUse.schemaVersion` | `2` | Yes | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1752,6 +2037,38 @@ Get an exact authorized immutable Agent revision
 | `data.serviceAccount.credential.secretRef.key` | `string` | Yes | max length: 253; pattern: `^(?![.]{1,2}$)[-._a-zA-Z0-9]+$` |
 | `data.serviceAccount.credential.secretRef.name` | `string` | Yes | max length: 253; pattern: `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:[.][a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$` |
 | `data.serviceAccount.id` | `string` | Yes | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse` | `object` | No | — |
+| `data.workloadProfileUse.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.admittedConfigurationDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.canonicalFormat` | `"oce.workload-profile.canonical-json.v1"` | Yes | — |
+| `data.workloadProfileUse.component` | `"gateway-harness-pair"` | Yes | — |
+| `data.workloadProfileUse.installationId` | `string` | Yes | min length: 40; max length: 40; pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.namespaceId` | `string` | Yes | min length: 39; max length: 39; pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.containment` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.containment.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.profileRefs.containment.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs.containment.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.profileRefs.identity` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.identity.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.profileRefs.identity.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs.identity.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.profileRefs.provider` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.provider.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.profileRefs.provider.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs.provider.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.profileRefs.runtime` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.runtime.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.profileRefs.runtime.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs.runtime.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.profileRefs.storage` | `object` | Yes | — |
+| `data.workloadProfileUse.profileRefs.storage.contentDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.workloadProfileUse.profileRefs.storage.ref` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.workloadProfileUse.profileRefs.storage.version` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.workloadProfileUse.schemaVersion` | `2` | Yes | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
