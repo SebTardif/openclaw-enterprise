@@ -265,7 +265,13 @@ observation closes the current bounded item and schedules a new one so that a
 provider outage does not abandon reconciliation of an authorized active runtime.
 Each new claim reauthorizes its original actor.
 
-`worker.completed` reports the target, outcome, and code; polling then continues.
+`worker.completed` reports the applied queue outcome and code only after the
+owning transaction commits. An active-revision conflict reports
+`ACTIVE_REVISION_CHANGED` with `retry`, or `permanent` when the attempt budget
+is exhausted. A failed transaction or lost claim emits no completion. Revision
+activation success is reported only after cleanup and the observation transaction
+complete. Maintenance reports the current item's completion or permanent failure,
+even when a failed item schedules another observation. Polling then continues.
 Lease loss is reported as `worker.error` with `CLAIM_LOST` rather than publishing
 stale lifecycle state. On `SIGTERM` or `SIGINT`, shutdown removes readiness,
 aborts in-flight work, waits for the loop, closes PostgreSQL, and emits

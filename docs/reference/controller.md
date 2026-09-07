@@ -210,6 +210,18 @@ completing work in a second transaction. Activation required before the first
 commit remains in revision reconciliation. Failed intervening effects retain
 the existing pending and recovery behavior.
 
+Each finalization transaction returns its applied disposition. Completion events
+are emitted only after that transaction commits and describe the queue outcome:
+`success`, `pending` for deferral, `retry`, or `permanent`. An active-revision
+conflict reports `ACTIVE_REVISION_CHANGED`; at the shared queue attempt limit it
+reports permanent failure. Revision activation success waits for cleanup and the
+second transaction. A lost claim or failed transaction emits no completion.
+Maintenance reports the current item's actual outcome even when it schedules a
+replacement observation. The
+[finalization outcome tests](../../tests/integration/worker-finalization-outcome.test.mjs)
+exercise event ordering with controlled capabilities and real PostgreSQL conflict
+cases when the application-role test database is selected.
+
 With the [PostgreSQL application-role test configuration](settings.md#postgresql-test-environment),
 run [postgres-worker-leases.test.mjs](../../tests/integration/postgres-worker-leases.test.mjs)
 and [postgres-worker-reconciliation.test.mjs](../../tests/integration/postgres-worker-reconciliation.test.mjs)
