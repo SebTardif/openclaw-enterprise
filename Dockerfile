@@ -22,6 +22,19 @@ RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARG
 RUN chmod 0555 /out/oce-runtime-authority
 RUN sh licenses/collect.sh /out/licenses
 
+# Consume a separately frozen package-input context, never the host .build tree.
+FROM ${NODE_BASE_IMAGE} AS upstream-sdk
+WORKDIR /app
+ARG OCE_UPSTREAM_SDK_MANIFEST_SHA256
+COPY --from=oce-upstream-inputs / /opt/oce-upstream-inputs/
+COPY scripts/prepare-upstream-sdk.mjs scripts/prepare-upstream-sdk.mjs
+RUN node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major !== 24 || minor < 15) throw new Error('The selected upstream package requires Node.js 24.15.0 or newer within Node.js 24.')"
+RUN mkdir -p /app/.build \
+    && node scripts/prepare-upstream-sdk.mjs \
+      --manifest /opt/oce-upstream-inputs/layout.json \
+      --sha256 "$OCE_UPSTREAM_SDK_MANIFEST_SHA256" \
+      --output /app/.build/upstream-sdk
+
 FROM ${NODE_BASE_IMAGE} AS dependencies
 
 WORKDIR /app
@@ -33,6 +46,8 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/iam/package.json packages/iam/package.json
 COPY packages/occ/package.json packages/occ/package.json
 COPY packages/utils/package.json packages/utils/package.json
+COPY --from=upstream-sdk /app/.build/upstream-sdk /app/.build/upstream-sdk
+COPY --from=upstream-sdk /opt/oce-upstream-inputs/dependencies /opt/oce-upstream-inputs/dependencies
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     corepack pnpm install --frozen-lockfile --prod --ignore-scripts
 
@@ -65,6 +80,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY --from=dependencies --chown=node:node /app/ ./
+COPY --from=dependencies /opt/oce-upstream-inputs/dependencies /opt/oce-upstream-inputs/dependencies
 COPY --chown=node:node package.json pnpm-workspace.yaml ./
 COPY --chown=node:node packages/audit/package.json packages/audit/package.json
 COPY --chown=node:node packages/audit/src packages/audit/src

@@ -6,6 +6,9 @@ x-development-build: &development-build
   args:
     NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:24-bookworm}
     GO_BASE_IMAGE: ${GO_BASE_IMAGE:-}
+    OCE_UPSTREAM_SDK_MANIFEST_SHA256: ${OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256:?Select the reviewed upstream package layout SHA-256}
+  additional_contexts:
+    oce-upstream-inputs: ${OCC_BUILD_UPSTREAM_SDK_CONTEXT:?Select the frozen upstream package-input context directory}
 
 services:
   postgres:
