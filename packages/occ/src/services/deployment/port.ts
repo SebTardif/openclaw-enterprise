@@ -13,7 +13,10 @@ import type {
   SelectedRepositories,
 } from "../../application/mutation-context.ts";
 import type { RuntimeIntent } from "@openclaw-enterprise/contracts/runtime-assignment";
+import type { CredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
+import type { AdmittedStorePolicyBindingV1 } from "../../workload-profiles/admitted-configuration.ts";
 import type { PlatformReadView } from "../../ports/platform-read-view.ts";
+import type { PlatformUnitOfWork } from "../../ports/platform-unit-of-work.ts";
 
 export const DEPLOYMENT_REPOSITORIES = {
   read: {},
@@ -70,6 +73,55 @@ export interface DeployAgentAdmissionContext {
   readonly transitionRef: string;
   readonly requestId: string;
   readonly createAuditEvent: (revision: Readonly<AgentRevision>) => AuditEvent;
+  /** Trusted selected-path requirement; no HTTP/bodyless inference or authority. */
+  readonly requireCredentialSelection?: true;
+}
+
+export interface DeploymentCredentialSelectionContext {
+  readonly installationId: string;
+  readonly principalId: string;
+  readonly transitionRef: string;
+  readonly requestId: string;
+  /** Actual normalized and Driver-validated candidate with its original revision ID. */
+  readonly revision: Readonly<AgentRevision>;
+  readonly repositories: SelectedRepositories<
+    PlatformUnitOfWork,
+    typeof DEPLOYMENT_REPOSITORIES.mutate
+  >;
+}
+
+/** Borrowed by this service; the enrolled original owner retains it until terminal cleanup. */
+export interface DeploymentCredentialSelectionGuard {
+  assertCurrent(): undefined;
+  release(): Promise<void>;
+}
+
+export interface PreparedDeploymentCredentialSelection extends DeploymentCredentialSelectionGuard {
+  readonly record: CredentialWorkloadSelectionV1;
+  readonly storePolicyBindings: readonly AdmittedStorePolicyBindingV1[];
+  /** Read the actual own inserted revision/use/credential rows and compare to the
+   * original protected owner expectations. Self-comparison is not qualification. */
+  verifyInserted(): Promise<void>;
+}
+
+/** Installed by the original accepting owner only. Neither structural inputs nor
+ * matching values authenticate an implementation. No default producer exists.
+ * prepare must authenticate/enroll the exact ambient deployment unit, retain
+ * current account/reference/material/profile participants, and own failed
+ * acquisition cleanup. It must not cast a Platform unit into a Gateway unit.
+ * retain synchronously registers the exact guard with that EXISTING owner for
+ * final pre-COMMIT checks and release after COMMIT/rollback/connection cleanup;
+ * callback return or acquisition-IO expiry must not release retained fences.
+ * Enrollment transfers custody only on a synchronous undefined return; a
+ * refused/throwing enrollment must not leave a registered participant. */
+export interface DeploymentCredentialSelectionProducer {
+  prepare(
+    context: DeploymentCredentialSelectionContext,
+  ): Promise<PreparedDeploymentCredentialSelection>;
+  retain(
+    context: DeploymentCredentialSelectionContext,
+    guard: DeploymentCredentialSelectionGuard,
+  ): undefined;
 }
 
 export interface DeploymentCommands {
@@ -131,4 +183,5 @@ export interface DeploymentServiceOptions {
   readonly loggingLevel: LoggingLevel;
   readonly createId: () => string;
   readonly now: () => string;
+  readonly credentialSelection?: DeploymentCredentialSelectionProducer;
 }

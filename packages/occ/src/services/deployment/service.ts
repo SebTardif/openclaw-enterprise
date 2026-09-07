@@ -1,4 +1,6 @@
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
+import { isDeepStrictEqual } from "node:util";
+import { decodeCredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
 import type { Namespace } from "@openclaw-enterprise/contracts/resources/namespace";
 import type { Secret, SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
 import type { ServiceAccountRevision } from "@openclaw-enterprise/contracts/resources/service-account";
@@ -25,6 +27,7 @@ import {
 } from "../configuration/service.ts";
 import { validExecutionMode, validateModelBinding } from "../agent/model-binding.ts";
 import { frozenRevision, frozenValues, resolveConfiguredHarnessId } from "./configuration.ts";
+import { deriveAdmittedConfigurationV1 } from "../../workload-profiles/admitted-configuration.ts";
 import type {
   DeploymentServiceOptions,
   DeploymentServicePort,
@@ -33,7 +36,185 @@ import type {
   HarnessResolver,
   AcceptedDeployOperation,
   AcceptedDeployOperationInput,
+  DeploymentCredentialSelectionContext,
+  DeploymentCredentialSelectionProducer,
 } from "./port.ts";
+
+/** A retained participant is fenced by its original owner after this callback,
+ * through terminal transaction cleanup. It is never an acquisition timeout. */
+async function prepareCredentialSelection(
+  producer: DeploymentCredentialSelectionProducer,
+  context: DeploymentCredentialSelectionContext,
+  poison: (error: unknown) => void,
+) {
+  const prepared = await producer.prepare(context);
+  // Capture known cleanup first. A producer owns failed acquisition cleanup if
+  // it cannot return a usable release method at all.
+  const releaseSource = prepared.release;
+  if (typeof releaseSource !== "function")
+    throw new DependencyUnavailableError("Credential selection cleanup is unavailable.");
+  let failed = false;
+  let failure: unknown;
+  let verified = false;
+  let retained = false;
+  let released = false;
+  let releasePromise: Promise<void> | undefined;
+  const pending = new Set<Promise<void>>();
+  const fail = (error: unknown) => {
+    if (!failed) {
+      failed = true;
+      failure = error;
+    }
+    poison(error);
+  };
+  const drain = (value: unknown) => {
+    const task = Promise.resolve(value).then(
+      () => undefined,
+      () => undefined,
+    );
+    pending.add(task);
+    void task.then(() => pending.delete(task));
+  };
+  const release = (): Promise<void> => {
+    if (releasePromise === undefined) {
+      released = true;
+      releasePromise = Promise.resolve().then(async () => {
+        while (pending.size > 0) await Promise.all(pending);
+        await releaseSource.call(prepared);
+      });
+    }
+    return releasePromise;
+  };
+  try {
+    const assertSource = prepared.assertCurrent;
+    const verifySource = prepared.verifyInserted;
+    const retainSource = producer.retain;
+    if (
+      typeof assertSource !== "function" ||
+      typeof verifySource !== "function" ||
+      typeof retainSource !== "function"
+    )
+      throw new DependencyUnavailableError("Credential selection participants are unavailable.");
+    const check = (): undefined => {
+      try {
+        if (failed) throw failure;
+        if (released)
+          throw new DependencyUnavailableError("Credential selection custody has ended.");
+        const result: unknown = assertSource.call(prepared);
+        if (result !== undefined) {
+          drain(result);
+          throw new DependencyUnavailableError("Credential selection assertion is invalid.");
+        }
+        return undefined;
+      } catch (error) {
+        fail(error);
+        throw error;
+      }
+    };
+    const guard = Object.freeze({
+      assertCurrent(): undefined {
+        try {
+          check();
+          if (!verified)
+            throw new DependencyUnavailableError(
+              "The inserted credential selection is unverified.",
+            );
+          return undefined;
+        } catch (error) {
+          fail(error);
+          throw error;
+        }
+      },
+      release,
+    });
+    check();
+    const registration: unknown = retainSource.call(producer, context, guard);
+    if (registration !== undefined) {
+      drain(registration);
+      throw new DependencyUnavailableError("Credential selection enrollment is invalid.");
+    }
+    retained = true;
+    check();
+    const decoded = decodeCredentialWorkloadSelectionV1(prepared.record);
+    if (decoded.kind !== "valid")
+      throw new ScopeViolationError("The credential selection record is invalid.");
+    const record = decoded.value;
+    const revision = context.revision;
+    if (
+      record.scope.installationId !== context.installationId ||
+      record.scope.namespaceId !== revision.namespaceId ||
+      record.scope.agentId !== revision.agentId ||
+      record.revisionId !== revision.id
+    )
+      throw new ScopeViolationError("Credential selection does not match the admitted revision.");
+    if (
+      record.model.profile.providerId !== revision.providerId ||
+      (revision.serviceAccount?.credential.kind === "api_key"
+        ? record.model.setup.kind !== "api-key-import"
+        : revision.serviceAccount?.credential.kind !== "access_token" ||
+          record.model.setup.kind === "api-key-import")
+    )
+      throw new ScopeViolationError(
+        "Credential selection does not match the admitted model binding.",
+      );
+    const projected = deriveAdmittedConfigurationV1({
+      manifestDigest: record.association.selection.manifestDigest,
+      configurationRef: revision.configurationId,
+      configurationGeneration: revision.configurationGeneration,
+      immutableConfigurationContent: {
+        kind: revision.configurationKind,
+        values: revision.configuration,
+        secretBindings: revision.secretBindings ?? {},
+      },
+      resolvedProfileBindingParameters: {
+        installationId: context.installationId,
+        namespaceId: revision.namespaceId,
+        agentId: revision.agentId,
+        serviceAccountAssociation: {
+          servicePrincipalId: revision.servicePrincipalId,
+          serviceAccount: revision.serviceAccount,
+        },
+        storePolicyBindings: prepared.storePolicyBindings,
+        roleBindings: record.association.profileRefs,
+      },
+    });
+    if (projected.admittedConfigurationDigest !== record.association.admittedConfigurationDigest)
+      throw new ScopeViolationError(
+        "Credential selection does not match the normalized Configuration.",
+      );
+    check();
+    return Object.freeze({
+      record,
+      check,
+      fail,
+      async verifyInserted(): Promise<void> {
+        try {
+          check();
+          const result: unknown = await verifySource.call(prepared);
+          if (result !== undefined)
+            throw new DependencyUnavailableError("Inserted credential verification is invalid.");
+          check();
+          verified = true;
+        } catch (error) {
+          fail(error);
+          throw error;
+        }
+      },
+    });
+  } catch (error) {
+    fail(error);
+    // Successful enrollment transfers terminal cleanup to the original owner.
+    // A refused synchronous enrollment must not register a participant.
+    if (!retained) {
+      try {
+        await release();
+      } catch (cleanupError) {
+        fail(cleanupError);
+      }
+    }
+    throw error;
+  }
+}
 
 function isDeploymentOperationRef(value: unknown): value is string {
   return (
@@ -80,8 +261,17 @@ export class DeploymentService implements DeploymentServicePort {
       throw new ScopeViolationError("The exact Agent identity is missing.");
     const compareGeneration = Object.hasOwn(input, "expectedLifecycleGeneration");
     const expectedGeneration = input.expectedLifecycleGeneration;
+    let credential: Awaited<ReturnType<typeof prepareCredentialSelection>> | undefined;
     return this.options.repositories
       .mutate(async (state) => {
+        const requireCredential = Object.hasOwn(admission, "requireCredentialSelection");
+        if (requireCredential && admission.requireCredentialSelection !== true)
+          throw new ScopeViolationError("The trusted credential-selection requirement is invalid.");
+        const producer = requireCredential ? this.options.credentialSelection : undefined;
+        if (requireCredential && (producer === undefined || typeof producer.prepare !== "function"))
+          throw new DependencyUnavailableError(
+            "The original credential-selection producer is unavailable.",
+          );
         if (
           compareGeneration &&
           expectedGeneration !== null &&
@@ -257,36 +447,61 @@ export class DeploymentService implements DeploymentServicePort {
           );
         }
         const previous = await state.revisions.listRevisions(namespace.id, lockedAgent.id);
-        const revision = await state.revisions.createRevision(
-          frozenRevision({
-            id: this.options.createId(),
-            namespaceId: namespace.id,
-            agentId: lockedAgent.id,
-            revision: previous.length + 1,
-            providerId,
-            configurationId: configuration.id,
-            configurationKind: configuration.kind,
-            configurationGeneration: configuration.generation,
-            configuration: admittedConfiguration,
-            harness: {
-              id: approvedHarness.id,
-              version: approvedHarness.version,
-              mode: lockedAgent.executionMode,
-            },
-            compute: { id: compute.id, implementation: compute.implementation },
-            ...(sandbox === undefined ? {} : { sandboxDriverId: sandbox.id }),
-            ...(secretDriver === undefined
-              ? {}
-              : { secretDriverId: secretDriver.id, secretBindings }),
-            ...(serviceAccount === undefined ? {} : { serviceAccount }),
-            servicePrincipalId: lockedAgent.servicePrincipalId,
-            createdAt: this.options.now(),
-          }),
-        );
+        const candidate = frozenRevision({
+          id: this.options.createId(),
+          namespaceId: namespace.id,
+          agentId: lockedAgent.id,
+          revision: previous.length + 1,
+          providerId,
+          configurationId: configuration.id,
+          configurationKind: configuration.kind,
+          configurationGeneration: configuration.generation,
+          configuration: admittedConfiguration,
+          harness: {
+            id: approvedHarness.id,
+            version: approvedHarness.version,
+            mode: lockedAgent.executionMode,
+          },
+          compute: { id: compute.id, implementation: compute.implementation },
+          ...(sandbox === undefined ? {} : { sandboxDriverId: sandbox.id }),
+          ...(secretDriver === undefined
+            ? {}
+            : { secretDriverId: secretDriver.id, secretBindings }),
+          ...(serviceAccount === undefined ? {} : { serviceAccount }),
+          servicePrincipalId: lockedAgent.servicePrincipalId,
+          createdAt: this.options.now(),
+        });
+        if (producer !== undefined)
+          credential = await prepareCredentialSelection(
+            producer,
+            Object.freeze({
+              installationId: this.options.installationId,
+              principalId,
+              transitionRef: admission.transitionRef,
+              requestId: admission.requestId,
+              revision: candidate,
+              repositories: state,
+            }),
+            (error) => this.options.poisonAdmission(error),
+          );
+        credential?.check();
+        const revision =
+          credential === undefined
+            ? await state.revisions.createRevision(candidate)
+            : await state.revisions.createRevision(candidate, credential.record);
+        credential?.check();
+        if (credential !== undefined) {
+          if (!isDeepStrictEqual(revision, candidate))
+            throw new ScopeViolationError(
+              "The inserted revision differs from the admitted candidate.",
+            );
+          await credential.verifyInserted();
+        }
         // The synchronous trusted factory runs before the intent write. No Driver
         // calls intervene in the intent, exact audit, admission identity, and work unit.
         const audit = immutableCopy(admission.createAuditEvent(revision));
         const attribution = { actorId: principalId, requestId: admission.requestId };
+        credential?.check();
         const intent =
           head === undefined
             ? await state.runtimeAssignments.initializeRuntimeIntent(
@@ -302,11 +517,13 @@ export class DeploymentService implements DeploymentServicePort {
                 admission.transitionRef,
                 attribution,
               );
+        credential?.check();
         if (!this.options.isRuntimeAdmissionAudit(audit, intent))
           throw new ScopeViolationError(
             "The deploy audit does not match its exact admitted revision and actor.",
           );
         await state.audit.append(audit);
+        credential?.check();
         await state.runtimeAdmissions.recordAdmission({
           ...scope,
           revisionId: revision.id,
@@ -314,6 +531,7 @@ export class DeploymentService implements DeploymentServicePort {
           lifecycleGeneration: intent.generation,
           auditEventId: audit.id,
         });
+        credential?.check();
         // Accepted deployments always require original reconciliation, including
         // direct domain callers and controllers suppressing unrelated operations.
         await state.operations.append({
@@ -325,13 +543,15 @@ export class DeploymentService implements DeploymentServicePort {
           runtimeTransitionRef: intent.transitionRef,
           lifecycleGeneration: intent.generation,
         });
+        credential?.check();
         return revision;
       })
       .catch((error: unknown) => {
         // A caller may catch a domain rejection inside its outer transaction. The
         // entire admission unit must still roll back, including memory mutations
         // and errors that did not abort the PostgreSQL transaction themselves.
-        this.options.poisonAdmission(error);
+        if (credential !== undefined) credential.fail(error);
+        else this.options.poisonAdmission(error);
         throw error;
       });
   }
