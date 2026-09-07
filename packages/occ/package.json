@@ -46,7 +46,8 @@
     "./containment/fault-request-adapter-v1": "./src/containment/fault-request-adapter-v1.ts",
     "./lifecycle/status-service-v1": "./src/lifecycle/status-service-v1.ts",
     "./gateway-startup-v1/owner": "./src/gateway-startup-v1/owner.ts",
-    "./gateway-startup-v1/installation-service": "./src/gateway-startup-v1/installation-service.ts"
+    "./gateway-startup-v1/installation-service": "./src/gateway-startup-v1/installation-service.ts",
+    "./gateway-startup-v1/material-delivery": "./src/gateway-startup-v1/material-delivery.ts"
   },
   "types": "./src/index.ts",
   "files": [
