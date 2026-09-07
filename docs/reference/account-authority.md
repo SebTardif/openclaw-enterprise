@@ -3,7 +3,7 @@
 The `@openclaw-enterprise/contracts` package exports the versioned account
 authority interface, closed diagnostic schemas, bounded decoders, and pure IAM
 request composition. It gives account adapters and accepting services a common
-TypeScript boundary for current account/session state and an exact operation.
+TypeScript boundary for current account/credential state and an exact operation.
 The interface does not implement an account store, credential verifier, selected
 IAM adapter, grant evaluator, route, or effect guard. Importing it changes no
 running service's authorization behavior.
@@ -39,10 +39,33 @@ drivers, wildcard actions, and permission assertions are rejected by the schema.
 Positive observations bind the principal kind and ID, selected IAM driver and
 revision, active account, credential mode, request, Installation, evaluated time,
 validity bound, and current version vector. Human session observations require
-session fields. Independent service-key observations require key fields and keep
-their optional Namespace scope; Agent-owned keys cannot enter this boundary.
-Session and key fields cannot be combined. An exact observation additionally
-binds the operation and Role/Binding evidence references.
+session fields. Native-channel human observations use a distinct `native-channel`
+credential mode and require the actual local account association. Independent
+service-key observations require key fields and keep their optional Namespace
+scope; Agent-owned keys cannot enter this boundary. Session, native-channel and
+key fields cannot be combined. An exact observation additionally binds the
+operation and Role/Binding evidence references.
+
+The native-channel subject's `nativeChannel` record contains
+`channelInstallationRef`/`channelInstallationVersion`,
+`externalBindingRef`/`externalBindingVersion`, `sourceInvocationRef`,
+`sourceCredentialVersion`, `sourceConfigurationVersion`, and `expiresAt`.
+These identify the current channel parent, external human binding and original
+verified native invocation. Each version comes from its own authoritative
+producer; the decoder does not equate the separate generations. The credential
+version must equal the observation's `versions.credential`, and observation
+validity cannot exceed the source's earliest applicable expiry. A channel
+Installation reference is distinct from the Enterprise Installation ID.
+
+A real native adapter must verify the original sender, tenant, recipient,
+invocation and local account association, reload current binding/account state,
+and retain the original source lifetime and selected IAM custody through the
+accepting operation. The native invocation's local verifying handle is never
+serialized into this record. Missing account-security or source-version producers
+remain unavailable; the schema supplies no default active account, security
+epoch, session credential or issuer. Native humans retain the same exact human
+IAM and semantic requirements and cannot supply independent-service cleanup or
+restore responsibility.
 
 `CurrentAccountResultV1` and `ExactAccountActionResultV1` require a process-local
 observation handle on positive results. The corresponding exported schemas and
@@ -89,7 +112,7 @@ operation deadline, or clock bound always prevails. The decoder checks interval
 relations; it does not consult a live authority or decide that historical data
 is current.
 
-Every port call must resolve the actual current account/session/key, selected
+Every port call must resolve the actual current account and original credential, selected
 driver, and grants. Exact authorization repeats those checks and compares the
 complete expected vector when supplied. The version vector covers Installation,
 account, credential, grants, IAM policy, semantic mapping, and driver selection.
@@ -129,7 +152,8 @@ identity or allow result. The consumer exhaustively handles result variants and
 checks at compile time that deserialized diagnostics cannot supply trusted
 handles. It stops before the real guarded read. Tests exercise exported schema
 and composition code, including closed fields/arrays, credential separation,
-version relations, exact IAM targets, and cancellation distinctions. They do not
+version relations, native-channel association completeness and source expiry,
+exact IAM targets, and cancellation distinctions. They do not
 prove live authentication, account disable races, driver invalidation, direct
 routes, active-stream closure, or effect-guard integration.
 
