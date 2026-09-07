@@ -286,7 +286,7 @@ test(
           },
           h.call,
         );
-        assert.deepEqual(refused, { kind: "conflict" });
+        assert.deepEqual(refused, { kind: "denied" });
         assert.equal(prematureStarts, 0);
         assert.deepEqual(
           plain((await h.read((j) => j.findAttempt(v.attempt, h.call))).record),
@@ -557,7 +557,7 @@ test(
             },
             h.call,
           ),
-          { kind: "conflict" },
+          { kind: "denied" },
         );
         assert.equal(starts, 0);
         assert.equal(
