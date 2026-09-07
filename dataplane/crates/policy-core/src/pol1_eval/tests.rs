@@ -1,3 +1,4 @@
+// Modified for OpenClaw Enterprise: parsed capability-gate enforcement regression.
 //! POL-1 evaluator tests — the §7 done-when's compose→evaluate half (doc 13 §7):
 //! a layered system→org→session composition round-trips parse→evaluate; deny-
 //! overrides covered; capability-gate inertness admits nothing (§7 inertness
@@ -389,4 +390,48 @@ fn compose_no_services_yields_empty_registry() {
         "no services[] in the stack → empty composed registry, got {:?}",
         composed.services
     );
+}
+
+#[test]
+fn parsed_capability_gate_cannot_admit_without_the_required_capability() {
+    // Enable the family so a lost gate would actually admit the domain.
+    let document = system_baseline()
+        .replace(
+            "binary-cdn: { tier: disabled }",
+            "binary-cdn: { tier: enabled }",
+        )
+        .replace("storage.googleapis.com", "api.openai.com");
+    let layer = parse(&document);
+    let without_capability = compose(&[layer.clone()], &[]);
+    let verdict = evaluate_domain(&without_capability, "api.openai.com");
+    assert!(!verdict.admits());
+    assert!(
+        matches!(verdict, Eval::InertCapabilityGated { ref requires, .. }
+        if requires == "http-policy")
+    );
+    assert!(without_capability
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "capability-gate-inert"
+            && warning.subject == "api.openai.com"));
+
+    let with_capability = compose(&[layer], &["http-policy"]);
+    assert!(evaluate_domain(&with_capability, "api.openai.com").admits());
+
+    let ungated = parse(&document.replace("      requires: http-policy\n", ""));
+    assert!(evaluate_domain(&compose(&[ungated], &[]), "api.openai.com").admits());
+
+    // Malformed gates must stop at parsing, before DNS can compose an active entry.
+    for value in [
+        "[http-policy]",
+        "{ capability: http-policy }",
+        "null",
+        "\"\"",
+    ] {
+        let malformed = document.replace("requires: http-policy", &format!("requires: {value}"));
+        let errors = parse_layer(&malformed).expect_err("malformed gate cannot reach composition");
+        assert!(errors.0.iter().any(|error| error.code
+            == ds_contracts::pol1::PolicyErrorCode::BadValue
+            && error.path == "baseline_pack.entries[2].requires"));
+    }
 }

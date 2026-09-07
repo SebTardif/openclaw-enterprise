@@ -143,13 +143,13 @@
     },
     {
       "path": "crates/ds-contracts/src/pol1.rs",
-      "sha256": "1739befd7f3177bf1a9035f49329efccc77d948932852754e30e19c85d14c2f1",
-      "modified_source_notice": false
+      "sha256": "d61b3ee6bdc07516cb935cf9a6a7ec1b1792b4bca26297dc534295b34b73edae",
+      "modified_source_notice": true
     },
     {
       "path": "crates/ds-contracts/src/pol1/tests.rs",
-      "sha256": "552f8238f466bfe33095cd87725fd95a246e1e91f8070608d4f6a46da126ed27",
-      "modified_source_notice": false
+      "sha256": "a896ddc15249860145756d1eaa3522d2aa24a2ec04b65ab7ffa78ba667a4658a",
+      "modified_source_notice": true
     },
     {
       "path": "crates/ds-contracts/src/reject.rs",
@@ -418,8 +418,8 @@
     },
     {
       "path": "crates/policy-core/src/pol1_eval/tests.rs",
-      "sha256": "51e6fa5831afe71e08dab2fd12a43e25ec4a52b407139b7ca1e318d3536d76b6",
-      "modified_source_notice": false
+      "sha256": "a321e7c9d54674f89d1966de64ade95222169bbee3c3df984087e2fe0969f915",
+      "modified_source_notice": true
     },
     {
       "path": "crates/policy-core/src/role.rs",

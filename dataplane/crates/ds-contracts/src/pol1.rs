@@ -1,3 +1,4 @@
+// Modified for OpenClaw Enterprise: reject malformed capability gates.
 //! POL-1 v0 policy schema — types, a stdlib-only document reader, and the
 //! parse-time structural validators (doc 13 §1–§3, §7, §8.1).
 //!
@@ -1638,7 +1639,7 @@ fn build_pack(node: Option<&YamlNode>, errs: &mut Vec<PolicyError>) -> BaselineP
         }
     }
     if let Some(seq) = n.get("entries").and_then(|x| x.as_sequence()) {
-        for item in seq {
+        for (i, item) in seq.iter().enumerate() {
             let fqdn = item
                 .get("fqdn")
                 .and_then(|x| x.as_scalar())
@@ -1667,7 +1668,21 @@ fn build_pack(node: Option<&YamlNode>, errs: &mut Vec<PolicyError>) -> BaselineP
                 .unwrap_or(false);
             let evidence = nonnull_scalar(item.get("evidence"));
             let path_scope = build_string_seq(item.get("path_scope"));
-            let requires = nonnull_scalar(item.get("requires"));
+            // A malformed present gate must never become an ungated entry.
+            let requires = match item.get("requires") {
+                None => None,
+                Some(node) => match nonnull_scalar(Some(node)) {
+                    Some(capability) if !capability.trim().is_empty() => Some(capability),
+                    _ => {
+                        errs.push(PolicyError::new(
+                            PolicyErrorCode::BadValue,
+                            format!("baseline_pack.entries[{i}].requires"),
+                            "requires must be a nonempty capability scalar; omit it for an ungated entry",
+                        ));
+                        None
+                    }
+                },
+            };
             pack.entries.push(PackEntry {
                 fqdn,
                 family,

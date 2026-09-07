@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, open, readFile, stat } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { mkdir, open, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, resolve, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { loadResumeCheckpoint } from "../fixtures/gvisor-identity-environment/resume-checkpoint.mjs";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import {
   KubernetesComputeDriver,
+  GVISOR_RUNTIME_CLASS,
   kubernetesNamespaceName,
 } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { createKubernetesClientConfiguration } from "../../apps/controller/src/drivers/kubernetes/client.ts";
@@ -19,15 +19,6 @@ import { withComputeAbortSignal } from "../../apps/controller/src/drivers/comput
 // model turn, projected identity, enrollment or production authority is exercised.
 const optedIn = process.env.OCC_TEST_RUN11_REAL === "1";
 const execute = promisify(execFile);
-const nodeName = "k3d-oce-gvisor-alpha-server-0";
-const runtimeClass = "oce-gvisor-systrap";
-const kube = [
-  "--kubeconfig",
-  "/home/dev-user/.cache/oce-gvisor-cluster/kubeconfig",
-  "--context",
-  "k3d-oce-gvisor-alpha",
-  "--request-timeout=10s",
-];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const nameFor = (role, id) => `${role}-${hash(id).slice(0, 12)}`;
 const deploymentFor = (revision) =>
@@ -35,16 +26,56 @@ const deploymentFor = (revision) =>
 const observer = resolve("tests/fixtures/gvisor-identity-environment/node-observer.mjs");
 
 test(
-  "RUN-11 actual Compute-owned native gVisor environment",
+  "Actual Compute-owned native gVisor environment",
   {
     skip: optedIn
       ? false
-      : "Select OCC_TEST_RUN11_REAL=1 with a reviewed immutable RUN-11 execution packet.",
+      : "Select OCC_TEST_RUN11_REAL=1 with a reviewed immutable execution packet.",
     timeout: 1_200_000,
   },
   async () => {
-    const root = process.env.OCC_RUN11_EVIDENCE;
-    assert.ok(root?.startsWith("/home/dev-user/code/oce-gvisor-development-20260904/run-11/runs/"));
+    function requiredSetting(name) {
+      const value = process.env[name];
+      assert.ok(value?.trim() && value === value.trim(), `${name} must be explicitly selected`);
+      return value;
+    }
+    // Every execution uses a separately reviewed disposable environment and fresh custody.
+    assert.equal(
+      process.env.OCC_RUN11_RESUME_ALLOCATION,
+      undefined,
+      "continuations are unsupported",
+    );
+    assert.equal(process.env.OCC_RUN11_RESUME_SHA256, undefined, "continuations are unsupported");
+    const root = requiredSetting("OCC_RUN11_EVIDENCE");
+    assert.equal(resolve(root), root, "evidence path must be absolute and canonical");
+    const parent = dirname(root);
+    assert.equal(await realpath(parent), parent);
+    const parentInfo = await stat(parent);
+    assert.ok(parentInfo.isDirectory());
+    assert.equal(parentInfo.mode & 0o777, 0o700);
+    assert.equal(parentInfo.uid, process.getuid());
+    const kubeconfig = requiredSetting("OCC_RUN11_KUBECONFIG");
+    assert.equal(resolve(kubeconfig), kubeconfig);
+    assert.equal(await realpath(kubeconfig), kubeconfig);
+    const kubeconfigInfo = await stat(kubeconfig);
+    assert.ok(kubeconfigInfo.isFile());
+    assert.equal(kubeconfigInfo.mode & 0o777, 0o600);
+    assert.equal(kubeconfigInfo.uid, process.getuid());
+    const context = requiredSetting("OCC_RUN11_CONTEXT");
+    assert.match(context, /^k3d-[a-z0-9][a-z0-9-]*$/);
+    const nodeName = requiredSetting("OCC_RUN11_NODE");
+    assert.match(nodeName, /^k3d-[a-z0-9][a-z0-9-]*-server-0$/);
+    assert.equal(nodeName, `${context}-server-0`);
+    const runtimeClass = requiredSetting("OCC_RUN11_RUNTIME_CLASS");
+    assert.equal(runtimeClass, GVISOR_RUNTIME_CLASS);
+    const apiServer = requiredSetting("OCC_RUN11_API_SERVER");
+    assert.match(apiServer, /^https:\/\/127\.0\.0\.1:[0-9]+$/);
+    assert.ok(Number(new URL(apiServer).port || 443) > 0, "positive disposable API port required");
+    const source = requiredSetting("OCC_RUN11_SOURCE");
+    assert.match(source, /^[a-f0-9]{40}$/);
+    const responsibleOperator = requiredSetting("OCC_RUN11_OPERATOR");
+    const exclusiveConsumer = requiredSetting("OCC_RUN11_CONSUMER");
+    const kube = ["--kubeconfig", kubeconfig, "--context", context, "--request-timeout=10s"];
     const agentImage = process.env.OCC_RUN11_AGENT_IMAGE;
     const gatewayImage = process.env.OCC_RUN11_GATEWAY_IMAGE;
     for (const image of [agentImage, gatewayImage])
@@ -54,9 +85,6 @@ test(
       );
     const runId = process.env.OCC_RUN11_RUN_ID;
     assert.match(runId ?? "", /^[a-f0-9]{12}$/);
-    const resume = process.env.OCC_RUN11_RESUME_ALLOCATION
-      ? await loadResumeCheckpoint({ runId, agentImage, gatewayImage, destination: root })
-      : undefined;
     await mkdir(root, { mode: 0o700 }); // Refuse reuse: uncertain effects retain their original owner.
     assert.equal((await stat(root)).mode & 0o777, 0o700);
     let sequence = 0;
@@ -144,7 +172,7 @@ test(
         effectId,
         description,
         allocation,
-        responsibility: "RUN-11 external operator",
+        responsibility: responsibleOperator,
         authority: "experimental fixture; not production OCC authority",
       });
       try {
@@ -207,6 +235,7 @@ test(
       { mode: "kubeconfig", kubeconfigPath: kube[1], context: kube[3] },
       (message) => new Error(message),
     );
+    assert.equal(operator.kubeConfig.getCurrentCluster().server, apiServer);
     const operatorCore = new operator.sdk.CoreV1Api(operator.clientConfiguration);
     const operatorObjects = new operator.sdk.KubernetesObjectApi(operator.clientConfiguration);
     async function deleteOwned(original) {
@@ -246,7 +275,7 @@ test(
         }),
       );
     }
-    const owner = resume?.owner ?? {
+    const owner = {
       id: `run11-${runId}`,
       name: "run11-identity-environment",
       status: "provisioning",
@@ -260,8 +289,8 @@ test(
     await record("responsibility", {
       runId,
       root,
-      ...(resume ? { originalResponsibility: resume.provenance } : {}),
-      source: "4c39a66c861365840aaac9a55fdfa505fbdb6efb",
+      responsibleOperator,
+      source,
       observerSha256: hash(await readFile(observer)),
       namespace,
       platform,
@@ -274,10 +303,7 @@ test(
       productionAuthority: false,
       identityEnrollment: false,
     });
-    assert.equal(
-      (await command("git", ["rev-parse", "HEAD"])).trim(),
-      "4c39a66c861365840aaac9a55fdfa505fbdb6efb",
-    );
+    assert.equal((await command("git", ["rev-parse", "HEAD"])).trim(), source);
     const nodes = await list("nodes");
     assert.equal(nodes.length, 1);
     assert.equal(nodes[0].metadata.name, nodeName);
@@ -289,108 +315,104 @@ test(
     const selectedClass = await get("runtimeclass", runtimeClass);
     assert.equal(selectedClass.handler, runtimeClass);
     await record("substrate", { node: nodes[0], runtimeClass: selectedClass });
-    if (!resume) {
-      assert.equal(
-        (await list("namespaces")).some((item) =>
-          [namespace, platform].includes(item.metadata.name),
-        ),
-        false,
+    assert.equal(
+      (await list("namespaces")).some((item) => [namespace, platform].includes(item.metadata.name)),
+      false,
+    );
+    for (const [kind, name] of [
+      ["clusterrole", controllerName],
+      ["clusterrolebinding", controllerName],
+      ["runtimeclass", missingClass],
+    ]) {
+      assert.ok(
+        !(await list(kind)).some((item) => item.metadata.name === name),
+        `refuse existing ${kind}/${name}`,
       );
-      for (const [kind, name] of [
-        ["clusterrole", controllerName],
-        ["clusterrolebinding", controllerName],
-        ["runtimeclass", missingClass],
-      ]) {
-        assert.ok(
-          !(await list(kind)).some((item) => item.metadata.name === name),
-          `refuse existing ${kind}/${name}`,
-        );
-      }
-      await create({
-        apiVersion: "v1",
-        kind: "Namespace",
-        metadata: {
-          name: platform,
-          labels: { "oce-run11-owner": runId, "pod-security.kubernetes.io/enforce": "restricted" },
-        },
-      });
-      await create({
-        apiVersion: "v1",
-        kind: "ServiceAccount",
-        metadata: { name: controllerName, namespace: platform },
-        automountServiceAccountToken: false,
-      });
-      await create({
-        apiVersion: "rbac.authorization.k8s.io/v1",
-        kind: "ClusterRole",
-        metadata: { name: controllerName },
-        rules: [
-          {
-            apiGroups: [""],
-            resources: ["namespaces"],
-            verbs: ["get", "list", "create", "patch", "delete"],
-          },
-          {
-            apiGroups: ["node.k8s.io"],
-            resources: ["runtimeclasses"],
-            resourceNames: [runtimeClass],
-            verbs: ["get"],
-          },
-        ],
-      });
-      await create({
-        apiVersion: "rbac.authorization.k8s.io/v1",
-        kind: "ClusterRoleBinding",
-        metadata: { name: controllerName },
-        roleRef: {
-          apiGroup: "rbac.authorization.k8s.io",
-          kind: "ClusterRole",
-          name: controllerName,
-        },
-        subjects: [{ kind: "ServiceAccount", name: controllerName, namespace: platform }],
-      });
-      const token = await effect(
-        "create short-lived fixture controller token",
-        { platform, controllerName, duration: "6h" },
-        async () => {
-          const value = await command(
-            "kubectl",
-            [...kube, "create", "token", controllerName, "-n", platform, "--duration=6h"],
-            { secret: true },
-          );
-          const cluster = JSON.parse(
-            await kubectl(
-              "config",
-              "view",
-              "--raw",
-              "--minify",
-              "--flatten",
-              "-o",
-              "jsonpath={.clusters[0].cluster}",
-            ),
-          );
-          assert.equal(cluster.server, "https://127.0.0.1:6445");
-          const file = await open(join(root, "controller-kubeconfig.json"), "wx", 0o600);
-          try {
-            await file.writeFile(
-              JSON.stringify({
-                apiVersion: "v1",
-                kind: "Config",
-                clusters: [{ name: "run11", cluster }],
-                users: [{ name: controllerName, user: { token: value.trim() } }],
-                contexts: [{ name: "run11", context: { cluster: "run11", user: controllerName } }],
-                "current-context": "run11",
-              }),
-            );
-            await file.sync();
-          } finally {
-            await file.close();
-          }
-          return { protectedKubeconfig: "controller-kubeconfig.json" };
-        },
-      );
-      assert.equal(token.protectedKubeconfig, "controller-kubeconfig.json");
     }
+    await create({
+      apiVersion: "v1",
+      kind: "Namespace",
+      metadata: {
+        name: platform,
+        labels: { "oce-run11-owner": runId, "pod-security.kubernetes.io/enforce": "restricted" },
+      },
+    });
+    await create({
+      apiVersion: "v1",
+      kind: "ServiceAccount",
+      metadata: { name: controllerName, namespace: platform },
+      automountServiceAccountToken: false,
+    });
+    await create({
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "ClusterRole",
+      metadata: { name: controllerName },
+      rules: [
+        {
+          apiGroups: [""],
+          resources: ["namespaces"],
+          verbs: ["get", "list", "create", "patch", "delete"],
+        },
+        {
+          apiGroups: ["node.k8s.io"],
+          resources: ["runtimeclasses"],
+          resourceNames: [runtimeClass],
+          verbs: ["get"],
+        },
+      ],
+    });
+    await create({
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "ClusterRoleBinding",
+      metadata: { name: controllerName },
+      roleRef: {
+        apiGroup: "rbac.authorization.k8s.io",
+        kind: "ClusterRole",
+        name: controllerName,
+      },
+      subjects: [{ kind: "ServiceAccount", name: controllerName, namespace: platform }],
+    });
+    const token = await effect(
+      "create short-lived fixture controller token",
+      { platform, controllerName, duration: "6h" },
+      async () => {
+        const value = await command(
+          "kubectl",
+          [...kube, "create", "token", controllerName, "-n", platform, "--duration=6h"],
+          { secret: true },
+        );
+        const cluster = JSON.parse(
+          await kubectl(
+            "config",
+            "view",
+            "--raw",
+            "--minify",
+            "--flatten",
+            "-o",
+            "jsonpath={.clusters[0].cluster}",
+          ),
+        );
+        assert.equal(cluster.server, apiServer);
+        const file = await open(join(root, "controller-kubeconfig.json"), "wx", 0o600);
+        try {
+          await file.writeFile(
+            JSON.stringify({
+              apiVersion: "v1",
+              kind: "Config",
+              clusters: [{ name: "run11", cluster }],
+              users: [{ name: controllerName, user: { token: value.trim() } }],
+              contexts: [{ name: "run11", context: { cluster: "run11", user: controllerName } }],
+              "current-context": "run11",
+            }),
+          );
+          await file.sync();
+        } finally {
+          await file.close();
+        }
+        return { protectedKubeconfig: "controller-kubeconfig.json" };
+      },
+    );
+    assert.equal(token.protectedKubeconfig, "controller-kubeconfig.json");
     const resources = {
       gateway: {
         requests: { cpu: "250m", memory: "512Mi", "ephemeral-storage": "256Mi" },
@@ -420,7 +442,7 @@ test(
       {
         authentication: {
           mode: "kubeconfig",
-          kubeconfigPath: resume?.controllerKubeconfig ?? join(root, "controller-kubeconfig.json"),
+          kubeconfigPath: join(root, "controller-kubeconfig.json"),
           context: "run11",
         },
         isolationProfile: "gvisor-systrap",
@@ -437,148 +459,72 @@ test(
       },
       { id: `run11-compute-${runId}` },
     );
-    if (!resume) {
-      await effect("Compute ensureNamespace before tenant grant", { owner, namespace }, () =>
-        driver.ensureNamespace(owner),
-      );
-      const verbs = ["get", "list", "create", "patch", "delete"];
-      await create({
-        apiVersion: "rbac.authorization.k8s.io/v1",
-        kind: "Role",
-        metadata: { name: controllerName, namespace },
-        rules: [
-          {
-            apiGroups: [""],
-            resources: [
-              "configmaps",
-              "serviceaccounts",
-              "services",
-              "resourcequotas",
-              "limitranges",
-              "persistentvolumeclaims",
-            ],
-            verbs,
-          },
-          { apiGroups: [""], resources: ["pods"], verbs: ["get", "list", "watch"] },
-          { apiGroups: ["apps"], resources: ["deployments"], verbs },
-          { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs },
-          {
-            apiGroups: ["discovery.k8s.io"],
-            resources: ["endpointslices"],
-            verbs: ["get", "list"],
-          },
-        ],
-      });
-      await create({
-        apiVersion: "rbac.authorization.k8s.io/v1",
-        kind: "RoleBinding",
-        metadata: { name: controllerName, namespace },
-        roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: controllerName },
-        subjects: [{ kind: "ServiceAccount", name: controllerName, namespace: platform }],
-      });
-      await wait(
-        "Compute namespace backing resources",
-        async () =>
-          (
-            await effect("Compute ensureNamespace", { owner, namespace }, () =>
-              driver.ensureNamespace(owner),
-            )
-          ).namespaceReady,
-      );
-    } else {
-      await verifyResumeOwnership();
-    }
+    await effect("Compute ensureNamespace before tenant grant", { owner, namespace }, () =>
+      driver.ensureNamespace(owner),
+    );
+    const verbs = ["get", "list", "create", "patch", "delete"];
+    await create({
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "Role",
+      metadata: { name: controllerName, namespace },
+      rules: [
+        {
+          apiGroups: [""],
+          resources: [
+            "configmaps",
+            "serviceaccounts",
+            "services",
+            "resourcequotas",
+            "limitranges",
+            "persistentvolumeclaims",
+          ],
+          verbs,
+        },
+        { apiGroups: [""], resources: ["pods"], verbs: ["get", "list", "watch"] },
+        { apiGroups: ["apps"], resources: ["deployments"], verbs },
+        { apiGroups: ["networking.k8s.io"], resources: ["networkpolicies"], verbs },
+        {
+          apiGroups: ["discovery.k8s.io"],
+          resources: ["endpointslices"],
+          verbs: ["get", "list"],
+        },
+      ],
+    });
+    await create({
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "RoleBinding",
+      metadata: { name: controllerName, namespace },
+      roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: controllerName },
+      subjects: [{ kind: "ServiceAccount", name: controllerName, namespace: platform }],
+    });
+    await wait(
+      "Compute namespace backing resources",
+      async () =>
+        (
+          await effect("Compute ensureNamespace", { owner, namespace }, () =>
+            driver.ensureNamespace(owner),
+          )
+        ).namespaceReady,
+    );
     owner.status = "ready";
     await record("namespace-observed", await get("namespace", namespace));
-    const revisions =
-      resume?.revisions ??
-      agentIds.map((agentId) => ({
-        id: `run11-rev-${randomUUID()}`,
-        namespaceId: owner.id,
-        agentId,
-        revision: 1,
-        configurationId: `run11-cfg-${randomUUID()}`,
-        configurationKind: "agent",
-        configurationGeneration: 1,
-        configuration: admitLoggingConfiguration(
-          { gateway: { controlUi: { enabled: false } } },
-          "info",
-        ),
-        harness: { id: "codex", version: "0.153.0", mode: "dedicated" },
-        compute: { id: driver.id, implementation: driver.implementation },
-        servicePrincipalId: `fixture-service-${agentId}`,
-        createdAt: new Date().toISOString(),
-      }));
-    // A resume continues only the exact ready incarnations from the completed failed observer.
-    // It never repeats preparation or adopts a replacement by Kubernetes name.
-    async function verifyResumeOwnership() {
-      assert.ok(Date.now() < Date.parse(resume.provenance.revalidateBefore));
-      assert.equal(nodes[0].metadata.uid, resume.nodeUid);
-      for (const original of resume.objects) {
-        const current = await get(
-          original.kind,
-          original.metadata.name,
-          original.metadata.namespace,
-        );
-        assert.equal(current.metadata.uid, original.metadata.uid);
-        assert.ok(!current.metadata.deletionTimestamp);
-        assert.deepEqual(current.metadata.labels ?? {}, original.metadata.labels ?? {});
-        for (const key of ["rules", "roleRef", "subjects", "automountServiceAccountToken"])
-          if (key in original) assert.deepEqual(current[key], original[key]);
-      }
-      const deployments = await list("deployments", namespace);
-      assert.deepEqual(
-        deployments.map((x) => x.metadata.uid).sort(),
-        resume.deployments.map((x) => x.metadata.uid).sort(),
-      );
-      for (const current of deployments) {
-        const original = resume.deployments.find((x) => x.metadata.uid === current.metadata.uid);
-        assert.equal(current.metadata.name, original.metadata.name);
-        assert.ok(!current.metadata.deletionTimestamp);
-        assert.deepEqual(current.metadata.labels, original.metadata.labels);
-        assert.deepEqual(current.spec.template.metadata.labels, original.templateLabels);
-        assert.equal(current.spec.replicas, 1);
-        assert.equal(current.status.readyReplicas, 1);
-      }
-      const pods = await list("pods", namespace);
-      assert.deepEqual(
-        pods.map((x) => x.metadata.uid).sort(),
-        resume.snapshotPods.map((x) => x.metadata.uid).sort(),
-      );
-      for (const current of pods) {
-        const original = resume.snapshotPods.find((x) => x.metadata.uid === current.metadata.uid);
-        assert.equal(current.metadata.name, original.metadata.name);
-        assert.ok(!current.metadata.deletionTimestamp);
-        assert.equal(current.spec.nodeName, nodeName);
-        for (const key of ["containerStatuses", "initContainerStatuses"])
-          assert.deepEqual(
-            (current.status[key] ?? []).map((x) => [x.name, x.containerID, x.restartCount]),
-            (original.status[key] ?? []).map((x) => [x.name, x.containerID, x.restartCount]),
-          );
-      }
-      await record("resume-ownership-confirmed", {
-        provenance: resume.provenance,
-        deployments,
-        pods,
-      });
-    }
-    async function resumedPod(revision) {
-      const original = resume.pods.find(
-        (x) => x.metadata.labels["openclaw.dev/agent"] === revision.agentId,
-      );
-      assert.ok(original);
-      const pod = await get("pod", original.metadata.name, namespace);
-      assert.equal(pod.metadata.uid, original.metadata.uid);
-      assert.ok(!pod.metadata.deletionTimestamp);
-      assert.equal(pod.status.phase, "Running");
-      assert.ok(pod.status.conditions.some((x) => x.type === "Ready" && x.status === "True"));
-      for (const key of ["containerStatuses", "initContainerStatuses"])
-        assert.deepEqual(
-          (pod.status[key] ?? []).map((x) => [x.name, x.containerID, x.restartCount]),
-          (original.status[key] ?? []).map((x) => [x.name, x.containerID, x.restartCount]),
-        );
-      return pod;
-    }
+    const revisions = agentIds.map((agentId) => ({
+      id: `run11-rev-${randomUUID()}`,
+      namespaceId: owner.id,
+      agentId,
+      revision: 1,
+      configurationId: `run11-cfg-${randomUUID()}`,
+      configurationKind: "agent",
+      configurationGeneration: 1,
+      configuration: admitLoggingConfiguration(
+        { gateway: { controlUi: { enabled: false } } },
+        "info",
+      ),
+      harness: { id: "codex", version: "0.153.0", mode: "dedicated" },
+      compute: { id: driver.id, implementation: driver.implementation },
+      servicePrincipalId: `fixture-service-${agentId}`,
+      createdAt: new Date().toISOString(),
+    }));
     async function readyPod(deployment, ns = namespace) {
       return wait(`ready Pod for ${deployment}`, async () =>
         (await list("pods", ns, "-l", `app.kubernetes.io/name=${deployment}`)).find(
@@ -722,8 +668,8 @@ test(
       await record("actual-correspondence", observation);
       return observation;
     }
-    const firstPod = resume ? await resumedPod(revisions[0]) : await prepare(revisions[0]);
-    const secondPod = resume ? await resumedPod(revisions[1]) : await prepare(revisions[1]);
+    const firstPod = await prepare(revisions[0]);
+    const secondPod = await prepare(revisions[1]);
     const first = await observe(firstPod, revisions[0]);
     const second = await observe(secondPod, revisions[1]);
     assert.notEqual(first.workspace.metadata.uid, second.workspace.metadata.uid);
@@ -1098,7 +1044,8 @@ test(
       network,
       noModelWork: true,
       identityQualification: false,
-      exclusiveConsumer: "original IDN-02 owner after root acceptance",
+      exclusiveConsumer,
+      handoffRequiresIndependentAcceptance: true,
       revalidateBeforeUse: true,
       cleanupRequiresOwnedObjectChecks: true,
     });
