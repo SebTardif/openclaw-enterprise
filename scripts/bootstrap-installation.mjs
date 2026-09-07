@@ -12,6 +12,7 @@ import {
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
   OpenClawController,
   PostgresPlatformState,
+  PostgresCommitOutcomeUnknownError,
 } from "../packages/occ/src/index.ts";
 import { createOccLogger, emitOccLogEvent } from "../apps/controller/src/logging.ts";
 import { loadOperationalLoggingConfiguration } from "../apps/controller/src/composition/installation-config.ts";
@@ -232,6 +233,19 @@ function authorizationFor(controllerAuth, installationId, userId) {
   };
 }
 
+// The seed contains plain IAM values, never a store, Driver or live capability.
+function immutableBootstrapSeed(state) {
+  const copy = structuredClone(state);
+  const seen = new WeakSet();
+  const freeze = (value) => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return value;
+    seen.add(value);
+    for (const child of Object.values(value)) freeze(child);
+    return Object.freeze(value);
+  };
+  return freeze(copy);
+}
+
 function includesPermission(role, action, resourceKind) {
   return role.permissions.some(
     (permission) => permission.action === action && permission.resourceKind === resourceKind,
@@ -264,6 +278,13 @@ function administratorPrincipal(state, issuer, userId) {
 }
 
 let bootstrapAttempt;
+let bootstrapOperation = "configuration";
+let reserved = false;
+let accountAuth;
+let createdAccount;
+let createdServiceKey;
+let finalizationCommitted = false;
+let outputStarted = false;
 let pool;
 let logging;
 let logger = createOccLogger({ component: "occ-bootstrap", level: "info", destination: "stderr" });
@@ -281,6 +302,7 @@ try {
   const state = new PostgresPlatformState(pool);
   const existing = await state.loadInstallation();
   if (existing !== undefined) {
+    bootstrapOperation = "existing-verification";
     const auth = await createAuth(pool, config, existing.id);
     const user = await findCredentialUser(auth, config.adminEmail);
     if (user === null) {
@@ -302,34 +324,54 @@ try {
     });
   } else {
     const freshConfig = freshBootstrapConfig(config);
-    const installation = {
+    const installation = Object.freeze({
       id: `ins_${randomUUID()}`,
       name: freshConfig.installationName,
       createdAt: new Date().toISOString(),
-    };
+    });
     bootstrapAttempt = {
       installationId: installation.id,
       ...(freshConfig.passwordPath === undefined ? {} : { passwordFile: freshConfig.passwordPath }),
       serviceKeyFile: freshConfig.serviceKeyPath,
     };
+    if (
+      typeof state.reserveFreshInstallationV1 !== "function" ||
+      typeof state.finalizeFreshInstallationV1 !== "function"
+    ) {
+      throw new Error("Fresh Installation bootstrap persistence is unavailable.");
+    }
+    bootstrapOperation = "reservation";
+    const reservation = await state.reserveFreshInstallationV1(installation);
+    if (reservation === undefined || reservation === null) {
+      throw new Error("Fresh Installation bootstrap reservation is unavailable.");
+    }
+    reserved = true;
+    bootstrapOperation = "account";
     const auth = await createAuth(pool, config, installation.id);
+    accountAuth = auth;
     const user = await createCredentialUser(auth, config.adminEmail, freshConfig.password);
+    createdAccount = user;
     bootstrapAttempt = { ...bootstrapAttempt, authAccountId: user.id };
     const authorization = authorizationFor(auth, installation.id, user.id);
+    const bootstrapSeed = immutableBootstrapSeed(authorization.state);
     bootstrapAttempt = {
       ...bootstrapAttempt,
       principalId: authorization.principal.id,
       servicePrincipalId: authorization.servicePrincipal.id,
     };
+    bootstrapOperation = "service-key";
     const serviceKey = await auth.createServiceKey({
       principal: authorization.servicePrincipal,
       name: "bootstrap-admin",
     });
+    createdServiceKey = serviceKey;
     bootstrapAttempt = {
       ...bootstrapAttempt,
       serviceKeyId: serviceKey.id,
       serviceKeyExpiresAt: serviceKey.expiresAt,
     };
+    bootstrapOperation = "protected-output";
+    outputStarted = true;
     if (freshConfig.passwordPath !== undefined) {
       await writeProtectedBootstrapFile(freshConfig.passwordPath, `${freshConfig.password}\n`);
     }
@@ -337,7 +379,6 @@ try {
       data: serviceKey,
       meta: { installationId: installation.id },
     });
-    state.setBootstrapNativeIAM(authorization.state);
     const controller = new OpenClawController(installation, {
       state,
       recordOperations: true,
@@ -346,32 +387,44 @@ try {
     const iam = new NativeIAMDriver(state, { id: "native-iam", implementation: "native" });
     controller.registerDriver(iam);
     controller.selectDriver("iam", iam.id);
-    await controller.transact(async (unit) => {
-      const defaultNamespace = await controller.createNamespace(authorization.principal.id, {
-        name: BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
-      });
-      await unit.audit.append({
-        id: `aud_${randomUUID()}`,
-        installationId: installation.id,
-        occurredAt: new Date().toISOString(),
-        kind: "bootstrap",
-        actorId: authorization.principal.id,
-        source: "occ",
-        action: "administer",
-        resource: { kind: "installation", id: installation.id },
-        outcome: "success",
-        details: {
-          kind: "bootstrap",
-          source:
-            config.mode === "production"
-              ? "production-installation-job"
-              : "development-installation-job",
-          servicePrincipalId: authorization.servicePrincipal.id,
-          serviceKeyId: serviceKey.id,
-          defaultNamespaceId: defaultNamespace.id,
-        },
-      });
-    });
+    bootstrapOperation = "finalization";
+    await state.finalizeFreshInstallationV1(reservation, bootstrapSeed, () =>
+      controller
+        .transact(async (unit) => {
+          const defaultNamespace = await controller.createNamespace(authorization.principal.id, {
+            name: BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
+          });
+          await unit.audit.append({
+            id: `aud_${randomUUID()}`,
+            installationId: installation.id,
+            occurredAt: new Date().toISOString(),
+            kind: "bootstrap",
+            actorId: authorization.principal.id,
+            source: "occ",
+            action: "administer",
+            resource: { kind: "installation", id: installation.id },
+            outcome: "success",
+            details: {
+              kind: "bootstrap",
+              source:
+                config.mode === "production"
+                  ? "production-installation-job"
+                  : "development-installation-job",
+              servicePrincipalId: authorization.servicePrincipal.id,
+              serviceKeyId: serviceKey.id,
+              defaultNamespaceId: defaultNamespace.id,
+            },
+          });
+        })
+        .then((result) => {
+          // Preserve a definite original COMMIT even if the finalizer wrapper later
+          // rejects while validating or releasing its own invocation association.
+          finalizationCommitted = true;
+          return result;
+        }),
+    );
+    finalizationCommitted = true;
+    bootstrapOperation = "complete";
     process.stdout.write(
       `${JSON.stringify({ event: "installation.bootstrapped", ...bootstrapAttempt })}\n`,
     );
@@ -381,12 +434,67 @@ try {
     });
   }
 } catch (error) {
-  emitOccLogEvent(logger, {
+  process.exitCode = 1;
+  // Diagnostic sink failures cannot interrupt independent cleanup or replace its
+  // actual outcome with a logging error. Never report raw dependency rejections.
+  const report = (event) => {
+    try {
+      emitOccLogEvent(logger, event);
+    } catch {}
+  };
+  const code = bootstrapFailureCode(error);
+  const unknown =
+    error instanceof PostgresCommitOutcomeUnknownError || code === "COMMIT_OUTCOME_UNKNOWN";
+  let result = finalizationCommitted
+    ? "committed"
+    : unknown
+      ? "outcome-unknown"
+      : reserved
+        ? "incomplete-installation"
+        : bootstrapOperation === "reservation"
+          ? "reservation-unavailable"
+          : "bootstrap-unavailable";
+  // These are separate authentication effects. An unknown COMMIT or a later
+  // output/logging failure must never compensate a possibly committed bootstrap.
+  if (!unknown && !finalizationCommitted && accountAuth !== undefined) {
+    const compensate = async (operation, work) => {
+      let acknowledged = false;
+      try {
+        await work();
+        acknowledged = true;
+      } catch {
+        result = "compensation-unavailable";
+      }
+      report({
+        event: acknowledged
+          ? "installation.bootstrap-compensation"
+          : "installation.bootstrap-compensation-failed",
+        operation,
+        outcome: acknowledged ? "acknowledged" : "unavailable",
+        attempt: bootstrapAttempt,
+      });
+    };
+    if (createdServiceKey !== undefined) {
+      await compensate("revoke-service-key", () => accountAuth.revokeServiceKey(createdServiceKey));
+    }
+    if (createdAccount !== undefined) {
+      await compensate("delete-account", () => accountAuth.deleteAccount(createdAccount));
+    } else if (bootstrapOperation === "account") {
+      // createAccount may have failed after its private writer created a user.
+      // No returned identity means there is no safe target for another deletion.
+      result = "account-outcome-unavailable";
+    }
+  }
+  // The protected writer does not return an inode/ownership receipt. Preserve
+  // output paths rather than unlinking a file that could have been replaced.
+  report({
     event: "installation.bootstrap-failed",
-    code: bootstrapFailureCode(error),
+    code,
+    operation: bootstrapOperation,
+    result,
+    pending: outputStarted,
     attempt: bootstrapAttempt,
   });
-  process.exitCode = 1;
 } finally {
   await pool?.end();
 }
