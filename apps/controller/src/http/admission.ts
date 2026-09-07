@@ -3,6 +3,7 @@ import type { OccApiRoute } from "@openclaw-enterprise/contracts/api/routes";
 import type { FastifyRequest } from "fastify";
 import type { AdmittedCaller, AdmissionVerifier } from "../admission/admission-verifier.ts";
 import { OCC_SERVICE_KEY_HEADER } from "../auth/index.ts";
+import type { ControllerWorkloadProfileRequestCustodyV1 } from "../auth/workload-profile-request.ts";
 import { failure, requestFailure } from "./errors.ts";
 
 export interface DevelopmentAdmission {
@@ -77,6 +78,11 @@ export interface HttpAdmissionOptions {
   readonly publicOrigin?: string;
   readonly verifyAdmission: AdmissionVerifier["verify"];
   readonly admissions: WeakMap<FastifyRequest, AdmittedCaller>;
+  /** The same original source already captured by controller construction. */
+  readonly workloadProfileRequests?: Pick<
+    ControllerWorkloadProfileRequestCustodyV1,
+    "beginRequest" | "captureAdmission" | "closeRequest"
+  >;
   readonly denial: (
     operation: OccApiRoute,
     request: FastifyRequest,
@@ -168,55 +174,62 @@ export function createHttpAdmission(options: HttpAdmissionOptions) {
       );
     }
 
-    let admitted: AdmittedCaller;
+    options.workloadProfileRequests?.beginRequest(request);
     try {
-      admitted = await options.verifyAdmission({
-        requestId: request.id,
-        method: request.method,
-        routeId: operation.operationId,
-        requestedScope: {
-          installationId,
-          ...(typeof params.namespaceId === "string" ? { namespaceId: params.namespaceId } : {}),
-        },
-        transport: {
-          remoteAddress,
-          ...(request.raw.socket.localAddress === undefined
-            ? {}
-            : { localAddress: request.raw.socket.localAddress }),
-          trustProxy: false,
-        },
-        ...(typeof request.headers.authorization === "string"
-          ? { authorizationHeader: request.headers.authorization }
-          : {}),
-        headers: request.headers,
-      });
+      let admitted: AdmittedCaller;
+      try {
+        admitted = await options.verifyAdmission({
+          requestId: request.id,
+          method: request.method,
+          routeId: operation.operationId,
+          requestedScope: {
+            installationId,
+            ...(typeof params.namespaceId === "string" ? { namespaceId: params.namespaceId } : {}),
+          },
+          transport: {
+            remoteAddress,
+            ...(request.raw.socket.localAddress === undefined
+              ? {}
+              : { localAddress: request.raw.socket.localAddress }),
+            trustProxy: false,
+          },
+          ...(typeof request.headers.authorization === "string"
+            ? { authorizationHeader: request.headers.authorization }
+            : {}),
+          headers: request.headers,
+        });
+      } catch (error) {
+        throw requestFailure(error);
+      }
+
+      if (
+        !admitted ||
+        !isNonEmptyString(admitted.externalIdentity?.issuer) ||
+        !isNonEmptyString(admitted.externalIdentity?.subject) ||
+        !isNonEmptyString(admitted.decisionId) ||
+        (admitted.method !== "session" && admitted.method !== "api_key") ||
+        admitted.admittedScope?.installationId !== installationId ||
+        (admitted.method === "session" &&
+          admitted.admittedScope.namespaceId !== undefined &&
+          admitted.admittedScope.namespaceId !== params.namespaceId)
+      ) {
+        await denial(operation, request, "authorization_denial");
+        throw failure(
+          503,
+          "DEPENDENCY_UNAVAILABLE",
+          "A required platform dependency is unavailable.",
+        );
+      }
+
+      admissions.set(request, admitted);
+      // Only verified explicit service keys can bypass browser intent. A cookie
+      // mutation requires the configured exact Origin even for a bodyless POST.
+      if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) requireBrowserIntent(request, true);
+      options.workloadProfileRequests?.captureAdmission(request, admitted);
     } catch (error) {
-      throw requestFailure(error);
+      options.workloadProfileRequests?.closeRequest(request);
+      throw error;
     }
-
-    if (
-      !admitted ||
-      !isNonEmptyString(admitted.externalIdentity?.issuer) ||
-      !isNonEmptyString(admitted.externalIdentity?.subject) ||
-      !isNonEmptyString(admitted.decisionId) ||
-      (admitted.method !== "session" && admitted.method !== "api_key") ||
-      admitted.admittedScope?.installationId !== installationId ||
-      (admitted.method === "session" &&
-        admitted.admittedScope.namespaceId !== undefined &&
-        admitted.admittedScope.namespaceId !== params.namespaceId)
-    ) {
-      await denial(operation, request, "authorization_denial");
-      throw failure(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "A required platform dependency is unavailable.",
-      );
-    }
-
-    admissions.set(request, admitted);
-    // Only verified explicit service keys can bypass browser intent. A cookie
-    // mutation requires the configured exact Origin even for a bodyless POST.
-    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) requireBrowserIntent(request, true);
   }
 
   return { admit, requireBrowserIntent };
