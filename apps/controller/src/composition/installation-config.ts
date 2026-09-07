@@ -7,6 +7,8 @@ import type {
   SandboxDriver,
   SecretDriver,
 } from "@openclaw-enterprise/contracts";
+import type { WorkloadProfileRendererContributionV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import type { KubernetesRendererSource } from "../drivers/compute/kubernetes/workload-profile-capability.ts";
 import type { NativeIAMStateStore } from "@openclaw-enterprise/iam";
 import {
   parseInstallationConfiguration,
@@ -25,6 +27,7 @@ import {
 import { createIAMDriverFactory, selectIAMDriver } from "./driver-factories/iam.ts";
 import {
   createComputeDriver,
+  selectedComputeWorkloadProfileCapability,
   selectComputeDriver,
   validateProductionComputeConfiguration,
 } from "./driver-factories/compute.ts";
@@ -56,6 +59,7 @@ export {
 export interface InstallationRuntimeDrivers {
   readonly installation: InstallationStartupConfiguration;
   readonly computeDriver: ComputeDriver;
+  readonly workloadProfileRendererContribution?: WorkloadProfileRendererContributionV2;
   readonly configurationDriver: ConfigurationDriver;
   readonly secretDriver: SecretDriver;
   readonly sandboxDriver?: SandboxDriver;
@@ -67,6 +71,7 @@ export async function loadInstallationConfiguration(options: {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly packageRoot?: string;
   readonly startupConfiguration?: StartupConfigurationSnapshot;
+  readonly workloadProfileRendererSource?: KubernetesRendererSource;
   readonly createSandboxDriver?: (selection: SelectedDriverConfiguration) => SandboxDriver;
 }): Promise<InstallationRuntimeDrivers | undefined> {
   const environment = options.environment ?? process.env;
@@ -193,7 +198,9 @@ export async function loadInstallationConfiguration(options: {
     configurationDriver,
     sandboxDriver,
     computePackage,
+    options.workloadProfileRendererSource,
   );
+  const workloadProfileRendererContribution = selectedComputeWorkloadProfileCapability(computeDriver);
   const secretDriver = createSecretDriver(secret);
   const createIAMDriver = createIAMDriverFactory(iam, iamPackage);
   if (
@@ -208,6 +215,9 @@ export async function loadInstallationConfiguration(options: {
   return Object.freeze({
     installation,
     computeDriver,
+    ...(workloadProfileRendererContribution === undefined
+      ? {}
+      : { workloadProfileRendererContribution }),
     configurationDriver,
     secretDriver,
     ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
