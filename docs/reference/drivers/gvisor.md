@@ -14,8 +14,9 @@ gVisor implements a userspace kernel, not a VM boundary.
 [platform documentation](https://gvisor.dev/docs/user_guide/platforms/) and
 [Kubernetes integration](https://gvisor.dev/docs/user_guide/quick_start/kubernetes/).
 A gVisor deployment does not establish OpenShell policy enforcement,
-Kata guest isolation, SPIRE guest attestation, or reference deployment
-acceptance. The OpenShell/Kata/SPIFFE reference profile remains separate.
+Kata guest isolation, SPIRE workload attestation, or deployment qualification.
+OpenShell/Kata is a separate runtime profile with its own prerequisites and
+qualification requirements.
 
 ## Selection and boundaries
 
@@ -213,9 +214,11 @@ Measure host sandbox limits separately from process accounting inside gVisor.
 Full gateway/Codex model execution must be measured separately on this Alpha
 profile; unit tests and HTTP fixtures are not that evidence. The intended
 external credential mediation boundary also requires its own integration and
-identity/authorization tests. A VM-capable host is still required for the
-reference OpenShell/Kata guest, SPIRE identity, credential mediation, networking,
-persistence, and channel acceptance tests.
+identity/authorization tests. SPIRE workload identity, credential mediation,
+networking, persistence, and channel behavior require evidence on the selected
+runtime profile. The separate OpenShell/Kata profile additionally requires a
+VM-capable host for its guest-specific qualification; those requirements do not
+apply to running this gVisor systrap profile.
 
 ## Rollback
 
