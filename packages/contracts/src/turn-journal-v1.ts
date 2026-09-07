@@ -1166,11 +1166,22 @@ function checkIntrinsic(input: unknown): void {
     )
       invalid();
     if (v.duplicate === false && link.disposition !== "original") invalid();
-    if (
-      (v.kind === "resolved-existing" || (v.kind === "existing" && "envelope" in record)) &&
-      link.disposition !== "duplicate"
-    )
-      invalid();
+    if (v.kind === "resolved-existing" && link.disposition !== "duplicate") invalid();
+    if (v.kind === "existing" && "envelope" in record && link.disposition !== "duplicate") {
+      // Exact rejected replay retains its immutable original incoming link.
+      // A distinct logical retry still needs its own duplicate link; routing
+      // correspondence remains the accepting journal's responsibility.
+      if (
+        link.disposition !== "original" ||
+        link.originalReceiptRefs.length !== 1 ||
+        link.originalReceiptRefs[0] !== receipt.receiptRef ||
+        link.locator.eventKey !== receipt.eventKey ||
+        link.locator.logicalMessageKey !== receipt.logicalMessageKey ||
+        link.incomingEventDigest !== receipt.eventDigest ||
+        link.incomingContentDigest !== receipt.contentDigest
+      )
+        invalid();
+    }
     if (v.kind === "recorded" && "envelope" in record && link.disposition !== "original") invalid();
   }
   if (

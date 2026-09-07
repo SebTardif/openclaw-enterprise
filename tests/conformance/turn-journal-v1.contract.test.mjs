@@ -1064,3 +1064,127 @@ test("rejected admission result codec retains denied, resolved and non-turn orig
     }),
   );
 });
+
+// An exact rejected replay keeps the first immutable link. A different event
+// matching the logical owner needs its own duplicate link, never a relabeled one.
+function rejectedOriginalReplay() {
+  return {
+    kind: "existing",
+    record: v.copy(rejected),
+    incomingLink: {
+      ...v.copy(incomingLink),
+      locator: {
+        schemaVersion: 1,
+        installationRef: rejected.envelope.installationRef,
+        channelInstallationRef: rejected.envelope.channelInstallationRef,
+        eventKey: rejected.receipt.eventKey,
+        logicalMessageKey: rejected.receipt.logicalMessageKey,
+      },
+      incomingEventDigest: rejected.receipt.eventDigest,
+      incomingContentDigest: rejected.receipt.contentDigest,
+      originalReceiptRefs: [rejected.receipt.receiptRef],
+      disposition: "original",
+    },
+  };
+}
+test("rejected exact replay retains its original link and existing result", () => {
+  const value = rejectedOriginalReplay();
+  const wire = JSON.stringify(value);
+  for (const result of [
+    parseTurnJournalResultV1("rejectedAdmissionResult", value),
+    parseTurnJournalResultJsonV1("rejectedAdmissionResult", wire),
+  ]) {
+    assert.equal(JSON.stringify(result), wire);
+    assert.equal(result.kind, "existing");
+    assert.equal(result.incomingLink.disposition, "original");
+    assert.equal(Object.isFrozen(result.incomingLink), true);
+    assert.equal(Object.isFrozen(result.incomingLink.originalReceiptRefs), true);
+  }
+  assert.equal(JSON.stringify(value), wire);
+});
+const rejectedReplayMutations = {
+  installation: (link) => {
+    link.locator.installationRef = "ins_00000000-0000-4000-8000-000000000002";
+  },
+  channelInstallation: (link) => {
+    link.locator.channelInstallationRef = "channel-installation-other";
+  },
+  eventKey: (link) => {
+    link.locator.eventKey = "8".repeat(64);
+  },
+  logicalMessageKey: (link) => {
+    link.locator.logicalMessageKey = "8".repeat(64);
+  },
+  eventDigest: (link) => {
+    link.incomingEventDigest = "8".repeat(64);
+  },
+  contentDigest: (link) => {
+    link.incomingContentDigest = "8".repeat(64);
+  },
+  extraOwner: (link) => {
+    link.originalReceiptRefs.push("receipt-other");
+  },
+  repeatedOwner: (link) => {
+    link.originalReceiptRefs.push(link.originalReceiptRefs[0]);
+  },
+  foreignOwner: (link) => {
+    link.originalReceiptRefs = ["receipt-other"];
+  },
+  noOwner: (link) => {
+    link.originalReceiptRefs = [];
+  },
+  conflictDisposition: (link) => {
+    link.disposition = "conflict";
+  },
+};
+for (const [name, mutate] of Object.entries(rejectedReplayMutations)) {
+  test(`rejected exact replay refuses original link with ${name} mismatch`, () => {
+    const value = rejectedOriginalReplay();
+    mutate(value.incomingLink);
+    assert.throws(() => parseTurnJournalResultV1("rejectedAdmissionResult", value));
+    assert.throws(() =>
+      parseTurnJournalResultJsonV1("rejectedAdmissionResult", JSON.stringify(value)),
+    );
+  });
+}
+test("rejected distinct logical retry requires a duplicate incoming link", () => {
+  const value = rejectedOriginalReplay();
+  value.incomingLink.incomingLinkRef = "link-next-event";
+  value.incomingLink.locator.eventKey = "8".repeat(64);
+  value.incomingLink.incomingEventDigest = "9".repeat(64);
+  assert.throws(() => parseTurnJournalResultV1("rejectedAdmissionResult", value));
+  value.incomingLink.disposition = "duplicate";
+  const result = parseTurnJournalResultJsonV1("rejectedAdmissionResult", JSON.stringify(value));
+  assert.equal(result.kind, "existing");
+  assert.equal(result.incomingLink.disposition, "duplicate");
+  assert.equal(result.record.receipt.receiptRef, rejected.receipt.receiptRef);
+  assert.equal(result.incomingLink.locator.eventKey, "8".repeat(64));
+});
+test("rejected first recorded result still requires original disposition", () => {
+  const value = rejectedOriginalReplay();
+  value.kind = "recorded";
+  assert.equal(parseTurnJournalResultV1("rejectedAdmissionResult", value).kind, "recorded");
+  value.incomingLink.disposition = "duplicate";
+  assert.throws(() => parseTurnJournalResultV1("rejectedAdmissionResult", value));
+});
+test("rejected exact replay exception does not broaden other original-link results", () => {
+  const value = rejectedOriginalReplay();
+  assert.throws(() =>
+    parseTurnJournalResultV1("admissionResult", { ...value, kind: "rejected-existing" }),
+  );
+  assert.throws(() =>
+    parseTurnJournalResultV1("rejectedAdmissionResult", {
+      kind: "resolved-existing",
+      record: v.admission,
+      incomingLink,
+    }),
+  );
+  assert.throws(() =>
+    parseTurnJournalResultV1("admissionResult", {
+      kind: "recorded",
+      record: v.admission,
+      incomingLink,
+      duplicate: true,
+    }),
+  );
+});

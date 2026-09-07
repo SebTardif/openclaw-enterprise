@@ -290,12 +290,120 @@ test(
           await h.write((j) => j.admitRejected(h.issue("rejected", v.rejected), h.call)),
         );
         assert.equal(recorded.kind, "recorded");
+        assert.equal(recorded.incomingLink.disposition, "original");
+        assert.deepEqual(recorded.incomingLink.originalReceiptRefs, [original.receipt.receiptRef]);
         same(recorded.record, original);
+        same(parseTurnJournalResultV1("rejectedAdmissionResult", recorded), recorded);
+        const ownership = async () => {
+          const scope = [v.locator.installationRef, v.locator.channelInstallationRef];
+          return {
+            owners: (
+              await pool.query(
+                "SELECT * FROM occ.turn_journal_owners WHERE installation_id=$1 AND channel_installation_id=$2 ORDER BY receipt_ref",
+                scope,
+              )
+            ).rows,
+            keys: (
+              await pool.query(
+                "SELECT * FROM occ.turn_journal_keys WHERE installation_id=$1 AND channel_installation_id=$2 ORDER BY key_kind,key_digest",
+                scope,
+              )
+            ).rows,
+            links: (
+              await pool.query(
+                "SELECT * FROM occ.turn_journal_incoming_links WHERE installation_id=$1 AND channel_installation_id=$2 ORDER BY incoming_link_ref",
+                scope,
+              )
+            ).rows,
+            attempts: (
+              await pool.query(
+                "SELECT * FROM occ.turn_journal_attempts WHERE installation_id=$1 AND channel_installation_id=$2 ORDER BY attempt_ref",
+                scope,
+              )
+            ).rows,
+          };
+        };
+        const readExactLink = async (link) => {
+          // Use the original rejected result's own exact tuple; an accepted
+          // identity digest would describe a different incoming observation.
+          const state = await h.read((j) =>
+            j.findIncomingLink(
+              {
+                locator: link.locator,
+                incomingIdentityDigest: link.incomingIdentityDigest,
+                incomingEventDigest: link.incomingEventDigest,
+                incomingContentDigest: link.incomingContentDigest,
+              },
+              h.call,
+            ),
+          );
+          assert.equal(state.kind, "found-rejected");
+          same(state.link, link);
+          same(state.original, original);
+          same(parseTurnJournalResultV1("incomingLink", state), state);
+        };
+        const firstRows = await ownership();
+        assert.equal(firstRows.owners.length, 1);
+        assert.equal(firstRows.keys.length, 2);
+        assert.equal(firstRows.links.length, 1);
+        assert.equal(firstRows.attempts.length, 0);
+        await readExactLink(recorded.incomingLink);
         const existing = valueOf(
           await h.write((j) => j.admitRejected(h.issue("rejected", v.rejected), h.call)),
         );
         assert.equal(existing.kind, "existing");
         same(existing.record, original);
+        same(existing.incomingLink, recorded.incomingLink);
+        assert.equal(existing.incomingLink.disposition, "original");
+        same(parseTurnJournalResultV1("rejectedAdmissionResult", existing), existing);
+        await readExactLink(existing.incomingLink);
+        same(await ownership(), firstRows);
+
+        const twin = changedIncoming(v, (incoming) => {
+          incoming.envelope.event.providerEventRef = ref("rejected-event-twin");
+        });
+        assert.notEqual(twin.rejected.receipt.eventKey, original.receipt.eventKey);
+        assert.equal(twin.rejected.receipt.logicalMessageKey, original.receipt.logicalMessageKey);
+        same(twin.rejected.envelope.retryMetadata, {});
+        const duplicate = valueOf(
+          await h.write((j) => j.admitRejected(h.issue("rejected", twin.rejected), h.call)),
+        );
+        assert.equal(duplicate.kind, "existing");
+        assert.equal(duplicate.incomingLink.disposition, "duplicate");
+        assert.notEqual(
+          duplicate.incomingLink.incomingLinkRef,
+          recorded.incomingLink.incomingLinkRef,
+        );
+        assert.equal(duplicate.incomingLink.locator.eventKey, twin.rejected.receipt.eventKey);
+        assert.deepEqual(duplicate.incomingLink.originalReceiptRefs, [original.receipt.receiptRef]);
+        same(duplicate.record, original);
+        same(parseTurnJournalResultV1("rejectedAdmissionResult", duplicate), duplicate);
+        await readExactLink(duplicate.incomingLink);
+        await readExactLink(recorded.incomingLink);
+        const twinRows = await ownership();
+        same(twinRows.owners, firstRows.owners);
+        same(twinRows.keys, firstRows.keys);
+        same(twinRows.attempts, firstRows.attempts);
+        assert.equal(twinRows.links.length, 2);
+        same(
+          twinRows.links.find(
+            (row) => row.incoming_link_ref === recorded.incomingLink.incomingLinkRef,
+          ),
+          firstRows.links[0],
+        );
+        const repeatedTwin = valueOf(
+          await h.write((j) => j.admitRejected(h.issue("rejected", twin.rejected), h.call)),
+        );
+        same(repeatedTwin, duplicate);
+        same(parseTurnJournalResultV1("rejectedAdmissionResult", repeatedTwin), repeatedTwin);
+        same(await ownership(), twinRows);
+        await readExactLink(repeatedTwin.incomingLink);
+        for (const lookup of [eventLookup(twin), logicalLookup(twin)]) {
+          const owner = await h.read((j) => j.findRejectedAdmission(lookup, h.call));
+          assert.equal(owner.kind, "found");
+          same(owner.record, original);
+          same(parseTurnJournalResultV1("rejectedAdmissionState", owner), owner);
+        }
         same(
           (await h.read((j) => j.findRejectedAdmission(eventLookup(v), h.call))).record,
           original,
