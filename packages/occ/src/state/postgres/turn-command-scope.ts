@@ -2,49 +2,26 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { DependencyUnavailableError, ScopeViolationError } from "../../errors.ts";
 import type { RepositoryTransaction } from "../../ports/transaction.ts";
 
-export interface TurnCommandIdentityV1 {
-  readonly installationId: string;
-  readonly namespaceId: string;
-  readonly agentId: string;
-  readonly operationRef: string;
-}
-
-export interface TurnCommandBoundsV1 {
-  readonly signal: AbortSignal;
-  readonly deadline: string;
-}
-
-export type TurnCommandTerminalV1 =
-  "rolled-back" | "commit-rejected" | "commit-unknown" | "committed";
-
-export type TurnCommandOperationV1 =
-  "currentness-read" | "journal-read" | "journal-mutation" | "mutation-audit";
-
-declare const ownedUnit: unique symbol;
-/** A private owner association, never a transferable authority or SQL capability. */
-export interface TurnCommandOwnedUnitV1 extends TurnCommandIdentityV1 {
-  readonly [ownedUnit]: true;
-}
-
-/** Supplied only by the selected original account/enrollment owner. Structural
- * conformity does not authenticate a participant or its returned lease. */
-export interface TurnCommandEnrollmentSourceV1 {
-  consume(unit: TurnCommandOwnedUnitV1): Promise<TurnCommandEnrollmentLeaseV1 | undefined>;
-}
-
-export interface TurnCommandEnrollmentLeaseV1 {
-  prepareCommit(): Promise<void>;
-  assertCurrent(): undefined;
-  release(outcome: TurnCommandTerminalV1): Promise<void>;
-}
-
-export interface TurnCommandAcceptedOperationV1 {
-  readonly unit: TurnCommandOwnedUnitV1;
-  assertActive(): void;
-  /** Tracks a trusted owner's accepted child operation, including unawaited SQL.
-   * No connection, query string, transaction control or public repository escapes. */
-  track<T>(work: () => Promise<T>): Promise<T>;
-}
+import type {
+  TurnCommandIdentityV1,
+  TurnCommandBoundsV1,
+  TurnCommandTerminalV1,
+  TurnCommandOperationV1,
+  TurnCommandOwnedUnitV1,
+  TurnCommandEnrollmentSourceV1,
+  TurnCommandEnrollmentLeaseV1,
+  TurnCommandAcceptedOperationV1,
+} from "../../ports/turn-command.ts";
+export type {
+  TurnCommandIdentityV1,
+  TurnCommandBoundsV1,
+  TurnCommandTerminalV1,
+  TurnCommandOperationV1,
+  TurnCommandOwnedUnitV1,
+  TurnCommandEnrollmentSourceV1,
+  TurnCommandEnrollmentLeaseV1,
+  TurnCommandAcceptedOperationV1,
+} from "../../ports/turn-command.ts";
 
 interface CapturedLease {
   prepareCommit: () => Promise<void>;
