@@ -983,7 +983,7 @@ export function createPostgresTurnJournal(
             return { kind: "resolved-existing", record: original, incomingLink: link };
           if (duplicate && original && "envelope" in original)
             return {
-              kind: link.disposition === "original" ? "recorded" : "existing",
+              kind: "existing",
               record: original,
               incomingLink: link,
             };
