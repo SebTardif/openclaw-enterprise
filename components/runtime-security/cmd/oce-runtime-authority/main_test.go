@@ -116,7 +116,7 @@ func TestActualProfileValidationExecutable(t *testing.T) {
 
 func TestActualCommandCancellationClosesIncompleteInput(t *testing.T) {
 	binary := buildCommand(t)
-	for _, mode := range []string{"validate-profile", "serve"} {
+	for _, mode := range []string{"validate-profile", "serve", "validate-gateway-startup-client-profile", "gateway-startup-client"} {
 		t.Run(mode, func(t *testing.T) {
 			command := exec.Command(binary, mode)
 			command.Env = []string{}

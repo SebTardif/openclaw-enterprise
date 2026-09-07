@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	MaxFrameBytes   = 131072
-	MaxRequestBytes = 65536
+	MaxFrameBytes           = 131072
+	MaxRequestBytes         = 65536
+	gatewayStartupPolicy    = "installation-gateway-startup-v1"
+	gatewayStartupTransport = "owned-child-stdio-installation-gateway-startup-v1"
 )
 
 var (
@@ -62,6 +64,16 @@ type Limits struct {
 // ValidateProfile performs maintained SPIFFE parsing and the selected closed
 // transport-profile checks. It opens no source, listener or other network path.
 func ValidateProfile(raw []byte) (Profile, error) {
+	return validateProfile(raw, false)
+}
+
+// ValidateGatewayStartupClientProfile selects the client role by its fixed
+// entrypoint. The recipient is the Controller peer, not the local Gateway.
+func ValidateGatewayStartupClientProfile(raw []byte) (Profile, error) {
+	return validateProfile(raw, true)
+}
+
+func validateProfile(raw []byte, client bool) (Profile, error) {
 	var p Profile
 	if len(raw) > MaxRequestBytes || decodeStrict(raw, &p) != nil {
 		return Profile{}, errProtocol
@@ -70,11 +82,16 @@ func ValidateProfile(raw []byte) (Profile, error) {
 	peer, peerErr := spiffeid.FromString(p.PeerSPIFFEID)
 	readback := p.OperationPolicy == "read-operation-only-v1" && p.TransportProfileRef == "owned-child-stdio-readback-v1"
 	initialBind := p.OperationPolicy == "initial-harness-bind-v1" && p.TransportProfileRef == "owned-child-stdio-initial-harness-bind-v1"
-	if p.SchemaVersion != 1 || (!readback && !initialBind) ||
+	gatewayStartup := p.OperationPolicy == gatewayStartupPolicy && p.TransportProfileRef == gatewayStartupTransport
+	recipient := p.OwnSPIFFEID
+	if client {
+		recipient = p.PeerSPIFFEID
+	}
+	if p.SchemaVersion != 1 || (!readback && !initialBind && !gatewayStartup) || (client && !gatewayStartup) ||
 		ownErr != nil || peerErr != nil || own.Path() == "" || peer.Path() == "" ||
 		own.String() != p.OwnSPIFFEID || peer.String() != p.PeerSPIFFEID ||
 		own.TrustDomain() != peer.TrustDomain() || own.TrustDomain().String() != p.TrustDomain ||
-		p.RecipientSPIFFEID != p.OwnSPIFFEID || len(p.OwnSPIFFEID) > 200 || len(p.PeerSPIFFEID) > 200 ||
+		p.RecipientSPIFFEID != recipient || len(p.OwnSPIFFEID) > 200 || len(p.PeerSPIFFEID) > 200 ||
 		!filepath.IsAbs(p.WorkloadAPISocketPath) || filepath.Clean(p.WorkloadAPISocketPath) != p.WorkloadAPISocketPath ||
 		p.WorkloadAPISocketPath == "/" || strings.ContainsRune(p.WorkloadAPISocketPath, 0) || len(p.WorkloadAPISocketPath) > 103 || !regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`).MatchString(p.WorkloadAPISocketPath) ||
 		!refPattern.MatchString(p.SourceRef) || !refPattern.MatchString(p.RecipientRef) ||
@@ -85,6 +102,52 @@ func ValidateProfile(raw []byte) (Profile, error) {
 		return Profile{}, errProtocol
 	}
 	return p, nil
+}
+
+// Only the Installation profile uses this sequential, original-connection
+// envelope. IDs are correlation, never registration or process evidence.
+type gatewayStartupEnvelope struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Kind          string `json:"kind"`
+	ConnectionID  string `json:"connectionId"`
+	ExchangeID    string `json:"exchangeId"`
+	Sequence      int64  `json:"sequence"`
+	Challenge     string `json:"challenge"`
+	RequestDigest string `json:"requestDigest"`
+	PayloadBase64 string `json:"payloadBase64"`
+}
+
+type gatewayStartupHello struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Kind          string `json:"kind"`
+	ConnectionID  string `json:"connectionId"`
+	ExpiresAt     string `json:"expiresAt"`
+}
+
+func gatewayStartupMethod(method string) bool {
+	return method == "consume-startup" || method == "read-current" || method == "read-operation"
+}
+
+// The canonical owner parser still validates the complete command before any
+// local invocation exists. Native dispatch independently binds its exact kind.
+func gatewayStartupRequestAllowed(request Request) bool {
+	if request.SchemaVersion != 1 || !gatewayStartupMethod(request.Method) {
+		return false
+	}
+	var operation map[string]json.RawMessage
+	if json.Unmarshal(request.Operation, &operation) != nil || operation == nil {
+		return false
+	}
+	expected, _ := json.Marshal(request.Method)
+	return bytes.Equal(bytes.TrimSpace(operation["kind"]), expected)
+}
+
+func validGatewayStartupEnvelope(value gatewayStartupEnvelope, kind, connectionID string, sequence int64) bool {
+	return value.SchemaVersion == 1 && value.Kind == kind &&
+		idPattern.MatchString(value.ConnectionID) && value.ConnectionID == connectionID &&
+		idPattern.MatchString(value.ExchangeID) && idPattern.MatchString(value.Challenge) &&
+		value.Sequence == sequence && sequence > 0 && sequence <= 9007199254740991 &&
+		digestPattern.MatchString(value.RequestDigest)
 }
 
 // ReadFrame rejects the length before allocating or reading the body. Its caller

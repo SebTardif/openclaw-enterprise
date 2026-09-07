@@ -347,6 +347,10 @@ func (b *bridge) accept() {
 }
 
 func (b *bridge) serve(raw net.Conn) {
+	if b.profile.OperationPolicy == gatewayStartupPolicy {
+		b.serveGatewayStartup(raw)
+		return
+	}
 	life, cancel := context.WithCancel(b.ctx)
 	defer cancel()
 	connection, err := b.transport.Handshake(life, raw)
