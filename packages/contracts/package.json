@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./lifecycle-deploy-v2": "./src/lifecycle-deploy-v2.ts",
     ".": "./src/index.ts",
     "./resources/scope": "./src/resources/scope.ts",
     "./resources/installation": "./src/resources/installation.ts",

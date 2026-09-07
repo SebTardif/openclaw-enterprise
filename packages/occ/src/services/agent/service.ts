@@ -5,7 +5,15 @@ import type { ServiceAccount } from "@openclaw-enterprise/contracts/resources/se
 import type { ProviderRef } from "@openclaw-enterprise/contracts/drivers/provider";
 import type { PermissionAction } from "@openclaw-enterprise/contracts/identity/authorization";
 import type { ResourceRef } from "@openclaw-enterprise/contracts/resources/scope";
+import { decodeWorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
+import { selectRepositories } from "../../application/mutation-context.ts";
+import type {
+  WorkloadProfileDraftUnitV2,
+  WorkloadProfileOwnedOperationV2,
+  WorkloadProfileOwnedLeaseV2,
+} from "../../workload-profiles/admitted-use.ts";
+import { AGENT_REPOSITORIES } from "./port.ts";
 import {
   DependencyUnavailableError,
   ResourceConflictError,
@@ -30,6 +38,97 @@ import type {
 
 function validName(value: unknown): value is string {
   return isNonEmptyString(value) && value.length <= 200;
+}
+
+function reportOwnedFailure(io: WorkloadProfileOwnedOperationV2, error: unknown): void {
+  try {
+    io.poison(error);
+  } catch {
+    // Reporting cannot replace the first failure or prevent known cleanup.
+    // The original rejection still leaves this callback unsuccessful.
+  }
+}
+
+/** Transfer one returned lease to its original owner before another wait. */
+async function retainDraftSelection(
+  source: WorkloadProfileOwnedLeaseV2,
+  unit: WorkloadProfileDraftUnitV2,
+  io: WorkloadProfileOwnedOperationV2,
+): Promise<() => undefined> {
+  const releaseSource = source.release;
+  if (typeof releaseSource !== "function")
+    throw new DependencyUnavailableError("Profile selection cleanup is unavailable.");
+  let failed = false;
+  let failure: unknown;
+  let retained = false;
+  let released = false;
+  let releasePromise: Promise<void> | undefined;
+  const pending = new Set<Promise<void>>();
+  const poison = (error: unknown) => {
+    if (!failed) {
+      failed = true;
+      failure = error;
+    }
+    reportOwnedFailure(io, error);
+  };
+  const observe = (value: unknown) => {
+    const task = Promise.resolve(value).then(
+      () => undefined,
+      () => undefined,
+    );
+    pending.add(task);
+    void task.then(() => pending.delete(task));
+  };
+  const release = (): Promise<void> => {
+    if (releasePromise === undefined) {
+      released = true;
+      releasePromise = Promise.resolve().then(async () => {
+        while (pending.size !== 0) await Promise.all(pending);
+        await releaseSource.call(source);
+      });
+    }
+    return releasePromise;
+  };
+  try {
+    const assertSource = source.assertCurrent;
+    if (typeof assertSource !== "function" || typeof unit.retain !== "function")
+      throw new DependencyUnavailableError("Profile selection participants are unavailable.");
+    const check = (): undefined => {
+      try {
+        if (failed) throw failure;
+        if (released || unit.signal.aborted)
+          throw new DependencyUnavailableError("Profile selection custody has ended.");
+        const result: unknown = assertSource.call(source);
+        if (result !== undefined) {
+          observe(result);
+          throw new DependencyUnavailableError("Profile selection assertion is invalid.");
+        }
+        return undefined;
+      } catch (error) {
+        poison(error);
+        throw error;
+      }
+    };
+    check();
+    const enrollment: unknown = unit.retain(Object.freeze({ assertCurrent: check, release }));
+    if (enrollment !== undefined) {
+      observe(enrollment);
+      throw new DependencyUnavailableError("Profile selection enrollment is invalid.");
+    }
+    retained = true;
+    check();
+    return check;
+  } catch (error) {
+    poison(error);
+    if (!retained) {
+      try {
+        await release();
+      } catch (cleanupError) {
+        poison(cleanupError);
+      }
+    }
+    throw error;
+  }
 }
 
 /** Agent drafts and reads share the composition owner's transaction and selected authority. */
@@ -275,6 +374,24 @@ export class AgentService implements AgentServicePort {
   }
 
   async updateAgent(principalId: string, input: UpdateAgentInput): Promise<Readonly<Agent>> {
+    const selectingProfile = Object.hasOwn(input, "workloadProfileSelection");
+    if (selectingProfile) {
+      const selected = decodeWorkloadProfileSelectionV1(input.workloadProfileSelection);
+      if (selected.kind !== "valid")
+        throw new ScopeViolationError("The exact workload profile selection is invalid.");
+      // The owner receives the same immutable operands used after every await.
+      input = Object.freeze({
+        namespaceId: input.namespaceId,
+        agentId: input.agentId,
+        configurationId: input.configurationId,
+        ...(input.providerId === undefined ? {} : { providerId: input.providerId }),
+        ...(input.serviceAccountId === undefined
+          ? {}
+          : { serviceAccountId: input.serviceAccountId }),
+        ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
+        workloadProfileSelection: selected.value,
+      });
+    }
     if (!isNonEmptyString(input.agentId))
       throw new ScopeViolationError("The exact Agent identity is missing.");
     if (!isNonEmptyString(input.configurationId))
@@ -287,72 +404,152 @@ export class AgentService implements AgentServicePort {
       throw new ScopeViolationError("The exact Agent ServiceAccount identity is missing.");
     if (input.executionMode !== undefined && !validExecutionMode(input.executionMode))
       throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
-    return this.options.repositories.mutate(async (state) => {
-      const namespace = await this.lockNamespace(state, input.namespaceId);
-      const agent = await state.agents.lockAgent(namespace.id, input.agentId);
-      if (!agent)
-        throw new ScopeViolationError(
-          "The Agent does not belong to the exact Installation and Namespace.",
-        );
-      await this.options.authorization.authorize(principalId, "update", {
-        kind: "agent",
-        id: agent.id,
-        namespaceId: namespace.id,
-      });
-      await this.options.authorization.authorize(principalId, "read", {
-        kind: "configuration",
-        id: input.configurationId,
-        namespaceId: namespace.id,
-      });
-      const configuration = await state.configurations.findConfiguration(
-        namespace.id,
-        input.configurationId,
-      );
-      if (!configuration || configuration.kind !== "agent")
-        throw new ScopeViolationError(
-          "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
-        );
-      if (agent.serviceAccountId !== undefined) {
-        await this.options.authorization.authorize(principalId, "read", {
-          kind: "service_account",
-          id: agent.serviceAccountId,
+    const profiles = this.options.workloadProfiles;
+    return this.options.repositories.mutate(async (selectedState) => {
+      const update = async (
+        state: typeof selectedState,
+        owned?: {
+          readonly unit: WorkloadProfileDraftUnitV2;
+          readonly io: WorkloadProfileOwnedOperationV2;
+        },
+      ): Promise<Readonly<Agent>> => {
+        owned?.io.assertActive();
+        const namespace = await this.lockNamespace(state, input.namespaceId);
+        const agent = await state.agents.lockAgent(namespace.id, input.agentId);
+        if (!agent)
+          throw new ScopeViolationError(
+            "The Agent does not belong to the exact Installation and Namespace.",
+          );
+        await this.options.authorization.authorize(principalId, "update", {
+          kind: "agent",
+          id: agent.id,
           namespaceId: namespace.id,
         });
-        await this.exactServiceAccount(state, namespace.id, agent.serviceAccountId);
-      }
-      if (
-        input.serviceAccountId !== undefined &&
-        input.serviceAccountId !== null &&
-        input.serviceAccountId !== agent.serviceAccountId
-      ) {
         await this.options.authorization.authorize(principalId, "read", {
-          kind: "service_account",
-          id: input.serviceAccountId,
+          kind: "configuration",
+          id: input.configurationId,
           namespaceId: namespace.id,
         });
-        await this.exactServiceAccount(state, namespace.id, input.serviceAccountId);
-      }
-      const secretBindings = configurationBindings(configuration.secretBindings);
-      await this.authorizeBindings(state, principalId, namespace.id, secretBindings);
-      const providerId = this.providerId(input.providerId, agent.providerId);
-      validateModelBinding(
-        secretBindings,
-        input.executionMode ?? agent.executionMode,
-        input.serviceAccountId === null
-          ? undefined
-          : (input.serviceAccountId ?? agent.serviceAccountId),
+        const configuration = await state.configurations.findConfiguration(
+          namespace.id,
+          input.configurationId,
+        );
+        if (!configuration || configuration.kind !== "agent")
+          throw new ScopeViolationError(
+            "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
+          );
+        if (agent.serviceAccountId !== undefined) {
+          await this.options.authorization.authorize(principalId, "read", {
+            kind: "service_account",
+            id: agent.serviceAccountId,
+            namespaceId: namespace.id,
+          });
+          await this.exactServiceAccount(state, namespace.id, agent.serviceAccountId);
+        }
+        if (
+          input.serviceAccountId !== undefined &&
+          input.serviceAccountId !== null &&
+          input.serviceAccountId !== agent.serviceAccountId
+        ) {
+          await this.options.authorization.authorize(principalId, "read", {
+            kind: "service_account",
+            id: input.serviceAccountId,
+            namespaceId: namespace.id,
+          });
+          await this.exactServiceAccount(state, namespace.id, input.serviceAccountId);
+        }
+        const secretBindings = configurationBindings(configuration.secretBindings);
+        await this.authorizeBindings(state, principalId, namespace.id, secretBindings);
+        const providerId = this.providerId(input.providerId, agent.providerId);
+        validateModelBinding(
+          secretBindings,
+          input.executionMode ?? agent.executionMode,
+          input.serviceAccountId === null
+            ? undefined
+            : (input.serviceAccountId ?? agent.serviceAccountId),
+        );
+        let checkSelection: (() => undefined) | undefined;
+        if (selectingProfile) {
+          if (owned === undefined || profiles === undefined)
+            throw new DependencyUnavailableError(
+              "The original profile selection owner is unavailable.",
+            );
+          const { unit, io } = owned;
+          io.assertActive();
+          if (
+            unit.kind !== "agent-selection" ||
+            unit.namespaceId !== namespace.id ||
+            unit.agentId !== agent.id ||
+            unit.signal.aborted
+          )
+            throw new ScopeViolationError("The profile selection unit does not match the Agent.");
+          checkSelection = await retainDraftSelection(
+            await profiles.use.validateSelectionLocked(
+              {
+                installationId: unit.installationId,
+                namespaceId: namespace.id,
+                agentId: agent.id,
+                selection: input.workloadProfileSelection!,
+              },
+              unit,
+              io,
+            ),
+            unit,
+            io,
+          );
+          io.assertActive();
+          checkSelection();
+        }
+        const updated = await state.agents.updateConfiguration(
+          namespace.id,
+          agent.id,
+          input.configurationId,
+          input.executionMode,
+          input.serviceAccountId,
+          input.providerId === undefined ? undefined : providerId,
+          ...(selectingProfile ? ([input.workloadProfileSelection!] as const) : []),
+        );
+        owned?.io.assertActive();
+        checkSelection?.();
+        if (!updated)
+          throw new ResourceConflictError("The Agent Configuration changed during its update.");
+        if (selectingProfile) {
+          const selected = decodeWorkloadProfileSelectionV1(updated.workloadProfileSelection);
+          const expected = input.workloadProfileSelection!;
+          if (
+            selected.kind !== "valid" ||
+            selected.value.manifestRef !== expected.manifestRef ||
+            selected.value.manifestDigest !== expected.manifestDigest ||
+            selected.value.admissionRef !== expected.admissionRef ||
+            selected.value.admissionVersion !== expected.admissionVersion
+          )
+            throw new ResourceConflictError(
+              "The stored workload profile selection differs from the update.",
+            );
+        }
+        return updated;
+      };
+      if (!selectingProfile) return update(selectedState);
+      if (profiles === undefined)
+        throw new DependencyUnavailableError(
+          "The original profile selection owner is unavailable.",
+        );
+      const invocation = await profiles.invocations.forCurrentInvocation();
+      return profiles.enrollment.withDraft(
+        invocation,
+        Object.freeze([principalId, input] as const),
+        async (unit, io) => {
+          try {
+            return await update(selectRepositories(unit.platform, AGENT_REPOSITORIES.mutate), {
+              unit,
+              io,
+            });
+          } catch (error) {
+            reportOwnedFailure(io, error);
+            throw error;
+          }
+        },
       );
-      const updated = await state.agents.updateConfiguration(
-        namespace.id,
-        agent.id,
-        input.configurationId,
-        input.executionMode,
-        input.serviceAccountId,
-        input.providerId === undefined ? undefined : providerId,
-      );
-      if (!updated)
-        throw new ResourceConflictError("The Agent Configuration changed during its update.");
-      return updated;
     });
   }
 

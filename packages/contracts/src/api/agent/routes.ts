@@ -1,6 +1,8 @@
 import { Type } from "typebox";
 
-import { AgentParams, EmptyQuery, NamespaceParams, RevisionParams } from "../common.ts";
+import { AgentParams, EmptyQuery, Meta, NamespaceParams, RevisionParams } from "../common.ts";
+import { LifecycleDeployCommandSchemaV2 } from "../../lifecycle-deploy-v2.ts";
+import { LifecycleAcceptedReceiptSchemaV1 } from "../../lifecycle-admission-v1.ts";
 import {
   AgentListResponse,
   AgentResponse,
@@ -113,7 +115,14 @@ export const agentApiRoutes = [
     schema: {
       querystring: EmptyQuery,
       params: AgentParams,
-      response: { 202: AgentRevisionResponse, ...mutationErrors },
+      body: LifecycleDeployCommandSchemaV2,
+      response: {
+        202: Type.Object(
+          { data: LifecycleAcceptedReceiptSchemaV1, meta: Meta },
+          { additionalProperties: false },
+        ),
+        ...createErrors,
+      },
     },
   },
   {

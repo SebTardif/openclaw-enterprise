@@ -16,6 +16,9 @@ export function frozenRevision(revision: AgentRevision): Readonly<AgentRevision>
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    ...(revision.workloadProfileUse === undefined
+      ? {}
+      : { workloadProfileUse: immutableCopy(revision.workloadProfileUse) }),
   });
 }
 

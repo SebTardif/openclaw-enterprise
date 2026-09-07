@@ -4,6 +4,7 @@ import type { ConfigurationKind, OpenClawConfigurationDocument } from "./configu
 import type { Scope } from "./scope.ts";
 import type { SecretBindings } from "./secret.ts";
 import type { ServiceAccountRevision } from "./service-account.ts";
+import type { WorkloadProfileSelectionV1, WorkloadProfileUseV2 } from "../workload-profile-v1.ts";
 
 export const HARNESS_EXECUTION_MODES = Object.freeze(["embedded", "dedicated"] as const);
 
@@ -19,6 +20,7 @@ export interface Agent extends Scope {
   readonly executionMode: HarnessExecutionMode;
   readonly servicePrincipalId: string;
   readonly activeRevisionId?: string;
+  readonly workloadProfileSelection?: WorkloadProfileSelectionV1;
   readonly createdAt: string;
 }
 
@@ -51,6 +53,7 @@ export interface AgentRevision extends Scope {
   readonly secretBindings?: SecretBindings;
   readonly serviceAccount?: ServiceAccountRevision;
   readonly servicePrincipalId: string;
+  readonly workloadProfileUse?: WorkloadProfileUseV2;
   readonly createdAt: string;
 }
 
@@ -66,5 +69,8 @@ export function freezeAgentRevision(revision: AgentRevision): Readonly<AgentRevi
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    ...(revision.workloadProfileUse === undefined
+      ? {}
+      : { workloadProfileUse: immutableCopy(revision.workloadProfileUse) }),
   });
 }

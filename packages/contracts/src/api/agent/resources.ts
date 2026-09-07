@@ -1,4 +1,8 @@
 import { Type } from "typebox";
+import {
+  WorkloadProfileSelectionSchemaV1,
+  WorkloadProfileUseSchemaV2,
+} from "../../workload-profile-v1.ts";
 
 import {
   AgentId,
@@ -35,6 +39,7 @@ export const UpdateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(Type.Union([ServiceAccountId, Type.Null()])),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
   },
   { additionalProperties: false },
 );
@@ -49,6 +54,7 @@ export const AgentSchema = Type.Object(
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
     activeRevisionId: Type.Optional(RevisionId),
+    workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
     createdAt: Timestamp,
   },
   { additionalProperties: false },
@@ -87,6 +93,7 @@ export const AgentRevisionSchema = Type.Object(
       { id: Type.String({ minLength: 1 }), implementation: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
     ),
+    workloadProfileUse: Type.Optional(WorkloadProfileUseSchemaV2),
     secretDriverId: Type.Optional(Type.String({ minLength: 1 })),
     secretBindings: Type.Optional(SecretBindings),
     serviceAccount: Type.Optional(

@@ -10,6 +10,14 @@ import type {
 } from "@openclaw-enterprise/contracts/api/resources";
 import type { AgentApiRoute, agentApiRoutes } from "@openclaw-enterprise/contracts/api/routes";
 import type { Agent, AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
+import {
+  decodeLifecycleDeployV2,
+  type LifecycleDeployCommandV2,
+} from "@openclaw-enterprise/contracts/lifecycle-deploy-v2";
+import {
+  decodeLifecycleAdmissionV1,
+  type LifecycleAcceptedReceiptV1,
+} from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
 import type { AgentServicePort } from "@openclaw-enterprise/occ";
 import { failure, validateConfiguration } from "../http/errors.ts";
 import type { RequestContext } from "../http/identity.ts";
@@ -47,8 +55,12 @@ export interface AgentOperationHandlerOptions {
     request: FastifyRequest,
     operation: AgentDeploymentOperation,
     context: RequestContext,
-    input: { readonly namespaceId: string; readonly agentId: string },
-  ) => Promise<Readonly<AgentRevision>>;
+    input: {
+      readonly namespaceId: string;
+      readonly agentId: string;
+      readonly command: LifecycleDeployCommandV2;
+    },
+  ) => Promise<LifecycleAcceptedReceiptV1>;
 }
 
 function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
@@ -61,6 +73,9 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     executionMode: agent.executionMode,
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
+    ...(agent.workloadProfileSelection === undefined
+      ? {}
+      : { workloadProfileSelection: agent.workloadProfileSelection }),
     createdAt: agent.createdAt,
   };
 }
@@ -81,6 +96,9 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
     ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
     ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
+    ...(revision.workloadProfileUse === undefined
+      ? {}
+      : { workloadProfileUse: revision.workloadProfileUse }),
     createdAt: revision.createdAt,
   };
 }
@@ -148,6 +166,9 @@ export function createAgentOperationHandlers(
             ...(body.serviceAccountId === undefined
               ? {}
               : { serviceAccountId: body.serviceAccountId }),
+            ...(body.workloadProfileSelection === undefined
+              ? {}
+              : { workloadProfileSelection: body.workloadProfileSelection }),
           }),
         (updated) => ({ kind: "agent", id: updated.id, namespaceId }),
         clientAgent,
@@ -168,11 +189,23 @@ export function createAgentOperationHandlers(
     },
     deployAgent: async (request, reply, operation) => {
       const { context, namespaceId, agentId } = resolveAgent(request);
-      const revision = await options.runDeployment(request, operation, context, {
+      const command = decodeLifecycleDeployV2("command", request.body);
+      if (command.kind !== "valid")
+        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
+      const result = await options.runDeployment(request, operation, context, {
         namespaceId,
         agentId,
+        command: command.value,
       });
-      reply.status(202).send({ data: clientRevision(revision), meta: { requestId: request.id } });
+      const receipt = decodeLifecycleAdmissionV1("mutationReceipt", result);
+      if (
+        receipt.kind !== "valid" ||
+        receipt.value.disposition !== "accepted" ||
+        receipt.value.operation.kind !== "deploy" ||
+        receipt.value.operation.operationRef !== command.value.operationRef
+      )
+        throw failure(503, "DEPENDENCY_UNAVAILABLE", "The deployment receipt is unavailable.");
+      reply.status(202).send({ data: receipt.value, meta: { requestId: request.id } });
     },
     listAgentRevisions: async (request, reply) => {
       const { context, service, namespaceId, agentId } = resolveAgent(request);
