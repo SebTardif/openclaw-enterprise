@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import pg from "pg";
 import {
   MigrationExecutionError,
   createMigrationDiagnostics,
@@ -13,10 +15,12 @@ import {
   readMigrationCatalog,
   runMigrations,
   runMigrationsInTransaction,
+  trackMigrationClient,
 } from "../../scripts/turn-journal-phase-upgrade.mjs";
 
-// These cases execute the original catalog reader and refusal paths. They do
-// not simulate transactions, a migration ledger, codecs or durable application.
+// These cases execute the original catalog reader, refusal paths and client
+// ownership controls. Declared control-flow acknowledgments below do not model
+// a migration ledger, codec output, SQL success or durable application.
 // The owner must materialize its descriptor before configured catalog cases run.
 const configured = {
   skip:
@@ -324,6 +328,286 @@ test(
     assert.equal(attempts, 1);
   },
 );
+
+test(
+  "acquired client query rejection and its separate error event remain one safe refusal",
+  configured,
+  async () => {
+    const client = new pg.Client();
+    const actualQuery = client.query.bind(client);
+    const queries = [];
+    const releaseArguments = [];
+    const idleErrors = [];
+    const idleListener = (error) => idleErrors.push(error);
+    const connectionFailure = Object.assign(new Error("private acquired connection failure"), {
+      code: "08006",
+    });
+    let acquisitions = 0;
+    let networkEntries = 0;
+    let escapedEvent;
+    let emitted = false;
+    let listenersDuringRelease = 0;
+    client.connect = () => {
+      networkEntries += 1;
+      throw new Error("This controlled client must never open a connection.");
+    };
+    client.query = (...args) => {
+      const statement = typeof args[0] === "string" ? args[0] : args[0].text;
+      queries.push(statement);
+      if (queries.length === 1) {
+        assert.equal(statement, "begin isolation level read committed");
+        // This single control-flow acknowledgment reaches the real isolation
+        // refusal boundary. It is not a server transaction or SQL-success claim.
+        return Promise.resolve({ rows: [] });
+      }
+      const pendingQuery = actualQuery(...args);
+      if (!emitted) {
+        emitted = true;
+        assert.equal(statement, "SHOW transaction_isolation");
+        queueMicrotask(() => {
+          try {
+            // The selected pg.Client implementation rejects its queued query
+            // and emits the separate client error; no socket is connected.
+            client._handleErrorEvent(connectionFailure);
+          } catch (error) {
+            escapedEvent = error;
+          }
+        });
+      }
+      return pendingQuery;
+    };
+    client.release = (discard) => {
+      releaseArguments.push(discard);
+      listenersDuringRelease = client.listenerCount("error");
+      // Model only the pool's listener handoff, without acquiring or returning
+      // a real database connection. The production owner must retain this one.
+      client.on("error", idleListener);
+    };
+    try {
+      await assert.rejects(
+        runMigrations(
+          {
+            async connect() {
+              acquisitions += 1;
+              return client;
+            },
+          },
+          { migrationsFolder: reviewedFolder() },
+        ),
+        (error) => {
+          migrationError("MIGRATION_FAILED")(error);
+          assert.deepEqual(migrationFailureLogFields(error), {
+            code: "MIGRATION_FAILED",
+            outcome: "not-committed",
+            operation: "isolation-query",
+            result: "sqlstate:08006",
+          });
+          return true;
+        },
+      );
+      assert.equal(escapedEvent, undefined);
+      assert.equal(emitted, true);
+      assert.deepEqual(queries, [
+        "begin isolation level read committed",
+        "SHOW transaction_isolation",
+        "rollback",
+      ]);
+      assert.equal(acquisitions, 1);
+      assert.equal(networkEntries, 0);
+      assert.deepEqual(releaseArguments, [true]);
+      assert.equal(listenersDuringRelease, 1);
+      assert.deepEqual(client.listeners("error"), [idleListener]);
+      assert.deepEqual(idleErrors, []);
+      assert.equal(client._connected, false);
+      assert.equal(client._queryQueue.length, 0);
+      assert.equal(client._sentQueryQueue.length, 0);
+    } finally {
+      client.removeListener("error", idleListener);
+      await client.end();
+    }
+  },
+);
+
+// These cases exercise the same lifetime object used by runMigrations. Their
+// bodyReturned flags describe controlled owner states, never a real SQL commit.
+test("acquired-client error observation ignores opaque payloads and cannot escape", () => {
+  const client = new EventEmitter();
+  const released = [];
+  client.release = (discard) => released.push(discard);
+  const lifetime = trackMigrationClient(client);
+  let touched = 0;
+  const opaque = new Proxy(
+    {},
+    {
+      get() {
+        touched += 1;
+        throw new Error("private event payload");
+      },
+      getOwnPropertyDescriptor() {
+        touched += 1;
+        throw new Error("private event descriptor");
+      },
+    },
+  );
+  assert.equal(Object.isFrozen(lifetime), true);
+  assert.doesNotThrow(() => client.emit("error", opaque));
+  assert.throws(() => lifetime.assertHealthy(), migrationError("MIGRATION_FAILED"));
+  assert.throws(() => lifetime.release(false), migrationError("MIGRATION_FAILED"));
+  assert.deepEqual(released, [true]);
+  assert.equal(client.listenerCount("error"), 0);
+  assert.equal(touched, 0);
+});
+
+test("falsey acquired-client event payloads still prevent successful release", () => {
+  for (const payload of [undefined, null, false, 0, ""]) {
+    const client = new EventEmitter();
+    const released = [];
+    client.release = (discard) => released.push(discard);
+    const lifetime = trackMigrationClient(client);
+    assert.doesNotThrow(() => client.emit("error", payload));
+    assert.throws(() => lifetime.assertHealthy(), migrationError("MIGRATION_FAILED"));
+    assert.throws(() => lifetime.release(false), migrationError("MIGRATION_FAILED"));
+    assert.deepEqual(released, [true]);
+    assert.equal(client.listenerCount("error"), 0);
+  }
+});
+
+test("clean release transfers listener ownership once and preserves unrelated listeners", () => {
+  const client = new EventEmitter();
+  const released = [];
+  const foreignEvents = [];
+  const idleEvents = [];
+  const foreign = (error) => foreignEvents.push(error);
+  const idle = (error) => idleEvents.push(error);
+  client.on("error", foreign);
+  client.release = (discard) => {
+    released.push(discard);
+    assert.equal(client.listenerCount("error"), 2);
+    client.on("error", idle);
+  };
+  const lifetime = trackMigrationClient(client);
+  assert.equal(lifetime.assertHealthy(), undefined);
+  assert.equal(lifetime.release(false, true), undefined);
+  assert.deepEqual(released, [false]);
+  assert.deepEqual(client.listeners("error"), [foreign, idle]);
+  assert.throws(
+    () => lifetime.release(false, true),
+    migrationError("MIGRATION_COMMIT_UNKNOWN", "unknown"),
+  );
+  assert.deepEqual(released, [false]);
+  const afterHandoff = new Error("foreign idle observation");
+  assert.doesNotThrow(() => client.emit("error", afterHandoff));
+  assert.deepEqual(foreignEvents, [afterHandoff]);
+  assert.deepEqual(idleEvents, [afterHandoff]);
+  assert.deepEqual(client.listeners("error"), [foreign, idle]);
+});
+
+test("first query diagnostic survives a separate client event and failing release", () => {
+  const client = new EventEmitter();
+  const diagnostics = createMigrationDiagnostics();
+  const released = [];
+  const lifetime = trackMigrationClient(client, diagnostics);
+  diagnostics.capture("ledger-publish", { code: "23505" }, { queryFailure: true });
+  client.emit("error", new Error("private connection replacement"));
+  client.release = (discard) => {
+    released.push(discard);
+    throw new Error("private release replacement");
+  };
+  assert.throws(
+    () => lifetime.release(false),
+    (error) => {
+      migrationError("MIGRATION_FAILED")(error);
+      const fields = migrationFailureLogFields(error);
+      assert.deepEqual(fields, {
+        code: "MIGRATION_FAILED",
+        outcome: "not-committed",
+        operation: "ledger-publish",
+        result: "sqlstate:23505",
+      });
+      assertSafeDiagnostic(fields);
+      return true;
+    },
+  );
+  assert.deepEqual(released, [true]);
+  assert.equal(client.listenerCount("error"), 0);
+});
+
+test("a client fault after the controlled body-return boundary always remains unknown", () => {
+  const client = new EventEmitter();
+  const diagnostics = createMigrationDiagnostics();
+  const released = [];
+  client.release = (discard) => released.push(discard);
+  const lifetime = trackMigrationClient(client, diagnostics);
+  diagnostics.capture(
+    "ledger-owner-query",
+    new MigrationExecutionError("MIGRATION_OWNER_REQUIRED"),
+  );
+  client.emit("error", new Error("private post-body failure"));
+  for (const action of [() => lifetime.assertHealthy(true), () => lifetime.release(false, true)]) {
+    assert.throws(action, (error) => {
+      migrationError("MIGRATION_COMMIT_UNKNOWN", "unknown")(error);
+      const fields = migrationFailureLogFields(error);
+      assert.equal(fields.operation, "ledger-owner-query");
+      assert.equal(fields.result, undefined);
+      assertSafeDiagnostic(fields);
+      return true;
+    });
+  }
+  assert.deepEqual(released, [true]);
+  assert.equal(client.listenerCount("error"), 0);
+});
+
+test("release-time client error is observed through handoff before success can escape", () => {
+  const client = new EventEmitter();
+  const released = [];
+  const foreignEvents = [];
+  const idleEvents = [];
+  const foreign = (error) => foreignEvents.push(error);
+  const idle = (error) => idleEvents.push(error);
+  const releaseError = new Error("private release-time event");
+  client.on("error", foreign);
+  client.release = (discard) => {
+    released.push(discard);
+    assert.equal(client.listenerCount("error"), 2);
+    client.on("error", idle);
+    client.emit("error", releaseError);
+  };
+  const lifetime = trackMigrationClient(client);
+  assert.equal(lifetime.assertHealthy(true), undefined);
+  assert.throws(
+    () => lifetime.release(false, true),
+    (error) => {
+      migrationError("MIGRATION_COMMIT_UNKNOWN", "unknown")(error);
+      assert.deepEqual(migrationFailureLogFields(error), {
+        code: "MIGRATION_COMMIT_UNKNOWN",
+        outcome: "unknown",
+        operation: "transaction-settlement",
+      });
+      return true;
+    },
+  );
+  assert.deepEqual(released, [false]);
+  assert.deepEqual(foreignEvents, [releaseError]);
+  assert.deepEqual(idleEvents, [releaseError]);
+  assert.deepEqual(client.listeners("error"), [foreign, idle]);
+});
+
+test("release exception without an event cannot turn a controlled post-body result into success", () => {
+  const client = new EventEmitter();
+  const released = [];
+  client.release = (discard) => {
+    released.push(discard);
+    throw undefined;
+  };
+  const lifetime = trackMigrationClient(client);
+  assert.equal(lifetime.assertHealthy(true), undefined);
+  assert.throws(
+    () => lifetime.release(false, true),
+    migrationError("MIGRATION_COMMIT_UNKNOWN", "unknown"),
+  );
+  assert.deepEqual(released, [false]);
+  assert.equal(client.listenerCount("error"), 0);
+});
 
 function assertSafeDiagnostic(fields) {
   assert.equal(Object.isFrozen(fields), true);

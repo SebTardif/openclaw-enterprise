@@ -417,25 +417,84 @@ export async function runMigrationsInTransaction(transaction, { migrationsFolder
   }
 }
 
+/** Observe only this checked-out client's faults through its synchronous pool
+ * release. This object does not execute or authorize a transaction. Event payloads
+ * are deliberately ignored so an awaited query failure keeps its own diagnostic. */
+export function trackMigrationClient(client, diagnostics = createMigrationDiagnostics()) {
+  let faulted = false;
+  let released = false;
+  const onError = () => {
+    faulted = true;
+  };
+  client.on("error", onError);
+
+  function captureFailure(error, bodyReturned) {
+    diagnostics.capture(bodyReturned ? "transaction-settlement" : "transaction-entry", error);
+  }
+
+  function assertHealthy(bodyReturned = false) {
+    if (!faulted) return;
+    const error = new MigrationExecutionError("MIGRATION_FAILED");
+    captureFailure(error, bodyReturned);
+    throw diagnostics.failure(error, bodyReturned);
+  }
+
+  return Object.freeze({
+    assertHealthy,
+    release(discard, bodyReturned = false) {
+      if (released) {
+        const error = new MigrationExecutionError("MIGRATION_FAILED");
+        captureFailure(error, bodyReturned);
+        throw diagnostics.failure(error, bodyReturned);
+      }
+      released = true;
+      try {
+        // A prior fault discards the client. Keep observation active while pg
+        // reattaches its idle listener and completes the release handoff.
+        client.release(discard || faulted);
+      } catch (error) {
+        faulted = true;
+        captureFailure(error, bodyReturned);
+      } finally {
+        try {
+          client.removeListener("error", onError);
+        } catch (error) {
+          faulted = true;
+          captureFailure(error, bodyReturned);
+        }
+      }
+      assertHealthy(bodyReturned);
+    },
+  });
+}
+
 /** The pool entry owns one client and one transaction, with no retry. Drizzle
  * discards the COMMIT result and may replace its failure with a ROLLBACK error.
  * Therefore every failure after our callback returns has unknown commit status. */
 export async function runMigrations(pool, { migrationsFolder }) {
   const diagnostics = createMigrationDiagnostics();
   let client;
+  let clientLifetime;
   let bodyReturned = false;
   let committed = false;
+  let result;
+  let failure;
   try {
     const catalog = readCatalog(migrationsFolder, diagnostics);
     const { drizzle } = atSync(diagnostics, "adapter-load", () =>
       dependency("drizzle-orm/node-postgres"),
     );
-    client = await at(diagnostics, "connection-acquire", () => pool.connect());
+    await at(diagnostics, "connection-acquire", async () => {
+      client = await pool.connect();
+      clientLifetime = trackMigrationClient(client, diagnostics);
+    });
+    clientLifetime.assertHealthy();
     const database = atSync(diagnostics, "adapter-load", () => drizzle(client));
-    const result = await database.transaction(
+    result = await database.transaction(
       async (transaction) => {
         try {
           const applied = await applyCatalog(transaction, catalog, diagnostics);
+          clientLifetime.assertHealthy();
           bodyReturned = true;
           return applied;
         } catch (error) {
@@ -446,22 +505,30 @@ export async function runMigrations(pool, { migrationsFolder }) {
       { isolationLevel: "read committed" },
     );
     committed = true;
-    return result;
+    clientLifetime.assertHealthy(bodyReturned);
   } catch (error) {
     // Drizzle owns BEGIN/COMMIT/ROLLBACK. This outer observation may be a
     // replacement rollback error, so it cannot supply an original SQLSTATE.
     diagnostics.capture(bodyReturned ? "transaction-settlement" : "transaction-entry", error);
-    throw diagnostics.failure(error, bodyReturned);
+    failure = diagnostics.failure(error, bodyReturned);
   } finally {
     if (client !== undefined) {
       try {
-        // Discard a failed connection; never let disposal conceal uncertainty.
-        client.release(!committed);
-      } catch {
-        // Disposal cannot change the transaction result already observed above.
+        if (clientLifetime !== undefined) {
+          clientLifetime.release(!committed, bodyReturned);
+        } else {
+          // Listener installation failed before transaction use.
+          client.release(true);
+        }
+      } catch (error) {
+        diagnostics.capture(bodyReturned ? "transaction-settlement" : "transaction-entry", error);
+        failure = diagnostics.failure(error, bodyReturned);
       }
     }
   }
+  // A release-time fault must be observed before success leaves this owner.
+  if (failure !== undefined) throw failure;
+  return result;
 }
 
 async function applyCatalog(transaction, catalog, diagnostics) {
