@@ -653,6 +653,29 @@ async function assertConversion(query, cases, before, insideTransaction = true) 
       "Full history, including later metadata after release, must remain byte-identical.",
     );
   }
+  const commonBindings = [cases.accepted, cases.cancelled, ...cases.compatibilityCommon];
+  const dispatchedBindings = [cases.consumed, cases.released, ...cases.compatibilityFull];
+  for (const [values, dispatched] of [
+    ...commonBindings.map((values) => [values, false]),
+    ...dispatchedBindings.map((values) => [values, true]),
+  ]) {
+    const record = (await attemptRow(query, values)).row.record;
+    parseTurnJournalV1("attempt", record);
+    for (const key of ["dispatchOperationRef", "authorityDecisionRef", "expiresAt"])
+      assert.equal(Object.hasOwn(record.binding, key), dispatched);
+    const projected = await query.query(
+      "SELECT occ.turn_journal_phase_common_binding($1::jsonb) AS binding",
+      [JSON.stringify(record)],
+    );
+    assert.equal(projected.rows.length, 1);
+    assert.deepEqual(
+      projected.rows[0].binding,
+      commonAttemptRecord(values).binding,
+      "The installed SQL function retains the complete original common binding, including extension payloads.",
+    );
+    for (const key of ["dispatchOperationRef", "authorityDecisionRef", "expiresAt"])
+      assert.equal(Object.hasOwn(projected.rows[0].binding, key), false);
+  }
   const historicalRelease = (
     await query.query(
       "SELECT request,record FROM occ.turn_journal_operations WHERE operation_kind='release' AND operation_ref=$1",
