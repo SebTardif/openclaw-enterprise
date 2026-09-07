@@ -215,7 +215,7 @@ export const phaseUpgradeDescriptor = freeze({
     tag: "0028_turn_journal_attempt_phase",
     breakpoints: true,
   },
-  hash: "1a396a7f3186a1a1be5e5bf672ea6d952c20bc332e72193d35908364e80beb42",
+  hash: "d428a5098a1a4c2f7fc4fbfd486e99a92a5bf41d4155d4980ba795bbfcd4bbf1",
   statementIndex: 1,
   statement:
     "\nDO $turn_journal_codec_step$\nBEGIN\n  RAISE EXCEPTION 'This migration requires the original locked journal codec step'\n    USING ERRCODE = '0A000';\nEND;\n$turn_journal_codec_step$;\n",
