@@ -10,7 +10,10 @@ import {
   PostgresPlatformState,
   RuntimeServiceTrustService,
 } from "@openclaw-enterprise/occ";
+import { createWorkloadProfilePurposeAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import { createWorkloadProfileUseResolverV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import { createPostgresControllerAuth } from "../auth/index.ts";
+import { createControllerWorkloadProfileSessionSecurityV1 } from "../auth/workload-profile-session-security.ts";
 import { createFastifyApp } from "../index.ts";
 import type {
   InstallationRuntimeDrivers,
@@ -94,6 +97,11 @@ export async function composeProduction(config: ProductionConfig) {
       baseURL: config.authBaseURL,
       pool,
     });
+    // Construct the original stable source before the controller. Every later
+    // recovery purpose keeps this originating request's remaining ceiling.
+    const workloadProfileRequests = auth.admissionVerifier.createWorkloadProfileRequestCustodyV1({
+      maxRequestLifetimeMs: 30_000,
+    });
 
     const iamState = await state.loadNativeIAMState(persistedInstallation.id);
     validatePersistedNativeIAMState(iamState);
@@ -139,6 +147,29 @@ export async function composeProduction(config: ProductionConfig) {
 
     const controller = new OpenClawController(persistedInstallation, {
       state,
+      workloadProfiles: {
+        invocations: workloadProfileRequests.invocations,
+        create(context) {
+          if (context.state !== state || context.installation.id !== persistedInstallation.id)
+            throw new Error("The workload profile factory requires the original controller state.");
+          const security = createControllerWorkloadProfileSessionSecurityV1({
+            requests: workloadProfileRequests,
+            reader: state.workloadProfileSessionSecurityV1(),
+          });
+          const account = createWorkloadProfilePurposeAccountParticipantV1({
+            owner: state.workloadProfileAccountOwnerV1(),
+            requests: workloadProfileRequests.requests,
+            security,
+          });
+          const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
+          return {
+            enrollment: profile.enrollment,
+            // TODO: Compose the original candidate, complete capability and
+            // inserted-row sources when qualified. Preparing Use stays unavailable.
+            use: createWorkloadProfileUseResolverV2(profile.activeReader),
+          };
+        },
+      },
       recordOperations: true,
       providers: installation.provider,
       loggingLevel: config.drivers.installation.logging.level,
@@ -183,6 +214,7 @@ export async function composeProduction(config: ProductionConfig) {
         validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
     });
     const app = createFastifyApp({
+      workloadProfileRequests,
       runtimeServiceTrust,
       controller,
       iamDriver,

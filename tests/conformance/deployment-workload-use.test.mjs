@@ -46,6 +46,444 @@ const acceptedReceipt = (operationRef) => ({
   },
 });
 
+// Receiving continuation: actual auth, HTTP, IAM and memory transactions. Only
+// service methods are observed/faulted, before account/profile enrollment. This
+// establishes neither PostgreSQL composition nor a successful profile deployment.
+function receiverLatch() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function receiverEntered(latch, pending) {
+  await Promise.race([
+    latch.promise,
+    pending.then(() => {
+      assert.fail("request settled before the expected receiving callback");
+    }),
+  ]);
+}
+async function receiverFixture(t, mode = "same") {
+  const [http, authModule, authHelpers, occ, iamModule, auditModule, harness] = await Promise.all([
+    import("../../apps/controller/src/index.ts"),
+    import("../../apps/controller/src/auth/index.ts"),
+    import("../helpers/auth-session.mjs"),
+    import("../../packages/occ/src/index.ts"),
+    import("../../packages/iam/src/index.ts"),
+    import("../../packages/audit/src/index.ts"),
+    import("../../apps/controller/src/composition/production-harness.ts"),
+  ]);
+  const origin = "http://127.0.0.1";
+  const credentials = await authHelpers.createTestAuthPrincipal({
+    installationId,
+    baseURL: origin,
+  });
+  const source = credentials.auth.admissionVerifier.createWorkloadProfileRequestCustodyV1({
+    maxRequestLifetimeMs: 30_000,
+  });
+  const otherAuth = authModule.createControllerAuth({
+    installationId,
+    mode: "development",
+    baseURL: origin,
+    secret: "controlled-foreign-auth-secret-with-at-least-thirty-two-bytes",
+    secureCookies: false,
+  });
+  const foreign = otherAuth.admissionVerifier.createWorkloadProfileRequestCustodyV1({
+    maxRequestLifetimeMs: 30_000,
+  });
+  const auditSink = new auditModule.InMemoryAuditSink();
+  const state = new occ.InMemoryPlatformState({ auditSink });
+  const seed = credentials.seed;
+  const iam = new iamModule.NativeIAMDriver(
+    {
+      loadNativeIAMState: async () => ({
+        identities: [seed.principal],
+        groups: [],
+        memberships: [],
+        roles: seed.roles,
+        bindings: seed.bindings,
+        restrictions: [],
+      }),
+    },
+    { id: "receiver-native-iam" },
+  );
+  const controller = new occ.OpenClawController(
+    { id: installationId, name: "Controlled HTTP receiver", createdAt: acceptedAt },
+    { state, recordOperations: false },
+  );
+  controller.registerDriver(iam);
+  controller.selectDriver("iam", iam.id);
+  const options = {
+    controller,
+    auth: credentials.auth,
+    iamDriver: iam,
+    auditSink,
+    publicOrigin: origin,
+    development: { enabled: false, installationId },
+    resolveHarness: harness.resolveApprovedHarness,
+    ...(mode === "absent"
+      ? {}
+      : { workloadProfileRequests: mode === "foreign" ? foreign : source }),
+  };
+  const app = http.createFastifyApp(options);
+  const transports = [];
+  app.addHook("onRequest", async (request, reply) => {
+    transports.push({ request, reply });
+  });
+  const releases = [],
+    requests = [];
+  t.after(async () => {
+    for (const release of releases) release();
+    await Promise.allSettled(requests);
+    await app.close();
+  });
+  await app.ready();
+  const session = await authHelpers.signInToControllerApp(app, credentials);
+  function request(method, path, body, extra = {}) {
+    const pending = app.inject({
+      method,
+      url: path,
+      remoteAddress: "127.0.0.1",
+      headers: {
+        host: "127.0.0.1",
+        origin,
+        ...(extra.anonymous ? {} : { cookie: session.cookie }),
+        "content-type": "application/json",
+        ...extra.headers,
+      },
+      payload: JSON.stringify(body),
+    });
+    requests.push(pending);
+    return pending;
+  }
+  return {
+    app,
+    options,
+    createFastifyApp: http.createFastifyApp,
+    controller,
+    state,
+    source,
+    foreign,
+    occ,
+    transports,
+    principalId: seed.principal.id,
+    request,
+    gate() {
+      const gate = receiverLatch();
+      releases.push(gate.resolve);
+      return gate;
+    },
+    join(work) {
+      requests.push(work);
+      work.catch(() => {});
+      return work;
+    },
+    deploy(body = command(), extra) {
+      return request("POST", `/namespaces/${namespaceId}/agents/${agentId}/deploy`, body, extra);
+    },
+    update(selected = true) {
+      return request("PATCH", `/namespaces/${namespaceId}/agents/${agentId}`, {
+        configurationId,
+        ...(selected
+          ? { workloadProfileSelection: command().expectedDraft.workloadProfileSelection }
+          : {}),
+      });
+    },
+    async unchanged() {
+      assert.deepEqual(
+        await state.read(async (view) => ({
+          agents: await view.agents.listAgents(namespaceId),
+          revisions: await view.revisions.listRevisions(namespaceId, agentId),
+        })),
+        { agents: [], revisions: [] },
+      );
+      assert.deepEqual(state.pendingOperations(), []);
+    },
+  };
+}
+
+test("Workload profile receiver keeps one genuine source and closes the completed request", async (t) => {
+  const f = await receiverFixture(t);
+  let observed;
+  t.mock.method(
+    f.controller.deployment,
+    "deployAgentCommand",
+    async (actor, input, resolver, admission) => {
+      const handle = await f.source.invocations.forCurrentInvocation();
+      await assert.rejects(f.foreign.invocations.forCurrentInvocation());
+      assert.equal(actor, f.principalId);
+      assert.deepEqual(plain(input), { namespaceId, agentId, command: command() });
+      assert.ok(Object.isFrozen(input));
+      assert.ok(Object.isFrozen(input.command.expectedDraft.workloadProfileSelection));
+      assert.equal(resolver, f.options.resolveHarness);
+      assert.equal(admission.transitionRef, input.command.operationRef);
+      const transport = f.transports.find(({ request }) => request.id === admission.requestId);
+      assert.ok(transport);
+      assert.notEqual(input.command, transport.request.body);
+      observed = { actor, input, handle, transport };
+      throw new f.occ.ResourceConflictError("controlled receiver observation");
+    },
+  );
+  const response = await f.deploy();
+  assert.equal(response.statusCode, 409);
+  assert.ok(observed, "actual admitted invocation must reach the observed service");
+  await assert.rejects(f.source.invocations.forCurrentInvocation());
+  await assert.rejects(f.foreign.invocations.forCurrentInvocation());
+  let entered = false;
+  // Unused recovery purpose distinguishes closure from invocation reuse.
+  await assert.rejects(
+    f.source.withWorkloadProfileInvocation(
+      observed.transport.request,
+      Object.freeze({
+        purpose: "workload-profile-deployment-recovery",
+        binding: Object.freeze([observed.actor, observed.input]),
+      }),
+      async () => {
+        entered = true;
+      },
+    ),
+  );
+  assert.equal(entered, false);
+  assert.throws(() => f.createFastifyApp(f.options), "same custody cannot attach to another app");
+  let updated = false;
+  t.mock.method(f.controller.agent, "updateAgent", async (actor, input) => {
+    assert.equal(actor, f.principalId);
+    assert.deepEqual(plain(input), {
+      namespaceId,
+      agentId,
+      configurationId,
+      workloadProfileSelection: command().expectedDraft.workloadProfileSelection,
+    });
+    assert.ok(Object.isFrozen(input));
+    assert.notEqual(await f.source.invocations.forCurrentInvocation(), observed.handle);
+    updated = true;
+    throw new f.occ.ResourceConflictError("selected update receiver observation");
+  });
+  assert.equal((await f.update()).statusCode, 409);
+  assert.equal(updated, true);
+  await f.unchanged();
+});
+
+test("Workload profile receiver refuses missing or foreign custody before selected callbacks", async (t) => {
+  for (const mode of ["absent", "foreign"]) {
+    const f = await receiverFixture(t, mode);
+    let transactions = 0,
+      deployments = 0,
+      updates = 0;
+    const transact = f.controller.transact.bind(f.controller);
+    t.mock.method(f.controller, "transact", async (work) => {
+      transactions += 1;
+      return transact(work);
+    });
+    t.mock.method(f.controller.deployment, "deployAgentCommand", async () => {
+      deployments += 1;
+      assert.fail("no selected deployment");
+    });
+    t.mock.method(f.controller.agent, "updateAgent", async () => {
+      updates += 1;
+      throw new f.occ.ResourceConflictError("ordinary update receiver observation");
+    });
+    for (const response of [await f.deploy(), await f.update()]) {
+      // Requires the original auth-owned typed-unavailability correction; no
+      // blanket receiver catch may convert errors thrown by admitted callbacks.
+      assert.equal(response.statusCode, 503, mode);
+      assert.equal(response.json().error.code, "DEPENDENCY_UNAVAILABLE");
+    }
+    assert.equal(transactions, 0);
+    assert.equal(deployments, 0);
+    assert.equal(updates, 0);
+    if (mode === "absent") {
+      assert.equal((await f.update(false)).statusCode, 409);
+      assert.equal(updates, 1, "omission still enters the original ordinary callback");
+      assert.equal(transactions, 1);
+    }
+    await f.unchanged();
+  }
+});
+
+test("Workload profile receiver requires actual session and browser admission", async (t) => {
+  const f = await receiverFixture(t);
+  let calls = 0;
+  t.mock.method(f.controller.deployment, "deployAgentCommand", async () => {
+    calls += 1;
+    assert.fail("unadmitted callback");
+  });
+  assert.equal((await f.deploy(command(), { anonymous: true })).statusCode, 401);
+  assert.equal(
+    (await f.deploy(command(), { headers: { origin: "https://foreign.example.invalid" } }))
+      .statusCode,
+    403,
+  );
+  assert.equal(calls, 0);
+  await f.unchanged();
+});
+
+test("Workload profile receiver starts fresh recovery after original transaction unwind", async (t) => {
+  const f = await receiverFixture(t);
+  const terminal = f.gate(),
+    atTerminal = f.gate(),
+    stale = f.gate();
+  const events = [];
+  let first,
+    staleProbe,
+    recoveryCalls = 0,
+    transactions = 0;
+  const transact = f.controller.transact.bind(f.controller);
+  t.mock.method(f.controller, "transact", async (work) => {
+    transactions += 1;
+    events.push("transaction:start");
+    try {
+      return await transact(work);
+    } finally {
+      events.push("transaction:drain");
+      atTerminal.resolve();
+      await terminal.promise;
+      events.push("transaction:end");
+    }
+  });
+  t.mock.method(f.controller.deployment, "deployAgentCommand", async (actor, input) => {
+    events.push("deployment");
+    first = { actor, input, handle: await f.source.invocations.forCurrentInvocation() };
+    staleProbe = f.join(
+      (async () => {
+        await stale.promise;
+        await assert.rejects(
+          f.source.invocations.forCurrentInvocation(),
+          "old deployment invocation must have unwound",
+        );
+      })(),
+    );
+    throw new f.occ.PostgresCommitOutcomeUnknownError();
+  });
+  t.mock.method(f.controller.deployment, "recoverDeployAgentCommand", async (actor, input) => {
+    recoveryCalls += 1;
+    events.push("recovery");
+    assert.equal(actor, first.actor);
+    assert.equal(input, first.input);
+    assert.notEqual(await f.source.invocations.forCurrentInvocation(), first.handle);
+    stale.resolve();
+    await staleProbe;
+    throw new f.occ.ResourceConflictError("controlled recovery conflict");
+  });
+  const pending = f.deploy();
+  await receiverEntered(atTerminal, pending);
+  assert.equal(recoveryCalls, 0, "recovery waits for transaction final settlement");
+  terminal.resolve();
+  const response = await pending;
+  assert.equal(response.statusCode, 409);
+  assert.equal(recoveryCalls, 1);
+  assert.equal(transactions, 1, "recovery must not create another mutation transaction");
+  assert.deepEqual(events, [
+    "transaction:start",
+    "deployment",
+    "transaction:drain",
+    "transaction:end",
+    "recovery",
+  ]);
+  await assert.rejects(f.source.invocations.forCurrentInvocation());
+  await f.unchanged();
+});
+
+test("Workload profile receiver preserves callback failures without false recovery", async (t) => {
+  const f = await receiverFixture(t);
+  let injected,
+    calls = 0,
+    recoveries = 0;
+  t.mock.method(f.controller.deployment, "deployAgentCommand", async () => {
+    calls += 1;
+    await f.source.invocations.forCurrentInvocation();
+    throw injected;
+  });
+  t.mock.method(f.controller.deployment, "recoverDeployAgentCommand", async () => {
+    recoveries += 1;
+    assert.fail("only the original unknown outcome constructor selects recovery");
+  });
+  for (const [error, status] of [
+    [new f.occ.ResourceConflictError("controlled admission conflict"), 409],
+    [
+      Object.assign(new Error("controlled name-only failure"), {
+        name: "PostgresCommitOutcomeUnknownError",
+      }),
+      500,
+    ],
+  ]) {
+    injected = error;
+    assert.equal((await f.deploy()).statusCode, status);
+  }
+  assert.equal(calls, 2);
+  assert.equal(recoveries, 0);
+  await f.unchanged();
+});
+
+test("Workload profile receiver closes active custody on reply close and request abort", async (t) => {
+  const f = await receiverFixture(t);
+  const transact = f.controller.transact.bind(f.controller);
+  for (const event of ["reply-close", "request-aborted"]) {
+    const entered = f.gate(),
+      resume = f.gate(),
+      completed = f.gate(),
+      unwound = f.gate();
+    let transport,
+      fenced = false;
+    const transaction = t.mock.method(f.controller, "transact", async (work) => {
+      try {
+        return await transact(work);
+      } finally {
+        unwound.resolve();
+      }
+    });
+    const probe = t.mock.method(
+      f.controller.deployment,
+      "deployAgentCommand",
+      async (_actor, _input, _resolver, admission) => {
+        try {
+          const handle = await f.source.invocations.forCurrentInvocation();
+          transport = f.transports.find(({ request }) => request.id === admission.requestId);
+          assert.ok(transport);
+          // Body parsing completed; custody must survive until transport closure.
+          await Promise.resolve();
+          assert.equal(await f.source.invocations.forCurrentInvocation(), handle);
+          entered.resolve();
+          await resume.promise;
+          await assert.rejects(f.source.invocations.forCurrentInvocation());
+          fenced = true;
+          throw new f.occ.ResourceConflictError("controlled callback ends after transport fence");
+        } finally {
+          completed.resolve();
+        }
+      },
+    );
+    const pending = f.deploy();
+    await receiverEntered(entered, pending);
+    // Observe settlement before close can reject the injected transport.
+    const settlement = f.join(
+      pending.then(
+        (response) => {
+          assert.equal(event, "request-aborted");
+          assert.equal(response.statusCode, 409);
+          assert.equal(response.json().error.code, "RESOURCE_CONFLICT");
+        },
+        (error) => {
+          assert.equal(event, "reply-close");
+          assert.equal(error.code, "LIGHT_ECONNRESET");
+        },
+      ),
+    );
+    if (event === "reply-close") transport.reply.raw.emit("close");
+    else transport.request.raw.emit("aborted");
+    resume.resolve();
+    await completed.promise;
+    await unwound.promise;
+    await settlement;
+    assert.equal(fenced, true, event);
+    assert.equal(transaction.mock.callCount(), 1, event);
+    probe.mock.restore();
+    transaction.mock.restore();
+  }
+  await f.unchanged();
+});
+
 async function httpFixture(t) {
   // Keep the real HTTP dependency graph: no loader replacement, copied error
   // mapper or parsed-object injection may stand in for this boundary.

@@ -18,7 +18,8 @@ import {
   decodeLifecycleAdmissionV1,
   type LifecycleAcceptedReceiptV1,
 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
-import type { AgentServicePort } from "@openclaw-enterprise/occ";
+import { decodeWorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
+import type { AgentServicePort, UpdateAgentInput } from "@openclaw-enterprise/occ";
 import { failure, validateConfiguration } from "../http/errors.ts";
 import type { RequestContext } from "../http/identity.ts";
 import type { OperationHandlers } from "../http/operation-registry.ts";
@@ -49,6 +50,7 @@ export interface AgentOperationHandlerOptions {
     mutate: () => Promise<T>,
     resource: (result: T) => AgentMutationResource,
     project: (result: T) => Result,
+    selectedUpdate?: UpdateAgentInput,
   ) => Promise<Result>;
   /** Composition retains admission correlation, transaction ownership, and COMMIT recovery. */
   readonly runDeployment: (
@@ -152,26 +154,31 @@ export function createAgentOperationHandlers(
     updateAgent: async (request, reply, operation) => {
       const { context, service, namespaceId, agentId } = resolveAgent(request);
       const body = request.body as UpdateAgentBody;
+      const selection =
+        body.workloadProfileSelection === undefined
+          ? undefined
+          : decodeWorkloadProfileSelectionV1(body.workloadProfileSelection);
+      if (selection !== undefined && selection.kind !== "valid")
+        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
+      // The issuer and the service receive the same detached original operands.
+      // The original selection decoder supplies its canonical nested value.
+      const input: UpdateAgentInput = Object.freeze({
+        namespaceId,
+        agentId,
+        configurationId: body.configurationId,
+        ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
+        ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),
+        ...(body.serviceAccountId === undefined ? {} : { serviceAccountId: body.serviceAccountId }),
+        ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
+      });
       const agent = await options.runAgentMutation(
         request,
         operation,
         context,
-        () =>
-          service.updateAgent(context.actorId, {
-            namespaceId,
-            agentId,
-            configurationId: body.configurationId,
-            ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
-            ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),
-            ...(body.serviceAccountId === undefined
-              ? {}
-              : { serviceAccountId: body.serviceAccountId }),
-            ...(body.workloadProfileSelection === undefined
-              ? {}
-              : { workloadProfileSelection: body.workloadProfileSelection }),
-          }),
+        () => service.updateAgent(context.actorId, input),
         (updated) => ({ kind: "agent", id: updated.id, namespaceId }),
         clientAgent,
+        selection === undefined ? undefined : input,
       );
       reply.send({ data: agent, meta: { requestId: request.id } });
     },

@@ -101,6 +101,76 @@ function agent(withSelection = true) {
 }
 const check = (schema, value) => Check({ SafeJsonValue: JsonValue }, schema, value);
 
+test("Agent receiver preserves the selected update operand across its callback", async (t) => {
+  const { createAgentOperationHandlers } =
+    await import("../../apps/controller/src/routes/agent.ts");
+  const operation = agentApiRoutes.find((route) => route.operationId === "updateAgent");
+  const stop = new Error("controlled service observation ends before profile enrollment");
+  for (const selected of [true, false]) {
+    const control = fixture();
+    const body = {
+      configurationId,
+      providerId: null,
+      executionMode: "dedicated",
+      serviceAccountId: null,
+      ...(selected ? { workloadProfileSelection: selection() } : {}),
+    };
+    const expected = clone({ namespaceId, agentId, ...body });
+    let entered = 0,
+      serviceCalls = 0,
+      selectedOperand;
+    t.mock.method(control.service, "updateAgent", async (actor, input) => {
+      serviceCalls += 1;
+      assert.equal(actor, principalId);
+      assert.deepEqual(clone(input), expected);
+      assert.ok(Object.isFrozen(input));
+      if (selected) {
+        assert.equal(input, selectedOperand);
+        assert.ok(Object.isFrozen(input.workloadProfileSelection));
+      }
+      throw stop;
+    });
+    const context = { actorId: principalId };
+    const request = { id: requestId, params: { namespaceId, agentId }, body };
+    const handlers = createAgentOperationHandlers({
+      resolveAgentService: () => control.service,
+      requestContext: () => context,
+      async runAgentMutation(actual, route, actor, mutate, _resource, _project, selectedUpdate) {
+        entered += 1;
+        assert.equal(actual, request);
+        assert.equal(route, operation);
+        assert.equal(actor, context);
+        selectedOperand = selectedUpdate;
+        assert.deepEqual(clone(selectedUpdate), selected ? expected : undefined);
+        body.configurationId = id("cfg", 90);
+        body.providerId = "provider-mutated";
+        body.serviceAccountId = id("sa", 91);
+        if (selected) body.workloadProfileSelection.admissionVersion = 999;
+        await Promise.resolve();
+        return mutate();
+      },
+      async runDeployment() {
+        assert.fail("update cannot enter deployment");
+      },
+    });
+    const reply = {
+      send() {
+        assert.fail("observed service failure cannot send success");
+      },
+    };
+    await assert.rejects(
+      handlers.updateAgent(request, reply, operation),
+      (error) => error === stop,
+    );
+    assert.equal(entered, 1);
+    assert.equal(serviceCalls, 1);
+    request.body = { configurationId, workloadProfileSelection: null };
+    await assert.rejects(handlers.updateAgent(request, reply, operation));
+    assert.equal(entered, 1, "malformed selection must fail before the mutation wrapper");
+    assert.equal(serviceCalls, 1);
+  }
+});
+
 for (const [name, freeze] of [
   ["contract", freezeAgentRevision],
   ["deployment", frozenRevision],
