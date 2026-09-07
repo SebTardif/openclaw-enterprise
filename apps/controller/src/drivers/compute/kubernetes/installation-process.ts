@@ -16,10 +16,29 @@ import type {
   GatewayProcessSubmissionV1,
   GatewayStartupOperationLocatorV1,
   GatewayStartupRecordRefV1,
+  GatewayProcessParticipantV2,
+  GatewayProcessCallV2,
+  GatewayProcessCreateInputV2,
+  GatewayProcessCreateResultV2,
+  GatewayProcessObjectV2,
+  GatewayProcessObservationInputV2,
+  GatewayProcessObservationResultV2,
+  GatewayProcessDiscoveryResultV2,
+  GatewayProcessRetirementInputV2,
+  GatewayProcessRetirementResultV2,
+  GatewayProcessDispositionResultV2,
+  GatewayProcessFailureV2,
+  GatewayProcessSubmissionOwnerV2,
+  GatewayProcessSubmissionV2,
+  GatewayStartupOperationLocatorV2,
 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
-import { immutableCopy } from "@openclaw-enterprise/utils";
+import { deepFreeze, immutableCopy } from "@openclaw-enterprise/utils";
 import { isDeepStrictEqual } from "node:util";
 import { withComputeAbortSignal } from "../operation-context.ts";
+import {
+  renderAdmittedGatewayLaunch,
+  type AdmittedGatewayLaunchSource,
+} from "./admitted-launch-plan.ts";
 import {
   installationObjectIdentity,
   observeInstallationApi,
@@ -137,6 +156,74 @@ export interface KubernetesInstallationProcessIo {
     >;
   }>;
   request<T>(operation: () => Promise<T>, options?: { readonly mutating?: boolean }): Promise<T>;
+}
+
+type AgentMethod = keyof GatewayProcessParticipantV2;
+type AgentInput<K extends AgentMethod = AgentMethod> = Parameters<
+  GatewayProcessParticipantV2[K]
+>[0];
+type AgentResult = Awaited<ReturnType<GatewayProcessParticipantV2[AgentMethod]>>;
+
+/** The genuine call owner registers the drain before returning this scope. Its
+ * settlement outlives the inner submit transaction and joins original retained
+ * work even when the visible call has already returned an unknown outcome. */
+export interface AgentGatewayInvocationScope {
+  settle(): Promise<void>;
+}
+
+export interface KubernetesAgentGatewayDependencies {
+  readonly invocations: {
+    /** Synchronous original call/method/input custody, before accepting or any
+     * fence. This enrollment is not admission or current effect authority. */
+    enrollInvocation<K extends AgentMethod>(
+      method: K,
+      input: AgentInput<K>,
+      call: GatewayProcessCallV2,
+      drain: () => Promise<void>,
+    ): AgentGatewayInvocationScope | undefined;
+  };
+  readonly accepting: {
+    accept<K extends AgentMethod>(
+      method: K,
+      input: AgentInput<K>,
+      call: GatewayProcessCallV2,
+    ): Promise<InstallationProcessAuthorization | undefined>;
+    readOriginal(
+      locator: GatewayStartupOperationLocatorV2,
+      call: GatewayProcessCallV2,
+    ): Promise<GatewayProcessObjectV2 | undefined>;
+    readCleanup(
+      input: GatewayProcessRetirementInputV2,
+      call: GatewayProcessCallV2,
+    ): Promise<InstallationCleanupResponsibility<GatewayProcessObjectV2> | undefined>;
+    retainCreate(
+      submission: GatewayProcessSubmissionV2,
+      input: GatewayProcessCreateInputV2,
+      outcome: InstallationCreateOutcome,
+    ): Promise<GatewayProcessObjectV2 | undefined>;
+    retainDescendants(
+      original: GatewayProcessObjectV2,
+      descendants: InstallationApiDescendants,
+    ): Promise<void>;
+    retainObservation(
+      original: GatewayProcessObjectV2,
+      observation: InstallationApiObservation,
+    ): Promise<
+      | {
+          readonly original: GatewayProcessObjectV2;
+          readonly observation: InstallationApiObservation;
+          readonly evidence: GatewayStartupRecordRefV1;
+          readonly observedAt: string;
+        }
+      | undefined
+    >;
+  };
+  readonly launchPlans: AdmittedGatewayLaunchSource;
+  readonly submission: GatewayProcessSubmissionOwnerV2;
+  readonly settlement: InstallationSettlementReader<
+    GatewayStartupOperationLocatorV2,
+    GatewayProcessCallV2
+  >;
 }
 
 interface Invocation {
@@ -261,13 +348,16 @@ export class KubernetesInstallationProcess implements GatewayProcessParticipantV
   private readonly io: KubernetesInstallationProcessIo;
   private readonly dependencies: KubernetesInstallationProcessDependencies | undefined;
   private readonly retained = new Set<Promise<unknown>>();
+  readonly agent: GatewayProcessParticipantV2;
 
   constructor(
     io: KubernetesInstallationProcessIo,
     dependencies?: KubernetesInstallationProcessDependencies,
+    agentDependencies?: KubernetesAgentGatewayDependencies,
   ) {
     this.io = io;
     this.dependencies = dependencies;
+    this.agent = new AgentGatewayProcess(io, agentDependencies, (work) => this.retain(work));
   }
 
   private retain(work: Promise<unknown>): void {
@@ -633,6 +723,7 @@ export class KubernetesInstallationProcess implements GatewayProcessParticipantV
         },
         snapshot,
         cleanup,
+        (work) => requireInstallationFence(work()),
       );
     });
   }
@@ -647,7 +738,534 @@ export class KubernetesInstallationProcess implements GatewayProcessParticipantV
         locatorOf(snapshot),
         call,
         invocation.current,
+        (work) => requireInstallationFence(work()),
       ),
     );
+  }
+}
+
+interface AgentInvocation {
+  readonly dependencies: KubernetesAgentGatewayDependencies;
+  signal: AbortSignal;
+  possibleEffect: boolean;
+  track<T>(work: Promise<T>): Promise<T>;
+  fence(work: () => unknown): void;
+  assertLocal(): void;
+  current(): Promise<void>;
+  assertCurrent(): undefined;
+}
+
+function agentLocator(input: AgentInput): GatewayStartupOperationLocatorV2 {
+  if ("binding" in input) return input.binding.startup;
+  if ("original" in input) return input.original.binding.startup;
+  return input;
+}
+
+function requireAgentLocator(locator: GatewayStartupOperationLocatorV2): void {
+  requireValue(locator.schemaVersion === 2 && locator.subject.kind === "agent-gateway");
+  for (const value of [
+    locator.subject.installationId,
+    locator.subject.namespaceRef,
+    locator.subject.agentRef,
+    locator.processRef,
+    locator.operationRef,
+    locator.operationDigest,
+  ])
+    requireValue(typeof value === "string" && value.length > 0);
+  requireValue(Number.isSafeInteger(locator.processGeneration) && locator.processGeneration > 0);
+}
+
+function matchesAgentOriginal(
+  original: GatewayProcessObjectV2,
+  locator: GatewayStartupOperationLocatorV2,
+): void {
+  requireAgentLocator(locator);
+  requireValue(
+    original.binding.schemaVersion === 2 &&
+      isDeepStrictEqual(original.binding.startup, locator) &&
+      original.binding.agentRef === locator.subject.agentRef &&
+      original.binding.namespaceRef === locator.subject.namespaceRef &&
+      original.deployment.name === original.target.deploymentName &&
+      recordRef(original.correlation) &&
+      Number.isSafeInteger(original.controllerGeneration) &&
+      original.controllerGeneration > 0,
+  );
+  installationObjectIdentity(original.deployment);
+  installationObjectIdentity(original.target.namespace);
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
+function invocationScope(value: unknown): value is AgentGatewayInvocationScope {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "settle" in value &&
+    typeof value.settle === "function"
+  );
+}
+
+/** Current Agent protocol of the same selected collaborator. It borrows the
+ * same cached client and request path; it has no creator or authority fallback. */
+class AgentGatewayProcess implements GatewayProcessParticipantV2 {
+  private readonly io: KubernetesInstallationProcessIo;
+  private readonly dependencies: KubernetesAgentGatewayDependencies | undefined;
+  private readonly retain: (work: Promise<unknown>) => void;
+
+  constructor(
+    io: KubernetesInstallationProcessIo,
+    dependencies: KubernetesAgentGatewayDependencies | undefined,
+    retain: (work: Promise<unknown>) => void,
+  ) {
+    this.io = io;
+    this.dependencies = dependencies;
+    this.retain = retain;
+  }
+
+  async createOriginal(
+    input: GatewayProcessCreateInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessCreateResultV2> {
+    return this.invoke("createOriginal", input, call, async (snapshot, invocation) => {
+      const plan = await invocation.dependencies.launchPlans.read(snapshot, call);
+      await invocation.current();
+      if (plan === undefined) return { kind: "unavailable" };
+      const { deployment } = renderAdmittedGatewayLaunch(snapshot, plan.record);
+      await plan.recheckCurrent();
+      await invocation.current();
+      const clients = await this.io.clients();
+      await invocation.current();
+      const assertPlan = () => {
+        invocation.assertCurrent();
+        invocation.fence(() => plan.assertCurrent());
+        invocation.assertCurrent();
+      };
+      const namespace = await this.io.request(() => {
+        assertPlan();
+        return clients.core.readNamespace({ name: snapshot.target.namespace.name });
+      });
+      await invocation.current();
+      await plan.recheckCurrent();
+      const ns = installationObjectIdentity(namespace.metadata);
+      requireValue(
+        namespace.kind === "Namespace" &&
+          namespace.apiVersion === "v1" &&
+          namespace.metadata?.deletionTimestamp === undefined &&
+          ns.name === snapshot.target.namespace.name &&
+          ns.uid === snapshot.target.namespace.uid,
+      );
+      // The original durable submission claim can itself become uncertain.
+      invocation.possibleEffect = true;
+      const claim = await invocation.dependencies.submission.claimOriginal(snapshot, call);
+      if (claim.kind !== "claimed") return claim;
+      await invocation.current();
+      await plan.recheckCurrent();
+      const pending = invocation.track(
+        Promise.resolve().then(async (): Promise<GatewayProcessCreateResultV2> => {
+          let outcome: InstallationCreateOutcome;
+          try {
+            const result = await this.io.request(
+              () => {
+                assertPlan();
+                // Consume the same original ticket at the actual SDK boundary. No
+                // await, owner callback, or replacement scope intervenes afterwards.
+                const consumed: unknown = invocation.dependencies.submission.consumeSubmission(
+                  claim.submission,
+                  snapshot,
+                  call,
+                );
+                if (consumed !== undefined) {
+                  invocation.track(Promise.resolve(consumed));
+                  throw new Error("An Agent Gateway submission must be synchronous.");
+                }
+                invocation.assertLocal();
+                return clients.apps.createNamespacedDeployment({
+                  namespace: ns.name,
+                  body: deployment,
+                });
+              },
+              { mutating: true },
+            );
+            const identity = installationObjectIdentity(result.metadata);
+            requireValue(
+              result.kind === "Deployment" &&
+                result.apiVersion === "apps/v1" &&
+                result.metadata?.namespace === ns.name &&
+                identity.name === snapshot.target.deploymentName &&
+                Number.isSafeInteger(result.metadata.generation) &&
+                result.metadata.generation! > 0,
+            );
+            outcome = {
+              kind: "acknowledged",
+              deployment: identity,
+              controllerGeneration: result.metadata.generation!,
+            };
+          } catch {
+            outcome = { kind: "unknown" };
+          }
+          // The whole invocation owns this late continuation even after its inner
+          // claim COMMIT or visible cancellation. No fresh call replaces it.
+          const original = await invocation.dependencies.accepting.retainCreate(
+            claim.submission,
+            snapshot,
+            outcome,
+          );
+          if (outcome.kind === "unknown" || original === undefined)
+            return { kind: "unknown", operation: snapshot.binding.startup };
+          matchesAgentOriginal(original, snapshot.binding.startup);
+          requireValue(
+            isDeepStrictEqual(original.binding, snapshot.binding) &&
+              isDeepStrictEqual(original.target, snapshot.target) &&
+              isDeepStrictEqual(original.deployment, outcome.deployment) &&
+              original.controllerGeneration === outcome.controllerGeneration,
+          );
+          await invocation.current();
+          return { kind: "accepted-object", original };
+        }),
+      );
+      return pending;
+    });
+  }
+
+  private async discover(
+    method: "discoverOriginal" | "recoverOriginal",
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDiscoveryResultV2> {
+    return this.invoke(method, locator, call, async (snapshot, invocation) => {
+      const original = await invocation.dependencies.accepting.readOriginal(snapshot, call);
+      await invocation.current();
+      if (original === undefined) return { kind: "unknown", operation: snapshot };
+      matchesAgentOriginal(original, snapshot);
+      return { kind: "found", original };
+    });
+  }
+
+  discoverOriginal(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDiscoveryResultV2> {
+    return this.discover("discoverOriginal", locator, call);
+  }
+
+  recoverOriginal(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDiscoveryResultV2> {
+    return this.discover("recoverOriginal", locator, call);
+  }
+
+  async observeExact(
+    input: GatewayProcessObservationInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessObservationResultV2> {
+    return this.invoke("observeExact", input, call, async (snapshot, invocation) => {
+      const original = await invocation.dependencies.accepting.readOriginal(
+        snapshot.original.binding.startup,
+        call,
+      );
+      await invocation.current();
+      requireValue(original && isDeepStrictEqual(original, snapshot.original));
+      matchesAgentOriginal(original, snapshot.original.binding.startup);
+      const plan = await invocation.dependencies.launchPlans.read(original, call);
+      await invocation.current();
+      requireValue(plan);
+      const { deployment } = renderAdmittedGatewayLaunch(original, plan.record);
+      const selectedContainers: InstallationPlannedContainer[] = [];
+      for (const [kind, containers] of [
+        ["main", deployment.spec!.template.spec!.containers],
+        ["init", deployment.spec!.template.spec!.initContainers ?? []],
+      ] as const)
+        for (const container of containers)
+          selectedContainers.push({ kind, name: container.name, image: container.image! });
+      const observation = await observeInstallationApi(
+        {
+          ...this.io,
+          request: (operation, options) =>
+            this.io.request(() => {
+              invocation.assertCurrent();
+              invocation.fence(() => plan.assertCurrent());
+              invocation.assertCurrent();
+              return operation();
+            }, options),
+          current: async () => {
+            await invocation.current();
+            await plan.recheckCurrent();
+            invocation.assertCurrent();
+            invocation.fence(() => plan.assertCurrent());
+            invocation.assertCurrent();
+          },
+          retainDescendants: (descendants) =>
+            invocation.track(
+              invocation.dependencies.accepting.retainDescendants(original, descendants),
+            ),
+        },
+        {
+          namespace: original.target.namespace,
+          deployment: original.deployment,
+          generation: original.controllerGeneration,
+          runtimeClassName: deployment.spec!.template.spec!.runtimeClassName!,
+        },
+        selectedContainers,
+      );
+      await invocation.current();
+      if (observation.status === "unavailable") return { kind: "unavailable" };
+      if (observation.status === "ambiguous") return { kind: "ambiguous", original };
+      const retained = await invocation.dependencies.accepting.retainObservation(
+        original,
+        observation,
+      );
+      await invocation.current();
+      requireValue(
+        retained &&
+          isDeepStrictEqual(retained.original, original) &&
+          isDeepStrictEqual(retained.observation, observation) &&
+          recordRef(retained.evidence) &&
+          Number.isFinite(Date.parse(retained.observedAt)),
+      );
+      if (observation.status === "absent")
+        return {
+          kind: "absent",
+          original,
+          evidence: retained.evidence,
+          observedAt: retained.observedAt,
+        };
+      if (observation.ancestry.pods.length !== 1) return { kind: "ambiguous", original };
+      const pod = observation.ancestry.pods[0]!;
+      const replicaSet = observation.ancestry.replicaSets.find(
+        ({ uid }) => uid === pod.replicaSetUid,
+      );
+      requireValue(replicaSet);
+      return {
+        kind: "observed",
+        original,
+        evidence: retained.evidence,
+        observedAt: retained.observedAt,
+        chain: {
+          namespace: observation.ancestry.root.namespace,
+          deployment: observation.ancestry.root.deployment,
+          replicaSet,
+          pod: pod.identity,
+        },
+      };
+    });
+  }
+
+  async requestRetirement(
+    input: GatewayProcessRetirementInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessRetirementResultV2> {
+    return this.invoke("requestRetirement", input, call, async (snapshot, invocation) => {
+      matchesAgentOriginal(snapshot.original, snapshot.original.binding.startup);
+      const cleanup = await invocation.dependencies.accepting.readCleanup(snapshot, call);
+      await invocation.current();
+      if (cleanup === undefined) return { kind: "unavailable" };
+      invocation.possibleEffect = true;
+      return retireInstallationProcess(
+        {
+          ...this.io,
+          current: invocation.current,
+          assertCurrent: invocation.assertCurrent,
+          retain: (pending) => {
+            invocation.track(pending);
+          },
+        },
+        snapshot,
+        cleanup,
+        invocation.fence,
+      );
+    });
+  }
+
+  async readReplacementDisposition(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDispositionResultV2> {
+    return this.invoke("readReplacementDisposition", locator, call, async (snapshot, invocation) =>
+      readInstallationDisposition(
+        invocation.dependencies.settlement,
+        snapshot,
+        call,
+        invocation.current,
+        invocation.fence,
+      ),
+    );
+  }
+
+  private async invoke<K extends AgentMethod, R extends AgentResult>(
+    method: K,
+    rawInput: AgentInput<K>,
+    call: GatewayProcessCallV2,
+    work: (input: AgentInput<K>, invocation: AgentInvocation) => Promise<R>,
+  ): Promise<R | GatewayProcessFailureV2> {
+    const dependencies = this.dependencies;
+    if (dependencies === undefined) return { kind: "unavailable" };
+    const pending = new Set<Promise<unknown>>();
+    let closed = false;
+    let failed = false;
+    let scope: AgentGatewayInvocationScope | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let locator: GatewayStartupOperationLocatorV2 | undefined;
+    let invocation: AgentInvocation | undefined;
+    const track = <T>(promise: Promise<T>): Promise<T> => {
+      pending.add(promise);
+      void promise.then(
+        () => pending.delete(promise),
+        () => pending.delete(promise),
+      );
+      this.retain(promise);
+      return promise;
+    };
+    const drain = async () => {
+      closed = true;
+      while (pending.size > 0) await Promise.allSettled([...pending]);
+    };
+    try {
+      requireValue(
+        dependencies.invocations &&
+          dependencies.accepting &&
+          dependencies.launchPlans &&
+          dependencies.submission &&
+          dependencies.settlement,
+      );
+      for (const port of [
+        dependencies.invocations.enrollInvocation,
+        dependencies.accepting.accept,
+        dependencies.accepting.readOriginal,
+        dependencies.accepting.readCleanup,
+        dependencies.accepting.retainCreate,
+        dependencies.accepting.retainDescendants,
+        dependencies.accepting.retainObservation,
+        dependencies.launchPlans.read,
+        dependencies.submission.claimOriginal,
+        dependencies.submission.consumeSubmission,
+        dependencies.settlement.readCurrent,
+      ])
+        requireValue(typeof port === "function");
+      // Preserve the method-indexed argument type while performing the same
+      // clone-and-freeze operation as immutableCopy.
+      const input = structuredClone(rawInput);
+      deepFreeze(input);
+      locator = agentLocator(input);
+      requireAgentLocator(locator);
+      // This synchronous original-owner registration precedes accepting itself.
+      // A deferred enrollment can never be upgraded into an accepted call.
+      const enrolled: unknown = dependencies.invocations.enrollInvocation(
+        method,
+        input,
+        call,
+        drain,
+      );
+      if (isThenable(enrolled)) {
+        const late = Promise.resolve(enrolled).then(async (value) => {
+          closed = true;
+          if (invocationScope(value)) await value.settle();
+        });
+        this.retain(late);
+        return { kind: "unavailable" };
+      }
+      if (!invocationScope(enrolled)) return { kind: "unavailable" };
+      scope = enrolled;
+      const bounds = call.authorityCall;
+      const expires = Date.parse(bounds.deadline);
+      requireValue(Number.isFinite(expires) && new Date(expires).toISOString() === bounds.deadline);
+      requireValue(
+        bounds.signal instanceof AbortSignal && !bounds.signal.aborted && expires > Date.now(),
+      );
+      const started = performance.now();
+      const remaining = expires - Date.now();
+      const deadline = new AbortController();
+      timer = setTimeout(
+        () => deadline.abort(new Error("Agent Gateway call expired.")),
+        Math.min(remaining, 2_147_483_647),
+      );
+      const signal = AbortSignal.any([bounds.signal, deadline.signal]);
+      const assertLocal = () => {
+        requireValue(!closed && !failed);
+        signal.throwIfAborted();
+        invocation?.signal.throwIfAborted();
+        requireValue(Date.now() < expires && performance.now() - started < remaining);
+      };
+      const fence = (callback: () => unknown) => {
+        assertLocal();
+        try {
+          const result = callback();
+          if (result !== undefined) {
+            track(Promise.resolve(result));
+            throw new Error("An Agent Gateway fence must be synchronous.");
+          }
+          assertLocal();
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      };
+      let authorization: InstallationProcessAuthorization | undefined;
+      const current = async () => {
+        fence(() => undefined);
+        requireValue(authorization);
+        await track(Promise.resolve().then(() => authorization!.recheckCurrent()));
+        fence(() => authorization!.assertCurrent());
+        authorization.signal.throwIfAborted();
+      };
+      invocation = {
+        dependencies,
+        signal,
+        possibleEffect: false,
+        track,
+        fence,
+        current,
+        assertLocal,
+        assertCurrent: () => {
+          fence(() => {
+            requireValue(authorization);
+            authorization.signal.throwIfAborted();
+            return authorization.assertCurrent();
+          });
+          return undefined;
+        },
+      };
+      const active = invocation;
+      const accepted = track(
+        Promise.resolve().then(async (): Promise<R | GatewayProcessFailureV2> => {
+          fence(() => undefined);
+          authorization = await dependencies.accepting.accept(method, input, call);
+          fence(() => undefined);
+          if (authorization === undefined) return { kind: "denied" };
+          active.signal = AbortSignal.any([signal, authorization.signal]);
+          await active.current();
+          const body = track(
+            Promise.resolve().then(() =>
+              withComputeAbortSignal(active.signal, () => work(input, active)),
+            ),
+          );
+          const result = await raceAbort(active.signal, body);
+          active.assertCurrent();
+          return result;
+        }),
+      );
+      return await raceAbort(signal, accepted);
+    } catch {
+      return invocation?.possibleEffect && locator !== undefined
+        ? { kind: "unknown", operation: locator }
+        : { kind: "unavailable" };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (scope !== undefined) {
+        // The original owner retains this settlement. Do not put it into pending:
+        // it joins drain and must not wait on itself. Visible unknown can precede
+        // physical/retention settlement, whose original ownership remains intact.
+        this.retain(Promise.resolve().then(() => scope!.settle()));
+      } else {
+        closed = true;
+      }
+    }
   }
 }
