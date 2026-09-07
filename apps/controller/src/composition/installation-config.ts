@@ -200,7 +200,8 @@ export async function loadInstallationConfiguration(options: {
     computePackage,
     options.workloadProfileRendererSource,
   );
-  const workloadProfileRendererContribution = selectedComputeWorkloadProfileCapability(computeDriver);
+  const workloadProfileRendererContribution =
+    selectedComputeWorkloadProfileCapability(computeDriver);
   const secretDriver = createSecretDriver(secret);
   const createIAMDriver = createIAMDriverFactory(iam, iamPackage);
   if (
