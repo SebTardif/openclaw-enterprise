@@ -80,6 +80,37 @@ if err := source.Start(ctx); err != nil {
 metadata, err := source.Metadata()
 ```
 
+## Coherent trust view
+
+`Source.TrustView()` returns one current `TrustView` with these value fields:
+
+- `Metadata`: the selected SPIFFE identity, expiry and certificate counts.
+- `BundleSHA256`: SHA-256 of the concatenated own-domain bundle DER certificates
+  in their existing order, encoded as `sha256:` followed by lowercase hexadecimal.
+- `CRLCount`: the number of CRL entries in that same accepted update.
+- `FederatedBundleCount`: the number of federated bundles in that update. This
+  count is descriptive; its presence does not add a trust-policy denial.
+
+The getter checks availability and reads the complete generation under one
+source lock. It returns no key, certificate, bundle or CRL buffers, parsed
+credential pointers, maps, slices, or source/transport handles. It does not call
+`Snapshot()`, copy credentials or maintain another persistent cache. Before
+readiness or after expiry, cancellation, terminal update failure or close, it
+returns the zero value and the existing source error.
+
+A returned view is historical data. It is neither peer authentication nor an
+assignment/operation grant, and it cannot keep a source or connection current.
+Each currentness check must obtain a fresh view. The native bridge checks its
+fixed expected SPIFFE identity, exact bundle digest and absence of CRLs from
+this one value. Federation count alone does not change bridge acceptance.
+Certificate renewal can preserve the bundle digest while replacing the expiry;
+a stable digest does not extend an old connection's authority.
+
+`Snapshot()` and the full credential consumer in `servicepeer` remain available
+for their existing transport purpose. The source owns watch shutdown; transport
+consumers borrow it and retain their own connection lifetimes. Closing a source
+still cannot erase credential copies already held elsewhere.
+
 ## JWT operations
 
 `FetchJWTSVID(ctx, audience)` requests the configured source identity for an

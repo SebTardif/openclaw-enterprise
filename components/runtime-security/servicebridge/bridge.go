@@ -289,19 +289,9 @@ func (r *sliceReader) Read(p []byte) (int, error) {
 }
 
 func (b *bridge) currentBundle() bool {
-	snapshot, err := b.source.Snapshot()
-	if err != nil {
-		return false
-	}
-	defer clear(snapshot.PrivateKey)
-	if snapshot.SPIFFEID != b.profile.OwnSPIFFEID || len(snapshot.CRLs) != 0 {
-		return false
-	}
-	h := sha256.New()
-	for _, cert := range snapshot.Bundle {
-		h.Write(cert)
-	}
-	return "sha256:"+hex.EncodeToString(h.Sum(nil)) == b.profile.TrustBundleSHA256
+	view, err := b.source.TrustView()
+	return err == nil && view.Metadata.SPIFFEID == b.profile.OwnSPIFFEID &&
+		view.CRLCount == 0 && view.BundleSHA256 == b.profile.TrustBundleSHA256
 }
 
 func (b *bridge) emit(kind string, x *exchange, challenge, payload string) error {

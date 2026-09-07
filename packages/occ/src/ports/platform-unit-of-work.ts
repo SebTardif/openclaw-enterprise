@@ -53,6 +53,10 @@ export function bindPlatformUnitOfWork(
   lifecyclePhase?: LifecycleAdmissionUnitPhase,
   credentialPhase?: CredentialInventoryOwnerPhaseV1,
   rejectIsolated?: (error: unknown) => never,
+  turn?: {
+    reject(error: unknown): never;
+    run<T>(repository: "turnJournal" | "audit", work: () => Promise<T>): Promise<T>;
+  },
 ): PlatformUnitOfWork {
   const unit: PlatformUnitOfWork = Object.freeze({
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
@@ -197,6 +201,38 @@ export function bindPlatformUnitOfWork(
   const profiled = profilePhase === undefined ? unit : profilePhase.bind(unit);
   const lifecycle = lifecyclePhase === undefined ? profiled : lifecyclePhase.bind(profiled);
   const credential = credentialPhase === undefined ? lifecycle : credentialPhase.bind(lifecycle);
+  if (turn !== undefined) {
+    if (rejectIsolated !== undefined)
+      throw new ScopeViolationError("Turn isolation cannot mix owners.");
+    // This is the sole returned UoW identity subsequently bound by the journal
+    // guard. Borrow each original repository once; no new claim or SQL facade.
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(credential).map(([name, repository]) => [
+          name,
+          Object.freeze(
+            Object.fromEntries(
+              Object.entries(repository).map(([method, implementation]) => [
+                method,
+                (...args: unknown[]) =>
+                  name === "turnJournal" || (name === "audit" && method === "append")
+                    ? typeof implementation === "function"
+                      ? turn.run(name, async () => Reflect.apply(implementation, repository, args))
+                      : turn.reject(
+                          new ScopeViolationError("The turn repository method is unavailable."),
+                        )
+                    : turn.reject(
+                        new ScopeViolationError(
+                          "The turn transaction forbids unrelated repositories.",
+                        ),
+                      ),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+    ) as unknown as PlatformUnitOfWork;
+  }
   if (rejectIsolated === undefined) return credential;
   // Internal owner isolation only; this projection creates no authority.
   return Object.freeze(
