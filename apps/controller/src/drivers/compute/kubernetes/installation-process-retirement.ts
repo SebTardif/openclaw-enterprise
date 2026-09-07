@@ -1,12 +1,12 @@
 import type { AppsV1Api, CoreV1Api } from "@kubernetes/client-node";
 import type {
   GatewayProcessCallV1,
-  GatewayProcessDispositionResultV1,
   GatewayProcessObjectV1,
-  GatewayProcessRetirementInputV1,
-  GatewayProcessRetirementResultV1,
   GatewayStartupOperationLocatorV1,
   GatewayStartupRecordRefV1,
+  GatewayProcessObjectV2,
+  GatewayStartupOperationLocatorV2,
+  GatewayProcessCallV2,
 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 import { isDeepStrictEqual } from "node:util";
 import { installationObjectIdentity } from "./installation-process-observations.ts";
@@ -19,8 +19,10 @@ export function requireInstallationFence(result: unknown): void {
   throw new Error("Installation process fence is unavailable.");
 }
 
-export interface InstallationCleanupResponsibility {
-  readonly original: GatewayProcessObjectV1;
+export interface InstallationCleanupResponsibility<
+  O extends GatewayProcessObjectV1 | GatewayProcessObjectV2 = GatewayProcessObjectV1,
+> {
+  readonly original: O;
   readonly responsibility: GatewayStartupRecordRefV1;
   readonly policy: {
     readonly gracePeriodSeconds: number;
@@ -35,13 +37,17 @@ export interface InstallationCleanupResponsibility {
 
 /** A selected protected reader authenticates a live original physical receipt;
  * this adapter does not implement a node/runtime observer or an authority issuer. */
-export interface InstallationSettlementReader {
+export interface InstallationSettlementReader<
+  L extends GatewayStartupOperationLocatorV1 | GatewayStartupOperationLocatorV2 =
+    GatewayStartupOperationLocatorV1,
+  C extends GatewayProcessCallV1 | GatewayProcessCallV2 = GatewayProcessCallV1,
+> {
   readCurrent(
-    locator: GatewayStartupOperationLocatorV1,
-    call: GatewayProcessCallV1,
+    locator: L,
+    call: C,
   ): Promise<
     | {
-        readonly operation: GatewayStartupOperationLocatorV1;
+        readonly operation: L;
         readonly disposition: "complete-initial" | "retired";
         readonly receipt: GatewayStartupRecordRefV1;
         /** Exact process tree, every applicable ancestry, and the original submission
@@ -66,11 +72,23 @@ export interface InstallationRetirementIo {
 
 /** Exact conditional API retirement. Even a successful response reports unknown
  * physical termination; neither 404 nor an acknowledged delete releases ownership. */
-export async function retireInstallationProcess(
+export async function retireInstallationProcess<
+  O extends GatewayProcessObjectV1 | GatewayProcessObjectV2,
+>(
   io: InstallationRetirementIo,
-  input: GatewayProcessRetirementInputV1,
-  cleanup: InstallationCleanupResponsibility,
-): Promise<GatewayProcessRetirementResultV1> {
+  input: { readonly original: O; readonly responsibility: GatewayStartupRecordRefV1 },
+  cleanup: InstallationCleanupResponsibility<O>,
+  fence: (work: () => unknown) => void,
+): Promise<
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "unknown"; readonly operation: O["binding"]["startup"] }
+  | {
+      readonly kind: "requested";
+      readonly original: O;
+      readonly responsibility: GatewayStartupRecordRefV1;
+      readonly termination: "unknown";
+    }
+> {
   const operation = input.original.binding.startup;
   let submitted = false;
   try {
@@ -89,9 +107,9 @@ export async function retireInstallationProcess(
     await io.current();
     await cleanup.recheckCurrent();
     const assertCurrent = () => {
-      requireInstallationFence(io.assertCurrent());
-      requireInstallationFence(cleanup.assertCurrent());
-      requireInstallationFence(io.assertCurrent());
+      fence(() => io.assertCurrent());
+      fence(() => cleanup.assertCurrent());
+      fence(() => io.assertCurrent());
     };
     const namespace = await io.request(() => {
       assertCurrent();
@@ -168,12 +186,24 @@ export async function retireInstallationProcess(
   }
 }
 
-export async function readInstallationDisposition(
-  reader: InstallationSettlementReader,
-  locator: GatewayStartupOperationLocatorV1,
-  call: GatewayProcessCallV1,
+export async function readInstallationDisposition<
+  L extends GatewayStartupOperationLocatorV1 | GatewayStartupOperationLocatorV2,
+  C extends GatewayProcessCallV1 | GatewayProcessCallV2,
+>(
+  reader: InstallationSettlementReader<L, C>,
+  locator: L,
+  call: C,
   current: () => Promise<void>,
-): Promise<GatewayProcessDispositionResultV1> {
+  fence: (work: () => unknown) => void,
+): Promise<
+  | { readonly kind: "unavailable" }
+  | {
+      readonly kind: "verified-disposition";
+      readonly operation: L;
+      readonly disposition: "complete-initial" | "retired";
+      readonly receipt: GatewayStartupRecordRefV1;
+    }
+> {
   try {
     await current();
     const result = await reader.readCurrent(locator, call);
@@ -190,7 +220,7 @@ export async function readInstallationDisposition(
     }
     await result.recheckCurrent();
     await current();
-    requireInstallationFence(result.assertCurrent());
+    fence(() => result.assertCurrent());
     return {
       kind: "verified-disposition",
       operation: locator,

@@ -1,9 +1,4 @@
 import type { NativeIAMTransactionView } from "@openclaw-enterprise/iam";
-import type {
-  ChannelAgentBinding,
-  ChannelHumanBinding,
-  ChannelInstallation,
-} from "@openclaw-enterprise/contracts/channel-bindings";
 import { isChannelBindingReference } from "@openclaw-enterprise/contracts/channel-bindings";
 import { DependencyUnavailableError } from "../../errors.ts";
 import type { QueryRepositoryFactoryContext } from "../../ports/repository-factory.ts";
@@ -14,50 +9,22 @@ import type {
   TurnCommandIdentityV1,
   TurnCommandOwnedUnitV1,
   TurnCommandTerminalV1,
-} from "./turn-command-scope.ts";
+} from "../../ports/turn-command.ts";
 
-export interface TurnCommandChannelLocatorV1 {
-  readonly parentId: string;
-  readonly providerSubjectRef: string;
-  readonly channelRef: string;
-}
-
-/** Locator observations are not current authority. The genuine participant must
- * compare its original source, account and binding identities after locking. */
-export interface TurnCommandChannelSnapshotV1 {
-  readonly parent: Readonly<ChannelInstallation> | undefined;
-  readonly human: Readonly<ChannelHumanBinding> | undefined;
-  readonly agent: Readonly<ChannelAgentBinding> | undefined;
-}
-
-/** Private same-client participant IO. This is not a caller-supplied unit, an
- * account-state producer, a raw query capability or the journal claim identity. */
-export interface TurnCommandAccountUnitV1 {
-  readonly token: TurnCommandOwnedUnitV1;
-  readonly identity: TurnCommandIdentityV1;
-  readonly bounds: TurnCommandBoundsV1;
-  readonly iam: NativeIAMTransactionView;
-  assertActive(): void;
-  /** Single original account/security writer cleanup, retained before acquisition
-   * resolves. The central terminal owner invokes it once; callers never release it. */
-  retainSecurityCleanup(release: (outcome: TurnCommandTerminalV1) => Promise<void>): void;
-  locateChannel(input: TurnCommandChannelLocatorV1): Promise<TurnCommandChannelSnapshotV1>;
-  /** The genuine source must already hold account/security/registration guards. */
-  lockPolicy(): Promise<void>;
-  lockParentsAndReload(): Promise<TurnCommandChannelSnapshotV1>;
-  readLockedChannel(): Promise<TurnCommandChannelSnapshotV1>;
-}
-
-export interface TurnCommandAccountLeaseV1 {
-  prepareCommit(unit: TurnCommandAccountUnitV1): Promise<void>;
-  /** Retained writer/selection guards; must not use expired acquisition IO. */
-  assertCurrent(): undefined;
-  release(outcome: TurnCommandTerminalV1): Promise<void>;
-}
-
-export interface TurnCommandAccountSourceV1 {
-  consume(unit: TurnCommandAccountUnitV1): Promise<TurnCommandAccountLeaseV1 | undefined>;
-}
+import type {
+  TurnCommandChannelLocatorV1,
+  TurnCommandChannelSnapshotV1,
+  TurnCommandAccountUnitV1,
+  TurnCommandAccountLeaseV1,
+  TurnCommandAccountSourceV1,
+} from "../../ports/turn-command.ts";
+export type {
+  TurnCommandChannelLocatorV1,
+  TurnCommandChannelSnapshotV1,
+  TurnCommandAccountUnitV1,
+  TurnCommandAccountLeaseV1,
+  TurnCommandAccountSourceV1,
+} from "../../ports/turn-command.ts";
 
 export interface TurnCommandAccountContextV1 extends QueryRepositoryFactoryContext {
   readonly token: TurnCommandOwnedUnitV1;

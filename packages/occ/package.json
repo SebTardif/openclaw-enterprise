@@ -11,6 +11,8 @@
     "./persistence/same-build-recovery-preflight-v1": "./src/persistence/same-build-recovery-preflight-v1.ts",
     "./services/workload-profile/port": "./src/services/workload-profile/port.ts",
     "./workload-profiles/canonical": "./src/workload-profiles/canonical.ts",
+    "./workload-profiles/selection": "./src/workload-profiles/selection.ts",
+    "./workload-profiles/projections": "./src/workload-profiles/projections.ts",
     "./turn-journal/store": "./src/turn-journal/store.ts",
     "./turn-journal/postgres": "./src/turn-journal/postgres.ts",
     "./turn-journal/completed-context": "./src/turn-journal/completed-context.ts",

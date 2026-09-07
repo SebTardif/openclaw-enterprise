@@ -14,6 +14,13 @@ import {
 } from "./postgres/turn-command-owner.ts";
 import {
   GatewayStartupOwnerPhaseV1,
+  parseGatewayStartupSubjectV2,
+  type GatewayStartupCommandV2,
+  type GatewayStartupCompletionV2,
+  type GatewayStartupOwnerParticipantsV2,
+  type GatewayStartupOwnerUnitV2,
+  type GatewayStartupTransactionOwnerV2,
+  type GatewayStartupTransactionResultV2,
   type GatewayStartupAcceptedOperationV1,
   type GatewayStartupAuthorityLeaseV1,
   type GatewayStartupCommandBoundsV1,
@@ -24,7 +31,10 @@ import {
   type GatewayStartupTransactionOwnerV1,
   type GatewayStartupTransactionResultV1,
 } from "../gateway-startup-v1/owner.ts";
-import { createPostgresGatewayStartupV1 } from "../gateway-startup-v1/postgres.ts";
+import {
+  createPostgresGatewayStartupV1,
+  createPostgresGatewayStartupV2,
+} from "../gateway-startup-v1/postgres.ts";
 import { createPostgresRevisionRepository } from "./postgres/revisions.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
@@ -177,7 +187,7 @@ export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.t
 interface TransactionContext {
   readonly turn?: TurnCommandExecutionV1;
   readonly turnQuery: PostgresClient["query"];
-  readonly gateway?: GatewayStartupExecutionV1;
+  readonly gateway?: GatewayStartupExecution;
   readonly gatewayQuery: PostgresClient["query"];
   readonly credential?: CredentialInventoryExecutionV1;
   readonly credentialQuery: PostgresClient["query"];
@@ -304,12 +314,23 @@ interface CredentialInventoryEnrollmentV1 {
 /** Private central-to-execute bridge. execute owns phase construction/finalization
  * and terminal disposition; the binding owns only its token correspondence. */
 interface GatewayStartupExecutionV1 {
+  readonly version?: 1;
   phase?: GatewayStartupOwnerPhaseV1;
   finalized?: GatewayStartupCompletionV1;
   disposition: "not-sent" | "sent" | "acknowledged";
   establishedNoCommit: boolean;
   close(): void;
 }
+
+interface GatewayStartupExecutionV2 extends Omit<
+  GatewayStartupExecutionV1,
+  "version" | "phase" | "finalized"
+> {
+  readonly version: 2;
+  phase?: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
+  finalized?: GatewayStartupCompletionV2;
+}
+type GatewayStartupExecution = GatewayStartupExecutionV1 | GatewayStartupExecutionV2;
 
 /** Borrowed only during the actual authority.consume operation. Holding this
  * facade supplies neither invocation authentication nor a permission decision. */
@@ -344,6 +365,8 @@ interface GatewayStartupOwnerBindingV1 {
 }
 
 interface GatewayStartupEnrollmentV1 {
+  readonly version: 1;
+  readonly installationId: string;
   readonly context: TransactionContext;
   readonly phase: GatewayStartupOwnerPhaseV1;
   readonly execution: GatewayStartupExecutionV1;
@@ -358,6 +381,49 @@ interface GatewayStartupEnrollmentV1 {
   authorityStarted: boolean;
   policyState: "unlocked" | "locking" | "locked";
   active: boolean;
+}
+
+type GatewayStartupRuntimeConsumeV2 = GatewayStartupOwnerParticipantsV2["authority"]["consume"];
+interface GatewayStartupCentralParticipantsV2 extends Omit<
+  GatewayStartupOwnerParticipantsV2,
+  "authority"
+> {
+  readonly driverSelection: DriverSelection;
+  readonly authority: {
+    consume(
+      ...args: [
+        ...Parameters<GatewayStartupRuntimeConsumeV2>,
+        policy: GatewayStartupPrivatePolicyV1,
+      ]
+    ): ReturnType<GatewayStartupRuntimeConsumeV2>;
+  };
+}
+interface GatewayStartupOwnerBindingV2 {
+  readonly transaction: GatewayStartupTransactionOwnerV2;
+  readonly participants?: GatewayStartupOwnerParticipantsV2;
+}
+interface GatewayStartupEnrollmentV2 extends Omit<
+  GatewayStartupEnrollmentV1,
+  "version" | "phase" | "execution" | "command" | "unit"
+> {
+  readonly version: 2;
+  readonly phase: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
+  readonly execution: GatewayStartupExecutionV2;
+  readonly command: GatewayStartupCommandV2;
+  readonly unit: GatewayStartupOwnerUnitV2;
+}
+type GatewayStartupEnrollment = GatewayStartupEnrollmentV1 | GatewayStartupEnrollmentV2;
+interface GatewayStartupRunV1 {
+  readonly version: 1;
+  readonly args: Parameters<GatewayStartupTransactionOwnerV1["run"]>;
+  readonly selection: DriverSelection | undefined;
+  readonly participants: GatewayStartupOwnerParticipantsV1 | undefined;
+}
+interface GatewayStartupRunV2 {
+  readonly version: 2;
+  readonly args: Parameters<GatewayStartupTransactionOwnerV2["run"]>;
+  readonly selection: DriverSelection | undefined;
+  readonly participants: GatewayStartupOwnerParticipantsV2 | undefined;
 }
 
 const PERMISSION_ACTIONS = new Set([
@@ -755,8 +821,8 @@ export class PostgresPlatformState implements PlatformStateStore {
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
   readonly #profileContexts = new WeakMap<object, TransactionContext>();
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
-  readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollmentV1>();
-  readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollmentV1>();
+  readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
+  readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
   readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
   readonly #turnContexts = new WeakMap<object, TurnCommandEnrollmentV1>();
@@ -816,11 +882,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (io === undefined || gateway.policyState !== "locked")
           throw new DependencyUnavailableError("The Gateway native IAM unit is unavailable.");
         this.assertGatewayAuthorityOperationV1(gateway, io);
-        const state = await this.nativeIAMState(
-          gateway.context,
-          io.query,
-          gateway.unit.installationId,
-        );
+        const state = await this.nativeIAMState(gateway.context, io.query, gateway.installationId);
         this.assertGatewayAuthorityOperationV1(gateway, io);
         return state;
       } catch (error) {
@@ -1544,7 +1606,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   private assertGatewayAuthorityOperationV1(
-    record: GatewayStartupEnrollmentV1,
+    record: GatewayStartupEnrollment,
     io: GatewayStartupAcceptedOperationV1,
   ): void {
     try {
@@ -1559,6 +1621,21 @@ export class PostgresPlatformState implements PlatformStateStore {
         record.bounds.signal.aborted
       )
         throw new DependencyUnavailableError("The Gateway authority operation is unavailable.");
+      if (record.version === 2) {
+        const subject = parseGatewayStartupSubjectV2(record.command.subject);
+        if (
+          subject.installationId !== record.installationId ||
+          subject.namespaceRef !== record.unit.subject.namespaceRef ||
+          subject.agentRef !== record.unit.subject.agentRef
+        )
+          throw new DependencyUnavailableError(
+            "The Gateway subject correspondence is unavailable.",
+          );
+      } else if (record.unit.installationId !== record.installationId) {
+        throw new DependencyUnavailableError(
+          "The Gateway Installation correspondence is unavailable.",
+        );
+      }
       io.assertActive();
       record.context.lifetime.assertActive();
       record.selected.assertCurrent();
@@ -1572,13 +1649,153 @@ export class PostgresPlatformState implements PlatformStateStore {
 
   /** No public producer/configuration is created here. Only the original owner
    * can compose the genuine private participants with the released Runtime owner. */
+  private bindGatewayAuthorityConsumerV1<
+    Args extends [
+      invocation: unknown,
+      command: GatewayStartupCommandV1 | GatewayStartupCommandV2,
+      bounds: GatewayStartupCommandBoundsV1,
+      unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+      io: GatewayStartupAcceptedOperationV1,
+    ],
+  >(
+    version: 1 | 2,
+    consume: (
+      ...args: [...Args, policy: GatewayStartupPrivatePolicyV1]
+    ) => Promise<GatewayStartupAuthorityLeaseV1>,
+  ): (...args: Args) => Promise<GatewayStartupAuthorityLeaseV1> {
+    const unavailable = () =>
+      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
+    return async (...args: Args) => {
+      const [invocation, command, bounds, unit, io] = args;
+      const record = this.#gatewayExecution.getStore();
+      if (
+        record === undefined ||
+        !record.active ||
+        record.version !== version ||
+        record.unit !== unit ||
+        record.command !== command ||
+        record.bounds !== bounds ||
+        record.policy !== unit.policy ||
+        record.authorityStarted
+      ) {
+        const error = unavailable();
+        record?.phase.poison(error);
+        throw error;
+      }
+      record.authorityStarted = true;
+      record.authorityIO = io;
+      let lease: GatewayStartupAuthorityLeaseV1 | undefined;
+      let transferred = false;
+      let release: (() => Promise<void>) | undefined;
+      try {
+        this.assertGatewayAuthorityOperationV1(record, io);
+        // These synchronous native/selection fences do not issue SQL and
+        // remain usable after the authority operation/lifetime has ended.
+        record.phase.retainCurrentness(() => {
+          record.selected.assertCurrent();
+          record.nativeIAM.assertCurrent();
+          return undefined;
+        });
+        const assertLocked = () => {
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (record.policyState !== "locked") throw unavailable();
+        };
+        const iam: NativeIAMTransactionView = Object.freeze({
+          assertCurrent: () => {
+            try {
+              assertLocked();
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+          lookupIdentity: async (
+            input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
+          ) => {
+            try {
+              assertLocked();
+              const result = await record.nativeIAM.lookupIdentity(input);
+              assertLocked();
+              return result;
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+          authorize: async (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) => {
+            try {
+              assertLocked();
+              const result = await record.nativeIAM.authorize(request);
+              assertLocked();
+              return result;
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+        });
+        const policy: GatewayStartupPrivatePolicyV1 = Object.freeze({
+          iam,
+          lockPolicy: async () => {
+            try {
+              this.assertGatewayAuthorityOperationV1(record, io);
+              if (record.policyState !== "unlocked") throw unavailable();
+              record.policyState = "locking";
+              // Genuine authority locks account/security/registration first.
+              // This existing function holds the complete native IAM writer set.
+              await io.query("SELECT occ.lock_workload_profile_iam()");
+              this.assertGatewayAuthorityOperationV1(record, io);
+              record.policyState = "locked";
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+        });
+        lease = await consume(...args, policy);
+        release = lease.release.bind(lease);
+        this.assertGatewayAuthorityOperationV1(record, io);
+        if (record.policyState !== "locked") throw unavailable();
+        if (record.version === 2) {
+          const subject = record.unit.subject;
+          // Genuine account/security and the complete IAM policy barrier precede
+          // these protected parents. The consumed lease is already owned locally;
+          // failed parent acquisition joins its cleanup before transfer to Runtime.
+          const namespace = await io.query("SELECT id FROM occ.namespaces WHERE id=$1 FOR SHARE", [
+            subject.namespaceRef,
+          ]);
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (namespace.rowCount !== 1) throw unavailable();
+          const agent = await io.query(
+            "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR SHARE",
+            [subject.namespaceRef, subject.agentRef],
+          );
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (agent.rowCount !== 1) throw unavailable();
+        }
+        transferred = true;
+        return lease;
+      } catch (error) {
+        record.phase.poison(error);
+        // Runtime has not received this lease yet; keep its failed acquisition
+        // release inside the accepted authority operation before rejecting.
+        if (lease !== undefined && !transferred) {
+          try {
+            await release?.();
+          } catch (cleanupError) {
+            record.phase.poison(cleanupError);
+          }
+        }
+        throw error;
+      } finally {
+        record.authorityIO = undefined;
+      }
+    };
+  }
+
   private bindGatewayStartupOwnersV1(
     source?: GatewayStartupCentralParticipantsV1,
   ): GatewayStartupOwnerBindingV1 {
-    const unavailable = () =>
-      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
-    const noncommitUnavailable = (): GatewayStartupTransactionResultV1 =>
-      Object.freeze({ kind: "rolled-back", response: Object.freeze({ kind: "unavailable" }) });
     const selection = source?.driverSelection;
     let participants: GatewayStartupOwnerParticipantsV1 | undefined;
 
@@ -1595,114 +1812,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       const consume = source.authority.consume.bind(source.authority);
       participants = Object.freeze({
         authority: Object.freeze({
-          consume: async (...args: Parameters<GatewayStartupRuntimeConsumeV1>) => {
-            const [invocation, command, bounds, unit, io] = args;
-            const record = this.#gatewayExecution.getStore();
-            if (
-              record === undefined ||
-              !record.active ||
-              record.unit !== unit ||
-              record.command !== command ||
-              record.bounds !== bounds ||
-              record.policy !== unit.policy ||
-              record.authorityStarted
-            ) {
-              const error = unavailable();
-              record?.phase.poison(error);
-              throw error;
-            }
-            record.authorityStarted = true;
-            record.authorityIO = io;
-            let lease: GatewayStartupAuthorityLeaseV1 | undefined;
-            let transferred = false;
-            try {
-              this.assertGatewayAuthorityOperationV1(record, io);
-              // These synchronous native/selection fences do not issue SQL and
-              // remain usable after the authority operation/lifetime has ended.
-              record.phase.retainCurrentness(() => {
-                record.selected.assertCurrent();
-                record.nativeIAM.assertCurrent();
-                return undefined;
-              });
-              const assertLocked = () => {
-                this.assertGatewayAuthorityOperationV1(record, io);
-                if (record.policyState !== "locked") throw unavailable();
-              };
-              const iam: NativeIAMTransactionView = Object.freeze({
-                assertCurrent: () => {
-                  try {
-                    assertLocked();
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-                lookupIdentity: async (
-                  input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
-                ) => {
-                  try {
-                    assertLocked();
-                    const result = await record.nativeIAM.lookupIdentity(input);
-                    assertLocked();
-                    return result;
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-                authorize: async (
-                  request: Parameters<NativeIAMTransactionView["authorize"]>[0],
-                ) => {
-                  try {
-                    assertLocked();
-                    const result = await record.nativeIAM.authorize(request);
-                    assertLocked();
-                    return result;
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-              });
-              const policy: GatewayStartupPrivatePolicyV1 = Object.freeze({
-                iam,
-                lockPolicy: async () => {
-                  try {
-                    this.assertGatewayAuthorityOperationV1(record, io);
-                    if (record.policyState !== "unlocked") throw unavailable();
-                    record.policyState = "locking";
-                    // Genuine authority locks account/security/registration first.
-                    // This existing function holds the complete native IAM writer set.
-                    await io.query("SELECT occ.lock_workload_profile_iam()");
-                    this.assertGatewayAuthorityOperationV1(record, io);
-                    record.policyState = "locked";
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-              });
-              lease = await consume(invocation, command, bounds, unit, io, policy);
-              this.assertGatewayAuthorityOperationV1(record, io);
-              if (record.policyState !== "locked") throw unavailable();
-              transferred = true;
-              return lease;
-            } catch (error) {
-              record.phase.poison(error);
-              // Runtime has not received this lease yet; keep its failed acquisition
-              // release inside the accepted authority operation before rejecting.
-              if (lease !== undefined && !transferred) {
-                try {
-                  await lease.release();
-                } catch (cleanupError) {
-                  record.phase.poison(cleanupError);
-                }
-              }
-              throw error;
-            } finally {
-              record.authorityIO = undefined;
-            }
-          },
+          consume: this.bindGatewayAuthorityConsumerV1(1, consume),
         }),
         selection: Object.freeze({
           resolveLocked: source.selection.resolveLocked.bind(source.selection),
@@ -1717,120 +1827,226 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
 
     const transaction: GatewayStartupTransactionOwnerV1 = Object.freeze({
-      run: async (
-        ...args: Parameters<GatewayStartupTransactionOwnerV1["run"]>
-      ): Promise<GatewayStartupTransactionResultV1> => {
-        const [command, bounds, work] = args;
-        const ambientGateway = this.#gatewayExecution.getStore();
-        const ambientCredential = this.#credentialExecution.getStore();
-        if (ambientGateway !== undefined || ambientCredential !== undefined) {
-          const error = unavailable();
-          ambientGateway?.phase.poison(error);
-          ambientCredential?.phase.poison(error);
-          return noncommitUnavailable();
-        }
-        // No selected producer, fabricated unit, pool access or callback on this path.
-        if (participants === undefined || selection === undefined) return noncommitUnavailable();
-        const timeoutMs = Math.min(3000, Date.parse(bounds.deadline) - Date.now());
-        if (
-          !(bounds.signal instanceof AbortSignal) ||
-          bounds.signal.aborted ||
-          !Number.isFinite(timeoutMs) ||
-          timeoutMs <= 0
-        )
-          return noncommitUnavailable();
-
-        let selected: GuardedDriverSelection<"iam"> | undefined;
-        let record: GatewayStartupEnrollmentV1 | undefined;
-        let failed = false;
-        const execution: GatewayStartupExecutionV1 = {
-          disposition: "not-sent",
-          establishedNoCommit: false,
-          close: () => {
-            if (record !== undefined) {
-              record.active = false;
-              record.authorityIO = undefined;
-              this.#gatewayContexts.delete(record.token);
-            }
-          },
-        };
-        try {
-          if (
-            Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
-            selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
-            selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
-          )
-            throw unavailable();
-          const driver = selection.selectedDriver("iam");
-          const held = selection.acquireGuardedSelection("iam", driver);
-          selected = held;
-          await this.execute(
-            false,
-            async (_unit, context) => {
-              const phase = execution.phase;
-              if (phase === undefined || context.gateway !== execution) throw unavailable();
-              const installation = await this.currentInstallation(context, context.gatewayQuery);
-              if (installation === undefined) throw unavailable();
-              const token = Object.freeze({});
-              const policy = Object.freeze({});
-              const nativeIAM = bindNativeIAMTransaction(driver, this, token);
-              const unit: GatewayStartupOwnerUnitV1 = Object.freeze({
-                installationId: installation.id,
-                phase,
-                backend: createPostgresGatewayStartupV1(installation.id),
-                policy,
-              });
-              const enrolled: GatewayStartupEnrollmentV1 = {
-                context,
-                phase,
-                execution,
-                command,
-                bounds,
-                unit,
-                policy,
-                token,
-                selected: held,
-                nativeIAM,
-                authorityStarted: false,
-                policyState: "unlocked",
-                active: true,
-              };
-              record = enrolled;
-              this.#gatewayContexts.set(token, enrolled);
-              // Runtime's callback owns phase.runCommand and its sole lifetime.run.
-              return this.#gatewayExecution.run(enrolled, () => work(unit));
-            },
-            { signal: bounds.signal, timeoutMs },
-            false,
-            undefined,
-            execution,
-          );
-        } catch {
-          failed = true;
-        } finally {
-          // execute has finished raw query/client/context cleanup AND the phase's
-          // one terminal release pass. Retain the actual driver through both.
-          try {
-            selected?.release();
-          } catch {
-            failed = true;
-          }
-        }
-        const possibleCommit =
-          execution.disposition !== "not-sent" && !execution.establishedNoCommit;
-        if (failed || execution.finalized === undefined)
-          return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
-        const finalized = execution.finalized;
-        if (finalized.kind === "rollback")
-          return possibleCommit
-            ? Object.freeze({ kind: "unknown" })
-            : Object.freeze({ kind: "rolled-back", response: finalized.response });
-        if (execution.disposition === "acknowledged")
-          return Object.freeze({ kind: "committed", response: finalized.provisional });
-        return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
-      },
+      run: (...args: Parameters<GatewayStartupTransactionOwnerV1["run"]>) =>
+        this.runGatewayStartupTransactionV1({ version: 1, args, selection, participants }),
     });
     return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
+  }
+
+  private bindGatewayStartupOwnersV2(
+    source?: GatewayStartupCentralParticipantsV2,
+  ): GatewayStartupOwnerBindingV2 {
+    const selection = source?.driverSelection;
+    let participants: GatewayStartupOwnerParticipantsV2 | undefined;
+
+    // Capture actual producer methods once, matching Runtime's own capture.
+    if (
+      source !== undefined &&
+      typeof source.authority?.consume === "function" &&
+      typeof source.selection?.resolveLocked === "function" &&
+      typeof source.process?.requireDisposition === "function" &&
+      typeof source.process?.requireCurrent === "function" &&
+      typeof source.audit?.append === "function" &&
+      typeof source.allocate === "function"
+    ) {
+      const consume = source.authority.consume.bind(source.authority);
+      participants = Object.freeze({
+        authority: Object.freeze({
+          consume: this.bindGatewayAuthorityConsumerV1(2, consume),
+        }),
+        selection: Object.freeze({
+          resolveLocked: source.selection.resolveLocked.bind(source.selection),
+        }),
+        process: Object.freeze({
+          requireDisposition: source.process.requireDisposition.bind(source.process),
+          requireCurrent: source.process.requireCurrent.bind(source.process),
+        }),
+        audit: Object.freeze({ append: source.audit.append.bind(source.audit) }),
+        allocate: source.allocate.bind(source),
+      });
+    }
+
+    const transaction: GatewayStartupTransactionOwnerV2 = Object.freeze({
+      run: (...args: Parameters<GatewayStartupTransactionOwnerV2["run"]>) =>
+        this.runGatewayStartupTransactionV1({ version: 2, args, selection, participants }),
+    });
+    return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
+  }
+
+  private runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV1,
+  ): Promise<GatewayStartupTransactionResultV1>;
+  private runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV2,
+  ): Promise<GatewayStartupTransactionResultV2>;
+  private async runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV1 | GatewayStartupRunV2,
+  ): Promise<GatewayStartupTransactionResultV1 | GatewayStartupTransactionResultV2> {
+    const unavailable = () =>
+      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
+    const noncommitUnavailable = () =>
+      Object.freeze({
+        kind: "rolled-back" as const,
+        response: Object.freeze({ kind: "unavailable" as const }),
+      });
+    const [command, bounds] = request.args;
+    const { selection, participants } = request;
+    const ambientGateway = this.#gatewayExecution.getStore();
+    const ambientCredential = this.#credentialExecution.getStore();
+    if (ambientGateway !== undefined || ambientCredential !== undefined) {
+      const error = unavailable();
+      ambientGateway?.phase.poison(error);
+      ambientCredential?.phase.poison(error);
+      return noncommitUnavailable();
+    }
+    // No selected producer, fabricated unit, pool access or callback on this path.
+    if (participants === undefined || selection === undefined) return noncommitUnavailable();
+    const timeoutMs = Math.min(3000, Date.parse(bounds.deadline) - Date.now());
+    if (
+      !(bounds.signal instanceof AbortSignal) ||
+      bounds.signal.aborted ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0
+    )
+      return noncommitUnavailable();
+
+    let selected: GuardedDriverSelection<"iam"> | undefined;
+    let record: GatewayStartupEnrollment | undefined;
+    let failed = false;
+    const close = () => {
+      if (record !== undefined) {
+        record.active = false;
+        record.authorityIO = undefined;
+        this.#gatewayContexts.delete(record.token);
+      }
+    };
+    const execution: GatewayStartupExecution =
+      request.version === 2
+        ? { version: 2, disposition: "not-sent", establishedNoCommit: false, close }
+        : { version: 1, disposition: "not-sent", establishedNoCommit: false, close };
+
+    try {
+      if (
+        Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+        selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+        selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+      )
+        throw unavailable();
+      const driver = selection.selectedDriver("iam");
+      const held = selection.acquireGuardedSelection("iam", driver);
+      selected = held;
+      await this.execute(
+        false,
+        async (_unit, context) => {
+          if (context.gateway !== execution) throw unavailable();
+          const installation = await this.currentInstallation(context, context.gatewayQuery);
+          if (installation === undefined) throw unavailable();
+          const token = Object.freeze({});
+          const policy = Object.freeze({});
+          const nativeIAM = bindNativeIAMTransaction(driver, this, token);
+          if (execution.version !== 2 && request.version === 1) {
+            const phase = execution.phase;
+            if (phase === undefined) throw unavailable();
+            const unit: GatewayStartupOwnerUnitV1 = Object.freeze({
+              installationId: installation.id,
+              phase,
+              backend: createPostgresGatewayStartupV1(installation.id),
+              policy,
+            });
+            const enrolled: GatewayStartupEnrollmentV1 = {
+              version: 1,
+              installationId: installation.id,
+              context,
+              phase,
+              execution,
+              command: request.args[0],
+              bounds,
+              unit,
+              policy,
+              token,
+              selected: held,
+              nativeIAM,
+              authorityStarted: false,
+              policyState: "unlocked",
+              active: true,
+            };
+            record = enrolled;
+            this.#gatewayContexts.set(token, enrolled);
+            // The original Runtime callback owns the sole phase.runCommand.
+            return this.#gatewayExecution.run(enrolled, () => request.args[2](unit));
+          }
+          if (execution.version === 2 && request.version === 2) {
+            const phase = execution.phase;
+            if (phase === undefined) throw unavailable();
+            const subject = parseGatewayStartupSubjectV2(request.args[0].subject);
+            if (subject.installationId !== installation.id) throw unavailable();
+            const unit: GatewayStartupOwnerUnitV2 = Object.freeze({
+              subject,
+              phase,
+              backend: createPostgresGatewayStartupV2(subject),
+              policy,
+            });
+            const enrolled: GatewayStartupEnrollmentV2 = {
+              version: 2,
+              installationId: installation.id,
+              context,
+              phase,
+              execution,
+              command: request.args[0],
+              bounds,
+              unit,
+              policy,
+              token,
+              selected: held,
+              nativeIAM,
+              authorityStarted: false,
+              policyState: "unlocked",
+              active: true,
+            };
+            record = enrolled;
+            this.#gatewayContexts.set(token, enrolled);
+            // The original Runtime callback owns the sole phase.runCommand.
+            return this.#gatewayExecution.run(enrolled, () => request.args[2](unit));
+          }
+          throw unavailable();
+        },
+        { signal: bounds.signal, timeoutMs },
+        false,
+        undefined,
+        execution,
+      );
+    } catch {
+      failed = true;
+    } finally {
+      // execute has finished raw query/client/context cleanup AND the phase's
+      // one terminal release pass. Retain the actual driver through both.
+      try {
+        selected?.release();
+      } catch {
+        failed = true;
+      }
+    }
+    const possibleCommit = execution.disposition !== "not-sent" && !execution.establishedNoCommit;
+    if (failed || execution.finalized === undefined)
+      return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
+    if (execution.version === 2) {
+      const finalized = execution.finalized;
+      if (finalized.kind === "rollback")
+        return possibleCommit
+          ? Object.freeze({ kind: "unknown" })
+          : Object.freeze({ kind: "rolled-back", response: finalized.response });
+      if (execution.disposition === "acknowledged")
+        return Object.freeze({ kind: "committed", response: finalized.provisional });
+      return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
+    }
+    const finalized = execution.finalized;
+    if (finalized.kind === "rollback")
+      return possibleCommit
+        ? Object.freeze({ kind: "unknown" })
+        : Object.freeze({ kind: "rolled-back", response: finalized.response });
+    if (execution.disposition === "acknowledged")
+      return Object.freeze({ kind: "committed", response: finalized.provisional });
+    return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
   }
 
   /** TODO: Connect the actual account, accepting-audit and protected-custody
@@ -2165,7 +2381,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     options?: PlatformReadOptions,
     profileReadCommitted = false,
     credential?: CredentialInventoryExecutionV1,
-    gateway?: GatewayStartupExecutionV1,
+    gateway?: GatewayStartupExecution,
     turn?: TurnCommandExecutionV1,
   ): Promise<T> {
     if (turn !== undefined && this.#outerExecution.getStore() !== undefined)
@@ -2335,7 +2551,12 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (gateway !== undefined) {
         if (gateway.phase !== undefined)
           throw new ScopeViolationError("The Gateway transaction phase cannot be reused.");
-        gateway.phase = new GatewayStartupOwnerPhaseV1(lifetime, query);
+        if (gateway.version === 2)
+          gateway.phase = new GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>(
+            lifetime,
+            query,
+          );
+        else gateway.phase = new GatewayStartupOwnerPhaseV1(lifetime, query);
       }
       client = {
         query: (statement, parameters) =>
@@ -2461,7 +2682,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (expired || options?.signal.aborted) throw abortFailure();
       context?.protectedProfile?.assertCurrent();
       if (gateway !== undefined) {
-        gateway.finalized = gateway.phase!.finalize();
+        if (gateway.version === 2) gateway.finalized = gateway.phase!.finalize();
+        else gateway.finalized = gateway.phase!.finalize();
         if (gateway.finalized.kind === "rollback") {
           await raw.query("ROLLBACK");
           started = false;

@@ -16,7 +16,9 @@ import {
 import {
   KubernetesInstallationProcess,
   type KubernetesInstallationProcessDependencies,
+  type KubernetesAgentGatewayDependencies,
 } from "./installation-process.ts";
+import type { GatewayProcessParticipantV2 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 import * as KubernetesIdentity from "./resources/identity.ts";
 import * as KubernetesNetwork from "./resources/network.ts";
 import * as KubernetesGateway from "./resources/gateway.ts";
@@ -356,6 +358,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly cleanup: KubernetesCleanup;
   private readonly runtimeObservations: KubernetesRuntimeObservations;
   private readonly installationProcess: KubernetesInstallationProcess;
+  private readonly agentGatewaySelected: boolean;
   private readonly resourcePolicy: KubernetesResourcePolicy;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
@@ -539,6 +542,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly sandboxDriver?: SandboxDriver;
       readonly runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies;
       readonly installationProcessDependencies?: KubernetesInstallationProcessDependencies;
+      readonly agentGatewayDependencies?: KubernetesAgentGatewayDependencies;
       readonly resourcePolicy?: KubernetesResourcePolicy;
     } = {},
   ) {
@@ -561,6 +565,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new ConfigurationFailure("The Kubernetes resource policy is unsupported.");
     }
     this.resourcePolicy = immutableCopy(resourcePolicy);
+    this.agentGatewaySelected = selection.agentGatewayDependencies !== undefined;
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
     this.runtimeObservations = new KubernetesRuntimeObservations(
@@ -577,6 +582,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         request: (operation, options) => this.request(operation, options),
       },
       selection.installationProcessDependencies,
+      selection.agentGatewayDependencies,
     );
     this.ownership = new KubernetesOwnership(
       {
@@ -660,6 +666,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
 
   getInstallationProcessParticipant(): KubernetesInstallationProcess {
     return this.installationProcess;
+  }
+
+  getAgentGatewayProcessParticipant(): GatewayProcessParticipantV2 {
+    return this.installationProcess.agent;
   }
 
   async preflight(): Promise<void> {
@@ -913,6 +923,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     revision: AgentRevision,
     context?: ComputeRevisionContext,
   ): Promise<ComputeReadiness> {
+    this.assertLegacyGatewayPreparation();
     return this.withIsolationContainment(revision, () =>
       this.prepareIsolatedRevision(revision, context),
     );
@@ -1257,9 +1268,18 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+    this.assertLegacyGatewayPreparation();
     return this.withIsolationContainment(revision, () =>
       this.activateIsolatedRevision(revision, context),
     );
+  }
+
+  private assertLegacyGatewayPreparation(): void {
+    if (this.agentGatewaySelected) {
+      throw new ConfigurationFailure(
+        "The selected Agent Gateway uses its original process participant for creation and activation.",
+      );
+    }
   }
 
   private async activateIsolatedRevision(

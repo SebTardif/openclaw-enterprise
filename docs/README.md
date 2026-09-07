@@ -108,6 +108,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Protected Installation Gateway startup](reference/gateway-startup-v1.md): original
   command ownership, provider submission and local lifetime; mandatory production
   authority, material and physical-settlement inputs remain separate.
+- [Agent Gateway process participant](reference/compute-gateway-process.md): admitted launch correspondence, original invocation drains, conditional retirement, and physical-settlement limits.
 - [Protected channel material delivery](reference/gateway-material-delivery.md): separate
   bounded disclosure using the original consumed startup claim and current selected material.
 - [Docker Compose development](flows/docker-compose-development.md),

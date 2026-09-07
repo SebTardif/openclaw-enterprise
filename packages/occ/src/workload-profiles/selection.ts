@@ -5,10 +5,12 @@ import {
   type WorkloadProfileRolesV1,
 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { validateRuntimeResourceAccountingV1 } from "@openclaw-enterprise/contracts/runtime-resource-accounting-v1";
-import type {
-  GatewayStartupOwnerUnitV1,
-  GatewayStartupAcceptedOperationV1,
-  GatewayStartupOwnerLeaseV1,
+import {
+  parseGatewayStartupSubjectV2,
+  type GatewayStartupOwnerUnitV1,
+  type GatewayStartupOwnerUnitV2,
+  type GatewayStartupAcceptedOperationV1,
+  type GatewayStartupOwnerLeaseV1,
 } from "../gateway-startup-v1/owner.ts";
 import { canonicalizeWorkloadProfileJson, decodeWorkloadProfileJson } from "./canonical.ts";
 import {
@@ -70,7 +72,7 @@ export interface WorkloadProfileSelectionLeaseV2 extends GatewayStartupOwnerLeas
 export interface WorkloadProfileSelectionStorageV2 {
   enroll(
     request: WorkloadProfileSelectionRequestV2,
-    unit: GatewayStartupOwnerUnitV1,
+    unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
     io: GatewayStartupAcceptedOperationV1,
   ): Promise<
     GatewayStartupOwnerLeaseV1 & {
@@ -102,7 +104,7 @@ export interface WorkloadProfileCapabilitySourceV2 {
     request: WorkloadProfileSelectionRequestV2,
     manifest: DerivedWorkloadProfileManifestV2["content"],
     admittedUse: WorkloadProfileUseV2,
-    unit: GatewayStartupOwnerUnitV1,
+    unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
     io: GatewayStartupAcceptedOperationV1,
   ): Promise<GatewayStartupOwnerLeaseV1>;
 }
@@ -293,7 +295,7 @@ export function createAdmittedWorkloadProfileSelectorV2(
   return Object.freeze({
     async resolveLocked(
       input: unknown,
-      unit: GatewayStartupOwnerUnitV1,
+      unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<WorkloadProfileSelectionLeaseV2> {
       if (!enroll || !acquire) return fail("unavailable");
@@ -302,6 +304,7 @@ export function createAdmittedWorkloadProfileSelectorV2(
       const releases: (() => Promise<void>)[] = [];
       const pendingFences = new Set<Promise<unknown>>();
       let closed = false;
+      let agentSubject: boolean | undefined;
       let fenceFailed = false;
       let fenceFailure: unknown;
       let releasePromise: Promise<void> | undefined;
@@ -341,9 +344,24 @@ export function createAdmittedWorkloadProfileSelectorV2(
         return releasePromise;
       };
       const assertCurrent = (): undefined => {
-        if (closed || unit.installationId !== expected.installationId) fail("unavailable");
+        if (closed) fail("unavailable");
         if (fenceFailed) throw fenceFailure;
         try {
+          // Version selects a fixed correspondence branch. A present malformed
+          // V2 subject never falls back to legacy Installation-only identity;
+          // held failure remains terminal even if a faulty peer later changes it.
+          const hasSubject = "subject" in unit;
+          if (agentSubject === undefined) agentSubject = hasSubject;
+          if (agentSubject !== hasSubject) fail("unavailable");
+          if (hasSubject) {
+            const subject = parseGatewayStartupSubjectV2(unit.subject);
+            if (
+              subject.installationId !== expected.installationId ||
+              subject.namespaceRef !== expected.namespaceId ||
+              subject.agentRef !== expected.agentId
+            )
+              fail("unavailable");
+          } else if (unit.installationId !== expected.installationId) fail("unavailable");
           for (const check of checks) synchronous(check);
         } catch (error) {
           fenceFailed = true;
