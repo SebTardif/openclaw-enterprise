@@ -57,12 +57,13 @@ function version(value: MaterialVersion): void {
 }
 
 function materialBytes(value: string): number {
+  // In Unicode mode, the surrogate range matches only unpaired UTF-16 code units.
   if (
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > GATEWAY_MATERIAL_LIMITS_V1.itemBytes ||
     value.includes("\0") ||
-    !value.isWellFormed()
+    /[\uD800-\uDFFF]/u.test(value)
   )
     unavailable();
   // UTF-16 length is bounded above before either content scan or byte count.

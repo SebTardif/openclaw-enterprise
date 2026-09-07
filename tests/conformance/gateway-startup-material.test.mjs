@@ -356,7 +356,7 @@ test("token callback has exact target, no cache, no parallel queue and rechecks 
 });
 
 test("callback failure and invalid tokens expose only constant error", async () => {
-  for (const value of ["", "bad\0token", "\ud800", "x".repeat(32769)]) {
+  for (const value of ["", "bad\0token", "\ud800", "\udc00", "x".repeat(32769)]) {
     const f = fixture();
     f.input.teams.ingress.getBotToken = async () => value;
     const owner = createGatewayStartupMaterialBorrowerV1(f.owner, f.selected, f.source);
@@ -372,6 +372,28 @@ test("callback failure and invalid tokens expose only constant error", async () 
   const material = await owner.borrowMaterial();
   await reject(material.input.teams.ingress.getBotToken(request, signal()));
   await owner.close();
+});
+
+test("valid surrogate pairs retain their values and UTF-8 byte counts", async () => {
+  for (const value of ["\ud800\udc00", "\ud83d\ude00", "\udbff\udfff"]) {
+    const f = fixture();
+    f.input.slack.options.botToken = value;
+    f.input.slack.options.appToken = value;
+    f.input.teams.ingress.getBotToken = async () => value;
+    assert.equal(
+      inspectGatewayMaterialInputV1(f.selected, f.lease.observed, f.input).slackMaterialBytes,
+      8,
+    );
+    const owner = createGatewayStartupMaterialBorrowerV1(f.owner, f.selected, f.source);
+    try {
+      const material = await owner.borrowMaterial();
+      assert.equal(material.input.slack.options.botToken, value);
+      assert.equal(material.input.slack.options.appToken, value);
+      assert.equal(await material.input.teams.ingress.getBotToken(request, signal()), value);
+    } finally {
+      await owner.close();
+    }
+  }
 });
 
 test("UTF-8 item and live owned bundle bounds deny without truncation", async () => {
