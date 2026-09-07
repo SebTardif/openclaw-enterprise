@@ -7,12 +7,15 @@ const modules = {
   audit: new URL("schema/audit.ts", schemaRoot).href,
   provider: new URL("schema/provider-account-bindings.ts", schemaRoot).href,
   channel: new URL("schema/channel.ts", schemaRoot).href,
+  agent: new URL("schema/agent.ts", schemaRoot).href,
+  iam: new URL("schema/iam.ts", schemaRoot).href,
+  work: new URL("schema/work-queue.ts", schemaRoot).href,
 };
 
 export const importOrders = [
-  ["aggregate", "audit", "provider", "channel"],
-  ["audit", "provider", "channel", "aggregate"],
-  ["channel", "provider", "aggregate", "audit"],
+  ["aggregate", "audit", "provider", "channel", "agent", "iam", "work"],
+  ["iam", "agent", "work", "audit", "provider", "channel", "aggregate"],
+  ["work", "channel", "provider", "aggregate", "iam", "agent", "audit"],
 ];
 
 export async function inspectImportOrder(orderIndex, dependencies) {
@@ -28,7 +31,17 @@ export async function inspectImportOrder(orderIndex, dependencies) {
     loaded.provider.serviceAccountDriverBindings,
   );
   assert.equal(typeof loaded.channel.createChannelTables, "function");
-  for (const helper of ["createChannelTables", "collatedText", "identifierPatterns"]) {
+  assert.equal(typeof loaded.agent.createAgentTables, "function");
+  assert.equal(typeof loaded.iam.createIamTables, "function");
+  assert.equal(typeof loaded.work.createControllerWorkTable, "function");
+  for (const helper of [
+    "createChannelTables",
+    "createAgentTables",
+    "createIamTables",
+    "createControllerWorkTable",
+    "collatedText",
+    "identifierPatterns",
+  ]) {
     assert.equal(Object.hasOwn(aggregate, helper), false, helper + " must stay private");
   }
 
@@ -89,4 +102,34 @@ export async function inspectImportOrder(orderIndex, dependencies) {
   const snapshot = tools.snapshot(aggregate);
   assert.equal(checkedForeignKeys, snapshot.relatedForeignKeys.length);
   return { snapshot, checkedForeignKeys, order: importOrders[orderIndex] };
+}
+
+export async function inspectLateIamConstruction({ getTableConfig }) {
+  const { occSchema } = await import(new URL("schema/shared.ts", schemaRoot).href);
+  const { namespaces } = await import(new URL("schema/namespace.ts", schemaRoot).href);
+  const { configurations } = await import(new URL("schema/configuration.ts", schemaRoot).href);
+  const { serviceAccounts } = await import(new URL("schema/service-account.ts", schemaRoot).href);
+  const { createAgentTables } = await import(modules.agent);
+  const { createIamTables } = await import(modules.iam);
+
+  // Assemble the real cycle once in this separate process. Reading it prematurely
+  // must fail rather than invent an identity or eagerly construct another table.
+  const { agents, agentRevisions } = createAgentTables(
+    occSchema,
+    { namespaces, configurations, serviceAccounts },
+    () => iamIdentities,
+  );
+  assert.throws(() => getTableConfig(agents), ReferenceError);
+  const { iamIdentities } = createIamTables(occSchema, { namespaces, agents });
+  for (const [source, constraint, target] of [
+    [agents, "agent_service_principal_owner", iamIdentities],
+    [agents, "agent_active_revision_owner", agentRevisions],
+    [iamIdentities, "iam_identities_agent_owner", agents],
+  ]) {
+    const key = getTableConfig(source).foreignKeys.find((entry) => entry.getName() === constraint);
+    assert.ok(key, constraint);
+    assert.strictEqual(key.reference().foreignTable, target, constraint);
+    for (const column of key.reference().foreignColumns) assert.strictEqual(column.table, target);
+  }
+  return { prematureRead: "rejected", originalCycleReferences: 3 };
 }

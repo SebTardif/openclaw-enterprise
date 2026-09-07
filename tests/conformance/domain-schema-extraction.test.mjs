@@ -43,3 +43,20 @@ console.log(JSON.stringify({
     t.diagnostic(result.stdout.trim());
   });
 }
+
+test("schema Agent/IAM cycle rejects premature metadata and resolves the original completed tables", (t) => {
+  const result = spawnSync(process.execPath, ["--max-old-space-size=1536", "--input-type=module"], {
+    cwd: fileURLToPath(new URL("../../packages/occ/", import.meta.url)),
+    encoding: "utf8",
+    timeout: 60_000,
+    input: `
+import { getTableConfig } from "drizzle-orm/pg-core";
+import { inspectLateIamConstruction } from "../../tests/fixtures/domain-schema-extraction/import-orders.mjs";
+console.log(JSON.stringify(await inspectLateIamConstruction({ getTableConfig })));
+`,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.signal, null, `Schema inspection terminated: ${result.signal}`);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  t.diagnostic(result.stdout.trim());
+});

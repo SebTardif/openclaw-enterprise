@@ -7,6 +7,15 @@ export const domainTableNames = [
   "channelInstallations",
   "channelHumanBindings",
   "channelAgentBindings",
+  "agents",
+  "agentRevisions",
+  "iamIdentities",
+  "iamRoles",
+  "iamGroups",
+  "iamGroupMemberships",
+  "iamAccessBindings",
+  "iamRestrictions",
+  "controllerWork",
 ];
 
 // Reuse the actual Drizzle normalizer; this fixture never declares a replacement table.
