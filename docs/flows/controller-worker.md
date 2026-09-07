@@ -81,6 +81,14 @@ support `setLifecycleDrivers`; invalid or unavailable selected capabilities stop
 startup. Production then runs Compute preflight before emitting `worker.started`
 and starting `run()`.
 
+The exported worker records its single start attempt before any startup await.
+Concurrent or repeated starts reject. A stop during startup joins the current
+stage and suppresses later startup stages, dispatch, and `worker.started`.
+All stop callers share one promise that joins startup, the loop, and the state's
+supplied pool-close capability. Startup errors remain with the start caller;
+shutdown still cleans up. A stopped instance cannot restart. The ordinary
+entrypoint already awaits startup sequentially.
+
 The worker has no HTTP listener, Better Auth session service, or provider-admin
 client. Compose and Helm keep it separate from the API process. See the
 [development](docker-compose-development.md) and

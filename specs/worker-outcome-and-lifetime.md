@@ -21,12 +21,15 @@ retry/backoff, or durable audit semantics.
 
 ## Worker lifetime
 
-The next implementation slice gives the exported worker one startup and shutdown
-lifetime. Startup must be recorded synchronously before any awaited work;
-concurrent startup is rejected. Shutdown joins awaited startup and all owned
-work, suppresses later dispatch and the started event, and closes the owned state
-once. All stop callers join the same shutdown result. Start after shutdown begins
-is rejected. Selected Drivers remain borrowed and their lifecycle is unchanged.
+Implemented: the exported worker owns one startup and shutdown lifetime. It
+records startup synchronously before any awaited work and rejects concurrent or
+repeated start calls. Shutdown joins awaited startup and all owned work,
+suppresses later startup stages, dispatch and the started event, and closes the
+owned state through its supplied pool-close capability once. Every stop caller
+joins the same shutdown promise, including when cleanup fails. Startup failures
+retain their original error; shutdown still performs cleanup. Start after
+shutdown begins is rejected. Selected Drivers remain borrowed and their lifetime
+is unchanged.
 The ordinary executable already awaits startup before registering shutdown
 handlers; the concurrency correction concerns the exported worker API.
 

@@ -142,7 +142,9 @@ export class ControllerWorker {
   private readonly abort = new AbortController();
   private installation: Readonly<Installation> | undefined;
   private loop: Promise<void> | undefined;
-  private stopping = false;
+  private starting: Promise<void> | undefined;
+  private shutdown: Promise<void> | undefined;
+  private lifetime: "idle" | "starting" | "running" | "failed" | "stopping" | "stopped" = "idle";
   private readonly runner: WorkerRunner;
 
   constructor(options: ControllerWorkerOptions) {
@@ -368,20 +370,50 @@ export class ControllerWorker {
     });
   }
 
-  async start(): Promise<void> {
-    if (this.loop !== undefined) throw new Error("The controller worker is already running.");
+  start(): Promise<void> {
+    if (this.stopping)
+      return Promise.reject(new Error("The controller worker is stopping or stopped."));
+    if (this.lifetime !== "idle")
+      return Promise.reject(new Error("The controller worker has already been started."));
+    this.lifetime = "starting";
+    // Record ownership before calling any asynchronous or reentrant capability.
+    this.starting = Promise.resolve().then(() => this.initialize());
+    return this.starting;
+  }
+
+  private get stopping(): boolean {
+    return this.lifetime === "stopping" || this.lifetime === "stopped";
+  }
+
+  private async initialize(): Promise<void> {
+    try {
+      await this.initializeRunningWorker();
+    } catch (error) {
+      if (!this.stopping) this.lifetime = "failed";
+      throw error;
+    }
+  }
+
+  private async initializeRunningWorker(): Promise<void> {
+    if (this.stopping) return;
     const installation = await this.state.loadInstallation();
+    if (this.stopping) return;
     if (installation === undefined)
       throw new Error("The platform Installation must be bootstrapped before starting the worker.");
     this.installation = installation;
-    validatePersistedNativeIAMState(await this.loadIAMState());
+    const iamState = await this.loadIAMState();
+    if (this.stopping) return;
+    validatePersistedNativeIAMState(iamState);
     this.attachLifecycleDrivers(this.iam);
+    if (this.stopping) return;
     if (this.mode === "production") {
       const compute = this.compute as ComputeDriver & { preflight?: () => Promise<void> };
       if (typeof compute.preflight === "function") await compute.preflight();
       else if (this.requireComputePreflight)
         throw new Error("The selected bundled production Compute Driver requires preflight.");
     }
+    if (this.stopping) return;
+    this.lifetime = "running";
     this.emit({
       event: "worker.started",
       computeDriverId: this.compute.id,
@@ -390,13 +422,26 @@ export class ControllerWorker {
     this.loop = this.runner.run();
   }
 
-  async stop(): Promise<void> {
-    if (this.stopping) return;
-    this.stopping = true;
+  stop(): Promise<void> {
+    if (this.shutdown !== undefined) return this.shutdown;
+    this.lifetime = "stopping";
+    this.shutdown = Promise.resolve().then(async () => {
+      try {
+        // The start caller retains its startup error; shutdown still owns cleanup.
+        await this.starting?.catch(() => {});
+        try {
+          await this.loop;
+        } finally {
+          await this.state.close();
+        }
+        this.emit({ event: "worker.stopped" });
+      } finally {
+        this.lifetime = "stopped";
+      }
+    });
+    // Memoize shutdown before cancellation can reenter stop through a Driver.
     this.abort.abort();
-    await this.loop;
-    await this.state.close();
-    this.emit({ event: "worker.stopped" });
+    return this.shutdown;
   }
 
   private async loadIAMState(): Promise<NativeIAMState> {
