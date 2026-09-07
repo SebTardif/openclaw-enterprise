@@ -14,6 +14,162 @@ import {
 } from "../../packages/contracts/src/turn-journal-v1.ts";
 import * as v from "../fixtures/turn-journal-v1/values.mjs";
 
+// Fixed notice classification is retained data. These codecs neither issue the
+// original delivery proof nor qualify a prior notice/update against live history.
+function statusOperation(statusNoticeCode, kind = "create") {
+  return {
+    ...v.copy(v.deliveryOperation),
+    slot: "outcome-status",
+    statusNoticeCode,
+    operation: kind === "create" ? { kind } : { kind, providerMessageRef: "message-one" },
+  };
+}
+const noticeCodes = [
+  "failed",
+  "interrupted",
+  "cancelled",
+  "outcome-unknown",
+  "unavailable-before-dispatch",
+  "resolved-completed",
+];
+for (const code of noticeCodes) {
+  const kinds =
+    code === "resolved-completed"
+      ? ["update"]
+      : code === "outcome-unknown" || code === "unavailable-before-dispatch"
+        ? ["create"]
+        : ["create", "update"];
+  for (const kind of kinds) {
+    test(`fixed ${code} ${kind} classification survives exact wire roundtrip`, () => {
+      const input = statusOperation(code, kind);
+      const parsed = parseTurnJournalJsonV1("deliveryOperation", JSON.stringify(input));
+      assert.equal(JSON.stringify(parsed), JSON.stringify(input));
+      assert.equal(parsed.statusNoticeCode, code);
+      assert.equal(Object.isFrozen(parsed), true);
+      assert.throws(() => {
+        parsed.statusNoticeCode = "outcome-unknown";
+      });
+    });
+  }
+  for (const slot of ["completed-result", "cancel-ack"]) {
+    test(`fixed ${code} cannot classify the independent ${slot} slot`, () => {
+      const input = {
+        ...statusOperation(code, code === "resolved-completed" ? "update" : "create"),
+        slot,
+      };
+      assert.throws(() => parseTurnJournalV1("deliveryOperation", input));
+      assert.throws(() => parseTurnJournalJsonV1("deliveryOperation", JSON.stringify(input)));
+    });
+  }
+}
+for (const [code, kind] of [
+  ["resolved-completed", "create"],
+  ["outcome-unknown", "update"],
+  ["unavailable-before-dispatch", "update"],
+]) {
+  test(`fixed ${code} rejects incompatible ${kind} at value and result boundaries`, () => {
+    const operation = statusOperation(code, kind);
+    assert.throws(() => parseTurnJournalV1("deliveryOperation", operation));
+    assert.throws(() => parseTurnJournalResultV1("delivery", { kind: "pending", operation }));
+    assert.throws(() =>
+      parseTurnJournalResultV1("delivery", {
+        kind: "recorded",
+        record: {
+          operation,
+          deliveryAttemptRef: "delivery-attempt-one",
+          outcome: { kind: "delivered", providerMessageRef: "message-one" },
+        },
+      }),
+    );
+  });
+}
+for (const slot of ["outcome-status", "completed-result", "cancel-ack"]) {
+  test(`legacy ${slot} remains readable without inventing unknown classification`, () => {
+    const input = { ...v.copy(v.deliveryOperation), slot };
+    const parsed = parseTurnJournalJsonV1("deliveryOperation", JSON.stringify(input));
+    assert.equal(JSON.stringify(parsed), JSON.stringify(input));
+    assert.equal(Object.hasOwn(parsed, "statusNoticeCode"), false);
+    const retained = parseTurnJournalResultV1("delivery", {
+      kind: "recorded",
+      record: {
+        operation: input,
+        deliveryAttemptRef: "delivery-attempt-one",
+        outcome: { kind: "delivered", providerMessageRef: "message-one" },
+      },
+    });
+    assert.equal(Object.hasOwn(retained.record.operation, "statusNoticeCode"), false);
+  });
+}
+for (const value of [null, 1, {}, "unknown", "cancel-requested", "OUTCOME-UNKNOWN"]) {
+  test(`notice classification rejects unsupported ${JSON.stringify(value)}`, () => {
+    const input = statusOperation(value);
+    assert.throws(() => parseTurnJournalV1("deliveryOperation", input));
+    assert.throws(() => parseTurnJournalJsonV1("deliveryOperation", JSON.stringify(input)));
+  });
+}
+test("retained delivered unknown and advanced resolved output keep distinct exact identities", () => {
+  const prior = statusOperation("outcome-unknown");
+  const next = {
+    ...statusOperation("resolved-completed", "update"),
+    operationRef: "delivery-update-one",
+    outputRef: "resolved-output-one",
+    outputDigest: "f".repeat(64),
+    outcomeVersion: prior.outcomeVersion + 1,
+  };
+  const record = parseTurnJournalResultJsonV1(
+    "delivery",
+    JSON.stringify({
+      kind: "recorded",
+      record: {
+        operation: prior,
+        deliveryAttemptRef: "create-attempt-one",
+        outcome: { kind: "delivered", providerMessageRef: "message-one" },
+      },
+    }),
+  );
+  const pending = parseTurnJournalResultJsonV1(
+    "delivery",
+    JSON.stringify({ kind: "pending", operation: next }),
+  );
+  assert.equal(JSON.stringify(record.record.operation), JSON.stringify(prior));
+  assert.equal(JSON.stringify(pending.operation), JSON.stringify(next));
+  assert.equal(
+    pending.operation.operation.providerMessageRef,
+    record.record.outcome.providerMessageRef,
+  );
+  // Preserve changed classification under the same operationRef as distinct
+  // input; only the actual journal can reject conflicting durable reuse.
+  const changed = parseTurnJournalV1("deliveryOperation", { ...prior, statusNoticeCode: "failed" });
+  assert.equal(changed.operationRef, record.record.operation.operationRef);
+  assert.notEqual(JSON.stringify(changed), JSON.stringify(record.record.operation));
+  assert.equal(record.record.operation.statusNoticeCode, "outcome-unknown");
+});
+test("classification rejects duplicate wire keys, aliases and property accessors", () => {
+  const input = statusOperation("outcome-unknown");
+  const json = JSON.stringify(input);
+  assert.throws(() =>
+    parseTurnJournalJsonV1(
+      "deliveryOperation",
+      json.replace(
+        '"statusNoticeCode":"outcome-unknown"',
+        '"statusNoticeCode":"outcome-unknown","statusNoticeCode":"failed"',
+      ),
+    ),
+  );
+  assert.throws(() =>
+    parseTurnJournalV1("deliveryOperation", { ...input, noticeCode: "outcome-unknown" }),
+  );
+  let read = false;
+  Object.defineProperty(input, "statusNoticeCode", {
+    get() {
+      read = true;
+      return "outcome-unknown";
+    },
+  });
+  assert.throws(() => parseTurnJournalV1("deliveryOperation", input));
+  assert.equal(read, false);
+});
+
 // These exercise the exported definition codecs/classifiers and commit-callback
 // wrapper. They do not implement or certify journal/database/runtime persistence.
 for (const [kind, value] of Object.entries({
