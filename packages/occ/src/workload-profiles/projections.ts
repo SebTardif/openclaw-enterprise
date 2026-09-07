@@ -1,12 +1,14 @@
 import { workloadProfileDigest } from "./canonical.ts";
 import {
   decodeWorkloadProfileManifest,
+  decodeWorkloadProfileManifestV2,
   WorkloadProfileManifestError,
   type DecodedWorkloadProfileManifestV1,
   type WorkloadProfileManifestArtifactV1,
   type WorkloadProfileManifestClaimV1,
   type WorkloadProfileManifestContentV1,
   type WorkloadProfileManifestProducerV1,
+  type WorkloadProfileManifestContentV2,
 } from "./manifest.ts";
 
 type Content = WorkloadProfileManifestContentV1;
@@ -23,6 +25,102 @@ export function projectWorkloadProfileResourceAccountingV1(
   return decodeWorkloadProfileManifest(input).content.launchConfiguration.resourceEnvelope
     .podAndRuntimeAccounting;
 }
+
+/** The successor keeps the existing domain names. Its complete pair content,
+ * including the original accounting seed, selects the bytes inside each domain. */
+export function deriveWorkloadProfileManifestV2(input: Uint8Array) {
+  const decoded = decodeWorkloadProfileManifestV2(input);
+  const manifest = decoded.content;
+  const launch = manifest.launchConfiguration;
+  const mountPolicy = Object.freeze({
+    gateway: launch.gateway.mounts,
+    harness: launch.harness.mounts,
+  });
+  const runtimeFlags = Object.freeze({
+    gateway: launch.gateway.runtimeClass,
+    harness: launch.harness.runtimeClass,
+    runtime: launch.runtime,
+  });
+  const projections = Object.freeze({
+    manifest,
+    artifactSet: manifest.artifactSet,
+    launchConfiguration: launch,
+    providerProfile: Object.freeze({
+      target: manifest.target,
+      placement: launch.placement,
+      physicalCreator: manifest.evidenceRequirements.physicalCreator,
+    }),
+    runtimeProfile: Object.freeze({
+      artifactSet: manifest.artifactSet,
+      launchConfiguration: launch,
+    }),
+    identityProfile: Object.freeze({
+      identity: manifest.endpoints.identity,
+      bootstrap: manifest.evidenceRequirements.bootstrap,
+      credentials: launch.credentials,
+    }),
+    containment: manifest.containment,
+    storageProfile: Object.freeze({
+      mountPolicy,
+      context: manifest.evidenceRequirements.context,
+      replacement: manifest.evidenceRequirements.replacement,
+    }),
+    endpoints: manifest.endpoints,
+    evidenceRequirements: manifest.evidenceRequirements,
+    mountPolicy,
+    resourceEnvelope: launch.resourceEnvelope,
+    runtimeFlags,
+  });
+  const digests = Object.freeze({
+    manifestDigest: workloadProfileDigest("manifestDigest", manifest),
+    artifactSetDigest: workloadProfileDigest("artifactSetDigest", projections.artifactSet),
+    launchConfigurationDigest: workloadProfileDigest("launchConfigurationDigest", launch),
+    providerProfileDigest: workloadProfileDigest(
+      "providerProfileDigest",
+      projections.providerProfile,
+    ),
+    runtimeProfileDigest: workloadProfileDigest("runtimeProfileDigest", projections.runtimeProfile),
+    identityProfileDigest: workloadProfileDigest(
+      "identityProfileDigest",
+      projections.identityProfile,
+    ),
+    containmentDigest: workloadProfileDigest("containmentDigest", projections.containment),
+    storageProfileDigest: workloadProfileDigest("storageProfileDigest", projections.storageProfile),
+    endpointsDigest: workloadProfileDigest("endpointsDigest", projections.endpoints),
+    evidenceRequirementsDigest: workloadProfileDigest(
+      "evidenceRequirementsDigest",
+      projections.evidenceRequirements,
+    ),
+    mountPolicyDigest: workloadProfileDigest("mountPolicyDigest", mountPolicy),
+    resourceEnvelopeDigest: workloadProfileDigest(
+      "resourceEnvelopeDigest",
+      projections.resourceEnvelope,
+    ),
+    runtimeFlagsDigest: workloadProfileDigest("runtimeFlagsDigest", runtimeFlags),
+  });
+  return Object.freeze({
+    ...decoded,
+    projections,
+    digests,
+    // The two application images are not the original component-only image-set
+    // projection, which also includes every init/helper container in its actual
+    // qualified renderer. Never hash the pair artifact set into that domain.
+    unavailableDigests: Object.freeze({
+      imageSetDigest: "renderer-container-projection-required" as const,
+      admittedConfigurationDigest: "deployment-inputs-required" as const,
+    }),
+    roleDigests: Object.freeze({
+      provider: digests.providerProfileDigest,
+      runtime: digests.runtimeProfileDigest,
+      identity: digests.identityProfileDigest,
+      containment: digests.containmentDigest,
+      storage: digests.storageProfileDigest,
+    }),
+  });
+}
+
+export type DerivedWorkloadProfileManifestV2 = ReturnType<typeof deriveWorkloadProfileManifestV2>;
+export type WorkloadProfilePairLaunchV2 = WorkloadProfileManifestContentV2["launchConfiguration"];
 
 type Artifact<R extends WorkloadProfileManifestArtifactV1["role"]> = Extract<
   WorkloadProfileManifestArtifactV1,
