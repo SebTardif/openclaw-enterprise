@@ -1,4 +1,11 @@
-import { asRecord, sha256Hex } from "@openclaw-enterprise/utils";
+import { asRecord, immutableCopy, sha256Hex } from "@openclaw-enterprise/utils";
+import type { V1Deployment, V1EnvVar, V1Volume, V1VolumeMount } from "@kubernetes/client-node";
+import type { GatewayProcessTargetV1 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
+import { normalizeResourceQuantity } from "./resource-normalization.ts";
+import {
+  snapshotKubernetesWorkloadResourcePlan,
+  type KubernetesWorkloadResourcePlan,
+} from "./revision-resource-plan.ts";
 import {
   admittedLoggingLevel,
   type AgentRevision,
@@ -198,4 +205,131 @@ export function gatewayConfigurationMap(
     immutable: true,
     data: { [CONFIGURATION_DOCUMENT]: document },
   };
+}
+
+/** Pure rendering from the original qualified immutable renderer definition.
+ * Admission, current authority and physical placement are checked by its caller. */
+export function admittedGatewayDeployment(input: {
+  readonly target: GatewayProcessTargetV1;
+  readonly template: V1Deployment;
+  readonly applicationName: string;
+  readonly privateStateInitName: string;
+  readonly image: string;
+  readonly argv: readonly string[];
+  readonly runtimeClassName: string;
+  readonly environment: readonly V1EnvVar[];
+  readonly volumes: readonly V1Volume[];
+  readonly mounts: readonly V1VolumeMount[];
+  readonly resources: KubernetesWorkloadResourcePlan;
+  readonly storage: Readonly<
+    Record<
+      "runtimeHome" | "temporary",
+      {
+        readonly accountingId: string;
+        readonly volumeName: string;
+      }
+    >
+  >;
+}): V1Deployment {
+  const template = immutableCopy(input.template);
+  const pod = template.spec?.template.spec;
+  const application = pod?.containers[0];
+  const init = pod?.initContainers?.[0];
+  const resources = snapshotKubernetesWorkloadResourcePlan(input.resources);
+  if (
+    resources.component !== "gateway" ||
+    !pod ||
+    !application ||
+    !init ||
+    template.kind !== "Deployment" ||
+    template.apiVersion !== "apps/v1" ||
+    template.metadata?.name !== input.target.deploymentName ||
+    template.metadata.namespace !== input.target.namespace.name ||
+    template.metadata.uid !== undefined ||
+    template.metadata.resourceVersion !== undefined ||
+    template.metadata.generateName !== undefined ||
+    template.metadata.deletionTimestamp !== undefined ||
+    template.spec?.replicas !== 1 ||
+    pod.containers.length !== 1 ||
+    pod.initContainers?.length !== 1 ||
+    application.name !== input.applicationName ||
+    init.name !== input.privateStateInitName ||
+    application.name === init.name ||
+    typeof init.image !== "string" ||
+    !/@sha256:[0-9a-f]{64}$/.test(init.image) ||
+    init.restartPolicy !== undefined ||
+    pod.automountServiceAccountToken !== false ||
+    pod.hostNetwork === true ||
+    pod.hostPID === true ||
+    pod.hostIPC === true ||
+    (pod.ephemeralContainers?.length ?? 0) !== 0 ||
+    application.securityContext?.privileged === true ||
+    init.securityContext?.privileged === true ||
+    input.argv.length === 0 ||
+    !input.argv[0]?.startsWith("/") ||
+    input.argv.some((value) => typeof value !== "string" || value.includes("\0")) ||
+    !input.runtimeClassName ||
+    input.runtimeClassName.trim() !== input.runtimeClassName ||
+    !input.image.includes("@sha256:")
+  )
+    throw new Error("The admitted Gateway renderer does not support this plan.");
+  const volumeNames = new Set(input.volumes.map(({ name }) => name));
+  const workload = resources.values.envelope.gateway;
+  if (
+    volumeNames.size !== input.volumes.length ||
+    workload.status !== "supplied" ||
+    workload.value.storage.status !== "supplied" ||
+    input.storage.runtimeHome.volumeName === input.storage.temporary.volumeName ||
+    [...input.mounts, ...(init.volumeMounts ?? [])].some(
+      (mount) => !volumeNames.has(mount.name) || mount.subPathExpr !== undefined,
+    )
+  )
+    throw new Error("The admitted Gateway volume correspondence is unavailable.");
+  for (const [key, kind, capacity] of [
+    ["runtimeHome", "runtime-home", resources.runtimeHomeBytes],
+    ["temporary", "temporary", resources.temporaryBytes],
+  ] as const) {
+    const selected = input.storage[key];
+    const store = workload.value.storage.value.find(
+      (entry) => entry.accountingId === selected.accountingId,
+    );
+    const volume = input.volumes.find(({ name }) => name === selected.volumeName);
+    if (
+      !store ||
+      store.kind !== kind ||
+      store.medium !== "disk-ephemeral" ||
+      store.capacityBytes !== capacity ||
+      !volume?.emptyDir ||
+      Object.keys(volume).some((name) => name !== "name" && name !== "emptyDir") ||
+      (volume.emptyDir.medium !== undefined && volume.emptyDir.medium !== "") ||
+      normalizeResourceQuantity("ephemeral-storage", volume.emptyDir.sizeLimit) !== capacity
+    )
+      throw new Error("The admitted Gateway storage capacity does not match.");
+  }
+  return immutableCopy({
+    ...template,
+    spec: {
+      ...template.spec,
+      template: {
+        ...template.spec.template,
+        spec: {
+          ...pod,
+          runtimeClassName: input.runtimeClassName,
+          volumes: [...input.volumes],
+          initContainers: [{ ...init, resources: resources.privateStateInit }],
+          containers: [
+            {
+              ...application,
+              image: input.image,
+              command: [input.argv[0]],
+              args: input.argv.slice(1),
+              env: [...input.environment],
+              volumeMounts: [...input.mounts],
+              resources: resources.application,
+            },
+          ],
+        },
+      },
+    },
+  });
 }

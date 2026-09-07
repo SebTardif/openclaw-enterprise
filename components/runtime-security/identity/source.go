@@ -5,7 +5,9 @@ package identity
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -50,6 +52,16 @@ type Metadata struct {
 	ExpiresAt              time.Time `json:"expiresAt"`
 	CertificateCount       int       `json:"certificateCount"`
 	BundleCertificateCount int       `json:"bundleCertificateCount"`
+}
+
+// TrustView describes one accepted generation without exposing credential material.
+// It is historical data after return, not a reusable currentness or authority grant.
+type TrustView struct {
+	Metadata     Metadata `json:"metadata"`
+	BundleSHA256 string   `json:"bundleSha256"`
+	CRLCount     int      `json:"crlCount"`
+	// FederatedBundleCount is descriptive and does not imply a trust-policy denial.
+	FederatedBundleCount int `json:"federatedBundleCount"`
 }
 
 // Snapshot contains independent DER copies. Credential material is excluded
@@ -204,6 +216,27 @@ func (s *Source) Metadata() (Metadata, error) {
 		return Metadata{}, err
 	}
 	return s.snapshot.Metadata, nil
+}
+
+// TrustView returns a coherent key-free projection of the current generation.
+// BundleSHA256 hashes the own-domain DER certificates in their existing order.
+// Each currentness check must call again; this value cannot keep a source current.
+func (s *Source) TrustView() (TrustView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.currentLocked(); err != nil {
+		return TrustView{}, err
+	}
+	digest := sha256.New()
+	for _, der := range s.snapshot.Bundle {
+		_, _ = digest.Write(der)
+	}
+	return TrustView{
+		Metadata:             s.snapshot.Metadata,
+		BundleSHA256:         "sha256:" + hex.EncodeToString(digest.Sum(nil)),
+		CRLCount:             len(s.snapshot.CRLs),
+		FederatedBundleCount: len(s.snapshot.FederatedBundles),
+	}, nil
 }
 
 func (s *Source) Snapshot() (Snapshot, error) {

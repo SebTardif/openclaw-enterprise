@@ -29,6 +29,7 @@
     "./secret-bindings": "./src/secret-bindings.ts",
     "./security-events": "./src/security-events.ts",
     "./account-authority-v1": "./src/account-authority-v1.ts",
+    "./manual-native-policy-v1": "./src/manual-native-policy-v1.ts",
     "./audience-observation-v1": "./src/audience-observation-v1.ts",
     "./credential-authority-v1": "./src/credential-authority-v1.ts",
     "./credential-storage-v1": "./src/credential-storage-v1.ts",

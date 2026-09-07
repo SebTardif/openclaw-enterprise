@@ -1,12 +1,12 @@
-# RUN11 native identity environment fixture
+# Native gVisor identity environment fixture
 
 This experimental fixture supplies an actual Codex 0.153.0 app-server for the
-RUN11 environment handoff. It has no provider credentials and performs one
+native environment handoff. It has no provider credentials and performs one
 authenticated `initialize` request plus its `initialized` notification. It
 retains the native process until the reviewed absolute expiry or an observed
 failure. It does not establish protected workload identity, perform enrollment,
-or qualify production runtime packaging. IDN02 owns the later identity and
-access-channel selection.
+or qualify production runtime packaging. Protected identity and access-channel
+selection require separate qualification.
 
 The `agent` Docker target contains the accepted amd64 Codex executable with
 SHA-256 `fce635028842bfe9257140e8b7d53162732945e2f356fc35225be0702b4974be`.
@@ -81,7 +81,7 @@ native argv. The token is used only by the launcher's own loopback proof;
 it is never persisted, logged, returned by HTTP, or given to the supporting
 gateway. This is experimental transport authentication, with no production
 service authority. The current image provides no external authenticated
-app-server access procedure; IDN02 must review its later channel selection.
+app-server access procedure; later channel selection requires separate review.
 
 The initialize exchange accepts exactly one response for request ID 1. Pinned
 Codex 0.153.0 subsequently sends `remoteControl/status/changed`, and may send a
@@ -109,9 +109,8 @@ control payloads exceeding 125 bytes, truncated frames and bytes after Close fai
 
 The recognized bubblewrap advisory documents an absent optional system binary.
 It does not establish native tool sandbox availability or safety, trigger an
-installation, or authorize any tool execution. The original failed image and
-observation belong in the preserved private evidence packet; the parser fix
-does not convert that failed attempt into a pass.
+installation, or authorize any tool execution. Failed images and observations belong in the preserved private evidence
+packet; source corrections do not convert failed attempts into passes.
 
 The main processes require UID 1000, zero permitted/effective/bounding
 capabilities, `NoNewPrivs=1`, and actual soft/hard descriptor limits of 256 and
@@ -226,7 +225,7 @@ The JSON observation schema includes:
 Correlate these diagnostics with independently observed Compute operations,
 Namespace/Deployment/ReplicaSet/Pod ownership, immutable image and node/runtime
 instances and original observation times. A reported PID, UUID or restart
-count does not prove the protected discriminator required by IDN02. Observe
+count does not prove a protected workload discriminator. Observe
 predecessor native termination and resolve outstanding create effects before
 admitting any writable replacement.
 
@@ -248,15 +247,29 @@ Investigate the exact immutable config, deadline,
 guest `/proc` observations and operator-owned runtime events without enabling
 credentials or relaxing the selected boundary.
 
-The original operator may continue the exact initial-observation checkpoint with
-`OCC_RUN11_RESUME_ALLOCATION` and its independently reviewed
-`OCC_RUN11_RESUME_SHA256`. This narrowly bounded mechanism verifies the completed
-failed process receipt, the complete original responsibility journal, controller
-kubeconfig custody, and the original ready Pod/container and Deployment identities.
-It writes a fresh evidence journal linked to the unchanged original journal and
-skips only completed namespace/RBAC creation and the two initial preparations.
-All correspondence, network, predecessor termination, replacement and handler
-checks still execute. Unknown effects, changed incarnations, an expired allocation,
-an existing continuation directory or a different checkpoint fail closed. This is
-an experimental operator continuation for the September 5 fixture, not a product
-resume or workload identity facility.
+## Explicit execution settings
+
+The real-environment test accepts only a fresh run. It refuses an existing
+evidence directory and any continuation settings. Preserve failed-run evidence
+and resource ownership; a fresh run ID does not authorize reusing or adopting
+resources from another attempt.
+
+Select the following values in the independently reviewed private execution
+packet before enabling `OCC_TEST_RUN11_REAL=1`:
+
+| Setting                                            | Required value                                                                                                                                                                          |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OCC_RUN11_EVIDENCE`                               | New canonical absolute directory beneath an existing canonical, operator-owned mode-0700 directory. The test creates the new directory as mode 0700 and its journal files as mode 0600. |
+| `OCC_RUN11_KUBECONFIG`                             | Canonical absolute path to the operator-owned mode-0600 kubeconfig for the explicitly selected disposable cluster.                                                                      |
+| `OCC_RUN11_CONTEXT`                                | Exact disposable `k3d-*` context.                                                                                                                                                       |
+| `OCC_RUN11_NODE`                                   | Exact Docker container and Kubernetes name of the cluster's sole `k3d-*-server-0` node. The operator observer requires the same selection.                                              |
+| `OCC_RUN11_RUNTIME_CLASS`                          | `oce-gvisor-systrap`, the Compute Driver's required class and handler. No runtime fallback is supported.                                                                                |
+| `OCC_RUN11_API_SERVER`                             | Exact HTTPS loopback endpoint with an explicit port, matching the selected kubeconfig.                                                                                                  |
+| `OCC_RUN11_SOURCE`                                 | Reviewed source commit, which must match the execution checkout's HEAD.                                                                                                                 |
+| `OCC_RUN11_AGENT_IMAGE`, `OCC_RUN11_GATEWAY_IMAGE` | Reviewed immutable `docker.io/library/oce-run11-agent@sha256:<digest>` and `docker.io/library/oce-run11-gateway@sha256:<digest>` images.                                                |
+| `OCC_RUN11_RUN_ID`                                 | Fresh 12-character lowercase hexadecimal run identifier.                                                                                                                                |
+| `OCC_RUN11_OPERATOR`, `OCC_RUN11_CONSUMER`         | Explicit responsible operator and exclusive intended handoff consumer, recorded only in the private journal. Handoff still requires independent acceptance.                             |
+
+This configuration supplies no execution approval or runtime result. Exact
+process, resource, network and custody review remains required. The public
+fixture provides no continuation facility or workload identity authority.

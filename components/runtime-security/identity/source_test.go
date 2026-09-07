@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -95,6 +96,36 @@ func safeError(t *testing.T, err error, code string) {
 		t.Fatalf("error code=%s, want %s", e.Code, code)
 	}
 }
+func unavailableTrustView(t *testing.T, source *identity.Source, code string) {
+	t.Helper()
+	view, err := source.TrustView()
+	safeError(t, err, code)
+	if view != (identity.TrustView{}) {
+		t.Fatal("unavailable trust view retained historical fields")
+	}
+}
+
+func expectedTrustView(t *testing.T, response *workload.X509SVIDResponse) identity.TrustView {
+	t.Helper()
+	selected := response.Svids[0]
+	chain, err := x509.ParseCertificates(selected.X509Svid)
+	must(t, err)
+	bundle, err := x509.ParseCertificates(selected.Bundle)
+	must(t, err)
+	expires := chain[0].NotAfter
+	for _, certificate := range chain {
+		if certificate.NotAfter.Before(expires) {
+			expires = certificate.NotAfter
+		}
+	}
+	digest := sha256.Sum256(selected.Bundle)
+	return identity.TrustView{
+		Metadata:     identity.Metadata{SPIFFEID: selected.SpiffeId, ExpiresAt: expires.UTC(), CertificateCount: len(chain), BundleCertificateCount: len(bundle)},
+		BundleSHA256: "sha256:" + hex.EncodeToString(digest[:]),
+		CRLCount:     len(response.Crl), FederatedBundleCount: len(response.FederatedBundles),
+	}
+}
+
 func eventually(t *testing.T, check func() bool) {
 	t.Helper()
 	until := time.Now().Add(3 * time.Second)
@@ -271,6 +302,109 @@ func TestX509SelectionAndMetadata(t *testing.T) {
 	}
 }
 
+func TestTrustViewOrderedBundleAndValueIsolation(t *testing.T) {
+	other := newCredentials(t)
+	f := newFixture(t, func(w *wireServer, c credentials) {
+		selected := clone(c.first)
+		selected.Bundle = append(bytes.Clone(c.ca.Raw), other.ca.Raw...)
+		w.initial.Svids = []*workload.X509SVID{selected}
+		w.initial.Crl = [][]byte{{0x30, 0x00}}
+		w.initial.FederatedBundles = map[string][]byte{"spiffe://federated.example": other.ca.Raw}
+	})
+	unavailableTrustView(t, f.source, "UNAVAILABLE")
+	f.start(t)
+	want := expectedTrustView(t, f.wire.initial)
+	view, err := f.source.TrustView()
+	must(t, err)
+	if view != want {
+		t.Fatal("trust view does not describe the selected complete generation")
+	}
+	view.Metadata.SPIFFEID = otherID
+	view.Metadata.ExpiresAt = time.Time{}
+	view.Metadata.CertificateCount = 0
+	view.Metadata.BundleCertificateCount = 0
+	view.BundleSHA256 = "changed"
+	view.CRLCount = 0
+	view.FederatedBundleCount = 0
+	next, err := f.source.TrustView()
+	must(t, err)
+	if next != want {
+		t.Fatal("returned value mutation changed the source")
+	}
+
+	// Reordering the same two authorities changes the digest; removed auxiliary
+	// context must disappear in the same generation as the new certificate expiry.
+	selected := clone(f.certs.rotated)
+	selected.Bundle = append(bytes.Clone(other.ca.Raw), f.certs.ca.Raw...)
+	replacement := &workload.X509SVIDResponse{Svids: []*workload.X509SVID{selected}}
+	rotated := expectedTrustView(t, replacement)
+	if rotated.BundleSHA256 == want.BundleSHA256 {
+		t.Fatal("fixture did not change ordered bundle bytes")
+	}
+	f.wire.events <- wireEvent{response: replacement}
+	eventually(t, func() bool { v, err := f.source.TrustView(); return err == nil && v == rotated })
+
+	// A later certificate with the same bundle has a fresh expiry and stable digest.
+	renewed := clone(f.certs.first)
+	renewed.Bundle = bytes.Clone(selected.Bundle)
+	renewal := &workload.X509SVIDResponse{Svids: []*workload.X509SVID{renewed}}
+	renewedView := expectedTrustView(t, renewal)
+	if renewedView.BundleSHA256 != rotated.BundleSHA256 || renewedView.Metadata.ExpiresAt.Equal(rotated.Metadata.ExpiresAt) {
+		t.Fatal("fixture did not preserve bundle while replacing the certificate")
+	}
+	f.wire.events <- wireEvent{response: renewal}
+	eventually(t, func() bool { v, err := f.source.TrustView(); return err == nil && v == renewedView })
+	must(t, f.source.Close())
+	unavailableTrustView(t, f.source, "CLOSED")
+	if next != want {
+		t.Fatal("a historical returned value changed after replacement or close")
+	}
+}
+
+func TestTrustViewConcurrentCompleteGenerations(t *testing.T) {
+	other := newCredentials(t)
+	f := newFixture(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	must(t, f.source.Start(ctx))
+	first := f.wire.initial
+	selected := clone(f.certs.rotated)
+	selected.Bundle = append(bytes.Clone(f.certs.ca.Raw), other.ca.Raw...)
+	second := &workload.X509SVIDResponse{
+		Svids: []*workload.X509SVID{selected}, Crl: [][]byte{{0x30, 0x00}},
+		FederatedBundles: map[string][]byte{"spiffe://federated.example": other.ca.Raw},
+	}
+	wantFirst, wantSecond := expectedTrustView(t, first), expectedTrustView(t, second)
+	var readers sync.WaitGroup
+	defer func() { cancel(); readers.Wait() }()
+	for range 4 {
+		readers.Go(func() {
+			for ctx.Err() == nil {
+				view, err := f.source.TrustView()
+				if err == nil && view != wantFirst && view != wantSecond {
+					t.Error("trust view mixed fields from different accepted generations")
+					return
+				}
+				if err != nil && ctx.Err() == nil {
+					t.Error("valid concurrent replacement made trust view unavailable")
+					return
+				}
+			}
+		})
+	}
+	for range 5 {
+		for _, generation := range []struct {
+			response *workload.X509SVIDResponse
+			view     identity.TrustView
+		}{{second, wantSecond}, {first, wantFirst}} {
+			f.wire.events <- wireEvent{response: generation.response}
+			eventually(t, func() bool { view, err := f.source.TrustView(); return err == nil && view == generation.view })
+		}
+	}
+	cancel()
+	readers.Wait()
+	unavailableTrustView(t, f.source, "ABORTED")
+}
+
 func TestX509ExactIdentityOverridesSharedHint(t *testing.T) {
 	f := newFixture(t, func(w *wireServer, c credentials) {
 		first, selected := clone(c.other), clone(c.first)
@@ -315,6 +449,7 @@ func TestX509RejectsInvalidEntriesHiddenByHints(t *testing.T) {
 				}
 			})
 			safeError(t, f.source.Start(context.Background()), "")
+			unavailableTrustView(t, f.source, "")
 			_, err := f.source.Snapshot()
 			safeError(t, err, "")
 		})
@@ -381,6 +516,7 @@ func TestX509InvalidResponses(t *testing.T) {
 				w.initial.Svids = []*workload.X509SVID{s}
 			})
 			safeError(t, f.source.Start(context.Background()), "")
+			unavailableTrustView(t, f.source, "")
 			_, err := f.source.Snapshot()
 			safeError(t, err, "")
 		})
@@ -402,6 +538,7 @@ func TestInvalidReplacementFailsClosed(t *testing.T) {
 	f.start(t)
 	f.update(f.certs.other)
 	eventually(t, func() bool { _, err := f.source.Snapshot(); return err != nil })
+	unavailableTrustView(t, f.source, "")
 	_, err := f.source.Metadata()
 	safeError(t, err, "")
 	_, err = f.source.FetchJWTSVID(context.Background(), audience)
@@ -445,6 +582,7 @@ func TestMalformedReplacementClearsIdentity(t *testing.T) {
 	malformed.X509Svid = []byte("malformed replacement")
 	f.update(malformed)
 	eventually(t, func() bool { _, err := f.source.Snapshot(); return err != nil })
+	unavailableTrustView(t, f.source, "")
 	_, err := f.source.FetchJWTSVID(context.Background(), audience)
 	safeError(t, err, "")
 }
@@ -454,6 +592,7 @@ func TestStreamTerminationAndRecreation(t *testing.T) {
 	f.start(t)
 	f.wire.events <- wireEvent{end: true}
 	eventually(t, func() bool { _, err := f.source.Snapshot(); return err != nil })
+	unavailableTrustView(t, f.source, "")
 	safeError(t, f.source.Start(context.Background()), "")
 	replacement, err := identity.NewSource(identity.Options{SocketPath: f.path, ExpectedSPIFFEID: ownID, Timeout: time.Second})
 	must(t, err)
@@ -524,6 +663,7 @@ func TestStartingTimeoutCancelAndClose(t *testing.T) {
 				t.Fatal("start did not finish")
 			}
 			eventually(t, func() bool { return streamCtx.Err() != nil })
+			unavailableTrustView(t, f.source, code)
 			_, err := f.source.Metadata()
 			safeError(t, err, "")
 		})
@@ -683,6 +823,7 @@ func TestX509ExpiryTimerRevokesIdentity(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("expiry timer did not cancel the identity stream")
 	}
+	unavailableTrustView(t, f.source, "EXPIRED")
 	_, err := f.source.Snapshot()
 	safeError(t, err, "EXPIRED")
 	_, err = f.source.Metadata()

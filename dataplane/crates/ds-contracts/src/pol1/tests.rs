@@ -1,3 +1,4 @@
+// Modified for OpenClaw Enterprise: capability-gate parsing regressions.
 //! POL-1 v0 schema tests — one named failing-input rejection test per §7 rule
 //! plus posture round-trip parsing (doc 13 §7 schema-validation suite).
 //!
@@ -688,4 +689,52 @@ posture: open  # another
     let layer = parse_layer(text).expect("comments stripped, parses");
     assert_eq!(layer.posture, Posture::Open);
     assert_eq!(layer.schema_version, "pol1/v0");
+}
+
+#[test]
+fn requires_rejects_malformed_present_gate() {
+    for value in [
+        "[http-policy]",
+        "[]",
+        "{ capability: http-policy }",
+        "{}",
+        "\n        - http-policy",
+        "\n        capability: http-policy",
+        "null",
+        "~",
+        "",
+        "\"\"",
+        "\"   \"",
+    ] {
+        let document =
+            sample_standard().replace("requires: http-policy", &format!("requires: {value}"));
+        let errors = parse_layer(&document).expect_err(&format!(
+            "malformed requires {value:?} must reject the layer"
+        ));
+        assert!(
+            errors
+                .0
+                .iter()
+                .any(|error| error.code == PolicyErrorCode::BadValue
+                    && error.path == "baseline_pack.entries[1].requires"),
+            "requires {value:?} must name the invalid entry field: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn requires_preserves_absence_and_capability_strings() {
+    let absent = sample_standard().replace("      requires: http-policy\n", "");
+    let layer = parse_layer(&absent).expect("omitted gate remains valid");
+    assert_eq!(layer.baseline_pack.entries[1].requires, None);
+
+    for value in ["http-policy", "\"http-policy\"", "'future-capability'"] {
+        let document =
+            sample_standard().replace("requires: http-policy", &format!("requires: {value}"));
+        let layer = parse_layer(&document).expect("capability string remains valid");
+        assert_eq!(
+            layer.baseline_pack.entries[1].requires.as_deref(),
+            Some(value.trim_matches(['\"', '\'']))
+        );
+    }
 }

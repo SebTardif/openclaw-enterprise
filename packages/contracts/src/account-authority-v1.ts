@@ -672,6 +672,28 @@ export const AccountSubjectSchemaV1 = Type.Union([
     },
     Closed,
   ),
+  Type.Object(
+    {
+      ...SubjectCommon,
+      principalKind: Type.Literal("principal"),
+      credentialMode: Type.Literal("native-channel"),
+      accountId: Ref,
+      nativeChannel: Type.Object(
+        {
+          channelInstallationRef: Ref,
+          channelInstallationVersion: Version,
+          externalBindingRef: Ref,
+          externalBindingVersion: Version,
+          sourceInvocationRef: Ref,
+          sourceCredentialVersion: Version,
+          sourceConfigurationVersion: Version,
+          expiresAt: Timestamp,
+        },
+        Closed,
+      ),
+    },
+    Closed,
+  ),
 ]);
 export type AccountSubjectV1 = DeepReadonly<Type.Static<typeof AccountSubjectSchemaV1>>;
 // Compile-time drift checks retain the existing IAM identity/action/resource types.
@@ -788,8 +810,11 @@ export type ExactAccountActionResultV1 =
 
 /**
  * Dependency implemented only by the real accepting-service authentication layer.
- * It verifies the current request, selects session versus explicitly supplied key
- * without fallback, and binds an opaque handle to this invocation and recipient.
+ * It verifies the current request in its actual session, explicitly supplied key
+ * or native-channel mode without fallback, and binds an opaque handle to this
+ * invocation and recipient. Native-channel evidence comes from the original
+ * verified source, current binding and actual local account association; neither
+ * a parsed envelope nor a diagnostic subject supplies that evidence.
  * Implementations reject foreign/replayed handles; TypeScript branding is not proof.
  * No implementation, raw-header constructor or remote transport is supplied here.
  */
@@ -798,7 +823,7 @@ export interface AuthenticatedRequestHandleSourceV1 {
 }
 
 /**
- * resolveSubjectV1 loads current account/session/key, selected IAM and all versions.
+ * resolveSubjectV1 loads current account/credential, selected IAM and all versions.
  * authorizeExactV1 repeats that resolution and every composed IAM check, current
  * semantic role/grant predicates and expected-version comparison. Never accept
  * a caller principal/driver, use Agent-owned service keys, or reuse resolve allow.
@@ -906,13 +931,26 @@ function requestTimes(input: ResolveAccountRequestV1): boolean {
 }
 function observationTimes(input: CurrentAccountObservationV1): boolean {
   const duration = Date.parse(input.validUntil) - Date.parse(input.evaluatedAt);
+  // Native versions and expiry are supplied by the original verified invocation
+  // and current source configuration, never by a fabricated session or default
+  // account/security epoch. The source expiry is its earliest applicable bound.
   const credential =
-    input.subject.credentialMode === "session" ? input.subject.session : input.subject.key;
+    input.subject.credentialMode === "session"
+      ? input.subject.session
+      : input.subject.credentialMode === "service-key"
+        ? input.subject.key
+        : input.subject.nativeChannel;
+  const credentialVersion =
+    input.subject.credentialMode === "native-channel"
+      ? input.subject.nativeChannel.sourceCredentialVersion
+      : input.subject.credentialMode === "session"
+        ? input.subject.session.version
+        : input.subject.key.version;
   return (
     duration > 0 &&
     duration <= ACCOUNT_AUTHORITY_LIMITS_V1.maxOperationStartMs &&
     Date.parse(input.validUntil) <= Date.parse(credential.expiresAt) &&
-    credential.version === input.versions.credential
+    credentialVersion === input.versions.credential
   );
 }
 export function decodeResolveAccountRequestV1(

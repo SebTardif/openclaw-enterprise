@@ -8,7 +8,8 @@ const execute = promisify(execFile);
 const [action, node, namespace, podName, podUid, predecessorSandboxId, predecessorDeploymentName] =
   process.argv.slice(2);
 assert.ok(["observe", "terminated"].includes(action));
-assert.equal(node, "k3d-oce-gvisor-alpha-server-0");
+assert.match(process.env.OCC_RUN11_NODE ?? "", /^k3d-[a-z0-9][a-z0-9-]*-server-0$/);
+assert.equal(node, process.env.OCC_RUN11_NODE, "observer must use the explicitly selected node");
 assert.match(namespace, /^oce-run11-[a-z0-9-]+$/);
 assert.match(podName, /^[a-z0-9-]+$/);
 assert.match(podUid, /^[a-f0-9-]{36}$/);

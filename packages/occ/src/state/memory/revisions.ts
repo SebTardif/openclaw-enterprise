@@ -1,3 +1,7 @@
+import {
+  decodeCredentialWorkloadSelectionV1,
+  type CredentialWorkloadSelectionV1,
+} from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 import type { Installation } from "@openclaw-enterprise/contracts/resources/installation";
 import type { SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
@@ -11,11 +15,39 @@ import type {
 } from "../../ports/repository-factory.ts";
 import type { PersistedNamespace } from "../../ports/repositories/namespace.ts";
 
+/** Stored only in the original collection; public repository projections omit it. */
+interface StoredAgentRevision extends AgentRevision {
+  readonly credential_workload_selection?: CredentialWorkloadSelectionV1;
+}
+function publicRevision(revision: Readonly<StoredAgentRevision>): Readonly<AgentRevision> {
+  return immutableCopy({
+    id: revision.id,
+    namespaceId: revision.namespaceId,
+    agentId: revision.agentId,
+    revision: revision.revision,
+    providerId: revision.providerId,
+    configurationId: revision.configurationId,
+    configurationKind: revision.configurationKind,
+    configurationGeneration: revision.configurationGeneration,
+    configuration: revision.configuration,
+    harness: revision.harness,
+    compute: revision.compute,
+    ...(revision.sandboxDriverId === undefined
+      ? {}
+      : { sandboxDriverId: revision.sandboxDriverId }),
+    ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
+    ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
+    ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
+    servicePrincipalId: revision.servicePrincipalId,
+    createdAt: revision.createdAt,
+  });
+}
+
 /** Live owner maps; only the revision collection is writable through this projection. */
 export interface MemoryRevisionSnapshot {
   readonly installation: Readonly<Installation> | undefined;
   readonly namespaces: ReadonlyMap<string, Readonly<Pick<PersistedNamespace, "deletedAt">>>;
-  readonly revisions: Map<string, readonly Readonly<AgentRevision>[]>;
+  readonly revisions: Map<string, readonly Readonly<StoredAgentRevision>[]>;
 }
 export interface MemoryRevisionRepositoryContext extends MemoryRepositoryFactoryContext<MemoryRevisionSnapshot> {
   readonly agents: Pick<AgentReadRepository, "findAgent">;
@@ -60,7 +92,7 @@ export const createMemoryRevisionRepository: RepositoryFactory<
         .get(agentKey(namespaceId, agentId))
         ?.find((revision) => revision.id === revisionId);
       return candidate?.namespaceId === namespaceId && candidate.agentId === agentId
-        ? immutableCopy(candidate)
+        ? publicRevision(candidate)
         : undefined;
     },
     listRevisions: async (namespaceId, agentId) =>
@@ -70,11 +102,27 @@ export const createMemoryRevisionRepository: RepositoryFactory<
               .filter(
                 (revision) => revision.namespaceId === namespaceId && revision.agentId === agentId,
               )
-              .map((revision) => immutableCopy(revision))
+              .map((revision) => publicRevision(revision))
           : [],
       ),
-    createRevision: async (revision) => {
+    createRevision: async (revision, credentialWorkloadSelection) => {
+      revision = immutableCopy(revision);
+      const decoded =
+        credentialWorkloadSelection === undefined
+          ? undefined
+          : decodeCredentialWorkloadSelectionV1(credentialWorkloadSelection);
+      if (decoded?.kind === "invalid")
+        throw new ScopeViolationError("The revision credential record is invalid.");
+      const credential = decoded?.value;
       requireInitialized();
+      if (
+        credential !== undefined &&
+        (credential.scope.installationId !== context.scope.installationId ||
+          credential.scope.namespaceId !== revision.namespaceId ||
+          credential.scope.agentId !== revision.agentId ||
+          credential.revisionId !== revision.id)
+      )
+        throw new ScopeViolationError("The revision credential record belongs to another scope.");
       assertAdmittedAgentRevision(revision);
       const owner = await agents.findAgent(revision.namespaceId, revision.agentId);
       if (
@@ -90,13 +138,15 @@ export const createMemoryRevisionRepository: RepositoryFactory<
       const previous = snapshot.revisions.get(key) ?? [];
       if (previous.some((existing) => existing.id === revision.id))
         throw new ResourceConflictError("The server generated an existing AgentRevision identity.");
-      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
+      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } =
+        publicRevision(revision);
       const saved = immutableCopy({
         ...withoutSecretBindings,
         ...(secretBindings === undefined ? {} : { secretBindings }),
+        ...(credential === undefined ? {} : { credential_workload_selection: credential }),
       });
       snapshot.revisions.set(key, Object.freeze([...previous, saved]));
-      return immutableCopy(saved);
+      return publicRevision(saved);
     },
   };
 

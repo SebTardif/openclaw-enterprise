@@ -1,7 +1,26 @@
 import type { NativeIAMTransactionView } from "@openclaw-enterprise/iam";
 import type { GuardedDriverSelection } from "../application/driver-selection.ts";
 import {
+  TurnCommandScopeV1,
+  type TurnCommandAcceptedOperationV1,
+  type TurnCommandBoundsV1,
+  type TurnCommandIdentityV1,
+  type TurnCommandTerminalV1,
+} from "./postgres/turn-command-scope.ts";
+import {
+  createTurnCommandAccountUnitV1,
+  type TurnCommandAccountSourceV1,
+  type TurnCommandAccountUnitV1,
+} from "./postgres/turn-command-owner.ts";
+import {
   GatewayStartupOwnerPhaseV1,
+  parseGatewayStartupSubjectV2,
+  type GatewayStartupCommandV2,
+  type GatewayStartupCompletionV2,
+  type GatewayStartupOwnerParticipantsV2,
+  type GatewayStartupOwnerUnitV2,
+  type GatewayStartupTransactionOwnerV2,
+  type GatewayStartupTransactionResultV2,
   type GatewayStartupAcceptedOperationV1,
   type GatewayStartupAuthorityLeaseV1,
   type GatewayStartupCommandBoundsV1,
@@ -12,8 +31,13 @@ import {
   type GatewayStartupTransactionOwnerV1,
   type GatewayStartupTransactionResultV1,
 } from "../gateway-startup-v1/owner.ts";
-import { createPostgresGatewayStartupV1 } from "../gateway-startup-v1/postgres.ts";
+import {
+  createPostgresGatewayStartupV1,
+  createPostgresGatewayStartupV2,
+} from "../gateway-startup-v1/postgres.ts";
 import { createPostgresRevisionRepository } from "./postgres/revisions.ts";
+import { createPostgresRevisionCredentialReaderV1 } from "./postgres/credential-record.ts";
+import type { RuntimeCredentialSelectionResolverV2 } from "../workload-profiles/credential-record.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
 import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
@@ -163,7 +187,9 @@ export interface PersistedNativeIAMPrincipalSeed {
 export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
 interface TransactionContext {
-  readonly gateway?: GatewayStartupExecutionV1;
+  readonly turn?: TurnCommandExecutionV1;
+  readonly turnQuery: PostgresClient["query"];
+  readonly gateway?: GatewayStartupExecution;
   readonly gatewayQuery: PostgresClient["query"];
   readonly credential?: CredentialInventoryExecutionV1;
   readonly credentialQuery: PostgresClient["query"];
@@ -181,6 +207,41 @@ interface TransactionContext {
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
+}
+
+interface TurnCommandExecutionV1 {
+  readonly identity: TurnCommandIdentityV1;
+  readonly bounds: TurnCommandBoundsV1;
+  phase?: TurnCommandScopeV1;
+  sent?: boolean;
+  acknowledged?: boolean;
+  close(): void;
+}
+
+interface TurnCommandIOV1 {
+  readonly record: TurnCommandEnrollmentV1;
+  readonly pending: Set<Promise<unknown>>;
+  readonly operation?: TurnCommandAcceptedOperationV1;
+  accepting: boolean;
+  active: boolean;
+}
+
+interface TurnCommandEnrollmentV1 {
+  readonly context: TransactionContext;
+  readonly execution: TurnCommandExecutionV1;
+  readonly phase: TurnCommandScopeV1;
+  readonly selected: GuardedDriverSelection<"iam">;
+  readonly nativeIAM: NativeIAMTransactionView;
+  policyState: "unlocked" | "locking" | "locked";
+  parentsLocked: boolean;
+  active: boolean;
+}
+
+/** Private accepting composition only. Shape is not authentication. No public
+ * options/registration accepts arbitrary positive account callbacks. */
+interface TurnCommandCentralSourceV1 {
+  readonly driverSelection: DriverSelection;
+  readonly account: TurnCommandAccountSourceV1;
 }
 
 type CredentialAcceptanceModeV1 = keyof CredentialInventoryAcceptingOwnerV1;
@@ -255,12 +316,23 @@ interface CredentialInventoryEnrollmentV1 {
 /** Private central-to-execute bridge. execute owns phase construction/finalization
  * and terminal disposition; the binding owns only its token correspondence. */
 interface GatewayStartupExecutionV1 {
+  readonly version?: 1;
   phase?: GatewayStartupOwnerPhaseV1;
   finalized?: GatewayStartupCompletionV1;
   disposition: "not-sent" | "sent" | "acknowledged";
   establishedNoCommit: boolean;
   close(): void;
 }
+
+interface GatewayStartupExecutionV2 extends Omit<
+  GatewayStartupExecutionV1,
+  "version" | "phase" | "finalized"
+> {
+  readonly version: 2;
+  phase?: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
+  finalized?: GatewayStartupCompletionV2;
+}
+type GatewayStartupExecution = GatewayStartupExecutionV1 | GatewayStartupExecutionV2;
 
 /** Borrowed only during the actual authority.consume operation. Holding this
  * facade supplies neither invocation authentication nor a permission decision. */
@@ -295,6 +367,8 @@ interface GatewayStartupOwnerBindingV1 {
 }
 
 interface GatewayStartupEnrollmentV1 {
+  readonly version: 1;
+  readonly installationId: string;
   readonly context: TransactionContext;
   readonly phase: GatewayStartupOwnerPhaseV1;
   readonly execution: GatewayStartupExecutionV1;
@@ -309,6 +383,51 @@ interface GatewayStartupEnrollmentV1 {
   authorityStarted: boolean;
   policyState: "unlocked" | "locking" | "locked";
   active: boolean;
+}
+
+type GatewayStartupRuntimeConsumeV2 = GatewayStartupOwnerParticipantsV2["authority"]["consume"];
+interface GatewayStartupCentralParticipantsV2 extends Omit<
+  GatewayStartupOwnerParticipantsV2,
+  "authority" | "selection"
+> {
+  readonly selection: RuntimeCredentialSelectionResolverV2;
+  readonly driverSelection: DriverSelection;
+  readonly authority: {
+    consume(
+      ...args: [
+        ...Parameters<GatewayStartupRuntimeConsumeV2>,
+        policy: GatewayStartupPrivatePolicyV1,
+      ]
+    ): ReturnType<GatewayStartupRuntimeConsumeV2>;
+  };
+}
+interface GatewayStartupOwnerBindingV2 {
+  readonly transaction: GatewayStartupTransactionOwnerV2;
+  readonly participants?: GatewayStartupOwnerParticipantsV2;
+}
+interface GatewayStartupEnrollmentV2 extends Omit<
+  GatewayStartupEnrollmentV1,
+  "version" | "phase" | "execution" | "command" | "unit"
+> {
+  readonly version: 2;
+  readonly phase: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
+  readonly execution: GatewayStartupExecutionV2;
+  readonly command: GatewayStartupCommandV2;
+  readonly unit: GatewayStartupOwnerUnitV2;
+  selectionIO?: GatewayStartupAcceptedOperationV1;
+}
+type GatewayStartupEnrollment = GatewayStartupEnrollmentV1 | GatewayStartupEnrollmentV2;
+interface GatewayStartupRunV1 {
+  readonly version: 1;
+  readonly args: Parameters<GatewayStartupTransactionOwnerV1["run"]>;
+  readonly selection: DriverSelection | undefined;
+  readonly participants: GatewayStartupOwnerParticipantsV1 | undefined;
+}
+interface GatewayStartupRunV2 {
+  readonly version: 2;
+  readonly args: Parameters<GatewayStartupTransactionOwnerV2["run"]>;
+  readonly selection: DriverSelection | undefined;
+  readonly participants: GatewayStartupOwnerParticipantsV2 | undefined;
 }
 
 const PERMISSION_ACTIONS = new Set([
@@ -706,8 +825,13 @@ export class PostgresPlatformState implements PlatformStateStore {
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
   readonly #profileContexts = new WeakMap<object, TransactionContext>();
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
-  readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollmentV1>();
-  readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollmentV1>();
+  readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
+  readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
+  readonly #outerExecution = new AsyncLocalStorage<true>();
+  readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
+  readonly #turnContexts = new WeakMap<object, TurnCommandEnrollmentV1>();
+  readonly #turnIO = new AsyncLocalStorage<TurnCommandIOV1>();
+  readonly #turnChild = new AsyncLocalStorage<{ readonly io: TurnCommandIOV1; active: boolean }>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
     this.pool = pool;
@@ -735,6 +859,26 @@ export class PostgresPlatformState implements PlatformStateStore {
   /** Only a live token minted by the real guarded owner can read this projection.
    * Never accepts a state snapshot or a caller-supplied transaction/current flag. */
   async loadNativeIAMStateInTransaction(token: object): Promise<PersistedNativeIAMState> {
+    const turn = this.#turnContexts.get(token);
+    if (turn !== undefined) {
+      return this.trackTurnIO(turn, async () => {
+        if (turn.policyState !== "locked")
+          throw new DependencyUnavailableError("The turn policy barrier is unavailable.");
+        const state = await this.nativeIAMState(
+          turn.context,
+          (statement, parameters) => this.turnQuery(turn, statement, parameters),
+          turn.phase.unit.installationId,
+        );
+        this.assertTurnIO(turn);
+        return state;
+      });
+    }
+    const ambientTurn = this.#turnExecution.getStore();
+    if (ambientTurn !== undefined) {
+      const error = new DependencyUnavailableError("The exact turn IAM token is unavailable.");
+      ambientTurn.phase.poison(error);
+      throw error;
+    }
     const gateway = this.#gatewayContexts.get(token);
     if (gateway !== undefined) {
       try {
@@ -742,11 +886,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (io === undefined || gateway.policyState !== "locked")
           throw new DependencyUnavailableError("The Gateway native IAM unit is unavailable.");
         this.assertGatewayAuthorityOperationV1(gateway, io);
-        const state = await this.nativeIAMState(
-          gateway.context,
-          io.query,
-          gateway.unit.installationId,
-        );
+        const state = await this.nativeIAMState(gateway.context, io.query, gateway.installationId);
         this.assertGatewayAuthorityOperationV1(gateway, io);
         return state;
       } catch (error) {
@@ -1037,6 +1177,365 @@ export class PostgresPlatformState implements PlatformStateStore {
     return this.execute(false, async (state) => work(state));
   }
 
+  private assertTurnIO(record: TurnCommandEnrollmentV1): TurnCommandIOV1 {
+    try {
+      const io = this.#turnIO.getStore();
+      if (
+        !record.active ||
+        this.#turnExecution.getStore() !== record ||
+        this.#turnContexts.get(record.phase.unit) !== record ||
+        record.context.turn !== record.execution ||
+        io?.record !== record ||
+        !io.active
+      )
+        throw new ScopeViolationError("The turn participant IO is unavailable.");
+      record.phase.assertOwned(record.phase.unit);
+      record.context.lifetime.assertActive();
+      record.selected.assertCurrent();
+      record.nativeIAM.assertCurrent();
+      io.operation?.assertActive();
+      return io;
+    } catch (error) {
+      record.phase.poison(error);
+      this.#turnExecution.getStore()?.phase.poison(error);
+      throw error;
+    }
+  }
+
+  private trackTurnIO<T>(record: TurnCommandEnrollmentV1, work: () => Promise<T>): Promise<T> {
+    try {
+      const io = this.assertTurnIO(record);
+      const inherited = this.#turnChild.getStore();
+      if (
+        (inherited !== undefined && (inherited.io !== io || !inherited.active)) ||
+        (!io.accepting && inherited === undefined)
+      )
+        throw new ScopeViolationError("The turn participant callback has closed.");
+      const child = { io, active: true };
+      const run = async () => {
+        try {
+          this.assertTurnIO(record);
+          const value = await this.#turnChild.run(child, work);
+          this.assertTurnIO(record);
+          return value;
+        } catch (error) {
+          record.phase.poison(error);
+          throw error;
+        } finally {
+          child.active = false;
+        }
+      };
+      const result =
+        io.operation === undefined ? record.context.lifetime.run(run) : io.operation.track(run);
+      io.pending.add(result);
+      void result.then(
+        () => io.pending.delete(result),
+        (error: unknown) => {
+          record.phase.poison(error);
+          io.pending.delete(result);
+        },
+      );
+      return result;
+    } catch (error) {
+      record.phase.poison(error);
+      return Promise.reject(error);
+    }
+  }
+
+  private turnQuery(
+    record: TurnCommandEnrollmentV1,
+    statement: string,
+    parameters?: readonly unknown[],
+  ) {
+    return this.trackTurnIO(record, () => record.context.turnQuery(statement, parameters));
+  }
+
+  private async withTurnIO<T>(
+    record: TurnCommandEnrollmentV1,
+    work: () => Promise<T>,
+    operation?: TurnCommandAcceptedOperationV1,
+  ): Promise<T> {
+    if (this.#turnIO.getStore() !== undefined) {
+      const error = new ScopeViolationError("Turn participant callbacks cannot nest.");
+      record.phase.poison(error);
+      throw error;
+    }
+    const io: TurnCommandIOV1 = {
+      record,
+      pending: new Set(),
+      accepting: true,
+      active: true,
+      ...(operation === undefined ? {} : { operation }),
+    };
+    try {
+      const value = await this.#turnIO.run(io, work);
+      return value;
+    } catch (error) {
+      record.phase.poison(error);
+      throw error;
+    } finally {
+      io.accepting = false;
+      while (io.pending.size) await Promise.allSettled([...io.pending]);
+      io.active = false;
+      record.phase.assertOwned(record.phase.unit);
+    }
+  }
+
+  /** Receiver-owned composition seam, not a public account-provider option.
+   * TODO(turn accepting source): invoke this only with the original native-channel
+   * participant and real account/security/SQL enrollment producers. Until those
+   * are installed, absence fails before checkout; shape alone authenticates none.
+   * The Store owns this adapter's OUTERMOST transact, never an ambient wrapper. */
+  private bindTurnCommandStateV1(
+    identity: TurnCommandIdentityV1,
+    bounds: TurnCommandBoundsV1,
+    source?: TurnCommandCentralSourceV1,
+  ): PlatformStateStore {
+    const unavailable = () =>
+      new DependencyUnavailableError("The turn command source is unavailable.");
+    const owner = this;
+    const selection = source?.driverSelection;
+    const consume = source?.account.consume.bind(source.account);
+    let used = false;
+    return Object.freeze({
+      // TODO(turn fresh reader): the original journal owner must select a fresh
+      // authenticated, scoped read producer. A completed command's source/token
+      // cannot authorize ordinary full-state reads before or after its lifetime.
+      read: <T>(
+        _work: (view: PlatformReadView) => Promise<T>,
+        _options?: PlatformReadOptions,
+      ): Promise<T> => Promise.reject(unavailable()),
+      transact: async <T>(work: (unit: PlatformUnitOfWork) => Promise<T>): Promise<T> => {
+        const ambient = this.#turnExecution.getStore();
+        if (ambient !== undefined) {
+          ambient.phase.poison(unavailable());
+          throw unavailable();
+        }
+        if (
+          used ||
+          selection === undefined ||
+          consume === undefined ||
+          this.turnJournal === undefined
+        )
+          throw unavailable();
+        used = true;
+        if (
+          Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+          selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+          selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+        )
+          throw unavailable();
+        const driver = selection.selectedDriver("iam");
+        const selected = selection.acquireGuardedSelection("iam", driver);
+        let record: TurnCommandEnrollmentV1 | undefined;
+        let failed = false;
+        let failure: unknown;
+        let value!: T;
+        const execution: TurnCommandExecutionV1 = {
+          identity,
+          bounds,
+          close: () => {
+            if (record !== undefined) {
+              record.active = false;
+              this.#turnContexts.delete(record.phase.unit);
+            }
+          },
+        };
+        try {
+          const timeoutMs = Math.min(3000, Date.parse(bounds.deadline) - Date.now());
+          value = await this.execute(
+            false,
+            async (unit, context) => {
+              const phase = execution.phase;
+              if (phase === undefined || context.turn !== execution) throw unavailable();
+              const installation = await this.currentInstallation(context, context.turnQuery);
+              if (installation?.id !== phase.unit.installationId) throw unavailable();
+              const nativeIAM = bindNativeIAMTransaction(driver, this, phase.unit);
+              const current: TurnCommandEnrollmentV1 = {
+                context,
+                execution,
+                phase,
+                selected,
+                nativeIAM,
+                active: true,
+                policyState: "unlocked",
+                parentsLocked: false,
+              };
+              record = current;
+              this.#turnContexts.set(phase.unit, current);
+              const iam: NativeIAMTransactionView = Object.freeze({
+                assertCurrent: () => {
+                  try {
+                    this.assertTurnIO(current);
+                    if (current.policyState !== "locked") throw unavailable();
+                  } catch (error) {
+                    phase.poison(error);
+                    throw error;
+                  }
+                },
+                lookupIdentity: (
+                  input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
+                ) => this.trackTurnIO(current, () => nativeIAM.lookupIdentity(input)),
+                authorize: (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) =>
+                  this.trackTurnIO(current, () => nativeIAM.authorize(request)),
+              });
+              let securityCleanup: ((outcome: TurnCommandTerminalV1) => Promise<void>) | undefined;
+              let sourceRelease: ((outcome: TurnCommandTerminalV1) => Promise<void>) | undefined;
+              let sourcePrepare: ((unit: TurnCommandAccountUnitV1) => Promise<void>) | undefined;
+              let sourceCurrent: (() => undefined) | undefined;
+              const retainSecurityCleanup: TurnCommandAccountUnitV1["retainSecurityCleanup"] = (
+                release,
+              ) => {
+                try {
+                  this.assertTurnIO(current);
+                  if (
+                    securityCleanup !== undefined ||
+                    current.policyState !== "unlocked" ||
+                    typeof release !== "function"
+                  )
+                    throw unavailable();
+                  securityCleanup = release;
+                } catch (error) {
+                  phase.poison(error);
+                  throw error;
+                }
+              };
+              const rawAccount = createTurnCommandAccountUnitV1({
+                token: phase.unit,
+                identity: phase.unit,
+                bounds: Object.freeze({ ...bounds }),
+                iam,
+                retainSecurityCleanup,
+                scope: { installationId: phase.unit.installationId },
+                transaction: {
+                  assertActive: () => {
+                    this.assertTurnIO(current);
+                  },
+                },
+                query: {
+                  query: (statement, parameters) => this.turnQuery(current, statement, parameters),
+                },
+                currentInstallation: () =>
+                  this.trackTurnIO(current, () =>
+                    this.currentInstallation(context, (statement, parameters) =>
+                      this.turnQuery(current, statement, parameters),
+                    ),
+                  ),
+                lockPolicy: async () => {
+                  this.assertTurnIO(current);
+                  if (current.policyState !== "unlocked" || securityCleanup === undefined)
+                    throw unavailable();
+                  current.policyState = "locking";
+                  await this.turnQuery(current, "SELECT occ.lock_workload_profile_iam()");
+                  this.assertTurnIO(current);
+                  current.policyState = "locked";
+                },
+                recordParentsLocked: () => {
+                  this.assertTurnIO(current);
+                  current.parentsLocked = true;
+                },
+              });
+              const accountUnit: TurnCommandAccountUnitV1 = Object.freeze({
+                token: rawAccount.token,
+                identity: rawAccount.identity,
+                bounds: rawAccount.bounds,
+                iam,
+                assertActive: rawAccount.assertActive,
+                retainSecurityCleanup,
+                locateChannel: (input: Parameters<TurnCommandAccountUnitV1["locateChannel"]>[0]) =>
+                  this.trackTurnIO(current, () => rawAccount.locateChannel(input)),
+                lockPolicy: () => this.trackTurnIO(current, () => rawAccount.lockPolicy()),
+                lockParentsAndReload: () =>
+                  this.trackTurnIO(current, () => rawAccount.lockParentsAndReload()),
+                readLockedChannel: () =>
+                  this.trackTurnIO(current, () => rawAccount.readLockedChannel()),
+              });
+              return this.#turnExecution.run(current, async () => {
+                await phase.enroll({
+                  consume: async () => {
+                    // Transfer the single cleanup owner even when acquisition or a
+                    // later getter fails. Poison retains the original failure; the
+                    // scope captures this release before testing the failed fence.
+                    try {
+                      await this.withTurnIO(current, async () => {
+                        const lease = await consume(accountUnit);
+                        if (lease === undefined) throw unavailable();
+                        sourceRelease = lease.release.bind(lease);
+                        sourcePrepare = lease.prepareCommit.bind(lease);
+                        sourceCurrent = lease.assertCurrent.bind(lease);
+                      });
+                    } catch (error) {
+                      phase.poison(error);
+                    }
+                    return {
+                      release: async (outcome) => {
+                        let failed = false;
+                        let failure: unknown;
+                        for (const release of [sourceRelease, securityCleanup]) {
+                          if (release === undefined) continue;
+                          try {
+                            await release(outcome);
+                          } catch (error) {
+                            if (!failed) {
+                              failed = true;
+                              failure = error;
+                            }
+                          }
+                        }
+                        if (failed) throw failure;
+                      },
+                      prepareCommit: () =>
+                        owner.#turnExecution.run(current, () =>
+                          owner.withTurnIO(current, async () => {
+                            if (sourcePrepare === undefined) throw unavailable();
+                            await sourcePrepare(accountUnit);
+                          }),
+                        ),
+                      assertCurrent: () => {
+                        selected.assertCurrent();
+                        nativeIAM.assertCurrent();
+                        if (
+                          current.policyState !== "locked" ||
+                          !current.parentsLocked ||
+                          sourceCurrent === undefined
+                        )
+                          throw unavailable();
+                        return sourceCurrent();
+                      },
+                    };
+                  },
+                });
+                return work(unit);
+              });
+            },
+            { signal: bounds.signal, timeoutMs },
+            false,
+            undefined,
+            undefined,
+            execution,
+          );
+        } catch (error) {
+          failed = true;
+          failure = error;
+        } finally {
+          try {
+            selected.release();
+          } catch (error) {
+            if (!failed) {
+              failed = true;
+              failure =
+                execution.acknowledged || execution.sent
+                  ? new PostgresCommitOutcomeUnknownError()
+                  : error;
+            }
+          }
+        }
+        if (failed) throw failure;
+        return value;
+      },
+    });
+  }
+
   /** Internal storage/policy unit. It does not authenticate an account; only the
    * service's genuine account participant may turn it into a protected request. */
   async workloadProfileTransaction<T>(
@@ -1111,7 +1610,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   private assertGatewayAuthorityOperationV1(
-    record: GatewayStartupEnrollmentV1,
+    record: GatewayStartupEnrollment,
     io: GatewayStartupAcceptedOperationV1,
   ): void {
     try {
@@ -1126,6 +1625,21 @@ export class PostgresPlatformState implements PlatformStateStore {
         record.bounds.signal.aborted
       )
         throw new DependencyUnavailableError("The Gateway authority operation is unavailable.");
+      if (record.version === 2) {
+        const subject = parseGatewayStartupSubjectV2(record.command.subject);
+        if (
+          subject.installationId !== record.installationId ||
+          subject.namespaceRef !== record.unit.subject.namespaceRef ||
+          subject.agentRef !== record.unit.subject.agentRef
+        )
+          throw new DependencyUnavailableError(
+            "The Gateway subject correspondence is unavailable.",
+          );
+      } else if (record.unit.installationId !== record.installationId) {
+        throw new DependencyUnavailableError(
+          "The Gateway Installation correspondence is unavailable.",
+        );
+      }
       io.assertActive();
       record.context.lifetime.assertActive();
       record.selected.assertCurrent();
@@ -1139,13 +1653,153 @@ export class PostgresPlatformState implements PlatformStateStore {
 
   /** No public producer/configuration is created here. Only the original owner
    * can compose the genuine private participants with the released Runtime owner. */
+  private bindGatewayAuthorityConsumerV1<
+    Args extends [
+      invocation: unknown,
+      command: GatewayStartupCommandV1 | GatewayStartupCommandV2,
+      bounds: GatewayStartupCommandBoundsV1,
+      unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+      io: GatewayStartupAcceptedOperationV1,
+    ],
+  >(
+    version: 1 | 2,
+    consume: (
+      ...args: [...Args, policy: GatewayStartupPrivatePolicyV1]
+    ) => Promise<GatewayStartupAuthorityLeaseV1>,
+  ): (...args: Args) => Promise<GatewayStartupAuthorityLeaseV1> {
+    const unavailable = () =>
+      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
+    return async (...args: Args) => {
+      const [invocation, command, bounds, unit, io] = args;
+      const record = this.#gatewayExecution.getStore();
+      if (
+        record === undefined ||
+        !record.active ||
+        record.version !== version ||
+        record.unit !== unit ||
+        record.command !== command ||
+        record.bounds !== bounds ||
+        record.policy !== unit.policy ||
+        record.authorityStarted
+      ) {
+        const error = unavailable();
+        record?.phase.poison(error);
+        throw error;
+      }
+      record.authorityStarted = true;
+      record.authorityIO = io;
+      let lease: GatewayStartupAuthorityLeaseV1 | undefined;
+      let transferred = false;
+      let release: (() => Promise<void>) | undefined;
+      try {
+        this.assertGatewayAuthorityOperationV1(record, io);
+        // These synchronous native/selection fences do not issue SQL and
+        // remain usable after the authority operation/lifetime has ended.
+        record.phase.retainCurrentness(() => {
+          record.selected.assertCurrent();
+          record.nativeIAM.assertCurrent();
+          return undefined;
+        });
+        const assertLocked = () => {
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (record.policyState !== "locked") throw unavailable();
+        };
+        const iam: NativeIAMTransactionView = Object.freeze({
+          assertCurrent: () => {
+            try {
+              assertLocked();
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+          lookupIdentity: async (
+            input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
+          ) => {
+            try {
+              assertLocked();
+              const result = await record.nativeIAM.lookupIdentity(input);
+              assertLocked();
+              return result;
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+          authorize: async (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) => {
+            try {
+              assertLocked();
+              const result = await record.nativeIAM.authorize(request);
+              assertLocked();
+              return result;
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+        });
+        const policy: GatewayStartupPrivatePolicyV1 = Object.freeze({
+          iam,
+          lockPolicy: async () => {
+            try {
+              this.assertGatewayAuthorityOperationV1(record, io);
+              if (record.policyState !== "unlocked") throw unavailable();
+              record.policyState = "locking";
+              // Genuine authority locks account/security/registration first.
+              // This existing function holds the complete native IAM writer set.
+              await io.query("SELECT occ.lock_workload_profile_iam()");
+              this.assertGatewayAuthorityOperationV1(record, io);
+              record.policyState = "locked";
+            } catch (error) {
+              record.phase.poison(error);
+              throw error;
+            }
+          },
+        });
+        lease = await consume(...args, policy);
+        release = lease.release.bind(lease);
+        this.assertGatewayAuthorityOperationV1(record, io);
+        if (record.policyState !== "locked") throw unavailable();
+        if (record.version === 2) {
+          const subject = record.unit.subject;
+          // Genuine account/security and the complete IAM policy barrier precede
+          // these protected parents. The consumed lease is already owned locally;
+          // failed parent acquisition joins its cleanup before transfer to Runtime.
+          const namespace = await io.query("SELECT id FROM occ.namespaces WHERE id=$1 FOR SHARE", [
+            subject.namespaceRef,
+          ]);
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (namespace.rowCount !== 1) throw unavailable();
+          const agent = await io.query(
+            "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR SHARE",
+            [subject.namespaceRef, subject.agentRef],
+          );
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (agent.rowCount !== 1) throw unavailable();
+        }
+        transferred = true;
+        return lease;
+      } catch (error) {
+        record.phase.poison(error);
+        // Runtime has not received this lease yet; keep its failed acquisition
+        // release inside the accepted authority operation before rejecting.
+        if (lease !== undefined && !transferred) {
+          try {
+            await release?.();
+          } catch (cleanupError) {
+            record.phase.poison(cleanupError);
+          }
+        }
+        throw error;
+      } finally {
+        record.authorityIO = undefined;
+      }
+    };
+  }
+
   private bindGatewayStartupOwnersV1(
     source?: GatewayStartupCentralParticipantsV1,
   ): GatewayStartupOwnerBindingV1 {
-    const unavailable = () =>
-      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
-    const noncommitUnavailable = (): GatewayStartupTransactionResultV1 =>
-      Object.freeze({ kind: "rolled-back", response: Object.freeze({ kind: "unavailable" }) });
     const selection = source?.driverSelection;
     let participants: GatewayStartupOwnerParticipantsV1 | undefined;
 
@@ -1162,114 +1816,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       const consume = source.authority.consume.bind(source.authority);
       participants = Object.freeze({
         authority: Object.freeze({
-          consume: async (...args: Parameters<GatewayStartupRuntimeConsumeV1>) => {
-            const [invocation, command, bounds, unit, io] = args;
-            const record = this.#gatewayExecution.getStore();
-            if (
-              record === undefined ||
-              !record.active ||
-              record.unit !== unit ||
-              record.command !== command ||
-              record.bounds !== bounds ||
-              record.policy !== unit.policy ||
-              record.authorityStarted
-            ) {
-              const error = unavailable();
-              record?.phase.poison(error);
-              throw error;
-            }
-            record.authorityStarted = true;
-            record.authorityIO = io;
-            let lease: GatewayStartupAuthorityLeaseV1 | undefined;
-            let transferred = false;
-            try {
-              this.assertGatewayAuthorityOperationV1(record, io);
-              // These synchronous native/selection fences do not issue SQL and
-              // remain usable after the authority operation/lifetime has ended.
-              record.phase.retainCurrentness(() => {
-                record.selected.assertCurrent();
-                record.nativeIAM.assertCurrent();
-                return undefined;
-              });
-              const assertLocked = () => {
-                this.assertGatewayAuthorityOperationV1(record, io);
-                if (record.policyState !== "locked") throw unavailable();
-              };
-              const iam: NativeIAMTransactionView = Object.freeze({
-                assertCurrent: () => {
-                  try {
-                    assertLocked();
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-                lookupIdentity: async (
-                  input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
-                ) => {
-                  try {
-                    assertLocked();
-                    const result = await record.nativeIAM.lookupIdentity(input);
-                    assertLocked();
-                    return result;
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-                authorize: async (
-                  request: Parameters<NativeIAMTransactionView["authorize"]>[0],
-                ) => {
-                  try {
-                    assertLocked();
-                    const result = await record.nativeIAM.authorize(request);
-                    assertLocked();
-                    return result;
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-              });
-              const policy: GatewayStartupPrivatePolicyV1 = Object.freeze({
-                iam,
-                lockPolicy: async () => {
-                  try {
-                    this.assertGatewayAuthorityOperationV1(record, io);
-                    if (record.policyState !== "unlocked") throw unavailable();
-                    record.policyState = "locking";
-                    // Genuine authority locks account/security/registration first.
-                    // This existing function holds the complete native IAM writer set.
-                    await io.query("SELECT occ.lock_workload_profile_iam()");
-                    this.assertGatewayAuthorityOperationV1(record, io);
-                    record.policyState = "locked";
-                  } catch (error) {
-                    record.phase.poison(error);
-                    throw error;
-                  }
-                },
-              });
-              lease = await consume(invocation, command, bounds, unit, io, policy);
-              this.assertGatewayAuthorityOperationV1(record, io);
-              if (record.policyState !== "locked") throw unavailable();
-              transferred = true;
-              return lease;
-            } catch (error) {
-              record.phase.poison(error);
-              // Runtime has not received this lease yet; keep its failed acquisition
-              // release inside the accepted authority operation before rejecting.
-              if (lease !== undefined && !transferred) {
-                try {
-                  await lease.release();
-                } catch (cleanupError) {
-                  record.phase.poison(cleanupError);
-                }
-              }
-              throw error;
-            } finally {
-              record.authorityIO = undefined;
-            }
-          },
+          consume: this.bindGatewayAuthorityConsumerV1(1, consume),
         }),
         selection: Object.freeze({
           resolveLocked: source.selection.resolveLocked.bind(source.selection),
@@ -1284,120 +1831,340 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
 
     const transaction: GatewayStartupTransactionOwnerV1 = Object.freeze({
-      run: async (
-        ...args: Parameters<GatewayStartupTransactionOwnerV1["run"]>
-      ): Promise<GatewayStartupTransactionResultV1> => {
-        const [command, bounds, work] = args;
-        const ambientGateway = this.#gatewayExecution.getStore();
-        const ambientCredential = this.#credentialExecution.getStore();
-        if (ambientGateway !== undefined || ambientCredential !== undefined) {
-          const error = unavailable();
-          ambientGateway?.phase.poison(error);
-          ambientCredential?.phase.poison(error);
-          return noncommitUnavailable();
-        }
-        // No selected producer, fabricated unit, pool access or callback on this path.
-        if (participants === undefined || selection === undefined) return noncommitUnavailable();
-        const timeoutMs = Math.min(3000, Date.parse(bounds.deadline) - Date.now());
-        if (
-          !(bounds.signal instanceof AbortSignal) ||
-          bounds.signal.aborted ||
-          !Number.isFinite(timeoutMs) ||
-          timeoutMs <= 0
-        )
-          return noncommitUnavailable();
-
-        let selected: GuardedDriverSelection<"iam"> | undefined;
-        let record: GatewayStartupEnrollmentV1 | undefined;
-        let failed = false;
-        const execution: GatewayStartupExecutionV1 = {
-          disposition: "not-sent",
-          establishedNoCommit: false,
-          close: () => {
-            if (record !== undefined) {
-              record.active = false;
-              record.authorityIO = undefined;
-              this.#gatewayContexts.delete(record.token);
-            }
-          },
-        };
-        try {
-          if (
-            Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
-            selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
-            selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
-          )
-            throw unavailable();
-          const driver = selection.selectedDriver("iam");
-          const held = selection.acquireGuardedSelection("iam", driver);
-          selected = held;
-          await this.execute(
-            false,
-            async (_unit, context) => {
-              const phase = execution.phase;
-              if (phase === undefined || context.gateway !== execution) throw unavailable();
-              const installation = await this.currentInstallation(context, context.gatewayQuery);
-              if (installation === undefined) throw unavailable();
-              const token = Object.freeze({});
-              const policy = Object.freeze({});
-              const nativeIAM = bindNativeIAMTransaction(driver, this, token);
-              const unit: GatewayStartupOwnerUnitV1 = Object.freeze({
-                installationId: installation.id,
-                phase,
-                backend: createPostgresGatewayStartupV1(installation.id),
-                policy,
-              });
-              const enrolled: GatewayStartupEnrollmentV1 = {
-                context,
-                phase,
-                execution,
-                command,
-                bounds,
-                unit,
-                policy,
-                token,
-                selected: held,
-                nativeIAM,
-                authorityStarted: false,
-                policyState: "unlocked",
-                active: true,
-              };
-              record = enrolled;
-              this.#gatewayContexts.set(token, enrolled);
-              // Runtime's callback owns phase.runCommand and its sole lifetime.run.
-              return this.#gatewayExecution.run(enrolled, () => work(unit));
-            },
-            { signal: bounds.signal, timeoutMs },
-            false,
-            undefined,
-            execution,
-          );
-        } catch {
-          failed = true;
-        } finally {
-          // execute has finished raw query/client/context cleanup AND the phase's
-          // one terminal release pass. Retain the actual driver through both.
-          try {
-            selected?.release();
-          } catch {
-            failed = true;
-          }
-        }
-        const possibleCommit =
-          execution.disposition !== "not-sent" && !execution.establishedNoCommit;
-        if (failed || execution.finalized === undefined)
-          return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
-        const finalized = execution.finalized;
-        if (finalized.kind === "rollback")
-          return possibleCommit
-            ? Object.freeze({ kind: "unknown" })
-            : Object.freeze({ kind: "rolled-back", response: finalized.response });
-        if (execution.disposition === "acknowledged")
-          return Object.freeze({ kind: "committed", response: finalized.provisional });
-        return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
-      },
+      run: (...args: Parameters<GatewayStartupTransactionOwnerV1["run"]>) =>
+        this.runGatewayStartupTransactionV1({ version: 1, args, selection, participants }),
     });
     return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
+  }
+
+  private bindGatewayCredentialSelectionV2(
+    resolve: RuntimeCredentialSelectionResolverV2["resolveLocked"],
+  ): GatewayStartupOwnerParticipantsV2["selection"]["resolveLocked"] {
+    return async (...args) => {
+      const [command, _original, unit, io] = args;
+      const record = this.#gatewayExecution.getStore();
+      const unavailable = () =>
+        new ScopeViolationError("The protected Gateway selection is unavailable.");
+      const assertOperation = () => {
+        if (
+          record?.version !== 2 ||
+          !record.active ||
+          this.#gatewayExecution.getStore() !== record ||
+          this.#gatewayContexts.get(record.token) !== record ||
+          record.command !== command ||
+          record.unit !== unit ||
+          record.selectionIO !== io ||
+          record.policyState !== "locked" ||
+          record.context.gateway !== record.execution ||
+          record.execution.phase !== record.phase ||
+          record.bounds.signal.aborted
+        )
+          throw unavailable();
+        io.assertActive();
+        record.context.lifetime.assertActive();
+        record.selected.assertCurrent();
+        record.nativeIAM.assertCurrent();
+      };
+      const pending = new Set<Promise<unknown>>();
+      let accepting = true;
+      try {
+        if (record?.version !== 2 || record.selectionIO !== undefined) throw unavailable();
+        record.selectionIO = io;
+        assertOperation();
+        const backend = createPostgresRevisionCredentialReaderV1({
+          scope: {
+            installationId: record.installationId,
+            namespaceId: record.unit.subject.namespaceRef,
+          },
+          query: { query: (statement, parameters) => io.query(statement, parameters) },
+          assertEnrolled: (request, held, inputUnit, inputIO) => {
+            assertOperation();
+            // The privately selected resolver owns its original held selection.
+            // These values check correspondence; they do not authenticate a lease.
+            if (
+              inputUnit !== unit ||
+              inputIO !== io ||
+              request !== held.request ||
+              request.schemaVersion !== 2 ||
+              request.installationId !== record.installationId ||
+              request.namespaceId !== unit.subject.namespaceRef ||
+              request.agentId !== unit.subject.agentRef
+            )
+              throw unavailable();
+          },
+          poison: (error) => record.phase.poison(error),
+        });
+        // Missing genuine selected-storage enrollment remains the original
+        // resolver's unavailable path. This reader supplies only owner custody.
+        const reader = Object.freeze({
+          readLocked: (...input: Parameters<typeof backend.readLocked>) => {
+            let work: Promise<unknown>;
+            try {
+              if (!accepting) throw unavailable();
+              work = backend.readLocked(...input);
+            } catch (error) {
+              record.phase.poison(error);
+              work = Promise.reject(error);
+            }
+            pending.add(work);
+            void work.then(
+              () => pending.delete(work),
+              (error: unknown) => {
+                record.phase.poison(error);
+                pending.delete(work);
+              },
+            );
+            return work;
+          },
+        });
+        const acquired = await resolve(...args, reader);
+        // Capture known cleanup before joining any ignored read or inspecting
+        // further lease methods. The Runtime owner receives the same idempotent
+        // closer and retains its original currentness fence after this returns.
+        const close = acquired.release.bind(acquired);
+        let closed: Promise<void> | undefined;
+        const release = (): Promise<void> => (closed ??= Promise.resolve().then(close));
+        try {
+          record.phase.retainCleanup(release);
+        } catch (error) {
+          await release();
+          throw error;
+        }
+        return Object.freeze({
+          selected: acquired.selected,
+          credentialWorkloadSelection: acquired.credentialWorkloadSelection,
+          assertCurrent: acquired.assertCurrent.bind(acquired),
+          release,
+        });
+      } catch (error) {
+        record?.phase.poison(error);
+        throw error;
+      } finally {
+        accepting = false;
+        // Join complete decoded reads, not only their borrowed SQL promises.
+        // A caught/unawaited failure has already poisoned the original phase.
+        while (pending.size) await Promise.allSettled([...pending]);
+        if (record?.version === 2 && record.selectionIO === io) delete record.selectionIO;
+      }
+    };
+  }
+
+  private bindGatewayStartupOwnersV2(
+    source?: GatewayStartupCentralParticipantsV2,
+  ): GatewayStartupOwnerBindingV2 {
+    const selection = source?.driverSelection;
+    let participants: GatewayStartupOwnerParticipantsV2 | undefined;
+
+    // Capture actual producer methods once, matching Runtime's own capture.
+    if (
+      source !== undefined &&
+      typeof source.authority?.consume === "function" &&
+      typeof source.selection?.resolveLocked === "function" &&
+      typeof source.process?.requireDisposition === "function" &&
+      typeof source.process?.requireCurrent === "function" &&
+      typeof source.audit?.append === "function" &&
+      typeof source.allocate === "function"
+    ) {
+      const consume = source.authority.consume.bind(source.authority);
+      participants = Object.freeze({
+        authority: Object.freeze({
+          consume: this.bindGatewayAuthorityConsumerV1(2, consume),
+        }),
+        selection: Object.freeze({
+          resolveLocked: this.bindGatewayCredentialSelectionV2(
+            source.selection.resolveLocked.bind(source.selection),
+          ),
+        }),
+        process: Object.freeze({
+          requireDisposition: source.process.requireDisposition.bind(source.process),
+          requireCurrent: source.process.requireCurrent.bind(source.process),
+        }),
+        audit: Object.freeze({ append: source.audit.append.bind(source.audit) }),
+        allocate: source.allocate.bind(source),
+      });
+    }
+
+    const transaction: GatewayStartupTransactionOwnerV2 = Object.freeze({
+      run: (...args: Parameters<GatewayStartupTransactionOwnerV2["run"]>) =>
+        this.runGatewayStartupTransactionV1({ version: 2, args, selection, participants }),
+    });
+    return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
+  }
+
+  private runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV1,
+  ): Promise<GatewayStartupTransactionResultV1>;
+  private runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV2,
+  ): Promise<GatewayStartupTransactionResultV2>;
+  private async runGatewayStartupTransactionV1(
+    request: GatewayStartupRunV1 | GatewayStartupRunV2,
+  ): Promise<GatewayStartupTransactionResultV1 | GatewayStartupTransactionResultV2> {
+    const unavailable = () =>
+      new DependencyUnavailableError("The Gateway startup owner is unavailable.");
+    const noncommitUnavailable = () =>
+      Object.freeze({
+        kind: "rolled-back" as const,
+        response: Object.freeze({ kind: "unavailable" as const }),
+      });
+    const [command, bounds] = request.args;
+    const { selection, participants } = request;
+    const ambientGateway = this.#gatewayExecution.getStore();
+    const ambientCredential = this.#credentialExecution.getStore();
+    if (ambientGateway !== undefined || ambientCredential !== undefined) {
+      const error = unavailable();
+      ambientGateway?.phase.poison(error);
+      ambientCredential?.phase.poison(error);
+      return noncommitUnavailable();
+    }
+    // No selected producer, fabricated unit, pool access or callback on this path.
+    if (participants === undefined || selection === undefined) return noncommitUnavailable();
+    const timeoutMs = Math.min(3000, Date.parse(bounds.deadline) - Date.now());
+    if (
+      !(bounds.signal instanceof AbortSignal) ||
+      bounds.signal.aborted ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0
+    )
+      return noncommitUnavailable();
+
+    let selected: GuardedDriverSelection<"iam"> | undefined;
+    let record: GatewayStartupEnrollment | undefined;
+    let failed = false;
+    const close = () => {
+      if (record !== undefined) {
+        record.active = false;
+        record.authorityIO = undefined;
+        this.#gatewayContexts.delete(record.token);
+      }
+    };
+    const execution: GatewayStartupExecution =
+      request.version === 2
+        ? { version: 2, disposition: "not-sent", establishedNoCommit: false, close }
+        : { version: 1, disposition: "not-sent", establishedNoCommit: false, close };
+
+    try {
+      if (
+        Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+        selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+        selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+      )
+        throw unavailable();
+      const driver = selection.selectedDriver("iam");
+      const held = selection.acquireGuardedSelection("iam", driver);
+      selected = held;
+      await this.execute(
+        false,
+        async (_unit, context) => {
+          if (context.gateway !== execution) throw unavailable();
+          const installation = await this.currentInstallation(context, context.gatewayQuery);
+          if (installation === undefined) throw unavailable();
+          const token = Object.freeze({});
+          const policy = Object.freeze({});
+          const nativeIAM = bindNativeIAMTransaction(driver, this, token);
+          if (execution.version !== 2 && request.version === 1) {
+            const phase = execution.phase;
+            if (phase === undefined) throw unavailable();
+            const unit: GatewayStartupOwnerUnitV1 = Object.freeze({
+              installationId: installation.id,
+              phase,
+              backend: createPostgresGatewayStartupV1(installation.id),
+              policy,
+            });
+            const enrolled: GatewayStartupEnrollmentV1 = {
+              version: 1,
+              installationId: installation.id,
+              context,
+              phase,
+              execution,
+              command: request.args[0],
+              bounds,
+              unit,
+              policy,
+              token,
+              selected: held,
+              nativeIAM,
+              authorityStarted: false,
+              policyState: "unlocked",
+              active: true,
+            };
+            record = enrolled;
+            this.#gatewayContexts.set(token, enrolled);
+            // The original Runtime callback owns the sole phase.runCommand.
+            return this.#gatewayExecution.run(enrolled, () => request.args[2](unit));
+          }
+          if (execution.version === 2 && request.version === 2) {
+            const phase = execution.phase;
+            if (phase === undefined) throw unavailable();
+            const subject = parseGatewayStartupSubjectV2(request.args[0].subject);
+            if (subject.installationId !== installation.id) throw unavailable();
+            const unit: GatewayStartupOwnerUnitV2 = Object.freeze({
+              subject,
+              phase,
+              backend: createPostgresGatewayStartupV2(subject),
+              policy,
+            });
+            const enrolled: GatewayStartupEnrollmentV2 = {
+              version: 2,
+              installationId: installation.id,
+              context,
+              phase,
+              execution,
+              command: request.args[0],
+              bounds,
+              unit,
+              policy,
+              token,
+              selected: held,
+              nativeIAM,
+              authorityStarted: false,
+              policyState: "unlocked",
+              active: true,
+            };
+            record = enrolled;
+            this.#gatewayContexts.set(token, enrolled);
+            // The original Runtime callback owns the sole phase.runCommand.
+            return this.#gatewayExecution.run(enrolled, () => request.args[2](unit));
+          }
+          throw unavailable();
+        },
+        { signal: bounds.signal, timeoutMs },
+        false,
+        undefined,
+        execution,
+      );
+    } catch {
+      failed = true;
+    } finally {
+      // execute has finished raw query/client/context cleanup AND the phase's
+      // one terminal release pass. Retain the actual driver through both.
+      try {
+        selected?.release();
+      } catch {
+        failed = true;
+      }
+    }
+    const possibleCommit = execution.disposition !== "not-sent" && !execution.establishedNoCommit;
+    if (failed || execution.finalized === undefined)
+      return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
+    if (execution.version === 2) {
+      const finalized = execution.finalized;
+      if (finalized.kind === "rollback")
+        return possibleCommit
+          ? Object.freeze({ kind: "unknown" })
+          : Object.freeze({ kind: "rolled-back", response: finalized.response });
+      if (execution.disposition === "acknowledged")
+        return Object.freeze({ kind: "committed", response: finalized.provisional });
+      return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
+    }
+    const finalized = execution.finalized;
+    if (finalized.kind === "rollback")
+      return possibleCommit
+        ? Object.freeze({ kind: "unknown" })
+        : Object.freeze({ kind: "rolled-back", response: finalized.response });
+    if (execution.disposition === "acknowledged")
+      return Object.freeze({ kind: "committed", response: finalized.provisional });
+    return possibleCommit ? Object.freeze({ kind: "unknown" }) : noncommitUnavailable();
   }
 
   /** TODO: Connect the actual account, accepting-audit and protected-custody
@@ -1732,8 +2499,24 @@ export class PostgresPlatformState implements PlatformStateStore {
     options?: PlatformReadOptions,
     profileReadCommitted = false,
     credential?: CredentialInventoryExecutionV1,
-    gateway?: GatewayStartupExecutionV1,
+    gateway?: GatewayStartupExecution,
+    turn?: TurnCommandExecutionV1,
   ): Promise<T> {
+    if (turn !== undefined && this.#outerExecution.getStore() !== undefined)
+      throw new ScopeViolationError("A turn command cannot nest in an existing owner callback.");
+    const ambientTurn = this.#turnExecution.getStore();
+    if (ambientTurn !== undefined) {
+      const error = new ScopeViolationError(
+        "Turn commands cannot open ambient or mixed transactions.",
+      );
+      ambientTurn.phase.poison(error);
+      throw error;
+    }
+    if (
+      turn !== undefined &&
+      (readOnly || profileReadCommitted || credential !== undefined || gateway !== undefined)
+    )
+      throw new ScopeViolationError("A turn command requires its isolated outer transaction.");
     const ambientGateway = this.#gatewayExecution.getStore();
     if (ambientGateway !== undefined) {
       const error = new ScopeViolationError(
@@ -1804,6 +2587,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     const abort = () => {
       credential?.phase.poison(abortFailure());
       gateway?.phase?.poison(abortFailure());
+      turn?.phase?.poison(options?.signal.reason ?? abortFailure());
       lifetime.close();
       expired = true;
       closed = true;
@@ -1837,6 +2621,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
+      turn?.phase?.poison(new DependencyUnavailableError("The turn transaction transport failed."));
       gateway?.phase?.poison(
         new DependencyUnavailableError("The Gateway transaction transport failed."),
       );
@@ -1866,32 +2651,61 @@ export class PostgresPlatformState implements PlatformStateStore {
           pending.delete(query);
         }
       };
+      if (turn !== undefined) {
+        if (turn.phase !== undefined)
+          throw new ScopeViolationError("The turn scope cannot be reused.");
+        // This outer assertion survives outward lifetime.finish(), but never
+        // client release, cancellation or actual owner closure.
+        turn.phase = new TurnCommandScopeV1(
+          {
+            assertActive: () => {
+              if (closed || released || expired || options?.signal.aborted) throw abortFailure();
+            },
+          },
+          turn.identity,
+          turn.bounds,
+        );
+      }
       if (gateway !== undefined) {
         if (gateway.phase !== undefined)
           throw new ScopeViolationError("The Gateway transaction phase cannot be reused.");
-        gateway.phase = new GatewayStartupOwnerPhaseV1(lifetime, query);
+        if (gateway.version === 2)
+          gateway.phase = new GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>(
+            lifetime,
+            query,
+          );
+        else gateway.phase = new GatewayStartupOwnerPhaseV1(lifetime, query);
       }
       client = {
         query: (statement, parameters) =>
           trackProfileOrder
-            ? gateway !== undefined
-              ? rejectGatewayOutward(
-                  new ScopeViolationError("Gateway startup requires its isolated owner query."),
-                )
-              : credential !== undefined
-                ? credential.phase.rejectOutward(
-                    new ScopeViolationError(
-                      "Credential inventory requires an isolated owner transaction.",
-                    ),
+            ? turn !== undefined
+              ? (() => {
+                  const error = new ScopeViolationError("Turn commands forbid outward SQL.");
+                  turn.phase?.poison(error);
+                  throw error;
+                })()
+              : gateway !== undefined
+                ? rejectGatewayOutward(
+                    new ScopeViolationError("Gateway startup requires its isolated owner query."),
                   )
-                : lifecyclePhase.legacyQuery(() =>
-                    profilePhase.other(() => query(statement, parameters)),
-                  )
+                : credential !== undefined
+                  ? credential.phase.rejectOutward(
+                      new ScopeViolationError(
+                        "Credential inventory requires an isolated owner transaction.",
+                      ),
+                    )
+                  : lifecyclePhase.legacyQuery(() =>
+                      profilePhase.other(() => query(statement, parameters)),
+                    )
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
       await client.query(
-        profileReadCommitted || credential !== undefined || gateway !== undefined
+        profileReadCommitted ||
+          credential !== undefined ||
+          gateway !== undefined ||
+          turn !== undefined
           ? "BEGIN ISOLATION LEVEL READ COMMITTED"
           : readOnly
             ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
@@ -1912,6 +2726,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query("SET LOCAL client_connection_check_interval = '100ms'");
       }
       context = {
+        ...(turn === undefined ? {} : { turn }),
+        turnQuery: query,
         ...(gateway === undefined ? {} : { gateway }),
         gatewayQuery: query,
         ...(credential === undefined ? {} : { credential }),
@@ -1935,12 +2751,35 @@ export class PostgresPlatformState implements PlatformStateStore {
         lifecyclePhase,
         credential?.phase,
         gateway === undefined ? undefined : rejectGatewayOutward,
+        turn === undefined
+          ? undefined
+          : {
+              reject: (error: unknown): never => {
+                turn.phase?.poison(error);
+                throw error;
+              },
+              run: <Value>(repository: "turnJournal" | "audit", work: () => Promise<Value>) => {
+                const record = this.#turnExecution.getStore();
+                if (record === undefined || record.execution !== turn) {
+                  const error = new ScopeViolationError("The exact turn operation is unavailable.");
+                  turn.phase?.poison(error);
+                  return Promise.reject(error);
+                }
+                return record.phase.runOperation(
+                  repository === "audit" ? "mutation-audit" : "journal-mutation",
+                  (operation) => this.withTurnIO(record, work, operation),
+                );
+              },
+            },
       );
       journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
-      running = Promise.resolve().then(() => work(unit!, activeContext));
+      running = Promise.resolve().then(() =>
+        this.#outerExecution.run(true, () => work(unit!, activeContext)),
+      );
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      if (turn !== undefined) await turn.phase!.prepareCommit();
       if (gateway !== undefined) {
         gateway.phase!.closeAdmissions();
         await gateway.phase!.drainAccepted();
@@ -1961,7 +2800,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       if (expired || options?.signal.aborted) throw abortFailure();
       context?.protectedProfile?.assertCurrent();
       if (gateway !== undefined) {
-        gateway.finalized = gateway.phase!.finalize();
+        if (gateway.version === 2) gateway.finalized = gateway.phase!.finalize();
+        else gateway.finalized = gateway.phase!.finalize();
         if (gateway.finalized.kind === "rollback") {
           await raw.query("ROLLBACK");
           started = false;
@@ -1973,7 +2813,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       // All asynchronous drains precede the final synchronous Gateway fence.
       // No awaited work may intervene between this marker and the raw COMMIT.
       gateway?.phase?.markCommitDispatched();
+      turn?.phase?.markCommitDispatched();
       commitDisposition = "sent";
+      if (turn !== undefined) turn.sent = true;
       if (credential !== undefined) credential.disposition = "sent";
       if (gateway !== undefined) gateway.disposition = "sent";
       let acknowledgement;
@@ -1994,6 +2836,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw new DependencyUnavailableError("The database transaction did not commit.");
       }
       commitDisposition = "acknowledged";
+      if (turn !== undefined) turn.acknowledged = true;
+      turn?.phase?.observeCommitAcknowledgement(acknowledgedCommand);
       if (credential !== undefined) credential.disposition = "acknowledged";
       if (gateway !== undefined) gateway.disposition = "acknowledged";
       started = false;
@@ -2006,6 +2850,13 @@ export class PostgresPlatformState implements PlatformStateStore {
       return result;
     } catch (error) {
       primaryFailure = true;
+      if (turn !== undefined) {
+        turn.phase?.closeAdmissions();
+        turn.phase?.poison(error);
+        await turn.phase?.drainAccepted();
+        if (running !== undefined) await Promise.allSettled([running]);
+        await turn.phase?.drainAccepted();
+      }
       if (gateway !== undefined) {
         gateway.establishedNoCommit = establishedNoCommit;
         gateway.phase?.closeAdmissions();
@@ -2071,6 +2922,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      cleanup(() => turn?.phase?.closeAdmissions());
+      cleanup(() => turn?.close());
       cleanup(() => gateway?.phase?.closeAdmissions());
       cleanup(() => credential?.phase.closeAdmissions());
       cleanup(() => lifecyclePhase.closeAdmissions());
@@ -2106,6 +2959,24 @@ export class PostgresPlatformState implements PlatformStateStore {
               : "rolled-back";
         try {
           await gateway.phase.finishTerminal(terminal);
+        } catch (error) {
+          if (!cleanupFailed) {
+            cleanupFailed = true;
+            cleanupFailure = error;
+          }
+        }
+      }
+      if (turn?.phase !== undefined) {
+        const terminal =
+          commitDisposition === "acknowledged"
+            ? "committed"
+            : commitDisposition === "sent"
+              ? establishedNoCommit
+                ? "commit-rejected"
+                : "commit-unknown"
+              : "rolled-back";
+        try {
+          await turn.phase.finishTerminal(terminal);
         } catch (error) {
           if (!cleanupFailed) {
             cleanupFailed = true;
@@ -2165,6 +3036,18 @@ export class PostgresPlatformState implements PlatformStateStore {
     query: PostgresClient["query"],
   ): Promise<void> {
     await this.requireInstallation(context, event.installationId);
+    if (context.turn !== undefined) {
+      const record = this.#turnExecution.getStore();
+      if (record === undefined || record.context !== context)
+        throw new ScopeViolationError("The turn audit unit is unavailable.");
+      this.assertTurnIO(record);
+      if (
+        event.namespaceId !== record.phase.unit.namespaceId ||
+        event.resource.namespaceId !== record.phase.unit.namespaceId
+      )
+        throw new ScopeViolationError("The turn audit belongs to another scope.");
+      query = (statement, parameters) => this.turnQuery(record, statement, parameters);
+    }
     if (event.resource.namespaceId !== event.namespaceId)
       throw new ScopeViolationError("The audit event and resource scopes do not match.");
     const details = auditDetails(event);
@@ -2998,7 +3881,15 @@ export class PostgresPlatformState implements PlatformStateStore {
                 return { installationId: context.installation.id };
               },
               transaction: { assertActive: () => context.lifetime.assertActive() },
-              query: { query: (statement, parameters) => client.query(statement, parameters) },
+              query: {
+                query: (statement, parameters) => {
+                  if (context.turn === undefined) return client.query(statement, parameters);
+                  const record = this.#turnExecution.getStore();
+                  if (record === undefined || record.context !== context)
+                    throw new ScopeViolationError("The turn journal unit is unavailable.");
+                  return this.turnQuery(record, statement, parameters);
+                },
+              },
               currentInstallation: async () => {
                 context.lifetime.assertActive();
                 const installation = await this.currentInstallation(context);

@@ -5,6 +5,10 @@
     "outDir": "./dist",
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
   },
-  "references": [{ "path": "../../packages/contracts" }],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/occ" },
+    { "path": "../../packages/utils" }
+  ],
   "include": ["src/**/*.ts"]
 }

@@ -20,7 +20,11 @@ async function workspace(t) {
   const root = await mkdtemp(join(tmpdir(), "module-boundaries-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await cp(fixture, root, { recursive: true });
-  const config = { ...policy, packages: ["apps/controller", "packages/contracts", "packages/occ"] };
+  // Keep every production source root active while registering only fixture packages.
+  const config = {
+    ...policy,
+    packages: ["apps/controller", "apps/gateway", "packages/contracts", "packages/occ"],
+  };
   const write = async (path, content) => {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
@@ -37,6 +41,20 @@ test("supports real leaf exports, source extension mapping, composition, and new
   const { root, check } = await workspace(t);
   const report = await check();
   assert.equal(report.ok, true, JSON.stringify(report.violations));
+  for (const sourceRoot of policy.sourceRoots) {
+    assert.ok(
+      report.files.some((path) => path.startsWith(`${sourceRoot}/`)),
+      `Fixture must exercise ${sourceRoot}`,
+    );
+  }
+  assert.ok(
+    report.edges.some(
+      (edge) =>
+        edge.from === "apps/gateway/src/main.mjs" &&
+        edge.to === "packages/contracts/src/resources/scope.ts" &&
+        edge.specifier === "@openclaw-enterprise/contracts/scope",
+    ),
+  );
   assert.ok(
     report.edges.some(
       (edge) =>
@@ -58,6 +76,35 @@ test("supports real leaf exports, source extension mapping, composition, and new
   ]);
   assert.equal(stderr, "");
   assert.equal(JSON.parse(stdout).ok, true);
+});
+
+test("checks new gateway leaves and rejects cross-application source imports", async (t) => {
+  const { write, check } = await workspace(t);
+  await write(
+    "apps/gateway/src/private.mjs",
+    'import { createHttpApp } from "../../controller/src/index.ts";',
+  );
+  await write(
+    "apps/controller/src/private-gateway.mjs",
+    'import { gatewayScope } from "../../gateway/src/main.mjs";',
+  );
+  const report = await check();
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.violations.map(({ rule, from, to }) => ({ rule, from, to })),
+    [
+      {
+        rule: "cross-package-source",
+        from: "apps/controller/src/private-gateway.mjs",
+        to: "apps/gateway/src/main.mjs",
+      },
+      {
+        rule: "cross-package-source",
+        from: "apps/gateway/src/private.mjs",
+        to: "apps/controller/src/index.ts",
+      },
+    ],
+  );
 });
 
 test("rejects concrete storage edges, including erased imports, re-exports and external database dependencies", async (t) => {

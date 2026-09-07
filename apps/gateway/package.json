@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@openclaw-enterprise/contracts": "workspace:*",
+    "@openclaw-enterprise/occ": "workspace:*",
+    "@openclaw-enterprise/utils": "workspace:*",
     "openclaw": "link:../../.build/upstream-sdk/openclaw"
   }
 }

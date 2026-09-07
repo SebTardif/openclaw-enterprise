@@ -89,7 +89,7 @@ BEGIN
   END IF;
   actual_type:=jsonb_typeof(value); expected_type:=definition->>'type';
   IF expected_type IS NOT NULL AND actual_type IS DISTINCT FROM
-    CASE WHEN expected_type='integer' THEN 'number' ELSE expected_type END THEN RETURN false; END IF;
+    (CASE WHEN expected_type='integer' THEN 'number' ELSE expected_type END) THEN RETURN false; END IF;
   IF actual_type='object' THEN
     IF definition ? 'required' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(definition->'required') AS required_key(key_name) WHERE NOT value ? required_key.key_name) THEN RETURN false; END IF;
     FOR entry IN SELECT * FROM jsonb_each(value) LOOP
@@ -397,7 +397,7 @@ $$;
 
 CREATE FUNCTION occ.turn_journal_phase_common_binding(record_value jsonb) RETURNS jsonb
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,occ AS $$
-  SELECT record_value->'binding'-ARRAY['dispatchOperationRef','authorityDecisionRef','expiresAt'];
+  SELECT (record_value->'binding')-ARRAY['dispatchOperationRef','authorityDecisionRef','expiresAt'];
 $$;
 
 CREATE FUNCTION occ.turn_journal_phase_before_cancel(record_value jsonb,operation_value jsonb) RETURNS boolean
@@ -547,7 +547,7 @@ BEGIN
       END IF;
       IF a.record IS NULL THEN CONTINUE; END IF;
       IF op.request ? 'expectedAttemptVersion' AND (op.request->>'expectedAttemptVersion')::numeric
-        >a.version-CASE WHEN op.operation_kind='release' THEN 0 ELSE 1 END THEN
+        >a.version-(CASE WHEN op.operation_kind='release' THEN 0 ELSE 1 END) THEN
         RAISE EXCEPTION 'Turn journal phase preflight: operation version exceeds retained publication' USING ERRCODE='23514';
       END IF;
       CASE op.operation_kind
