@@ -92,6 +92,9 @@ importers:
 
   apps/gateway:
     dependencies:
+      '@openclaw-enterprise/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       openclaw:
         specifier: link:../../.build/upstream-sdk/openclaw
         version: link:../../.build/upstream-sdk/openclaw
