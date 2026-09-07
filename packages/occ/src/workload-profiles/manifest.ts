@@ -781,3 +781,196 @@ export function decodeWorkloadProfileManifest(input: Uint8Array): DecodedWorkloa
   const canonicalBytes = canonicalizeWorkloadProfileJson(content);
   return Object.freeze({ content, canonicalBytes });
 }
+
+// Version 2 describes the complete selected pair. Version 1 remains the exact
+// non-executable Harness candidate above; no unresolved leaf is promoted in place.
+const positiveVersion: Rule<number> = (value) => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+    reject("invalid-value");
+  return value;
+};
+const referenceName = text(/^[A-Za-z0-9][A-Za-z0-9:._/-]*$/, 255);
+const selectedRecord = object({
+  ref: referenceName,
+  version: positiveVersion,
+  contentDigest: sha256Digest,
+});
+const selectedPath = text(/^\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+$/, 1024);
+function boundedList<T extends Json>(rule: Rule<T>, min: number, max: number): Rule<readonly T[]> {
+  return (value) => {
+    if (!Array.isArray(value) || value.length < min || value.length > max) reject("invalid-shape");
+    return Object.freeze(value.map(rule));
+  };
+}
+function choice<const T extends readonly string[]>(values: T): Rule<T[number]> {
+  return (value) => {
+    if (typeof value !== "string" || !values.includes(value)) reject("invalid-value");
+    return value as T[number];
+  };
+}
+const argumentLiteral = object({ kind: literal("literal"), value: documentary });
+const argumentBinding = object({
+  kind: literal("binding"),
+  name: choice(["configuration-path", "state-path", "bootstrap-socket"] as const),
+});
+const argument: Rule<Value<typeof argumentLiteral> | Value<typeof argumentBinding>> = (value) =>
+  asObject(value).kind === "literal" ? argumentLiteral(value) : argumentBinding(value);
+const selectedExecutable = object({ path: selectedPath, contentDigest: sha256Digest });
+const selectedImage = object({
+  reference: documentary,
+  platformDigest: sha256Digest,
+  executable: selectedExecutable,
+});
+const pairArtifacts = object({ gateway: selectedImage, harness: selectedImage });
+const moduleDefinition = object({
+  id: artifactName,
+  kind: choice(["identity", "channel", "harness", "persistence"] as const),
+  definition: selectedRecord,
+  artifactDigest: sha256Digest,
+});
+const selectedMount = object({
+  name: artifactName,
+  path: selectedPath,
+  store: selectedRecord,
+  access: choice(["read-only", "read-write"] as const),
+});
+// Application operands only. The selected runtime.implementation below closes
+// the complete renderer, including every init/helper, readiness hook, security,
+// volume/subPath and accounting-to-container mapping. Nothing is inherited from
+// an unbound legacy Pod template.
+const processLaunch = object({
+  argv: boundedList(argument, 1, 32),
+  environmentDefinition: selectedRecord,
+  runtimeClass: artifactName,
+  protocolVersion: positiveVersion,
+  stateSchemaVersion: positiveVersion,
+  agentSchemaVersion: positiveVersion,
+  mounts: boundedList(selectedMount, 1, 16),
+});
+
+export const WORKLOAD_PROFILE_PAIR_CAPABILITIES_V2 = Object.freeze([
+  "fixed-gateway-start",
+  "fixed-harness-start",
+  "independent-bootstrap",
+  "current-identity",
+  "channel-material-delivery",
+  "complete-initial-writer-closure",
+  "quiet-context-restore",
+  "retained-participant-interlock",
+  "guarded-serving",
+  "model-mediation",
+  "repository-issuance",
+] as const);
+export type WorkloadProfilePairCapabilityV2 =
+  (typeof WORKLOAD_PROFILE_PAIR_CAPABILITIES_V2)[number];
+const selectedCapability = object({
+  id: choice(WORKLOAD_PROFILE_PAIR_CAPABILITIES_V2),
+  implementation: selectedRecord,
+});
+const pairContentRule = object({
+  schemaVersion: literal(2),
+  target: object({
+    component: literal("gateway-harness-pair"),
+    provider: literal("occ/kubernetes-gvisor"),
+    architecture: literal("linux/amd64"),
+    placement: literal("dedicated"),
+    fallback: literal("none"),
+    subject: literal("installation-namespace-agent"),
+  }),
+  profileRefs: object({
+    provider: role("provider"),
+    runtime: role("runtime"),
+    identity: role("identity"),
+    containment: role("containment"),
+    storage: role("storage"),
+  }),
+  artifactSet: pairArtifacts,
+  launchConfiguration: object({
+    gateway: processLaunch,
+    harness: processLaunch,
+    modules: boundedList(moduleDefinition, 1, 16),
+    // This is an immutable logical placement, not a future Namespace/Pod UID.
+    placement: object({ cluster: selectedRecord, namespaceAllocation: selectedRecord }),
+    runtime: object({
+      // The original immutable definition binds both the selected runsc setup
+      // and Compute's complete fixed renderer. Its original capability producer
+      // must resolve and verify that content before this pair can be selected.
+      implementation: selectedRecord,
+      handler: artifactName,
+      platform: literal("systrap"),
+    }),
+    resourceEnvelope: object({ podAndRuntimeAccounting: selectedAccounting }),
+    credentials: object({
+      deliveryMode: literal("installation-channel-material-v1"),
+      materialSelection: selectedRecord,
+      pathCustody: selectedRecord,
+      harnessPlatformCredentials: literal("forbidden"),
+    }),
+  }),
+  containment: object({
+    definition: selectedRecord,
+    kvmRequired: literal(false),
+    privileged: literal(false),
+    gatewayPrivateStateInHarness: literal("forbidden"),
+    supportedRunnableTuple: literal("requires-current-owner-validation"),
+  }),
+  endpoints: object({
+    identity: selectedRecord,
+    modelMediator: selectedRecord,
+    repositoryIssuer: selectedRecord,
+    harnessTransport: selectedRecord,
+  }),
+  evidenceRequirements: object({
+    bootstrap: literal("independent-installation-service"),
+    physicalCreator: literal("original-compute-createOriginal"),
+    context: literal("initialize-new-or-resume-retained"),
+    replacement: literal("exact-replaced-and-retained-participants"),
+    capabilities: boundedList(
+      selectedCapability,
+      WORKLOAD_PROFILE_PAIR_CAPABILITIES_V2.length,
+      WORKLOAD_PROFILE_PAIR_CAPABILITIES_V2.length,
+    ),
+  }),
+});
+
+/** Static complete definition only. Actual source qualification and every use's
+ * current admitted association come from protected original participants. */
+export type WorkloadProfileManifestContentV2 = Value<typeof pairContentRule>;
+export interface DecodedWorkloadProfileManifestV2 {
+  readonly content: WorkloadProfileManifestContentV2;
+  readonly canonicalBytes: Uint8Array;
+}
+
+export function decodeWorkloadProfileManifestV2(
+  input: Uint8Array,
+): DecodedWorkloadProfileManifestV2 {
+  const content = pairContentRule(decodeWorkloadProfileJson(input).value);
+  const launch = content.launchConfiguration;
+  const unique = (values: readonly string[]) => {
+    if (new Set(values).size !== values.length) reject("duplicate-identity");
+  };
+  unique(launch.modules.map((item) => item.id));
+  unique(content.evidenceRequirements.capabilities.map((item) => item.id));
+  for (const kind of ["identity", "harness", "persistence"] as const)
+    if (launch.modules.filter((item) => item.kind === kind).length !== 1)
+      reject("invalid-reference");
+  if (!launch.modules.some((item) => item.kind === "channel")) reject("invalid-reference");
+  for (const component of ["gateway", "harness"] as const) {
+    const process = launch[component];
+    unique(process.mounts.map((item) => item.name));
+    unique(process.mounts.map((item) => item.path));
+    if (
+      process.argv[0]?.kind !== "literal" ||
+      process.argv[0].value !== content.artifactSet[component].executable.path
+    )
+      reject("invalid-reference");
+    const image = content.artifactSet[component];
+    if (!image.reference.endsWith(`@${image.platformDigest}`) || /\s/u.test(image.reference))
+      reject("invalid-reference");
+    for (const path of [image.executable.path, ...process.mounts.map((item) => item.path)])
+      if (path.split("/").some((part) => part === "." || part === "..")) reject("invalid-value");
+  }
+  // Sharing a writable mount under two components needs the separately qualified
+  // interlock and is represented explicitly by the same immutable store identity.
+  return Object.freeze({ content, canonicalBytes: canonicalizeWorkloadProfileJson(content) });
+}
