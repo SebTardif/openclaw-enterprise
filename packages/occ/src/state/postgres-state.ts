@@ -14,6 +14,8 @@ import type {
 import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
 import type { UpdateAgentInput } from "../services/agent/port.ts";
 import type { WorkloadProfileAccountUnit } from "../services/workload-profile/port.ts";
+import type { WorkloadProfileSessionSecurityReaderV1 } from "../ports/workload-profile-session-security.ts";
+import { readPostgresWorkloadProfileSessionV1 } from "./postgres/workload-profile-session-security.ts";
 import type { AuthenticatedRequestHandleV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
 import {
   createWorkloadProfileAdmissionRepositoryV2,
@@ -2101,6 +2103,50 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (!owner)
           throw new DependencyUnavailableError("The original profile account unit is unavailable.");
         return owner.bindAccountOwner(terminalCleanup);
+      },
+    });
+  }
+
+  /** The original profile account object is the only accepting unit. A returned
+   * reader grants no request provenance and never opens another checkout. */
+  workloadProfileSessionSecurityV1(): WorkloadProfileSessionSecurityReaderV1 {
+    return Object.freeze<WorkloadProfileSessionSecurityReaderV1>({
+      lock: (unit, lookup) => {
+        const guarded = this.#profileAccounts.get(unit);
+        if (!guarded)
+          return Promise.reject(
+            new DependencyUnavailableError("The original profile session owner is unavailable."),
+          );
+        let released = false;
+        const release = () => {
+          released = true;
+        };
+        // The original owner holds this cleanup before input getters or SQL wait.
+        const control = guarded.bindAccountOwner(release);
+        const pending = readPostgresWorkloadProfileSessionV1(
+          {
+            installationId: unit.installationId,
+            signal: unit.signal,
+            assertAcquiring: () => {
+              control.assertAcquiring();
+              if (released)
+                throw new DependencyUnavailableError("The session observation is closed.");
+            },
+            assertCurrent: () => {
+              control.assertCurrent();
+              if (released)
+                throw new DependencyUnavailableError("The session observation is closed.");
+              return undefined;
+            },
+            query: (statement, parameters) => unit.query(statement, parameters),
+            retainCurrentness: (check) => guarded.unit.retainCurrentness(check),
+            poison: (error) => guarded.poison(error),
+            release,
+          },
+          lookup,
+        );
+        control.retainAccepted(pending.then(() => {}));
+        return pending;
       },
     });
   }
