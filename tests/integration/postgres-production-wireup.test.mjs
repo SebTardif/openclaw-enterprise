@@ -15,6 +15,10 @@ import { authenticatedHeaders, signInWithEmailPassword } from "../helpers/auth-s
 import { createInstallationDriverConfiguration } from "../helpers/installation-driver-configuration.mjs";
 import { createTestSecretDriver } from "../helpers/secret-driver.mjs";
 import { BOOTSTRAP_DEFAULT_NAMESPACE_NAME } from "../../packages/occ/src/index.ts";
+import {
+  exerciseReceivingPostgres,
+  receivingComputeObserver,
+} from "../helpers/workload-profile-receiving-postgres.mjs";
 
 const databaseUrl = process.env.OCC_PRODUCTION_WIREUP_DATABASE_URL;
 const repository = fileURLToPath(new URL("../../", import.meta.url));
@@ -89,7 +93,7 @@ test(
       ? false
       : "Set OCC_PRODUCTION_WIREUP_DATABASE_URL for real PostgreSQL production bootstrap proof.",
   },
-  async () => {
+  async (context) => {
     const environment = {
       ...process.env,
       NODE_ENV: "production",
@@ -122,7 +126,7 @@ test(
       assert.match(bootstrapped.stdout, /installation\.bootstrapped/);
 
       const pg = requireControllerDependency("pg");
-      pool = new pg.Pool({ connectionString: databaseUrl });
+      pool = new pg.Pool({ connectionString: databaseUrl, max: 4, connectionTimeoutMillis: 250 });
       // Creating an administrator is not signing in: no usable session may exist yet.
       const bootstrapSessions = await pool.query(
         "SELECT count(*)::integer AS count FROM occ.session",
@@ -498,6 +502,30 @@ test(
         }),
       });
       assert.equal(publicSignup.status, 404);
+
+      // Preserve the complete ordinary-role production proof above. The next
+      // factory uses the same real bootstrap account and protected password,
+      // while the shared receiving matrix owns and closes its selected app.
+      const observedCompute = receivingComputeObserver(createPassiveComputeDriver());
+      await exerciseReceivingPostgres({
+        context,
+        databaseUrl,
+        defaultApp: app,
+        defaultEndpoint: endpoint,
+        authBaseURL,
+        credentials: { email: adminEmail, password },
+        runWriterMatrix: true,
+        computeCalls: observedCompute.calls,
+        createSelectedApp: (selectedDatabaseUrl) =>
+          composeProduction({
+            mode: "production",
+            host: "127.0.0.1",
+            databaseUrl: selectedDatabaseUrl,
+            authSecret,
+            authBaseURL,
+            drivers: { ...productionDrivers(), computeDriver: observedCompute.driver },
+          }),
+      });
     } finally {
       if (app !== undefined) await app.close();
       if (pool !== undefined) await pool.end();
