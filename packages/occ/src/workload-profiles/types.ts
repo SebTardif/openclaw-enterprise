@@ -2,6 +2,9 @@ import { immutableCopy } from "@openclaw-enterprise/utils";
 import { types } from "node:util";
 import {
   decodeWorkloadProfilePrepareEnvelopeV1,
+  decodeWorkloadProfilePrepareEnvelopeV2,
+  type WorkloadProfilePrepareV2,
+  type WorkloadProfileScopeV2,
   type WorkloadProfilePrepareV1,
   type WorkloadProfileScopeV1,
 } from "@openclaw-enterprise/contracts/workload-profile-v1";
@@ -50,7 +53,7 @@ export interface NormalizedProfilePreparation {
 }
 /** Retained lexical content is inert. It has not passed the closed manifest
  * dictionary, human acceptance guard, or downstream current-use gate. */
-export interface StoredProfilePreparation {
+export interface StoredProfilePreparationV1 {
   readonly schemaVersion: 1;
   readonly kind: "inert-profile-preparation";
   readonly scope: WorkloadProfileScopeV1;
@@ -64,6 +67,19 @@ export interface StoredProfilePreparation {
   readonly operationDigest: string;
   readonly preparedAt: string;
 }
+export interface NormalizedProfilePreparationV2 {
+  readonly request: Readonly<WorkloadProfilePrepareV2>;
+  readonly canonicalClientIntent: string;
+  readonly clientIntentDigest: string;
+}
+export interface StoredProfilePreparationV2 extends Omit<
+  StoredProfilePreparationV1,
+  "schemaVersion" | "scope"
+> {
+  readonly schemaVersion: 2;
+  readonly scope: WorkloadProfileScopeV2;
+}
+export type StoredProfilePreparation = StoredProfilePreparationV1 | StoredProfilePreparationV2;
 export interface ProfileCapacity {
   readonly ordinaryOperations: number;
   readonly pendingOrdinaryOperations: number;
@@ -167,7 +183,7 @@ export function profileTimestamp(input: unknown): asserts input is string {
     invalid();
 }
 export function profileOperationEnvelope(
-  record: Omit<StoredProfilePreparation, "canonicalOperation" | "operationDigest">,
+  record: Omit<StoredProfilePreparationV1, "canonicalOperation" | "operationDigest">,
 ) {
   return {
     schemaVersion: 1,
@@ -187,7 +203,7 @@ export function createProfilePreparation(
   normalized: NormalizedProfilePreparation,
   allocated: ProfileAllocatedIdentities,
   preparedAt: string,
-): StoredProfilePreparation {
+): StoredProfilePreparationV1 {
   profileInstallation(installationId);
   profileTimestamp(preparedAt);
   const record = {
@@ -233,6 +249,7 @@ export function decodeStoredProfilePreparation(input: unknown): StoredProfilePre
     "operationDigest",
     "preparedAt",
   ]);
+  if (input.schemaVersion === 2) return decodeStoredProfilePreparationV2(input);
   if (input.schemaVersion !== 1 || input.kind !== "inert-profile-preparation") invalid();
   if (
     typeof input.canonicalClientIntent !== "string" ||
@@ -276,4 +293,130 @@ export function profileOperationKey(locator: ProfileOperationLocator): string {
   return [locator.installationId, locator.actor.principalRef, locator.operationRef]
     .map((part) => `${encoder.encode(part).byteLength}:${part}`)
     .join("");
+}
+
+/** V2 uses the original intent/operation domains with its own closed version. */
+export function normalizeProfilePreparationV2(input: unknown): NormalizedProfilePreparationV2 {
+  const decoded = decodeWorkloadProfilePrepareEnvelopeV2(input);
+  if (decoded.kind !== "valid") invalid();
+  const request = decoded.value;
+  const manifest = decodeWorkloadProfileJson(encoder.encode(request.manifest.canonicalUtf8));
+  if (
+    decoder.decode(manifest.canonicalBytes) !== request.manifest.canonicalUtf8 ||
+    workloadProfileDigest("manifestDigest", manifest.value) !== request.manifest.manifestDigest
+  )
+    invalid();
+  return immutableCopy({
+    request,
+    canonicalClientIntent: decoder.decode(
+      canonicalizeWorkloadProfileJson(request, "operator-envelope"),
+    ),
+    clientIntentDigest: operatorIntentDigest(request),
+  });
+}
+export function normalizeAnyProfilePreparation(
+  input: unknown,
+): NormalizedProfilePreparation | NormalizedProfilePreparationV2 {
+  return decodeWorkloadProfilePrepareEnvelopeV1(input).kind === "valid"
+    ? normalizeProfilePreparation(input)
+    : normalizeProfilePreparationV2(input);
+}
+export function createProfilePreparationV2(
+  installationId: string,
+  actor: ProfileOperationActor,
+  normalized: NormalizedProfilePreparationV2,
+  allocated: ProfileAllocatedIdentities,
+  preparedAt: string,
+): StoredProfilePreparationV2 {
+  profileInstallation(installationId);
+  profileTimestamp(preparedAt);
+  const record = {
+    schemaVersion: 2 as const,
+    kind: "inert-profile-preparation" as const,
+    scope: {
+      installationId,
+      namespaceId: normalized.request.namespaceId,
+      component: "gateway-harness-pair" as const,
+    },
+    actor: profileActor(actor),
+    operationRef: normalized.request.operationRef,
+    action: normalized.request.action,
+    canonicalClientIntent: normalized.canonicalClientIntent,
+    clientIntentDigest: normalized.clientIntentDigest,
+    allocated: profileAllocatedIdentities(allocated),
+    preparedAt,
+  };
+  const envelope = {
+    schemaVersion: record.schemaVersion,
+    kind: record.kind,
+    scope: record.scope,
+    actor: record.actor,
+    operationRef: record.operationRef,
+    action: record.action,
+    clientIntentDigest: record.clientIntentDigest,
+    allocated: record.allocated,
+    preparedAt: record.preparedAt,
+  };
+  return immutableCopy({
+    ...record,
+    canonicalOperation: decoder.decode(
+      canonicalizeWorkloadProfileJson(envelope, "operator-envelope"),
+    ),
+    operationDigest: operatorOperationDigest(envelope),
+  });
+}
+export function decodeStoredProfilePreparationV2(input: unknown): StoredProfilePreparationV2 {
+  keys(input, [
+    "schemaVersion",
+    "kind",
+    "scope",
+    "actor",
+    "operationRef",
+    "action",
+    "canonicalClientIntent",
+    "clientIntentDigest",
+    "allocated",
+    "canonicalOperation",
+    "operationDigest",
+    "preparedAt",
+  ]);
+  if (
+    input.schemaVersion !== 2 ||
+    input.kind !== "inert-profile-preparation" ||
+    typeof input.canonicalClientIntent !== "string" ||
+    typeof input.canonicalOperation !== "string" ||
+    input.canonicalClientIntent.length > 65_536 ||
+    input.canonicalOperation.length > 65_536
+  )
+    invalid();
+  const normalized = normalizeProfilePreparationV2(
+    decodeWorkloadProfileJson(encoder.encode(input.canonicalClientIntent), "operator-envelope")
+      .value,
+  );
+  keys(input.scope, ["installationId", "namespaceId", "component"]);
+  profileInstallation(input.scope.installationId);
+  profileTimestamp(input.preparedAt);
+  const rebuilt = createProfilePreparationV2(
+    input.scope.installationId,
+    profileActor(input.actor),
+    normalized,
+    profileAllocatedIdentities(input.allocated),
+    input.preparedAt,
+  );
+  for (const field of [
+    "operationRef",
+    "action",
+    "canonicalClientIntent",
+    "clientIntentDigest",
+    "canonicalOperation",
+    "operationDigest",
+    "preparedAt",
+  ] as const)
+    if (input[field] !== rebuilt[field]) invalid();
+  if (
+    input.scope.namespaceId !== rebuilt.scope.namespaceId ||
+    input.scope.component !== "gateway-harness-pair"
+  )
+    invalid();
+  return rebuilt;
 }
