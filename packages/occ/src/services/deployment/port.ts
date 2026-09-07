@@ -25,6 +25,11 @@ import type {
   WorkloadProfileUseResolverV2,
 } from "../../workload-profiles/admitted-use.ts";
 
+import type {
+  DeploymentCandidateNormalizerV2,
+  WorkloadProfileCandidateContinuationV2,
+} from "../../ports/workload-profile-candidate.ts";
+
 export const DEPLOYMENT_REPOSITORIES = {
   read: {},
   mutate: {
@@ -189,6 +194,8 @@ export interface AcceptedDeployOperation {
 export interface DeploymentServicePort extends DeploymentCommands, DeploymentQueries {}
 
 export interface DeploymentServiceOptions {
+  /** Same original callable captured by the constructor and candidate owner. */
+  readonly candidateNormalizer?: DeploymentCandidateNormalizerV2;
   readonly installationId: string;
   readonly isRuntimeAdmissionAudit: (event: AuditEvent, intent: RuntimeIntent) => boolean;
   readonly repositories: DeploymentRepositories;
@@ -219,5 +226,7 @@ export interface DeploymentServiceOptions {
       "withDeployment" | "withRecovery"
     >;
     readonly use: WorkloadProfileUseResolverV2;
+    /** Required for a fresh selected V2 admission; replay never invokes it. */
+    readonly candidates?: WorkloadProfileCandidateContinuationV2;
   };
 }

@@ -8,39 +8,22 @@ import {
   decodeLifecycleAdmissionV1,
   type LifecycleAcceptedReceiptV1,
 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
-import {
-  decodeWorkloadProfileSelectionV1,
-  decodeWorkloadProfileUseV2,
-} from "@openclaw-enterprise/contracts/workload-profile-v1";
+import { decodeWorkloadProfileUseV2 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { isDeepStrictEqual } from "node:util";
 import { decodeCredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
-import type { Namespace } from "@openclaw-enterprise/contracts/resources/namespace";
-import type { Secret, SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
-import type { ServiceAccountRevision } from "@openclaw-enterprise/contracts/resources/service-account";
-import type { ComputeDriver } from "@openclaw-enterprise/contracts/drivers/compute";
-import type { ProviderRef } from "@openclaw-enterprise/contracts/drivers/provider";
-import { admitLoggingConfiguration } from "@openclaw-enterprise/contracts/logging";
 import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
-  NamespaceNotReadyError,
   ResourceConflictError,
   ScopeViolationError,
 } from "../../errors.ts";
-import type { NamespaceRepository } from "../../ports/repositories/namespace.ts";
-import type { SecretRepository } from "../../ports/repositories/secret.ts";
-import {
-  assertConfiguredProvider,
-  validateServiceAccountProviderBinding,
-} from "../../providers.ts";
-import {
-  authorizeConfigurationBindings,
-  configurationBindings,
-  exactConfiguration,
-} from "../configuration/service.ts";
-import { validExecutionMode, validateModelBinding } from "../agent/model-binding.ts";
-import { frozenRevision, frozenValues, resolveConfiguredHarnessId } from "./configuration.ts";
+import { frozenRevision } from "./configuration.ts";
+import { createDeploymentCandidateNormalizerV2 } from "./candidate-normalization.ts";
+import type {
+  DeploymentCandidateNormalizerV2,
+  DeploymentCandidateResultV2,
+} from "../../ports/workload-profile-candidate.ts";
 import { deriveAdmittedConfigurationV1 } from "../../workload-profiles/admitted-configuration.ts";
 import { canonicalizeWorkloadProfileJson } from "../../workload-profiles/canonical.ts";
 import { selectRepositories } from "../../application/mutation-context.ts";
@@ -413,9 +396,12 @@ function validateDeployLocator(
 /** Admission uses one shared mutation unit, with explicit retained-locator recovery. */
 export class DeploymentService implements DeploymentServicePort {
   private readonly options: DeploymentServiceOptions;
+  private readonly candidateNormalizer: DeploymentCandidateNormalizerV2;
 
   constructor(options: DeploymentServiceOptions) {
     this.options = options;
+    this.candidateNormalizer =
+      options.candidateNormalizer ?? createDeploymentCandidateNormalizerV2(options);
   }
 
   async deployAgent(
@@ -613,411 +599,233 @@ export class DeploymentService implements DeploymentServicePort {
             throw new ScopeViolationError(
               "The expected lifecycle generation must be null or a positive safe integer.",
             );
-          const namespace = await this.lockNamespace(state, input.namespaceId);
-          const agent = await state.agents.findAgent(namespace.id, input.agentId);
-          if (!agent)
-            throw new ScopeViolationError(
-              "The Agent does not belong to the exact Installation and Namespace.",
-            );
-          await this.options.authorization.authorize(principalId, "deploy", {
-            kind: "agent",
-            id: agent.id,
-            namespaceId: namespace.id,
-          });
-          if (namespace.status !== "ready") throw new NamespaceNotReadyError();
-          if (typeof resolveHarness !== "function")
-            throw new DependencyUnavailableError("The selected Harness descriptor is unavailable.");
-
-          let compute: ComputeDriver;
-          try {
-            compute = this.options.computeDriver();
-          } catch {
-            throw new DependencyUnavailableError("The selected compute Driver is unavailable.");
-          }
-          const sandbox = this.options.sandboxDriver();
-
-          const lockedAgent = await state.agents.lockAgent(namespace.id, agent.id);
-          if (!lockedAgent || !isNonEmptyString(lockedAgent.servicePrincipalId))
-            throw new ScopeViolationError(
-              "The Agent or its service principal does not belong to the exact Namespace.",
-            );
-          if (command !== undefined) {
-            const expected = command.expectedDraft;
-            const selected = decodeWorkloadProfileSelectionV1(lockedAgent.workloadProfileSelection);
-            if (
-              selected.kind !== "valid" ||
-              lockedAgent.configurationId !== expected.configurationId ||
-              lockedAgent.providerId !== expected.providerId ||
-              lockedAgent.executionMode !== expected.executionMode ||
-              (lockedAgent.serviceAccountId ?? null) !== expected.serviceAccountId ||
-              selected.value.manifestRef !== expected.workloadProfileSelection.manifestRef ||
-              selected.value.manifestDigest !== expected.workloadProfileSelection.manifestDigest ||
-              selected.value.admissionRef !== expected.workloadProfileSelection.admissionRef ||
-              selected.value.admissionVersion !== expected.workloadProfileSelection.admissionVersion
-            )
-              throw new ResourceConflictError(
-                "The saved Agent draft does not match the retained command.",
-              );
-          }
-          const scope = { namespaceId: namespace.id, agentId: lockedAgent.id };
-          const head = await state.runtimeAssignments.findRuntimeIntentHead(scope);
-          if (compareGeneration && expectedGeneration !== (head?.generation ?? null))
-            throw new ResourceConflictError("The lifecycle generation does not match.");
-          if (head !== undefined && head.desiredMode !== "running")
-            throw new ResourceConflictError("Deploy cannot resume a disabled or stopped Agent.");
-          if (head?.generation === Number.MAX_SAFE_INTEGER)
-            throw new ResourceConflictError("The lifecycle generation is exhausted.");
-          const providerId = this.providerId(lockedAgent.providerId);
-          if (sandbox !== undefined && lockedAgent.executionMode !== "dedicated")
-            throw new ScopeViolationError(
-              "The selected Sandbox Driver supports only dedicated Harness execution.",
-            );
-          let serviceAccount: ServiceAccountRevision | undefined;
-          if (lockedAgent.serviceAccountId !== undefined) {
-            await this.options.authorization.authorize(principalId, "read", {
-              kind: "service_account",
-              id: lockedAgent.serviceAccountId,
-              namespaceId: namespace.id,
-            });
-            const account = await state.serviceAccounts.lockServiceAccount(
-              namespace.id,
-              lockedAgent.serviceAccountId,
-            );
-            if (account === undefined)
-              throw new ScopeViolationError(
-                "The ServiceAccount does not belong to the exact Namespace.",
-              );
-            const credential = account.credential;
-            if (credential === undefined)
-              throw new ResourceConflictError("The associated ServiceAccount has no credential.");
-            if (credential.kind !== "api_key" && credential.kind !== "access_token")
-              throw new ResourceConflictError(
-                "OAuth ServiceAccount credentials are not supported for deployment.",
-              );
-            if (credential.kind === "access_token") {
-              validateServiceAccountProviderBinding(
-                this.options.providers,
-                providerId,
-                await state.serviceAccounts.findServiceAccountProviderBinding(
-                  namespace.id,
-                  account.id,
-                ),
-              );
-            }
-            serviceAccount = immutableCopy({
-              id: account.id,
-              credential: { kind: credential.kind, secretRef: credential.secretRef },
-            });
-          }
-          await this.options.authorization.authorize(principalId, "read", {
-            kind: "configuration",
-            id: lockedAgent.configurationId,
-            namespaceId: namespace.id,
-          });
-          const metadata = await state.configurations.lockConfiguration(
-            namespace.id,
-            lockedAgent.configurationId,
-          );
-          if (!metadata || metadata.kind !== "agent")
-            throw new ScopeViolationError(
-              "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
-            );
-          if (
-            command !== undefined &&
-            metadata.generation !== command.expectedDraft.configurationGeneration
-          )
-            throw new ResourceConflictError(
-              "The saved Configuration generation does not match the retained command.",
-            );
-          const secretBindings = configurationBindings(metadata.secretBindings);
-          const sources = await this.authorizeBindings(
-            state,
-            principalId,
-            namespace.id,
-            secretBindings,
-          );
-          validateModelBinding(
-            secretBindings,
-            lockedAgent.executionMode,
-            lockedAgent.serviceAccountId,
-          );
-          const secretDriver =
-            Object.keys(secretBindings).length === 0 ? undefined : this.options.secretDriver();
-          for (const secret of sources) {
-            await this.options.authorization.authorize(lockedAgent.servicePrincipalId, "operate", {
-              kind: "secret",
-              id: secret.id,
-              namespaceId: namespace.id,
-            });
-            const resolved = await this.options.secretOperation(() =>
-              secretDriver!.resolve(secret),
-            );
-            if (
-              Object.keys(secret.backendRef).some(
-                (key) =>
-                  resolved[key as keyof typeof resolved] !==
-                  secret.backendRef[key as keyof typeof secret.backendRef],
-              )
-            )
-              throw new DependencyUnavailableError("The Secret backend identity changed.");
-          }
-          const configurationDriver = this.options.configurationDriver();
-          const configuration = exactConfiguration(
-            await this.options.configurationOperation(() =>
-              configurationDriver.read({ id: metadata.id, namespaceId: namespace.id }),
-            ),
-            metadata,
-          );
-          const sandboxConfiguration =
-            sandbox?.configureAgent !== undefined
-              ? frozenValues(sandbox.configureAgent(frozenValues(configuration.values)))
-              : configuration.values;
-          const admittedConfiguration = frozenValues(
-            admitLoggingConfiguration(sandboxConfiguration, this.options.loggingLevel),
-          );
-          await configurationDriver.validate({ ...configuration, values: admittedConfiguration });
-          if (!validExecutionMode(lockedAgent.executionMode))
-            throw new ScopeViolationError("The persisted Agent Harness execution mode is invalid.");
-          const configuredHarnessId = resolveConfiguredHarnessId(admittedConfiguration);
-          const approvedHarness = resolveHarness(configuredHarnessId, lockedAgent.executionMode);
-          if (
-            approvedHarness === undefined ||
-            !isNonEmptyString(approvedHarness.id) ||
-            !isNonEmptyString(approvedHarness.version)
-          ) {
-            throw new DependencyUnavailableError("The selected Harness runtime is not approved.");
-          }
-          if (approvedHarness.id !== configuredHarnessId)
-            throw new ScopeViolationError(
-              "The approved Harness does not match the native runtime.",
-            );
-          if (
-            (approvedHarness.id === "openclaw" && lockedAgent.executionMode !== "embedded") ||
-            (approvedHarness.id === "codex" && lockedAgent.executionMode !== "dedicated") ||
-            (approvedHarness.id !== "openclaw" && approvedHarness.id !== "codex")
-          ) {
-            throw new ScopeViolationError(
-              "The selected Harness does not support this execution mode.",
-            );
-          }
-          if (
-            serviceAccount?.credential.kind === "access_token" &&
-            (approvedHarness.id !== "codex" || lockedAgent.executionMode !== "dedicated")
-          ) {
-            throw new ResourceConflictError(
-              "ServiceAccount access-token credentials require the dedicated Codex Harness.",
-            );
-          }
-          const previous = await state.revisions.listRevisions(namespace.id, lockedAgent.id);
-          let candidate = frozenRevision({
-            id: this.options.createId(),
-            namespaceId: namespace.id,
-            agentId: lockedAgent.id,
-            revision: previous.length + 1,
-            providerId,
-            configurationId: configuration.id,
-            configurationKind: configuration.kind,
-            configurationGeneration: configuration.generation,
-            configuration: admittedConfiguration,
-            harness: {
-              id: approvedHarness.id,
-              version: approvedHarness.version,
-              mode: lockedAgent.executionMode,
-            },
-            compute: { id: compute.id, implementation: compute.implementation },
-            ...(sandbox === undefined ? {} : { sandboxDriverId: sandbox.id }),
-            ...(secretDriver === undefined
-              ? {}
-              : { secretDriverId: secretDriver.id, secretBindings }),
-            ...(serviceAccount === undefined ? {} : { serviceAccount }),
-            servicePrincipalId: lockedAgent.servicePrincipalId,
-            createdAt: this.options.now(),
-          });
-          const profileGuards: Awaited<ReturnType<typeof retainDeploymentProfile>>[] = [];
-          const checkProfiles = () => {
-            owned?.io.assertActive();
-            for (const guard of profileGuards) guard.check();
-          };
-          let verifyUse: (() => Promise<void>) | undefined;
-          if (command !== undefined) {
-            if (owned === undefined || profiles === undefined)
-              throw new DependencyUnavailableError(
-                "The original workload use producer is unavailable.",
-              );
-            const { unit, io } = owned;
-            io.assertActive();
-            const request = Object.freeze({
-              schemaVersion: 2 as const,
-              installationId: unit.installationId,
-              namespaceId: candidate.namespaceId,
-              agentId: candidate.agentId,
-              revisionId: candidate.id,
-              configurationRef: candidate.configurationId,
-              configurationVersion: candidate.configurationGeneration,
-              selection: command.expectedDraft.workloadProfileSelection,
-            });
-            const prepared = await profiles.use.prepareUseLocked(request, candidate, unit, io);
-            profileGuards.push(await retainDeploymentProfile(prepared, unit, io));
-            checkProfiles();
-            const decoded = decodeWorkloadProfileUseV2(prepared.use);
-            const selected = command.expectedDraft.workloadProfileSelection;
-            if (
-              decoded.kind !== "valid" ||
-              decoded.value.installationId !== unit.installationId ||
-              decoded.value.namespaceId !== candidate.namespaceId ||
-              decoded.value.manifestRef !== selected.manifestRef ||
-              decoded.value.manifestDigest !== selected.manifestDigest ||
-              decoded.value.admissionRef !== selected.admissionRef ||
-              decoded.value.admissionVersion !== selected.admissionVersion
-            )
-              throw new ScopeViolationError(
-                "The prepared workload use differs from the exact selection.",
-              );
-            const verifySource = prepared.verifyInserted;
-            if (typeof verifySource !== "function")
-              throw new DependencyUnavailableError(
-                "The inserted workload use verifier is unavailable.",
-              );
-            candidate = frozenRevision({ ...candidate, workloadProfileUse: decoded.value });
-            verifyUse = async () => {
+          const afterNormalized = async (normalized: DeploymentCandidateResultV2) => {
+            const { namespace, lockedAgent, head } = normalized;
+            const scope = { namespaceId: namespace.id, agentId: lockedAgent.id };
+            let candidate = normalized.candidate;
+            const profileGuards: Awaited<ReturnType<typeof retainDeploymentProfile>>[] = [];
+            const checkProfiles = () => {
+              owned?.io.assertActive();
+              for (const guard of profileGuards) guard.check();
+            };
+            let verifyUse: (() => Promise<void>) | undefined;
+            if (command !== undefined) {
+              if (owned === undefined || profiles === undefined)
+                throw new DependencyUnavailableError(
+                  "The original workload use producer is unavailable.",
+                );
+              const { unit, io } = owned;
+              io.assertActive();
+              const request = Object.freeze({
+                schemaVersion: 2 as const,
+                installationId: unit.installationId,
+                namespaceId: candidate.namespaceId,
+                agentId: candidate.agentId,
+                revisionId: candidate.id,
+                configurationRef: candidate.configurationId,
+                configurationVersion: candidate.configurationGeneration,
+                selection: command.expectedDraft.workloadProfileSelection,
+              });
+              const prepared = await profiles.use.prepareUseLocked(request, candidate, unit, io);
+              profileGuards.push(await retainDeploymentProfile(prepared, unit, io));
               checkProfiles();
-              const verified = await verifySource.call(prepared, io);
-              profileGuards.push(await retainDeploymentProfile(verified, unit, io));
-              checkProfiles();
-              const actualUse = decodeWorkloadProfileUseV2(verified.use);
+              const decoded = decodeWorkloadProfileUseV2(prepared.use);
+              const selected = command.expectedDraft.workloadProfileSelection;
               if (
-                actualUse.kind !== "valid" ||
-                !sameProfileData(verified.request, request) ||
-                !sameProfileData(actualUse.value, decoded.value)
+                decoded.kind !== "valid" ||
+                decoded.value.installationId !== unit.installationId ||
+                decoded.value.namespaceId !== candidate.namespaceId ||
+                decoded.value.manifestRef !== selected.manifestRef ||
+                decoded.value.manifestDigest !== selected.manifestDigest ||
+                decoded.value.admissionRef !== selected.admissionRef ||
+                decoded.value.admissionVersion !== selected.admissionVersion
               )
                 throw new ScopeViolationError(
-                  "The inserted workload use proof differs from the admitted candidate.",
+                  "The prepared workload use differs from the exact selection.",
                 );
-            };
-          }
-          checkProfiles();
-          if (producer !== undefined)
-            credential = await prepareCredentialSelection(
-              producer,
-              Object.freeze({
-                installationId: this.options.installationId,
-                principalId,
-                transitionRef: admission.transitionRef,
-                requestId: admission.requestId,
-                revision: candidate,
-                repositories: state,
-              }),
-              (error) => this.options.poisonAdmission(error),
-            );
-          checkProfiles();
-          credential?.check();
-          const revision =
-            credential === undefined
-              ? await state.revisions.createRevision(candidate)
-              : await state.revisions.createRevision(candidate, credential.record);
-          checkProfiles();
-          credential?.check();
-          if (credential !== undefined || verifyUse !== undefined) {
-            const returnedUse =
-              candidate.workloadProfileUse === undefined
-                ? undefined
-                : decodeWorkloadProfileUseV2(revision.workloadProfileUse);
-            const sameRevision =
-              candidate.workloadProfileUse === undefined
-                ? isDeepStrictEqual(revision, candidate)
-                : returnedUse?.kind === "valid" &&
-                  sameProfileData(returnedUse.value, candidate.workloadProfileUse) &&
-                  isDeepStrictEqual(
-                    { ...revision, workloadProfileUse: undefined },
-                    { ...candidate, workloadProfileUse: undefined },
-                  );
-            if (!sameRevision)
-              throw new ScopeViolationError(
-                "The inserted revision differs from the admitted candidate.",
-              );
-            if (verifyUse !== undefined) await verifyUse();
-            if (credential !== undefined) await credential.verifyInserted();
-          }
-          checkProfiles();
-          // The synchronous trusted factory runs before the intent write. No Driver
-          // calls intervene in the intent, exact audit, admission identity, and work unit.
-          const audit = immutableCopy(admission.createAuditEvent(revision));
-          const attribution = { actorId: principalId, requestId: admission.requestId };
-          checkProfiles();
-          credential?.check();
-          const intent =
-            head === undefined
-              ? await state.runtimeAssignments.initializeRuntimeIntent(
-                  scope,
-                  revision.id,
-                  admission.transitionRef,
-                  attribution,
+              const verifySource = prepared.verifyInserted;
+              if (typeof verifySource !== "function")
+                throw new DependencyUnavailableError(
+                  "The inserted workload use verifier is unavailable.",
+                );
+              candidate = frozenRevision({ ...candidate, workloadProfileUse: decoded.value });
+              verifyUse = async () => {
+                checkProfiles();
+                const verified = await verifySource.call(prepared, io);
+                profileGuards.push(await retainDeploymentProfile(verified, unit, io));
+                checkProfiles();
+                const actualUse = decodeWorkloadProfileUseV2(verified.use);
+                if (
+                  actualUse.kind !== "valid" ||
+                  !sameProfileData(verified.request, request) ||
+                  !sameProfileData(actualUse.value, decoded.value)
                 )
-              : await state.runtimeAssignments.advanceRuntimeIntent(
-                  scope,
-                  head.generation,
-                  { desiredMode: "running", revisionId: revision.id },
-                  admission.transitionRef,
-                  attribution,
+                  throw new ScopeViolationError(
+                    "The inserted workload use proof differs from the admitted candidate.",
+                  );
+              };
+            }
+            checkProfiles();
+            if (producer !== undefined)
+              credential = await prepareCredentialSelection(
+                producer,
+                Object.freeze({
+                  installationId: this.options.installationId,
+                  principalId,
+                  transitionRef: admission.transitionRef,
+                  requestId: admission.requestId,
+                  revision: candidate,
+                  repositories: state,
+                }),
+                (error) => this.options.poisonAdmission(error),
+              );
+            checkProfiles();
+            credential?.check();
+            const revision =
+              credential === undefined
+                ? await state.revisions.createRevision(candidate)
+                : await state.revisions.createRevision(candidate, credential.record);
+            checkProfiles();
+            credential?.check();
+            if (credential !== undefined || verifyUse !== undefined) {
+              const returnedUse =
+                candidate.workloadProfileUse === undefined
+                  ? undefined
+                  : decodeWorkloadProfileUseV2(revision.workloadProfileUse);
+              const sameRevision =
+                candidate.workloadProfileUse === undefined
+                  ? isDeepStrictEqual(revision, candidate)
+                  : returnedUse?.kind === "valid" &&
+                    sameProfileData(returnedUse.value, candidate.workloadProfileUse) &&
+                    isDeepStrictEqual(
+                      { ...revision, workloadProfileUse: undefined },
+                      { ...candidate, workloadProfileUse: undefined },
+                    );
+              if (!sameRevision)
+                throw new ScopeViolationError(
+                  "The inserted revision differs from the admitted candidate.",
                 );
-          checkProfiles();
-          credential?.check();
-          if (
-            command !== undefined &&
-            (intent.transitionRef !== command.operationRef ||
-              intent.installationId !== this.options.installationId ||
-              intent.namespaceId !== namespace.id ||
-              intent.agentId !== lockedAgent.id ||
-              intent.actorId !== principalId ||
-              intent.requestId !== admission.requestId ||
-              intent.desiredMode !== "running" ||
-              intent.revisionId !== revision.id ||
-              intent.generation !== (head?.generation ?? 0) + 1)
-          )
-            throw new ScopeViolationError(
-              "The admitted intent differs from the retained deployment command.",
-            );
-          if (!this.options.isRuntimeAdmissionAudit(audit, intent))
-            throw new ScopeViolationError(
-              "The deploy audit does not match its exact admitted revision and actor.",
-            );
-          await state.audit.append(audit);
-          checkProfiles();
-          credential?.check();
-          const recordedAdmission = {
-            ...scope,
-            revisionId: revision.id,
-            runtimeTransitionRef: intent.transitionRef,
-            lifecycleGeneration: intent.generation,
-            auditEventId: audit.id,
-          };
-          if (command === undefined)
-            await state.runtimeAdmissions.recordAdmission(recordedAdmission);
-          else
-            await state.runtimeAdmissions.recordAdmission(recordedAdmission, {
-              command,
+              if (verifyUse !== undefined) await verifyUse();
+              if (credential !== undefined) await credential.verifyInserted();
+            }
+            checkProfiles();
+            // The synchronous trusted factory runs before the intent write. No Driver
+            // calls intervene in the intent, exact audit, admission identity, and work unit.
+            const audit = immutableCopy(admission.createAuditEvent(revision));
+            const attribution = { actorId: principalId, requestId: admission.requestId };
+            checkProfiles();
+            credential?.check();
+            const intent =
+              head === undefined
+                ? await state.runtimeAssignments.initializeRuntimeIntent(
+                    scope,
+                    revision.id,
+                    admission.transitionRef,
+                    attribution,
+                  )
+                : await state.runtimeAssignments.advanceRuntimeIntent(
+                    scope,
+                    head.generation,
+                    { desiredMode: "running", revisionId: revision.id },
+                    admission.transitionRef,
+                    attribution,
+                  );
+            checkProfiles();
+            credential?.check();
+            if (
+              command !== undefined &&
+              (intent.transitionRef !== command.operationRef ||
+                intent.installationId !== this.options.installationId ||
+                intent.namespaceId !== namespace.id ||
+                intent.agentId !== lockedAgent.id ||
+                intent.actorId !== principalId ||
+                intent.requestId !== admission.requestId ||
+                intent.desiredMode !== "running" ||
+                intent.revisionId !== revision.id ||
+                intent.generation !== (head?.generation ?? 0) + 1)
+            )
+              throw new ScopeViolationError(
+                "The admitted intent differs from the retained deployment command.",
+              );
+            if (!this.options.isRuntimeAdmissionAudit(audit, intent))
+              throw new ScopeViolationError(
+                "The deploy audit does not match its exact admitted revision and actor.",
+              );
+            await state.audit.append(audit);
+            checkProfiles();
+            credential?.check();
+            const recordedAdmission = {
+              ...scope,
+              revisionId: revision.id,
+              runtimeTransitionRef: intent.transitionRef,
+              lifecycleGeneration: intent.generation,
+              auditEventId: audit.id,
+            };
+            if (command === undefined)
+              await state.runtimeAdmissions.recordAdmission(recordedAdmission);
+            else
+              await state.runtimeAdmissions.recordAdmission(recordedAdmission, {
+                command,
+                actorId: principalId,
+              });
+            checkProfiles();
+            credential?.check();
+            // Accepted deployments always require original reconciliation, including
+            // direct domain callers and controllers suppressing unrelated operations.
+            await state.operations.append({
+              kind: "agent_revision",
+              action: "reconcile",
+              namespaceId: namespace.id,
+              resourceId: revision.id,
               actorId: principalId,
+              runtimeTransitionRef: intent.transitionRef,
+              lifecycleGeneration: intent.generation,
             });
-          checkProfiles();
-          credential?.check();
-          // Accepted deployments always require original reconciliation, including
-          // direct domain callers and controllers suppressing unrelated operations.
-          await state.operations.append({
-            kind: "agent_revision",
-            action: "reconcile",
-            namespaceId: namespace.id,
-            resourceId: revision.id,
-            actorId: principalId,
-            runtimeTransitionRef: intent.transitionRef,
-            lifecycleGeneration: intent.generation,
-          });
-          checkProfiles();
-          credential?.check();
-          return {
-            revision,
-            intent,
-            ...(command === undefined ? {} : { receipt: acceptedReceipt(intent) }),
+            checkProfiles();
+            credential?.check();
+            return {
+              revision,
+              intent,
+              ...(command === undefined ? {} : { receipt: acceptedReceipt(intent) }),
+            };
           };
+          if (command !== undefined) {
+            if (owned === undefined || profiles?.candidates === undefined)
+              throw new DependencyUnavailableError(
+                "The original normalized candidate owner is unavailable.",
+              );
+            return profiles.candidates.withCandidate(
+              owned.unit,
+              owned.io,
+              resolveHarness,
+              afterNormalized,
+            );
+          }
+          // Legacy direct admission uses the same original normalization body.
+          // A selected V2 command can only enter the genuine owner continuation.
+          const normalized = await this.candidateNormalizer(
+            [
+              principalId,
+              {
+                namespaceId: input.namespaceId,
+                agentId: input.agentId,
+                ...(compareGeneration ? { expectedLifecycleGeneration: expectedGeneration } : {}),
+              },
+            ],
+            resolveHarness,
+            {
+              repositories: state,
+              drivers: {
+                compute: () => this.options.computeDriver(),
+                sandbox: () => this.options.sandboxDriver(),
+                secret: (expectedId) => this.options.secretDriver(expectedId),
+                configuration: () => this.options.configurationDriver(),
+              },
+              nextRevisionId: () => this.options.createId(),
+              now: () => this.options.now(),
+            },
+          );
+          return afterNormalized(normalized);
         };
         if (command === undefined) return perform(selectedState);
         if (profiles === undefined)
@@ -1233,46 +1041,5 @@ export class DeploymentService implements DeploymentServicePort {
       // A failed or unavailable proof does not establish rollback or authorize a retry.
     }
     throw new DependencyUnavailableError("The deployment acknowledgement could not be verified.");
-  }
-
-  private async lockNamespace(
-    state: { readonly namespaces: Pick<NamespaceRepository, "lockNamespace"> },
-    namespaceId: string,
-  ): Promise<Readonly<Namespace>> {
-    if (!isNonEmptyString(namespaceId))
-      throw new ScopeViolationError("The exact Namespace identity is missing.");
-    const namespace = await state.namespaces.lockNamespace(namespaceId);
-    if (!namespace)
-      throw new ScopeViolationError(
-        "The Namespace does not belong to the server-owned Installation.",
-      );
-    return namespace;
-  }
-
-  private async authorizeBindings(
-    state: { readonly secrets: Pick<SecretRepository, "lockSecret"> },
-    principalId: string,
-    namespaceId: string,
-    bindings: SecretBindings,
-  ): Promise<readonly Secret[]> {
-    return authorizeConfigurationBindings(
-      state,
-      principalId,
-      namespaceId,
-      bindings,
-      {
-        authorize: (actorId, action, resource) =>
-          this.options.authorization.authorize(actorId, action, resource),
-      },
-      (expectedId) => {
-        this.options.secretDriver(expectedId);
-      },
-    );
-  }
-
-  private providerId(value: ProviderRef | undefined, preserve?: ProviderRef): ProviderRef {
-    const providerId = value === undefined ? (preserve ?? null) : value;
-    assertConfiguredProvider(this.options.providers, providerId, "Provider");
-    return providerId;
   }
 }
