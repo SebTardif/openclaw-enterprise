@@ -6,6 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   MigrationExecutionError,
+  createMigrationDiagnostics,
+  migrationFailureLogFields,
   phaseCodecSentinel,
   phaseUpgradeDescriptor,
   readMigrationCatalog,
@@ -25,6 +27,25 @@ const configured = {
 const unconfigured = { skip: phaseUpgradeDescriptor !== null };
 const breakpoint = "--> statement-breakpoint";
 const hash = (value) => createHash("sha256").update(value).digest("hex");
+// Expected public diagnostic vocabulary from the accepted original-owner scope.
+// These values check the production projection; they do not grant authority.
+const diagnosticCodes = Object.freeze([
+  "MIGRATION_DESCRIPTOR_UNCONFIGURED",
+  "MIGRATION_DESCRIPTOR_INVALID",
+  "MIGRATION_DESCRIPTOR_MISMATCH",
+  "MIGRATION_CATALOG_INVALID",
+  "MIGRATION_CATALOG_CHANGED",
+  "MIGRATION_SENTINEL_MISMATCH",
+  "MIGRATION_SENTINEL_MISSING",
+  "MIGRATION_TRANSACTION_REQUIRED",
+  "MIGRATION_ISOLATION_REQUIRED",
+  "MIGRATION_OWNER_REQUIRED",
+  "MIGRATION_HISTORY_MISMATCH",
+  "MIGRATION_PHASE_LOCKS_REQUIRED",
+  "MIGRATION_CODEC_PREFLIGHT_FAILED",
+  "MIGRATION_FAILED",
+  "MIGRATION_COMMIT_UNKNOWN",
+]);
 const migrationError =
   (code, outcome = "not-committed") =>
   (error) => {
@@ -291,10 +312,397 @@ test(
         throw acquisitionFailure;
       },
     };
-    await assert.rejects(
-      runMigrations(pool, { migrationsFolder: reviewedFolder() }),
-      migrationError("MIGRATION_FAILED"),
-    );
+    await assert.rejects(runMigrations(pool, { migrationsFolder: reviewedFolder() }), (error) => {
+      migrationError("MIGRATION_FAILED")(error);
+      assert.deepEqual(migrationFailureLogFields(error), {
+        code: "MIGRATION_FAILED",
+        outcome: "not-committed",
+        operation: "connection-acquire",
+      });
+      return true;
+    });
     assert.equal(attempts, 1);
+  },
+);
+
+function assertSafeDiagnostic(fields) {
+  assert.equal(Object.isFrozen(fields), true);
+  assert.ok(
+    Object.keys(fields).every((key) => ["code", "outcome", "operation", "result"].includes(key)),
+  );
+  // These are the existing controller logger's scalar alphabet and 512-character
+  // limit. Checking the projected values does not invoke the logger or provider.
+  for (const value of Object.values(fields)) {
+    assert.equal(typeof value, "string");
+    assert.ok(value.length > 0 && value.length <= 512);
+    assert.match(value, /^[A-Za-z0-9]/);
+    assert.doesNotMatch(value, /[^A-Za-z0-9._: /@-]/);
+  }
+}
+
+function queryDiagnostic(error, options = {}) {
+  const diagnostics = createMigrationDiagnostics();
+  diagnostics.capture("migration-statement", error, { queryFailure: true, ...options });
+  const failure = diagnostics.failure(error);
+  migrationError("MIGRATION_FAILED")(failure);
+  const fields = migrationFailureLogFields(failure);
+  assertSafeDiagnostic(fields);
+  return fields;
+}
+
+test("shared wrapper projection admits exactly the reviewed typed code vocabulary", () => {
+  assert.equal(new Set(diagnosticCodes).size, 15);
+  for (const code of diagnosticCodes) {
+    const fields = migrationFailureLogFields(new MigrationExecutionError(code), "entry-migration");
+    assert.deepEqual(fields, {
+      code,
+      outcome: code === "MIGRATION_COMMIT_UNKNOWN" ? "unknown" : "not-committed",
+      operation: "entry-migration",
+    });
+    assertSafeDiagnostic(fields);
+  }
+  assert.deepEqual(migrationFailureLogFields(new MigrationExecutionError("UNREVIEWED_CODE")), {
+    code: "MIGRATION_FAILED",
+    outcome: "not-committed",
+    operation: "entry-migration",
+  });
+  for (const operation of [
+    "entry-arguments",
+    "entry-configuration",
+    "entry-database-url",
+    "entry-pg-load",
+    "entry-pool-create",
+    "entry-migration",
+    "entry-reporting",
+  ]) {
+    const fields = migrationFailureLogFields(new Error("private wrapper error"), operation);
+    assert.deepEqual(fields, { code: "MIGRATION_FAILED", operation });
+    assertSafeDiagnostic(fields);
+  }
+});
+
+test("projection never forwards untyped codes, raw error fields or secret-bearing getters", () => {
+  const secret = "postgres://private-user:private-password@example.invalid/private-database";
+  let touched = 0;
+  const opaque = {};
+  for (const key of [
+    "code",
+    "outcome",
+    "message",
+    "stack",
+    "cause",
+    "query",
+    "params",
+    "operation",
+    "result",
+  ]) {
+    Object.defineProperty(opaque, key, {
+      get() {
+        touched += 1;
+        throw new Error(secret);
+      },
+    });
+  }
+  const cyclic = { code: "MIGRATION_OWNER_REQUIRED", outcome: "unknown", message: secret };
+  cyclic.cause = cyclic;
+  for (const error of [undefined, null, 7, secret, opaque, cyclic, new Error(secret)]) {
+    const fields = migrationFailureLogFields(error, secret);
+    assert.deepEqual(fields, { code: "MIGRATION_FAILED", operation: "entry-migration" });
+    assertSafeDiagnostic(fields);
+    assert.equal(JSON.stringify(fields).includes(secret), false);
+  }
+  const typed = new MigrationExecutionError("MIGRATION_OWNER_REQUIRED");
+  for (const key of ["message", "stack", "cause", "query", "params", "operation", "result"]) {
+    Object.defineProperty(typed, key, {
+      get() {
+        touched += 1;
+        throw new Error(secret);
+      },
+    });
+  }
+  assert.deepEqual(migrationFailureLogFields(typed), {
+    code: "MIGRATION_OWNER_REQUIRED",
+    outcome: "not-committed",
+    operation: "entry-migration",
+  });
+  Object.defineProperty(typed, "code", {
+    get() {
+      touched += 1;
+      throw new Error(secret);
+    },
+  });
+  assert.equal(migrationFailureLogFields(typed).code, "MIGRATION_FAILED");
+  assert.equal(touched, 0);
+});
+
+test("query diagnostic selects only an exact five-character own-data SQLSTATE", () => {
+  for (const code of ["23505", "42P01", "P0001", "XX000", "00000"]) {
+    const fields = queryDiagnostic({
+      query: "private SQL",
+      params: ["private stored value"],
+      cause: { code },
+    });
+    assert.equal(fields.result, `sqlstate:${code}`);
+  }
+  let touched = 0;
+  const codeGetter = Object.defineProperty({}, "code", {
+    get() {
+      touched += 1;
+      return "23505";
+    },
+  });
+  const causeGetter = Object.defineProperty({}, "cause", {
+    get() {
+      touched += 1;
+      return { code: "23505" };
+    },
+  });
+  const cyclic = { code: "malformed" };
+  cyclic.cause = cyclic;
+  const inaccessible = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor() {
+        throw new Error("private inaccessible carrier");
+      },
+    },
+  );
+  const coercible = {
+    toString() {
+      touched += 1;
+      return "23505";
+    },
+  };
+  for (const error of [
+    ...[
+      "23505\n",
+      "23505\r\n",
+      "2350",
+      "235050",
+      "42p01",
+      "２３５０５",
+      23505,
+      true,
+      coercible,
+    ].map((code) => ({ code })),
+    Object.create({ code: "23505" }),
+    codeGetter,
+    causeGetter,
+    cyclic,
+    inaccessible,
+    { cause: "private error message" },
+    { cause: 23505 },
+    { cause: false },
+  ]) {
+    assert.equal(queryDiagnostic(error).result, undefined);
+  }
+  assert.equal(touched, 0);
+  assert.equal(queryDiagnostic({ code: "23505" }, { queryFailure: false }).result, undefined);
+  for (const stage of [
+    "transaction-settlement",
+    "transaction-entry",
+    "codec-import",
+    "codec-decode",
+  ]) {
+    const diagnostics = createMigrationDiagnostics();
+    diagnostics.capture(stage, { code: "23505" }, { queryFailure: true });
+    assert.equal(
+      migrationFailureLogFields(diagnostics.failure(new Error("private nonquery failure"))).result,
+      undefined,
+    );
+  }
+});
+
+test("SQLSTATE cause traversal is finite and independent for each invocation", () => {
+  const chain = (parents) => {
+    let value = { code: "23505" };
+    for (let index = 0; index < parents; index += 1) value = { cause: value };
+    return value;
+  };
+  assert.equal(queryDiagnostic(chain(7)).result, "sqlstate:23505");
+  assert.equal(queryDiagnostic(chain(8)).result, undefined);
+  const first = createMigrationDiagnostics();
+  const second = createMigrationDiagnostics();
+  first.capture("codec-decode", new Error("private first invocation"));
+  second.capture("ledger-publish", { code: "42501" }, { queryFailure: true });
+  assert.deepEqual(migrationFailureLogFields(first.failure(new Error("replacement"))), {
+    code: "MIGRATION_FAILED",
+    outcome: "not-committed",
+    operation: "codec-decode",
+  });
+  assert.deepEqual(migrationFailureLogFields(second.failure(new Error("replacement"))), {
+    code: "MIGRATION_FAILED",
+    outcome: "not-committed",
+    operation: "ledger-publish",
+    result: "sqlstate:42501",
+  });
+});
+
+test("first query diagnostic survives later rollback replacement without retaining the source error", () => {
+  const diagnostics = createMigrationDiagnostics();
+  assert.equal(Object.isFrozen(diagnostics), true);
+  const original = { message: "private query", cause: { code: "23505" } };
+  const location = {
+    migrationIndex: 28,
+    migrationTag: "0028_turn_journal_attempt_phase",
+    statementOrdinal: 2,
+    queryFailure: true,
+  };
+  diagnostics.capture("migration-statement", original, location);
+  original.cause.code = "40001";
+  location.migrationTag = "0000_changed_after_capture";
+  diagnostics.capture("transaction-settlement", { code: "40001" }, { queryFailure: true });
+  const failure = diagnostics.failure(new Error("private rollback replacement"));
+  migrationError("MIGRATION_FAILED")(failure);
+  assert.deepEqual(migrationFailureLogFields(failure), {
+    code: "MIGRATION_FAILED",
+    outcome: "not-committed",
+    operation: "migration-statement:migration-28:0028_turn_journal_attempt_phase:statement-2",
+    result: "sqlstate:23505",
+  });
+  assertSafeDiagnostic(migrationFailureLogFields(failure));
+});
+
+test("first typed failure code and operation survive rollback replacement while unknown always dominates", () => {
+  const diagnostics = createMigrationDiagnostics();
+  diagnostics.capture(
+    "ledger-owner-query",
+    new MigrationExecutionError("MIGRATION_OWNER_REQUIRED"),
+  );
+  diagnostics.capture("transaction-settlement", new Error("private rollback replacement"));
+  const replacement = new Error("private outer rollback error");
+  assert.deepEqual(migrationFailureLogFields(diagnostics.failure(replacement)), {
+    code: "MIGRATION_OWNER_REQUIRED",
+    outcome: "not-committed",
+    operation: "ledger-owner-query",
+  });
+  for (const error of [
+    replacement,
+    new MigrationExecutionError("MIGRATION_CATALOG_INVALID"),
+    null,
+  ]) {
+    const fields = migrationFailureLogFields(diagnostics.failure(error, true));
+    assert.equal(fields.code, "MIGRATION_COMMIT_UNKNOWN");
+    assert.equal(fields.outcome, "unknown");
+    assertSafeDiagnostic(fields);
+  }
+  for (const error of [
+    new MigrationExecutionError("MIGRATION_FAILED", "unknown"),
+    new MigrationExecutionError("UNREVIEWED_CODE", "unknown"),
+    new MigrationExecutionError("MIGRATION_COMMIT_UNKNOWN", "not-committed"),
+  ]) {
+    assert.equal(migrationFailureLogFields(error).code, "MIGRATION_COMMIT_UNKNOWN");
+    assert.equal(migrationFailureLogFields(diagnostics.failure(error)).outcome, "unknown");
+  }
+  const firstUnknown = createMigrationDiagnostics();
+  firstUnknown.capture(
+    "transaction-settlement",
+    new MigrationExecutionError("MIGRATION_COMMIT_UNKNOWN", "unknown"),
+  );
+  assert.equal(
+    migrationFailureLogFields(firstUnknown.failure(new MigrationExecutionError("MIGRATION_FAILED")))
+      .outcome,
+    "unknown",
+  );
+  const settlement = createMigrationDiagnostics();
+  settlement.capture(
+    "transaction-settlement",
+    { code: "40001", message: "private replacement" },
+    { queryFailure: true },
+  );
+  assert.deepEqual(migrationFailureLogFields(settlement.failure(new Error("replacement"), true)), {
+    code: "MIGRATION_COMMIT_UNKNOWN",
+    outcome: "unknown",
+    operation: "transaction-settlement",
+  });
+});
+
+test("diagnostic location is detached, bounded and omitted safely for malformed caller carriers", () => {
+  const valid = {
+    migrationIndex: 9999,
+    migrationTag: `0000_${"a".repeat(123)}`,
+    statementOrdinal: Number.MAX_SAFE_INTEGER,
+  };
+  assert.equal(valid.migrationTag.length, 128);
+  assertSafeDiagnostic(queryDiagnostic({ code: "23505" }, valid));
+  for (const overrides of [
+    { migrationIndex: -1 },
+    { migrationIndex: 10000 },
+    { migrationIndex: 0.5 },
+    { migrationTag: `0000_${"a".repeat(124)}` },
+    { migrationTag: "0000_valid\n" },
+    { migrationTag: "0000_private?credential=value" },
+    { statementOrdinal: -1 },
+    { statementOrdinal: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const fields = queryDiagnostic({ code: "23505" }, { ...valid, ...overrides });
+    assert.equal(fields.operation, "migration-statement");
+    assertSafeDiagnostic(fields);
+  }
+  let touched = 0;
+  const options = {};
+  for (const key of ["migrationIndex", "migrationTag", "statementOrdinal", "queryFailure"]) {
+    Object.defineProperty(options, key, {
+      get() {
+        touched += 1;
+        throw new Error("private option getter");
+      },
+    });
+  }
+  const diagnostics = createMigrationDiagnostics();
+  diagnostics.capture("private unexpected stage", { code: "23505" }, options);
+  assert.deepEqual(migrationFailureLogFields(diagnostics.failure(new Error("replacement"))), {
+    code: "MIGRATION_FAILED",
+    outcome: "not-committed",
+    operation: "execution",
+  });
+  assert.equal(touched, 0);
+});
+
+test(
+  "diagnostic tag bound does not narrow the actual accepted catalog metadata domain",
+  configured,
+  async (t) => {
+    const entry = inertEntry({ tag: `0000_${"a".repeat(124)}` });
+    const folder = await inertCatalog(t, [entry]);
+    // The real reader accepts this long tag, then rejects the missing mandatory
+    // phase. Diagnostic truncation must not turn it into invalid catalog metadata.
+    assert.throws(() => readMigrationCatalog(folder), migrationError("MIGRATION_SENTINEL_MISSING"));
+    const fields = queryDiagnostic(
+      { code: "23505" },
+      { migrationIndex: 0, migrationTag: entry.tag, statementOrdinal: 0 },
+    );
+    assert.equal(fields.operation, "migration-statement");
+  },
+);
+
+test(
+  "actual bad catalog diagnostics are selected before any pool acquisition",
+  configured,
+  async (t) => {
+    let attempted = 0;
+    const pool = {
+      connect() {
+        attempted += 1;
+        throw new Error("pool must stay untouched");
+      },
+    };
+    for (const [folder, operation] of [
+      [undefined, "catalog-validate"],
+      [join(await mkdtemp(join(tmpdir(), "oce-executor-missing-")), "absent"), "catalog-load"],
+    ]) {
+      if (folder !== undefined)
+        t.after(() => rm(join(folder, ".."), { recursive: true, force: true }));
+      await assert.rejects(runMigrations(pool, { migrationsFolder: folder }), (error) => {
+        migrationError("MIGRATION_CATALOG_INVALID")(error);
+        assert.deepEqual(migrationFailureLogFields(error), {
+          code: "MIGRATION_CATALOG_INVALID",
+          outcome: "not-committed",
+          operation,
+        });
+        return true;
+      });
+    }
+    assert.equal(attempted, 0);
   },
 );
