@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./account-authority/workload-profile": "./src/account-authority/workload-profile.ts",
     "./auth-persistence/schema-auth-boundary-v1": "./src/auth-persistence/schema-auth-boundary-v1.ts",
     "./schema/core-schema-boundary-v1": "./src/schema/core-schema-boundary-v1.ts",
     "./persistence/same-build-recovery-preflight-v1": "./src/persistence/same-build-recovery-preflight-v1.ts",
