@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -191,7 +191,13 @@ test("the CLI rejects unsupported targets without invoking build tools", async (
 
 async function captureCli(target, environment) {
   const child = spawn(process.execPath, [script, target], {
-    env: { ...process.env, PATH: "", ...environment },
+    env: {
+      ...process.env,
+      PATH: "",
+      OCC_BUILD_UPSTREAM_SDK_CONTEXT: "",
+      OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "",
+      ...environment,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -235,6 +241,87 @@ test("controller images require a pinned Go build input before any prerequisite 
   }
 });
 
+test("controller images reject missing or malformed SDK inputs before prerequisites run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-build-sdk-inputs "));
+  try {
+    // A real directory exercises path validation; these cases stop before any build.
+    const sdkContext = await realpath(directory);
+    const environment = {
+      OCC_BUILD_CONTROLLER_TAG: "controller:local",
+      OCC_BUILD_NODE_BASE_IMAGE: `node:24@sha256:${"a".repeat(64)}`,
+      OCC_BUILD_GO_BASE_IMAGE: `golang:1.26@sha256:${"b".repeat(64)}`,
+      OCC_BUILD_UPSTREAM_SDK_CONTEXT: sdkContext,
+      OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "d".repeat(64),
+    };
+    for (const [overrides, diagnostic] of [
+      [
+        { OCC_BUILD_UPSTREAM_SDK_CONTEXT: "" },
+        /OCC_BUILD_UPSTREAM_SDK_CONTEXT must be an absolute/,
+      ],
+      [
+        { OCC_BUILD_UPSTREAM_SDK_CONTEXT: "relative/context" },
+        /OCC_BUILD_UPSTREAM_SDK_CONTEXT must be an absolute/,
+      ],
+      [
+        { OCC_BUILD_UPSTREAM_SDK_CONTEXT: `${sdkContext}/.` },
+        /OCC_BUILD_UPSTREAM_SDK_CONTEXT must be canonical/,
+      ],
+      [
+        { OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "" },
+        /OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256 must be the reviewed/,
+      ],
+      [
+        { OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "d".repeat(63) },
+        /OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256 must be the reviewed/,
+      ],
+      [
+        { OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "D".repeat(64) },
+        /OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256 must be the reviewed/,
+      ],
+    ]) {
+      const result = await captureCli("image-controller", { ...environment, ...overrides });
+      assert.equal(result.status, 1);
+      assert.equal(result.output, "");
+      assert.match(result.errors, diagnostic);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("controller SDK contexts reject regular files before build prerequisites", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-build-sdk-file "));
+  try {
+    const regularFile = join(directory, "context");
+    await writeFile(regularFile, "ordinary file");
+    const environment = {
+      OCC_BUILD_CONTROLLER_TAG: "controller:local",
+      OCC_BUILD_NODE_BASE_IMAGE: `node:24@sha256:${"a".repeat(64)}`,
+      OCC_BUILD_GO_BASE_IMAGE: `golang:1.26@sha256:${"b".repeat(64)}`,
+      OCC_BUILD_UPSTREAM_SDK_CONTEXT: await realpath(regularFile),
+      OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "d".repeat(64),
+    };
+    // Canonical path equality alone accepts this real file; neither entrypoint
+    // may treat it as a context directory or proceed to build prerequisites.
+    const result = await captureCli("image-controller", environment);
+    assert.equal(result.status, 1);
+    assert.equal(result.output, "");
+    assert.match(result.errors, /OCC_BUILD_UPSTREAM_SDK_CONTEXT must be a directory/);
+    const output = await runCommand(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import assert from "node:assert/strict"; import { imageBuildArguments } from ${JSON.stringify(moduleUrl)}; assert.throws(() => imageBuildArguments("controller", "output.image-id"), /OCC_BUILD_UPSTREAM_SDK_CONTEXT must be a directory/);`,
+      ],
+      { cwd: tmpdir(), capture: true, env: { ...process.env, PATH: "", ...environment } },
+    );
+    assert.equal(output, "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Go compiler cache namespaces follow canonical worktree directories", async () => {
   const directory = await mkdtemp(join(tmpdir(), "oce-build-cache-scope-"));
   try {
@@ -258,45 +345,79 @@ test("Go compiler cache namespaces follow canonical worktree directories", async
   }
 });
 
-test("the image command preserves both controller base digests and isolates egress inputs", async () => {
-  const nodeImage = `node:24@sha256:${"a".repeat(64)}`;
-  const goImage = `golang:1.26@sha256:${"b".repeat(64)}`;
-  const egressImage = `debian:trixie@sha256:${"c".repeat(64)}`;
-  // Inspect the actual command builder used by buildImage. This verifies argv
-  // construction without substituting a Docker executable or claiming an image build.
-  const inspect = async (kind, environment) =>
-    JSON.parse(
-      await runCommand(
-        process.execPath,
-        [
-          "--input-type=module",
-          "-e",
-          `import { imageBuildArguments } from ${JSON.stringify(moduleUrl)}; process.stdout.write(JSON.stringify(imageBuildArguments(${JSON.stringify(kind)}, "output.image-id")));`,
-        ],
-        { cwd: tmpdir(), capture: true, env: { ...process.env, PATH: "", ...environment } },
-      ),
+test("the image command preserves controller digests and SDK inputs and isolates egress", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-build-image-inputs "));
+  try {
+    const sdkContext = await realpath(directory);
+    const sdkManifestSha256 = "d".repeat(64);
+    const nodeImage = `node:24@sha256:${"a".repeat(64)}`;
+    const goImage = `golang:1.26@sha256:${"b".repeat(64)}`;
+    const egressImage = `debian:trixie@sha256:${"c".repeat(64)}`;
+    // Inspect the actual command builder used by buildImage. The directory and
+    // digest exercise argv construction without materializing an SDK or image.
+    const inspect = async (kind, environment) =>
+      JSON.parse(
+        await runCommand(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { imageBuildArguments } from ${JSON.stringify(moduleUrl)}; process.stdout.write(JSON.stringify(imageBuildArguments(${JSON.stringify(kind)}, "output.image-id")));`,
+          ],
+          {
+            cwd: tmpdir(),
+            capture: true,
+            env: {
+              ...process.env,
+              PATH: "",
+              OCC_BUILD_UPSTREAM_SDK_CONTEXT: "",
+              OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "",
+              ...environment,
+            },
+          },
+        ),
+      );
+    const controller = await inspect("controller", {
+      OCC_BUILD_CONTROLLER_TAG: "controller:local",
+      OCC_BUILD_NODE_BASE_IMAGE: nodeImage,
+      OCC_BUILD_GO_BASE_IMAGE: goImage,
+      OCC_BUILD_UPSTREAM_SDK_CONTEXT: sdkContext,
+      OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: sdkManifestSha256,
+      GO_BUILD_CACHE_SCOPE: "ambient-scope-must-not-select-another-worktrees-cache",
+    });
+    const buildArguments = (args) =>
+      args.filter((_, index) => index > 0 && args[index - 1] === "--build-arg");
+    assert.deepEqual(buildArguments(controller), [
+      `NODE_BASE_IMAGE=${nodeImage}`,
+      `GO_BASE_IMAGE=${goImage}`,
+      `GO_BUILD_CACHE_SCOPE=${goBuildCacheScope()}`,
+      `OCE_UPSTREAM_SDK_MANIFEST_SHA256=${sdkManifestSha256}`,
+    ]);
+    assert.deepEqual(
+      controller.filter((_, index) => index > 0 && controller[index - 1] === "--build-context"),
+      [`oce-upstream-inputs=${sdkContext}`],
     );
-  const controller = await inspect("controller", {
-    OCC_BUILD_CONTROLLER_TAG: "controller:local",
-    OCC_BUILD_NODE_BASE_IMAGE: nodeImage,
-    OCC_BUILD_GO_BASE_IMAGE: goImage,
-    GO_BUILD_CACHE_SCOPE: "ambient-scope-must-not-select-another-worktrees-cache",
-  });
-  const buildArguments = (args) =>
-    args.filter((_, index) => index > 0 && args[index - 1] === "--build-arg");
-  assert.deepEqual(buildArguments(controller), [
-    `NODE_BASE_IMAGE=${nodeImage}`,
-    `GO_BASE_IMAGE=${goImage}`,
-    `GO_BUILD_CACHE_SCOPE=${goBuildCacheScope()}`,
-  ]);
-  assert.equal(controller[controller.indexOf("--target") + 1], "runtime");
-  const egress = await inspect("egress", {
-    OCC_BUILD_EGRESS_TAG: "egress:local",
-    OCC_BUILD_EGRESS_BASE_IMAGE: egressImage,
-    OCC_BUILD_GO_BASE_IMAGE: "",
-    OCC_BUILD_NODE_BASE_IMAGE: "",
-  });
-  assert.deepEqual(buildArguments(egress), [`EGRESS_BASE_IMAGE=${egressImage}`]);
-  assert.ok(egress.includes("--network=none"));
-  assert.ok(!egress.includes("--target"));
+    assert.equal(controller[controller.indexOf("--target") + 1], "runtime");
+    for (const sdkEnvironment of [
+      {},
+      {
+        OCC_BUILD_UPSTREAM_SDK_CONTEXT: "relative/context",
+        OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "not-a-digest",
+      },
+    ]) {
+      const egress = await inspect("egress", {
+        OCC_BUILD_EGRESS_TAG: "egress:local",
+        OCC_BUILD_EGRESS_BASE_IMAGE: egressImage,
+        OCC_BUILD_GO_BASE_IMAGE: "",
+        OCC_BUILD_NODE_BASE_IMAGE: "",
+        ...sdkEnvironment,
+      });
+      assert.deepEqual(buildArguments(egress), [`EGRESS_BASE_IMAGE=${egressImage}`]);
+      assert.ok(egress.includes("--network=none"));
+      assert.ok(!egress.includes("--target"));
+      assert.ok(!egress.includes("--build-context"));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

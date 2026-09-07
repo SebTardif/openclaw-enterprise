@@ -14,9 +14,12 @@ the [guides](README.md#start-and-deploy), and source execution by
 
 The control plane consists of an API, an independent controller worker,
 PostgreSQL-backed state, and Installation-selected Drivers. The API also serves
-the [read-only platform console](reference/console.md) at `/console/`. Its static
-browser module uses same-origin sessions and the existing authorized APIs; it
-adds no frontend service or resource persistence.
+the [platform console](reference/console.md) at `/console/`. It lists resources,
+creates Agents and their Configuration drafts, shows Agent details and immutable
+revisions, and edits supported Slack and Teams settings on saved drafts. Its
+static browser modules use same-origin sessions and the existing authorized
+APIs; they add no frontend service or resource persistence. Deployment and live
+runtime health remain outside the console.
 
 ```mermaid
 flowchart LR
@@ -71,9 +74,11 @@ revision, which the controller worker provisions asynchronously.
 
 ## Control plane
 
-The API authenticates requests, resolves caller identity, authorizes access to
-exact resources, and records resource changes. PostgreSQL stores platform
-state, IAM policy, controller work, and attributable audit evidence.
+The API authenticates human clients with Better Auth sessions and non-Agent
+automation with service API keys, resolves caller identity through the selected
+IAM Driver, authorizes access to exact resources, and records resource changes.
+PostgreSQL stores platform state, IAM policy, controller work, and attributable
+audit evidence.
 
 Compose and Helm run one shared initializer after database migration and before
 API/worker startup. Both processes load initialized state; only the initializer
@@ -171,7 +176,7 @@ sequenceDiagram
     participant Runtime
 
     Client->>API: Create Namespace
-    API->>API: Check direct transport and Better Auth session
+    API->>API: Check direct transport and session or service API key
     API->>IAM: Lookup Principal and authorize Namespace create
     IAM-->>API: Allowed with evidence
     API->>OCC: Create Namespace in provisioning
@@ -184,7 +189,7 @@ sequenceDiagram
     Worker->>DB: Persist Namespace readiness and audit
 
     Client->>API: Create Configuration, create Agent, deploy Agent
-    API->>API: Check direct transport and Better Auth session
+    API->>API: Check direct transport and session or service API key
     API->>IAM: Authorize exact Agent and referenced resources
     API->>OCC: Admit immutable AgentRevision
     OCC->>DB: Persist revision, audit, and work
@@ -237,8 +242,9 @@ the [source flow](flows/channel-delivery.md), and the proposal-only
 
 ## Security boundaries
 
-- Controller API access uses authenticated sessions; IAM authorizes each
-  operation against its exact Installation, Namespace, Agent, or revision.
+- Ordinary controller API access uses authenticated human sessions or non-Agent
+  service API keys; IAM authorizes each operation against its exact Installation,
+  Namespace, Agent, or revision. The console uses human sessions only.
 - Namespace isolation prevents access to another tenant's resources or
   workloads.
 - Agent revisions, workload identity, configuration, and credentials remain
@@ -276,17 +282,24 @@ See [Docker development](reference/drivers/docker-compute.md),
 
 The current implementation does not provide:
 
-- Public ingress, external identity federation, or console resource management.
-  The console currently lists Agents, Providers, and Namespaces; creation,
-  editing, deployment, and resource details remain outside its scope.
+- Public ingress or external identity federation.
+- Console deployment, rollback, Agent deletion, or live runtime-health controls.
+  Provider and Namespace console pages remain read-only; Agent creation and
+  supported channel draft editing use the existing management APIs.
+- Production lifecycle status and recovery reads in the default composition.
+  The [lifecycle status API](reference/lifecycle-status-api.md) has contracts and
+  handlers, but requires server-owned current authorization and observation
+  dependencies; absent dependencies return `503 DEPENDENCY_UNAVAILABLE`.
 - A general, verified pre-execution sandbox policy barrier for every runtime.
   Optional SandboxDriver facets and delegated OpenShell Harness provisioning
   exist, but upstream compatibility and enforcement limitations remain; see
   the [SandboxDriver reference](reference/drivers/sandbox.md).
 - SecretBroker substitution, brokered model credentials, or an approved
   restricted model-egress proxy.
-- Service-principal API authentication, token exchange, or production workload
-  token verification.
+- Agent-owned service-principal API-key authentication, token exchange, or
+  general production workload-token verification. Non-Agent service API keys
+  are supported; the selected runtime-service listener has a separate, narrow
+  X.509-SVID authentication boundary.
 - Secret value history, automatic Secret rotation, automatic workload restart
   after Secret update, or automatic provider credential refresh.
 - Shared Kubernetes clusters or multi-replica Agent gateways.
@@ -324,8 +337,15 @@ from a configured trusted local Unix socket. It selects one exact identity and
 withdraws access when its stream or credential validity is lost. The operator
 diagnostic consumes this component without printing credentials.
 
-This component is available to explicit programmatic consumers; controller
-authentication, runtime activation and gateway-to-harness transport do not
-automatically consume it. Constrained registration, actual guest attestation,
-remote peer verification and current runtime authorization remain separate
-integration requirements.
+The controller can explicitly select a separate
+[authenticated runtime authority listener](reference/runtime-service-transport.md)
+whose owned native child consumes the Workload API and authenticates exact
+service peers through mutual TLS. Its admitted profiles permit historical
+`readOperation`, or an initial dedicated gVisor Harness `bind` request. The bind
+path currently rejects before effects when authoritative preparation, approved
+workload-profile and protected Compute inputs are unavailable. This listener
+does not establish active runtime authority or replace ordinary API authentication.
+
+Runtime activation and gateway-to-harness transport do not automatically consume
+this identity component. Constrained registration, actual guest attestation and
+current runtime authorization remain separate integration requirements.

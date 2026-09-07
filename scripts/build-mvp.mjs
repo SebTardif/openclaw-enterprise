@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants, realpathSync } from "node:fs";
+import { constants as fsConstants, realpathSync, statSync } from "node:fs";
 import {
   access,
   copyFile,
@@ -341,7 +341,27 @@ function imageInputs(kind) {
         "a digest-pinned Go build image reference",
       )
     : null;
-  return { controller, tag, base, goBase };
+  const upstreamSdkContext = controller
+    ? requiredEnvironment(
+        "OCC_BUILD_UPSTREAM_SDK_CONTEXT",
+        /^\/[^\0\r\n]+$/,
+        "an absolute frozen upstream package-input context directory",
+      )
+    : null;
+  if (upstreamSdkContext !== null && realpathSync(upstreamSdkContext) !== upstreamSdkContext)
+    throw new Error(
+      "OCC_BUILD_UPSTREAM_SDK_CONTEXT must be canonical and must not traverse links.",
+    );
+  if (upstreamSdkContext !== null && !statSync(upstreamSdkContext).isDirectory())
+    throw new Error("OCC_BUILD_UPSTREAM_SDK_CONTEXT must be a directory.");
+  const upstreamSdkManifestSha256 = controller
+    ? requiredEnvironment(
+        "OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256",
+        /^[a-f0-9]{64}$/,
+        "the reviewed upstream package layout SHA-256",
+      )
+    : null;
+  return { controller, tag, base, goBase, upstreamSdkContext, upstreamSdkManifestSha256 };
 }
 
 export function goBuildCacheScope(root = repositoryRoot) {
@@ -350,7 +370,8 @@ export function goBuildCacheScope(root = repositoryRoot) {
 }
 
 export function imageBuildArguments(kind, idFile) {
-  const { controller, tag, base, goBase } = imageInputs(kind);
+  const { controller, tag, base, goBase, upstreamSdkContext, upstreamSdkManifestSha256 } =
+    imageInputs(kind);
   const dockerfile = controller ? "Dockerfile" : "deploy/egress/Dockerfile";
   const args = [
     "build",
@@ -372,6 +393,10 @@ export function imageBuildArguments(kind, idFile) {
       `GO_BASE_IMAGE=${goBase}`,
       "--build-arg",
       `GO_BUILD_CACHE_SCOPE=${goBuildCacheScope()}`,
+      "--build-context",
+      `oce-upstream-inputs=${upstreamSdkContext}`,
+      "--build-arg",
+      `OCE_UPSTREAM_SDK_MANIFEST_SHA256=${upstreamSdkManifestSha256}`,
       "--target",
       "runtime",
     );
