@@ -115,11 +115,11 @@ async function reviewedMigrations(sql, expectedSqlHash) {
   );
   assert.equal(
     sha256(originalCatalogBytes),
-    "2df6652623dad2e6c3d25bdc58225b2b7fb61b97536e3cda573dc67e97ca57fb",
-    "The reviewed current checkout catalog with 34 entries must remain exact.",
+    "92a3f75237437719efcb7f0f3ed339810244902e92694e63acab2af95d0bccfe",
+    "The reviewed current checkout catalog with 36 entries must remain exact.",
   );
   const originalCatalog = JSON.parse(originalCatalogBytes);
-  assert.equal(originalCatalog.entries.length, 34);
+  assert.equal(originalCatalog.entries.length, 36);
   const reviewedPrefix = { ...originalCatalog, entries: originalCatalog.entries.slice(0, 29) };
   assert.equal(
     journalHash,
