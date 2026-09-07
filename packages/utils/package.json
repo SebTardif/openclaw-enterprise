@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./native-material-wire": "./src/native-material-wire.ts"
+    "./native-material-wire": "./src/native-material-wire.ts",
+    "./gateway-channel-material": "./src/gateway-channel-material.ts"
   },
   "types": "./src/index.ts",
   "files": [

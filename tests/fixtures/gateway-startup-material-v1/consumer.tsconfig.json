@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM"],
+    "composite": false,
+    "declaration": false,
+    "rewriteRelativeImportExtensions": false,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "files": ["consumer.ts"],
+  "include": []
+}
