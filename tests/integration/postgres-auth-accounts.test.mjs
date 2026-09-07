@@ -13,6 +13,10 @@ import { createTestConfigurationDriver } from "../helpers/configuration-driver.m
 import { authenticatedHeaders, signInWithEmailPassword } from "../helpers/auth-session.mjs";
 import { ensureDevelopmentBootstrap } from "../helpers/bootstrap-installation.mjs";
 import { createDevelopmentComputeDriver } from "../helpers/development.mjs";
+import {
+  exerciseReceivingPostgres,
+  receivingComputeObserver,
+} from "../helpers/workload-profile-receiving-postgres.mjs";
 
 const databaseUrl = process.env.OCC_TEST_DATABASE_URL;
 const adminEmail = "postgres-admin@openclaw.local";
@@ -384,6 +388,30 @@ test(
        WHERE action = 'openclaw.auth.accounts.create'`,
     );
     assert.equal(afterAudit.rows[0].count, beforeAudit.rows[0].count + 1);
+
+    // The real two-controller account and audit proof is complete. Close A
+    // before the receiving-only app is composed, retaining B for the ordinary
+    // role negative and using a real loopback listener for disconnect evidence.
+    await appA.close();
+    appA = undefined;
+    const observedCompute = receivingComputeObserver(createDevelopmentComputeDriver());
+    await exerciseReceivingPostgres({
+      context,
+      databaseUrl,
+      defaultApp: appB,
+      authBaseURL: config.authBaseURL,
+      credentials: { email: adminEmail, password: adminPassword },
+      runWriterMatrix: false,
+      computeCalls: observedCompute.calls,
+      createSelectedApp: (selectedDatabaseUrl) =>
+        composePostgresDevelopment(
+          { ...config, databaseUrl: selectedDatabaseUrl },
+          {
+            computeDriver: observedCompute.driver,
+            configurationDriver: createTestConfigurationDriver(),
+          },
+        ),
+    });
   },
 );
 
