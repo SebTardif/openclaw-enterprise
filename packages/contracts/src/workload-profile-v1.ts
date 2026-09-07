@@ -32,6 +32,12 @@ export const WorkloadProfileScopeSchemaV1 = object({
 });
 export type WorkloadProfileScopeV1 = Static<typeof WorkloadProfileScopeSchemaV1>;
 
+export const WorkloadProfileScopeSchemaV2 = object({
+  ...WorkloadProfileScopeSchemaV1.properties,
+  component: Type.Literal("gateway-harness-pair"),
+});
+export type WorkloadProfileScopeV2 = Static<typeof WorkloadProfileScopeSchemaV2>;
+
 /** A saved selection identifies intended bytes. It carries no current authority. */
 export const WorkloadProfileSelectionSchemaV1 = object({
   manifestRef: UUID,
@@ -119,6 +125,29 @@ export const WorkloadProfileWithdrawSchemaV1 = object({
 });
 export type WorkloadProfileWithdrawV1 = Static<typeof WorkloadProfileWithdrawSchemaV1>;
 
+export const WorkloadProfilePrepareSchemaV2 = Type.Union([
+  object({
+    ...preparationProperties,
+    schemaVersion: Type.Literal(2),
+    component: Type.Literal("gateway-harness-pair"),
+    action: Type.Literal("admit"),
+    expectedAdmission: Type.Null(),
+  }),
+  object({
+    ...preparationProperties,
+    schemaVersion: Type.Literal(2),
+    component: Type.Literal("gateway-harness-pair"),
+    action: Type.Literal("replace"),
+    expectedAdmission: WorkloadProfileSelectionSchemaV1,
+  }),
+]);
+export type WorkloadProfilePrepareV2 = Static<typeof WorkloadProfilePrepareSchemaV2>;
+export const WorkloadProfileWithdrawSchemaV2 = object({
+  ...WorkloadProfileWithdrawSchemaV1.properties,
+  schemaVersion: Type.Literal(2),
+});
+export type WorkloadProfileWithdrawV2 = Static<typeof WorkloadProfileWithdrawSchemaV2>;
+
 export const ProfileInvalidationRequestSchemaV1 = object({
   schemaVersion: Type.Literal(1),
   kind: Type.Literal("profile-admission-invalidated"),
@@ -139,6 +168,13 @@ export const ProfileInvalidationRequestSchemaV1 = object({
   }),
 });
 export type ProfileInvalidationRequestV1 = Static<typeof ProfileInvalidationRequestSchemaV1>;
+
+export const ProfileInvalidationRequestSchemaV2 = object({
+  ...ProfileInvalidationRequestSchemaV1.properties,
+  schemaVersion: Type.Literal(2),
+  component: Type.Literal("gateway-harness-pair"),
+});
+export type ProfileInvalidationRequestV2 = Static<typeof ProfileInvalidationRequestSchemaV2>;
 
 export type WorkloadProfileDecodeResultV1<T> =
   { readonly kind: "valid"; readonly value: Readonly<T> } | { readonly kind: "invalid" };
@@ -232,6 +268,35 @@ export function decodeWorkloadProfileWithdrawV1(input: unknown) {
 
 export function decodeProfileInvalidationRequestV1(input: unknown) {
   const result = decode(ProfileInvalidationRequestSchemaV1, input);
+  if (
+    result.kind === "valid" &&
+    (result.value.previousVersion === Number.MAX_SAFE_INTEGER ||
+      result.value.currentVersion !== result.value.previousVersion + 1 ||
+      !Number.isFinite(Date.parse(result.value.acceptedAt)) ||
+      new Date(result.value.acceptedAt).toISOString() !== result.value.acceptedAt)
+  )
+    return { kind: "invalid" } as const;
+  return result;
+}
+
+export function decodeWorkloadProfileScopeV2(input: unknown) {
+  return decode(WorkloadProfileScopeSchemaV2, input);
+}
+export function decodeWorkloadProfilePrepareEnvelopeV2(input: unknown) {
+  const result = decode(WorkloadProfilePrepareSchemaV2, input);
+  if (
+    result.kind === "valid" &&
+    new TextEncoder().encode(result.value.manifest.canonicalUtf8).byteLength >
+      WORKLOAD_PROFILE_LIMITS_V1.canonicalBytes
+  )
+    return { kind: "invalid" } as const;
+  return result;
+}
+export function decodeWorkloadProfileWithdrawV2(input: unknown) {
+  return decode(WorkloadProfileWithdrawSchemaV2, input);
+}
+export function decodeProfileInvalidationRequestV2(input: unknown) {
+  const result = decode(ProfileInvalidationRequestSchemaV2, input);
   if (
     result.kind === "valid" &&
     (result.value.previousVersion === Number.MAX_SAFE_INTEGER ||
