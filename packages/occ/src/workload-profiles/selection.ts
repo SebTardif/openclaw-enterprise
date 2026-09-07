@@ -1,8 +1,8 @@
 import {
   decodeWorkloadProfileSelectionV1,
-  decodeWorkloadProfileUseV1,
+  decodeWorkloadProfileUseV2,
   type WorkloadProfileSelectionV1,
-  type WorkloadProfileRolesV1,
+  type WorkloadProfileUseV2,
 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { validateRuntimeResourceAccountingV1 } from "@openclaw-enterprise/contracts/runtime-resource-accounting-v1";
 import {
@@ -18,16 +18,7 @@ import {
   type DerivedWorkloadProfileManifestV2,
 } from "./projections.ts";
 
-/** Same selection identity as V1; only the applicability is explicitly versioned. */
-export interface WorkloadProfileUseV2 extends WorkloadProfileSelectionV1 {
-  readonly schemaVersion: 2;
-  readonly component: "gateway-harness-pair";
-  readonly installationId: string;
-  readonly namespaceId: string;
-  readonly canonicalFormat: "oce.workload-profile.canonical-json.v1";
-  readonly profileRefs: WorkloadProfileRolesV1;
-  readonly admittedConfigurationDigest: string;
-}
+export type { WorkloadProfileUseV2 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 export interface WorkloadProfileSelectionRequestV2 {
   readonly schemaVersion: 2;
   readonly installationId: string;
@@ -167,27 +158,8 @@ function equal(left: unknown, right: unknown): boolean {
     decoder.decode(canonicalizeWorkloadProfileJson(right))
   );
 }
-function use(value: unknown): WorkloadProfileUseV2 {
-  shape(value, [
-    "schemaVersion",
-    "component",
-    "installationId",
-    "namespaceId",
-    "canonicalFormat",
-    "manifestRef",
-    "manifestDigest",
-    "admissionRef",
-    "admissionVersion",
-    "profileRefs",
-    "admittedConfigurationDigest",
-  ]);
-  if (value.schemaVersion !== 2 || value.component !== "gateway-harness-pair")
-    fail("invalid-record");
-  // Reuse the original field validators. This temporary validation projection
-  // is never returned or persisted as a Harness use or a runtime capability.
-  const original = decodeWorkloadProfileUseV1({ ...value, schemaVersion: 1, component: "harness" });
-  if (original.kind !== "valid") fail("invalid-record");
-  return value as unknown as WorkloadProfileUseV2;
+function use(value: unknown): asserts value is WorkloadProfileUseV2 {
+  if (decodeWorkloadProfileUseV2(value).kind !== "valid") fail("invalid-record");
 }
 function request(input: unknown): WorkloadProfileSelectionRequestV2 {
   const value = snapshot(input);
@@ -224,7 +196,8 @@ function correlated(input: unknown, expected: WorkloadProfileSelectionRequestV2)
     typeof record.canonicalManifest !== "string"
   )
     fail("invalid-record");
-  const admitted = use(record.use);
+  use(record.use);
+  const admitted = record.use;
   const retainedSelection = {
     manifestRef: admitted.manifestRef,
     manifestDigest: admitted.manifestDigest,
