@@ -176,6 +176,21 @@ existing before/after authority checks, followed by another fresh check before
 returning the result. The child rechecks actual source/trust/connection/time
 immediately before writing to the original TLS stream.
 
+The bridge reads `Source.TrustView()` for each trust check. That key-free value
+contains metadata, the SHA-256 digest of the ordered own-domain bundle DER and
+the CRL count from one current Source generation under its existing lock. The
+bridge compares the exact own SPIFFE ID and admitted bundle digest and rejects
+CRL-bearing views. It does not copy a private key, certificate, bundle or CRL
+buffer for this check. Returned views are historical data; retaining one cannot
+replace a fresh Source or connection check. A descriptive federation count does
+not introduce an additional bridge admission predicate.
+
+Certificate renewal under an unchanged ordered bundle preserves the admitted
+bundle digest, while the old authenticated connection still ends. A new TLS
+connection must authenticate the renewed certificate independently. The peer
+transport intentionally retains its full credential snapshot for TLS setup,
+including the existing key-wiping and Source-lifetime ownership rules.
+
 The service also requires a private request-correspondence check against the
 factory-owned context and the original method, full parsed input, request
 reference, recipient and deadline. A captured context cannot be reused with
@@ -230,8 +245,8 @@ module and includes its dependency licenses. Source builds use:
 ```sh
 go -C components/runtime-security build -mod=readonly -o ./bin/oce-runtime-authority ./cmd/oce-runtime-authority
 chmod 0555 components/runtime-security/bin/oce-runtime-authority
-go -C components/runtime-security test -race ./servicebridge ./cmd/oce-runtime-authority
-go -C components/runtime-security vet ./servicebridge ./cmd/oce-runtime-authority
+go -C components/runtime-security test -race ./identity ./servicepeer ./servicebridge ./cmd/oce-runtime-authority
+go -C components/runtime-security vet ./identity ./servicepeer ./servicebridge ./cmd/oce-runtime-authority
 node --test tests/integration/runtime-authority-authenticated-readback.test.mjs
 node --test tests/integration/runtime-authority-authenticated-bind.test.mjs
 ```

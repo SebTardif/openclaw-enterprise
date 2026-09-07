@@ -81,6 +81,14 @@ support `setLifecycleDrivers`; invalid or unavailable selected capabilities stop
 startup. Production then runs Compute preflight before emitting `worker.started`
 and starting `run()`.
 
+The exported worker records its single start attempt before any startup await.
+Concurrent or repeated starts reject. A stop during startup joins the current
+stage and suppresses later startup stages, dispatch, and `worker.started`.
+All stop callers share one promise that joins startup, the loop, and the state's
+supplied pool-close capability. Startup errors remain with the start caller;
+shutdown still cleans up. A stopped instance cannot restart. The ordinary
+entrypoint already awaits startup sequentially.
+
 The worker has no HTTP listener, Better Auth session service, or provider-admin
 client. Compose and Helm keep it separate from the API process. See the
 [development](docker-compose-development.md) and
@@ -265,7 +273,13 @@ observation closes the current bounded item and schedules a new one so that a
 provider outage does not abandon reconciliation of an authorized active runtime.
 Each new claim reauthorizes its original actor.
 
-`worker.completed` reports the target, outcome, and code; polling then continues.
+`worker.completed` reports the applied queue outcome and code only after the
+owning transaction commits. An active-revision conflict reports
+`ACTIVE_REVISION_CHANGED` with `retry`, or `permanent` when the attempt budget
+is exhausted. A failed transaction or lost claim emits no completion. Revision
+activation success is reported only after cleanup and the observation transaction
+complete. Maintenance reports the current item's completion or permanent failure,
+even when a failed item schedules another observation. Polling then continues.
 Lease loss is reported as `worker.error` with `CLAIM_LOST` rather than publishing
 stale lifecycle state. On `SIGTERM` or `SIGINT`, shutdown removes readiness,
 aborts in-flight work, waits for the loop, closes PostgreSQL, and emits

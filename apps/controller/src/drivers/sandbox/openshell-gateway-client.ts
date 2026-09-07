@@ -1,4 +1,4 @@
-import { asRecord } from "@openclaw-enterprise/utils";
+import { asRecord, immutableCopy } from "@openclaw-enterprise/utils";
 import { spawn } from "node:child_process";
 import { isAbsolute, normalize } from "node:path";
 
@@ -176,7 +176,7 @@ export class GoOpenShellGatewayClient implements OpenShellGatewayClient {
       throw new OpenShellGatewayFailure("invalid_binary_path");
     }
     this.binaryPath = binaryPath;
-    this.gateway = gateway;
+    this.gateway = immutableCopy(gateway);
   }
 
   async health(signal: AbortSignal): Promise<void> {

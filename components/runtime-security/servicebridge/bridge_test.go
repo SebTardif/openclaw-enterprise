@@ -405,6 +405,41 @@ func TestActualNativeBridgeCustodyAndRevocation(t *testing.T) {
 		}
 		h.shutdown(t)
 	})
+	t.Run("same-bundle renewal admits only a new authenticated connection", func(t *testing.T) {
+		f := startFixture(t, binary)
+		h := newBridge(t, f)
+		firstID := f.request(t, h.boot.ListenAddress, rawFrame(operationRequest(t, time.Now().Add(2800*time.Millisecond))))
+		first := h.next(t, "request")
+		if !h.inspect(t, first, strings.Repeat("b", 32)).Valid {
+			t.Fatal("original connection was not authenticated before renewal")
+		}
+		// Renew the actual server SVID through its Workload API while retaining
+		// the same ordered own-domain bundle. Existing connection authority ends.
+		f.change(t, "rotate-own")
+		h.next(t, "closed")
+		if len(responseBytes(t, f, firstID)) != 0 {
+			t.Fatal("certificate renewal disclosed a pending old result")
+		}
+		if h.inspect(t, first, strings.Repeat("c", 32)).Valid {
+			t.Fatal("renewal restored the retired connection")
+		}
+		// The existing admitted bundle still matches: a fresh TLS connection can
+		// authenticate the renewed certificate without reviving the old exchange.
+		secondID := f.request(t, h.boot.ListenAddress, rawFrame(operationRequest(t, time.Now().Add(2800*time.Millisecond))))
+		second := h.next(t, "request")
+		if second.ConnectionID == first.ConnectionID || second.ExchangeID == first.ExchangeID ||
+			!h.inspect(t, second, strings.Repeat("d", 32)).Valid {
+			t.Fatal("renewed certificate did not establish a distinct current connection")
+		}
+		result := []byte(`{"schemaVersion":1,"result":"not-visible","reasonCode":"scope-hidden"}`)
+		h.send(t, "result", second, "", result)
+		h.next(t, "completed")
+		h.next(t, "closed")
+		if got := responseBytes(t, f, secondID); !bytes.Equal(got, rawFrame(result)) {
+			t.Fatal("renewed connection did not retain its own negative response")
+		}
+		h.shutdown(t)
+	})
 	for _, action := range []string{"withdraw", "rotate-own", "rotate-bundle", "remote close", "cancel"} {
 		t.Run(action+" while awaiting a result", func(t *testing.T) {
 			f := startFixture(t, binary)

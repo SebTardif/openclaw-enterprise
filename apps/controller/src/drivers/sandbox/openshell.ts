@@ -1,4 +1,4 @@
-import { asRecord, isNonEmptyString, sha256Hex } from "@openclaw-enterprise/utils";
+import { asRecord, immutableCopy, isNonEmptyString, sha256Hex } from "@openclaw-enterprise/utils";
 import { KubernetesObjectApi, type KubernetesObject, PatchStrategy } from "@kubernetes/client-node";
 import type {
   AgentRevision,
@@ -787,7 +787,8 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     options: OpenShellSandboxDriverOptions,
     selection: OpenShellSandboxDriverSelection = {},
   ) {
-    validateOptions(options);
+    this.options = immutableCopy(options);
+    validateOptions(this.options);
     this.id = nonempty(selection.id ?? "sandbox-openshell-local", "OpenShell Sandbox Driver ID");
     this.implementation = nonempty(
       selection.implementation ?? "openshell",
@@ -798,7 +799,6 @@ export class OpenShellSandboxDriver implements SandboxDriver {
         "OpenShell Sandbox Driver implementation must be exactly openshell.",
       );
     }
-    this.options = options;
     this.injectedGatewayClient = selection.gatewayClient;
   }
 

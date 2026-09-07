@@ -30,9 +30,9 @@ export type WorkerFinalizationQueue = Pick<
 >;
 
 export interface WorkerFinalizationOptions {
-  readonly transact: (
-    action: (unit: WorkerFinalizationUnit, queue: WorkerFinalizationQueue) => Promise<void>,
-  ) => Promise<void>;
+  readonly transact: <T>(
+    action: (unit: WorkerFinalizationUnit, queue: WorkerFinalizationQueue) => Promise<T>,
+  ) => Promise<T>;
   readonly installation: () => Readonly<Installation> | undefined;
   readonly iamDriverId: string;
   readonly computeDriverId: string;
@@ -42,6 +42,12 @@ export interface WorkerFinalizationOptions {
   readonly cleanup: Pick<WorkerRevisionCleanup, "afterActivation">;
   readonly emit: (event: Readonly<Record<string, unknown>>) => void;
 }
+
+type AppliedWorkOutcome = Pick<DispatchResult, "outcome" | "code">;
+
+type RevisionFinalizationDisposition =
+  | { readonly kind: "activated"; readonly revision: Readonly<AgentRevision> }
+  | { readonly kind: "settled"; readonly result: AppliedWorkOutcome };
 
 function workOperation(claim: ClaimedWork): string {
   if (claim.revisionId !== undefined) return "agent_revision.reconcile";
@@ -81,46 +87,46 @@ export class WorkerFinalization {
     const resolved: RevisionDispatchResult = expired
       ? { ...result, outcome: "permanent", code: "CONVERGENCE_DEADLINE_EXCEEDED" }
       : result;
-    let activated: Readonly<AgentRevision> | undefined;
-    await this.options.transact(async (unit, queue) => {
-      if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
-      if (resolved.supersededBy !== undefined && resolved.outcome === "success") {
-        await this.appendRevisionSuperseded(unit, claim, resolved.supersededBy);
-      } else if (resolved.revision !== undefined && resolved.outcome === "success") {
-        const current = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
-        if (
-          current === undefined ||
-          current.servicePrincipalId !== resolved.revision.servicePrincipalId ||
-          current.activeRevisionId !== resolved.expectedActiveRevisionId
-        ) {
-          await queue.retry(claim, { code: "ACTIVE_REVISION_CHANGED" });
-          return;
+    const applied = await this.options.transact(
+      async (unit, queue): Promise<RevisionFinalizationDisposition> => {
+        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+        if (resolved.supersededBy !== undefined && resolved.outcome === "success") {
+          await this.appendRevisionSuperseded(unit, claim, resolved.supersededBy);
+        } else if (resolved.revision !== undefined && resolved.outcome === "success") {
+          const current = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+          if (
+            current === undefined ||
+            current.servicePrincipalId !== resolved.revision.servicePrincipalId ||
+            current.activeRevisionId !== resolved.expectedActiveRevisionId
+          ) {
+            return {
+              kind: "settled",
+              result: await this.retry(queue, claim, "ACTIVE_REVISION_CHANGED"),
+            };
+          }
+          const activeAgent = await unit.agents.compareAndSetActiveRevision(
+            claim.namespaceId,
+            current.id,
+            resolved.expectedActiveRevisionId,
+            resolved.revision.id,
+          );
+          if (activeAgent === undefined) {
+            return {
+              kind: "settled",
+              result: await this.retry(queue, claim, "ACTIVE_REVISION_CHANGED"),
+            };
+          }
+          return { kind: "activated", revision: resolved.revision };
+        } else if (resolved.decision !== undefined) {
+          await this.appendRevisionDenial(unit, claim, resolved);
         }
-        const activeAgent = await unit.agents.compareAndSetActiveRevision(
-          claim.namespaceId,
-          current.id,
-          resolved.expectedActiveRevisionId,
-          resolved.revision.id,
-        );
-        if (activeAgent === undefined) {
-          await queue.retry(claim, { code: "ACTIVE_REVISION_CHANGED" });
-          return;
-        }
-        activated = resolved.revision;
-        return;
-      } else if (resolved.decision !== undefined) {
-        await this.appendRevisionDenial(unit, claim, resolved);
-      }
 
-      if (resolved.outcome === "success") await queue.complete(claim);
-      else if (resolved.outcome === "pending") await queue.defer(claim, { code: resolved.code });
-      else if (resolved.outcome === "permanent" || claim.attemptCount >= this.options.maxAttempts)
-        await queue.fail(claim, { code: resolved.code });
-      else await queue.retry(claim, { code: resolved.code });
-    });
-    if (activated !== undefined) {
+        return { kind: "settled", result: await this.applyOutcome(queue, claim, resolved) };
+      },
+    );
+    if (applied.kind === "activated") {
       try {
-        await this.options.cleanup.afterActivation(execution, activated, resolved);
+        await this.options.cleanup.afterActivation(execution, applied.revision, resolved);
       } catch (error) {
         if (error instanceof WorkClaimLostError) throw error;
         await this.finalizeRevision(execution, {
@@ -138,9 +144,9 @@ export class WorkerFinalization {
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       revisionId: claim.revisionId,
-      result: resolved.outcome,
-      outcome: resolved.outcome,
-      code: resolved.code,
+      result: applied.result.outcome,
+      outcome: applied.result.outcome,
+      code: applied.result.code,
     });
   }
 
@@ -151,35 +157,34 @@ export class WorkerFinalization {
     const { claim } = execution;
     const revision = result.revision;
     if (revision === undefined) throw new Error("The activated Agent revision is unavailable.");
-    let completed = false;
-    await this.options.transact(async (unit, queue) => {
-      if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
-      const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
-      if (
-        agent === undefined ||
-        agent.id !== revision.agentId ||
-        agent.servicePrincipalId !== revision.servicePrincipalId ||
-        agent.activeRevisionId !== revision.id
-      ) {
-        await queue.retry(claim, { code: "ACTIVE_REVISION_CHANGED" });
-        return;
-      }
-      await this.appendRevisionObservation(unit, claim, result);
-      await queue.complete(claim);
-      if (this.options.maintenanceIntervalMs !== undefined)
-        await this.enqueueMaintenance(queue, claim, revision);
-      completed = true;
-    });
-    if (!completed) return;
+    const applied = await this.options.transact(
+      async (unit, queue): Promise<AppliedWorkOutcome> => {
+        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+        const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+        if (
+          agent === undefined ||
+          agent.id !== revision.agentId ||
+          agent.servicePrincipalId !== revision.servicePrincipalId ||
+          agent.activeRevisionId !== revision.id
+        ) {
+          return this.retry(queue, claim, "ACTIVE_REVISION_CHANGED");
+        }
+        await this.appendRevisionObservation(unit, claim, result);
+        await queue.complete(claim);
+        if (this.options.maintenanceIntervalMs !== undefined)
+          await this.enqueueMaintenance(queue, claim, revision);
+        return { outcome: "success", code: result.code };
+      },
+    );
     this.options.emit({
       event: "worker.completed",
       ...workLogFields(claim),
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       revisionId: claim.revisionId,
-      result: result.outcome,
-      outcome: result.outcome,
-      code: result.code,
+      result: applied.outcome,
+      outcome: applied.outcome,
+      code: applied.code,
     });
   }
 
@@ -196,31 +201,34 @@ export class WorkerFinalization {
       await this.finalizeRevision(execution, { outcome: "pending", code });
       return;
     }
-    await this.options.transact(async (unit, queue) => {
-      if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
-      const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
-      if (
-        agent === undefined ||
-        agent.servicePrincipalId !== revision.servicePrincipalId ||
-        agent.activeRevisionId !== revision.id
-      ) {
-        await queue.complete(claim);
-        return;
-      }
-      // Keep each failed observation bounded without permanently abandoning
-      // an authorized active runtime after one prolonged provider outage.
-      await queue.fail(claim, { code });
-      await this.enqueueMaintenance(queue, claim, revision);
-    });
+    const applied = await this.options.transact(
+      async (unit, queue): Promise<AppliedWorkOutcome> => {
+        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+        const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+        if (
+          agent === undefined ||
+          agent.servicePrincipalId !== revision.servicePrincipalId ||
+          agent.activeRevisionId !== revision.id
+        ) {
+          await queue.complete(claim);
+          return { outcome: "success", code };
+        }
+        // Keep each failed observation bounded without permanently abandoning
+        // an authorized active runtime after one prolonged provider outage.
+        await queue.fail(claim, { code });
+        await this.enqueueMaintenance(queue, claim, revision);
+        return { outcome: "permanent", code };
+      },
+    );
     this.options.emit({
       event: "worker.completed",
       ...workLogFields(claim),
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       revisionId: claim.revisionId,
-      result: "pending",
-      outcome: "pending",
-      code,
+      result: applied.outcome,
+      outcome: applied.outcome,
+      code: applied.code,
     });
   }
 
@@ -345,7 +353,7 @@ export class WorkerFinalization {
     const resolved: DispatchResult = expired
       ? { ...result, outcome: "permanent", code: "CONVERGENCE_DEADLINE_EXCEEDED" }
       : result;
-    await this.options.transact(async (unit, queue) => {
+    const applied = await this.options.transact(async (unit, queue) => {
       if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
       const current =
         namespace === undefined
@@ -375,20 +383,50 @@ export class WorkerFinalization {
           await this.appendObservation(unit, claim, current, resolved);
       }
 
-      if (resolved.outcome === "success") await queue.complete(claim);
-      else if (resolved.outcome === "pending") await queue.defer(claim, { code: resolved.code });
-      else if (resolved.outcome === "permanent" || claim.attemptCount >= this.options.maxAttempts)
-        await queue.fail(claim, { code: resolved.code });
-      else await queue.retry(claim, { code: resolved.code });
+      return this.applyOutcome(queue, claim, resolved);
     });
     this.options.emit({
       event: "worker.completed",
       ...workLogFields(claim),
       namespaceId: claim.namespaceId,
-      result: resolved.outcome,
-      outcome: resolved.outcome,
-      code: resolved.code,
+      result: applied.outcome,
+      outcome: applied.outcome,
+      code: applied.code,
     });
+  }
+
+  private async retry(
+    queue: WorkerFinalizationQueue,
+    claim: ClaimedWork,
+    code: string,
+  ): Promise<AppliedWorkOutcome> {
+    await queue.retry(claim, { code });
+    // The queue and finalizer share maxAttempts; retry terminalizes an exhausted claim.
+    return {
+      outcome: claim.attemptCount >= this.options.maxAttempts ? "permanent" : "retry",
+      code,
+    };
+  }
+
+  private async applyOutcome(
+    queue: WorkerFinalizationQueue,
+    claim: ClaimedWork,
+    result: AppliedWorkOutcome,
+  ): Promise<AppliedWorkOutcome> {
+    const { code } = result;
+    if (result.outcome === "success") {
+      await queue.complete(claim);
+      return { outcome: "success", code };
+    }
+    if (result.outcome === "pending") {
+      await queue.defer(claim, { code });
+      return { outcome: "pending", code };
+    }
+    if (result.outcome === "permanent" || claim.attemptCount >= this.options.maxAttempts) {
+      await queue.fail(claim, { code });
+      return { outcome: "permanent", code };
+    }
+    return this.retry(queue, claim, code);
   }
 
   private async appendObservation(

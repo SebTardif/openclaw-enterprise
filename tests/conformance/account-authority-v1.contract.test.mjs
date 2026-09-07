@@ -58,6 +58,24 @@ const keySubject = {
   selectedIAM: { driverId: "selected-iam", revision: 3 },
   key: { keyId: "key-a", version: 2, expiresAt: "2026-01-01T00:01:00.000Z" },
 };
+const nativeSubject = {
+  principalId: "prn_human-a",
+  principalKind: "principal",
+  accountState: "active",
+  credentialMode: "native-channel",
+  accountId: "account-a",
+  selectedIAM: { driverId: "selected-iam", revision: 3 },
+  nativeChannel: {
+    channelInstallationRef: "channel-installation-a",
+    channelInstallationVersion: 11,
+    externalBindingRef: "human-binding-a",
+    externalBindingVersion: 13,
+    sourceInvocationRef: "source-invocation-a",
+    sourceCredentialVersion: 2,
+    sourceConfigurationVersion: 17,
+    expiresAt: "2026-01-01T00:00:05.000Z",
+  },
+};
 function current(subject = sessionSubject) {
   return {
     kind: "current",
@@ -163,6 +181,102 @@ test("session and independent key diagnostics retain distinct principal and cred
   ]) {
     assert.equal(decodeCurrentAccountDiagnosticV1(current(subject)).kind, "invalid");
   }
+});
+
+test("native-channel human diagnostics retain exact source and binding facts without session authority", () => {
+  const input = current(nativeSubject);
+  const result = decodeCurrentAccountDiagnosticV1(input);
+  assert.equal(result.kind, "valid");
+  assert.deepEqual(result.value.observation.subject, nativeSubject);
+  assert.equal(Object.hasOwn(result.value, "authority"), false);
+  assert.equal(Object.hasOwn(result.value.observation.subject, "session"), false);
+  input.observation.subject.nativeChannel.externalBindingVersion = 99;
+  assert.equal(result.value.observation.subject.nativeChannel.externalBindingVersion, 13);
+  assert.throws(() => {
+    result.value.observation.subject.nativeChannel.sourceInvocationRef = "changed";
+  }, TypeError);
+  assert.equal(
+    decodeCurrentAccountDiagnosticV1({ ...current(nativeSubject), authority: {} }).kind,
+    "invalid",
+  );
+});
+
+test("native-channel subjects require every original association and reject credential-mode aliases", () => {
+  for (const field of Object.keys(nativeSubject.nativeChannel)) {
+    const subject = structuredClone(nativeSubject);
+    delete subject.nativeChannel[field];
+    assert.equal(decodeCurrentAccountDiagnosticV1(current(subject)).kind, "invalid", field);
+  }
+  for (const field of ["principalId", "accountId", "accountState", "selectedIAM"]) {
+    const subject = structuredClone(nativeSubject);
+    delete subject[field];
+    assert.equal(decodeCurrentAccountDiagnosticV1(current(subject)).kind, "invalid", field);
+  }
+  for (const subject of [
+    { ...nativeSubject, principalKind: "service_principal" },
+    { ...nativeSubject, credentialMode: "session" },
+    { ...nativeSubject, credentialMode: "service-key" },
+    { ...nativeSubject, session: sessionSubject.session },
+    { ...nativeSubject, key: keySubject.key },
+    { ...nativeSubject, accountState: "disabled" },
+    { ...nativeSubject, accountState: true },
+    { ...sessionSubject, nativeChannel: nativeSubject.nativeChannel },
+    { ...keySubject, nativeChannel: nativeSubject.nativeChannel },
+    { ...nativeSubject, nativeChannel: { ...nativeSubject.nativeChannel, verified: true } },
+  ]) {
+    assert.equal(decodeCurrentAccountDiagnosticV1(current(subject)).kind, "invalid");
+  }
+});
+
+test("native source versions and expiry bound observations without equating independent generations", () => {
+  assert.equal(decodeCurrentAccountDiagnosticV1(current(nativeSubject)).kind, "valid");
+  for (const field of [
+    "channelInstallationVersion",
+    "externalBindingVersion",
+    "sourceCredentialVersion",
+    "sourceConfigurationVersion",
+  ]) {
+    for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const subject = structuredClone(nativeSubject);
+      subject.nativeChannel[field] = value;
+      assert.equal(decodeCurrentAccountDiagnosticV1(current(subject)).kind, "invalid", field);
+    }
+  }
+  for (const patch of [
+    { sourceCredentialVersion: 3 },
+    { expiresAt: "2026-01-01T00:00:04.999Z" },
+    { expiresAt: request.createdAt },
+    { expiresAt: "2026-02-30T00:00:00.000Z" },
+    { channelInstallationRef: "" },
+    { externalBindingRef: "binding with spaces" },
+    { sourceInvocationRef: "x".repeat(201) },
+  ]) {
+    assert.equal(
+      decodeCurrentAccountDiagnosticV1(
+        current({ ...nativeSubject, nativeChannel: { ...nativeSubject.nativeChannel, ...patch } }),
+      ).kind,
+      "invalid",
+    );
+  }
+});
+
+test("native-channel human action diagnostics preserve human and independent-service distinctions", () => {
+  for (const kind of ["conversation.read", "turn.admit"]) {
+    assert.equal(
+      decodeExactAccountActionDiagnosticV1(allowed({ kind, target: conversation }, nativeSubject))
+        .kind,
+      "valid",
+    );
+  }
+  assert.equal(
+    decodeExactAccountActionDiagnosticV1(
+      allowed(
+        { kind: "runtime.cleanup", target: { ...agent, responsibilityRef: "responsibility-a" } },
+        nativeSubject,
+      ),
+    ).kind,
+    "invalid",
+  );
 });
 
 test("expired, changed-profile and overlong positive observations are rejected", () => {

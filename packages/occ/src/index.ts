@@ -117,12 +117,7 @@ import {
   type CreateConfigurationInput,
   type UpdateConfigurationInput,
 } from "./services/configuration/port.ts";
-import {
-  ConfigurationService,
-  authorizeConfigurationBindings,
-  configurationBindings,
-  exactConfiguration,
-} from "./services/configuration/service.ts";
+import { ConfigurationService } from "./services/configuration/service.ts";
 export type {
   ConfigurationCommands,
   ConfigurationQueries,
@@ -146,12 +141,9 @@ import type {
   Namespace,
   LoggingLevel,
   ProviderDefinition,
-  ProviderRef,
   ResourceKind,
   ResourceRef,
   SandboxDriver,
-  Secret,
-  SecretBindings,
   SecretDriver,
   SecretMetadata,
   ServiceAccount,
@@ -169,7 +161,6 @@ import {
   ScopeViolationError,
 } from "./errors.ts";
 import {
-  assertConfiguredProvider,
   providerDefinitionMap,
   validateProviderDefinitions,
   validateServiceAccountProviderBinding,
@@ -699,59 +690,6 @@ export class OpenClawController {
     return this.authorization.authorizationAuthority(principalId);
   }
 
-  private async exactNamespace(
-    state: PlatformReadView,
-    namespaceId: string,
-  ): Promise<Readonly<Namespace>> {
-    if (!isNonEmptyString(namespaceId))
-      throw new ScopeViolationError("The exact Namespace identity is missing.");
-    const namespace = await state.namespaces.findNamespace(namespaceId);
-    if (!namespace)
-      throw new ScopeViolationError(
-        "The Namespace does not belong to the server-owned Installation.",
-      );
-    return namespace;
-  }
-
-  private async lockNamespace(
-    state: PlatformUnitOfWork,
-    namespaceId: string,
-  ): Promise<Readonly<Namespace>> {
-    if (!isNonEmptyString(namespaceId))
-      throw new ScopeViolationError("The exact Namespace identity is missing.");
-    const namespace = await state.namespaces.lockNamespace(namespaceId);
-    if (!namespace)
-      throw new ScopeViolationError(
-        "The Namespace does not belong to the server-owned Installation.",
-      );
-    return namespace;
-  }
-
-  private bindings(input: unknown): SecretBindings {
-    return configurationBindings(input);
-  }
-
-  /** Called under the Namespace lock, also taken by deletion and assignment. */
-  private async authorizeBindings(
-    state: PlatformUnitOfWork,
-    principalId: string,
-    namespaceId: string,
-    bindings: SecretBindings,
-  ): Promise<readonly Secret[]> {
-    return authorizeConfigurationBindings(
-      state,
-      principalId,
-      namespaceId,
-      bindings,
-      {
-        authorize: (actorId, action, resource) => this.authorize(actorId, action, resource),
-      },
-      (expectedId) => {
-        this.secretDriver(expectedId);
-      },
-    );
-  }
-
   private secretDriver(expectedId?: string): SecretDriver {
     return this.drivers.secretDriver(expectedId);
   }
@@ -815,16 +753,6 @@ export class OpenClawController {
     }
   }
 
-  private exactConfiguration(
-    configuration: Configuration,
-    expected: Pick<
-      Configuration,
-      "id" | "namespaceId" | "kind" | "generation" | "createdAt" | "secretBindings"
-    >,
-  ): Readonly<Configuration> {
-    return exactConfiguration(configuration, expected);
-  }
-
   private nextIdentifier(kind: ResourceKind): string {
     const prefixes: Record<ResourceKind, string> = {
       installation: "ins",
@@ -848,19 +776,5 @@ export class OpenClawController {
     if (!(now instanceof Date) || Number.isNaN(now.getTime()))
       throw new ScopeViolationError("The controller clock returned an invalid timestamp.");
     return now.toISOString();
-  }
-
-  private providerId(value: ProviderRef | undefined, preserve?: ProviderRef): ProviderRef {
-    const providerId = value === undefined ? (preserve ?? null) : value;
-    assertConfiguredProvider(this.providerMap, providerId, "Provider");
-    return providerId;
-  }
-
-  private async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.mutations.read(work);
-  }
-
-  private async mutate<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
-    return this.mutations.mutate(work);
   }
 }
