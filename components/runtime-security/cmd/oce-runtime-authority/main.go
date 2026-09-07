@@ -60,7 +60,7 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch args[0] {
-	case "validate-profile":
+	case "validate-profile", "validate-gateway-startup-client-profile":
 		timer := time.AfterFunc(3*time.Second, func() { input.Close(); output.Close() })
 		defer timer.Stop()
 		interrupted := context.AfterFunc(ctx, func() { input.Close(); output.Close() })
@@ -75,7 +75,12 @@ func run(args []string) int {
 		}
 		result := "invalid"
 		if err == nil {
-			if _, err = servicebridge.ValidateProfile(raw); err == nil {
+			if args[0] == "validate-gateway-startup-client-profile" {
+				_, err = servicebridge.ValidateGatewayStartupClientProfile(raw)
+			} else {
+				_, err = servicebridge.ValidateProfile(raw)
+			}
+			if err == nil {
 				result = "valid"
 			}
 		}
@@ -92,6 +97,11 @@ func run(args []string) int {
 		return 0
 	case "serve":
 		if servicebridge.Run(ctx, input, output) != nil {
+			return 1
+		}
+		return 0
+	case "gateway-startup-client":
+		if servicebridge.RunGatewayStartupClient(ctx, input, output) != nil {
 			return 1
 		}
 		return 0

@@ -53,6 +53,47 @@ func TestProfileValidationIsPureAndPreservesExactInput(t *testing.T) {
 	}
 }
 
+func TestGatewayStartupProfileHasFixedClientAndServerSides(t *testing.T) {
+	server := profileValue()
+	server.OperationPolicy = "installation-gateway-startup-v1"
+	server.TransportProfileRef = "owned-child-stdio-installation-gateway-startup-v1"
+	client := server
+	client.OwnSPIFFEID, client.PeerSPIFFEID = server.PeerSPIFFEID, server.OwnSPIFFEID
+	for _, tc := range []struct {
+		name    string
+		profile servicebridge.Profile
+		client  bool
+		valid   bool
+	}{
+		{"server", server, false, true},
+		{"client", client, true, true},
+		{"client bytes in server entrypoint", client, false, false},
+		{"server bytes in client entrypoint", server, true, false},
+		{"readback is never a startup client", profileValue(), true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := servicebridge.ValidateProfile
+			if tc.client {
+				parser = servicebridge.ValidateGatewayStartupClientProfile
+			}
+			parsed, err := parser(jsonBytes(t, tc.profile))
+			if tc.valid && (err != nil || parsed != tc.profile) {
+				t.Fatal("selected role changed or rejected")
+			}
+			if !tc.valid && err == nil {
+				t.Fatal("unselected role admitted")
+			}
+		})
+	}
+	for _, policy := range []string{"read-operation-only-v1", "initial-harness-bind-v1"} {
+		cross := server
+		cross.OperationPolicy = policy
+		if _, err := servicebridge.ValidateProfile(jsonBytes(t, cross)); err == nil {
+			t.Fatal("cross-profile pair admitted")
+		}
+	}
+}
+
 func TestProfileRequiresExplicitInitialBindTransportPair(t *testing.T) {
 	for _, test := range []struct {
 		policy, transport string
