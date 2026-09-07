@@ -1,0 +1,53 @@
+{
+  "label": "Synthetic immutable delivery values; no real producer or runtime qualification",
+  "event": {
+    "schema": "openclaw.security-event/v1",
+    "schemaVersion": 1,
+    "id": "00000000-0000-4000-8000-000000000001",
+    "installationId": "00000000-0000-4000-8000-000000000002",
+    "namespaceId": "00000000-0000-4000-8000-000000000003",
+    "requestId": "00000000-0000-4000-8000-000000000009",
+    "admissionDecisionId": "00000000-0000-4000-8000-00000000000a",
+    "occurredAt": "2026-01-01T00:00:00.000Z",
+    "receivedAt": "2026-01-01T00:00:01.000Z",
+    "source": "occ",
+    "category": "lifecycle",
+    "action": "stop",
+    "decision": "allowed",
+    "phase": "accepted",
+    "result": "pending",
+    "reasonCode": "DurablyAccepted",
+    "resource": {
+      "kind": "agent",
+      "id": "00000000-0000-4000-8000-000000000004",
+      "namespaceId": "00000000-0000-4000-8000-000000000003"
+    },
+    "human": {
+      "state": "verified",
+      "principalId": "00000000-0000-4000-8000-000000000006"
+    },
+    "workload": {
+      "state": "verified",
+      "principalId": "00000000-0000-4000-8000-000000000007",
+      "assignmentId": "00000000-0000-4000-8000-000000000008",
+      "agentId": "00000000-0000-4000-8000-000000000004",
+      "revisionId": "00000000-0000-4000-8000-000000000005",
+      "generation": 7
+    },
+    "correlation": {
+      "agentId": "00000000-0000-4000-8000-000000000004",
+      "revisionId": "00000000-0000-4000-8000-000000000005",
+      "conversationId": "00000000-0000-4000-8000-00000000000b",
+      "channelEventId": "00000000-0000-4000-8000-00000000000c",
+      "turnId": "00000000-0000-4000-8000-00000000000d",
+      "attemptId": "00000000-0000-4000-8000-00000000000e",
+      "grantId": "00000000-0000-4000-8000-00000000000f",
+      "policyId": "00000000-0000-4000-8000-000000000010",
+      "registrationId": "00000000-0000-4000-8000-000000000011"
+    }
+  },
+  "producerInstanceRef": "00000000-0000-4000-8000-000000000101",
+  "obligationRef": "00000000-0000-4000-8000-000000000102",
+  "commitReceiptRef": "00000000-0000-4000-8000-000000000103",
+  "originalOperationRef": "00000000-0000-4000-8000-000000000104"
+}
