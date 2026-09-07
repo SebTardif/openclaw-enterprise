@@ -95,6 +95,12 @@ importers:
       '@openclaw-enterprise/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@openclaw-enterprise/occ':
+        specifier: workspace:*
+        version: link:../../packages/occ
+      '@openclaw-enterprise/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       openclaw:
         specifier: link:../../.build/upstream-sdk/openclaw
         version: link:../../.build/upstream-sdk/openclaw
