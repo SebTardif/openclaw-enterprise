@@ -263,7 +263,7 @@ const operationBodyExpectations = {
   updateAgent: "required",
   listAgents: "none",
   getAgent: "none",
-  deployAgent: "none",
+  deployAgent: "required",
   getAgentWorkspaceFile: "none",
   putAgentWorkspaceFile: "required",
   listAgentRevisions: "none",

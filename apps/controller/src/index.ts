@@ -47,6 +47,7 @@ import {
   parseRuntimeServiceTrustHttpBody,
 } from "./admission/runtime-service-trust.ts";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
+import type { LifecycleAcceptedReceiptV1 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
 import { randomUUID } from "node:crypto";
 import {
   type FastifyInstance,
@@ -1667,14 +1668,14 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           return project(result);
         });
       },
-      runDeployment: async (request, operation, context, { namespaceId, agentId }) => {
+      runDeployment: async (request, operation, context, { namespaceId, agentId, command }) => {
         const currentController = controller;
         if (!currentController)
           throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
-        // Retain trusted correlation before the transaction so an uncertain COMMIT
-        // can recover this exact admission without admitting another revision.
+        // The client retains this exact command before submission. A transport retry
+        // keeps its operation identity and original expected draft across head edits.
         const admission: DeployAgentAdmissionContext = {
-          transitionRef: randomUUID(),
+          transitionRef: command.operationRef,
           requestId: request.id,
           createAuditEvent: (admitted) =>
             event(
@@ -1685,22 +1686,21 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               context,
             ),
         };
-        let revision: Readonly<AgentRevision>;
+        let receipt: LifecycleAcceptedReceiptV1;
         try {
-          revision = await currentController.transact(() =>
-            currentController.deployment.deployAgent(
+          receipt = await currentController.transact(() =>
+            currentController.deployment.deployAgentCommand(
               context.actorId,
-              { namespaceId, agentId },
+              { namespaceId, agentId, command },
               options.resolveHarness,
               admission,
             ),
           );
         } catch (error) {
           if (error instanceof PostgresCommitOutcomeUnknownError) {
-            revision = await currentController.deployment.recoverDeployAgent(
+            receipt = await currentController.deployment.recoverDeployAgentCommand(
               context.actorId,
-              { namespaceId, agentId },
-              admission,
+              { namespaceId, agentId, command },
             );
           } else {
             if (error instanceof NamespaceNotReadyError)
@@ -1708,7 +1708,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             throw error;
           }
         }
-        return revision;
+        return receipt;
       },
     });
     // TODO: Supply the qualified current-account request bridge and authorized
