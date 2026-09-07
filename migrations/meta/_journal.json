@@ -239,6 +239,13 @@
       "when": 1788767620620,
       "tag": "0033_revision_credential_selection",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788777975068,
+      "tag": "0034_workload_profile_admission",
+      "breakpoints": true
     }
   ]
 }
