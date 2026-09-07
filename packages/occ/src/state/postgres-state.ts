@@ -230,6 +230,48 @@ interface FreshInstallationRecordV1 {
   readonly installation: Readonly<Installation>;
   readonly rowVersion: string;
 }
+export interface FreshBootstrapFailureReceiptV1 {
+  readonly schema: "fresh-bootstrap-failure-v1";
+  readonly stage:
+    | "preflight"
+    | "checkout"
+    | "begin"
+    | "installation-lock"
+    | "installation-match"
+    | "iam-writer-lock"
+    | "iam-empty-read"
+    | "iam-empty-check"
+    | "iam-seed-write"
+    | "bootstrap-callback"
+    | "completion-check"
+    | "commit"
+    | "transport"
+    | "terminal-cleanup"
+    | "unknown";
+  readonly sqlstate:
+    | "42501"
+    | "55P03"
+    | "57014"
+    | "40P01"
+    | "40001"
+    | "23001"
+    | "23505"
+    | "23503"
+    | "23514"
+    | "23502"
+    | "55000"
+    | "25P02"
+    | "25006"
+    | "42P01"
+    | "42883"
+    | "08003"
+    | "08006"
+    | "57P01"
+    | null;
+  readonly commitDisposition: "not-sent" | "sent" | "acknowledged";
+  readonly establishedNoCommit: boolean;
+}
+type FreshBootstrapFailureStageV1 = FreshBootstrapFailureReceiptV1["stage"];
 interface FreshBootstrapExecutionV1 {
   readonly kind: "reserve" | "finalize";
   readonly installation: Readonly<Installation>;
@@ -244,6 +286,11 @@ interface FreshBootstrapExecutionV1 {
   started: boolean;
   failed: boolean;
   failure?: unknown;
+  diagnostic?: Readonly<
+    Pick<FreshBootstrapFailureReceiptV1, "stage" | "sqlstate"> & {
+      failure: unknown;
+    }
+  >;
   context?: TransactionContext;
   transaction?: Promise<unknown>;
   disposition: "not-sent" | "sent" | "acknowledged";
@@ -981,6 +1028,12 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #profileSelectedUnits = new WeakMap<object, ProfileSelectedEnrollmentV2>();
   readonly #freshReservations = new WeakMap<object, FreshInstallationRecordV1>();
   readonly #freshExecution = new AsyncLocalStorage<FreshBootstrapExecutionV1>();
+  // Diagnostic associations never participate in reservation or transaction authority.
+  readonly #freshFailureStages = new AsyncLocalStorage<{
+    readonly record: FreshBootstrapExecutionV1;
+    readonly stage: FreshBootstrapFailureStageV1;
+  }>();
+  readonly #freshFailureReceipts = new WeakMap<object, FreshBootstrapFailureReceiptV1 | null>();
   readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
   readonly #turnContexts = new WeakMap<object, TurnCommandEnrollmentV1>();
   readonly #turnIO = new AsyncLocalStorage<TurnCommandIOV1>();
@@ -995,10 +1048,103 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
   }
 
-  private rejectFresh(record: FreshBootstrapExecutionV1, error: unknown): never {
+  /** Only the exact outward failure from this state has a terminal diagnostic.
+   * Foreign, primitive and ambiguously reused error objects remain unavailable. */
+  freshBootstrapFailureReceiptV1(
+    error: unknown,
+  ): Readonly<FreshBootstrapFailureReceiptV1> | undefined {
+    if ((typeof error !== "object" || error === null) && typeof error !== "function")
+      return undefined;
+    return this.#freshFailureReceipts.get(error) ?? undefined;
+  }
+
+  private captureFreshFailure(
+    record: FreshBootstrapExecutionV1,
+    error: unknown,
+    stage: FreshBootstrapFailureStageV1,
+    databaseRejection = false,
+  ): void {
+    if (record.failed && !Object.is(record.failure, error)) return;
+    if (
+      record.diagnostic !== undefined &&
+      (!record.failed || Object.is(record.diagnostic.failure, error))
+    )
+      return;
+    let sqlstate: FreshBootstrapFailureReceiptV1["sqlstate"] = null;
+    if (databaseRejection) {
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+        if (descriptor !== undefined && "value" in descriptor) {
+          switch (descriptor.value) {
+            case "42501":
+            case "55P03":
+            case "57014":
+            case "40P01":
+            case "40001":
+            case "23001":
+            case "23505":
+            case "23503":
+            case "23514":
+            case "23502":
+            case "55000":
+            case "25P02":
+            case "25006":
+            case "42P01":
+            case "42883":
+            case "08003":
+            case "08006":
+            case "57P01":
+              sqlstate = descriptor.value;
+          }
+        }
+      } catch {
+        // A hostile descriptor must not mask or expand the original failure.
+      }
+    }
+    // A Proxy descriptor trap can reenter the owner and latch another failure.
+    // It must not let this earlier, still-unlatched observation overwrite that fact.
+    if (record.failed && !Object.is(record.failure, error)) return;
+    if (
+      record.diagnostic !== undefined &&
+      (!record.failed || Object.is(record.diagnostic.failure, error))
+    )
+      return;
+    record.diagnostic = Object.freeze({ failure: error, stage, sqlstate });
+  }
+
+  private publishFreshFailure(record: FreshBootstrapExecutionV1, error: unknown): void {
+    if ((typeof error !== "object" || error === null) && typeof error !== "function") return;
+    if (this.#freshFailureReceipts.has(error)) {
+      this.#freshFailureReceipts.set(error, null);
+      return;
+    }
+    this.#freshFailureReceipts.set(
+      error,
+      Object.freeze({
+        schema: "fresh-bootstrap-failure-v1",
+        stage: record.diagnostic?.stage ?? "unknown",
+        sqlstate: record.diagnostic?.sqlstate ?? null,
+        commitDisposition: record.disposition,
+        establishedNoCommit: record.establishedNoCommit,
+      }),
+    );
+  }
+
+  private rejectFresh(
+    record: FreshBootstrapExecutionV1,
+    error: unknown,
+    databaseRejection = false,
+  ): never {
     if (!record.failed) {
       record.failed = true;
       record.failure = error;
+      const observed = this.#freshFailureStages.getStore();
+      this.captureFreshFailure(
+        record,
+        error,
+        observed?.record === record ? observed.stage : "unknown",
+        databaseRejection,
+      );
     }
     throw error;
   }
@@ -1148,9 +1294,17 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
     return this.#freshExecution.run(record, async () => {
       try {
-        const value = await work();
-        if (!record.started || record.transaction === undefined)
-          throw new ScopeViolationError("Fresh bootstrap requires its original transaction.");
+        const value = await this.#freshFailureStages.run(
+          { record, stage: "bootstrap-callback" },
+          work,
+        );
+        if (!record.started || record.transaction === undefined) {
+          const error = new ScopeViolationError(
+            "Fresh bootstrap requires its original transaction.",
+          );
+          this.captureFreshFailure(record, error, "completion-check");
+          throw error;
+        }
         await record.transaction;
         if (record.failed) throw record.failure;
         return value;
@@ -1158,11 +1312,18 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (!record.failed) {
           record.failed = true;
           record.failure = error;
+          // execute may already have classified a primary cleanup rejection before
+          // translating its outward error. Keep that original diagnostic.
+          if (record.diagnostic === undefined)
+            this.captureFreshFailure(record, error, "bootstrap-callback");
         }
         if (record.transaction !== undefined) await Promise.allSettled([record.transaction]);
-        if (!record.establishedNoCommit && record.disposition !== "not-sent")
-          throw new PostgresCommitOutcomeUnknownError();
-        throw error;
+        const outward =
+          !record.establishedNoCommit && record.disposition !== "not-sent"
+            ? new PostgresCommitOutcomeUnknownError()
+            : error;
+        this.publishFreshFailure(record, outward);
+        throw outward;
       } finally {
         record.accepting = false;
         record.active = false;
@@ -1262,40 +1423,55 @@ export class PostgresPlatformState implements PlatformStateStore {
   ): Promise<void> {
     if (record.seed === undefined || record.rowVersion === undefined)
       throw new ScopeViolationError("The fresh bootstrap seed is unavailable.");
-    const found = rows(
-      (
-        await context.client.query(
+    const installationRows = await this.#freshFailureStages.run(
+      { record, stage: "installation-lock" },
+      () =>
+        context.client.query(
           "SELECT id, name, created_at, xmin::text AS row_version FROM occ.installation WHERE id=$1 FOR SHARE",
           [record.installation.id],
-        )
-      ).rows,
+        ),
     );
-    if (
-      found.length !== 1 ||
-      text(found[0]!, "row_version") !== record.rowVersion ||
-      text(found[0]!, "id") !== record.installation.id ||
-      text(found[0]!, "name") !== record.installation.name ||
-      timestamp(found[0]!, "created_at") !== record.installation.createdAt
-    )
-      throw new ScopeViolationError("The original fresh Installation row changed.");
+    try {
+      const found = rows(installationRows.rows);
+      if (
+        found.length !== 1 ||
+        text(found[0]!, "row_version") !== record.rowVersion ||
+        text(found[0]!, "id") !== record.installation.id ||
+        text(found[0]!, "name") !== record.installation.name ||
+        timestamp(found[0]!, "created_at") !== record.installation.createdAt
+      )
+        throw new ScopeViolationError("The original fresh Installation row changed.");
+    } catch (error) {
+      this.captureFreshFailure(record, error, "installation-match");
+      throw error;
+    }
     context.installation = record.installation;
     context.installationLoaded = true;
     // Same original six-table writer barrier, before empty-state observation and
     // seed persistence. No NativeIAM policy projection or second evaluator.
-    await context.client.query(`LOCK TABLE occ.iam_identities, occ.iam_roles, occ.iam_groups,
-      occ.iam_group_memberships, occ.iam_access_bindings, occ.iam_restrictions IN SHARE ROW EXCLUSIVE MODE`);
-    const counts = rows(
-      (
-        await context.client.query(`SELECT
+    await this.#freshFailureStages.run({ record, stage: "iam-writer-lock" }, () =>
+      context.client.query(`LOCK TABLE occ.iam_identities, occ.iam_roles, occ.iam_groups,
+      occ.iam_group_memberships, occ.iam_access_bindings, occ.iam_restrictions IN SHARE ROW EXCLUSIVE MODE`),
+    );
+    const countRows = await this.#freshFailureStages.run({ record, stage: "iam-empty-read" }, () =>
+      context.client.query(`SELECT
       (SELECT count(*) FROM occ.iam_identities) + (SELECT count(*) FROM occ.iam_roles) +
       (SELECT count(*) FROM occ.iam_groups) + (SELECT count(*) FROM occ.iam_group_memberships) +
       (SELECT count(*) FROM occ.iam_access_bindings) + (SELECT count(*) FROM occ.iam_restrictions)
-      AS retained_count`)
-      ).rows,
+      AS retained_count`),
     );
-    if (counts.length !== 1 || String(counts[0]!.retained_count) !== "0")
-      throw new ScopeViolationError("Fresh bootstrap cannot adopt existing IAM state.");
-    await this.insertIAMState(context, record.seed);
+    try {
+      const counts = rows(countRows.rows);
+      if (counts.length !== 1 || String(counts[0]!.retained_count) !== "0")
+        throw new ScopeViolationError("Fresh bootstrap cannot adopt existing IAM state.");
+    } catch (error) {
+      this.captureFreshFailure(record, error, "iam-empty-check");
+      throw error;
+    }
+    const seed = record.seed;
+    await this.#freshFailureStages.run({ record, stage: "iam-seed-write" }, () =>
+      this.insertIAMState(context, seed),
+    );
   }
 
   setBootstrapNativeIAM(state: PersistedNativeIAMState): void {
@@ -4101,6 +4277,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         fresh.failure = new DependencyUnavailableError(
           "The bootstrap transaction transport failed.",
         );
+        this.captureFreshFailure(fresh, fresh.failure, "transport");
       }
       turn?.phase?.poison(new DependencyUnavailableError("The turn transaction transport failed."));
       gateway?.phase?.poison(
@@ -4112,7 +4289,12 @@ export class PostgresPlatformState implements PlatformStateStore {
       throw error;
     };
     try {
-      raw = await this.pool.connect();
+      try {
+        raw = await this.pool.connect();
+      } catch (error) {
+        if (fresh !== undefined) this.captureFreshFailure(fresh, error, "checkout");
+        throw error;
+      }
       raw.on?.("error", onTransportError);
       if (expired || options?.signal.aborted) {
         release(true);
@@ -4123,10 +4305,30 @@ export class PostgresPlatformState implements PlatformStateStore {
         lifetime.assertActive();
         if (context !== undefined && trackProfileOrder) context.dataQueryStarted = true;
         if (closed || options?.signal.aborted) throw abortFailure();
-        const query = underlying.query(statement, parameters);
+        let query: ReturnType<PostgresClient["query"]>;
+        try {
+          query = underlying.query(statement, parameters);
+        } catch (error) {
+          if (fresh !== undefined) {
+            const observed = this.#freshFailureStages.getStore();
+            this.captureFreshFailure(
+              fresh,
+              error,
+              observed?.record === fresh ? observed.stage : "unknown",
+              true,
+            );
+          }
+          throw error;
+        }
         pending.add(query);
         try {
-          const result = await query;
+          let result;
+          try {
+            result = await query;
+          } catch (error) {
+            if (fresh !== undefined) this.rejectFresh(fresh, error, true);
+            throw error;
+          }
           lifetime.assertActive();
           return result;
         } catch (error) {
@@ -4190,16 +4392,21 @@ export class PostgresPlatformState implements PlatformStateStore {
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
       };
-      await client.query(
+      const beginStatement =
         profileReadCommitted ||
-          credential !== undefined ||
-          gateway !== undefined ||
-          turn !== undefined
+        credential !== undefined ||
+        gateway !== undefined ||
+        turn !== undefined
           ? "BEGIN ISOLATION LEVEL READ COMMITTED"
           : readOnly
             ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
-            : "BEGIN",
-      );
+            : "BEGIN";
+      const originalClient = client;
+      await (fresh === undefined
+        ? originalClient.query(beginStatement)
+        : this.#freshFailureStages.run({ record: fresh, stage: "begin" }, () =>
+            originalClient.query(beginStatement),
+          ));
       started = true;
       if (options !== undefined) {
         // PostgreSQL also detects a disappeared client during a blocked query. The
@@ -4284,61 +4491,66 @@ export class PostgresPlatformState implements PlatformStateStore {
         ),
       );
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
-      if (fresh !== undefined) {
-        fresh.accepting = false;
-        while (fresh.pending.size) await Promise.allSettled([...fresh.pending]);
-        if (fresh.failed) throw fresh.failure;
-        if (
-          fresh.kind === "finalize" &&
-          (fresh.namespaceIds.size !== 1 ||
-            [...fresh.namespaceIds].some(
-              (id) => !fresh.workNamespaceIds.has(id) || !fresh.auditNamespaceIds.has(id),
-            ))
-        )
-          throw new ScopeViolationError(
-            "Fresh bootstrap requires its Namespace, work and attributable audit.",
-          );
-      }
-      if (turn !== undefined) await turn.phase!.prepareCommit();
-      if (gateway !== undefined) {
-        gateway.phase!.closeAdmissions();
-        await gateway.phase!.drainAccepted();
-      }
-      if (credential !== undefined) {
-        credential.phase.closeAdmissions();
-        await credential.phase.drainAccepted();
-        await credential.phase.runFinalization(credential.prepareCommit);
-        await credential.phase.drainAccepted();
-      }
-      context.profileEnrollmentClosed = true;
-      while (context.profileEnrollments.size)
-        await Promise.allSettled([...context.profileEnrollments]);
-      lifecyclePhase.closeAdmissions();
-      await context?.protectedProfile?.finish();
-      await lifetime.finish();
-      await lifecyclePhase.finish();
-      await authorityGuard.finish();
-      await journalGuard.finish();
-      await profilePhase.guard.finish();
-      if (expired || options?.signal.aborted) throw abortFailure();
-      context?.protectedProfile?.assertCurrent();
-      profilePhase.guard.assertCurrent();
-      if (gateway !== undefined) {
-        if (gateway.version === 2) gateway.finalized = gateway.phase!.finalize();
-        else gateway.finalized = gateway.phase!.finalize();
-        if (gateway.finalized.kind === "rollback") {
-          await raw.query("ROLLBACK");
-          started = false;
-          return result;
+      try {
+        if (fresh !== undefined) {
+          fresh.accepting = false;
+          while (fresh.pending.size) await Promise.allSettled([...fresh.pending]);
+          if (fresh.failed) throw fresh.failure;
+          if (
+            fresh.kind === "finalize" &&
+            (fresh.namespaceIds.size !== 1 ||
+              [...fresh.namespaceIds].some(
+                (id) => !fresh.workNamespaceIds.has(id) || !fresh.auditNamespaceIds.has(id),
+              ))
+          )
+            throw new ScopeViolationError(
+              "Fresh bootstrap requires its Namespace, work and attributable audit.",
+            );
         }
+        if (turn !== undefined) await turn.phase!.prepareCommit();
+        if (gateway !== undefined) {
+          gateway.phase!.closeAdmissions();
+          await gateway.phase!.drainAccepted();
+        }
+        if (credential !== undefined) {
+          credential.phase.closeAdmissions();
+          await credential.phase.drainAccepted();
+          await credential.phase.runFinalization(credential.prepareCommit);
+          await credential.phase.drainAccepted();
+        }
+        context.profileEnrollmentClosed = true;
+        while (context.profileEnrollments.size)
+          await Promise.allSettled([...context.profileEnrollments]);
+        lifecyclePhase.closeAdmissions();
+        await context?.protectedProfile?.finish();
+        await lifetime.finish();
+        await lifecyclePhase.finish();
+        await authorityGuard.finish();
+        await journalGuard.finish();
+        await profilePhase.guard.finish();
+        if (expired || options?.signal.aborted) throw abortFailure();
+        context?.protectedProfile?.assertCurrent();
+        profilePhase.guard.assertCurrent();
+        if (gateway !== undefined) {
+          if (gateway.version === 2) gateway.finalized = gateway.phase!.finalize();
+          else gateway.finalized = gateway.phase!.finalize();
+          if (gateway.finalized.kind === "rollback") {
+            await raw.query("ROLLBACK");
+            started = false;
+            return result;
+          }
+        }
+        credential?.assertCommitReady();
+        credential?.phase.assertCommitReady();
+        // All asynchronous drains precede the final synchronous Gateway fence.
+        // No awaited work may intervene between this marker and the raw COMMIT.
+        gateway?.phase?.markCommitDispatched();
+        turn?.phase?.markCommitDispatched();
+        if (fresh?.failed) throw fresh.failure;
+      } catch (error) {
+        if (fresh !== undefined) this.captureFreshFailure(fresh, error, "completion-check");
+        throw error;
       }
-      credential?.assertCommitReady();
-      credential?.phase.assertCommitReady();
-      // All asynchronous drains precede the final synchronous Gateway fence.
-      // No awaited work may intervene between this marker and the raw COMMIT.
-      gateway?.phase?.markCommitDispatched();
-      turn?.phase?.markCommitDispatched();
-      if (fresh?.failed) throw fresh.failure;
       commitDisposition = "sent";
       if (fresh !== undefined) fresh.disposition = "sent";
       if (turn !== undefined) turn.sent = true;
@@ -4348,6 +4560,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       try {
         acknowledgement = await raw.query("COMMIT");
       } catch (error) {
+        if (fresh !== undefined) this.captureFreshFailure(fresh, error, "commit", true);
         establishedNoCommit = commitRejectionEstablishesNoCommit(error);
         throw error;
       }
@@ -4382,6 +4595,11 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (!fresh.failed) {
           fresh.failed = true;
           fresh.failure = error;
+          this.captureFreshFailure(
+            fresh,
+            error,
+            commitDisposition === "not-sent" ? "bootstrap-callback" : "commit",
+          );
         }
         while (fresh.pending.size) await Promise.allSettled([...fresh.pending]);
       }
@@ -4543,6 +4761,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         }
       }
       if (cleanupFailed && !primaryFailure) {
+        if (fresh !== undefined)
+          this.captureFreshFailure(fresh, cleanupFailure, "terminal-cleanup");
         const possibleCommit =
           !readOnly && commitDisposition !== "not-sent" && !establishedNoCommit;
         throw possibleCommit

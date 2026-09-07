@@ -6,7 +6,11 @@ import {
   PostgresPlatformState,
   PostgresCommitOutcomeUnknownError,
 } from "../../packages/occ/src/state/postgres-state.ts";
-import { ScopeViolationError } from "../../packages/occ/src/errors.ts";
+import {
+  ScopeViolationError,
+  ResourceConflictError,
+  DependencyUnavailableError,
+} from "../../packages/occ/src/errors.ts";
 import { OpenClawController } from "../../packages/occ/src/index.ts";
 import { createBootstrapAdministratorSeed, NativeIAMDriver } from "../../packages/iam/src/index.ts";
 import {
@@ -520,4 +524,325 @@ test("aggregate registers one original account security table with canonical par
   assert.ok(parents.includes(user));
   assert.ok(parents.includes(account));
   assert.equal(getTableConfig(gatewayStartupHeads).name, "gateway_startup_heads");
+});
+
+async function failedFinalization(p, reservation, original, work = () => admitted(p, original)) {
+  let failure;
+  await assert.rejects(
+    p.state.finalizeFreshInstallationV1(reservation, original, work),
+    (error) => {
+      failure = error;
+      return true;
+    },
+  );
+  return { failure, receipt: p.state.freshBootstrapFailureReceiptV1(failure) };
+}
+function expectedReceipt(
+  stage,
+  sqlstate = null,
+  commitDisposition = "not-sent",
+  establishedNoCommit = false,
+) {
+  return {
+    schema: "fresh-bootstrap-failure-v1",
+    stage,
+    sqlstate,
+    commitDisposition,
+    establishedNoCommit,
+  };
+}
+
+// These driver rejections exercise the real owner and its diagnostic boundary.
+// The controlled peer still does not emulate PostgreSQL privilege enforcement.
+for (const stage of ["installation-lock", "iam-writer-lock"])
+  test(`diagnostic distinguishes ${stage} denial before later work`, async () => {
+    const failure = Object.assign(new Error("private driver detail must stay private"), {
+      code: "42501",
+    });
+    const { p, reservation, original } = await reserved({
+      query: ({ number, sql }) => {
+        if (
+          number === 2 &&
+          (stage === "installation-lock"
+            ? sql.includes("FROM occ.installation") && sql.endsWith("FOR SHARE")
+            : sql.startsWith("LOCK TABLE"))
+        )
+          throw failure;
+      },
+    });
+    const observed = await failedFinalization(p, reservation, original);
+    assert.equal(observed.failure, failure);
+    assert.deepEqual(observed.receipt, expectedReceipt(stage, "42501"));
+    assert.ok(Object.isFrozen(observed.receipt));
+    assert.equal(JSON.stringify(observed.receipt).includes(failure.message), false);
+    assert.deepEqual(p.db.iam_identities, []);
+    assert.deepEqual(p.db.namespaces, []);
+    const calls = p.calls.filter((call) => call.number === 2);
+    assert.equal(
+      calls.some((call) => call.sql.includes("AS retained_count")),
+      false,
+    );
+    if (stage === "installation-lock")
+      assert.equal(
+        calls.some((call) => call.sql.startsWith("LOCK TABLE")),
+        false,
+      );
+    assert.equal(calls.filter((call) => call.sql === "ROLLBACK").length, 1);
+    assert.equal(calls.filter((call) => call.sql === "RELEASE").length, 1);
+    assert.equal(peer().state.freshBootstrapFailureReceiptV1(failure), undefined);
+    assert.equal(p.state.freshBootstrapFailureReceiptV1({ ...failure }), undefined);
+  });
+
+for (const stage of ["installation-match", "iam-empty-check"])
+  test(`diagnostic ${stage} is a state refusal without a SQLSTATE`, async () => {
+    const { p, reservation, original } = await reserved();
+    if (stage === "installation-match") p.db.installation[0].row_version = "102";
+    else p.db.iam_roles.push({ id: "retained-role" });
+    const observed = await failedFinalization(p, reservation, original);
+    assert.ok(observed.failure instanceof ScopeViolationError);
+    assert.deepEqual(observed.receipt, expectedReceipt(stage));
+    assert.deepEqual(p.db.iam_identities, []);
+    assert.deepEqual(p.db.namespaces, []);
+  });
+
+test("diagnostic retains allowlisted seed rejection before the original error translation", async () => {
+  const failure = Object.assign(new Error("duplicate private seed row"), { code: "23505" });
+  const { p, reservation, original } = await reserved({
+    query: ({ number, sql }) => {
+      if (number === 2 && sql.startsWith("INSERT INTO occ.iam_roles")) throw failure;
+    },
+  });
+  const observed = await failedFinalization(p, reservation, original);
+  assert.ok(observed.failure instanceof ResourceConflictError);
+  assert.notEqual(observed.failure, failure);
+  assert.deepEqual(observed.receipt, expectedReceipt("iam-seed-write", "23505"));
+  assert.equal(p.state.freshBootstrapFailureReceiptV1(failure), undefined);
+  assert.deepEqual(p.db.iam_identities, []);
+});
+
+for (const kind of ["unlisted", "inherited", "accessor", "descriptor-trap", "non-string"])
+  test(`diagnostic refuses ${kind} SQLSTATE data without expanding or masking failure`, async () => {
+    let invoked = 0;
+    let failure;
+    if (kind === "unlisted") failure = { code: "private-arbitrary-code" };
+    if (kind === "inherited") failure = Object.create({ code: "42501" });
+    if (kind === "accessor")
+      failure = Object.defineProperty({}, "code", {
+        get() {
+          invoked++;
+          throw new Error("code getter must not run");
+        },
+      });
+    if (kind === "descriptor-trap")
+      failure = new Proxy(
+        {},
+        {
+          getOwnPropertyDescriptor() {
+            throw new Error("descriptor refused");
+          },
+        },
+      );
+    if (kind === "non-string")
+      failure = {
+        code: {
+          toString() {
+            invoked++;
+            throw new Error("coercion must not run");
+          },
+        },
+      };
+    // Non-Error rejection preserves the original fixed persistence translation,
+    // which itself does not inspect code; only diagnostics see its descriptor.
+    const { p, reservation, original } = await reserved({
+      query: ({ number, sql }) => {
+        if (number === 2 && sql.startsWith("LOCK TABLE")) throw failure;
+      },
+    });
+    const observed = await failedFinalization(p, reservation, original);
+    assert.ok(observed.failure instanceof DependencyUnavailableError);
+    assert.deepEqual(observed.receipt, expectedReceipt("iam-writer-lock"));
+    assert.equal(invoked, 0);
+  });
+
+test("diagnostic callback lookalike code is not database evidence", async () => {
+  const failure = Object.assign(new Error("caller refusal"), { code: "42501" });
+  const { p, reservation, original } = await reserved();
+  const observed = await failedFinalization(p, reservation, original, () =>
+    admitted(p, original, {
+      extra: () => {
+        throw failure;
+      },
+    }),
+  );
+  assert.equal(observed.failure, failure);
+  assert.deepEqual(observed.receipt, expectedReceipt("bootstrap-callback"));
+});
+
+test("diagnostic descriptor reentry cannot overwrite the original owner's first failure", async () => {
+  let p,
+    original,
+    first,
+    descriptorCalls = 0;
+  const rejection = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor() {
+        descriptorCalls++;
+        // This is a real forbidden operation on the still-original COMMIT owner.
+        // Its synchronous rejection is caught here but must remain the first latch.
+        try {
+          p.state.setBootstrapNativeIAM(original);
+        } catch (error) {
+          first = error;
+        }
+        return { configurable: true, enumerable: true, writable: true, value: "08006" };
+      },
+    },
+  );
+  const setup = await reserved({
+    query: ({ number, sql }) => {
+      if (number === 2 && sql === "COMMIT") throw rejection;
+    },
+  });
+  p = setup.p;
+  original = setup.original;
+  const observed = await failedFinalization(p, setup.reservation, original);
+  assert.equal(descriptorCalls, 1);
+  assert.ok(first instanceof ScopeViolationError);
+  assert.ok(observed.failure instanceof PostgresCommitOutcomeUnknownError);
+  assert.deepEqual(observed.receipt, expectedReceipt("bootstrap-callback", null, "sent"));
+  assert.equal(p.state.freshBootstrapFailureReceiptV1(first), undefined);
+  assert.deepEqual(p.db.namespaces, []);
+});
+
+test("diagnostic keeps the first query failure across rollback and release failures", async () => {
+  const first = Object.assign(new Error("first rejection"), { code: "42501" });
+  const secondary = Object.assign(new Error("secondary cleanup rejection"), { code: "57014" });
+  const { p, reservation, original } = await reserved({
+    failure: secondary,
+    releaseFailure: 2,
+    query: ({ number, sql }) => {
+      if (number === 2 && sql.startsWith("LOCK TABLE")) throw first;
+      if (number === 2 && sql === "ROLLBACK") throw secondary;
+    },
+  });
+  const observed = await failedFinalization(p, reservation, original);
+  assert.equal(observed.failure, first);
+  assert.deepEqual(observed.receipt, expectedReceipt("iam-writer-lock", "42501"));
+  assert.equal(p.state.freshBootstrapFailureReceiptV1(secondary), undefined);
+});
+
+test("diagnostic late ignored SQL rejection cannot overwrite earlier retained refusal", async () => {
+  const entered = deferred(),
+    resume = deferred();
+  const late = Object.assign(new Error("late database rejection"), { code: "42501" });
+  const { p, reservation, original } = await reserved({
+    query: async ({ sql, values }) => {
+      if (sql.startsWith("INSERT INTO occ.audit_events") && values[0] === "aud-late-diagnostic") {
+        entered.resolve();
+        await resume.promise;
+        throw late;
+      }
+    },
+  });
+  let earlier;
+  const observed = await failedFinalization(p, reservation, original, () =>
+    admitted(p, original, {
+      extra: async (unit) => {
+        const ignored = unit.audit.append({ ...audit(original), id: "aud-late-diagnostic" });
+        void ignored.catch(() => {});
+        await entered.promise;
+        await unit.audit.append({ ...audit(original), actorId: "wrong-actor" }).catch((error) => {
+          earlier = error;
+        });
+        resume.resolve();
+      },
+    }),
+  );
+  assert.equal(observed.failure, earlier);
+  assert.deepEqual(observed.receipt, expectedReceipt("bootstrap-callback"));
+  assert.deepEqual(p.db.audit_events, []);
+});
+
+for (const mode of ["commitUnknown", "releaseFailure", "releaseEvent", "afterAck"])
+  test(`diagnostic ${mode} preserves original terminal COMMIT facts and unknown outcome`, async () => {
+    const failure = Object.assign(new Error(mode), { code: "08006" });
+    const { p, reservation, original } = await reserved({
+      failure,
+      ...(mode === "afterAck" ? {} : { [mode]: 2 }),
+      ...(mode === "releaseEvent" ? { releaseEventMicrotask: true } : {}),
+    });
+    const observed = await failedFinalization(p, reservation, original, async () => {
+      await admitted(p, original);
+      if (mode === "afterAck") throw failure;
+    });
+    assert.ok(observed.failure instanceof PostgresCommitOutcomeUnknownError);
+    const stage =
+      mode === "commitUnknown"
+        ? "commit"
+        : mode === "releaseFailure"
+          ? "terminal-cleanup"
+          : mode === "releaseEvent"
+            ? "transport"
+            : "bootstrap-callback";
+    assert.deepEqual(
+      observed.receipt,
+      expectedReceipt(
+        stage,
+        mode === "commitUnknown" ? "08006" : null,
+        mode === "commitUnknown" ? "sent" : "acknowledged",
+      ),
+    );
+    assert.equal(p.db.namespaces.length, 1);
+    assert.equal(p.calls.filter((call) => call.number === 2 && call.sql === "RELEASE").length, 1);
+    await assert.rejects(
+      p.state.finalizeFreshInstallationV1(reservation, original, () => admitted(p, original)),
+      ScopeViolationError,
+    );
+  });
+
+test("diagnostic definite COMMIT rejection preserves the existing no-commit decision", async () => {
+  const failure = Object.assign(new Error("serialization rejection"), { code: "40001" });
+  const { p, reservation, original } = await reserved({
+    query: ({ number, sql }) => {
+      if (number === 2 && sql === "COMMIT") throw failure;
+    },
+  });
+  const observed = await failedFinalization(p, reservation, original);
+  assert.equal(observed.failure, failure);
+  assert.deepEqual(observed.receipt, expectedReceipt("commit", "40001", "sent", true));
+  assert.deepEqual(p.db.namespaces, []);
+});
+
+test("diagnostic unavailable lookup and preflight refusal cannot create authority", async () => {
+  const { p, reservation, original } = await reserved();
+  for (const value of [undefined, null, 1, "42501", Symbol(), {}, new Error("foreign")])
+    assert.equal(p.state.freshBootstrapFailureReceiptV1(value), undefined);
+  const observed = await failedFinalization(p, { ...reservation }, original);
+  assert.ok(observed.failure instanceof ScopeViolationError);
+  assert.equal(observed.receipt, undefined);
+  await p.state.finalizeFreshInstallationV1(reservation, original, () => admitted(p, original));
+  assert.equal(p.checkouts, 2);
+  assert.equal(p.calls.filter((call) => call.sql === "COMMIT").length, 2);
+});
+
+test("diagnostic reused outward error is refused after a separate fresh database epoch", async () => {
+  const failure = Object.assign(new Error("reused driver error object"), { code: "42501" });
+  const p = peer({
+    query: ({ sql }) => {
+      if (sql.startsWith("LOCK TABLE")) throw failure;
+    },
+  });
+  const original = seed();
+  const first = await p.state.reserveFreshInstallationV1(installation);
+  assert.deepEqual(
+    (await failedFinalization(p, first, original)).receipt,
+    expectedReceipt("iam-writer-lock", "42501"),
+  );
+  // Model an external reset of the disposable database between operations. The
+  // same state still must obtain a new genuine reservation; no handle is forged.
+  p.db.installation.length = 0;
+  const second = await p.state.reserveFreshInstallationV1(installation);
+  assert.equal((await failedFinalization(p, second, original)).receipt, undefined);
+  assert.equal(p.state.freshBootstrapFailureReceiptV1(failure), undefined);
 });
