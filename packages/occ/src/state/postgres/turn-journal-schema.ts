@@ -222,7 +222,7 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
       admissionReceiptRef: text("admission_receipt_ref").notNull(),
       firstReceivedAt: timestamp("first_received_at", { withTimezone: true }).notNull(),
       reservation: jsonb("reservation").notNull(),
-      record: jsonb("record"),
+      record: jsonb("record").notNull(),
       version: bigint("version", { mode: "number" }).notNull().default(1),
     },
     (table): PgTableExtraConfigValue[] => [
@@ -256,8 +256,10 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
       boundedObject("turn_journal_attempts_reservation_value", table.reservation),
       check(
         "turn_journal_attempts_record",
-        sql`${table.record} IS NULL OR (jsonb_typeof(${table.record}) = 'object'
-      AND octet_length(${table.record}::text) BETWEEN 1 AND 65536 AND (${table.record}->>'version')::numeric = ${table.version})`,
+        sql`(jsonb_typeof(${table.record}) = 'object'
+      AND octet_length(${table.record}::text) BETWEEN 1 AND 65536
+      AND ${table.record}->'version' = to_jsonb(${table.version})
+      AND ${sql.identifier(schema.schemaName)}.turn_journal_phase_value_valid('attempt', ${table.record})) IS TRUE`,
       ),
       check(
         "turn_journal_attempts_reservation_identity",

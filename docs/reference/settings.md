@@ -384,7 +384,7 @@ dedicated role:
 docker compose -f compose.postgres.yaml up -d --wait
 
 export OCC_MIGRATION_DATABASE_URL=postgresql://occ_migrator:occ-migrator-local@127.0.0.1:55432/openclaw_enterprise
-node_modules/.bin/drizzle-kit migrate
+pnpm db:migrate
 ```
 
 Add the application connection URL to the required controller environment shown
@@ -419,16 +419,26 @@ deletes them, including the initial credential delivery copy.
 
 ### Migration environment
 
-| Variable                     | Required by                      | Behavior                                                                                                     |
-| ---------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `OCC_MIGRATION_DATABASE_URL` | Drizzle configuration and tools. | Must contain the dedicated `occ_migrator` connection URL. Drizzle commands fail when the variable is absent. |
+| Variable                     | Required by                                   | Behavior                                                                                                                      |
+| ---------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `OCC_MIGRATION_DATABASE_URL` | Migration entrypoints and Drizzle generation. | Must contain the dedicated `occ_migrator` connection URL. Migration and generation commands fail when the variable is absent. |
 
-[`drizzle.config.ts`](../../drizzle.config.ts) fixes the PostgreSQL dialect,
+`pnpm db:migrate` runs `node scripts/migrate-production.mjs --local` using the
+dedicated migration URL without loading production Installation configuration.
+`pnpm db:migrate:production` runs the same wrapper with production logging
+configuration. The isolated PostgreSQL runner uses the local command with its
+allocated migrator URL. All three invoke the same internal executor and use
+`drizzle.__drizzle_migrations` as the migration-history table. An uncertain
+COMMIT acknowledgement fails with `MIGRATION_COMMIT_UNKNOWN`; the command does
+not retry automatically.
+
+[`drizzle.config.ts`](../../drizzle.config.ts) configures schema generation with
+the PostgreSQL dialect,
 [`packages/occ/src/state/postgres-schema.ts`](../../packages/occ/src/state/postgres-schema.ts)
 as the relational schema, [`migrations/`](../../migrations) as the migration
-directory, the `occ` application schema, and
-`drizzle.__drizzle_migrations` as the migration-history table. `strict` and
-`verbose` are enabled. There are no environment overrides for these settings.
+directory, and the `occ` application schema. `strict` and `verbose` are enabled.
+There are no environment overrides for these settings. Use `pnpm db:generate`
+to generate migration files and `pnpm db:migrate` to apply the reviewed catalog.
 
 ### PostgreSQL test environment
 

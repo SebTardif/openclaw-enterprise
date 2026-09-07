@@ -5,6 +5,7 @@ import pg from "pg";
 import { runtimeCommitAckProxy } from "../fixtures/postgres-runtime-assignment-commit-ack-fault.mjs";
 import {
   changedIncoming,
+  commonAttemptRecord,
   deferred,
   eventLookup,
   incomingLookup,
@@ -141,8 +142,11 @@ test(
             },
             outcome: "success",
           });
-          // The accepted definition has no honest predispatch binding carrier yet;
-          // inspect the canonical reservation row without inventing dispatch proof.
+          const common = await unit.turnJournal.findAttempt(v.attempt, h.call);
+          assert.equal(common.kind, "found");
+          assert.deepEqual(plain(common.record), commonAttemptRecord(v));
+          // Common readback exists inside the original transaction; another
+          // client must still see no ownership before the real outer COMMIT.
           const canonical = await h.state.queryInTransaction(
             unit,
             "SELECT count(*)::int AS count FROM occ.turn_journal_attempts WHERE agent_id=$1",
@@ -274,6 +278,20 @@ test(
         const peer = journalHarness(peerPool, { provenance: h.provenance });
         const v = journalValues(await seedJournalOwner(h.state));
         await admit(h, v);
+        let prematureStarts = 0;
+        const refused = await h.store.consumeAndInitiate(
+          h.issue("consumption", { operation: v.consumption, binding: v.binding }),
+          async () => {
+            prematureStarts++;
+          },
+          h.call,
+        );
+        assert.deepEqual(refused, { kind: "conflict" });
+        assert.equal(prematureStarts, 0);
+        assert.deepEqual(
+          plain((await h.read((j) => j.findAttempt(v.attempt, h.call))).record),
+          commonAttemptRecord(v),
+        );
         await dispatch(h, v);
         const handle = h.issue("consumption", { operation: v.consumption, binding: v.binding });
         let starts = 0;
@@ -406,6 +424,160 @@ test(
     );
 
     await t.test(
+      "cancelled common publication and separate release roll back with their original owner",
+      async () => {
+        const h = journalHarness(pool);
+        const v = journalValues(await seedJournalOwner(h.state));
+        await admit(h, v);
+        const release = { ...v.release, expectedAttemptVersion: 2 };
+        const rolledBack = await h.write(async (j) => {
+          assert.equal(
+            (await j.commitCancellation(h.issue("cancellation", v.cancellation), h.call)).outcome,
+            "cancelled-before-dispatch",
+          );
+          assert.equal((await j.findAttempt(v.attempt, h.call)).record.version, 2);
+          assert.equal(
+            (await j.releaseReservation(h.issue("release", release), h.call)).kind,
+            "released",
+          );
+          throw new Error("abort cancellation and its separate release");
+        });
+        assert.equal(rolledBack.kind, "unavailable");
+        assert.deepEqual(
+          plain((await h.read((j) => j.findAttempt(v.attempt, h.call))).record),
+          commonAttemptRecord(v),
+        );
+        assert.equal(
+          (await h.read((j) => j.findCancellation(v.cancellation, h.call))).kind,
+          "absent",
+        );
+        assert.equal((await h.read((j) => j.findRelease(release, h.call))).kind, "absent");
+        assert.deepEqual(
+          (
+            await pool.query(
+              "SELECT reservation_ref FROM occ.turn_journal_reservations WHERE agent_id=$1",
+              [v.context.agentRef],
+            )
+          ).rows.map((row) => row.reservation_ref),
+          [v.attempt.reservationRef],
+        );
+
+        for (const unawaited of [false, true]) {
+          let cancellation;
+          const result = await h.write(async (j) => {
+            cancellation = j.commitCancellation(h.issue("cancellation", v.cancellation), h.call);
+            if (!unawaited) assert.equal((await cancellation).kind, "recorded");
+            void cancellation.catch(() => {});
+            // The original guard must drain the accepted cancellation and retain
+            // a subsequent rejection even when callback code observes it.
+            const rejected = j.allocateCheckpoint(
+              { ...v.allocation, checkpointId: "invalid\ncheckpoint" },
+              h.call,
+            );
+            if (unawaited) void rejected.catch(() => {});
+            else await rejected.catch(() => {});
+          });
+          assert.equal(result.kind, "unavailable");
+          await cancellation.catch(() => {});
+          assert.deepEqual(
+            plain((await h.read((j) => j.findAttempt(v.attempt, h.call))).record),
+            commonAttemptRecord(v),
+          );
+          assert.equal(
+            (await h.read((j) => j.findCancellation(v.cancellation, h.call))).kind,
+            "absent",
+          );
+        }
+      },
+    );
+
+    await t.test(
+      "lost cancellation and release acknowledgements recover exact common state without initiation",
+      async () => {
+        const h = journalHarness(pool);
+        const v = journalValues(await seedJournalOwner(h.state));
+        await admit(h, v);
+        const release = { ...v.release, expectedAttemptVersion: 2 };
+        for (const kind of ["cancellation", "release"]) {
+          const proxy = await runtimeCommitAckProxy(databaseUrl);
+          const faultPool = new pg.Pool({
+            connectionString: proxy.url,
+            max: 2,
+            connectionTimeoutMillis: 250,
+          });
+          faultPool.on("error", () => {});
+          try {
+            const fault = journalHarness(faultPool, { provenance: h.provenance });
+            const transactionRef = ref(`${kind}-unknown`);
+            proxy.arm();
+            const result = await fault.store.transact(
+              transactionRef,
+              (j) =>
+                kind === "cancellation"
+                  ? j.commitCancellation(fault.issue("cancellation", v.cancellation), fault.call)
+                  : j.releaseReservation(fault.issue("release", release), fault.call),
+              fault.call,
+            );
+            assert.deepEqual(result, { kind: "commit-unknown", transactionRef });
+            assert.equal(proxy.observedCommit, true);
+          } finally {
+            await faultPool.end();
+            await proxy.close();
+          }
+          // Read only after the original unknown command settled and unwound.
+          const current = (await h.read((j) => j.findAttempt(v.attempt, h.call))).record;
+          assert.deepEqual(plain(current), {
+            ...commonAttemptRecord(v),
+            version: 2,
+            outcome: {
+              kind: "cancelled",
+              stage: "before-dispatch",
+              evidenceRef: v.cancellation.operationRef,
+            },
+          });
+          const cancellation = await h.read((j) => j.findCancellation(v.cancellation, h.call));
+          assert.equal(cancellation.kind, "found");
+          assert.deepEqual(plain(cancellation.operation), v.cancellation);
+          const held = (
+            await pool.query(
+              "SELECT count(*)::int AS count FROM occ.turn_journal_reservations WHERE agent_id=$1",
+              [v.context.agentRef],
+            )
+          ).rows[0].count;
+          assert.equal(held, kind === "cancellation" ? 1 : 0);
+          if (kind === "release")
+            assert.equal((await h.read((j) => j.findRelease(release, h.call))).kind, "released");
+        }
+        let starts = 0;
+        assert.deepEqual(
+          await h.store.consumeAndInitiate(
+            h.issue("consumption", { operation: v.consumption, binding: v.binding }),
+            async () => {
+              starts++;
+            },
+            h.call,
+          ),
+          { kind: "conflict" },
+        );
+        assert.equal(starts, 0);
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.commitCancellation(h.issue("cancellation", v.cancellation), h.call),
+            ),
+          ).kind,
+          "existing",
+        );
+        assert.equal(
+          valueOf(await h.write((j) => j.releaseReservation(h.issue("release", release), h.call)))
+            .kind,
+          "existing",
+        );
+        assert.equal((await h.read((j) => j.findAttempt(v.attempt, h.call))).record.version, 2);
+      },
+    );
+
+    await t.test(
       "real lost COMMIT acknowledgement retains admission link and suppresses consumption initiation",
       async () => {
         const h = journalHarness(pool);
@@ -434,6 +606,9 @@ test(
             (await h.read((j) => j.findIncomingLink(incomingLookup(v.identity), h.call))).kind,
             "found",
           );
+          const recoveredCommon = await h.read((j) => j.findAttempt(v.attempt, h.call));
+          assert.equal(recoveredCommon.kind, "found");
+          assert.deepEqual(plain(recoveredCommon.record), commonAttemptRecord(v));
         } finally {
           await faultPool.end();
           await admissionProxy.close();

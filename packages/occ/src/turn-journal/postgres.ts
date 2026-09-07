@@ -10,7 +10,9 @@ import {
   TURN_JOURNAL_LIMITS_V1,
   classifyJournalAdmissionV1,
   digestJournalAdmissionIdentityV1,
+  journalCancellationBeforeDispatchMatchesV1,
   journalCompletionMatchesV1,
+  journalDispatchIntentMatchesV1,
   journalOutcomeTransitionAllowedV1,
   journalReleaseMatchesV1,
   parseTurnJournalV1,
@@ -40,7 +42,6 @@ import {
   type ExactDeliveryOperationV1,
   type ExactDeliveryOutcomeV1,
   type DeliveryStateV1,
-  type ExactCancellationOperationV1,
   type ExactOutcomeOperationV1,
   type JournalReleaseObservationV1,
 } from "@openclaw-enterprise/contracts/turn-journal-v1";
@@ -289,7 +290,7 @@ export function createPostgresTurnJournal(
   const contextUsed = async (key: ContextKeyV1) =>
     (
       await query(
-        `SELECT 1 FROM occ.turn_journal_attempts WHERE ${contextWhere} AND record IS NOT NULL LIMIT 1`,
+        `SELECT 1 FROM occ.turn_journal_attempts WHERE ${contextWhere} AND record->>'phase' IS DISTINCT FROM 'admitted-undispatched' LIMIT 1`,
         contextValues(key),
       )
     ).length > 0;
@@ -349,7 +350,7 @@ export function createPostgresTurnJournal(
     newAttempt: boolean,
   ) => {
     const [r] = await query(
-      "SELECT (SELECT count(*) FROM occ.turn_journal_owners WHERE installation_id=$1) AS owners,(SELECT count(*) FROM occ.turn_journal_incoming_links WHERE installation_id=$1) AS links,(SELECT count(*) FROM occ.turn_journal_attempts WHERE installation_id=$1) AS attempts,(SELECT count(*) FROM occ.turn_journal_attempts WHERE installation_id=$1 AND record IS NULL) AS pending",
+      "SELECT (SELECT count(*) FROM occ.turn_journal_owners WHERE installation_id=$1) AS owners,(SELECT count(*) FROM occ.turn_journal_incoming_links WHERE installation_id=$1) AS links,(SELECT count(*) FROM occ.turn_journal_attempts WHERE installation_id=$1) AS attempts,(SELECT count(*) FROM occ.turn_journal_attempts a JOIN occ.turn_journal_reservations r USING (installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref) WHERE a.installation_id=$1 AND a.record->>'phase'='admitted-undispatched') AS pending",
       [installation],
     );
     return (
@@ -512,8 +513,7 @@ export function createPostgresTurnJournal(
           `SELECT * FROM occ.turn_journal_attempts WHERE ${attemptWhere}`,
           attemptValues(attempt),
         );
-        const record = rows[0] && parseAttemptRow(rows[0]);
-        return record ? ({ kind: "found", record } as const) : rows[0] ? unavailable : absent;
+        return rows[0] ? ({ kind: "found", record: parseAttemptRow(rows[0]) } as const) : absent;
       });
     },
     async readHead(input, call) {
@@ -566,12 +566,9 @@ export function createPostgresTurnJournal(
       const operation = parseTurnJournalV1("cancellation", input);
       return read("findCancellation", operation, call, async () => {
         const op = await getOperation(operation.attempt, "cancellation", operation.operationRef);
-        if (!op || !sameJournalValue(op.request, operation)) return absent;
-        const record = op.record as {
-          operation: ExactCancellationOperationV1;
-          outcome: "requested" | "cancelled-before-dispatch";
-        };
-        return { kind: "found", ...record } as const;
+        if (!op || op.operationKind !== "cancellation" || !sameJournalValue(op.request, operation))
+          return absent;
+        return { kind: "found", ...op.record } as const;
       });
     },
     async findRelease(input, call) {
@@ -642,6 +639,12 @@ export function createPostgresTurnJournal(
           const identity = parseTurnJournalV1("admissionIdentity", observation.identity);
           const attempt = parseCompletedContextV1("exactAttempt", observation.attempt);
           const expectedHead = parseTurnJournalV1("head", observation.expectedHead);
+          const admittedBinding = parseTurnJournalV1("commonAttemptBinding", {
+            attempt,
+            identity,
+            reservation: observation.reservation,
+            expectedHead,
+          });
           const firstReceivedAt = observation.envelope.receivedAt;
           const firstReceived = Date.parse(firstReceivedAt);
           if (
@@ -658,6 +661,7 @@ export function createPostgresTurnJournal(
             !sameJournalValue(observation.identity, identity) ||
             !sameJournalValue(observation.attempt, attempt) ||
             !sameJournalValue(observation.expectedHead, expectedHead) ||
+            !sameJournalValue(observation.reservation, admittedBinding.reservation) ||
             observation.envelope.receivedAt !== firstReceivedAt
           )
             return denied;
@@ -777,6 +781,7 @@ export function createPostgresTurnJournal(
             !sameJournalValue(observation.identity, identity) ||
             !sameJournalValue(observation.attempt, attempt) ||
             !sameJournalValue(observation.expectedHead, expectedHead) ||
+            !sameJournalValue(observation.reservation, admittedBinding.reservation) ||
             !Number.isFinite(firstReceived) ||
             observation.envelope.receivedAt !== firstReceivedAt ||
             firstReceived > Date.now() ||
@@ -819,16 +824,22 @@ export function createPostgresTurnJournal(
                 "INSERT INTO occ.turn_journal_heads (installation_id,namespace_id,agent_id,conversation_ref,record,checkpoint) VALUES ($1,$2,$3,$4,$5,NULL)",
                 [...contextValues(attempt), JSON.stringify(expectedHead)],
               );
-            // TODO: expose the admitted phase when the journal contract defines a
-            // record that does not require not-yet-issued dispatch authority.
+            const admitted = parseTurnJournalV1("attempt", {
+              phase: "admitted-undispatched",
+              binding: admittedBinding,
+              version: 1,
+              consumption: null,
+              outcome: { kind: "accepted-undispatched" },
+            });
             await query(
-              "INSERT INTO occ.turn_journal_attempts (installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref,channel_installation_id,admission_receipt_ref,reservation,first_received_at,record,version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,1)",
+              "INSERT INTO occ.turn_journal_attempts (installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref,channel_installation_id,admission_receipt_ref,reservation,first_received_at,record,version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1)",
               [
                 ...attemptValues(attempt),
                 identity.locator.channelInstallationRef,
                 identity.receipt.receiptRef,
-                JSON.stringify(observation.reservation),
+                JSON.stringify(admittedBinding.reservation),
                 firstReceivedAt,
+                JSON.stringify(admitted),
               ],
             );
             await query(
@@ -1097,9 +1108,10 @@ export function createPostgresTurnJournal(
         mutate(call, async () => {
           const auth = await authorize("recordDispatchIntent", input, call);
           if (auth.kind !== "authorized") return auth;
-          let binding = await ports.evidence.inspectDispatch(input, checkedCall(call));
+          let observed = await ports.evidence.inspectDispatch(input, checkedCall(call));
           active(call);
-          if (failure(binding)) return binding;
+          if (failure(observed)) return observed;
+          const binding = parseTurnJournalV1("attemptBinding", observed);
           if (
             binding.attempt.installationRef !== auth.installation.id ||
             !(await agentLock(binding.attempt))
@@ -1107,14 +1119,32 @@ export function createPostgresTurnJournal(
             return denied;
           const row = await getAttempt(binding.attempt);
           if (!row) return conflict;
-          binding = await ports.evidence.inspectDispatch(input, checkedCall(call));
+          observed = await ports.evidence.inspectDispatch(input, checkedCall(call));
           active(call);
-          if (failure(binding)) return binding;
+          if (failure(observed)) return observed;
+          if (!sameJournalValue(parseTurnJournalV1("attemptBinding", observed), binding))
+            return denied;
+          const current = parseAttemptRow(row);
+          // Replays retain actual intent or later progress. Neither a common
+          // record nor early authority is an existing dispatch intent.
+          if (current.outcome.kind !== "accepted-undispatched") {
+            if (
+              "phase" in current ||
+              ("stage" in current.outcome && current.outcome.stage === "before-dispatch") ||
+              !sameJournalValue(current.binding, binding)
+            )
+              return conflict;
+            return parseTurnJournalResultV1("dispatchIntent", {
+              kind: "existing",
+              record: current,
+            });
+          }
+          if (current.version === Number.MAX_SAFE_INTEGER) return conflict;
           const result = parseTurnJournalResultV1("dispatchIntent", {
             kind: "recorded",
             record: {
               binding,
-              version: 2,
+              version: current.version + 1,
               consumption: null,
               outcome: {
                 kind: "dispatch-intent",
@@ -1124,20 +1154,8 @@ export function createPostgresTurnJournal(
           });
           if (result.kind !== "recorded")
             throw new DependencyUnavailableError("The dispatch intent result is unavailable.");
-          const existing = parseAttemptRow(row);
-          if (existing) {
-            if (
-              "phase" in existing ||
-              existing.outcome.kind === "accepted-undispatched" ||
-              ("stage" in existing.outcome && existing.outcome.stage === "before-dispatch") ||
-              !sameJournalValue(existing.binding, binding)
-            )
-              return conflict;
-            return parseTurnJournalResultV1("dispatchIntent", {
-              kind: "existing",
-              record: existing,
-            });
-          }
+          if (!journalDispatchIntentMatchesV1(current, result.record, current.version))
+            return conflict;
           const ownerRows = await query(
             "SELECT * FROM occ.turn_journal_owners WHERE installation_id=$1 AND channel_installation_id=$2 AND receipt_ref=$3",
             [auth.installation.id, row.channel_installation_id, row.admission_receipt_ref],
@@ -1201,6 +1219,7 @@ export function createPostgresTurnJournal(
             return denied;
           if (
             record.outcome.kind !== "dispatch-intent" ||
+            record.version === Number.MAX_SAFE_INTEGER ||
             Date.now() >= Date.parse(record.binding.expiresAt) ||
             !(await reservationHeld(operation.attempt))
           )
@@ -1439,8 +1458,6 @@ export function createPostgresTurnJournal(
               : conflict;
           const row = await getAttempt(operation.attempt);
           const current = row && parseAttemptRow(row);
-          // TODO: the admitted-phase record amendment enables this projection for
-          // predispatch failures without inventing dispatch authority.
           if (!current) return unavailable;
           observed = await ports.evidence.inspectOutcome(input, checkedCall(call));
           active(call);
@@ -1476,14 +1493,12 @@ export function createPostgresTurnJournal(
             operation.operationRef,
           );
           if (existing) {
-            if (!sameJournalValue(existing.request, operation)) return conflict;
-            return {
-              kind: "existing",
-              ...(existing.record as {
-                operation: ExactCancellationOperationV1;
-                outcome: "requested" | "cancelled-before-dispatch";
-              }),
-            };
+            if (
+              existing.operationKind !== "cancellation" ||
+              !sameJournalValue(existing.request, operation)
+            )
+              return conflict;
+            return { kind: "existing", ...existing.record };
           }
           const previousCancellation = await query(
             `SELECT 1 FROM occ.turn_journal_operations WHERE ${attemptWhere} AND operation_kind='cancellation'`,
@@ -1493,12 +1508,13 @@ export function createPostgresTurnJournal(
           const row = await getAttempt(operation.attempt);
           if (!row) return conflict;
           const current = parseAttemptRow(row);
-          if (
-            current?.outcome.kind === "completed" ||
-            (current && ["failed", "interrupted", "cancelled"].includes(current.outcome.kind))
-          )
+          if (["completed", "failed", "interrupted", "cancelled"].includes(current.outcome.kind))
             return { kind: "too-late" };
-          if (Number(row.version) !== operation.expectedAttemptVersion) return conflict;
+          if (
+            current.version !== operation.expectedAttemptVersion ||
+            current.version === Number.MAX_SAFE_INTEGER
+          )
+            return conflict;
           const owners = await query(
             "SELECT * FROM occ.turn_journal_owners WHERE installation_id=$1 AND channel_installation_id=$2 AND receipt_ref=$3",
             [auth.installation.id, row.channel_installation_id, row.admission_receipt_ref],
@@ -1507,6 +1523,10 @@ export function createPostgresTurnJournal(
           if (
             !owner ||
             !("identity" in owner) ||
+            owner.decision.kind !== "accepted" ||
+            !sameJournalValue(owner.decision.attempt, operation.attempt) ||
+            !sameJournalValue(owner.identity, current.binding.identity) ||
+            !sameJournalValue(owner.expectedHead, current.binding.expectedHead) ||
             operation.originalPrincipalRef !== owner.identity.principalRef
           )
             return denied;
@@ -1514,13 +1534,33 @@ export function createPostgresTurnJournal(
           active(call);
           if (failure(observed)) return observed;
           if (!sameJournalValue(observed, operation)) return denied;
-          const outcome = !current ? "cancelled-before-dispatch" : "requested";
+          const beforeDispatch = journalCancellationBeforeDispatchMatchesV1(current, operation);
+          // Before-dispatch uncertainty is not proof of accepted, unstarted
+          // work. Its original outcome owner must resolve it before cancellation.
+          if (
+            !beforeDispatch &&
+            ("phase" in current ||
+              ("stage" in current.outcome && current.outcome.stage === "before-dispatch"))
+          )
+            return conflict;
+          if (!(await reservationHeld(operation.attempt))) return { kind: "too-late" };
+          const outcome = beforeDispatch ? "cancelled-before-dispatch" : "requested";
+          const next = parseTurnJournalV1("attempt", {
+            ...current,
+            version: current.version + 1,
+            outcome: beforeDispatch
+              ? {
+                  kind: "cancelled",
+                  stage: "before-dispatch",
+                  evidenceRef: operation.operationRef,
+                }
+              : current.outcome,
+          });
           await putOperation(operation.attempt, "cancellation", operation.operationRef, operation, {
             operation,
             outcome,
           });
-          if (current)
-            await updateAttempt(operation.attempt, { ...current, version: current.version + 1 });
+          await updateAttempt(operation.attempt, next);
           active(call);
           return { kind: "recorded", operation, outcome };
         }),
@@ -1548,7 +1588,6 @@ export function createPostgresTurnJournal(
               : conflict;
           const row = await getAttempt(observation.attempt);
           const current = row && parseAttemptRow(row);
-          // TODO: use the accepted admitted-phase value after its contract amendment.
           if (!current) return { kind: "held" };
           observed = await ports.evidence.inspectRelease(input, checkedCall(call));
           active(call);

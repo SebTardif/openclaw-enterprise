@@ -1,0 +1,1551 @@
+{
+  "exports": [
+    "account",
+    "agentLifecycleAdmissions",
+    "agentRevisionRuntimeAdmissions",
+    "agentRevisions",
+    "agentRuntimeIntentHeads",
+    "agentRuntimeIntents",
+    "agents",
+    "apikey",
+    "auditEvents",
+    "auditExportOutbox",
+    "channelAgentBindings",
+    "channelHumanBindings",
+    "channelInstallations",
+    "configurations",
+    "controllerWork",
+    "credentialInventoryMintClaims",
+    "credentialInventoryOperations",
+    "credentialInventoryRecords",
+    "credentialInventoryRevocationClaims",
+    "credentialInventorySnapshots",
+    "iamAccessBindings",
+    "iamGroupMemberships",
+    "iamGroups",
+    "iamIdentities",
+    "iamRestrictions",
+    "iamRoles",
+    "installation",
+    "lifecycleCapabilities",
+    "namespaces",
+    "occSchema",
+    "runtimeAssignmentAllocations",
+    "runtimeAuthorityOperations",
+    "runtimeCleanupResponsibilities",
+    "runtimeCleanupResponsibilityAllocations",
+    "runtimePreparationOperations",
+    "runtimeServiceTrustRecords",
+    "secrets",
+    "serviceAccountDriverBindings",
+    "serviceAccounts",
+    "session",
+    "signInQuotaSlots",
+    "turnJournalAttempts",
+    "turnJournalDeliveries",
+    "turnJournalDeliveryAttempts",
+    "turnJournalHeads",
+    "turnJournalIncomingLinks",
+    "turnJournalKeys",
+    "turnJournalOperations",
+    "turnJournalOwners",
+    "turnJournalReservations",
+    "user",
+    "verification",
+    "workloadProfileCapacity",
+    "workloadProfileOperations"
+  ],
+  "schema": "occ",
+  "tables": {
+    "installation": {
+      "schema": "occ",
+      "name": "installation",
+      "columns": [
+        {
+          "property": "id",
+          "name": "id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": true,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "installation_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "name",
+          "name": "name",
+          "sqlType": "text COLLATE \"C\"",
+          "dataType": "custom",
+          "columnType": "PgCustomColumn",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "installation_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "createdAt",
+          "name": "created_at",
+          "sqlType": "timestamp with time zone",
+          "dataType": "date",
+          "columnType": "PgTimestamp",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "installation_created_at_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        }
+      ],
+      "primaryKeys": [],
+      "uniqueConstraints": [],
+      "checks": [
+        {
+          "name": "installation_id_format",
+          "value": {
+            "sql": "\"occ\".\"installation\".\"id\" ~ $1",
+            "params": ["^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
+          }
+        },
+        {
+          "name": "installation_name_length",
+          "value": {
+            "sql": "char_length(\"occ\".\"installation\".\"name\") BETWEEN 1 AND 200",
+            "params": []
+          }
+        },
+        {
+          "name": "installation_name_normalized",
+          "value": {
+            "sql": "\"occ\".\"installation\".\"name\" = btrim(\"occ\".\"installation\".\"name\") AND \"occ\".\"installation\".\"name\" !~ '[[:cntrl:]]'",
+            "params": []
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "sql": "true",
+              "params": []
+            }
+          ],
+          "method": "btree",
+          "name": "installation_one_row",
+          "only": false,
+          "unique": true
+        }
+      ],
+      "foreignKeys": [],
+      "policies": [],
+      "enableRLS": false
+    },
+    "namespaces": {
+      "schema": "occ",
+      "name": "namespaces",
+      "columns": [
+        {
+          "property": "id",
+          "name": "id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": true,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "namespaces_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "name",
+          "name": "name",
+          "sqlType": "text COLLATE \"C\"",
+          "dataType": "custom",
+          "columnType": "PgCustomColumn",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": true,
+          "uniqueName": "namespaces_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "existingNamespace",
+          "name": "existing_namespace",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "namespaces_existing_namespace_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "status",
+          "name": "status",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": true,
+          "default": "provisioning",
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "namespaces_status_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "createdAt",
+          "name": "created_at",
+          "sqlType": "timestamp with time zone",
+          "dataType": "date",
+          "columnType": "PgTimestamp",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "namespaces_created_at_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "deletedAt",
+          "name": "deleted_at",
+          "sqlType": "timestamp with time zone",
+          "dataType": "date",
+          "columnType": "PgTimestamp",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "namespaces_deleted_at_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        }
+      ],
+      "primaryKeys": [],
+      "uniqueConstraints": [],
+      "checks": [
+        {
+          "name": "namespaces_existing_namespace_valid",
+          "value": {
+            "sql": "\"occ\".\"namespaces\".\"existing_namespace\" IS NULL OR (\n        char_length(\"occ\".\"namespaces\".\"existing_namespace\") BETWEEN 1 AND 63\n        AND \"occ\".\"namespaces\".\"existing_namespace\" ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'\n      )",
+            "params": []
+          }
+        },
+        {
+          "name": "namespaces_id_format",
+          "value": {
+            "sql": "\"occ\".\"namespaces\".\"id\" ~ $1",
+            "params": ["^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
+          }
+        },
+        {
+          "name": "namespaces_name_length",
+          "value": {
+            "sql": "char_length(\"occ\".\"namespaces\".\"name\") BETWEEN 1 AND 200",
+            "params": []
+          }
+        },
+        {
+          "name": "namespaces_name_normalized",
+          "value": {
+            "sql": "\"occ\".\"namespaces\".\"name\" = btrim(\"occ\".\"namespaces\".\"name\") AND \"occ\".\"namespaces\".\"name\" !~ '[[:cntrl:]]'",
+            "params": []
+          }
+        },
+        {
+          "name": "namespaces_status_valid",
+          "value": {
+            "sql": "\"occ\".\"namespaces\".\"status\" IN ('provisioning', 'ready', 'failed', 'deleting')",
+            "params": []
+          }
+        },
+        {
+          "name": "namespaces_tombstone_valid",
+          "value": {
+            "sql": "\"occ\".\"namespaces\".\"deleted_at\" IS NULL OR (\"occ\".\"namespaces\".\"status\" = 'deleting' AND \"occ\".\"namespaces\".\"deleted_at\" >= \"occ\".\"namespaces\".\"created_at\")",
+            "params": []
+          }
+        }
+      ],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "indexConfig": {
+                "nulls": "last",
+                "order": "asc"
+              },
+              "keyAsName": false,
+              "name": "existing_namespace",
+              "type": "PgText"
+            }
+          ],
+          "method": "btree",
+          "name": "namespaces_existing_namespace_unique",
+          "only": false,
+          "unique": true,
+          "where": {
+            "sql": "\"occ\".\"namespaces\".\"existing_namespace\" IS NOT NULL AND \"occ\".\"namespaces\".\"deleted_at\" IS NULL",
+            "params": []
+          }
+        }
+      ],
+      "foreignKeys": [],
+      "policies": [],
+      "enableRLS": false
+    },
+    "configurations": {
+      "schema": "occ",
+      "name": "configurations",
+      "columns": [
+        {
+          "property": "id",
+          "name": "id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": true,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "namespaceId",
+          "name": "namespace_id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_namespace_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "kind",
+          "name": "kind",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_kind_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "generation",
+          "name": "generation",
+          "sqlType": "bigint",
+          "dataType": "number",
+          "columnType": "PgBigInt53",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_generation_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "secretBindings",
+          "name": "secret_bindings",
+          "sqlType": "jsonb",
+          "dataType": "json",
+          "columnType": "PgJsonb",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_secret_bindings_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "createdAt",
+          "name": "created_at",
+          "sqlType": "timestamp with time zone",
+          "dataType": "date",
+          "columnType": "PgTimestamp",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "configurations_created_at_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        }
+      ],
+      "primaryKeys": [],
+      "uniqueConstraints": [
+        {
+          "name": "configurations_namespace_id_id_unique",
+          "columns": ["namespace_id", "id"],
+          "nullsNotDistinct": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "configurations_generation_valid",
+          "value": {
+            "sql": "\"occ\".\"configurations\".\"generation\" BETWEEN 1 AND 9007199254740991",
+            "params": []
+          }
+        },
+        {
+          "name": "configurations_id_format",
+          "value": {
+            "sql": "\"occ\".\"configurations\".\"id\" ~ $1",
+            "params": ["^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
+          }
+        },
+        {
+          "name": "configurations_kind_valid",
+          "value": {
+            "sql": "\"occ\".\"configurations\".\"kind\" = 'agent'",
+            "params": []
+          }
+        },
+        {
+          "name": "configurations_secret_bindings_valid",
+          "value": {
+            "sql": "\"occ\".\"configurations\".\"secret_bindings\" IS NULL OR occ.secret_bindings_are_valid(\"occ\".\"configurations\".\"secret_bindings\", \"occ\".\"configurations\".\"namespace_id\")",
+            "params": []
+          }
+        }
+      ],
+      "indexes": [],
+      "foreignKeys": [
+        {
+          "name": "configurations_namespace_id_namespaces_id_fk",
+          "table": {
+            "schema": "occ",
+            "name": "configurations"
+          },
+          "columns": ["namespace_id"],
+          "foreignTable": {
+            "schema": "occ",
+            "name": "namespaces"
+          },
+          "foreignColumns": ["id"],
+          "onUpdate": "restrict",
+          "onDelete": "restrict"
+        }
+      ],
+      "policies": [],
+      "enableRLS": false
+    },
+    "secrets": {
+      "schema": "occ",
+      "name": "secrets",
+      "columns": [
+        {
+          "property": "id",
+          "name": "id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": true,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "namespaceId",
+          "name": "namespace_id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_namespace_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "name",
+          "name": "name",
+          "sqlType": "text COLLATE \"C\"",
+          "dataType": "custom",
+          "columnType": "PgCustomColumn",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "driverId",
+          "name": "driver_id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_driver_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "backendNamespaceName",
+          "name": "backend_namespace_name",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_backend_namespace_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "backendName",
+          "name": "backend_name",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_backend_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "backendKey",
+          "name": "backend_key",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_backend_key_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "backendUid",
+          "name": "backend_uid",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_backend_uid_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "createdAt",
+          "name": "created_at",
+          "sqlType": "timestamp with time zone",
+          "dataType": "date",
+          "columnType": "PgTimestamp",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "secrets_created_at_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        }
+      ],
+      "primaryKeys": [],
+      "uniqueConstraints": [
+        {
+          "name": "secrets_namespace_id_id_unique",
+          "columns": ["namespace_id", "id"],
+          "nullsNotDistinct": false
+        },
+        {
+          "name": "secrets_namespace_id_name_unique",
+          "columns": ["namespace_id", "name"],
+          "nullsNotDistinct": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "secrets_backend_key_valid",
+          "value": {
+            "sql": "char_length(\"occ\".\"secrets\".\"backend_key\") BETWEEN 1 AND 253\n        AND \"occ\".\"secrets\".\"backend_key\" ~ '^[-._a-zA-Z0-9]+$'\n        AND \"occ\".\"secrets\".\"backend_key\" NOT IN ('.', '..')",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_backend_name_valid",
+          "value": {
+            "sql": "char_length(\"occ\".\"secrets\".\"backend_name\") BETWEEN 1 AND 253\n        AND \"occ\".\"secrets\".\"backend_name\" ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_backend_namespace_name_valid",
+          "value": {
+            "sql": "char_length(\"occ\".\"secrets\".\"backend_namespace_name\") BETWEEN 1 AND 63\n        AND \"occ\".\"secrets\".\"backend_namespace_name\" ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_backend_uid_valid",
+          "value": {
+            "sql": "\"occ\".\"secrets\".\"backend_uid\" ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_driver_id_valid",
+          "value": {
+            "sql": "char_length(\"occ\".\"secrets\".\"driver_id\") BETWEEN 1 AND 200 AND \"occ\".\"secrets\".\"driver_id\" = btrim(\"occ\".\"secrets\".\"driver_id\")",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_id_format",
+          "value": {
+            "sql": "\"occ\".\"secrets\".\"id\" ~ $1",
+            "params": ["^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
+          }
+        },
+        {
+          "name": "secrets_name_length",
+          "value": {
+            "sql": "char_length(\"occ\".\"secrets\".\"name\") BETWEEN 1 AND 200",
+            "params": []
+          }
+        },
+        {
+          "name": "secrets_name_normalized",
+          "value": {
+            "sql": "\"occ\".\"secrets\".\"name\" = btrim(\"occ\".\"secrets\".\"name\") AND \"occ\".\"secrets\".\"name\" !~ '[[:cntrl:]]'",
+            "params": []
+          }
+        }
+      ],
+      "indexes": [],
+      "foreignKeys": [
+        {
+          "name": "secrets_namespace_id_namespaces_id_fk",
+          "table": {
+            "schema": "occ",
+            "name": "secrets"
+          },
+          "columns": ["namespace_id"],
+          "foreignTable": {
+            "schema": "occ",
+            "name": "namespaces"
+          },
+          "foreignColumns": ["id"],
+          "onUpdate": "restrict",
+          "onDelete": "restrict"
+        }
+      ],
+      "policies": [],
+      "enableRLS": false
+    },
+    "serviceAccounts": {
+      "schema": "occ",
+      "name": "service_accounts",
+      "columns": [
+        {
+          "property": "id",
+          "name": "id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": true,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "service_accounts_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "namespaceId",
+          "name": "namespace_id",
+          "sqlType": "text",
+          "dataType": "string",
+          "columnType": "PgText",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "service_accounts_namespace_id_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "name",
+          "name": "name",
+          "sqlType": "text COLLATE \"C\"",
+          "dataType": "custom",
+          "columnType": "PgCustomColumn",
+          "notNull": true,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "service_accounts_name_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "credential",
+          "name": "credential",
+          "sqlType": "jsonb",
+          "dataType": "json",
+          "columnType": "PgJsonb",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "service_accounts_credential_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        }
+      ],
+      "primaryKeys": [],
+      "uniqueConstraints": [
+        {
+          "name": "service_accounts_namespace_id_id_unique",
+          "columns": ["namespace_id", "id"],
+          "nullsNotDistinct": false
+        },
+        {
+          "name": "service_accounts_namespace_id_name_unique",
+          "columns": ["namespace_id", "name"],
+          "nullsNotDistinct": false
+        }
+      ],
+      "checks": [
+        {
+          "name": "service_accounts_credential_valid",
+          "value": {
+            "sql": "\"occ\".\"service_accounts\".\"credential\" IS NULL OR (\n        jsonb_typeof(\"occ\".\"service_accounts\".\"credential\") = 'object'\n        AND (\"occ\".\"service_accounts\".\"credential\" ?& ARRAY['kind', 'secretRef'])\n        AND (\"occ\".\"service_accounts\".\"credential\" - 'kind' - 'secretRef') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"service_accounts\".\"credential\"->'kind') = 'string'\n        AND (\"occ\".\"service_accounts\".\"credential\"->>'kind') IN ('api_key', 'oauth_access_token', 'access_token')\n        AND jsonb_typeof(\"occ\".\"service_accounts\".\"credential\"->'secretRef') = 'object'\n        AND ((\"occ\".\"service_accounts\".\"credential\"->'secretRef') ?& ARRAY['name', 'key'])\n        AND ((\"occ\".\"service_accounts\".\"credential\"->'secretRef') - 'name' - 'key') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"service_accounts\".\"credential\" #> '{secretRef,name}') = 'string'\n        AND char_length(\"occ\".\"service_accounts\".\"credential\" #>> '{secretRef,name}') BETWEEN 1 AND 253\n        AND (\"occ\".\"service_accounts\".\"credential\" #>> '{secretRef,name}') ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'\n        AND jsonb_typeof(\"occ\".\"service_accounts\".\"credential\" #> '{secretRef,key}') = 'string'\n        AND char_length(\"occ\".\"service_accounts\".\"credential\" #>> '{secretRef,key}') BETWEEN 1 AND 253\n        AND (\"occ\".\"service_accounts\".\"credential\" #>> '{secretRef,key}') ~ '^[-._a-zA-Z0-9]+$'\n        AND (\"occ\".\"service_accounts\".\"credential\" #>> '{secretRef,key}') NOT IN ('.', '..')\n      )",
+            "params": []
+          }
+        },
+        {
+          "name": "service_accounts_id_format",
+          "value": {
+            "sql": "\"occ\".\"service_accounts\".\"id\" ~ $1",
+            "params": ["^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"]
+          }
+        },
+        {
+          "name": "service_accounts_name_length",
+          "value": {
+            "sql": "char_length(\"occ\".\"service_accounts\".\"name\") BETWEEN 1 AND 200",
+            "params": []
+          }
+        },
+        {
+          "name": "service_accounts_name_normalized",
+          "value": {
+            "sql": "\"occ\".\"service_accounts\".\"name\" = btrim(\"occ\".\"service_accounts\".\"name\") AND \"occ\".\"service_accounts\".\"name\" !~ '[[:cntrl:]]'",
+            "params": []
+          }
+        }
+      ],
+      "indexes": [],
+      "foreignKeys": [
+        {
+          "name": "service_accounts_namespace_id_namespaces_id_fk",
+          "table": {
+            "schema": "occ",
+            "name": "service_accounts"
+          },
+          "columns": ["namespace_id"],
+          "foreignTable": {
+            "schema": "occ",
+            "name": "namespaces"
+          },
+          "foreignColumns": ["id"],
+          "onUpdate": "restrict",
+          "onDelete": "restrict"
+        }
+      ],
+      "policies": [],
+      "enableRLS": false
+    }
+  },
+  "inboundForeignKeys": [
+    {
+      "name": "lifecycle_admissions_installation_owner",
+      "table": {
+        "schema": "occ",
+        "name": "agent_lifecycle_admissions"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "agent_runtime_intents_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "agent_runtime_intents"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "agents_configuration_owner",
+      "table": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "columns": ["namespace_id", "configuration_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "configurations"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "agents_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "agents_service_account_owner",
+      "table": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "columns": ["namespace_id", "service_account_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "service_accounts"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "audit_export_outbox_installation_owner",
+      "table": {
+        "schema": "occ",
+        "name": "audit_export_outbox"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "channel_agent_bindings_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "channel_agent_bindings"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "channel_human_bindings_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "channel_human_bindings"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "channel_installations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "channel_installations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "configurations_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "configurations"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "controller_work_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "controller_work"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_mint_claims_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_mint_claims"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_operations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_operations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_records_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_records"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_revocation_claims_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_revocation_claims"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "credential_inventory_snapshots_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "credential_inventory_snapshots"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_access_bindings_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_access_bindings"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_group_memberships_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_group_memberships"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_groups_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_groups"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_identities_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_identities"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_restrictions_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_restrictions"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "iam_roles_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "iam_roles"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "lifecycle_capabilities_installation_owner",
+      "table": {
+        "schema": "occ",
+        "name": "lifecycle_capabilities"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "runtime_cleanup_responsibilities_installation_owner",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_cleanup_responsibilities"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "runtime_service_trust_records_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_service_trust_records"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "secrets_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "secrets"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "service_account_driver_bindings_account_owner",
+      "table": {
+        "schema": "occ",
+        "name": "service_account_driver_bindings"
+      },
+      "columns": ["namespace_id", "service_account_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "service_accounts"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "cascade"
+    },
+    {
+      "name": "service_accounts_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "service_accounts"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_attempts_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_attempts"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_deliveries_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_deliveries"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_delivery_history_installation",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_delivery_attempts"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_heads_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_heads"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_incoming_links_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_incoming_links"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_keys_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_keys"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_operations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_operations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_owners_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_owners"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_reservations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_reservations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "workload_profile_capacity_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "workload_profile_capacity"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "workload_profile_operations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "workload_profile_operations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "workload_profile_operations_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "workload_profile_operations"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    }
+  ]
+}

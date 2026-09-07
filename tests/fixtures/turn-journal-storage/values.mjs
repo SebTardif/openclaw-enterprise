@@ -17,6 +17,23 @@ const sdk = await import(
 );
 
 export const copy = (value) => structuredClone(value);
+// Expected common-phase data only: no dispatch, authority, expiry, consumption,
+// native start, or release evidence is created by this fixture projection.
+export function commonAttemptRecord(values) {
+  return {
+    phase: "admitted-undispatched",
+    binding: {
+      attempt: copy(values.attempt),
+      identity: copy(values.identity),
+      reservation: copy(values.reservation),
+      expectedHead: copy(values.head),
+    },
+    version: 1,
+    consumption: null,
+    outcome: { kind: "accepted-undispatched" },
+  };
+}
+
 export const ref = (prefix) => `${prefix}-${randomUUID()}`;
 export const digest = (value = randomUUID()) => createHash("sha256").update(value).digest("hex");
 export function deferred() {
@@ -350,6 +367,30 @@ export function changedIncoming(values, change) {
   next.rejected.decisionRef = ref("rejected-decision");
   next.rejected.auditIntentRef = ref("rejected-audit");
   return next;
+}
+
+// Ordinary data witnesses only. A legacy test can pass the rejected wrapper
+// made by its original changedIncoming constructor; no source/SDK copy or new
+// provenance handle is created by this matrix.
+export function journalScopeCompatibilityCases(
+  values,
+  rejected = changedIncoming(values, (incoming) => {
+    incoming.envelope.retryMetadata = {};
+  }).rejected,
+) {
+  return [
+    { name: "partial attempt", extra: { binding: {}, outcome: {}, consumption: null } },
+    { name: "partial head", extra: { kind: "new-context", head: { completionSequence: 0 } } },
+    {
+      name: "annotated head",
+      extra: { kind: "new-context", head: { ...copy(values.head), annotation: "benign" } },
+    },
+    {
+      name: "extended dates",
+      extra: { customAt: "+010000-01-01T00:00:00.000Z", earlierAt: "-000001-01-01T00:00:00.000Z" },
+    },
+    { name: "nested SDK rejection", extra: copy(rejected) },
+  ];
 }
 
 export function journalHarness(pool, options = {}) {

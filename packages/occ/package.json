@@ -51,7 +51,8 @@
     "./credential-inventory-v1/inventory": "./src/credential-inventory-v1/inventory.ts",
     "./credential-inventory-v1/ports": "./src/credential-inventory-v1/ports.ts",
     "./credential-inventory-v1/backend": "./src/credential-inventory-v1/backend.ts",
-    "./lifecycle/status-service-v1": "./src/lifecycle/status-service-v1.ts"
+    "./lifecycle/status-service-v1": "./src/lifecycle/status-service-v1.ts",
+    "./auth-persistence/postgres-auth-binding": "./src/auth-persistence/postgres-auth-binding.ts"
   },
   "types": "./src/index.ts",
   "files": [

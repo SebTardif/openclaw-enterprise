@@ -236,6 +236,7 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
                 if (state.kind !== "found") throw unavailable();
                 const record = parseTurnJournalV1("attempt", state.record);
                 if (
+                  "phase" in record ||
                   record.outcome.kind !== "consumed" ||
                   record.consumption === null ||
                   !isDeepStrictEqual(record.binding.attempt, retained.operation.attempt) ||

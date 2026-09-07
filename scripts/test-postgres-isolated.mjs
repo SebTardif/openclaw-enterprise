@@ -295,7 +295,7 @@ export async function runPilot(options, signal) {
       await phase(`migration:${entry.suite}`, async () => {
         const result = await runChild({
           label: `migration:${entry.suite}`,
-          args: ["node_modules/drizzle-kit/bin.cjs", "migrate"],
+          args: ["scripts/migrate-production.mjs", "--local"],
           env: childEnvironment(
             "OCC_MIGRATION_DATABASE_URL",
             connectionURL(config, "migrator", entry.name),

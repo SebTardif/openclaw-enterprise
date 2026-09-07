@@ -1,19 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
+import { channelEnvelopeSchemaV1 } from "openclaw/plugin-sdk/channel-inbound";
 import {
   changedIncoming,
+  commonAttemptRecord,
   copy,
   deferred,
   digest,
   eventLookup,
   incomingLookup,
   journalHarness,
+  journalScopeCompatibilityCases,
   journalValues,
   logicalLookup,
   ref,
   seedJournalOwner,
 } from "../fixtures/turn-journal-storage/values.mjs";
+import {
+  parseRejectedAdmissionV1,
+  parseTurnJournalResultV1,
+  parseTurnJournalV1,
+} from "../../packages/contracts/src/turn-journal-v1.ts";
 
 const databaseUrl = process.env.OCC_TEST_DATABASE_URL;
 const options = {
@@ -65,6 +73,16 @@ test(
         assert.equal(original.kind, "recorded");
         assert.equal(original.record.decision.kind, "accepted");
         assert.equal(original.duplicate, false);
+        const common = await h.read((j) => j.findAttempt(v.attempt, h.call));
+        assert.equal(common.kind, "found");
+        same(common.record, commonAttemptRecord(v));
+        const firstAttempt = (
+          await pool.query(
+            "SELECT version,record,first_received_at,reservation FROM occ.turn_journal_attempts WHERE agent_id=$1",
+            [v.context.agentRef],
+          )
+        ).rows[0];
+        assert.equal(firstAttempt.first_received_at.getTime(), Date.parse(v.envelope.receivedAt));
         same(
           (await h.read((j) => j.findAdmission(eventLookup(v), h.call))).record,
           original.record,
@@ -77,6 +95,16 @@ test(
         assert.equal(duplicate.kind, "recorded");
         same(duplicate.incomingLink, original.incomingLink);
         same(duplicate.record, original.record);
+        same((await h.read((j) => j.findAttempt(v.attempt, h.call))).record, common.record);
+        same(
+          (
+            await pool.query(
+              "SELECT version,record,first_received_at,reservation FROM occ.turn_journal_attempts WHERE agent_id=$1",
+              [v.context.agentRef],
+            )
+          ).rows[0],
+          firstAttempt,
+        );
         const twin = changedIncoming(v, (incoming) => {
           incoming.envelope.event.providerEventRef = ref("event-twin");
         });
@@ -164,6 +192,173 @@ test(
         "found",
       );
     });
+
+    await t.test(
+      "accepted scope extensions survive guarded admission, dispatch, consumption and terminal publication",
+      async () => {
+        const h = journalHarness(pool);
+        const run = (work) => {
+          const call = h.provenance.call();
+          return h.write((journal) => work(journal, call), call).then(valueOf);
+        };
+        for (let index = 0; index < 5; index++) {
+          const v = journalValues(await seedJournalOwner(h.state));
+          const { name, extra } = journalScopeCompatibilityCases(v)[index];
+          v.identity.workspace.scope = { ...v.identity.workspace.scope, extra: copy(extra) };
+          v.reservation.scope = { ...v.reservation.scope, extra: copy(extra) };
+          const before = copy(v);
+          parseTurnJournalV1("attempt", commonAttemptRecord(v));
+          if (name === "nested SDK rejection") {
+            const normalized = channelEnvelopeSchemaV1.safeParse(extra.envelope);
+            assert.equal(normalized.success, true);
+            assert.equal(Object.hasOwn(normalized.data, "retryMetadata"), false);
+            const retained = parseRejectedAdmissionV1(extra);
+            assert.equal(Object.hasOwn(retained.envelope, "retryMetadata"), true);
+            same(retained.envelope.retryMetadata, {});
+          }
+          const admission = await run((j, call) =>
+            j.admit(h.issue("admission", v.observation), call),
+          );
+          assert.equal(admission.record.decision.kind, "accepted", name);
+          const readCall = h.provenance.call();
+          same(
+            (await h.read((j) => j.findAttempt(v.attempt, readCall), readCall)).record,
+            commonAttemptRecord(v),
+          );
+          const projection =
+            "SELECT (record#>'{binding,identity,workspace,scope}')::text AS workspace_scope,(record#>'{binding,reservation,scope}')::text AS reservation_scope,reservation::text AS original_reservation FROM occ.turn_journal_attempts WHERE attempt_ref=$1";
+          const originalScopes = (await pool.query(projection, [v.attempt.attemptRef])).rows;
+          const intent = await run((j, call) =>
+            j.recordDispatchIntent(h.issue("dispatch", v.binding), call),
+          );
+          assert.equal(intent.kind, "recorded");
+          assert.equal(intent.record.version, 2);
+          assert.equal(
+            (await run((j, call) => j.recordDispatchIntent(h.issue("dispatch", v.binding), call)))
+              .kind,
+            "existing",
+          );
+          assert.equal(
+            (
+              await run((j, call) =>
+                j.consumeAttempt(
+                  h.issue("consumption", { operation: v.consumption, binding: v.binding }),
+                  call,
+                ),
+              )
+            ).kind,
+            "claim-pending",
+          );
+          const terminal = await run((j, call) =>
+            j.recordOutcome(h.issue("outcome", v.outcome), call),
+          );
+          assert.equal(terminal.kind, "recorded");
+          assert.equal(terminal.record.version, 4);
+          same(terminal.record.binding.identity.workspace.scope.extra, extra);
+          same(terminal.record.binding.reservation.scope.extra, extra);
+          assert.deepEqual(
+            (await pool.query(projection, [v.attempt.attemptRef])).rows,
+            originalScopes,
+          );
+          same(
+            (await run((j, call) => j.admit(h.issue("admission", v.observation), call))).record,
+            admission.record,
+          );
+          assert.equal(
+            (await run((j, call) => j.releaseReservation(h.issue("release", v.release), call)))
+              .kind,
+            "released",
+          );
+          same(v, before);
+        }
+      },
+    );
+
+    await t.test(
+      "actual SDK normalization leaves empty retry metadata retained in the rejected owner",
+      async () => {
+        const h = journalHarness(pool);
+        const v = changedIncoming(journalValues(await seedJournalOwner(h.state)), (incoming) => {
+          incoming.envelope.retryMetadata = {};
+        });
+        const original = copy(v.rejected);
+        const normalized = channelEnvelopeSchemaV1.safeParse(v.rejected.envelope);
+        assert.equal(normalized.success, true);
+        assert.equal(Object.hasOwn(normalized.data, "retryMetadata"), false);
+        same(parseRejectedAdmissionV1(v.rejected).envelope.retryMetadata, {});
+        const recorded = valueOf(
+          await h.write((j) => j.admitRejected(h.issue("rejected", v.rejected), h.call)),
+        );
+        assert.equal(recorded.kind, "recorded");
+        same(recorded.record, original);
+        const existing = valueOf(
+          await h.write((j) => j.admitRejected(h.issue("rejected", v.rejected), h.call)),
+        );
+        assert.equal(existing.kind, "existing");
+        same(existing.record, original);
+        same(
+          (await h.read((j) => j.findRejectedAdmission(eventLookup(v), h.call))).record,
+          original,
+        );
+        assert.equal((await h.read((j) => j.findAttempt(v.attempt, h.call))).kind, "absent");
+        same(v.rejected, original);
+      },
+    );
+
+    await t.test(
+      "actual backend codecs refuse malformed nested consumption before publishing ownership",
+      async () => {
+        const h = journalHarness(pool);
+        for (const consumption of [1, true]) {
+          const v = journalValues(await seedJournalOwner(h.state));
+          const extra = { binding: {}, outcome: {}, consumption };
+          v.identity.workspace.scope = { ...v.identity.workspace.scope, extra: copy(extra) };
+          v.reservation.scope = { ...v.reservation.scope, extra: copy(extra) };
+          assert.throws(() => parseTurnJournalV1("attempt", commonAttemptRecord(v)));
+          assert.equal(
+            (await h.write((j) => j.admit(h.issue("admission", v.observation), h.call))).kind,
+            "unavailable",
+          );
+          assert.equal((await h.read((j) => j.findAttempt(v.attempt, h.call))).kind, "absent");
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS count FROM occ.turn_journal_owners WHERE installation_id=$1 AND channel_installation_id=$2 AND receipt_ref=$3",
+                [v.context.installationRef, v.locator.channelInstallationRef, v.receipt.receiptRef],
+              )
+            ).rows[0].count,
+            0,
+          );
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS count FROM occ.turn_journal_reservations WHERE agent_id=$1",
+                [v.context.agentRef],
+              )
+            ).rows[0].count,
+            0,
+          );
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS count FROM occ.turn_journal_operations WHERE agent_id=$1",
+                [v.context.agentRef],
+              )
+            ).rows[0].count,
+            0,
+          );
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS count FROM occ.turn_journal_incoming_links WHERE installation_id=$1 AND channel_installation_id=$2 AND event_key=$3",
+                [v.context.installationRef, v.locator.channelInstallationRef, v.locator.eventKey],
+              )
+            ).rows[0].count,
+            0,
+          );
+        }
+      },
+    );
 
     await t.test(
       "rejected and non-turn originals remain negative and related events never seize parent ownership",
@@ -287,7 +482,18 @@ test(
           ]);
           const winner =
             values[results.findIndex((result) => result.record.decision.kind === "accepted")];
-          assert.equal((await dispatch(h, winner)).kind, "recorded");
+          const intent = parseTurnJournalResultV1("dispatchIntent", await dispatch(h, winner));
+          assert.equal(intent.kind, "recorded");
+          assert.equal(intent.record.version, 2);
+          assert.equal(intent.record.consumption, null);
+          assert.equal(intent.record.outcome.kind, "dispatch-intent");
+          assert.equal(Object.hasOwn(intent.record, "phase"), false);
+          const repeatedIntent = parseTurnJournalResultV1(
+            "dispatchIntent",
+            await dispatch(h, winner),
+          );
+          assert.equal(repeatedIntent.kind, "existing");
+          same(repeatedIntent.record, intent.record);
           const alternate = {
             ...winner,
             consumption: {
@@ -313,6 +519,52 @@ test(
               stored.record.consumption.operation.operationRef,
             ),
           );
+          for (const invalidConsumption of [1, true]) {
+            await assert.rejects(
+              pool.query(
+                "UPDATE occ.turn_journal_attempts SET record=$2,version=4 WHERE agent_id=$1",
+                [
+                  winner.context.agentRef,
+                  { ...plain(stored.record), version: 4, consumption: invalidConsumption },
+                ],
+              ),
+              { code: "23514" },
+            );
+          }
+          const stripped = {
+            ...plain(stored.record),
+            version: 4,
+            consumption: null,
+            outcome: {
+              kind: "failed",
+              stage: "execution",
+              evidenceRef: ref("stripped-consumption"),
+            },
+          };
+          await assert.rejects(
+            pool.query(
+              "UPDATE occ.turn_journal_attempts SET record=$2,version=4 WHERE agent_id=$1",
+              [winner.context.agentRef, stripped],
+            ),
+            { code: "23514" },
+          );
+          const demoted = {
+            ...commonAttemptRecord(winner),
+            version: 4,
+            outcome: {
+              kind: "outcome-unknown",
+              stage: "before-dispatch",
+              evidenceRef: ref("demoted-common-phase"),
+            },
+          };
+          await assert.rejects(
+            pool.query(
+              "UPDATE occ.turn_journal_attempts SET record=$2,version=4 WHERE agent_id=$1",
+              [winner.context.agentRef, demoted],
+            ),
+            { code: "23514" },
+          );
+          same((await h.read((j) => j.findAttempt(winner.attempt, h.call))).record, stored.record);
           const otherOwner = await seedJournalOwner(h.state);
           assert.equal(
             (await admit(contender, journalValues(otherOwner))).record.decision.kind,
@@ -592,7 +844,7 @@ test(
             [v.context.agentRef],
           )
         ).rows[0];
-        assert.equal(stored.record, null);
+        same(stored.record, commonAttemptRecord(v));
         assert.equal(stored.first_received_at.getTime(), received);
       },
     );
@@ -692,21 +944,269 @@ test(
             readback.operation.requesterPrincipalRef,
             readback.operation.originalPrincipalRef,
           );
-          assert.equal((await dispatch(h, v)).kind, "denied");
-          assert.equal(
-            (
-              await pool.query("SELECT record FROM occ.turn_journal_attempts WHERE agent_id=$1", [
-                v.context.agentRef,
-              ])
-            ).rows[0].record,
-            null,
-          );
+          assert.equal((await dispatch(h, v)).kind, "conflict");
+          const cancelled = (await h.read((j) => j.findAttempt(v.attempt, h.call))).record;
+          same(cancelled, {
+            ...commonAttemptRecord(v),
+            version: 2,
+            outcome: {
+              kind: "cancelled",
+              stage: "before-dispatch",
+              evidenceRef: v.cancellation.operationRef,
+            },
+          });
+          const published = (
+            await pool.query(
+              "SELECT (SELECT count(*) FROM occ.turn_journal_operations WHERE agent_id=$1 AND operation_kind='cancellation')::int AS cancellations,(SELECT count(*) FROM occ.turn_journal_operations WHERE agent_id=$1 AND operation_kind='outcome')::int AS outcomes,(SELECT count(*) FROM occ.turn_journal_reservations WHERE agent_id=$1)::int AS held",
+              [v.context.agentRef],
+            )
+          ).rows[0];
+          assert.deepEqual(published, { cancellations: 1, outcomes: 0, held: 1 });
         } else {
           const stored = await h.read((j) => j.findAttempt(v.attempt, h.call));
           assert.equal(stored.record.outcome.kind, "dispatch-intent");
           assert.equal(stored.record.version, 2);
         }
         assert.equal((await admit(h, journalValues(v.owner))).record.decision.kind, "busy");
+      },
+    );
+
+    await t.test(
+      "predispatch cancellation publishes version two and releases only through its exact separate observation",
+      async () => {
+        const h = journalHarness(pool);
+        const owner = await seedJournalOwner(h.state);
+        const v = journalValues(owner);
+        await admit(h, v);
+        const stale = { ...v.cancellation, expectedAttemptVersion: 2 };
+        assert.equal(
+          valueOf(
+            await h.write((j) => j.commitCancellation(h.issue("cancellation", stale), h.call)),
+          ).kind,
+          "conflict",
+        );
+        const wrongPrincipal = {
+          ...v.cancellation,
+          originalPrincipalRef: ref("foreign-principal"),
+        };
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.commitCancellation(h.issue("cancellation", wrongPrincipal), h.call),
+            ),
+          ).kind,
+          "denied",
+        );
+        const cancelled = valueOf(
+          await h.write((j) =>
+            j.commitCancellation(h.issue("cancellation", v.cancellation), h.call),
+          ),
+        );
+        assert.equal(cancelled.outcome, "cancelled-before-dispatch");
+        const current = (await h.read((j) => j.findAttempt(v.attempt, h.call))).record;
+        same(current, {
+          ...commonAttemptRecord(v),
+          version: 2,
+          outcome: {
+            kind: "cancelled",
+            stage: "before-dispatch",
+            evidenceRef: v.cancellation.operationRef,
+          },
+        });
+        const repeated = valueOf(
+          await h.write((j) =>
+            j.commitCancellation(h.issue("cancellation", v.cancellation), h.call),
+          ),
+        );
+        assert.equal(repeated.kind, "existing");
+        same(repeated.operation, v.cancellation);
+        same((await h.read((j) => j.findAttempt(v.attempt, h.call))).record, current);
+        assert.equal((await admit(h, journalValues(owner))).record.decision.kind, "busy");
+        assert.equal(
+          valueOf(await h.write((j) => j.releaseReservation({}, h.call))).kind,
+          "denied",
+        );
+        assert.equal((await h.read((j) => j.findRelease(v.release, h.call))).kind, "absent");
+        const release = { ...v.release, expectedAttemptVersion: 2 };
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.releaseReservation(
+                h.issue("release", { ...release, expectedAttemptVersion: 1 }),
+                h.call,
+              ),
+            ),
+          ).kind,
+          "conflict",
+        );
+        assert.equal(
+          valueOf(await h.write((j) => j.releaseReservation(h.issue("release", release), h.call)))
+            .kind,
+          "released",
+        );
+        // A never-dispatched context retains its original empty head/creationRef.
+        const head = await h.read((j) => j.readHead(v.context, h.call));
+        assert.equal(head.kind, "new-context");
+        same(head.head, v.head);
+        const successor = journalValues(owner, {
+          conversationRef: v.context.conversationRef,
+          head: v.head,
+        });
+        assert.equal((await admit(h, successor)).record.decision.kind, "accepted");
+        assert.equal(
+          valueOf(await h.write((j) => j.releaseReservation(h.issue("release", release), h.call)))
+            .kind,
+          "existing",
+        );
+        const held = (
+          await pool.query(
+            "SELECT reservation_ref FROM occ.turn_journal_reservations WHERE agent_id=$1",
+            [v.context.agentRef],
+          )
+        ).rows;
+        assert.deepEqual(
+          held.map((row) => row.reservation_ref),
+          [successor.attempt.reservationRef],
+        );
+      },
+    );
+
+    await t.test(
+      "common uncertainty uses version CAS, stays undispatched and holds ownership until separate release",
+      async () => {
+        const h = journalHarness(pool);
+        const v = journalValues(await seedJournalOwner(h.state));
+        await admit(h, v);
+        const unknown = {
+          ...v.outcome,
+          expectedAttemptVersion: 1,
+          outcome: {
+            kind: "outcome-unknown",
+            stage: "before-dispatch",
+            evidenceRef: ref("unknown-before-dispatch"),
+          },
+        };
+        const recorded = valueOf(
+          await h.write((j) => j.recordOutcome(h.issue("outcome", unknown), h.call)),
+        );
+        assert.equal(recorded.kind, "recorded");
+        assert.equal(recorded.record.phase, "admitted-undispatched");
+        assert.equal(recorded.record.version, 2);
+        assert.equal(recorded.record.consumption, null);
+        assert.equal((await dispatch(h, v)).kind, "conflict");
+        assert.equal((await consume(h, v)).kind, "conflict");
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.commitCancellation(
+                h.issue("cancellation", { ...v.cancellation, expectedAttemptVersion: 2 }),
+                h.call,
+              ),
+            ),
+          ).kind,
+          "conflict",
+        );
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.recordOutcome(
+                h.issue("outcome", { ...v.outcome, expectedAttemptVersion: 2 }),
+                h.call,
+              ),
+            ),
+          ).kind,
+          "conflict",
+        );
+        const terminal = {
+          ...unknown,
+          operationRef: ref("resolve-before-dispatch"),
+          requestDigest: digest(),
+          expectedAttemptVersion: 2,
+          outcome: {
+            kind: "failed",
+            stage: "before-dispatch",
+            evidenceRef: ref("resolved-before-dispatch"),
+          },
+        };
+        const competitor = {
+          ...terminal,
+          operationRef: ref("competing-resolution"),
+          requestDigest: digest(),
+        };
+        const results = await Promise.all(
+          [terminal, competitor].map((operation) =>
+            h.write((j) => j.recordOutcome(h.issue("outcome", operation), h.call)).then(valueOf),
+          ),
+        );
+        assert.deepEqual(results.map((result) => result.kind).sort(), ["conflict", "recorded"]);
+        const final = (await h.read((j) => j.findAttempt(v.attempt, h.call))).record;
+        assert.equal(final.version, 3);
+        assert.equal(final.phase, "admitted-undispatched");
+        assert.equal(final.consumption, null);
+        assert.equal((await admit(h, journalValues(v.owner))).record.decision.kind, "busy");
+        // Exact old operation replay returns its original version-two observation.
+        const replay = valueOf(
+          await h.write((j) => j.recordOutcome(h.issue("outcome", unknown), h.call)),
+        );
+        assert.equal(replay.kind, "existing");
+        same(replay.record, recorded.record);
+        same((await h.read((j) => j.findAttempt(v.attempt, h.call))).record, final);
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.releaseReservation(
+                h.issue("release", { ...v.release, expectedAttemptVersion: 3 }),
+                h.call,
+              ),
+            ),
+          ).kind,
+          "released",
+        );
+      },
+    );
+
+    await t.test(
+      "retained dispatch intent marks a context used even without consumption and after release",
+      async () => {
+        const h = journalHarness(pool);
+        const v = journalValues(await seedJournalOwner(h.state));
+        await admit(h, v);
+        await dispatch(h, v);
+        const operation = {
+          ...v.outcome,
+          expectedAttemptVersion: 2,
+          outcome: { kind: "failed", stage: "dispatch", evidenceRef: ref("dispatch-failure") },
+        };
+        const terminal = valueOf(
+          await h.write((j) => j.recordOutcome(h.issue("outcome", operation), h.call)),
+        );
+        assert.equal(terminal.record.consumption, null);
+        assert.equal(Object.hasOwn(terminal.record, "phase"), false);
+        assert.equal(
+          valueOf(
+            await h.write((j) =>
+              j.releaseReservation(
+                h.issue("release", { ...v.release, expectedAttemptVersion: 3 }),
+                h.call,
+              ),
+            ),
+          ).kind,
+          "released",
+        );
+        assert.equal((await h.read((j) => j.readHead(v.context, h.call))).kind, "unavailable");
+        const successor = journalValues(v.owner, {
+          conversationRef: v.context.conversationRef,
+          head: v.head,
+        });
+        const denied = await admit(h, successor);
+        assert.equal(
+          denied.kind === "recorded" ? denied.record.decision.kind : denied.kind,
+          "denied",
+        );
+        assert.equal(
+          (await h.read((j) => j.findAttempt(successor.attempt, h.call))).kind,
+          "absent",
+        );
       },
     );
 
@@ -1133,6 +1633,112 @@ test(
     );
 
     await t.test(
+      "unknown and terminal common attempts count toward pending capacity until their own reservation is released",
+      async () => {
+        const h = journalHarness(pool);
+        const firstOwner = await seedJournalOwner(h.state);
+        const installation = firstOwner.installation.id;
+        const pendingSql =
+          "SELECT count(*)::int AS count FROM occ.turn_journal_attempts a JOIN occ.turn_journal_reservations r USING (installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref) WHERE a.installation_id=$1 AND a.record->>'phase'='admitted-undispatched'";
+        const baseline = (await pool.query(pendingSql, [installation])).rows[0].count;
+        assert.ok(
+          baseline < 32,
+          "allocated test database must have room for at least one owned pending fixture",
+        );
+        const tracked = [];
+        const run = (work) => {
+          const call = h.provenance.call();
+          return h.write((j) => work(j, call), call).then(valueOf);
+        };
+        try {
+          for (let index = baseline; index < 32; index++) {
+            const owner = index === baseline ? firstOwner : await seedJournalOwner(h.state);
+            const v = journalValues(owner);
+            assert.equal(
+              (await run((j, call) => j.admit(h.issue("admission", v.observation), call))).record
+                .decision.kind,
+              "accepted",
+            );
+            tracked.push({ values: v, version: 1, released: false });
+            const operation = {
+              ...v.outcome,
+              expectedAttemptVersion: 1,
+              outcome: {
+                kind: index % 2 ? "outcome-unknown" : "failed",
+                stage: "before-dispatch",
+                evidenceRef: ref("held-common-observation"),
+              },
+            };
+            const observed = await run((j, call) =>
+              j.recordOutcome(h.issue("outcome", operation), call),
+            );
+            assert.equal(observed.kind, "recorded");
+            tracked[tracked.length - 1].version = 2;
+          }
+          assert.equal((await pool.query(pendingSql, [installation])).rows[0].count, 32);
+          const candidate = journalValues(await seedJournalOwner(h.state));
+          const refusedCall = h.provenance.call();
+          const refused = await h.write(
+            (j) => j.admit(h.issue("admission", candidate.observation), refusedCall),
+            refusedCall,
+          );
+          assert.equal(
+            refused.kind === "committed" ? refused.value.kind : refused.kind,
+            "unavailable",
+          );
+          const readCall = h.provenance.call();
+          assert.equal(
+            (await h.read((j) => j.findAttempt(candidate.attempt, readCall), readCall)).kind,
+            "absent",
+          );
+          const held = tracked[0];
+          const release = { ...held.values.release, expectedAttemptVersion: held.version };
+          assert.equal(
+            (await run((j, call) => j.releaseReservation(h.issue("release", release), call))).kind,
+            "released",
+          );
+          held.released = true;
+          assert.equal((await pool.query(pendingSql, [installation])).rows[0].count, 31);
+          assert.equal(
+            (await run((j, call) => j.admit(h.issue("admission", candidate.observation), call)))
+              .record.decision.kind,
+            "accepted",
+          );
+          tracked.push({ values: candidate, version: 1, released: false });
+          assert.equal((await pool.query(pendingSql, [installation])).rows[0].count, 32);
+        } finally {
+          // Release only this case's exact synthetic storage responsibilities;
+          // unknown/terminal labels never remove a reservation by themselves.
+          for (const entry of tracked.filter((entry) => !entry.released)) {
+            if (entry.version === 1) {
+              const operation = {
+                ...entry.values.outcome,
+                expectedAttemptVersion: 1,
+                outcome: {
+                  kind: "failed",
+                  stage: "before-dispatch",
+                  evidenceRef: ref("capacity-fixture-close"),
+                },
+              };
+              assert.equal(
+                (await run((j, call) => j.recordOutcome(h.issue("outcome", operation), call))).kind,
+                "recorded",
+              );
+              entry.version = 2;
+            }
+            const release = { ...entry.values.release, expectedAttemptVersion: entry.version };
+            assert.equal(
+              (await run((j, call) => j.releaseReservation(h.issue("release", release), call)))
+                .kind,
+              "released",
+            );
+          }
+        }
+        assert.equal((await pool.query(pendingSql, [installation])).rows[0].count, baseline);
+      },
+    );
+
+    await t.test(
       "limited application role and direct SQL constraints protect owner identity and immutable links",
       async () => {
         const h = journalHarness(pool);
@@ -1200,6 +1806,44 @@ test(
             [v.context.agentRef],
           )
         ).rows[0].record;
+        const nonnull = (
+          await pool.query(
+            "SELECT attnotnull FROM pg_attribute WHERE attrelid='occ.turn_journal_attempts'::regclass AND attname='record'",
+            [],
+          )
+        ).rows[0];
+        assert.equal(nonnull.attnotnull, true);
+        await assert.rejects(
+          pool.query("UPDATE occ.turn_journal_attempts SET record=NULL WHERE agent_id=$1", [
+            v.context.agentRef,
+          ]),
+          (error) => ["23502", "23514"].includes(error.code),
+        );
+        const unpairedCancellation = {
+          ...commonAttemptRecord(v),
+          version: 2,
+          outcome: {
+            kind: "cancelled",
+            stage: "before-dispatch",
+            evidenceRef: ref("absent-cancellation-operation"),
+          },
+        };
+        await assert.rejects(
+          pool.query("UPDATE occ.turn_journal_attempts SET record=$2,version=2 WHERE agent_id=$1", [
+            v.context.agentRef,
+            unpairedCancellation,
+          ]),
+          { code: "23514" },
+        );
+        const wrongCommon = commonAttemptRecord(v);
+        wrongCommon.binding.expectedHead.creationRef = ref("replacement-original-creation");
+        await assert.rejects(
+          pool.query("UPDATE occ.turn_journal_attempts SET record=$2,version=2 WHERE agent_id=$1", [
+            v.context.agentRef,
+            { ...wrongCommon, version: 2 },
+          ]),
+          { code: "23514" },
+        );
         await assert.rejects(
           pool.query("UPDATE occ.turn_journal_attempts SET attempt_ref=$2 WHERE agent_id=$1", [
             v.context.agentRef,
