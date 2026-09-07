@@ -397,7 +397,7 @@ $$;
 
 CREATE FUNCTION occ.turn_journal_phase_common_binding(record_value jsonb) RETURNS jsonb
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,occ AS $$
-  SELECT record_value->'binding'-ARRAY['dispatchOperationRef','authorityDecisionRef','expiresAt'];
+  SELECT (record_value->'binding')-ARRAY['dispatchOperationRef','authorityDecisionRef','expiresAt'];
 $$;
 
 CREATE FUNCTION occ.turn_journal_phase_before_cancel(record_value jsonb,operation_value jsonb) RETURNS boolean
