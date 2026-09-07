@@ -163,10 +163,16 @@ export async function composePostgresDevelopment(
             security,
           });
           const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
+          const candidateContext = state.workloadProfileCandidateContextV2(
+            context.selection,
+            context.candidateNormalizer,
+            context.candidateOperations,
+          );
           return {
             enrollment: profile.enrollment,
-            // TODO: Compose the original candidate, complete capability and
-            // inserted-row sources when qualified. Preparing Use stays unavailable.
+            candidates: candidateContext.candidates,
+            // TODO: Compose the candidate provider with genuine bindings, complete
+            // capability and inserted-row sources. Preparing Use stays unavailable.
             use: createWorkloadProfileUseResolverV2(profile.activeReader),
           };
         },
