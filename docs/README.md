@@ -49,6 +49,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   [Service accounts](reference/service-accounts.md): sign-in, permissions, and credentials.
 - [Authentication storage failures](reference/authentication-failures.md): unconfirmed
   logout outcomes, dependency diagnostics, and focused verification.
+- [Workload profile request authentication](reference/workload-profile-request-authentication.md):
+  original request binding, session currentness, and transaction-owned cleanup.
 - [Providers](reference/providers.md): authenticated clients, related Drivers,
   optional Agent association, and safe configuration changes.
 - [Harness execution](reference/harness-execution.md) and
