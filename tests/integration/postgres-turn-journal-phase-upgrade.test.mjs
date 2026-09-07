@@ -255,7 +255,7 @@ async function allocation(t) {
   const app = new pg.Pool({
     connectionString: appUrl,
     max: 3,
-    connectionTimeoutMillis: 500,
+    connectionTimeoutMillis: 250,
     options: "-c timezone=UTC",
   });
   const migration = new pg.Pool({
