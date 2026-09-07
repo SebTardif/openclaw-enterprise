@@ -59,7 +59,7 @@ function context() {
       revision: 1,
       providerId: "provider-openai",
       configurationId: "configuration-one",
-      configurationKind: "openclaw",
+      configurationKind: "agent",
       configurationGeneration: 1,
       configuration: {},
       harness: { mode: "dedicated", id: "codex", version: "0.153.0" },
