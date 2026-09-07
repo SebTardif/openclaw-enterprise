@@ -1,3 +1,8 @@
+import {
+  CONFIGURATION_DOCUMENT,
+  type FixedWorkloadInput,
+  type FixedWorkloadRenderer,
+} from "./fixed-workload-renderer.ts";
 import { asRecord, immutableCopy, sha256Hex } from "@openclaw-enterprise/utils";
 import type { V1Deployment, V1EnvVar, V1Volume, V1VolumeMount } from "@kubernetes/client-node";
 import type { GatewayProcessTargetV1 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
@@ -51,11 +56,11 @@ export interface GatewayConfigurationSnapshot {
   readonly loggingLevel: LoggingLevel;
 }
 
-export const CONFIGURATION_DIRECTORY = "/etc/openclaw";
-
-export const CONFIGURATION_DOCUMENT = "openclaw.json";
-
-export const CONFIGURATION_VOLUME = "openclaw-configuration";
+export {
+  CONFIGURATION_DIRECTORY,
+  CONFIGURATION_DOCUMENT,
+  CONFIGURATION_VOLUME,
+} from "./fixed-workload-renderer.ts";
 
 export const GATEWAY_API_VERSION = "gateway.networking.k8s.io/v1";
 
@@ -329,6 +334,41 @@ export function admittedGatewayDeployment(input: {
             },
           ],
         },
+      },
+    },
+  });
+}
+
+/** The selected Driver's authentic fixed constructor supplies this template to
+ * the original launch owner. These resolved operands confer no authority; that
+ * owner independently acquires the later call/target/create-effect lifetime.
+ * RuntimeClass is an explicit selected Gateway input, never an Agent default. */
+export function fixedAdmittedGatewayTemplate(
+  renderer: FixedWorkloadRenderer,
+  input: Omit<FixedWorkloadInput, "component" | "embedded">,
+  runtimeClassName: string,
+): V1Deployment {
+  if (
+    !runtimeClassName ||
+    runtimeClassName.trim() !== runtimeClassName ||
+    runtimeClassName.includes("\0")
+  )
+    throw new Error("The selected Gateway RuntimeClass is unavailable.");
+  const snapshot = immutableCopy(input);
+  if (snapshot.image !== renderer.definition().images.gateway)
+    throw new Error("The Gateway image differs from the selected fixed constructor.");
+  const deployment = renderer.deployment({ ...snapshot, component: "gateway", embedded: false });
+  const spec = deployment.spec;
+  const pod = spec?.template.spec;
+  if (spec === undefined || pod === undefined)
+    throw new Error("The fixed Gateway construction is unavailable.");
+  return immutableCopy({
+    ...deployment,
+    spec: {
+      ...spec,
+      template: {
+        ...spec.template,
+        spec: { ...pod, runtimeClassName },
       },
     },
   });
