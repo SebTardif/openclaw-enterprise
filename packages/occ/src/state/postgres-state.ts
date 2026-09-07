@@ -1,3 +1,12 @@
+import type {
+  DeploymentCandidateNormalizerV2,
+  DeploymentCandidateOriginalOperationsV2,
+  WorkloadProfileCandidateContinuationV2,
+} from "../ports/workload-profile-candidate.ts";
+import {
+  makeTrackedCandidateOperations,
+  sameCandidateDataV2,
+} from "./postgres/workload-profile-candidate.ts";
 import {
   decodeWorkloadProfileSelectionRequestV2,
   type WorkloadProfileSelectionStorageV2,
@@ -10,6 +19,7 @@ import type {
   WorkloadProfileRecoveryUnitV2,
   WorkloadProfileOwnedOperationV2,
   WorkloadProfileActiveReaderV2,
+  WorkloadProfileCandidateContextReaderV2,
 } from "../workload-profiles/admitted-use.ts";
 import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
 import type { UpdateAgentInput } from "../services/agent/port.ts";
@@ -20,6 +30,7 @@ import type { AuthenticatedRequestHandleV1 } from "@openclaw-enterprise/contract
 import {
   createWorkloadProfileAdmissionRepositoryV2,
   decodeWorkloadProfileAdmissionHeadV2,
+  type WorkloadProfileAdmissionHeadV2,
 } from "../workload-profiles/admission-record.ts";
 import { createPostgresWorkloadProfileAdmissionBackendV2 } from "./postgres/workload-profile-admission.ts";
 import {
@@ -254,6 +265,31 @@ export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.t
 
 type ProfileDeploymentBindingV2 = readonly [principalId: string, input: DeployAgentCommandInput];
 type ProfileDraftBindingV2 = readonly [principalId: string, input: UpdateAgentInput];
+interface ProfileCandidateSlotV2 {
+  accepting: boolean;
+  completed: boolean;
+  headStarted: boolean;
+  head?: WorkloadProfileAdmissionHeadV2;
+  snapshot?: Readonly<AgentRevision>;
+  configuration?: Awaited<
+    ReturnType<WorkloadProfileCandidateContextReaderV2["readLocked"]>
+  >["configuration"];
+  failed: boolean;
+  first?: unknown;
+  readonly pending: Set<Promise<void>>;
+  assertCurrent(): undefined;
+}
+interface ProfileSelectedEnrollmentV2 {
+  readonly context: TransactionContext;
+  readonly io: WorkloadProfileOwnedOperationV2;
+  readonly selection: DriverSelection;
+  readonly profileToken: object;
+  readonly profileOwner: ReturnType<typeof createGuardedWorkloadProfileUnit>;
+  readonly platform: PlatformUnitOfWork;
+  readonly deploymentBinding?: ProfileDeploymentBindingV2;
+  active: boolean;
+  candidate?: ProfileCandidateSlotV2;
+}
 interface TransactionContext {
   readonly fresh?: FreshBootstrapExecutionV1;
   readonly turn?: TurnCommandExecutionV1;
@@ -688,7 +724,11 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
   const secretBindings =
     admitted.secret_bindings === undefined
       ? undefined
-      : secretBindingsFromJson(admitted.secret_bindings, text(row, "namespace_id"));
+      : secretBindingsFromJson(
+          admitted.secret_bindings,
+          text(row, "namespace_id"),
+          use !== undefined,
+        );
   return immutableCopy({
     id: text(row, "id"),
     namespaceId: text(row, "namespace_id"),
@@ -715,7 +755,11 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
   });
 }
 
-function secretBindingsFromJson(value: unknown, namespaceId: string): SecretBindings | undefined {
+function secretBindingsFromJson(
+  value: unknown,
+  namespaceId: string,
+  preserveEmpty = false,
+): SecretBindings | undefined {
   if (!NAMESPACE_IDENTIFIER.test(namespaceId))
     throw new DependencyUnavailableError("Persisted Secret bindings have an invalid Namespace.");
   let parsed: unknown;
@@ -734,15 +778,18 @@ function secretBindingsFromJson(value: unknown, namespaceId: string): SecretBind
     if (source.namespaceId !== namespaceId || !SECRET_IDENTIFIER.test(source.id))
       throw new DependencyUnavailableError("Persisted Secret bindings reference invalid Secrets.");
   }
-  return Object.keys(normalized).length === 0 ? undefined : immutableCopy(normalized);
+  return Object.keys(normalized).length === 0 && !preserveEmpty
+    ? undefined
+    : immutableCopy(normalized);
 }
 
 function secretBindingsFromState(
   value: SecretBindings,
   namespaceId: string,
+  preserveEmpty = false,
 ): SecretBindings | undefined {
   try {
-    return secretBindingsFromJson(value, namespaceId);
+    return secretBindingsFromJson(value, namespaceId, preserveEmpty);
   } catch (error) {
     if (error instanceof DependencyUnavailableError)
       throw new ScopeViolationError("Secret bindings are invalid.");
@@ -931,10 +978,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     WorkloadProfileAccountUnit,
     ReturnType<typeof createGuardedWorkloadProfileUnit>
   >();
-  readonly #profileSelectedUnits = new WeakMap<
-    object,
-    { context: TransactionContext; io: WorkloadProfileOwnedOperationV2; active: boolean }
-  >();
+  readonly #profileSelectedUnits = new WeakMap<object, ProfileSelectedEnrollmentV2>();
   readonly #freshReservations = new WeakMap<object, FreshInstallationRecordV1>();
   readonly #freshExecution = new AsyncLocalStorage<FreshBootstrapExecutionV1>();
   readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
@@ -2151,6 +2195,234 @@ export class PostgresPlatformState implements PlatformStateStore {
     });
   }
 
+  /** Constructor-captured original normalizer and operations. These methods
+   * recognize the existing deployment enrollment; data objects cannot enroll it. */
+  workloadProfileCandidateContextV2(
+    selection: DriverSelection,
+    normalizer: DeploymentCandidateNormalizerV2,
+    original: DeploymentCandidateOriginalOperationsV2,
+  ): Readonly<{
+    candidates: WorkloadProfileCandidateContinuationV2;
+    contexts: WorkloadProfileCandidateContextReaderV2;
+  }> {
+    const fail = (record: ProfileSelectedEnrollmentV2, error: unknown): never => {
+      const slot = record.candidate;
+      if (slot && !slot.failed) {
+        slot.failed = true;
+        slot.first = error;
+      }
+      const first = slot?.failed ? slot.first : error;
+      try {
+        record.profileOwner.poison(first);
+      } finally {
+        throw first;
+      }
+    };
+    const recognized = (
+      unit: WorkloadProfileDeploymentUnitV2,
+      io: WorkloadProfileOwnedOperationV2,
+      acquiring: boolean,
+    ): ProfileSelectedEnrollmentV2 => {
+      const record = this.#profileSelectedUnits.get(unit);
+      if (!record) throw new ScopeViolationError("The original candidate owner is unavailable.");
+      try {
+        const binding = record.deploymentBinding;
+        if (
+          !record.active ||
+          unit.kind !== "deployment" ||
+          !binding ||
+          record.io !== io ||
+          record.selection !== selection ||
+          record.context.profileToken !== record.profileToken ||
+          this.#profileContexts.get(record.profileToken) !== record.context ||
+          record.context.protectedProfile !== record.profileOwner ||
+          record.context.readOnly ||
+          unit.platform !== record.platform ||
+          unit.operationRef !== binding[1].command.operationRef ||
+          unit.namespaceId !== binding[1].namespaceId ||
+          unit.agentId !== binding[1].agentId ||
+          unit.signal.aborted
+        )
+          throw new ScopeViolationError("The candidate does not belong to this deployment owner.");
+        record.context.assertOwnerActive();
+        if (acquiring) {
+          io.assertActive();
+          record.profileOwner.assertOperationActive();
+        }
+        if (record.candidate?.failed) throw record.candidate.first;
+        return record;
+      } catch (error) {
+        return fail(record, error);
+      }
+    };
+    const tracked = <Value>(
+      record: ProfileSelectedEnrollmentV2,
+      work: () => Promise<Value>,
+    ): Promise<Value> => {
+      const task = Promise.resolve()
+        .then(work)
+        .catch((error) => fail(record, error));
+      const joined = task.then(
+        () => {},
+        () => {},
+      );
+      record.context.profileEnrollments.add(joined);
+      record.candidate?.pending.add(joined);
+      void joined.then(() => {
+        record.context.profileEnrollments.delete(joined);
+        record.candidate?.pending.delete(joined);
+      });
+      return task;
+    };
+    const contexts = Object.freeze<WorkloadProfileCandidateContextReaderV2>({
+      readLocked: async (input, suppliedCandidate, unit, io) => {
+        const record = recognized(unit, io, true);
+        try {
+          const slot = record.candidate;
+          if (
+            !slot?.accepting ||
+            !slot.completed ||
+            !slot.head ||
+            !slot.snapshot ||
+            !slot.configuration
+          )
+            throw new ScopeViolationError(
+              "No completed original candidate and profile head are captured.",
+            );
+          const request = decodeWorkloadProfileSelectionRequestV2(input);
+          const candidate = immutableCopy(suppliedCandidate);
+          const expected = record.deploymentBinding![1].command.expectedDraft;
+          if (
+            request.installationId !== unit.installationId ||
+            request.namespaceId !== unit.namespaceId ||
+            request.agentId !== unit.agentId ||
+            request.revisionId !== slot.snapshot.id ||
+            request.configurationRef !== slot.configuration.configurationRef ||
+            request.configurationVersion !== slot.configuration.configurationGeneration ||
+            !sameCandidateDataV2(request.selection, expected.workloadProfileSelection) ||
+            !sameCandidateDataV2(request.selection, slot.head.selection) ||
+            !sameCandidateDataV2(candidate, slot.snapshot)
+          )
+            throw new ScopeViolationError(
+              "The copied candidate differs from original normalization.",
+            );
+          let released = false;
+          const current = (): undefined => {
+            recognized(unit, io, false);
+            if (released || !slot.completed || record.candidate !== slot)
+              return fail(record, new ScopeViolationError("The candidate observation expired."));
+            slot.assertCurrent();
+            return undefined;
+          };
+          current();
+          return Object.freeze({
+            configuration: slot.configuration,
+            assertCurrent: current,
+            release: async () => {
+              released = true;
+            },
+          });
+        } catch (error) {
+          return fail(record, error);
+        }
+      },
+    });
+    const candidates = Object.freeze<WorkloadProfileCandidateContinuationV2>({
+      withCandidate: (unit, io, resolveHarness, work) => {
+        const record = recognized(unit, io, true);
+        if (record.candidate)
+          return fail(
+            record,
+            new ScopeViolationError("This candidate attempt is already consumed."),
+          );
+        const [principalId, input] = record.deploymentBinding!;
+        const command = input.command;
+        // Builder construction is inert. Install the slot and cleanup before
+        // it reads any repository/Driver or calls the original normalizer.
+        const capture = makeTrackedCandidateOperations({
+          unit,
+          selection,
+          original,
+          operands: Object.freeze([
+            principalId,
+            Object.freeze({
+              namespaceId: input.namespaceId,
+              agentId: input.agentId,
+              expectedLifecycleGeneration: command.expectedLifecycleGeneration,
+            }),
+            command,
+          ]),
+          assertAcquiring: () => {
+            recognized(unit, io, true);
+          },
+          assertOwner: () => {
+            recognized(unit, io, false);
+          },
+          track: (operation) => tracked(record, operation),
+          poison: (error) => fail(record, error),
+        });
+        const slot: ProfileCandidateSlotV2 = {
+          accepting: true,
+          completed: false,
+          headStarted: false,
+          failed: false,
+          pending: new Set(),
+          assertCurrent: capture.assertCurrent,
+        };
+        record.candidate = slot;
+        unit.retain({
+          assertCurrent: () => {
+            recognized(unit, io, false);
+            capture.assertCurrent();
+            return undefined;
+          },
+          release: async () => {
+            slot.accepting = false;
+            while (slot.pending.size > 0) await Promise.allSettled([...slot.pending]);
+            await capture.release();
+          },
+        });
+        return tracked(record, async () => {
+          try {
+            const result = await normalizer(
+              Object.freeze([
+                principalId,
+                Object.freeze({
+                  namespaceId: input.namespaceId,
+                  agentId: input.agentId,
+                  expectedLifecycleGeneration: command.expectedLifecycleGeneration,
+                }),
+                command,
+              ]),
+              resolveHarness,
+              capture.operations,
+            );
+            recognized(unit, io, true);
+            const observed = capture.finish(result);
+            slot.snapshot = immutableCopy(result.candidate);
+            slot.configuration = immutableCopy({
+              configurationRef: observed.metadata.id,
+              configurationGeneration: observed.metadata.generation,
+              immutableConfigurationContent: {
+                kind: "agent",
+                values: observed.validated.values,
+                secretBindings: observed.secretBindings,
+              },
+            });
+            slot.completed = true;
+            capture.assertCurrent();
+            return await work(result);
+          } catch (error) {
+            return fail(record, error);
+          } finally {
+            slot.accepting = false;
+          }
+        });
+      },
+    });
+    return Object.freeze({ candidates, contexts });
+  }
+
   /** Server-owned composition over the original mutation/read callback. Missing
    * authentic account participation refuses before the protected callback. */
   workloadProfileMutationEnrollmentV2(
@@ -2358,7 +2630,18 @@ export class PostgresPlatformState implements PlatformStateStore {
               : kind === "deployment"
                 ? Object.freeze({ ...common, kind, operationRef: operationRef!, platform })
                 : Object.freeze({ ...common, kind, platform });
-          const enrolled = { context, io, active: true };
+          const enrolled: ProfileSelectedEnrollmentV2 = {
+            context,
+            io,
+            active: true,
+            selection,
+            profileToken: token,
+            profileOwner: guarded,
+            platform,
+            ...(kind === "deployment"
+              ? { deploymentBinding: binding as ProfileDeploymentBindingV2 }
+              : {}),
+          };
           this.#profileSelectedUnits.set(unit, enrolled);
           retain({
             assertCurrent: () => {
@@ -2470,6 +2753,17 @@ export class PostgresPlatformState implements PlatformStateStore {
           )
             throw new ScopeViolationError("The exact selected profile read owner is unavailable.");
           io.assertActive();
+          const slot = unit.kind === "deployment" ? record.candidate : undefined;
+          if (unit.kind === "deployment") {
+            if (!slot?.accepting || !slot.completed || slot.headStarted) {
+              const error = new ScopeViolationError(
+                "Original normalization must complete before the profile head.",
+              );
+              record.profileOwner.poison(error);
+              throw error;
+            }
+            slot.headStarted = true;
+          }
           const namespace = rows(
             (
               await io.query(
@@ -2513,6 +2807,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           )
             throw new ResourceConflictError("The selected profile admission changed.");
           io.assertActive();
+          if (slot) slot.head = head;
           return Object.freeze({
             head,
             assertCurrent: () => {
@@ -4642,7 +4937,10 @@ export class PostgresPlatformState implements PlatformStateStore {
       agents,
       rows,
       revisionFromRow,
-      secretBindingsFromState,
+      // The repository invokes this only for a present revision field. Preserve
+      // that explicit empty map in the initial row; omitted V1 fields stay omitted.
+      secretBindingsFromState: (bindings, namespaceId) =>
+        secretBindingsFromState(bindings, namespaceId, true),
       validateSecretBindingsAvailable,
     });
 

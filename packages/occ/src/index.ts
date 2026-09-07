@@ -57,6 +57,12 @@ import {
   type HarnessResolver,
 } from "./services/deployment/port.ts";
 import { DeploymentService } from "./services/deployment/service.ts";
+import { createDeploymentCandidateNormalizerV2 } from "./services/deployment/candidate-normalization.ts";
+import type {
+  DeploymentCandidateNormalizerV2,
+  DeploymentCandidateOriginalOperationsV2,
+  WorkloadProfileCandidateContinuationV2,
+} from "./ports/workload-profile-candidate.ts";
 export type {
   ActiveAgentRevisionSelection,
   AgentCommands,
@@ -259,7 +265,9 @@ export const BOOTSTRAP_DEFAULT_NAMESPACE_NAME = "default";
 export type ControllerWorkloadProfileCollaboratorsV2 = NonNullable<
   AgentServiceOptions["workloadProfiles"]
 > &
-  NonNullable<DeploymentServiceOptions["workloadProfiles"]>;
+  NonNullable<DeploymentServiceOptions["workloadProfiles"]> & {
+    readonly candidates?: WorkloadProfileCandidateContinuationV2;
+  };
 
 /** Synchronous server-owned assembly over this controller's exact selection.
  * The factory installs collaborators, never an account or deployment authority. */
@@ -270,8 +278,10 @@ export interface ControllerWorkloadProfileFactoryV2 {
       installation: Readonly<Installation>;
       state: PlatformStateStore;
       selection: DriverSelection;
+      candidateNormalizer: DeploymentCandidateNormalizerV2;
+      candidateOperations: DeploymentCandidateOriginalOperationsV2;
     }>,
-  ): Pick<ControllerWorkloadProfileCollaboratorsV2, "enrollment" | "use">;
+  ): Pick<ControllerWorkloadProfileCollaboratorsV2, "enrollment" | "use" | "candidates">;
 }
 
 export interface ControllerOptions {
@@ -394,6 +404,27 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+    // Capture the original normalization dependencies once. Driver selection
+    // and all IO remain deferred until the genuine deployment operation.
+    const candidateBase = Object.freeze({
+      authorization: {
+        authorize: (
+          principalId: string,
+          action: Parameters<DeploymentServiceOptions["authorization"]["authorize"]>[1],
+          resource: Parameters<DeploymentServiceOptions["authorization"]["authorize"]>[2],
+        ) => this.authorize(principalId, action, resource),
+      },
+      providers: this.providerMap,
+      loggingLevel: this.loggingLevel,
+      configurationOperation: <Value>(operation: () => Promise<Value>) =>
+        this.driverOperation(operation),
+      secretOperation: <Value>(operation: () => Promise<Value>) => this.secretOperation(operation),
+    });
+    const candidateOperations: DeploymentCandidateOriginalOperationsV2 = Object.freeze({
+      createId: () => this.nextIdentifier("agent_revision"),
+      now: () => this.timestamp(),
+    });
+    const candidateNormalizer = createDeploymentCandidateNormalizerV2(candidateBase);
     const profileFactory = options.workloadProfiles;
     let workloadProfiles: ControllerWorkloadProfileCollaboratorsV2 | undefined;
     if (profileFactory !== undefined) {
@@ -407,6 +438,8 @@ export class OpenClawController {
           installation: this.installation,
           state: this.state,
           selection: this.drivers,
+          candidateNormalizer,
+          candidateOperations,
         }),
       );
       if (supplied instanceof Promise) {
@@ -422,15 +455,22 @@ export class OpenClawController {
         );
       const enrollment = supplied.enrollment;
       const use = supplied.use;
+      const candidates = supplied.candidates;
       if (
         typeof enrollment?.withDraft !== "function" ||
         typeof enrollment?.withDeployment !== "function" ||
         typeof enrollment?.withRecovery !== "function" ||
         typeof use?.validateSelectionLocked !== "function" ||
-        typeof use?.prepareUseLocked !== "function"
+        typeof use?.prepareUseLocked !== "function" ||
+        (candidates !== undefined && typeof candidates.withCandidate !== "function")
       )
         throw new DependencyUnavailableError("The original profile collaborators are unavailable.");
-      workloadProfiles = Object.freeze({ invocations, enrollment, use });
+      workloadProfiles = Object.freeze({
+        invocations,
+        enrollment,
+        use,
+        ...(candidates === undefined ? {} : { candidates }),
+      });
     }
     this.agent = new AgentService({
       ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
@@ -448,6 +488,9 @@ export class OpenClawController {
     });
     this.deployment = new DeploymentService({
       ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
+      ...candidateBase,
+      ...candidateOperations,
+      candidateNormalizer,
       installationId: this.installation.id,
       isRuntimeAdmissionAudit,
       repositories: this.mutations.forRepositories(DEPLOYMENT_REPOSITORIES),
@@ -455,19 +498,10 @@ export class OpenClawController {
         this.state.read((view) => work(selectRepositories(view, DEPLOYMENT_RECOVERY_REPOSITORIES))),
       hasActiveTransaction: () => this.mutations.hasActiveTransaction(),
       poisonAdmission: (error) => this.mutations.poisonAdmission(error),
-      authorization: {
-        authorize: (principalId, action, resource) => this.authorize(principalId, action, resource),
-      },
       computeDriver: () => this.selectedDriver("compute"),
       configurationDriver: () => this.configurationDriver(),
       secretDriver: (expectedId) => this.secretDriver(expectedId),
       sandboxDriver: () => this.sandboxDriver(),
-      configurationOperation: (operation) => this.driverOperation(operation),
-      secretOperation: (operation) => this.secretOperation(operation),
-      providers: this.providerMap,
-      loggingLevel: this.loggingLevel,
-      createId: () => this.nextIdentifier("agent_revision"),
-      now: () => this.timestamp(),
     });
   }
 
