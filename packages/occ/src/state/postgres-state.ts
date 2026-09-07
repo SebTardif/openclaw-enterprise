@@ -50,6 +50,7 @@ import {
   WorkloadProfileUnitPhase,
 } from "../ports/platform-unit-of-work.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Namespace } from "@openclaw-enterprise/contracts/resources/namespace";
 import type { QueryRepositoryFactoryContext } from "../ports/repository-factory.ts";
 import type {
   CredentialInventoryTransactionV1,
@@ -173,6 +174,37 @@ export interface PersistedNativeIAMState {
   readonly restrictions: readonly Restriction[];
 }
 
+declare const freshInstallationReservation: unique symbol;
+/** Issued only after this exact store has acknowledged its original fresh INSERT.
+ * Runtime recognition is private object identity, never the public Installation. */
+export interface FreshInstallationReservationV1 {
+  readonly [freshInstallationReservation]: true;
+  readonly installation: Readonly<Installation>;
+}
+interface FreshInstallationRecordV1 {
+  readonly installation: Readonly<Installation>;
+  readonly rowVersion: string;
+}
+interface FreshBootstrapExecutionV1 {
+  readonly kind: "reserve" | "finalize";
+  readonly installation: Readonly<Installation>;
+  readonly rowVersion?: string;
+  readonly seed?: PersistedNativeIAMState;
+  readonly pending: Set<Promise<unknown>>;
+  readonly namespaceIds: Set<string>;
+  readonly workNamespaceIds: Set<string>;
+  readonly auditNamespaceIds: Set<string>;
+  active: boolean;
+  accepting: boolean;
+  started: boolean;
+  failed: boolean;
+  failure?: unknown;
+  context?: TransactionContext;
+  transaction?: Promise<unknown>;
+  disposition: "not-sent" | "sent" | "acknowledged";
+  establishedNoCommit: boolean;
+}
+
 export interface PostgresPlatformStateOptions {
   readonly bootstrapNativeIAM?: PersistedNativeIAMState;
   readonly turnJournal?: PostgresTurnJournalOptions;
@@ -187,6 +219,7 @@ export interface PersistedNativeIAMPrincipalSeed {
 export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
 interface TransactionContext {
+  readonly fresh?: FreshBootstrapExecutionV1;
   readonly turn?: TurnCommandExecutionV1;
   readonly turnQuery: PostgresClient["query"];
   readonly gateway?: GatewayStartupExecution;
@@ -828,6 +861,8 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
+  readonly #freshReservations = new WeakMap<object, FreshInstallationRecordV1>();
+  readonly #freshExecution = new AsyncLocalStorage<FreshBootstrapExecutionV1>();
   readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
   readonly #turnContexts = new WeakMap<object, TurnCommandEnrollmentV1>();
   readonly #turnIO = new AsyncLocalStorage<TurnCommandIOV1>();
@@ -842,7 +877,316 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
   }
 
+  private rejectFresh(record: FreshBootstrapExecutionV1, error: unknown): never {
+    if (!record.failed) {
+      record.failed = true;
+      record.failure = error;
+    }
+    throw error;
+  }
+
+  private trackFresh<Value>(
+    record: FreshBootstrapExecutionV1,
+    work: () => Promise<Value>,
+  ): Promise<Value> {
+    let result: Promise<Value>;
+    try {
+      if (!record.active || !record.accepting || this.#freshExecution.getStore() !== record)
+        throw new ScopeViolationError("The fresh bootstrap operation is closed.");
+      record.context?.lifetime.assertActive();
+      result = Promise.resolve().then(work);
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    const owned = result.catch((error: unknown) => this.rejectFresh(record, error));
+    record.pending.add(owned);
+    void owned.then(
+      () => record.pending.delete(owned),
+      () => record.pending.delete(owned),
+    );
+    return owned;
+  }
+
+  /** Definite reservation is independent of later BetterAuth transactions. No
+   * handle is minted after collision, rollback or an uncertain COMMIT/cleanup. */
+  async reserveFreshInstallationV1(
+    installation: Installation,
+  ): Promise<FreshInstallationReservationV1> {
+    if (
+      this.bootstrapNativeIAM !== undefined ||
+      this.#freshExecution.getStore() !== undefined ||
+      this.#outerExecution.getStore() !== undefined
+    )
+      throw new ScopeViolationError("A fresh Installation requires its original empty owner.");
+    const selected = immutableCopy(installation);
+    const record: FreshBootstrapExecutionV1 = {
+      kind: "reserve",
+      installation: selected,
+      pending: new Set(),
+      namespaceIds: new Set(),
+      workNamespaceIds: new Set(),
+      auditNamespaceIds: new Set(),
+      active: true,
+      accepting: false,
+      started: true,
+      failed: false,
+      disposition: "not-sent",
+      establishedNoCommit: false,
+    };
+    const rowVersion = await this.execute(
+      false,
+      async (unit, context) => {
+        await unit.installations.createInstallation(selected);
+        const found = rows(
+          (
+            await context.client.query(
+              "SELECT xmin::text AS row_version FROM occ.installation WHERE id=$1",
+              [selected.id],
+            )
+          ).rows,
+        );
+        if (found.length !== 1)
+          throw new ScopeViolationError("The fresh Installation insert is unavailable.");
+        return text(found[0]!, "row_version");
+      },
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      record,
+    );
+    // Terminal transport events can be observed during a no-throw release after
+    // the raw ACK. They must not turn an uncertain delivery into a fresh handle.
+    if (record.failed) {
+      if (!record.establishedNoCommit && record.disposition !== "not-sent")
+        throw new PostgresCommitOutcomeUnknownError();
+      throw record.failure;
+    }
+    const handle = Object.freeze({ installation: selected }) as FreshInstallationReservationV1;
+    this.#freshReservations.set(handle, { installation: selected, rowVersion });
+    return handle;
+  }
+
+  /** Select exactly the original Store.transact called by MutationRunner. This
+   * callback wrapper never opens an ambient or independently committing unit. */
+  async finalizeFreshInstallationV1<Value>(
+    reservation: FreshInstallationReservationV1,
+    seed: PersistedNativeIAMState,
+    work: () => Promise<Value>,
+  ): Promise<Value> {
+    const reserved = this.#freshReservations.get(reservation);
+    if (
+      reserved === undefined ||
+      this.#freshExecution.getStore() !== undefined ||
+      this.#outerExecution.getStore() !== undefined
+    )
+      throw new ScopeViolationError("The original fresh Installation reservation is unavailable.");
+    this.#freshReservations.delete(reservation);
+    const selectedSeed = immutableCopy(seed);
+    this.validateIAMState(selectedSeed, true);
+    const principal = selectedSeed.identities.filter((identity) => identity.kind === "principal");
+    const service = selectedSeed.identities.filter(
+      (identity) => identity.kind === "service_principal",
+    );
+    if (
+      typeof work !== "function" ||
+      principal.length !== 1 ||
+      service.length !== 1 ||
+      selectedSeed.identities.length !== 2 ||
+      selectedSeed.groups.length !== 0 ||
+      selectedSeed.memberships.length !== 0 ||
+      selectedSeed.restrictions.length !== 0 ||
+      principal[0]!.issuer !== `occ:installation:${reserved.installation.id}:better-auth` ||
+      !principal[0]!.subject ||
+      service[0]!.namespaceId !== undefined ||
+      service[0]!.agentId !== undefined ||
+      selectedSeed.roles.some((role) => role.namespaceId !== undefined) ||
+      selectedSeed.bindings.some(
+        (binding) =>
+          binding.namespaceId !== undefined ||
+          binding.subjectKind !== "identity" ||
+          (binding.resourceId !== undefined &&
+            (binding.resourceKind !== "installation" ||
+              binding.resourceId !== reserved.installation.id)),
+      )
+    )
+      throw new ScopeViolationError("The original fresh bootstrap seed is unavailable.");
+    const record: FreshBootstrapExecutionV1 = {
+      kind: "finalize",
+      installation: reserved.installation,
+      rowVersion: reserved.rowVersion,
+      seed: selectedSeed,
+      pending: new Set(),
+      namespaceIds: new Set(),
+      workNamespaceIds: new Set(),
+      auditNamespaceIds: new Set(),
+      active: true,
+      accepting: false,
+      started: false,
+      failed: false,
+      disposition: "not-sent",
+      establishedNoCommit: false,
+    };
+    return this.#freshExecution.run(record, async () => {
+      try {
+        const value = await work();
+        if (!record.started || record.transaction === undefined)
+          throw new ScopeViolationError("Fresh bootstrap requires its original transaction.");
+        await record.transaction;
+        if (record.failed) throw record.failure;
+        return value;
+      } catch (error) {
+        if (!record.failed) {
+          record.failed = true;
+          record.failure = error;
+        }
+        if (record.transaction !== undefined) await Promise.allSettled([record.transaction]);
+        if (!record.establishedNoCommit && record.disposition !== "not-sent")
+          throw new PostgresCommitOutcomeUnknownError();
+        throw error;
+      } finally {
+        record.accepting = false;
+        record.active = false;
+      }
+    });
+  }
+
+  private bindFreshBootstrapUnit(
+    unit: PlatformUnitOfWork,
+    record: FreshBootstrapExecutionV1,
+  ): PlatformUnitOfWork {
+    const allowed: Readonly<Record<string, readonly string[]>> = {
+      installations: ["findInstallation", "getInstallation"],
+      namespaces: ["findNamespace", "listNamespaces", "createNamespace"],
+      audit: ["append"],
+      operations: ["append"],
+    };
+    const principal = record.seed!.identities.find((identity) => identity.kind === "principal")!;
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(unit).map(([name, repository]) => [
+          name,
+          Object.freeze(
+            Object.fromEntries(
+              Object.entries(repository).map(([method, invoke]) => [
+                method,
+                (...args: unknown[]) => {
+                  let captured: readonly unknown[];
+                  try {
+                    captured = immutableCopy(args);
+                  } catch (error) {
+                    return this.trackFresh(record, async () => {
+                      throw error;
+                    });
+                  }
+                  return this.trackFresh(record, async () => {
+                    if (!allowed[name]?.includes(method) || typeof invoke !== "function")
+                      throw new ScopeViolationError("The operation is outside fresh bootstrap.");
+                    const value: unknown = await Reflect.apply(invoke, repository, captured);
+                    if (name === "namespaces" && method === "createNamespace") {
+                      const namespace = value as Readonly<Namespace>;
+                      if (!namespace || namespace.status !== "provisioning")
+                        throw new ScopeViolationError(
+                          "Fresh bootstrap requires its new Namespace.",
+                        );
+                      record.namespaceIds.add(namespace.id);
+                    }
+                    if (name === "operations") {
+                      const operation = captured[0] as PlatformOperation;
+                      if (
+                        operation.kind !== "namespace" ||
+                        operation.action !== "reconcile" ||
+                        operation.target !== "ready" ||
+                        operation.namespaceId !== operation.resourceId ||
+                        operation.actorId !== principal.id ||
+                        !record.namespaceIds.has(operation.namespaceId)
+                      )
+                        throw new ScopeViolationError(
+                          "Fresh bootstrap work must name its original Namespace.",
+                        );
+                      record.workNamespaceIds.add(operation.namespaceId);
+                    }
+                    if (name === "audit") {
+                      const event = captured[0] as AuditEvent;
+                      if (event.kind === "bootstrap") {
+                        const details = event.details;
+                        if (
+                          event.installationId !== record.installation.id ||
+                          event.actorId !== principal.id ||
+                          event.resource.kind !== "installation" ||
+                          event.resource.id !== record.installation.id ||
+                          event.outcome !== "success" ||
+                          details?.kind !== "bootstrap" ||
+                          typeof details.defaultNamespaceId !== "string" ||
+                          !record.namespaceIds.has(details.defaultNamespaceId)
+                        )
+                          throw new ScopeViolationError(
+                            "Fresh bootstrap audit must name its original admission.",
+                          );
+                        record.auditNamespaceIds.add(details.defaultNamespaceId);
+                      }
+                    }
+                    return value;
+                  });
+                },
+              ]),
+            ),
+          ),
+        ]),
+      ),
+    ) as unknown as PlatformUnitOfWork;
+  }
+
+  private async prepareFreshBootstrap(
+    record: FreshBootstrapExecutionV1,
+    context: TransactionContext,
+  ): Promise<void> {
+    if (record.seed === undefined || record.rowVersion === undefined)
+      throw new ScopeViolationError("The fresh bootstrap seed is unavailable.");
+    const found = rows(
+      (
+        await context.client.query(
+          "SELECT id, name, created_at, xmin::text AS row_version FROM occ.installation WHERE id=$1 FOR SHARE",
+          [record.installation.id],
+        )
+      ).rows,
+    );
+    if (
+      found.length !== 1 ||
+      text(found[0]!, "row_version") !== record.rowVersion ||
+      text(found[0]!, "id") !== record.installation.id ||
+      text(found[0]!, "name") !== record.installation.name ||
+      timestamp(found[0]!, "created_at") !== record.installation.createdAt
+    )
+      throw new ScopeViolationError("The original fresh Installation row changed.");
+    context.installation = record.installation;
+    context.installationLoaded = true;
+    // Same original six-table writer barrier, before empty-state observation and
+    // seed persistence. No NativeIAM policy projection or second evaluator.
+    await context.client.query(`LOCK TABLE occ.iam_identities, occ.iam_roles, occ.iam_groups,
+      occ.iam_group_memberships, occ.iam_access_bindings, occ.iam_restrictions IN SHARE ROW EXCLUSIVE MODE`);
+    const counts = rows(
+      (
+        await context.client.query(`SELECT
+      (SELECT count(*) FROM occ.iam_identities) + (SELECT count(*) FROM occ.iam_roles) +
+      (SELECT count(*) FROM occ.iam_groups) + (SELECT count(*) FROM occ.iam_group_memberships) +
+      (SELECT count(*) FROM occ.iam_access_bindings) + (SELECT count(*) FROM occ.iam_restrictions)
+      AS retained_count`)
+      ).rows,
+    );
+    if (counts.length !== 1 || String(counts[0]!.retained_count) !== "0")
+      throw new ScopeViolationError("Fresh bootstrap cannot adopt existing IAM state.");
+    await this.insertIAMState(context, record.seed);
+  }
+
   setBootstrapNativeIAM(state: PersistedNativeIAMState): void {
+    const fresh = this.#freshExecution.getStore();
+    if (fresh !== undefined)
+      this.rejectFresh(
+        fresh,
+        new ScopeViolationError("The fresh bootstrap seed is already selected."),
+      );
     this.bootstrapNativeIAM = state;
   }
 
@@ -851,6 +1195,21 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async loadNativeIAMState(installationId?: string): Promise<PersistedNativeIAMState> {
+    const fresh = this.#freshExecution.getStore();
+    if (fresh !== undefined)
+      return this.trackFresh(fresh, async () => {
+        if (
+          fresh.kind !== "finalize" ||
+          fresh.context === undefined ||
+          (installationId !== undefined && installationId !== fresh.installation.id)
+        )
+          throw new ScopeViolationError("The fresh bootstrap IAM reader is unavailable.");
+        return this.nativeIAMState(
+          fresh.context,
+          fresh.context.client.query,
+          fresh.installation.id,
+        );
+      });
     return this.execute(true, async (_state, context) =>
       this.nativeIAMState(context, context.client.query, installationId),
     );
@@ -1174,7 +1533,43 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
-    return this.execute(false, async (state) => work(state));
+    const fresh = this.#freshExecution.getStore();
+    if (fresh === undefined) return this.execute(false, async (state) => work(state));
+    if (!fresh.active || fresh.started || fresh.kind !== "finalize")
+      return this.rejectFresh(
+        fresh,
+        new ScopeViolationError("Fresh bootstrap permits one original outer transaction."),
+      );
+    fresh.started = true;
+    const transaction = this.execute(
+      false,
+      async (state, context) => {
+        fresh.context = context;
+        await this.prepareFreshBootstrap(fresh, context);
+        fresh.accepting = true;
+        try {
+          return await work(state);
+        } catch (error) {
+          return this.rejectFresh(fresh, error);
+        } finally {
+          fresh.accepting = false;
+        }
+      },
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      fresh,
+    );
+    fresh.transaction = transaction;
+    void transaction.catch((error: unknown) => {
+      if (!fresh.failed) {
+        fresh.failed = true;
+        fresh.failure = error;
+      }
+    });
+    return transaction;
   }
 
   private assertTurnIO(record: TurnCommandEnrollmentV1): TurnCommandIOV1 {
@@ -2501,7 +2896,25 @@ export class PostgresPlatformState implements PlatformStateStore {
     credential?: CredentialInventoryExecutionV1,
     gateway?: GatewayStartupExecution,
     turn?: TurnCommandExecutionV1,
+    fresh?: FreshBootstrapExecutionV1,
   ): Promise<T> {
+    const ambientFresh = this.#freshExecution.getStore();
+    if (
+      (ambientFresh !== undefined && ambientFresh !== fresh) ||
+      (fresh !== undefined &&
+        (readOnly ||
+          credential !== undefined ||
+          gateway !== undefined ||
+          turn !== undefined ||
+          this.#outerExecution.getStore() !== undefined ||
+          (fresh.kind === "finalize" && ambientFresh !== fresh)))
+    ) {
+      const error = new ScopeViolationError(
+        "Fresh bootstrap cannot nest or mix transaction owners.",
+      );
+      if (ambientFresh !== undefined) this.rejectFresh(ambientFresh, error);
+      throw error;
+    }
     if (turn !== undefined && this.#outerExecution.getStore() !== undefined)
       throw new ScopeViolationError("A turn command cannot nest in an existing owner callback.");
     const ambientTurn = this.#turnExecution.getStore();
@@ -2621,6 +3034,12 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
+      if (fresh !== undefined && !fresh.failed) {
+        fresh.failed = true;
+        fresh.failure = new DependencyUnavailableError(
+          "The bootstrap transaction transport failed.",
+        );
+      }
       turn?.phase?.poison(new DependencyUnavailableError("The turn transaction transport failed."));
       gateway?.phase?.poison(
         new DependencyUnavailableError("The Gateway transaction transport failed."),
@@ -2647,6 +3066,9 @@ export class PostgresPlatformState implements PlatformStateStore {
           const result = await query;
           lifetime.assertActive();
           return result;
+        } catch (error) {
+          if (fresh !== undefined) this.rejectFresh(fresh, error);
+          throw error;
         } finally {
           pending.delete(query);
         }
@@ -2726,6 +3148,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query("SET LOCAL client_connection_check_interval = '100ms'");
       }
       context = {
+        ...(fresh === undefined ? {} : { fresh }),
         ...(turn === undefined ? {} : { turn }),
         turnQuery: query,
         ...(gateway === undefined ? {} : { gateway }),
@@ -2772,6 +3195,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               },
             },
       );
+      if (fresh?.kind === "finalize") unit = this.bindFreshBootstrapUnit(unit, fresh);
       journalGuard.bind(unit);
       this.contexts.set(unit, context);
       const activeContext = context;
@@ -2779,6 +3203,21 @@ export class PostgresPlatformState implements PlatformStateStore {
         this.#outerExecution.run(true, () => work(unit!, activeContext)),
       );
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
+      if (fresh !== undefined) {
+        fresh.accepting = false;
+        while (fresh.pending.size) await Promise.allSettled([...fresh.pending]);
+        if (fresh.failed) throw fresh.failure;
+        if (
+          fresh.kind === "finalize" &&
+          (fresh.namespaceIds.size !== 1 ||
+            [...fresh.namespaceIds].some(
+              (id) => !fresh.workNamespaceIds.has(id) || !fresh.auditNamespaceIds.has(id),
+            ))
+        )
+          throw new ScopeViolationError(
+            "Fresh bootstrap requires its Namespace, work and attributable audit.",
+          );
+      }
       if (turn !== undefined) await turn.phase!.prepareCommit();
       if (gateway !== undefined) {
         gateway.phase!.closeAdmissions();
@@ -2814,7 +3253,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       // No awaited work may intervene between this marker and the raw COMMIT.
       gateway?.phase?.markCommitDispatched();
       turn?.phase?.markCommitDispatched();
+      if (fresh?.failed) throw fresh.failure;
       commitDisposition = "sent";
+      if (fresh !== undefined) fresh.disposition = "sent";
       if (turn !== undefined) turn.sent = true;
       if (credential !== undefined) credential.disposition = "sent";
       if (gateway !== undefined) gateway.disposition = "sent";
@@ -2836,6 +3277,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         throw new DependencyUnavailableError("The database transaction did not commit.");
       }
       commitDisposition = "acknowledged";
+      if (fresh !== undefined) fresh.disposition = "acknowledged";
       if (turn !== undefined) turn.acknowledged = true;
       turn?.phase?.observeCommitAcknowledgement(acknowledgedCommand);
       if (credential !== undefined) credential.disposition = "acknowledged";
@@ -2850,6 +3292,14 @@ export class PostgresPlatformState implements PlatformStateStore {
       return result;
     } catch (error) {
       primaryFailure = true;
+      if (fresh !== undefined) {
+        fresh.accepting = false;
+        if (!fresh.failed) {
+          fresh.failed = true;
+          fresh.failure = error;
+        }
+        while (fresh.pending.size) await Promise.allSettled([...fresh.pending]);
+      }
       if (turn !== undefined) {
         turn.phase?.closeAdmissions();
         turn.phase?.poison(error);
@@ -2922,6 +3372,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       discardClient ||= unknownCommit || expired;
       throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      if (fresh !== undefined) {
+        fresh.accepting = false;
+        fresh.active = false;
+        fresh.establishedNoCommit = establishedNoCommit;
+      }
       cleanup(() => turn?.phase?.closeAdmissions());
       cleanup(() => turn?.close());
       cleanup(() => gateway?.phase?.closeAdmissions());
@@ -3093,7 +3548,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         );
         context.installation = immutableCopy(installation);
         context.installationLoaded = true;
-        if (this.bootstrapNativeIAM !== undefined)
+        if (context.fresh === undefined && this.bootstrapNativeIAM !== undefined)
           await this.insertIAMState(context, this.bootstrapNativeIAM);
         return immutableCopy(installation);
       },

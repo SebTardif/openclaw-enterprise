@@ -1,3 +1,4 @@
+import { createAccountSecurityTablesV1 } from "./schema/account-security.ts";
 import { createAgentTables } from "./schema/agent.ts";
 import { createIamTables } from "./schema/iam.ts";
 import { createControllerWorkTable } from "./schema/work-queue.ts";
@@ -699,3 +700,11 @@ export const { gatewayStartupHeads, gatewayStartupOperations } = createGatewaySt
   occSchema,
   { installation, auditEvents, agents },
 );
+
+/** The paired account-security migration is required before use. Registration
+ * retains the original table object without granting privileges or enrolling old accounts. */
+export const { accountSecurityRecords } = createAccountSecurityTablesV1(occSchema, {
+  installation,
+  user,
+  account,
+});
