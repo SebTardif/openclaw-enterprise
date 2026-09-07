@@ -238,49 +238,51 @@ export function createControllerWorkloadProfileRequestCustodyV1(
       return invocation.handle;
     },
   });
-  const requests: WorkloadProfileRequestCustodySourceV1 = Object.freeze({
-    async consume(handle, purpose, unit, retainCleanup) {
-      const invocation = handles.get(handle);
-      if (!invocation || invocation.used || ambient.getStore() !== invocation) throw unavailable();
-      // Consume once even when a later field or registration fails.
-      invocation.used = true;
-      let held = true;
-      const release = () => {
-        held = false;
-      };
-      retainCleanup(release);
-      assertInvocation(invocation);
-      const captured = immutableCopy(purpose);
-      if (
-        !isDeepStrictEqual(captured, invocation.purpose) ||
-        unit.installationId !== installationId ||
-        unit.signal.aborted
-      )
-        throw unavailable();
-      const session = invocation.request.session;
-      if (!session) throw unavailable();
-      let lease: WorkloadProfileRequestLeaseV1;
-      const assertCurrent = () => {
-        if (!held || unit.signal.aborted) throw unavailable();
+  const requests: WorkloadProfileRequestCustodySourceV1 =
+    Object.freeze<WorkloadProfileRequestCustodySourceV1>({
+      async consume(handle, purpose, unit, retainCleanup) {
+        const invocation = handles.get(handle);
+        if (!invocation || invocation.used || ambient.getStore() !== invocation)
+          throw unavailable();
+        // Consume once even when a later field or registration fails.
+        invocation.used = true;
+        let held = true;
+        const release = () => {
+          held = false;
+        };
+        retainCleanup(release);
         assertInvocation(invocation);
-      };
-      lease = Object.freeze({
-        facts: Object.freeze({
-          installationId,
-          principalId: invocation.principal.id,
-          accountRef: session.accountId,
-          sessionRef: session.sessionId,
-          requestId: invocation.requestId,
-          admissionDecisionId: invocation.decisionId,
-          expiresAt: invocation.expiresAt,
-        }),
-        assertCurrent,
-      });
-      consumed.set(lease, { invocation, unit, active: true });
-      assertCurrent();
-      return lease;
-    },
-  });
+        const captured = immutableCopy(purpose);
+        if (
+          !isDeepStrictEqual(captured, invocation.purpose) ||
+          unit.installationId !== installationId ||
+          unit.signal.aborted
+        )
+          throw unavailable();
+        const session = invocation.request.session;
+        if (!session) throw unavailable();
+        let lease: WorkloadProfileRequestLeaseV1;
+        const assertCurrent = () => {
+          if (!held || unit.signal.aborted) throw unavailable();
+          assertInvocation(invocation);
+        };
+        lease = Object.freeze({
+          facts: Object.freeze({
+            installationId,
+            principalId: invocation.principal.id,
+            accountRef: session.accountId,
+            sessionRef: session.sessionId,
+            requestId: invocation.requestId,
+            admissionDecisionId: invocation.decisionId,
+            expiresAt: invocation.expiresAt,
+          }),
+          assertCurrent,
+        });
+        consumed.set(lease, { invocation, unit, active: true });
+        assertCurrent();
+        return lease;
+      },
+    });
   return Object.freeze({
     attachReceiver(input: ControllerWorkloadProfileRequestReceiverV1) {
       if (receiver) throw unavailable();

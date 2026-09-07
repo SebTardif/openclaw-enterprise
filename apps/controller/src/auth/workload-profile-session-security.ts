@@ -64,7 +64,7 @@ export function createControllerWorkloadProfileSessionSecurityV1(
 ): WorkloadProfileSessionSecuritySourceV1 {
   const requests = options.requests;
   const reader = options.reader;
-  return Object.freeze({
+  return Object.freeze<WorkloadProfileSessionSecuritySourceV1>({
     async lock(
       unit,
       request,
