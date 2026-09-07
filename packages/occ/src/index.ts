@@ -256,11 +256,28 @@ export {
 
 export const BOOTSTRAP_DEFAULT_NAMESPACE_NAME = "default";
 
+export type ControllerWorkloadProfileCollaboratorsV2 = NonNullable<
+  AgentServiceOptions["workloadProfiles"]
+> &
+  NonNullable<DeploymentServiceOptions["workloadProfiles"]>;
+
+/** Synchronous server-owned assembly over this controller's exact selection.
+ * The factory installs collaborators, never an account or deployment authority. */
+export interface ControllerWorkloadProfileFactoryV2 {
+  readonly invocations: ControllerWorkloadProfileCollaboratorsV2["invocations"];
+  create(
+    context: Readonly<{
+      installation: Readonly<Installation>;
+      state: PlatformStateStore;
+      selection: DriverSelection;
+    }>,
+  ): Pick<ControllerWorkloadProfileCollaboratorsV2, "enrollment" | "use">;
+}
+
 export interface ControllerOptions {
-  /** Server-owned original request/enrollment/use composition. Omission leaves
-   * selected draft/deploy commands unavailable; it supplies no default authority. */
-  readonly workloadProfiles?: NonNullable<AgentServiceOptions["workloadProfiles"]> &
-    NonNullable<DeploymentServiceOptions["workloadProfiles"]>;
+  /** Created once before Agent/Deployment capture. Missing genuine collaborators
+   * remain unavailable; the original stable invocation source is shared. */
+  readonly workloadProfiles?: ControllerWorkloadProfileFactoryV2;
   readonly authorize?: (
     request: AuthorizationRequest,
   ) => AuthorizationDecision | Promise<AuthorizationDecision>;
@@ -377,14 +394,44 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
-    const workloadProfiles =
-      options.workloadProfiles === undefined
-        ? undefined
-        : Object.freeze({
-            invocations: options.workloadProfiles.invocations,
-            enrollment: options.workloadProfiles.enrollment,
-            use: options.workloadProfiles.use,
-          });
+    const profileFactory = options.workloadProfiles;
+    let workloadProfiles: ControllerWorkloadProfileCollaboratorsV2 | undefined;
+    if (profileFactory !== undefined) {
+      const invocations = profileFactory.invocations;
+      const create = profileFactory.create;
+      if (typeof invocations?.forCurrentInvocation !== "function" || typeof create !== "function")
+        throw new DependencyUnavailableError("The profile construction source is unavailable.");
+      const supplied = create.call(
+        profileFactory,
+        Object.freeze({
+          installation: this.installation,
+          state: this.state,
+          selection: this.drivers,
+        }),
+      );
+      if (supplied instanceof Promise) {
+        // Reject asynchronous setup without leaving its rejected promise unobserved.
+        void supplied.catch(() => {});
+        throw new DependencyUnavailableError(
+          "Profile construction requires synchronous collaborators.",
+        );
+      }
+      if (supplied === null || typeof supplied !== "object" || "then" in supplied)
+        throw new DependencyUnavailableError(
+          "Profile construction requires synchronous collaborators.",
+        );
+      const enrollment = supplied.enrollment;
+      const use = supplied.use;
+      if (
+        typeof enrollment?.withDraft !== "function" ||
+        typeof enrollment?.withDeployment !== "function" ||
+        typeof enrollment?.withRecovery !== "function" ||
+        typeof use?.validateSelectionLocked !== "function" ||
+        typeof use?.prepareUseLocked !== "function"
+      )
+        throw new DependencyUnavailableError("The original profile collaborators are unavailable.");
+      workloadProfiles = Object.freeze({ invocations, enrollment, use });
+    }
     this.agent = new AgentService({
       ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
       repositories: this.mutations.forRepositories(AGENT_REPOSITORIES),
