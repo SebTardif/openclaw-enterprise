@@ -12,6 +12,10 @@ import {
 } from "../../packages/occ/src/workload-profiles/selection.ts";
 import { workloadProfileDigest } from "../../packages/occ/src/workload-profiles/canonical.ts";
 import { GatewayStartupOwnerPhaseV1 } from "../../packages/occ/src/gateway-startup-v1/owner.ts";
+import {
+  createPostgresGatewayStartupV1,
+  createPostgresGatewayStartupV2,
+} from "../../packages/occ/src/gateway-startup-v1/postgres.ts";
 import { RepositoryTransactionLifetime } from "../../packages/occ/src/ports/transaction.ts";
 import { workloadProfileManifestFixture } from "../fixtures/workload-profile.mjs";
 import { envelope } from "../fixtures/runtime-resource-accounting-v1/values.mjs";
@@ -122,7 +126,7 @@ function manifest() {
     },
   };
 }
-function setup() {
+function setup(version = 1) {
   const value = manifest();
   const derived = deriveWorkloadProfileManifestV2(bytes(value));
   const selection = {
@@ -185,7 +189,17 @@ function setup() {
       events.push("poison");
     },
   };
-  const unit = { installationId: request.installationId };
+  const unit =
+    version === 1
+      ? { installationId: request.installationId }
+      : {
+          subject: {
+            kind: "agent-gateway",
+            installationId: request.installationId,
+            namespaceRef: request.namespaceId,
+            agentRef: request.agentId,
+          },
+        };
   const lease = {
     assertCurrent() {
       if (!current) throw new Error("revoked");
@@ -624,3 +638,182 @@ for (const [name, mutate] of Object.entries(malformed))
     mutate(value);
     assert.throws(() => decodeWorkloadProfileManifestV2(bytes(value)));
   });
+
+for (const version of [1, 2])
+  test(`original selector accepts exact V${version} owner correspondence and forwards original unit`, async () => {
+    const f = setup(version),
+      result = await f.resolve();
+    assert.deepEqual(f.events, ["enroll", "namespace", "agent", "admission", "capabilities"]);
+    assert.deepEqual(copy(result.use), f.record.use);
+    assert.deepEqual(copy(result.request), f.request);
+    result.assertCurrent();
+    await result.release();
+    assert.deepEqual(f.events.slice(-2), ["capability-release", "storage-release"]);
+  });
+for (const field of ["installationId", "namespaceRef", "agentRef"])
+  test(`actual V2 unit ${field} mismatch refuses before enrollment`, async () => {
+    const f = setup(2);
+    f.unit.subject[field] = "foreign";
+    await assert.rejects(f.resolve());
+    assert.deepEqual(f.events, ["poison"]);
+  });
+for (const malformed of [
+  undefined,
+  {},
+  { kind: "installation", installationId: "I", namespaceRef: "N", agentRef: "A" },
+])
+  test(`a malformed present V2 subject cannot fall back to matching legacy Installation ${JSON.stringify(malformed)}`, async () => {
+    const f = setup(2);
+    f.unit.installationId = f.request.installationId;
+    f.unit.subject = malformed;
+    await assert.rejects(f.resolve());
+    assert.deepEqual(f.events, ["poison"]);
+  });
+test("caught V2 subject failure stays latched after restoration or legacy downgrade", async () => {
+  const f = setup(2),
+    result = await f.resolve(),
+    original = copy(f.unit.subject);
+  f.unit.subject.agentRef = "foreign";
+  assert.throws(result.assertCurrent);
+  f.unit.subject = original;
+  assert.throws(result.assertCurrent);
+  delete f.unit.subject;
+  f.unit.installationId = f.request.installationId;
+  assert.throws(result.assertCurrent);
+  await result.release();
+  assert.deepEqual(f.events.slice(-2), ["capability-release", "storage-release"]);
+});
+
+// Real original phase and backend objects with controlled borrowed storage and
+// capability participants. No SQL, accepting invocation or positive issuer.
+async function selectedInPhase(version) {
+  const f = setup(version),
+    lifetime = new RepositoryTransactionLifetime();
+  const phase = new GatewayStartupOwnerPhaseV1(lifetime, async () => assert.fail("unexpected SQL"));
+  const unit =
+    version === 1
+      ? {
+          installationId: f.request.installationId,
+          phase,
+          policy: {},
+          backend: createPostgresGatewayStartupV1(f.request.installationId),
+        }
+      : {
+          subject: copy(f.unit.subject),
+          phase,
+          policy: {},
+          backend: createPostgresGatewayStartupV2(f.unit.subject),
+        };
+  const current = { storage: true, capability: true, late: undefined };
+  let selectionIo, selected;
+  const assertStorage = () => {
+    if (!current.storage) throw Error("storage withdrawn");
+  };
+  const assertCapability = () => {
+    if (current.late) return current.late.promise;
+    if (!current.capability) throw Error("capability withdrawn");
+  };
+  const selector = createAdmittedWorkloadProfileSelectorV2(
+    {
+      async enroll(request, actual, io) {
+        assert.equal(actual, unit);
+        assert.deepEqual(copy(request), f.request);
+        selectionIo = io;
+        io.assertActive();
+        return { ...f.lease, assertCurrent: assertStorage };
+      },
+    },
+    {
+      async acquire(request, manifest, use, actual, io) {
+        assert.equal(actual, unit);
+        assert.equal(io, selectionIo);
+        io.assertActive();
+        return {
+          assertCurrent: assertCapability,
+          async release() {
+            f.events.push("capability-release");
+          },
+        };
+      },
+    },
+  );
+  const completion = { kind: "rollback", response: { kind: "unavailable" } };
+  await phase.runCommand(async () => {
+    selected = await phase.runOperation("selection", (io) =>
+      selector.resolveLocked(f.request, unit, io),
+    );
+    phase.retainCleanup(selected.release);
+    phase.retainCurrentness(selected.assertCurrent);
+    await phase.runOperation("later-head", async (io) => {
+      io.assertActive();
+      selected.assertCurrent();
+    });
+    return completion;
+  });
+  await phase.drainAccepted();
+  await lifetime.finish();
+  return { f, phase, unit, current, selected, completion };
+}
+for (const version of [1, 2])
+  test(`V${version} selector held lease survives real acquisition IO through original final fence`, async () => {
+    const p = await selectedInPhase(version);
+    assert.equal(p.phase.finalize(), p.completion);
+    assert.equal(
+      p.f.events.some((x) => x.endsWith("release")),
+      false,
+    );
+    await p.phase.finishTerminal("rolled-back");
+    assert.deepEqual(p.f.events.slice(-2), ["capability-release", "storage-release"]);
+    assert.throws(p.selected.assertCurrent);
+  });
+for (const kind of ["storage", "capability"])
+  test(`V2 real finalization refuses ${kind} withdrawal and retains terminal cleanup`, async () => {
+    const p = await selectedInPhase(2);
+    p.current[kind] = false;
+    assert.throws(() => p.phase.finalize());
+    assert.throws(() => p.phase.markCommitDispatched());
+    await assert.rejects(p.phase.finishTerminal("rolled-back"));
+    assert.deepEqual(p.f.events.slice(-2), ["capability-release", "storage-release"]);
+  });
+for (const settlement of ["resolve", "reject"])
+  test(`V2 late invalid final assertion stays owned through actual terminal ${settlement}`, async () => {
+    const p = await selectedInPhase(2);
+    p.current.late = deferred();
+    assert.throws(() => p.phase.finalize());
+    let done = false;
+    const ending = assert.rejects(p.phase.finishTerminal("rolled-back")).then(() => {
+      done = true;
+    });
+    await nextTurn();
+    assert.equal(done, false);
+    assert.equal(
+      p.f.events.some((x) => x.endsWith("release")),
+      false,
+    );
+    p.current.late[settlement](undefined);
+    await ending;
+    assert.deepEqual(p.f.events.slice(-2), ["capability-release", "storage-release"]);
+    assert.throws(() => p.phase.markCommitDispatched());
+  });
+
+test("one captured version observation selects the V2 subject fence", async () => {
+  const f = setup(2);
+  f.unit.installationId = f.request.installationId;
+  f.unit.subject.agentRef = "agt_00000000-0000-4000-8000-000000000099";
+  let observations = 0;
+  const unit = new Proxy(f.unit, {
+    has(target, property) {
+      if (property === "subject") return ++observations === 1;
+      return Reflect.has(target, property);
+    },
+  });
+  await assert.rejects(
+    createAdmittedWorkloadProfileSelectorV2(f.storage, f.capabilities).resolveLocked(
+      f.request,
+      unit,
+      f.io,
+    ),
+  );
+  assert.equal(observations, 1);
+  assert.deepEqual(f.events, ["poison"]);
+});
