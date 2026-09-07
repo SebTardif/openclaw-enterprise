@@ -64,7 +64,8 @@
     "./containment-controls-codec-v1": "./src/containment-controls-codec-v1.ts",
     "./native-measurement-v1": "./src/native-measurement-v1.ts",
     "./native-measurement-codec-v1": "./src/native-measurement-codec-v1.ts",
-    "./api/agent/lifecycle-routes": "./src/api/agent/lifecycle-routes.ts"
+    "./api/agent/lifecycle-routes": "./src/api/agent/lifecycle-routes.ts",
+    "./gateway-startup-v1": "./src/gateway-startup-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
