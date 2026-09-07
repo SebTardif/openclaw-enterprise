@@ -3,6 +3,12 @@ import type { HarnessExecutionMode } from "@openclaw-enterprise/contracts/resour
 import type { ProviderDefinition } from "@openclaw-enterprise/contracts/drivers/provider";
 import type { ExactAuthorization } from "../../application/authorization.ts";
 import type { MutationRepositoryOperations } from "../../application/mutation-context.ts";
+import type { WorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
+import type { AuthenticatedRequestHandleSourceV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
+import type {
+  WorkloadProfileMutationEnrollmentV2,
+  WorkloadProfileUseResolverV2,
+} from "../../workload-profiles/admitted-use.ts";
 
 /** Only repositories and methods needed by Agent draft commands and queries. */
 export const AGENT_REPOSITORIES = {
@@ -41,6 +47,8 @@ export interface UpdateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string | null;
   readonly executionMode?: HarnessExecutionMode;
+  /** Explicit immutable draft selection; omission preserves the stored selection. */
+  readonly workloadProfileSelection?: WorkloadProfileSelectionV1;
 }
 
 export interface ActiveAgentRevisionSelection {
@@ -88,4 +96,16 @@ export interface AgentServiceOptions {
   readonly assertSecretDriverOwner: (expectedId: string) => void;
   readonly createId: () => string;
   readonly now: () => string;
+  /** Original invocation/unit owners only; this option supplies no default authority. */
+  readonly workloadProfiles?: {
+    readonly invocations: AuthenticatedRequestHandleSourceV1;
+    readonly enrollment: Pick<
+      WorkloadProfileMutationEnrollmentV2<
+        never,
+        readonly [principalId: string, input: UpdateAgentInput]
+      >,
+      "withDraft"
+    >;
+    readonly use: WorkloadProfileUseResolverV2;
+  };
 }

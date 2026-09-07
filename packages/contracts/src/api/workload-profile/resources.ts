@@ -3,6 +3,7 @@ import { Meta, Timestamp } from "../common.ts";
 import {
   WorkloadProfileIdSchemaV1,
   WorkloadProfileScopeSchemaV1,
+  WorkloadProfileScopeSchemaV2,
   WorkloadProfileContentEnvelopeSchemaV1,
   WorkloadProfileSelectionSchemaV1,
 } from "../../workload-profile-v1.ts";
@@ -27,7 +28,7 @@ export const WorkloadProfileAcknowledgementSchema = Type.Object(
     kind: Type.Literal("acknowledged"),
     operationRef: WorkloadProfileIdSchemaV1,
     action: Action,
-    scope: WorkloadProfileScopeSchemaV1,
+    scope: Type.Union([WorkloadProfileScopeSchemaV1, WorkloadProfileScopeSchemaV2]),
   },
   closed,
 );
@@ -47,7 +48,7 @@ export const WorkloadProfilePreparationProjectionSchema = Type.Object(
     kind: Type.Literal("inert-preparation"),
     operationRef: WorkloadProfileIdSchemaV1,
     action: Type.Union([Type.Literal("admit"), Type.Literal("replace")]),
-    scope: WorkloadProfileScopeSchemaV1,
+    scope: Type.Union([WorkloadProfileScopeSchemaV1, WorkloadProfileScopeSchemaV2]),
     manifest: WorkloadProfileContentEnvelopeSchemaV1,
     preparedAt: Timestamp,
   },
@@ -59,7 +60,7 @@ export type WorkloadProfilePreparationProjection = Static<
 /** Historical state is not current authorization or evidence of runtime termination. */
 export const WorkloadProfileAdmissionProjectionSchema = Type.Object(
   {
-    scope: WorkloadProfileScopeSchemaV1,
+    scope: Type.Union([WorkloadProfileScopeSchemaV1, WorkloadProfileScopeSchemaV2]),
     selection: WorkloadProfileSelectionSchemaV1,
     status: Type.Union([Type.Literal("active"), Type.Literal("withdrawn")]),
     manifest: WorkloadProfileContentEnvelopeSchemaV1,

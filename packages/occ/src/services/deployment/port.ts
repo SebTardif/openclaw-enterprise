@@ -13,10 +13,17 @@ import type {
   SelectedRepositories,
 } from "../../application/mutation-context.ts";
 import type { RuntimeIntent } from "@openclaw-enterprise/contracts/runtime-assignment";
+import type { LifecycleDeployCommandV2 } from "@openclaw-enterprise/contracts/lifecycle-deploy-v2";
+import type { LifecycleAcceptedReceiptV1 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
 import type { CredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
 import type { AdmittedStorePolicyBindingV1 } from "../../workload-profiles/admitted-configuration.ts";
 import type { PlatformReadView } from "../../ports/platform-read-view.ts";
 import type { PlatformUnitOfWork } from "../../ports/platform-unit-of-work.ts";
+import type { AuthenticatedRequestHandleSourceV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
+import type {
+  WorkloadProfileMutationEnrollmentV2,
+  WorkloadProfileUseResolverV2,
+} from "../../workload-profiles/admitted-use.ts";
 
 export const DEPLOYMENT_REPOSITORIES = {
   read: {},
@@ -25,6 +32,7 @@ export const DEPLOYMENT_REPOSITORIES = {
     agents: ["findAgent", "lockAgent"],
     runtimeAssignments: [
       "findRuntimeIntentHead",
+      "findRuntimeIntent",
       "initializeRuntimeIntent",
       "advanceRuntimeIntent",
     ],
@@ -33,7 +41,7 @@ export const DEPLOYMENT_REPOSITORIES = {
     secrets: ["lockSecret"],
     revisions: ["listRevisions", "createRevision"],
     audit: ["append"],
-    runtimeAdmissions: ["recordAdmission"],
+    runtimeAdmissions: ["lockDeployCommand", "findCommittedDeployCommand", "recordAdmission"],
     operations: ["append"],
   },
 } as const;
@@ -48,7 +56,7 @@ export const DEPLOYMENT_RECOVERY_REPOSITORIES = {
   installations: ["getInstallation"],
   agents: ["findAgent"],
   runtimeAssignments: ["findRuntimeIntent"],
-  runtimeAdmissions: ["findCommittedAdmission"],
+  runtimeAdmissions: ["findCommittedAdmission", "findCommittedDeployCommand"],
 } as const;
 
 export type DeploymentRecoveryReadView = SelectedRepositories<
@@ -66,6 +74,11 @@ export interface DeployAgentInput {
   readonly agentId: string;
   /** Internal admission CAS; omission preserves the staged bodyless bridge. */
   readonly expectedLifecycleGeneration?: number | null;
+}
+
+/** Scope comes from the route; the body remains the original closed V2 command. */
+export interface DeployAgentCommandInput extends Pick<DeployAgentInput, "namespaceId" | "agentId"> {
+  readonly command: LifecycleDeployCommandV2;
 }
 
 /** Trusted caller retains this locator before opening its outer transaction. */
@@ -125,6 +138,12 @@ export interface DeploymentCredentialSelectionProducer {
 }
 
 export interface DeploymentCommands {
+  deployAgentCommand(
+    principalId: string,
+    input: DeployAgentCommandInput,
+    resolveHarness: HarnessResolver,
+    admission: DeployAgentAdmissionContext,
+  ): Promise<LifecycleAcceptedReceiptV1>;
   deployAgent(
     principalId: string,
     input: DeployAgentInput,
@@ -134,6 +153,10 @@ export interface DeploymentCommands {
 }
 
 export interface DeploymentQueries {
+  recoverDeployAgentCommand(
+    principalId: string,
+    input: DeployAgentCommandInput,
+  ): Promise<LifecycleAcceptedReceiptV1>;
   /** Compatible reader for the original deploy-admission format, not live runtime status. */
   getAcceptedDeployOperation(
     principalId: string,
@@ -184,4 +207,17 @@ export interface DeploymentServiceOptions {
   readonly createId: () => string;
   readonly now: () => string;
   readonly credentialSelection?: DeploymentCredentialSelectionProducer;
+  /** Original accepting invocation/unit and active profile sources. Absent
+   * composition keeps the explicit profile-backed command unavailable. */
+  readonly workloadProfiles?: {
+    readonly invocations: AuthenticatedRequestHandleSourceV1;
+    readonly enrollment: Pick<
+      WorkloadProfileMutationEnrollmentV2<
+        readonly [principalId: string, input: DeployAgentCommandInput],
+        never
+      >,
+      "withDeployment" | "withRecovery"
+    >;
+    readonly use: WorkloadProfileUseResolverV2;
+  };
 }

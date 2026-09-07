@@ -2,9 +2,12 @@
 
 The deployment command codec defines a client-retained operation identity and
 exact saved-draft expectations. The admitted-configuration codec defines the
-immutable configuration projection associated with that deployment. Both are
-source components. They do not register an HTTP route, change the existing
-deployment service, install an admission repository, or supply current authority.
+immutable configuration projection associated with that deployment. The Agent
+update and deployment services consume the shared profile selection and Use
+definitions, and the deploy HTTP operation requires this explicit V2 command.
+These adapters require the original authenticated request, transaction enrollment,
+active admission and capability implementations. Their presence in the route
+catalog does not supply those producers or enable a missing composition.
 
 ## Command identity
 
@@ -52,7 +55,7 @@ for UTF-8 byte comparison, with sorted object keys and no trailing newline.
 There is no new command digest or authority field. Original actor custody remains
 separate from this serializable binding.
 
-The eventual accepting transaction must perform fresh authorization over the
+The accepting transaction must perform fresh authorization over the
 retained original operands before disclosing a committed result. Exact replay
 then resolves the same canonical command and original revision, intent, work,
 and mutation audit before comparing today's draft or lifecycle head. A changed
@@ -69,6 +72,39 @@ authorize a new operation ID, another provider submission, or a deadline reset.
 Independent status reads retain their own current Agent-read authorization;
 revision documents additionally require AgentRevision read. Mutation permission
 does not grant either disclosure.
+
+The deploy registration retains raw bytes in an encapsulated JSON parser until
+the original command decoder has rejected duplicate names, invalid UTF-8 and
+unsupported numeric representations. The existing admission hook still runs
+before parsing; schema validation and current identity resolution still precede
+dispatch. Other operations retain their existing parsers. A successful deploy
+response contains only the original accepted operation reference, generation,
+timestamp and fixed deploy/saved-draft/running fields, with response metadata.
+It does not expose the revision document or its protected credential selection.
+
+An existing Agent can save an explicit `workloadProfileSelection` through its
+authorized update path. Omission preserves the selection; null, an implicit
+latest profile and a default selection are unsupported. Changing or explicitly
+resubmitting a selection requires the original enrolled active-head validator
+and its withdrawal-conflicting lease. Agent creation retains its existing
+behavior. Public Agent and revision reads project optional Selection and shared
+pair-wide `workloadProfileUse` respectively; historical absence is preserved.
+
+The selected deployment service serializes the command and resolves a committed
+exact replay before reading today's draft, head, Drivers or active profile. The
+original enrollment must authenticate current authority over the retained
+original operands before that lookup can disclose a result. For a new command,
+the service compares all saved-draft expectations, normalizes and validates the
+Configuration, prepares Use before the first revision INSERT, and invokes the
+same-unit selector against the inserted row. The protected credential record is
+the second argument to that same revision INSERT. Both returned profile leases
+transfer to the original transaction owner for final checks and terminal cleanup.
+
+Acknowledgement recovery runs after the failed write transaction has unwound,
+through the original read owner and a separate current recovery enrollment. It
+uses the same client-retained command, not a new transport request ID, and never
+prepares Use, changes the lifecycle head or submits provider work. Missing or
+failed readback remains unavailable; it cannot establish rollback.
 
 ## Admitted configuration projection
 
@@ -159,9 +195,17 @@ retained content, all five role records, scope and reference sensitivity, declar
 set normalization, strict rejection, and independent snapshots. They do not run a
 native Driver, database transaction, account producer, or runtime.
 
-Agent selection fields, the shared pair-wide profile-use definition, both revision
-freezers, the original admission repository, current authority guards, route and
-client cutover still require their original implementations. No second manifest,
-profile selector, request journal, or caller-supplied positive authority is defined
-here. Unsupported production inputs remain unavailable until those actual
-participants are connected.
+Additional conformance sources are
+`tests/conformance/agent-workload-profile-selection.test.mjs` and
+`tests/conformance/deployment-workload-use.test.mjs`. They exercise the actual
+services and raw HTTP boundary with explicitly controlled owner participants.
+Such fixtures do not qualify production authentication, held account/policy
+authority, durable commit or active profile capability.
+
+The accepting composition must install genuine current invocation, original
+unit/read enrollment and profile resolution inputs in the Agent and deployment
+services. Missing inputs leave the selected methods unavailable. Complete native
+SDK/Driver qualification, actual account and reference guards, profile storage
+and invalidation, and client command retention remain with their original
+implementations. No second manifest, profile selector, request journal, or
+caller-supplied positive authority is defined here.

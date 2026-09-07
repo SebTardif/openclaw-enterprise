@@ -4,11 +4,15 @@ import { WORKLOAD_PROFILE_LIMITS_V1 } from "@openclaw-enterprise/contracts/workl
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
 import type { WorkloadProfileRepository } from "../ports/repositories/workload-profile.ts";
 import { decodeWorkloadProfileJson } from "./canonical.ts";
-import { deriveWorkloadProfileManifest } from "./projections.ts";
+import { deriveWorkloadProfileManifestV2, deriveWorkloadProfileManifest } from "./projections.ts";
 import {
   PROFILE_ALLOCATION_KINDS,
   InvalidProfileOperationError,
   createProfilePreparation,
+  createProfilePreparationV2,
+  normalizeAnyProfilePreparation,
+  normalizeProfilePreparationV2,
+  type NormalizedProfilePreparationV2,
   decodeStoredProfilePreparation,
   normalizeProfilePreparation,
   profileActor,
@@ -29,9 +33,14 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 /** The envelope already claims canonical content. Normalize through the closed
  * dictionary, then require exact bytes rather than rewriting the caller's intent.
  * Computable projections identify this inert candidate; they confer no authority. */
-function validateManifest(normalized: NormalizedProfilePreparation): void {
+function validateManifest(
+  normalized: NormalizedProfilePreparation | NormalizedProfilePreparationV2,
+): void {
   const { request } = normalized;
-  const manifest = deriveWorkloadProfileManifest(encoder.encode(request.manifest.canonicalUtf8));
+  const manifest =
+    request.schemaVersion === 2
+      ? deriveWorkloadProfileManifestV2(encoder.encode(request.manifest.canonicalUtf8))
+      : deriveWorkloadProfileManifest(encoder.encode(request.manifest.canonicalUtf8));
   if (
     decoder.decode(manifest.canonicalBytes) !== request.manifest.canonicalUtf8 ||
     manifest.digests.manifestDigest !== request.manifest.manifestDigest ||
@@ -48,7 +57,7 @@ function validatedStoredPreparation(input: unknown): StoredProfilePreparation {
     encoder.encode(record.canonicalClientIntent),
     "operator-envelope",
   ).value;
-  validateManifest(normalizeProfilePreparation(intent));
+  validateManifest(normalizeAnyProfilePreparation(intent));
   return record;
 }
 
@@ -70,8 +79,14 @@ export class WorkloadProfileTransactionGuard {
   #failure: unknown;
   #pending: Promise<void> = Promise.resolve();
   run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.#closed)
-      return Promise.reject(new ScopeViolationError("The profile transaction is closed."));
+    if (this.#closed) {
+      const error = new ScopeViolationError("The profile transaction is closed.");
+      if (!this.#failed) {
+        this.#failed = true;
+        this.#failure = error;
+      }
+      return Promise.reject(error);
+    }
     const result = this.#pending.then(async () => {
       if (this.#failed) throw this.#failure;
       try {
@@ -87,6 +102,10 @@ export class WorkloadProfileTransactionGuard {
       () => {},
     );
     return result;
+  }
+  /** Original owner calls this in its final synchronous pre-COMMIT fence. */
+  assertCurrent(): void {
+    if (this.#failed) throw this.#failure;
   }
   async finish(): Promise<void> {
     this.#closed = true;
@@ -131,7 +150,7 @@ export function createWorkloadProfileRepository(
   guard: WorkloadProfileTransactionGuard,
   identities: ProfileIdentityAllocator = allocator,
   now: () => string = () => new Date().toISOString(),
-): WorkloadProfileRepository {
+): Pick<WorkloadProfileRepository, "prepareOperation" | "findOperation"> {
   return Object.freeze({
     findOperation: (input: ProfileOperationLocator) =>
       guard.run(async () => {
@@ -144,7 +163,7 @@ export function createWorkloadProfileRepository(
       }),
     prepareOperation: (input: unknown, attribution: ProfileOperationActor) =>
       guard.run(async () => {
-        const normalized = normalizeProfilePreparation(input);
+        const normalized = normalizeAnyProfilePreparation(input);
         validateManifest(normalized);
         const actor = profileActor(attribution);
         const installationId = backend.installationId();
@@ -179,13 +198,22 @@ export function createWorkloadProfileRepository(
         const allocated = Object.fromEntries(
           PROFILE_ALLOCATION_KINDS.map((kind) => [kind, identities.allocate(kind)]),
         ) as ProfileAllocatedIdentities;
-        const record = createProfilePreparation(
-          installationId,
-          actor,
-          normalized,
-          allocated,
-          now(),
-        );
+        const record =
+          normalized.request.schemaVersion === 2
+            ? createProfilePreparationV2(
+                installationId,
+                actor,
+                normalizeProfilePreparationV2(normalized.request),
+                allocated,
+                now(),
+              )
+            : createProfilePreparation(
+                installationId,
+                actor,
+                normalizeProfilePreparation(normalized.request),
+                allocated,
+                now(),
+              );
         await backend.insert(record, {
           ordinaryOperations: capacity.ordinaryOperations + 1,
           pendingOrdinaryOperations: capacity.pendingOrdinaryOperations + 1,
