@@ -67,6 +67,14 @@ export const WorkloadProfileUseSchemaV1 = object({
 });
 export type WorkloadProfileUseV1 = Static<typeof WorkloadProfileUseSchemaV1>;
 
+/** Pair-wide retained data. Validity does not establish a current admission. */
+export const WorkloadProfileUseSchemaV2 = object({
+  ...WorkloadProfileUseSchemaV1.properties,
+  schemaVersion: Type.Literal(2),
+  component: Type.Literal("gateway-harness-pair"),
+});
+export type WorkloadProfileUseV2 = Readonly<Static<typeof WorkloadProfileUseSchemaV2>>;
+
 /** Transport envelope only. Its bytes still require the selected closed content decoder. */
 export const WorkloadProfileContentEnvelopeSchemaV1 = object({
   format: Type.Literal("oce.workload-profile.canonical-json.v1"),
@@ -195,6 +203,13 @@ export function decodeWorkloadProfileSelectionV1(input: unknown) {
 
 export function decodeWorkloadProfileUseV1(input: unknown) {
   const result = decode(WorkloadProfileUseSchemaV1, input);
+  if (result.kind === "invalid") return result;
+  const refs = Object.values(result.value.profileRefs).map((role) => role.ref);
+  return new Set(refs).size === refs.length ? result : ({ kind: "invalid" } as const);
+}
+
+export function decodeWorkloadProfileUseV2(input: unknown) {
+  const result = decode(WorkloadProfileUseSchemaV2, input);
   if (result.kind === "invalid") return result;
   const refs = Object.values(result.value.profileRefs).map((role) => role.ref);
   return new Set(refs).size === refs.length ? result : ({ kind: "invalid" } as const);
