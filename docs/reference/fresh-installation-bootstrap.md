@@ -18,6 +18,10 @@ Protected credential output retains its existing exclusive creation and private 
 
 Failure records distinguish the operation that failed, a committed or unknown outcome, an incomplete Installation, and unavailable account/compensation outcomes. A cleanup acknowledgment is not evidence that the whole bootstrap rolled back. The pending field indicates that protected output writing started; it does not assert that every file was durably written.
 
+A finalization failure can include an optional `finalization` diagnostic object with exactly five fields: `schema: "fresh-bootstrap-failure-v1"`, `stage`, `sqlstate`, `commitDisposition`, and `establishedNoCommit`. The stage identifies the first captured failure boundary. SQLSTATE is restricted to a closed set of database failure categories; `null` means no supported category was captured, not that the operation succeeded. The COMMIT disposition (`not-sent`, `sent`, or `acknowledged`) and no-COMMIT fact describe the original transaction after its terminal cleanup settles. They can therefore describe a later boundary than the first failure stage.
+
+The receipt comes from the same state instance and exact finalizer error. If it is unavailable, bootstrap retains its existing bounded failure record. Neither the receipt nor a failed diagnostic lookup changes the original failure classification, pending/result meanings, compensation decisions, or recovery requirements. It carries no raw error text, SQL, parameters, passwords, or service-key values and does not establish database authority. A stage or SQLSTATE is evidence about that captured failure; it does not, by itself, establish the cause of an earlier attempt.
+
 ## Scope
 
 This flow creates fresh local accounts through the existing authentication writer. It does not backfill historical account-security records, enroll native channel users, grant additional database privileges, or establish the other authority-version producers. Existing users require their separately authorized migration or enrollment path.

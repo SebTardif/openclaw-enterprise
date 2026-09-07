@@ -257,6 +257,140 @@ test("OCC event sanitizer drops arbitrary fields and unsafe diagnostic text", ()
   assert.equal(JSON.stringify(output.lines).includes("arbitrary"), false);
 });
 
+const bootstrapFinalizationReceipt = Object.freeze({
+  schema: "fresh-bootstrap-failure-v1",
+  stage: "iam-writer-lock",
+  sqlstate: "42501",
+  commitDisposition: "not-sent",
+  establishedNoCommit: true,
+});
+
+test("bootstrap finalization logging preserves the closed receipt, explicit null and false", () => {
+  const output = memoryDestination();
+  const logger = createOccLogger({ component: "occ-bootstrap", destination: output.destination });
+  const receipts = [
+    bootstrapFinalizationReceipt,
+    Object.freeze({
+      ...bootstrapFinalizationReceipt,
+      stage: "commit",
+      sqlstate: null,
+      commitDisposition: "sent",
+      establishedNoCommit: false,
+    }),
+  ];
+  for (const finalization of receipts) {
+    emitOccLogEvent(logger, {
+      event: "installation.bootstrap-failed",
+      code: "BOOTSTRAP_FAILED",
+      operation: "finalization",
+      pending: true,
+      result: "incomplete-installation",
+      finalization,
+    });
+  }
+  assert.deepEqual(
+    output.lines.map((line) => line.finalization),
+    receipts,
+  );
+  for (const line of output.lines) {
+    assert.equal(line.severity, "ERROR");
+    assert.equal(line.code, "BOOTSTRAP_FAILED");
+    assert.equal(line.operation, "finalization");
+    assert.equal(line.pending, true);
+    assert.equal(line.result, "incomplete-installation");
+    assert.deepEqual(Object.keys(line.finalization).sort(), [
+      "commitDisposition",
+      "establishedNoCommit",
+      "schema",
+      "sqlstate",
+      "stage",
+    ]);
+  }
+});
+
+test("bootstrap finalization logging omits malformed or inherited receipt fields", () => {
+  const output = memoryDestination();
+  const logger = createOccLogger({ component: "occ-bootstrap", destination: output.destination });
+  const receipts = [null, [], "42501", Object.create(bootstrapFinalizationReceipt)];
+  for (const [key, value] of [
+    ["schema", "future-failure-v2"],
+    ["stage", "query-with-private-details"],
+    ["sqlstate", "XX000"],
+    ["sqlstate", 42501],
+    ["commitDisposition", "rolled-back"],
+    ["establishedNoCommit", "false"],
+  ])
+    receipts.push({ ...bootstrapFinalizationReceipt, [key]: value });
+  for (const key of Object.keys(bootstrapFinalizationReceipt)) {
+    const incomplete = { ...bootstrapFinalizationReceipt };
+    delete incomplete[key];
+    receipts.push(incomplete);
+  }
+  for (const finalization of receipts) {
+    emitOccLogEvent(logger, { event: "installation.bootstrap-failed", finalization });
+  }
+  assert.equal(output.lines.length, receipts.length);
+  for (const line of output.lines) assert.equal(Object.hasOwn(line, "finalization"), false);
+});
+
+test("bootstrap finalization logging drops private extras without invoking accessors or toJSON", () => {
+  const output = memoryDestination();
+  const logger = createOccLogger({ component: "occ-bootstrap", destination: output.destination });
+  const secret = "Bearer private-diagnostic-secret";
+  let evaluated = 0;
+  const finalization = {
+    ...bootstrapFinalizationReceipt,
+    message: secret,
+    sql: secret,
+    parameters: [secret],
+    credentials: { password: secret, serviceKey: secret },
+    toJSON() {
+      evaluated += 1;
+      throw new Error(secret);
+    },
+    get stack() {
+      evaluated += 1;
+      throw new Error(secret);
+    },
+    get cause() {
+      evaluated += 1;
+      throw new Error(secret);
+    },
+  };
+  emitOccLogEvent(logger, { event: "installation.bootstrap-failed", finalization });
+  const accessor = { ...bootstrapFinalizationReceipt };
+  Object.defineProperty(accessor, "stage", {
+    enumerable: true,
+    get() {
+      evaluated += 1;
+      throw new Error(secret);
+    },
+  });
+  emitOccLogEvent(logger, { event: "installation.bootstrap-failed", finalization: accessor });
+  emitOccLogEvent(logger, {
+    event: "installation.bootstrap-failed",
+    get finalization() {
+      evaluated += 1;
+      throw new Error(secret);
+    },
+  });
+  assert.equal(evaluated, 0);
+  assert.deepEqual(output.lines[0].finalization, bootstrapFinalizationReceipt);
+  assert.equal(Object.hasOwn(output.lines[1], "finalization"), false);
+  assert.equal(Object.hasOwn(output.lines[2], "finalization"), false);
+  assert.equal(JSON.stringify(output.lines).includes(secret), false);
+});
+
+test("bootstrap finalization logging is confined to the exact failed bootstrap event", () => {
+  const output = memoryDestination();
+  const logger = createOccLogger({ component: "occ-bootstrap", destination: output.destination });
+  for (const event of ["installation.bootstrapped", "migration.failed", "worker.error"]) {
+    emitOccLogEvent(logger, { event, finalization: bootstrapFinalizationReceipt });
+  }
+  assert.equal(output.lines.length, 3);
+  for (const line of output.lines) assert.equal(Object.hasOwn(line, "finalization"), false);
+});
+
 test("Fastify app writes one safe HTTP completion record and bounded unexpected-error diagnostics", async () => {
   const output = memoryDestination();
   const logger = createOccLogger({

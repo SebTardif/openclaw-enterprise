@@ -284,6 +284,7 @@ let accountAuth;
 let createdAccount;
 let createdServiceKey;
 let finalizationCommitted = false;
+let bootstrapFinalizationFailure;
 let outputStarted = false;
 let pool;
 let logging;
@@ -388,41 +389,50 @@ try {
     controller.registerDriver(iam);
     controller.selectDriver("iam", iam.id);
     bootstrapOperation = "finalization";
-    await state.finalizeFreshInstallationV1(reservation, bootstrapSeed, () =>
-      controller
-        .transact(async (unit) => {
-          const defaultNamespace = await controller.createNamespace(authorization.principal.id, {
-            name: BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
-          });
-          await unit.audit.append({
-            id: `aud_${randomUUID()}`,
-            installationId: installation.id,
-            occurredAt: new Date().toISOString(),
-            kind: "bootstrap",
-            actorId: authorization.principal.id,
-            source: "occ",
-            action: "administer",
-            resource: { kind: "installation", id: installation.id },
-            outcome: "success",
-            details: {
+    try {
+      await state.finalizeFreshInstallationV1(reservation, bootstrapSeed, () =>
+        controller
+          .transact(async (unit) => {
+            const defaultNamespace = await controller.createNamespace(authorization.principal.id, {
+              name: BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
+            });
+            await unit.audit.append({
+              id: `aud_${randomUUID()}`,
+              installationId: installation.id,
+              occurredAt: new Date().toISOString(),
               kind: "bootstrap",
-              source:
-                config.mode === "production"
-                  ? "production-installation-job"
-                  : "development-installation-job",
-              servicePrincipalId: authorization.servicePrincipal.id,
-              serviceKeyId: serviceKey.id,
-              defaultNamespaceId: defaultNamespace.id,
-            },
-          });
-        })
-        .then((result) => {
-          // Preserve a definite original COMMIT even if the finalizer wrapper later
-          // rejects while validating or releasing its own invocation association.
-          finalizationCommitted = true;
-          return result;
-        }),
-    );
+              actorId: authorization.principal.id,
+              source: "occ",
+              action: "administer",
+              resource: { kind: "installation", id: installation.id },
+              outcome: "success",
+              details: {
+                kind: "bootstrap",
+                source:
+                  config.mode === "production"
+                    ? "production-installation-job"
+                    : "development-installation-job",
+                servicePrincipalId: authorization.servicePrincipal.id,
+                serviceKeyId: serviceKey.id,
+                defaultNamespaceId: defaultNamespace.id,
+              },
+            });
+          })
+          .then((result) => {
+            // Preserve a definite original COMMIT even if the finalizer wrapper later
+            // rejects while validating or releasing its own invocation association.
+            finalizationCommitted = true;
+            return result;
+          }),
+      );
+    } catch (error) {
+      try {
+        bootstrapFinalizationFailure = state.freshBootstrapFailureReceiptV1(error);
+      } catch {
+        // A diagnostic lookup cannot replace the original finalization failure.
+      }
+      throw error;
+    }
     finalizationCommitted = true;
     bootstrapOperation = "complete";
     process.stdout.write(
@@ -494,6 +504,9 @@ try {
     result,
     pending: outputStarted,
     attempt: bootstrapAttempt,
+    ...(bootstrapFinalizationFailure === undefined
+      ? {}
+      : { finalization: bootstrapFinalizationFailure }),
   });
 } finally {
   await pool?.end();

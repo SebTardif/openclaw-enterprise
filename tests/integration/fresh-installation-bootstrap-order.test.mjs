@@ -49,6 +49,8 @@ async function controlled(options = {}) {
   let auth;
   let pool;
   let selectedSeed;
+  let state;
+  let finalizationError;
   let applied = false;
   let committed = false;
   let transactionStarted = false;
@@ -91,6 +93,8 @@ async function controlled(options = {}) {
   class State {
     constructor(actualPool) {
       assert.equal(actualPool, pool);
+      state = this;
+      if (options.missingReceiptLookup) this.freshBootstrapFailureReceiptV1 = undefined;
       if (options.missingReserve) this.reserveFreshInstallationV1 = undefined;
       if (options.missingFinalize) this.finalizeFreshInstallationV1 = undefined;
     }
@@ -119,10 +123,22 @@ async function controlled(options = {}) {
       assert.equal(Object.isFrozen(seed.identities), true);
       assert.equal(Object.isFrozen(seed.identities[0]), true);
       selectedSeed = seed;
-      failure("finalizeError");
-      const result = await runOriginalTransaction();
-      failure("finalizerAfterCommitError");
-      return result;
+      try {
+        failure("finalizeError");
+        const result = await runOriginalTransaction();
+        failure("finalizerAfterCommitError");
+        return result;
+      } catch (error) {
+        finalizationError = error;
+        throw error;
+      }
+    }
+    freshBootstrapFailureReceiptV1(error) {
+      calls.push("finalizer:receipt");
+      assert.equal(this, state);
+      assert.equal(error, finalizationError);
+      if (Object.hasOwn(options, "receiptLookupError")) throw options.receiptLookupError;
+      return options.finalizationReceipt;
     }
     async loadNativeIAMState(id) {
       calls.push("iam:read");
@@ -537,4 +553,122 @@ test("a finalizer wrapper rejection after original COMMIT cannot compensate comm
   assert.equal(failed(result).result, "committed");
   assert.equal(result.output.length, 0);
   assert.equal(result.exitCode, 1);
+});
+
+// Controlled data receipt only: this fixture supplies no PostgreSQL privileges
+// or state-owned failure classification. Actual projection is tested by the logger.
+const finalizationReceipt = Object.freeze({
+  schema: "fresh-bootstrap-failure-v1",
+  stage: "iam-writer-lock",
+  sqlstate: "42501",
+  commitDisposition: "not-sent",
+  establishedNoCommit: true,
+});
+
+test("bootstrap failure receipt comes from the same state and exact error before compensation", async () => {
+  const result = await controlled({ finalizeError: new Error(secret), finalizationReceipt });
+  assert.deepEqual(
+    result.calls.filter((call) =>
+      ["finalizer:receipt", "key:revoke", "account:delete"].includes(call),
+    ),
+    ["finalizer:receipt", "key:revoke", "account:delete"],
+  );
+  assert.equal(result.calls.includes("transaction:acquire"), false);
+  assert.deepEqual(failed(result).finalization, finalizationReceipt);
+  assert.equal(failed(result).code, "BOOTSTRAP_FAILED");
+  assert.equal(failed(result).operation, "finalization");
+  assert.equal(failed(result).result, "incomplete-installation");
+  assert.equal(failed(result).pending, true);
+  assert.deepEqual(
+    result.logs
+      .filter((event) => event.event === "installation.bootstrap-compensation")
+      .map(({ operation, outcome }) => ({ operation, outcome })),
+    [
+      { operation: "revoke-service-key", outcome: "acknowledged" },
+      { operation: "delete-account", outcome: "acknowledged" },
+    ],
+  );
+});
+
+for (const [name, options] of [
+  ["unavailable receipt", {}],
+  ["missing getter", { missingReceiptLookup: true }],
+  ["throwing getter", { receiptLookupError: new CommitUnknown() }],
+  ["undefined getter rejection", { receiptLookupError: undefined }],
+]) {
+  test(`bootstrap failure receipt ${name} preserves the original known failure and cleanup`, async () => {
+    const result = await controlled({ finalizeError: new Error(secret), ...options });
+    assert.equal(Object.hasOwn(failed(result), "finalization"), false);
+    assert.equal(failed(result).code, "BOOTSTRAP_FAILED");
+    assert.equal(failed(result).result, "incomplete-installation");
+    assert.deepEqual(
+      result.calls.filter((call) => ["key:revoke", "account:delete"].includes(call)),
+      ["key:revoke", "account:delete"],
+    );
+    assert.equal(result.exitCode, 1);
+  });
+}
+
+test("bootstrap failure receipt cannot authorize cleanup after an unknown original COMMIT", async () => {
+  const result = await controlled({ finalCommitError: new CommitUnknown(), finalizationReceipt });
+  // Deliberately conflicting diagnostic data cannot override the original failure.
+  assert.deepEqual(failed(result).finalization, finalizationReceipt);
+  assert.equal(failed(result).code, "COMMIT_OUTCOME_UNKNOWN");
+  assert.equal(failed(result).result, "outcome-unknown");
+  noCompensation(result);
+});
+
+test("bootstrap failure receipt lookup rejection cannot replace an unknown original COMMIT", async () => {
+  const result = await controlled({
+    finalCommitError: new CommitUnknown(),
+    receiptLookupError: new Error(secret),
+  });
+  assert.equal(failed(result).code, "COMMIT_OUTCOME_UNKNOWN");
+  assert.equal(failed(result).result, "outcome-unknown");
+  assert.equal(Object.hasOwn(failed(result), "finalization"), false);
+  noCompensation(result);
+});
+
+test("bootstrap failure receipt preserves acknowledged COMMIT after finalizer rejection", async () => {
+  const result = await controlled({
+    finalizerAfterCommitError: new Error(secret),
+    finalizationReceipt,
+  });
+  assert.deepEqual(failed(result).finalization, finalizationReceipt);
+  assert.equal(failed(result).result, "committed");
+  assert.equal(result.calls.includes("transaction:ack"), true);
+  noCompensation(result);
+});
+
+test("bootstrap failure receipt does not interrupt independent cleanup when logging fails", async () => {
+  const result = await controlled({
+    auditError: new Error(secret),
+    finalizationReceipt,
+    revokeError: new Error(secret),
+    compensationLoggerError: true,
+    failureLoggerError: true,
+  });
+  assert.deepEqual(
+    result.calls.filter((call) =>
+      ["finalizer:receipt", "key:revoke", "account:delete"].includes(call),
+    ),
+    ["finalizer:receipt", "key:revoke", "account:delete"],
+  );
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.output.length, 0);
+});
+
+test("bootstrap failure receipt is not requested on success, earlier failure or existing verification", async () => {
+  for (const options of [
+    {},
+    { reservationError: new Error(secret) },
+    { accountError: new Error(secret) },
+    { keyOutputError: new Error(secret) },
+    { stdoutError: new Error(secret) },
+    { existing: { id: "ins_existing" } },
+  ]) {
+    const result = await controlled({ ...options, finalizationReceipt });
+    assert.equal(result.calls.includes("finalizer:receipt"), false);
+    assert.equal(Object.hasOwn(failed(result) ?? {}, "finalization"), false);
+  }
 });

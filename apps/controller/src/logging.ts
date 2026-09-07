@@ -136,6 +136,81 @@ function safeAttempt(
   return Object.keys(result).length === 0 ? undefined : Object.freeze(result);
 }
 
+// Display allowlists for the original state-owned fresh-bootstrap receipt.
+// This projection does not classify errors or authorize cleanup.
+const BOOTSTRAP_FAILURE_STAGES = new Set([
+  "preflight",
+  "checkout",
+  "begin",
+  "installation-lock",
+  "installation-match",
+  "iam-writer-lock",
+  "iam-empty-read",
+  "iam-empty-check",
+  "iam-seed-write",
+  "bootstrap-callback",
+  "completion-check",
+  "commit",
+  "transport",
+  "terminal-cleanup",
+  "unknown",
+]);
+const BOOTSTRAP_FAILURE_SQLSTATES = new Set([
+  "42501",
+  "55P03",
+  "57014",
+  "40P01",
+  "40001",
+  "23001",
+  "23505",
+  "23503",
+  "23514",
+  "23502",
+  "55000",
+  "25P02",
+  "25006",
+  "42P01",
+  "42883",
+  "08003",
+  "08006",
+  "57P01",
+]);
+
+function safeBootstrapFinalization(
+  event: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string | boolean | null>> | undefined {
+  try {
+    const field = Object.getOwnPropertyDescriptor(event, "finalization");
+    if (field === undefined || !Object.hasOwn(field, "value")) return undefined;
+    const value: unknown = field.value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const fields: Record<string, unknown> = {};
+    for (const key of ["schema", "stage", "sqlstate", "commitDisposition", "establishedNoCommit"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) return undefined;
+      fields[key] = descriptor.value;
+    }
+    const { schema, stage, sqlstate, commitDisposition, establishedNoCommit } = fields;
+    if (
+      schema !== "fresh-bootstrap-failure-v1" ||
+      typeof stage !== "string" ||
+      !BOOTSTRAP_FAILURE_STAGES.has(stage) ||
+      !(
+        sqlstate === null ||
+        (typeof sqlstate === "string" && BOOTSTRAP_FAILURE_SQLSTATES.has(sqlstate))
+      ) ||
+      (commitDisposition !== "not-sent" &&
+        commitDisposition !== "sent" &&
+        commitDisposition !== "acknowledged") ||
+      typeof establishedNoCommit !== "boolean"
+    )
+      return undefined;
+    return Object.freeze({ schema, stage, sqlstate, commitDisposition, establishedNoCommit });
+  } catch {
+    return undefined;
+  }
+}
+
 function sanitizedEvent(
   event: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
@@ -143,7 +218,15 @@ function sanitizedEvent(
   const eventName =
     typeof rawEvent === "string" ? (safeString(rawEvent) ?? "occ.event") : "occ.event";
   const result: Record<string, unknown> = { event: eventName };
-  for (const [key, value] of Object.entries(event)) {
+  for (const key of Object.keys(event)) {
+    if (key === "finalization") {
+      if (eventName === "installation.bootstrap-failed") {
+        const safe = safeBootstrapFinalization(event);
+        if (safe !== undefined) result[key] = safe;
+      }
+      continue;
+    }
+    const value = event[key];
     if (key === "event" || !ALLOWED_FIELDS.has(key)) continue;
     const safe = key === "attempt" ? safeAttempt(value) : safeScalar(key, value);
     if (safe !== undefined) result[key] = safe;
