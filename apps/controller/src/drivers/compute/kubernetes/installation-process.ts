@@ -20,7 +20,6 @@ import type {
 import { immutableCopy } from "@openclaw-enterprise/utils";
 import { isDeepStrictEqual } from "node:util";
 import { withComputeAbortSignal } from "../operation-context.ts";
-import { GVISOR_RUNTIME_CLASS } from "./resources/identity.ts";
 import {
   installationObjectIdentity,
   observeInstallationApi,
@@ -215,7 +214,9 @@ function validatePlan(
       body.metadata.generateName === undefined &&
       body.metadata.deletionTimestamp === undefined &&
       body.spec?.replicas === 1 &&
-      body.spec.template.spec?.runtimeClassName === GVISOR_RUNTIME_CLASS,
+      typeof body.spec.template.spec?.runtimeClassName === "string" &&
+      body.spec.template.spec.runtimeClassName.length > 0 &&
+      body.spec.template.spec.runtimeClassName.trim() === body.spec.template.spec.runtimeClassName,
   );
   requireValue(
     body.spec.template.spec.automountServiceAccountToken === false &&
@@ -563,7 +564,7 @@ export class KubernetesInstallationProcess implements GatewayProcessParticipantV
           namespace: original.target.namespace,
           deployment: original.deployment,
           generation: original.controllerGeneration,
-          runtimeClassName: GVISOR_RUNTIME_CLASS,
+          runtimeClassName: selectedPlan.spec!.template.spec!.runtimeClassName!,
         },
         selectedContainers,
       );

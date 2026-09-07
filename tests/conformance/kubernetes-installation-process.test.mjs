@@ -278,11 +278,34 @@ for (const change of ["namespace", "template", "plan"]) {
   test(`create refuses changed ${change} before submission`, async () => {
     const f = fixture({ original: false });
     if (change === "namespace") f.namespace.metadata.uid = "successor-namespace";
-    if (change === "template") f.template.spec.template.spec.runtimeClassName = "another-runtime";
+    if (change === "template") f.template.metadata.namespace = "foreign-namespace";
     if (change === "plan") f.planCurrent = false;
     assert.equal((await invoke(f, "createOriginal", f.createInput)).kind, "unavailable");
     assert.equal(f.claimCount, 0);
     assert.equal(f.requests.filter(({ method }) => method === "POST").length, 0);
+  });
+}
+
+test("create and observation consume the explicit immutable Installation RuntimeClass", async () => {
+  const f = fixture({ original: false });
+  const selectedClass = "installation-selected-runsc";
+  f.template.spec.template.spec.runtimeClassName = selectedClass;
+  f.deployment.spec.template.spec.runtimeClassName = selectedClass;
+  f.pod.spec.runtimeClassName = selectedClass;
+  assert.equal((await invoke(f, "createOriginal", f.createInput)).kind, "accepted-object");
+  const observed = await invoke(f, "observeExact", { original: f.original });
+  assert.equal(observed.kind, "observed");
+  assert.equal(observed.chain.pod.runtimeClassName, selectedClass);
+});
+
+for (const selectedClass of [undefined, "", " "]) {
+  test(`missing or blank explicit RuntimeClass is unavailable: ${String(selectedClass)}`, async () => {
+    const f = fixture({ original: false });
+    if (selectedClass === undefined) delete f.template.spec.template.spec.runtimeClassName;
+    else f.template.spec.template.spec.runtimeClassName = selectedClass;
+    assert.equal((await invoke(f, "createOriginal", f.createInput)).kind, "unavailable");
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.claimCount, 0);
   });
 }
 
