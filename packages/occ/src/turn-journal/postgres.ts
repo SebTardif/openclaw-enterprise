@@ -983,7 +983,7 @@ export function createPostgresTurnJournal(
             return { kind: "resolved-existing", record: original, incomingLink: link };
           if (duplicate && original && "envelope" in original)
             return {
-              kind: link.disposition === "original" ? "recorded" : "existing",
+              kind: "existing",
               record: original,
               incomingLink: link,
             };
@@ -1664,6 +1664,72 @@ export function createPostgresTurnJournal(
         ? { kind: "recorded", record: record.outcome }
         : { kind: "pending", operation };
     };
+    const completedStatusPublished = async (
+      attempt: AttemptRecordV1,
+      prior: ExactDeliveryOperationV1,
+      call: AuthorityCallV1,
+    ): Promise<boolean> => {
+      if ("phase" in attempt || !attempt.consumption || attempt.outcome.kind !== "completed")
+        return false;
+      const completed = await getOperation(
+        attempt.binding.attempt,
+        "completion",
+        attempt.outcome.completionOperationRef,
+      );
+      active(call);
+      if (!completed || completed.operationKind !== "completion") return false;
+      const { request, record } = completed;
+      const { checkpoint, head } = record;
+      const expected = attempt.binding.expectedHead;
+      const identity = attempt.binding.identity;
+      if (
+        request.operationRef !== attempt.outcome.completionOperationRef ||
+        !sameJournalValue(request.attempt, attempt.binding.attempt) ||
+        !sameJournalValue(record.operation, request) ||
+        !sameJournalValue(checkpoint, attempt.outcome.checkpoint) ||
+        !sameJournalValue(attemptValues(checkpoint), attemptValues(attempt.binding.attempt)) ||
+        request.checkpointId !== checkpoint.checkpointId ||
+        request.expectedCompletionSequence !== expected.completionSequence ||
+        record.outcomeVersion !== request.expectedAttemptVersion + 1 ||
+        record.outcomeVersion <= prior.outcomeVersion ||
+        record.outcomeVersion > attempt.version ||
+        checkpoint.workspaceBindingRef !== identity.workspace.bindingRef ||
+        checkpoint.revisionRef !== identity.admittedRevisionRef ||
+        checkpoint.admittedConfigurationDigest !== identity.admittedConfigurationDigest ||
+        checkpoint.producingGatewayAssignmentRef !== identity.gatewayAssignment.id ||
+        checkpoint.producingHarnessAssignmentRef !== identity.harnessAssignment.id ||
+        checkpoint.parentCheckpointId !== expected.checkpointId ||
+        !sameJournalValue(head.context, expected.context) ||
+        head.creationRef !== expected.creationRef ||
+        head.checkpointId !== checkpoint.checkpointId ||
+        head.completionSequence !== checkpoint.completionSequence ||
+        head.headVersion !== expected.headVersion + 1 ||
+        head.completionSequence !== expected.completionSequence + 1 ||
+        !sameJournalValue(record.pendingDelivery.attempt, attempt.binding.attempt) ||
+        record.pendingDelivery.replyDestinationRef !== identity.replyDestinationRef ||
+        record.pendingDelivery.replyBindingVersion !== identity.replyBindingVersion ||
+        record.pendingDelivery.slot !== "completed-result" ||
+        record.pendingDelivery.operation.kind !== "create" ||
+        record.pendingDelivery.outcomeVersion !== record.outcomeVersion
+      )
+        return false;
+      const current = await getHead(attempt.binding.attempt);
+      active(call);
+      // The immutable operation was atomically published with this exact head
+      // and checkpoint. Later publications advance both counters together while
+      // preserving the creation; they do not replace this historical evidence.
+      return (
+        current !== null &&
+        sameJournalValue(current.head.context, head.context) &&
+        current.head.creationRef === head.creationRef &&
+        current.head.completionSequence >= head.completionSequence &&
+        current.head.headVersion - head.headVersion ===
+          current.head.completionSequence - head.completionSequence &&
+        (current.head.completionSequence !== head.completionSequence ||
+          (sameJournalValue(current.head, head) &&
+            sameJournalValue(current.checkpoint, checkpoint)))
+      );
+    };
     return {
       async findDelivery(input, call) {
         const operation = parseTurnJournalV1("deliveryOperation", input);
@@ -1709,22 +1775,24 @@ export function createPostgresTurnJournal(
             operation.outcomeVersion !== attempt.version
           )
             return denied;
-          observed = await ports.evidence.inspectDelivery(input, checkedCall(call));
-          active(call);
-          if (failure(observed)) return observed;
-          if (!sameJournalValue(observed, operation)) return denied;
           if (
             operation.slot === "completed-result" &&
             (attempt.outcome.kind !== "completed" || !slot)
           )
             return conflict;
-          if (
-            operation.slot === "outcome-status" &&
-            !["failed", "interrupted", "cancelled", "outcome-unknown"].includes(
-              attempt.outcome.kind,
+          if (operation.slot === "outcome-status") {
+            const code = operation.statusNoticeCode;
+            // Legacy absence is unclassified. This unit has no affirmative
+            // no-intent producer for an unavailable-before-dispatch notice.
+            if (
+              code === undefined ||
+              code === "unavailable-before-dispatch" ||
+              (code === "resolved-completed"
+                ? attempt.outcome.kind !== "completed"
+                : code !== attempt.outcome.kind)
             )
-          )
-            return denied;
+              return denied;
+          }
           if (operation.slot === "cancel-ack") {
             const cancelled = await query(
               `SELECT 1 FROM occ.turn_journal_operations WHERE ${attemptWhere} AND operation_kind='cancellation'`,
@@ -1738,12 +1806,32 @@ export function createPostgresTurnJournal(
               !update ||
               operation.slot !== "outcome-status" ||
               raw?.update_used !== false ||
+              slot.operation.operation.kind !== "create" ||
+              slot.operation.statusNoticeCode !== "outcome-unknown" ||
+              !sameJournalValue(slot.operation.attempt, operation.attempt) ||
+              slot.operation.replyDestinationRef !== operation.replyDestinationRef ||
+              slot.operation.replyBindingVersion !== operation.replyBindingVersion ||
+              operation.outcomeVersion <= slot.operation.outcomeVersion ||
               slot.outcome?.outcome.kind !== "delivered" ||
               operation.operation.kind !== "update" ||
               operation.operation.providerMessageRef !== slot.outcome.outcome.providerMessageRef
             )
               return conflict;
           } else if (update) return { kind: "existing", state: await stateFor(operation) };
+          if (
+            operation.slot === "outcome-status" &&
+            operation.statusNoticeCode === "resolved-completed"
+          ) {
+            if (!slot || !(await completedStatusPublished(attempt, slot.operation, call)))
+              return conflict;
+            active(call);
+          }
+          const current = await authorize("reserveDelivery", input, call);
+          if (current.kind !== "authorized") return current;
+          observed = await ports.evidence.inspectDelivery(input, checkedCall(call));
+          active(call);
+          if (failure(observed)) return observed;
+          if (!sameJournalValue(observed, operation)) return denied;
           if (!slot) {
             if (update) return conflict;
             await insertDeliverySlot(operation);

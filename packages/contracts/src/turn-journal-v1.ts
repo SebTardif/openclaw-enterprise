@@ -438,6 +438,18 @@ export type ExactDeliveryOperationV1 = Readonly<{
   outputDigest: JournalDigestV1;
   outcomeVersion: number;
   slot: "completed-result" | "outcome-status" | "cancel-ack";
+  /** Immutable fixed-notice classification resolved by the original delivery
+   * provenance owner and checked against canonical outcome at reservation.
+   * Absent legacy classification is unclassified, never proof of an unknown
+   * notice. New status reservations require it; decoding grants no authority.
+   */
+  statusNoticeCode?:
+    | "failed"
+    | "interrupted"
+    | "cancelled"
+    | "outcome-unknown"
+    | "unavailable-before-dispatch"
+    | "resolved-completed";
   replyDestinationRef: string;
   replyBindingVersion: number;
   operation:
@@ -805,6 +817,16 @@ export const ExactDeliveryOperationSchemaV1 = object({
   outputDigest: digest,
   outcomeVersion: version,
   slot: Type.Enum(["completed-result", "outcome-status", "cancel-ack"]),
+  statusNoticeCode: Type.Optional(
+    Type.Enum([
+      "failed",
+      "interrupted",
+      "cancelled",
+      "outcome-unknown",
+      "unavailable-before-dispatch",
+      "resolved-completed",
+    ]),
+  ),
   replyDestinationRef: ref,
   replyBindingVersion: version,
   operation: Type.Union([
@@ -1125,6 +1147,17 @@ function checkIntrinsic(input: unknown): void {
     v.attemptNumber !== 1
   )
     invalid();
+  if (v.statusNoticeCode !== undefined) {
+    const operation = v.operation as ExactDeliveryOperationV1["operation"];
+    if (
+      v.slot !== "outcome-status" ||
+      (v.statusNoticeCode === "resolved-completed" && operation.kind !== "update") ||
+      ((v.statusNoticeCode === "outcome-unknown" ||
+        v.statusNoticeCode === "unavailable-before-dispatch") &&
+        operation.kind !== "create")
+    )
+      invalid();
+  }
   if (v.checkpoint !== undefined) parseCompletedContextV1("checkpointRef", v.checkpoint);
   if (
     v.kind === "new-context" &&
@@ -1166,11 +1199,22 @@ function checkIntrinsic(input: unknown): void {
     )
       invalid();
     if (v.duplicate === false && link.disposition !== "original") invalid();
-    if (
-      (v.kind === "resolved-existing" || (v.kind === "existing" && "envelope" in record)) &&
-      link.disposition !== "duplicate"
-    )
-      invalid();
+    if (v.kind === "resolved-existing" && link.disposition !== "duplicate") invalid();
+    if (v.kind === "existing" && "envelope" in record && link.disposition !== "duplicate") {
+      // Exact rejected replay retains its immutable original incoming link.
+      // A distinct logical retry still needs its own duplicate link; routing
+      // correspondence remains the accepting journal's responsibility.
+      if (
+        link.disposition !== "original" ||
+        link.originalReceiptRefs.length !== 1 ||
+        link.originalReceiptRefs[0] !== receipt.receiptRef ||
+        link.locator.eventKey !== receipt.eventKey ||
+        link.locator.logicalMessageKey !== receipt.logicalMessageKey ||
+        link.incomingEventDigest !== receipt.eventDigest ||
+        link.incomingContentDigest !== receipt.contentDigest
+      )
+        invalid();
+    }
     if (v.kind === "recorded" && "envelope" in record && link.disposition !== "original") invalid();
   }
   if (
@@ -1866,6 +1910,16 @@ export interface JournalEvidenceProvenanceV1 {
     handle: VerifiedOutcomeV1,
     call: AuthorityCallV1,
   ): Promise<ExactOutcomeOperationV1 | JournalDeniedV1 | JournalUnavailableV1>;
+  /** Resolve immutable output reference/digest to its exact authorized bytes and
+   * fixed status classification. New status reservations require classification;
+   * legacy absence cannot be inferred from current state or a generic status slot.
+   * The accepting journal also checks the canonical outcome/version and retained
+   * predecessor. A classified unknown create must have been accepted as unknown
+   * and positively delivered before one exact known-ID reconciliation update.
+   * Resolved-completed requires actual canonical checkpoint publication, never
+   * native success alone. Current audience/destination, deadline and one-update
+   * limits remain independent; serialized classification is not trusted proof.
+   */
   authorizeDelivery(
     operation: ExactDeliveryOperationV1,
     call: AuthorityCallV1,

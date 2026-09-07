@@ -156,8 +156,43 @@ checks. The journal claims the slot before native send and records the provider
 outcome afterward. The closed slots are completed result, outcome status and
 cancellation acknowledgement. Each has at most three create attempts within a
 two-minute episode; retry needs definitive no-effect evidence. An ambiguous send
-remains `delivery-unknown`. At most one exact known-ID outcome-status update is
-allowed. A missing reply never regenerates the result by executing the turn again.
+remains `delivery-unknown`.
+
+`ExactDeliveryOperationV1.statusNoticeCode` classifies only `outcome-status`
+operations. Its closed values are `failed`, `interrupted`, `cancelled`,
+`outcome-unknown`, `unavailable-before-dispatch` and `resolved-completed`.
+Unknown and unavailable-before-dispatch classify creates; resolved-completed
+classifies an update. Failed, interrupted and cancelled can classify an initial
+notice or the single resolution of a delivered unknown notice. New status
+reservations require the actual immutable output provenance to bind that code,
+output reference and digest to the exact attempt
+and outcome version, with matching canonical journal state. The optional wire
+field preserves old records: a missing legacy classification is readable but
+unclassified, and never proves a previously unknown notice. A generic status
+slot or output reference cannot supply that missing classification.
+
+At most one outcome-status update may reconcile a positively delivered
+`outcome-unknown` create to newly established `failed`, `interrupted`, `cancelled`
+or `resolved-completed` status. It retains the exact known provider message ID,
+original attempt, actor, destination and reply binding. Its retained outcome
+version must be strictly newer than the prior unknown notice and equal the
+current canonical attempt version. Fresh original-human and complete-audience
+checks and the original two-minute episode still apply. A previously delivered
+terminal notice does not qualify as unknown.
+
+A resolved-completed update requires the original successful completion operation
+and its exact request identity, checkpoint and atomically published head. The
+publication version must be newer than the prior unknown notice and no greater
+than the current attempt version; it is not reconstructed from the delivery
+version. A later head cannot substitute its checkpoint for the original
+publication. Public head-read refusal while the reservation is held does not
+make release a prerequisite for delivery. The completed-result slot remains
+separate, and completed state does not authorize a new outcome-status create.
+
+An unknown create without a positively known message ID cannot be updated. An
+unknown update cannot write again, and uncertain commit readback does not grant
+send permission. A missing reply never regenerates the result by executing the
+turn again.
 
 Successful completion remains historical state when current permission later
 denies delivery or continuation. No delivery acknowledgement proves every channel

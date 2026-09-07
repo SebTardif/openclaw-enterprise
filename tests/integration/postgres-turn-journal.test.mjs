@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
+import { runtimeCommitAckProxy } from "../fixtures/postgres-runtime-assignment-commit-ack-fault.mjs";
 import { channelEnvelopeSchemaV1 } from "openclaw/plugin-sdk/channel-inbound";
 import {
   changedIncoming,
@@ -49,6 +50,206 @@ const consume = (h, v) =>
       ),
     )
     .then(valueOf);
+
+// These helpers use the actual store and SQL participant. Their opaque handles
+// and output values are controlled storage fixtures, not original COL/AUT/native
+// producer evidence. Classification is checked against real canonical progress.
+async function statusFixture(pool, kind = "outcome-unknown", deliveryKind = "delivered") {
+  const h = journalHarness(pool);
+  const v = journalValues(await seedJournalOwner(h.state));
+  await admit(h, v);
+  await dispatch(h, v);
+  await consume(h, v);
+  const observation = {
+    ...v.outcome,
+    outcome: { kind, stage: "execution", evidenceRef: ref("status-evidence") },
+  };
+  const recorded = valueOf(
+    await h.write((j) => j.recordOutcome(h.issue("outcome", observation), h.call)),
+  );
+  assert.equal(recorded.kind, "recorded");
+  assert.equal(recorded.record.version, 4);
+  assert.equal(recorded.record.outcome.kind, kind);
+  same(recorded.record.consumption.operation, v.consumption);
+  const status = {
+    ...v.delivery,
+    operationRef: ref("status-create"),
+    outputRef: ref("status-output"),
+    outputDigest: digest(),
+    slot: "outcome-status",
+    statusNoticeCode: kind,
+    outcomeVersion: recorded.record.version,
+  };
+  const providerMessageRef = ref("known-status-message");
+  if (deliveryKind === "unreserved") {
+    return { pool, h, v, status, providerMessageRef };
+  }
+  const reserved = valueOf(
+    await h.write((j) => j.reserveDelivery(h.issue("delivery", status), h.call)),
+  );
+  assert.equal(reserved.kind, "reserved");
+  assert.equal(reserved.attemptNumber, 1);
+  const delivered = {
+    operation: status,
+    deliveryAttemptRef: reserved.deliveryAttemptRef,
+    outcome:
+      deliveryKind === "delivered"
+        ? { kind: "delivered", providerMessageRef }
+        : { kind: "delivery-unknown" },
+  };
+  assert.equal(valueOf(await h.write((j) => j.recordDelivery(delivered, h.call))).kind, "recorded");
+  return { pool, h, v, status, reserved, delivered, providerMessageRef };
+}
+
+async function laterStatusOutcome(seed, kind) {
+  const { h, v } = seed;
+  const current = await h.read((j) => j.findAttempt(v.attempt, h.call));
+  assert.equal(current.kind, "found");
+  const observation = {
+    ...v.outcome,
+    operationRef: ref("later-outcome"),
+    expectedAttemptVersion: current.record.version,
+    outcome: { kind, stage: "execution", evidenceRef: ref("later-evidence") },
+  };
+  const next = valueOf(
+    await h.write((j) => j.recordOutcome(h.issue("outcome", observation), h.call)),
+  );
+  assert.equal(next.kind, "recorded");
+  assert.equal(next.record.version, current.record.version + 1);
+  assert.equal(next.record.outcome.kind, kind);
+  same(next.record.binding, current.record.binding);
+  same(next.record.consumption, current.record.consumption);
+  return next.record;
+}
+
+async function publishStatusCompletion(seed) {
+  const { h, v } = seed;
+  const before = await h.read((j) => j.findAttempt(v.attempt, h.call));
+  assert.equal(before.kind, "found");
+  assert.equal(before.record.outcome.kind, "outcome-unknown");
+  assert.equal(
+    valueOf(await h.write((j) => j.allocateCheckpoint(v.allocation, h.call))).kind,
+    "allocated",
+  );
+  assert.equal(
+    (await h.read((j) => j.findAttempt(v.attempt, h.call))).record.version,
+    before.record.version,
+  );
+  const completion = copy(v.completion);
+  // The original completion CAS comes from its real canonical attempt, never
+  // from the old delivered notice or a synthesized delivery-version predecessor.
+  completion.operation.expectedAttemptVersion = before.record.version;
+  completion.pendingDelivery.outcomeVersion = before.record.version + 1;
+  const result = valueOf(
+    await h.write((j) => j.publishCompleted(h.issue("completion", completion), h.call)),
+  );
+  assert.equal(result.kind, "published");
+  assert.equal(result.record.outcomeVersion, before.record.version + 1);
+  assert.equal(result.record.head.headVersion, v.head.headVersion + 1);
+  assert.equal(result.record.head.completionSequence, v.head.completionSequence + 1);
+  assert.equal(result.record.head.creationRef, v.head.creationRef);
+  same(result.record.checkpoint, v.checkpoint);
+  const current = await h.read((j) => j.findAttempt(v.attempt, h.call));
+  assert.equal(current.kind, "found");
+  assert.equal(current.record.outcome.kind, "completed");
+  assert.equal(current.record.version, result.record.outcomeVersion);
+  same(current.record.outcome.checkpoint, v.checkpoint);
+  same(current.record.binding, before.record.binding);
+  same(current.record.consumption, before.record.consumption);
+  same((await h.read((j) => j.findCompletion(completion.operation, h.call))).record, result.record);
+  assert.equal((await h.read((j) => j.readHead(v.context, h.call))).kind, "unavailable");
+  const pending = await h.read((j) => j.findDelivery(completion.pendingDelivery, h.call));
+  assert.equal(pending.kind, "pending");
+  same(pending.operation, completion.pendingDelivery);
+  return { observation: completion, record: result.record };
+}
+
+function statusUpdate(seed, outcomeVersion, statusNoticeCode = "resolved-completed") {
+  return {
+    ...seed.status,
+    operationRef: ref("status-update"),
+    outputRef: ref("reconciled-output"),
+    outputDigest: digest(),
+    outcomeVersion,
+    statusNoticeCode,
+    operation: { kind: "update", providerMessageRef: seed.providerMessageRef },
+  };
+}
+
+async function statusStorageSnapshot(seed, call = seed.h.call) {
+  const { h, v, pool } = seed;
+  const exact = [
+    v.attempt.installationRef,
+    v.attempt.namespaceRef,
+    v.attempt.agentRef,
+    v.attempt.conversationRef,
+    v.attempt.turnRef,
+    v.attempt.attemptRef,
+    v.attempt.reservationRef,
+  ];
+  const where =
+    "installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND conversation_ref=$4 AND turn_ref=$5 AND attempt_ref=$6 AND reservation_ref=$7";
+  // Readback only: never manufacture a predecessor or overwrite canonical rows.
+  return {
+    attempt: await h.read((j) => j.findAttempt(v.attempt, call), call),
+    firstDelivery: await h.read((j) => j.findDelivery(seed.status, call), call),
+    slots: (
+      await pool.query(
+        `SELECT * FROM occ.turn_journal_deliveries WHERE ${where} ORDER BY slot`,
+        exact,
+      )
+    ).rows,
+    history: (
+      await pool.query(
+        `SELECT * FROM occ.turn_journal_delivery_attempts WHERE ${where} ORDER BY delivery_attempt_ref`,
+        exact,
+      )
+    ).rows,
+  };
+}
+
+async function refusedStatusUpdate(seed, operation, expectedKind, call = seed.h.call) {
+  const before = await statusStorageSnapshot(seed, call);
+  const { h } = seed;
+  const result = valueOf(
+    await h.write((j) => j.reserveDelivery(h.issue("delivery", operation), call), call),
+  );
+  assert.equal(result.kind, expectedKind);
+  same(await statusStorageSnapshot(seed, call), before);
+  return result;
+}
+
+async function reservedStatusUpdate(seed, update, call = seed.h.call) {
+  const { h } = seed;
+  const reservation = valueOf(
+    await h.write((j) => j.reserveDelivery(h.issue("delivery", update), call), call),
+  );
+  assert.equal(reservation.kind, "reserved");
+  assert.equal(reservation.attemptNumber, 1);
+  same(reservation.operation, update);
+  assert.notEqual(reservation.deliveryAttemptRef, seed.reserved.deliveryAttemptRef);
+  assert.equal(reservation.episodeStartedAt, seed.reserved.episodeStartedAt);
+  same((await h.read((j) => j.findDelivery(seed.status, call), call)).record, seed.delivered);
+  return reservation;
+}
+
+async function recordedStatusUpdate(seed, update, reservation, outcome) {
+  const { h } = seed;
+  const observation = {
+    operation: update,
+    deliveryAttemptRef: reservation.deliveryAttemptRef,
+    outcome,
+  };
+  const result = valueOf(await h.write((j) => j.recordDelivery(observation, h.call)));
+  assert.equal(result.kind, "recorded");
+  same(result.record, observation);
+  same((await h.read((j) => j.findDelivery(update, h.call))).record, observation);
+  same((await h.read((j) => j.findDelivery(seed.status, h.call))).record, seed.delivered);
+  const snapshot = await statusStorageSnapshot(seed);
+  assert.equal(snapshot.history.filter((r) => r.operation.operation.kind === "update").length, 1);
+  assert.equal(snapshot.slots.find((r) => r.slot === "outcome-status").update_used, true);
+  return observation;
+}
 
 // The real repository and database are under test. Controlled provenance ports
 // supply storage observations only; this suite does not certify AUT/UPS owners.
@@ -893,6 +1094,7 @@ test(
           ...failed.delivery,
           operationRef: ref("status"),
           slot: "outcome-status",
+          statusNoticeCode: "failed",
         };
         const reserved = valueOf(
           await h.write((j) => j.reserveDelivery(h.issue("delivery", unknownDelivery), h.call)),
@@ -1210,67 +1412,664 @@ test(
       },
     );
 
-    await t.test("an exact known-message status update is attempted only once", async () => {
-      const h = journalHarness(pool);
-      const v = journalValues(await seedJournalOwner(h.state));
-      await admit(h, v);
-      await dispatch(h, v);
-      await consume(h, v);
-      assert.equal(
-        valueOf(await h.write((j) => j.recordOutcome(h.issue("outcome", v.outcome), h.call))).kind,
-        "recorded",
-      );
-      const status = { ...v.delivery, operationRef: ref("status-create"), slot: "outcome-status" };
-      const initial = valueOf(
-        await h.write((j) => j.reserveDelivery(h.issue("delivery", status), h.call)),
-      );
-      assert.equal(initial.kind, "reserved");
-      const providerMessageRef = ref("known-provider-message");
-      assert.equal(
-        valueOf(
-          await h.write((j) =>
-            j.recordDelivery(
-              {
-                operation: status,
-                deliveryAttemptRef: initial.deliveryAttemptRef,
-                outcome: { kind: "delivered", providerMessageRef },
-              },
-              h.call,
-            ),
-          ),
-        ).kind,
-        "recorded",
-      );
-      const update = {
-        ...status,
-        operationRef: ref("status-update"),
-        operation: { kind: "update", providerMessageRef },
-      };
-      const updated = valueOf(
-        await h.write((j) => j.reserveDelivery(h.issue("delivery", update), h.call)),
-      );
-      assert.equal(updated.kind, "reserved");
-      assert.equal(updated.attemptNumber, 1);
-      await h.write((j) =>
-        j.recordDelivery(
-          {
-            operation: update,
-            deliveryAttemptRef: updated.deliveryAttemptRef,
-            outcome: { kind: "definitive-no-effect", retryClass: "transient" },
+    await t.test(
+      "classified status reconciliation follows canonical journal transitions",
+      async (t) => {
+        for (const deliveryKind of ["delivered", "definitive-no-effect", "delivery-unknown"]) {
+          await t.test(
+            `unknown v4 to published v5 permits one ${deliveryKind} update`,
+            async () => {
+              const seed = await statusFixture(pool);
+              const publication = await publishStatusCompletion(seed);
+              assert.equal(seed.status.statusNoticeCode, "outcome-unknown");
+              assert.equal(seed.status.outcomeVersion, 4);
+              assert.equal(publication.observation.operation.expectedAttemptVersion, 4);
+              assert.equal(publication.record.outcomeVersion, 5);
+              const update = statusUpdate(seed, publication.record.outcomeVersion);
+              assert.equal(update.statusNoticeCode, "resolved-completed");
+              const reservation = await reservedStatusUpdate(seed, update);
+              const outcome =
+                deliveryKind === "delivered"
+                  ? { kind: "delivered", providerMessageRef: seed.providerMessageRef }
+                  : deliveryKind === "definitive-no-effect"
+                    ? { kind: "definitive-no-effect", retryClass: "transient" }
+                    : { kind: "delivery-unknown" };
+              const recorded = await recordedStatusUpdate(seed, update, reservation, outcome);
+              const replay = await refusedStatusUpdate(seed, update, "existing");
+              assert.equal(replay.state.kind, "recorded");
+              same(replay.state.record, recorded);
+              await refusedStatusUpdate(
+                seed,
+                { ...update, operationRef: ref("second-update") },
+                "conflict",
+              );
+              const { h, v } = seed;
+              const independent = await h.read((j) =>
+                j.findDelivery(publication.observation.pendingDelivery, h.call),
+              );
+              assert.equal(independent.kind, "pending");
+              same(independent.operation, publication.observation.pendingDelivery);
+              same(
+                (await h.read((j) => j.findCompletion(publication.observation.operation, h.call)))
+                  .record,
+                publication.record,
+              );
+              assert.equal(
+                (await h.read((j) => j.findAttempt(v.attempt, h.call))).record.version,
+                5,
+              );
+              // A current completed-status CREATE remains disallowed even after
+              // this update has settled; completed-result has its own original slot.
+              const create = {
+                ...seed.status,
+                operationRef: ref("completed-status-create"),
+                outcomeVersion: 5,
+              };
+              await refusedStatusUpdate(seed, create, "denied");
+              const malformedCreate = {
+                ...update,
+                operationRef: ref("resolved-status-create"),
+                operation: { kind: "create" },
+              };
+              assert.throws(() => parseTurnJournalV1("deliveryOperation", malformedCreate));
+              if (deliveryKind === "delivered") {
+                const resultOperation = publication.observation.pendingDelivery;
+                const completedResult = valueOf(
+                  await h.write((j) =>
+                    j.reserveDelivery(h.issue("delivery", resultOperation), h.call),
+                  ),
+                );
+                assert.equal(completedResult.kind, "reserved");
+                assert.equal(
+                  valueOf(
+                    await h.write((j) =>
+                      j.recordDelivery(
+                        {
+                          operation: resultOperation,
+                          deliveryAttemptRef: completedResult.deliveryAttemptRef,
+                          outcome: {
+                            kind: "delivered",
+                            providerMessageRef: ref("independent-completed-message"),
+                          },
+                        },
+                        h.call,
+                      ),
+                    ),
+                  ).kind,
+                  "recorded",
+                );
+                same((await h.read((j) => j.findDelivery(update, h.call))).record, recorded);
+              }
+            },
+          );
+        }
+
+        for (const kind of ["failed", "interrupted", "cancelled"]) {
+          await t.test(`unknown status reconciles only to newly recorded ${kind}`, async () => {
+            const seed = await statusFixture(pool);
+            const current = await laterStatusOutcome(seed, kind);
+            const update = statusUpdate(seed, current.version, kind);
+            const reservation = await reservedStatusUpdate(seed, update);
+            await recordedStatusUpdate(seed, update, reservation, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+            const { h, v } = seed;
+            assert.equal(
+              (await h.read((j) => j.findAttempt(v.attempt, h.call))).record.outcome.kind,
+              kind,
+            );
+            assert.equal(
+              (await h.read((j) => j.findCompletion(v.completionOperation, h.call))).kind,
+              "absent",
+            );
+          });
+        }
+
+        await t.test(
+          "completion retains its original CAS after additional unknown observations",
+          async () => {
+            const seed = await statusFixture(pool);
+            const next = await laterStatusOutcome(seed, "outcome-unknown");
+            assert.equal(next.version, 5);
+            const publication = await publishStatusCompletion(seed);
+            assert.equal(seed.status.outcomeVersion, 4);
+            assert.equal(publication.observation.operation.expectedAttemptVersion, 5);
+            assert.equal(publication.record.outcomeVersion, 6);
+            const update = statusUpdate(seed, 6);
+            const reserved = await reservedStatusUpdate(seed, update);
+            await recordedStatusUpdate(seed, update, reserved, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+            const { h } = seed;
+            const retained = await h.read((j) =>
+              j.findCompletion(publication.observation.operation, h.call),
+            );
+            assert.equal(retained.kind, "published");
+            same(retained.record.operation, publication.observation.operation);
+            assert.notEqual(
+              retained.record.operation.expectedAttemptVersion,
+              seed.status.outcomeVersion,
+            );
           },
-          h.call,
-        ),
-      );
-      assert.notEqual(
-        valueOf(await h.write((j) => j.reserveDelivery(h.issue("delivery", update), h.call))).kind,
-        "reserved",
-      );
-      const second = { ...update, operationRef: ref("second-status-update") };
-      assert.notEqual(
-        valueOf(await h.write((j) => j.reserveDelivery(h.issue("delivery", second), h.call))).kind,
-        "reserved",
-      );
-    });
+        );
+
+        await t.test(
+          "a later same-creation head preserves the original completed status proof",
+          async () => {
+            const seed = await statusFixture(pool);
+            const publication = await publishStatusCompletion(seed);
+            const { h, v } = seed;
+            const release = {
+              ...v.release,
+              expectedAttemptVersion: publication.record.outcomeVersion,
+            };
+            assert.equal(
+              valueOf(
+                await h.write((j) => j.releaseReservation(h.issue("release", release), h.call)),
+              ).kind,
+              "released",
+            );
+            const originalHead = await h.read((j) => j.readHead(v.context, h.call));
+            assert.equal(originalHead.kind, "completed");
+            same(originalHead.head, publication.record.head);
+            const successor = journalValues(v.owner, {
+              conversationRef: v.context.conversationRef,
+              head: publication.record.head,
+            });
+            assert.equal((await admit(h, successor)).record.decision.kind, "accepted");
+            await dispatch(h, successor);
+            await consume(h, successor);
+            assert.equal(
+              valueOf(await h.write((j) => j.allocateCheckpoint(successor.allocation, h.call)))
+                .kind,
+              "allocated",
+            );
+            const advanced = valueOf(
+              await h.write((j) =>
+                j.publishCompleted(h.issue("completion", successor.completion), h.call),
+              ),
+            );
+            assert.equal(advanced.kind, "published");
+            assert.equal(advanced.record.head.creationRef, publication.record.head.creationRef);
+            assert.equal(
+              advanced.record.head.completionSequence,
+              publication.record.head.completionSequence + 1,
+            );
+            assert.equal(advanced.record.head.headVersion, publication.record.head.headVersion + 1);
+            assert.equal(
+              advanced.record.checkpoint.parentCheckpointId,
+              publication.record.checkpoint.checkpointId,
+            );
+            assert.notEqual(
+              advanced.record.checkpoint.checkpointId,
+              publication.record.checkpoint.checkpointId,
+            );
+            const update = statusUpdate(seed, publication.record.outcomeVersion);
+            const reservation = await reservedStatusUpdate(seed, update);
+            await recordedStatusUpdate(seed, update, reservation, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+            same(
+              (await h.read((j) => j.findCompletion(publication.observation.operation, h.call)))
+                .record,
+              publication.record,
+            );
+            same(
+              (await h.read((j) => j.findAttempt(v.attempt, h.call))).record.outcome.checkpoint,
+              v.checkpoint,
+            );
+            same(
+              (await h.read((j) => j.findCompletion(successor.completionOperation, h.call))).record,
+              advanced.record,
+            );
+          },
+        );
+
+        await t.test(
+          "current version, exact tuple and known provider ID each remain required",
+          async (t) => {
+            const seed = await statusFixture(pool);
+            const publication = await publishStatusCompletion(seed);
+            const cases = [
+              ["outdated version", { outcomeVersion: 3 }, "denied"],
+              ["same prior version", { outcomeVersion: 4 }, "denied"],
+              ["future version", { outcomeVersion: 6 }, "denied"],
+              [
+                "foreign message",
+                { operation: { kind: "update", providerMessageRef: ref("foreign-message") } },
+                "conflict",
+              ],
+              [
+                "foreign destination",
+                { replyDestinationRef: ref("foreign-destination") },
+                "denied",
+              ],
+              [
+                "foreign binding",
+                { replyBindingVersion: seed.status.replyBindingVersion + 1 },
+                "denied",
+              ],
+              [
+                "foreign installation",
+                { attempt: { ...seed.v.attempt, installationRef: ref("foreign-installation") } },
+                "denied",
+              ],
+              [
+                "foreign namespace",
+                { attempt: { ...seed.v.attempt, namespaceRef: ref("foreign-namespace") } },
+                "denied",
+              ],
+              [
+                "foreign agent",
+                { attempt: { ...seed.v.attempt, agentRef: ref("foreign-agent") } },
+                "denied",
+              ],
+              [
+                "foreign attempt",
+                { attempt: { ...seed.v.attempt, attemptRef: ref("foreign-attempt") } },
+                "denied",
+              ],
+              [
+                "foreign reservation",
+                { attempt: { ...seed.v.attempt, reservationRef: ref("foreign-reservation") } },
+                "denied",
+              ],
+              [
+                "foreign turn",
+                { attempt: { ...seed.v.attempt, turnRef: ref("foreign-turn") } },
+                "denied",
+              ],
+              [
+                "foreign conversation",
+                { attempt: { ...seed.v.attempt, conversationRef: ref("foreign-conversation") } },
+                "denied",
+              ],
+              ["mismatched terminal classification", { statusNoticeCode: "failed" }, "denied"],
+            ];
+            for (const [name, change, expected] of cases) {
+              await t.test(name, async () => {
+                await refusedStatusUpdate(
+                  seed,
+                  { ...statusUpdate(seed, publication.record.outcomeVersion), ...change },
+                  expected,
+                );
+              });
+            }
+            // A valid final reservation is necessary to distinguish the negative
+            // predicates from a fixture that denies every update indiscriminately.
+            const valid = statusUpdate(seed, publication.record.outcomeVersion);
+            const reservation = await reservedStatusUpdate(seed, valid);
+            await recordedStatusUpdate(seed, valid, reservation, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+          },
+        );
+
+        await t.test(
+          "unknown-to-unknown update is invalid despite real version advancement",
+          async () => {
+            const seed = await statusFixture(pool);
+            const current = await laterStatusOutcome(seed, "outcome-unknown");
+            assert.equal(current.version, 5);
+            const malformed = statusUpdate(seed, current.version, "outcome-unknown");
+            assert.throws(() => parseTurnJournalV1("deliveryOperation", malformed));
+            const before = await statusStorageSnapshot(seed);
+            const { h } = seed;
+            // This is specifically malformed-codec input: the actual store converts
+            // the poisoned transaction into unavailable, not a successful refusal.
+            assert.deepEqual(
+              await h.write((j) => j.reserveDelivery(h.issue("delivery", malformed), h.call)),
+              { kind: "unavailable" },
+            );
+            same(await statusStorageSnapshot(seed), before);
+            await refusedStatusUpdate(
+              seed,
+              statusUpdate(seed, current.version, "failed"),
+              "denied",
+            );
+          },
+        );
+
+        for (const kind of ["failed", "interrupted", "cancelled"]) {
+          await t.test(`a delivered ${kind} notice is not an unknown predecessor`, async () => {
+            const seed = await statusFixture(pool, kind);
+            await refusedStatusUpdate(seed, statusUpdate(seed, 4, kind), "conflict");
+            const { h, v } = seed;
+            const before = await statusStorageSnapshot(seed);
+            const invalidProgress = {
+              ...v.outcome,
+              operationRef: ref("terminal-rewrite"),
+              expectedAttemptVersion: 4,
+              outcome: {
+                kind: "outcome-unknown",
+                stage: "execution",
+                evidenceRef: ref("invalid-later-evidence"),
+              },
+            };
+            assert.equal(
+              valueOf(
+                await h.write((j) => j.recordOutcome(h.issue("outcome", invalidProgress), h.call)),
+              ).kind,
+              "conflict",
+            );
+            same(await statusStorageSnapshot(seed), before);
+            // Do not invent a terminal-to-completed history to bypass this guard.
+            const unknown = await statusFixture(pool, "outcome-unknown", "unreserved");
+            await refusedStatusUpdate(
+              unknown,
+              { ...unknown.status, statusNoticeCode: kind },
+              "denied",
+            );
+          });
+        }
+
+        await t.test(
+          "legacy values decode without granting a new unclassified reservation",
+          async () => {
+            const seed = await statusFixture(pool, "outcome-unknown", "unreserved");
+            const legacy = copy(seed.status);
+            delete legacy.statusNoticeCode;
+            same(parseTurnJournalV1("deliveryOperation", legacy), legacy);
+            const oldOutcome = {
+              operation: legacy,
+              deliveryAttemptRef: ref("legacy-parser-only"),
+              outcome: { kind: "delivered", providerMessageRef: ref("legacy-parser-message") },
+            };
+            same(parseTurnJournalV1("delivery", oldOutcome), oldOutcome);
+            await refusedStatusUpdate(seed, legacy, "denied");
+            // These legacy values were decoded, not installed as historical rows.
+            // Real legacy readback/settlement requires the separate original upgrade fixture.
+            const publication = await publishStatusCompletion(seed);
+            const unclassifiedUpdate = statusUpdate(seed, publication.record.outcomeVersion);
+            delete unclassifiedUpdate.statusNoticeCode;
+            await refusedStatusUpdate(seed, unclassifiedUpdate, "denied");
+          },
+        );
+
+        await t.test(
+          "absent and unknown provider deliveries never grant a status update",
+          async () => {
+            for (const deliveryKind of ["unreserved", "delivery-unknown"]) {
+              const seed = await statusFixture(pool, "outcome-unknown", deliveryKind);
+              const publication = await publishStatusCompletion(seed);
+              const update = statusUpdate(seed, publication.record.outcomeVersion);
+              if (deliveryKind === "unreserved") {
+                const result = await refusedStatusUpdate(seed, update, "existing");
+                assert.equal(result.state.kind, "unavailable");
+              } else {
+                await refusedStatusUpdate(seed, update, "conflict");
+                const replay = await refusedStatusUpdate(seed, seed.status, "existing");
+                assert.equal(replay.state.record.outcome.kind, "delivery-unknown");
+              }
+            }
+          },
+        );
+
+        await t.test(
+          "missing, foreign or only allocated checkpoints cannot unlock completion updates",
+          async () => {
+            const seed = await statusFixture(pool);
+            const { h, v } = seed;
+            const completion = copy(v.completion);
+            completion.operation.expectedAttemptVersion = 4;
+            completion.pendingDelivery.outcomeVersion = 5;
+            const before = await statusStorageSnapshot(seed);
+            assert.equal(
+              valueOf(
+                await h.write((j) => j.publishCompleted(h.issue("completion", completion), h.call)),
+              ).kind,
+              "conflict",
+            );
+            same(await statusStorageSnapshot(seed), before);
+            await refusedStatusUpdate(seed, statusUpdate(seed, 5), "denied");
+            const foreign = await statusFixture(pool, "outcome-unknown", "unreserved");
+            assert.equal(
+              valueOf(
+                await foreign.h.write((j) =>
+                  j.allocateCheckpoint(foreign.v.allocation, foreign.h.call),
+                ),
+              ).kind,
+              "allocated",
+            );
+            const mixed = {
+              ...completion,
+              allocation: foreign.v.allocation,
+              canonical: foreign.v.completion.canonical,
+            };
+            assert.equal(
+              valueOf(
+                await h.write((j) => j.publishCompleted(h.issue("completion", mixed), h.call)),
+              ).kind,
+              "conflict",
+            );
+            same(await statusStorageSnapshot(seed), before);
+            assert.equal(
+              valueOf(await h.write((j) => j.allocateCheckpoint(v.allocation, h.call))).kind,
+              "allocated",
+            );
+            assert.equal((await h.read((j) => j.findAttempt(v.attempt, h.call))).record.version, 4);
+            await refusedStatusUpdate(seed, statusUpdate(seed, 5), "denied");
+            await refusedStatusUpdate(seed, statusUpdate(seed, 4), "denied");
+            assert.equal(
+              (await h.read((j) => j.findCompletion(completion.operation, h.call))).kind,
+              "absent",
+            );
+          },
+        );
+
+        await t.test(
+          "unavailable-before-dispatch does not invent an affirmative no-intent producer",
+          async () => {
+            const h = journalHarness(pool);
+            const v = journalValues(await seedJournalOwner(h.state));
+            await admit(h, v);
+            const status = {
+              ...v.delivery,
+              operationRef: ref("no-intent-status"),
+              outcomeVersion: 1,
+              slot: "outcome-status",
+              statusNoticeCode: "unavailable-before-dispatch",
+            };
+            same(parseTurnJournalV1("deliveryOperation", status), status);
+            const before = await h.read((j) => j.findAttempt(v.attempt, h.call));
+            assert.equal(
+              valueOf(await h.write((j) => j.reserveDelivery(h.issue("delivery", status), h.call)))
+                .kind,
+              "denied",
+            );
+            same(await h.read((j) => j.findAttempt(v.attempt, h.call)), before);
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT count(*)::int AS count FROM occ.turn_journal_deliveries WHERE agent_id=$1",
+                  [v.context.agentRef],
+                )
+              ).rows[0].count,
+              0,
+            );
+          },
+        );
+
+        await t.test(
+          "current denial preserves canonical status and exact historical readback",
+          async () => {
+            const seed = await statusFixture(pool);
+            const publication = await publishStatusCompletion(seed);
+            const update = statusUpdate(seed, publication.record.outcomeVersion);
+            const { h } = seed;
+            const before = await statusStorageSnapshot(seed);
+            const handle = h.issue("delivery", update);
+            h.provenance.setAllowed(false);
+            try {
+              assert.equal(
+                valueOf(await h.write((j) => j.reserveDelivery(handle, h.call))).kind,
+                "denied",
+              );
+              assert.equal(
+                (await h.read((j) => j.findDelivery(seed.status, h.call))).kind,
+                "denied",
+              );
+            } finally {
+              h.provenance.setAllowed(true);
+            }
+            same(await statusStorageSnapshot(seed), before);
+            const copied = structuredClone(handle);
+            assert.equal(
+              valueOf(await h.write((j) => j.reserveDelivery(copied, h.call))).kind,
+              "denied",
+            );
+            same(await statusStorageSnapshot(seed), before);
+            const reserved = await reservedStatusUpdate(seed, update);
+            await recordedStatusUpdate(seed, update, reserved, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+          },
+        );
+
+        await t.test(
+          "original call expiry and revocation after a real inspection wait prevent reservation",
+          async () => {
+            for (const boundary of ["deadline", "revocation"]) {
+              const seed = await statusFixture(pool);
+              const publication = await publishStatusCompletion(seed);
+              const update = statusUpdate(seed, publication.record.outcomeVersion);
+              const { h } = seed;
+              const before = await statusStorageSnapshot(seed);
+              const gate = deferred();
+              const inspections = h.provenance.inspections.length;
+              const call = h.provenance.call({
+                deadline: new Date(Date.now() + 2_000).toISOString(),
+              });
+              h.provenance.hold("delivery", gate.promise);
+              const pending = h.write(
+                (j) => j.reserveDelivery(h.issue("delivery", update), call),
+                call,
+              );
+              let waitFailure;
+              let result;
+              try {
+                const enteredBy = Date.now() + 1_000;
+                while (h.provenance.inspections.length === inspections && Date.now() < enteredBy) {
+                  await new Promise((resolve) => setTimeout(resolve, 5));
+                }
+                assert.ok(
+                  h.provenance.inspections.length > inspections,
+                  "actual delivery inspection did not enter its wait",
+                );
+                if (boundary === "deadline") {
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, Math.max(0, Date.parse(call.deadline) - Date.now() + 10)),
+                  );
+                } else {
+                  h.provenance.setAllowed(false);
+                }
+              } catch (error) {
+                waitFailure = error;
+              } finally {
+                gate.resolve();
+                h.provenance.unhold("delivery");
+                try {
+                  result = await pending;
+                } finally {
+                  h.provenance.setAllowed(true);
+                }
+              }
+              if (waitFailure) throw waitFailure;
+              if (boundary === "deadline") assert.deepEqual(result, { kind: "unavailable" });
+              else assert.equal(valueOf(result).kind, "denied");
+              same(await statusStorageSnapshot(seed), before);
+              const valid = await reservedStatusUpdate(seed, update);
+              await recordedStatusUpdate(seed, update, valid, {
+                kind: "delivered",
+                providerMessageRef: seed.providerMessageRef,
+              });
+            }
+          },
+        );
+
+        await t.test(
+          "a real rolled-back update reservation leaves the one-write allowance unused",
+          async () => {
+            const seed = await statusFixture(pool);
+            const publication = await publishStatusCompletion(seed);
+            const update = statusUpdate(seed, publication.record.outcomeVersion);
+            const before = await statusStorageSnapshot(seed);
+            const { h } = seed;
+            const result = await h.write(async (j) => {
+              assert.equal(
+                (await j.reserveDelivery(h.issue("delivery", update), h.call)).kind,
+                "reserved",
+              );
+              throw new Error("roll back the actual status update transaction");
+            });
+            assert.deepEqual(result, { kind: "unavailable" });
+            same(await statusStorageSnapshot(seed), before);
+            const reserved = await reservedStatusUpdate(seed, update);
+            await recordedStatusUpdate(seed, update, reserved, {
+              kind: "delivered",
+              providerMessageRef: seed.providerMessageRef,
+            });
+          },
+        );
+
+        await t.test(
+          "lost update-reservation COMMIT acknowledgment permits only exact readback",
+          async () => {
+            const seed = await statusFixture(pool);
+            const publication = await publishStatusCompletion(seed);
+            const update = statusUpdate(seed, publication.record.outcomeVersion);
+            const proxy = await runtimeCommitAckProxy(databaseUrl);
+            const faultPool = new pg.Pool({
+              connectionString: proxy.url,
+              max: 2,
+              connectionTimeoutMillis: 250,
+            });
+            faultPool.on("error", () => {});
+            const { h } = seed;
+            const fault = journalHarness(faultPool, { provenance: h.provenance });
+            const transactionRef = ref("status-update-commit-unknown");
+            try {
+              proxy.arm();
+              assert.deepEqual(
+                await fault.store.transact(
+                  transactionRef,
+                  (j) => j.reserveDelivery(fault.issue("delivery", update), fault.call),
+                  fault.call,
+                ),
+                { kind: "commit-unknown", transactionRef },
+              );
+              assert.equal(proxy.observedCommit, true);
+            } finally {
+              try {
+                await faultPool.end();
+              } finally {
+                await proxy.close();
+              }
+            }
+            // After unwind, perform status reads only. No provider invocation, new
+            // reserveDelivery command, outcome write or speculative resend follows.
+            const recovered = await h.read((j) => j.findDelivery(update, h.call));
+            assert.equal(recovered.kind, "pending");
+            same(recovered.operation, update);
+            const snapshot = await statusStorageSnapshot(seed);
+            assert.equal(
+              snapshot.history.filter((r) => r.operation.operation.kind === "update").length,
+              1,
+            );
+            const slot = snapshot.slots.find((r) => r.slot === "outcome-status");
+            assert.equal(slot.update_used, true);
+            assert.equal(slot.outcome, null);
+            same(snapshot.firstDelivery.record, seed.delivered);
+            assert.equal(snapshot.attempt.record.outcome.kind, "completed");
+          },
+        );
+      },
+    );
 
     await t.test(
       "consumed cancellation and completion compete under the same attempt version",
@@ -1939,5 +2738,268 @@ test(
         );
       },
     );
+  },
+);
+
+// This separate opt-in case requires its own >120-second allocated runtime
+// selection. Short call-deadline tests above do not prove episode expiry.
+test(
+  "PostgreSQL turn journal expires the original status episode",
+  {
+    skip: !databaseUrl
+      ? options.skip
+      : process.env.OCC_TEST_JOURNAL_STATUS_EPISODE === "1"
+        ? false
+        : "Set OCC_TEST_JOURNAL_STATUS_EPISODE=1 only for the separately allocated real 120-second episode test.",
+    timeout: 150_000,
+  },
+  async (t) => {
+    const pool = new pg.Pool({
+      connectionString: databaseUrl,
+      max: 2,
+      connectionTimeoutMillis: 250,
+    });
+    t.after(() => pool.end());
+    const seed = await statusFixture(pool);
+    const publication = await publishStatusCompletion(seed);
+    const update = statusUpdate(seed, publication.record.outcomeVersion);
+    const { h, v } = seed;
+    const before = await statusStorageSnapshot(seed);
+    const exact = [
+      v.attempt.installationRef,
+      v.attempt.namespaceRef,
+      v.attempt.agentRef,
+      v.attempt.conversationRef,
+      v.attempt.turnRef,
+      v.attempt.attemptRef,
+      v.attempt.reservationRef,
+    ];
+    const where =
+      "installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND conversation_ref=$4 AND turn_ref=$5 AND attempt_ref=$6 AND reservation_ref=$7";
+    const captureRollback = new Error("roll back the genuinely produced probe reservation");
+    let candidate;
+    const captureCall = h.provenance.call();
+    await assert.rejects(
+      h.state.transact(async (unit) => {
+        const reserved = await unit.turnJournal.reserveDelivery(
+          h.issue("delivery", update),
+          captureCall,
+        );
+        assert.equal(reserved.kind, "reserved");
+        same(reserved.operation, update);
+        // Capture through this SAME accepting transaction, before rollback.
+        // These are real backend-produced values, never a second-client seed.
+        const slots = await h.state.queryInTransaction(
+          unit,
+          `SELECT * FROM occ.turn_journal_deliveries WHERE ${where} AND slot='outcome-status'`,
+          exact,
+        );
+        const history = await h.state.queryInTransaction(
+          unit,
+          "SELECT * FROM occ.turn_journal_delivery_attempts WHERE installation_id=$1 AND delivery_attempt_ref=$2",
+          [v.attempt.installationRef, reserved.deliveryAttemptRef],
+        );
+        assert.equal(slots.rowCount, 1);
+        assert.equal(history.rowCount, 1);
+        candidate = { slot: slots.rows[0], history: history.rows[0] };
+        same(candidate.slot.operation, update);
+        same(candidate.history.operation, update);
+        assert.equal(candidate.slot.delivery_attempt_ref, reserved.deliveryAttemptRef);
+        assert.equal(candidate.history.delivery_attempt_ref, reserved.deliveryAttemptRef);
+        assert.equal(candidate.slot.update_used, true);
+        assert.equal(candidate.slot.outcome, null);
+        assert.equal(candidate.history.outcome, null);
+        assert.equal(
+          new Date(candidate.slot.episode_started_at).toISOString(),
+          seed.reserved.episodeStartedAt,
+        );
+        assert.equal(
+          new Date(candidate.history.episode_started_at).toISOString(),
+          seed.reserved.episodeStartedAt,
+        );
+        throw captureRollback;
+      }),
+      (error) => error === captureRollback,
+    );
+    same(await statusStorageSnapshot(seed, captureCall), before);
+    const deadline = Date.parse(seed.reserved.episodeStartedAt) + 120_000;
+    const serverTime = async () =>
+      new Date(
+        (await pool.query("SELECT clock_timestamp() AS observed_at")).rows[0].observed_at,
+      ).getTime();
+    assert.ok((await serverTime()) < deadline - 10_000, "the real episode expired during setup");
+    // This tests the installed SQL guard. The adapter's earlier FOR UPDATE
+    // would wait before its own episode check, so it cannot expose this SQL race.
+    while ((await serverTime()) < deadline - 10_000) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    const locker = await pool.connect();
+    const entered = deferred();
+    let pending;
+    let pendingOutcome;
+    let sqlFailure;
+    let blockedBefore;
+    let blockedAfter;
+    let waitingSince;
+    const probeRollback = new Error("roll back even if the guard unexpectedly accepts the probe");
+    try {
+      await locker.query("BEGIN");
+      const lockerPid = (await locker.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      // NO KEY UPDATE permits the preceding history FK's KEY SHARE. It blocks
+      // the new guard's canonical-attempt FOR SHARE without changing any row.
+      const locked = await locker.query(
+        "SELECT attempt_ref FROM occ.turn_journal_attempts WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3 AND conversation_ref=$4 AND turn_ref=$5 AND attempt_ref=$6 AND reservation_ref=$7 FOR NO KEY UPDATE",
+        [
+          v.attempt.installationRef,
+          v.attempt.namespaceRef,
+          v.attempt.agentRef,
+          v.attempt.conversationRef,
+          v.attempt.turnRef,
+          v.attempt.attemptRef,
+          v.attempt.reservationRef,
+        ],
+      );
+      assert.equal(locked.rowCount, 1);
+      waitingSince = performance.now();
+      // Replay only the exact captured row values into the installed constraint
+      // boundary using one real limited-role transaction. This is not a new
+      // authenticated reserve command or evidence of native output authority.
+      pending = h.state
+        .transact(async (unit) => {
+          await h.state.queryInTransaction(unit, "SET LOCAL statement_timeout = '20s'");
+          const backend = await h.state.queryInTransaction(unit, "SELECT pg_backend_pid() AS pid");
+          entered.resolve(backend.rows[0].pid);
+          const history = candidate.history;
+          await h.state.queryInTransaction(
+            unit,
+            "INSERT INTO occ.turn_journal_delivery_attempts (installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref,slot,operation_ref,delivery_attempt_ref,operation,attempt_number,episode_started_at,outcome) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULL)",
+            [
+              ...exact,
+              history.slot,
+              history.operation_ref,
+              history.delivery_attempt_ref,
+              JSON.stringify(history.operation),
+              history.attempt_number,
+              history.episode_started_at,
+            ],
+          );
+          const slot = candidate.slot;
+          let updated;
+          try {
+            updated = await h.state.queryInTransaction(
+              unit,
+              `UPDATE occ.turn_journal_deliveries SET operation_ref=$9,operation=$10,delivery_attempt_ref=$11,attempt_number=$12,episode_started_at=$13,outcome=NULL,update_used=$14 WHERE ${where} AND slot=$8`,
+              [
+                ...exact,
+                slot.slot,
+                slot.operation_ref,
+                JSON.stringify(slot.operation),
+                slot.delivery_attempt_ref,
+                slot.attempt_number,
+                slot.episode_started_at,
+                slot.update_used,
+              ],
+            );
+          } catch (error) {
+            // Capture only these fields before the original transaction owner
+            // maps SQL errors; rethrow the original error for its real rollback.
+            sqlFailure = { code: error.code, message: error.message };
+            throw error;
+          }
+          assert.equal(updated.rowCount, 1);
+          throw probeRollback;
+        })
+        .then(
+          (value) => ({ kind: "fulfilled", value }),
+          (error) => {
+            entered.reject(error);
+            return { kind: "rejected", error };
+          },
+        );
+      const pendingPid = await entered.promise;
+      const observe = async () => {
+        // Refresh the transaction-cached activity snapshot before each poll.
+        await locker.query("SELECT pg_stat_clear_snapshot()");
+        const result = await locker.query(
+          "SELECT clock_timestamp() AS observed_at, clock_timestamp() >= $3::timestamptz + interval '120 seconds' AS episode_expired, $1::int = ANY(pg_blocking_pids($2::int)) AS blocked, wait_event_type, query FROM pg_stat_activity WHERE pid=$2::int",
+          [lockerPid, pendingPid, seed.reserved.episodeStartedAt],
+        );
+        assert.equal(result.rowCount, 1, "the original pending backend must remain observable");
+        return result.rows[0];
+      };
+      const observeBy = Date.now() + 5_000;
+      while (Date.now() < observeBy) {
+        const observed = await observe();
+        if (
+          observed.blocked &&
+          observed.wait_event_type === "Lock" &&
+          observed.query.startsWith("UPDATE occ.turn_journal_deliveries SET operation_ref=")
+        ) {
+          blockedBefore = observed;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(blockedBefore, "the slot UPDATE must wait inside the canonical-attempt guard");
+      assert.equal(blockedBefore.episode_expired, false, "the SQL guard must enter before expiry");
+      do {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        blockedAfter = await observe();
+        assert.equal(blockedAfter.blocked, true);
+        assert.equal(blockedAfter.wait_event_type, "Lock");
+        assert.ok(
+          blockedAfter.query.startsWith("UPDATE occ.turn_journal_deliveries SET operation_ref="),
+        );
+      } while (!blockedAfter.episode_expired);
+      assert.ok(new Date(blockedAfter.observed_at).getTime() >= deadline);
+      t.diagnostic(
+        JSON.stringify({
+          episodeStartedAt: seed.reserved.episodeStartedAt,
+          episodeDeadline: new Date(deadline).toISOString(),
+          blockedBeforeAt: new Date(blockedBefore.observed_at).toISOString(),
+          blockedAfterAt: new Date(blockedAfter.observed_at).toISOString(),
+          observedWaitMilliseconds: performance.now() - waitingSince,
+          boundary: "installed SQL guard; captured candidate transaction was rolled back",
+          lockerPid,
+          pendingPid,
+        }),
+      );
+    } finally {
+      // The locker connection also performs all observations: the original
+      // two-client pool is sufficient, and every failure releases the waiter.
+      try {
+        await locker.query("ROLLBACK");
+      } finally {
+        locker.release();
+        pendingOutcome = await pending;
+      }
+    }
+    assert.equal(pendingOutcome.kind, "rejected");
+    assert.deepEqual(sqlFailure, {
+      code: "23514",
+      message: "Turn journal delivery episode is expired",
+    });
+    assert.equal(pendingOutcome.error.name, "ScopeViolationError");
+    assert.equal(
+      pendingOutcome.error.message,
+      "The resource violates its exact platform ownership or state.",
+    );
+    // Independently exercise the real API after expiry using a new valid call;
+    // this does not attribute the SQL probe to an authenticated whole command.
+    const currentCall = h.provenance.call();
+    assert.ok(Date.parse(currentCall.deadline) > Date.now());
+    assert.equal(currentCall.signal.aborted, false);
+    same(await statusStorageSnapshot(seed, currentCall), before);
+    const result = await refusedStatusUpdate(seed, update, "existing", currentCall);
+    assert.equal(result.state.kind, "recorded");
+    same(result.state.record, seed.delivered);
+    const snapshot = await statusStorageSnapshot(seed, currentCall);
+    const slot = snapshot.slots.find((r) => r.slot === "outcome-status");
+    assert.equal(slot.update_used, false);
+    assert.equal(new Date(slot.episode_started_at).toISOString(), seed.reserved.episodeStartedAt);
+    assert.equal(snapshot.history.filter((r) => r.operation.operation.kind === "update").length, 0);
+    assert.equal(snapshot.attempt.record.outcome.kind, "completed");
+    // No date replacement, timestamp UPDATE, native send, new status create,
+    // Harness attempt or release is used to manufacture this elapsed interval.
   },
 );
