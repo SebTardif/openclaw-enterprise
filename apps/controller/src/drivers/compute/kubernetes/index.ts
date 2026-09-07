@@ -13,6 +13,10 @@ import {
   KubernetesRuntimeObservations,
   type KubernetesRuntimeObservationDependencies,
 } from "./runtime-observations.ts";
+import {
+  KubernetesInstallationProcess,
+  type KubernetesInstallationProcessDependencies,
+} from "./installation-process.ts";
 import * as KubernetesIdentity from "./resources/identity.ts";
 import * as KubernetesNetwork from "./resources/network.ts";
 import * as KubernetesGateway from "./resources/gateway.ts";
@@ -351,6 +355,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly routing: KubernetesRouting;
   private readonly cleanup: KubernetesCleanup;
   private readonly runtimeObservations: KubernetesRuntimeObservations;
+  private readonly installationProcess: KubernetesInstallationProcess;
   private readonly resourcePolicy: KubernetesResourcePolicy;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
@@ -533,6 +538,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly lifecycleDrivers?: readonly Driver[];
       readonly sandboxDriver?: SandboxDriver;
       readonly runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies;
+      readonly installationProcessDependencies?: KubernetesInstallationProcessDependencies;
       readonly resourcePolicy?: KubernetesResourcePolicy;
     } = {},
   ) {
@@ -564,6 +570,13 @@ export class KubernetesComputeDriver implements ComputeDriver {
       },
       selection.runtimeObservationDependencies,
       this.options.isolationProfile,
+    );
+    this.installationProcess = new KubernetesInstallationProcess(
+      {
+        clients: () => this.clients(),
+        request: (operation, options) => this.request(operation, options),
+      },
+      selection.installationProcessDependencies,
     );
     this.ownership = new KubernetesOwnership(
       {
@@ -643,6 +656,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
     input: Parameters<typeof projectKubernetesResourceDiagnostics>[0],
   ): ReturnType<typeof projectKubernetesResourceDiagnostics> {
     return projectKubernetesResourceDiagnostics(input);
+  }
+
+  getInstallationProcessParticipant(): KubernetesInstallationProcess {
+    return this.installationProcess;
   }
 
   async preflight(): Promise<void> {
