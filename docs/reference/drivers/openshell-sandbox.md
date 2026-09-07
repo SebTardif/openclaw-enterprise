@@ -122,6 +122,22 @@ during `ensureNamespace`. Do not include Secrets in this array; the driver
 rejects Secret resources because OpenShell credentials must not be embedded in
 startup YAML.
 
+### Configuration ownership
+
+Each constructed OpenShell driver retains a validated, immutable copy of its
+plain configuration, including nested policies, resource settings, gateway
+options, and configured NetworkPolicy resources. Changes to the caller's
+configuration object after construction do not change later provisioning or
+cleanup. Construction accepts frozen configuration and does not freeze or
+modify the caller's object.
+
+The native gateway adapter separately snapshots its plain gateway options,
+including authentication file paths. File contents remain operation-scoped:
+credential and certificate rotation at the accepted paths continues to work as
+described below. A gateway client supplied through the driver's constructor
+selection remains the same capability object and follows the driver's existing
+close lifecycle.
+
 ### Gateway transport and authentication
 
 The native [`openshell` Go package](../../../components/runtime-security/openshell/)
@@ -293,6 +309,12 @@ fail closed instead of launching an unsandboxed or incorrectly credentialed
 Harness.
 
 ## Verification evidence
+
+The [options ownership conformance test](../../../tests/conformance/openshell-options-ownership.test.mjs)
+invokes the actual driver through its supported injected gateway client. It
+checks outgoing launch configuration, stable provisioning and cleanup identity
+after caller mutations, frozen input acceptance, and invalid configuration
+rejection. This test does not execute the native adapter or an upstream gateway.
 
 The [native OpenShell package tests](../../../components/runtime-security/openshell/)
 use actual local gRPC servers and TLS certificates to exercise the generated
