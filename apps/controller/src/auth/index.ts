@@ -1,6 +1,6 @@
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { APIError, betterAuth, type Auth, type BetterAuthOptions } from "better-auth";
 import { splitSetCookieHeader } from "better-auth/cookies";
@@ -25,6 +25,12 @@ import {
   type SignInQuotaStore,
 } from "./sign-in-quota.ts";
 import { durableSessionRevocation, safeAuthDependencyLogger } from "./storage-failures.ts";
+import {
+  captureControllerSessionValuesV1,
+  createControllerWorkloadProfileRequestCustodyV1,
+  type ControllerVerifiedSessionV1,
+  type ControllerWorkloadProfileRequestCustodyV1,
+} from "./workload-profile-request.ts";
 
 export const OCC_BETTER_AUTH_ISSUER_PREFIX = "occ:installation:";
 export const OCC_AUTH_COOKIE_PREFIX = "openclaw_occ";
@@ -281,6 +287,25 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
   readonly #auth: ControllerBetterAuth;
   readonly #installationId: string;
   readonly #issuer: string;
+  readonly #verifiedSessions = new WeakMap<AdmittedCaller, Readonly<ControllerVerifiedSessionV1>>();
+  #workloadProfileCustody: ControllerWorkloadProfileRequestCustodyV1 | undefined;
+
+  createWorkloadProfileRequestCustodyV1(
+    options: Readonly<{ maxRequestLifetimeMs: number }>,
+  ): ControllerWorkloadProfileRequestCustodyV1 {
+    if (this.#workloadProfileCustody)
+      throw new Error("The original request custody already exists.");
+    const source = createControllerWorkloadProfileRequestCustodyV1(
+      { installationId: this.#installationId, maxRequestLifetimeMs: options.maxRequestLifetimeMs },
+      (admitted) => {
+        const session = this.#verifiedSessions.get(admitted);
+        this.#verifiedSessions.delete(admitted);
+        return session;
+      },
+    );
+    this.#workloadProfileCustody = source;
+    return source;
+  }
 
   constructor(auth: ControllerBetterAuth, installationId: string) {
     this.#auth = auth;
@@ -336,8 +361,9 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
       throw new AdmissionFailure(401, "UNAUTHENTICATED", "A valid controller session is required.");
     }
 
-    return {
-      externalIdentity: { issuer: this.#issuer, subject: response.user.id },
+    const accountId = response.user.id;
+    const admitted: AdmittedCaller = {
+      externalIdentity: { issuer: this.#issuer, subject: accountId },
       admittedScope: {
         installationId: this.#installationId,
         ...(request.requestedScope.namespaceId === undefined
@@ -347,6 +373,42 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
       decisionId: `adm_${randomUUID()}`,
       method: "session" as const,
     };
+    // Keep the public admission result unchanged. Only a complete genuine
+    // primary-store session can seed the private workload-profile receiver.
+    // Missing fields preserve ordinary admission but supply no such proof.
+    if (this.#workloadProfileCustody) {
+      try {
+        const sessionId = response.session.id;
+        const sessionUserId = response.session.userId;
+        const expiry = response.session.expiresAt;
+        const sessionToken = response.session.token;
+        if (
+          isNonEmptyString(sessionId) &&
+          isNonEmptyString(sessionUserId) &&
+          isNonEmptyString(sessionToken)
+        ) {
+          const expiresAt = new Date(expiry).toISOString();
+          const captured = captureControllerSessionValuesV1({
+            installationId: this.#installationId,
+            issuer: this.#issuer,
+            accountId,
+            sessionId,
+            sessionUserId,
+            expiresAt,
+            sessionCredentialDigest: createHash("sha256")
+              .update(sessionToken, "utf8")
+              .digest("hex"),
+            requestId: request.requestId,
+            routeId: request.routeId,
+            method: request.method,
+          });
+          this.#verifiedSessions.set(admitted, captured);
+        }
+      } catch {
+        // No credential/source exception is exposed and no partial proof is kept.
+      }
+    }
+    return admitted;
   }
 }
 
