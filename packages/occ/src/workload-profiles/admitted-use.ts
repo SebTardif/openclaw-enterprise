@@ -574,3 +574,171 @@ export function createWorkloadProfileCapabilityAggregatorV2(
   };
   return Object.freeze(aggregator);
 }
+
+/** Candidate projection over the original held source inputs.
+ * Reuses the existing lifetime and decoder implementation.
+ * Required sources below are private original-owner receiving dependencies.
+ * Their shape does not enroll a unit or prove that normalization occurred.
+ */
+type CandidateConfigurationInputsV2 = Pick<
+  AdmittedConfigurationProjectionV1,
+  "configurationRef" | "configurationGeneration" | "immutableConfigurationContent"
+>;
+type CandidateResolvedBindingsV2 = Pick<
+  AdmittedConfigurationProjectionV1["resolvedProfileBindingParameters"],
+  "serviceAccountAssociation" | "storePolicyBindings" | "roleBindings"
+>;
+
+/** Central's original per-operation slot is established BEFORE prepareUseLocked
+ * by the trusted Deployment normalization continuation. readLocked recognizes
+ * its exact private unit/token/IO and original request/candidate data; it performs
+ * no new parent locks after the active admission head has been locked. A later
+ * copied candidate is compared against the privately retained snapshot, not by
+ * caller object identity. Normalization/selected-Driver guards are owner-held.
+ */
+export interface WorkloadProfileCandidateContextReaderV2 {
+  readLocked(
+    request: WorkloadProfileSelectionRequestV2,
+    candidate: Readonly<AgentRevision>,
+    unit: WorkloadProfileDeploymentUnitV2,
+    io: WorkloadProfileOwnedOperationV2,
+  ): Promise<
+    WorkloadProfileOwnedLeaseV2 & {
+      readonly configuration: CandidateConfigurationInputsV2;
+    }
+  >;
+}
+
+/** Pre-H original qualification, over real captured normalization/reference
+ * records and actual immutable native/identity/credential/store definitions.
+ * Neither expected manifest mounts nor head role references qualify themselves.
+ * The source resolves the selected originals and retains every contributing
+ * lease, including exact ServiceAccount backend-reference correspondence.
+ * Native Configuration semantics are qualified here; the generic Configuration
+ * Driver's JSON validation alone is insufficient. This source must recognize
+ * the same genuine captured candidate context, not just these input values.
+ */
+export interface WorkloadProfileCandidateBindingsSourceV2 {
+  resolveLocked(
+    request: WorkloadProfileSelectionRequestV2,
+    candidate: Readonly<AgentRevision>,
+    manifest: DerivedWorkloadProfileManifestV2["content"],
+    unit: WorkloadProfileDeploymentUnitV2,
+    io: WorkloadProfileOwnedOperationV2,
+  ): Promise<
+    WorkloadProfileOwnedLeaseV2 & {
+      readonly bindings: CandidateResolvedBindingsV2;
+    }
+  >;
+}
+
+/** Produces the existing projection from genuine held inputs. No INSERT, Use
+ * minting, new authority token, definition registry, or unavailable substitute.
+ * The existing prepareUseLocked performs its unchanged complete comparisons,
+ * capability acquisition and subsequent same-row selector verification.
+ */
+export function createWorkloadProfileCandidateSourceV2(
+  contexts: WorkloadProfileCandidateContextReaderV2,
+  sources: WorkloadProfileCandidateBindingsSourceV2,
+): WorkloadProfileCandidateSourceV2 {
+  const read = contexts.readLocked.bind(contexts);
+  const resolve = sources.resolveLocked.bind(sources);
+  return Object.freeze({
+    async resolveLocked(
+      input: WorkloadProfileSelectionRequestV2,
+      original: Readonly<AgentRevision>,
+      inputHead: WorkloadProfileAdmissionHeadV2,
+      unit: WorkloadProfileDeploymentUnitV2,
+      io: WorkloadProfileOwnedOperationV2,
+    ) {
+      const request = decodeWorkloadProfileSelectionRequestV2(input);
+      const held = heldWork(io, () => {
+        assertUnit(request, unit);
+        if (unit.kind !== "deployment") unavailable();
+      });
+      try {
+        held.acquiring();
+        const candidate = immutableCopy(original);
+        const head = selectedHead(inputHead, request);
+        if (
+          candidate.id !== request.revisionId ||
+          candidate.agentId !== request.agentId ||
+          candidate.namespaceId !== request.namespaceId ||
+          candidate.configurationKind !== "agent" ||
+          candidate.configurationId !== request.configurationRef ||
+          candidate.configurationGeneration !== request.configurationVersion ||
+          candidate.serviceAccount === undefined ||
+          candidate.secretBindings === undefined ||
+          ("workloadProfileUse" in candidate && candidate.workloadProfileUse !== undefined)
+        )
+          mismatch();
+        const manifest = deriveWorkloadProfileManifestV2(bytes.encode(head.canonicalManifest));
+        // retain captures cleanup before reading any supplied result data.
+        const captured = held.retain(await read(request, candidate, unit, io));
+        const configuration = immutableCopy(captured.configuration);
+        if (
+          configuration.configurationRef !== request.configurationRef ||
+          configuration.configurationGeneration !== request.configurationVersion ||
+          !equalData(configuration.immutableConfigurationContent, {
+            kind: candidate.configurationKind,
+            values: candidate.configuration,
+            secretBindings: candidate.secretBindings,
+          })
+        )
+          mismatch();
+        const qualified = held.retain(
+          await resolve(request, candidate, manifest.content, unit, io),
+        );
+        const resolved = immutableCopy(qualified.bindings);
+        const { projection } = deriveAdmittedConfigurationV1({
+          manifestDigest: request.selection.manifestDigest,
+          configurationRef: configuration.configurationRef,
+          configurationGeneration: configuration.configurationGeneration,
+          immutableConfigurationContent: configuration.immutableConfigurationContent,
+          resolvedProfileBindingParameters: {
+            installationId: request.installationId,
+            namespaceId: request.namespaceId,
+            agentId: request.agentId,
+            serviceAccountAssociation: resolved.serviceAccountAssociation,
+            storePolicyBindings: resolved.storePolicyBindings,
+            roleBindings: resolved.roleBindings,
+          },
+        });
+        const bindings = projection.resolvedProfileBindingParameters;
+        if (
+          !equalData(bindings.roleBindings, head.profileRefs) ||
+          !equalData(bindings.serviceAccountAssociation, {
+            servicePrincipalId: candidate.servicePrincipalId,
+            serviceAccount: candidate.serviceAccount,
+          })
+        )
+          mismatch();
+        const declaredStores = (["gateway", "harness"] as const).flatMap((component) =>
+          manifest.content.launchConfiguration[component].mounts.map((mount) => ({
+            component,
+            ...mount,
+          })),
+        );
+        const compareStore = (
+          a: CandidateResolvedBindingsV2["storePolicyBindings"][number],
+          b: CandidateResolvedBindingsV2["storePolicyBindings"][number],
+        ) => a.component.localeCompare(b.component) || a.name.localeCompare(b.name);
+        if (
+          !equalData(
+            [...bindings.storePolicyBindings].sort(compareStore),
+            declaredStores.sort(compareStore),
+          )
+        )
+          mismatch();
+        held.acquiring();
+        return Object.freeze({
+          projection,
+          assertCurrent: held.assertCurrent,
+          release: held.release,
+        });
+      } catch (error) {
+        return held.reject(error);
+      }
+    },
+  });
+}
