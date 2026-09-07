@@ -36,6 +36,8 @@ import {
   createPostgresGatewayStartupV2,
 } from "../gateway-startup-v1/postgres.ts";
 import { createPostgresRevisionRepository } from "./postgres/revisions.ts";
+import { createPostgresRevisionCredentialReaderV1 } from "./postgres/credential-record.ts";
+import type { RuntimeCredentialSelectionResolverV2 } from "../workload-profiles/credential-record.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
 import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
@@ -386,8 +388,9 @@ interface GatewayStartupEnrollmentV1 {
 type GatewayStartupRuntimeConsumeV2 = GatewayStartupOwnerParticipantsV2["authority"]["consume"];
 interface GatewayStartupCentralParticipantsV2 extends Omit<
   GatewayStartupOwnerParticipantsV2,
-  "authority"
+  "authority" | "selection"
 > {
+  readonly selection: RuntimeCredentialSelectionResolverV2;
   readonly driverSelection: DriverSelection;
   readonly authority: {
     consume(
@@ -411,6 +414,7 @@ interface GatewayStartupEnrollmentV2 extends Omit<
   readonly execution: GatewayStartupExecutionV2;
   readonly command: GatewayStartupCommandV2;
   readonly unit: GatewayStartupOwnerUnitV2;
+  selectionIO?: GatewayStartupAcceptedOperationV1;
 }
 type GatewayStartupEnrollment = GatewayStartupEnrollmentV1 | GatewayStartupEnrollmentV2;
 interface GatewayStartupRunV1 {
@@ -1833,6 +1837,118 @@ export class PostgresPlatformState implements PlatformStateStore {
     return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
   }
 
+  private bindGatewayCredentialSelectionV2(
+    resolve: RuntimeCredentialSelectionResolverV2["resolveLocked"],
+  ): GatewayStartupOwnerParticipantsV2["selection"]["resolveLocked"] {
+    return async (...args) => {
+      const [command, _original, unit, io] = args;
+      const record = this.#gatewayExecution.getStore();
+      const unavailable = () =>
+        new ScopeViolationError("The protected Gateway selection is unavailable.");
+      const assertOperation = () => {
+        if (
+          record?.version !== 2 ||
+          !record.active ||
+          this.#gatewayExecution.getStore() !== record ||
+          this.#gatewayContexts.get(record.token) !== record ||
+          record.command !== command ||
+          record.unit !== unit ||
+          record.selectionIO !== io ||
+          record.policyState !== "locked" ||
+          record.context.gateway !== record.execution ||
+          record.execution.phase !== record.phase ||
+          record.bounds.signal.aborted
+        )
+          throw unavailable();
+        io.assertActive();
+        record.context.lifetime.assertActive();
+        record.selected.assertCurrent();
+        record.nativeIAM.assertCurrent();
+      };
+      const pending = new Set<Promise<unknown>>();
+      let accepting = true;
+      try {
+        if (record?.version !== 2 || record.selectionIO !== undefined) throw unavailable();
+        record.selectionIO = io;
+        assertOperation();
+        const backend = createPostgresRevisionCredentialReaderV1({
+          scope: {
+            installationId: record.installationId,
+            namespaceId: record.unit.subject.namespaceRef,
+          },
+          query: { query: (statement, parameters) => io.query(statement, parameters) },
+          assertEnrolled: (request, held, inputUnit, inputIO) => {
+            assertOperation();
+            // The privately selected resolver owns its original held selection.
+            // These values check correspondence; they do not authenticate a lease.
+            if (
+              inputUnit !== unit ||
+              inputIO !== io ||
+              request !== held.request ||
+              request.schemaVersion !== 2 ||
+              request.installationId !== record.installationId ||
+              request.namespaceId !== unit.subject.namespaceRef ||
+              request.agentId !== unit.subject.agentRef
+            )
+              throw unavailable();
+          },
+          poison: (error) => record.phase.poison(error),
+        });
+        // Missing genuine selected-storage enrollment remains the original
+        // resolver's unavailable path. This reader supplies only owner custody.
+        const reader = Object.freeze({
+          readLocked: (...input: Parameters<typeof backend.readLocked>) => {
+            let work: Promise<unknown>;
+            try {
+              if (!accepting) throw unavailable();
+              work = backend.readLocked(...input);
+            } catch (error) {
+              record.phase.poison(error);
+              work = Promise.reject(error);
+            }
+            pending.add(work);
+            void work.then(
+              () => pending.delete(work),
+              (error: unknown) => {
+                record.phase.poison(error);
+                pending.delete(work);
+              },
+            );
+            return work;
+          },
+        });
+        const acquired = await resolve(...args, reader);
+        // Capture known cleanup before joining any ignored read or inspecting
+        // further lease methods. The Runtime owner receives the same idempotent
+        // closer and retains its original currentness fence after this returns.
+        const close = acquired.release.bind(acquired);
+        let closed: Promise<void> | undefined;
+        const release = (): Promise<void> => (closed ??= Promise.resolve().then(close));
+        try {
+          record.phase.retainCleanup(release);
+        } catch (error) {
+          await release();
+          throw error;
+        }
+        return Object.freeze({
+          selected: acquired.selected,
+          credentialWorkloadSelection: acquired.credentialWorkloadSelection,
+          assertCurrent: acquired.assertCurrent.bind(acquired),
+          release,
+        });
+      } catch (error) {
+        record?.phase.poison(error);
+        throw error;
+      } finally {
+        accepting = false;
+        // Join complete decoded reads, not only their borrowed SQL promises.
+        // A caught/unawaited failure has already poisoned the original phase.
+        while (pending.size) await Promise.allSettled([...pending]);
+        if (record?.version === 2 && record.selectionIO === io) delete record.selectionIO;
+      }
+    };
+  }
+
   private bindGatewayStartupOwnersV2(
     source?: GatewayStartupCentralParticipantsV2,
   ): GatewayStartupOwnerBindingV2 {
@@ -1855,7 +1971,9 @@ export class PostgresPlatformState implements PlatformStateStore {
           consume: this.bindGatewayAuthorityConsumerV1(2, consume),
         }),
         selection: Object.freeze({
-          resolveLocked: source.selection.resolveLocked.bind(source.selection),
+          resolveLocked: this.bindGatewayCredentialSelectionV2(
+            source.selection.resolveLocked.bind(source.selection),
+          ),
         }),
         process: Object.freeze({
           requireDisposition: source.process.requireDisposition.bind(source.process),

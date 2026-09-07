@@ -1,3 +1,4 @@
+import { decodeCredentialWorkloadSelectionV1 } from "@openclaw-enterprise/contracts/credential-workload-selection-v1";
 import type { AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 import type { Installation } from "@openclaw-enterprise/contracts/resources/installation";
 import type { SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
@@ -88,8 +89,24 @@ export const createPostgresRevisionRepository: RepositoryFactory<
       );
       return Object.freeze(found.map((row) => revisionFromRow(row)));
     },
-    createRevision: async (revision) => {
+    createRevision: async (revision, credentialWorkloadSelection) => {
+      revision = immutableCopy(revision);
+      const decoded =
+        credentialWorkloadSelection === undefined
+          ? undefined
+          : decodeCredentialWorkloadSelectionV1(credentialWorkloadSelection);
+      if (decoded?.kind === "invalid")
+        throw new ScopeViolationError("The revision credential record is invalid.");
+      const credential = decoded?.value;
       await requireInitialized();
+      if (
+        credential !== undefined &&
+        (credential.scope.installationId !== context.scope.installationId ||
+          credential.scope.namespaceId !== revision.namespaceId ||
+          credential.scope.agentId !== revision.agentId ||
+          credential.revisionId !== revision.id)
+      )
+        throw new ScopeViolationError("The revision credential record belongs to another scope.");
       const owner = await agents.findAgent(revision.namespaceId, revision.agentId);
       if (
         owner === undefined ||
@@ -120,6 +137,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
             draft_spec: revision.configuration,
             harness: revision.harness,
             compute: revision.compute,
+            ...(credential === undefined ? {} : { credential_workload_selection: credential }),
             ...(revision.sandboxDriverId === undefined
               ? {}
               : { sandbox_driver_id: revision.sandboxDriverId }),
@@ -134,10 +152,32 @@ export const createPostgresRevisionRepository: RepositoryFactory<
           revision.createdAt,
         ],
       );
-      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
-      return immutableCopy({
-        ...withoutSecretBindings,
-        ...(secretBindings === undefined ? {} : { secretBindings }),
+      return revisionFromRow({
+        id: revision.id,
+        namespace_id: revision.namespaceId,
+        agent_id: revision.agentId,
+        revision_number: revision.revision,
+        provider_id: revision.providerId,
+        service_principal_id: revision.servicePrincipalId,
+        admitted_at: revision.createdAt,
+        admitted_spec: {
+          configuration_id: revision.configurationId,
+          configuration_kind: revision.configurationKind,
+          configuration_generation: revision.configurationGeneration,
+          draft_spec: revision.configuration,
+          harness: revision.harness,
+          compute: revision.compute,
+          ...(revision.sandboxDriverId === undefined
+            ? {}
+            : { sandbox_driver_id: revision.sandboxDriverId }),
+          ...(revision.secretDriverId === undefined
+            ? {}
+            : { secret_driver_id: revision.secretDriverId }),
+          ...(secretBindings === undefined ? {} : { secret_bindings: secretBindings }),
+          ...(revision.serviceAccount === undefined
+            ? {}
+            : { service_account: revision.serviceAccount }),
+        },
       });
     },
   };
@@ -148,6 +188,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
       withinTransaction(() => revisions.findRevision(namespaceId, agentId, revisionId)),
     listRevisions: (namespaceId, agentId) =>
       withinTransaction(() => revisions.listRevisions(namespaceId, agentId)),
-    createRevision: (revision) => withinTransaction(() => revisions.createRevision(revision)),
+    createRevision: (revision, credentialWorkloadSelection) =>
+      withinTransaction(() => revisions.createRevision(revision, credentialWorkloadSelection)),
   });
 };

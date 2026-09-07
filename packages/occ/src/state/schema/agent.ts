@@ -135,6 +135,10 @@ export function createAgentTables(
       ),
       check("agent_revisions_spec_object", sql`jsonb_typeof(${table.admittedSpec}) = 'object'`),
       check(
+        "agent_revisions_credential_selection",
+        sql`NOT (${table.admittedSpec} ? 'credential_workload_selection') OR occ.revision_credential_selection_valid_v1(${table.admittedSpec}->'credential_workload_selection',${table.namespaceId},${table.agentId},${table.id})`,
+      ),
+      check(
         "agent_revisions_admitted_snapshot",
         sql`(${table.admittedSpec} ?& ARRAY[
           'configuration_id', 'configuration_kind', 'configuration_generation',
@@ -143,7 +147,7 @@ export function createAgentTables(
         AND (${table.admittedSpec}
           - 'configuration_id' - 'configuration_kind' - 'configuration_generation'
           - 'draft_spec' - 'harness' - 'compute' - 'sandbox_driver_id'
-          - 'secret_driver_id' - 'secret_bindings' - 'service_account') = '{}'::jsonb
+          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection') = '{}'::jsonb
         AND jsonb_typeof(${table.admittedSpec}->'configuration_id') = 'string'
         AND (${table.admittedSpec}->>'configuration_id') ~ ${identifierPatterns.configuration}
         AND jsonb_typeof(${table.admittedSpec}->'configuration_kind') = 'string'
