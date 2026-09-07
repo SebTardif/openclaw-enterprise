@@ -1,8 +1,16 @@
+import type {
+  WorkloadProfileAdmissionHeadV2,
+  WorkloadProfileAdmissionHistoryV2,
+  WorkloadProfileAcceptanceResultV2,
+} from "../../workload-profiles/admission-record.ts";
+import type { WorkloadProfileDefinitionSourceV2 } from "../../workload-profiles/admitted-use.ts";
 import type { Principal } from "@openclaw-enterprise/contracts";
 import type { StoredProfilePreparation } from "../../workload-profiles/types.ts";
 import type { AuthenticatedRequestHandleV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
 import type {
   WorkloadProfilePrepareV1,
+  WorkloadProfilePrepareV2,
+  WorkloadProfileWithdrawV2,
   WorkloadProfileWithdrawV1,
 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type {
@@ -19,7 +27,7 @@ export type ProfileMutationResponse =
 export interface WorkloadProfileServicePort {
   prepare(
     invocation: AuthenticatedRequestHandleV1,
-    input: WorkloadProfilePrepareV1,
+    input: WorkloadProfilePrepareV1 | WorkloadProfilePrepareV2,
     signal: AbortSignal,
   ): Promise<ProfileMutationResponse>;
   accept(
@@ -30,7 +38,7 @@ export interface WorkloadProfileServicePort {
   withdraw(
     invocation: AuthenticatedRequestHandleV1,
     admissionRef: string,
-    input: WorkloadProfileWithdrawV1,
+    input: WorkloadProfileWithdrawV1 | WorkloadProfileWithdrawV2,
     signal: AbortSignal,
   ): Promise<ProfileMutationResponse>;
   readOperation(
@@ -53,11 +61,19 @@ export interface WorkloadProfileServicePort {
 export interface WorkloadProfileAccountParticipant {
   consume(
     invocation: AuthenticatedRequestHandleV1,
-    request: Readonly<{
-      method: "prepare" | "readOperation";
-      operationRef: string;
-      canonicalInput: string;
-    }>,
+    request:
+      | Readonly<{
+          method: "prepare" | "accept" | "readOperation";
+          operationRef: string;
+          canonicalInput: string;
+        }>
+      | Readonly<{
+          method: "withdraw";
+          operationRef: string;
+          admissionRef: string;
+          canonicalInput: string;
+        }>
+      | Readonly<{ method: "readProfile"; admissionRef: string; canonicalInput: string }>,
     unit: WorkloadProfileAccountUnit,
   ): Promise<WorkloadProfileAccountLease>;
 }
@@ -66,6 +82,9 @@ export interface WorkloadProfileAccountParticipant {
 export interface WorkloadProfileAccountUnit {
   readonly installationId: string;
   readonly signal: AbortSignal;
+  /** Original owner takes acquired security cleanup before any later wait;
+   * registration conveys no account or currentness authority. */
+  retainSecurityCleanup(release: () => void): undefined;
   query(
     statement: string,
     parameters?: readonly unknown[],
@@ -102,6 +121,22 @@ export interface GuardedWorkloadProfileUnit {
     operationRef: string,
     actor: GuardedProfileActor,
   ): Promise<StoredProfilePreparation | undefined>;
+  /** The original phase supplies/recognizes definition unit and IO inside the
+   * locked fresh-acceptance qualifier and retains its lease until terminal. */
+  accept(
+    operationRef: string,
+    actor: GuardedProfileActor,
+    source?: WorkloadProfileDefinitionSourceV2,
+  ): Promise<WorkloadProfileAcceptanceResultV2>;
+  withdraw(
+    admissionRef: string,
+    input: WorkloadProfileWithdrawV2,
+    actor: GuardedProfileActor,
+  ): Promise<WorkloadProfileAdmissionHistoryV2>;
+  readProfile(
+    admissionRef: string,
+    actor: GuardedProfileActor,
+  ): Promise<WorkloadProfileAdmissionHeadV2 | undefined>;
 }
 
 /** Trusted owner port, with the PostgreSQL implementation retaining real policy

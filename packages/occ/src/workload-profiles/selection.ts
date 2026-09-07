@@ -1,3 +1,4 @@
+import type { WorkloadProfileSelectionUnitV2 } from "./admitted-use.ts";
 import {
   decodeWorkloadProfileSelectionV1,
   decodeWorkloadProfileUseV2,
@@ -7,8 +8,6 @@ import {
 import { validateRuntimeResourceAccountingV1 } from "@openclaw-enterprise/contracts/runtime-resource-accounting-v1";
 import {
   parseGatewayStartupSubjectV2,
-  type GatewayStartupOwnerUnitV1,
-  type GatewayStartupOwnerUnitV2,
   type GatewayStartupAcceptedOperationV1,
   type GatewayStartupOwnerLeaseV1,
 } from "../gateway-startup-v1/owner.ts";
@@ -63,7 +62,7 @@ export interface WorkloadProfileSelectionLeaseV2 extends GatewayStartupOwnerLeas
 export interface WorkloadProfileSelectionStorageV2 {
   enroll(
     request: WorkloadProfileSelectionRequestV2,
-    unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+    unit: WorkloadProfileSelectionUnitV2,
     io: GatewayStartupAcceptedOperationV1,
   ): Promise<
     GatewayStartupOwnerLeaseV1 & {
@@ -95,7 +94,7 @@ export interface WorkloadProfileCapabilitySourceV2 {
     request: WorkloadProfileSelectionRequestV2,
     manifest: DerivedWorkloadProfileManifestV2["content"],
     admittedUse: WorkloadProfileUseV2,
-    unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+    unit: WorkloadProfileSelectionUnitV2,
     io: GatewayStartupAcceptedOperationV1,
   ): Promise<GatewayStartupOwnerLeaseV1>;
 }
@@ -161,7 +160,9 @@ function equal(left: unknown, right: unknown): boolean {
 function use(value: unknown): asserts value is WorkloadProfileUseV2 {
   if (decodeWorkloadProfileUseV2(value).kind !== "valid") fail("invalid-record");
 }
-function request(input: unknown): WorkloadProfileSelectionRequestV2 {
+export function decodeWorkloadProfileSelectionRequestV2(
+  input: unknown,
+): WorkloadProfileSelectionRequestV2 {
   const value = snapshot(input);
   shape(value, [
     "schemaVersion",
@@ -268,16 +269,16 @@ export function createAdmittedWorkloadProfileSelectorV2(
   return Object.freeze({
     async resolveLocked(
       input: unknown,
-      unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+      unit: WorkloadProfileSelectionUnitV2,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<WorkloadProfileSelectionLeaseV2> {
       if (!enroll || !acquire) return fail("unavailable");
-      const expected = request(input);
+      const expected = decodeWorkloadProfileSelectionRequestV2(input);
       const checks: (() => undefined)[] = [];
       const releases: (() => Promise<void>)[] = [];
       const pendingFences = new Set<Promise<unknown>>();
       let closed = false;
-      let agentSubject: boolean | undefined;
+      let unitBranch: "agent" | "installation" | "deployment" | undefined;
       let fenceFailed = false;
       let fenceFailure: unknown;
       let releasePromise: Promise<void> | undefined;
@@ -298,7 +299,7 @@ export function createAdmittedWorkloadProfileSelectorV2(
       const release = (): Promise<void> => {
         if (releasePromise) return releasePromise;
         closed = true;
-        releasePromise = (async () => {
+        releasePromise = Promise.resolve().then(async () => {
           while (pendingFences.size) await Promise.allSettled([...pendingFences]);
           let failed = false;
           let failure: unknown;
@@ -313,7 +314,7 @@ export function createAdmittedWorkloadProfileSelectorV2(
             }
           }
           if (failed) throw failure;
-        })();
+        });
         return releasePromise;
       };
       const assertCurrent = (): undefined => {
@@ -323,10 +324,22 @@ export function createAdmittedWorkloadProfileSelectorV2(
           // Version selects a fixed correspondence branch. A present malformed
           // V2 subject never falls back to legacy Installation-only identity;
           // held failure remains terminal even if a faulty peer later changes it.
+          const isDeployment = "kind" in unit;
           const hasSubject = "subject" in unit;
-          if (agentSubject === undefined) agentSubject = hasSubject;
-          if (agentSubject !== hasSubject) fail("unavailable");
-          if (hasSubject) {
+          const branch = isDeployment ? "deployment" : hasSubject ? "agent" : "installation";
+          if (unitBranch === undefined) unitBranch = branch;
+          if (unitBranch !== branch) fail("unavailable");
+          if (isDeployment) {
+            if (
+              hasSubject ||
+              unit.kind !== "deployment" ||
+              unit.signal.aborted ||
+              unit.installationId !== expected.installationId ||
+              unit.namespaceId !== expected.namespaceId ||
+              unit.agentId !== expected.agentId
+            )
+              fail("unavailable");
+          } else if (hasSubject) {
             const subject = parseGatewayStartupSubjectV2(unit.subject);
             if (
               subject.installationId !== expected.installationId ||
