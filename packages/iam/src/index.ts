@@ -1,5 +1,7 @@
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
+import type { NativeIAMState } from "./state.ts";
+export type { NativeIAMState } from "./state.ts";
 import {
   ChannelAdministrationStateError,
   validateChannelAdministrationMappings,
@@ -16,8 +18,6 @@ import type {
   Role,
 } from "@openclaw-enterprise/contracts/identity/authorization";
 import type {
-  Group,
-  GroupMembership,
   Identity,
   IdentityLookup,
   Principal,
@@ -25,15 +25,6 @@ import type {
 } from "@openclaw-enterprise/contracts/identity/identity";
 import type { IAMDriver } from "@openclaw-enterprise/contracts/drivers/iam";
 import type { JSONSchema } from "@openclaw-enterprise/contracts/drivers/base";
-
-export interface NativeIAMState {
-  readonly identities: readonly Identity[];
-  readonly groups: readonly Group[];
-  readonly memberships: readonly GroupMembership[];
-  readonly roles: readonly Role[];
-  readonly bindings: readonly AccessBinding[];
-  readonly restrictions: readonly Restriction[];
-}
 
 export interface NativeIAMStateStore {
   loadNativeIAMState(): Promise<NativeIAMState>;
