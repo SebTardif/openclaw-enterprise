@@ -246,6 +246,13 @@
       "when": 1788777975068,
       "tag": "0034_workload_profile_admission",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788779752000,
+      "tag": "0035_workload_profile_session_security",
+      "breakpoints": true
     }
   ]
 }

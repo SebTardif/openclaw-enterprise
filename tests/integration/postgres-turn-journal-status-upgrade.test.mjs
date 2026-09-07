@@ -35,7 +35,7 @@ const candidateEntry = Object.freeze({
 });
 const candidateHash = "a59c47ab858f6f660dfaca363e6c820521001df5cd92dfda53c762fb8d7d73b1";
 const journalHash = "e854e6db2e15fe30d9daf43f0b1d4846677217c0bb5e5901c5589637f346c54c";
-const checkoutJournalHash = "f7dde9c2b0b78dd1c0aeace66fc40836e72575eeba5fa78b4489b9811ca516ee";
+const checkoutJournalHash = "92a3f75237437719efcb7f0f3ed339810244902e92694e63acab2af95d0bccfe";
 const legacyAcceptanceHash = "8753fa7b738950135c361b05519cacf6cb3211ef8666004a04359d9ec28fc915";
 const legacyInventoryHash = "1018f432b0bf50b084504d841bd6b3b3c0a51571f432ee27d8ecd51a901e6304";
 const legacyCommit = "49ca9e3350b19364a4be25cf60b73d1733a3c37a";
@@ -146,7 +146,7 @@ function reviewedJournalPrefix(provided, original) {
   assert.equal(sha256(provided), journalHash, "Selected status-upgrade prefix changed.");
   const checkout = JSON.parse(original);
   const selectedJournal = JSON.parse(provided);
-  assert.equal(checkout.entries.length, 35);
+  assert.equal(checkout.entries.length, 36);
   assert.equal(selectedJournal.entries.length, 31);
   assert.deepEqual(selectedJournal, {
     ...checkout,
@@ -217,7 +217,7 @@ test("status upgrade catalog metadata preserves the selected migration boundary"
   const selectedJournal = { ...checkout, entries: checkout.entries.slice(0, 31) };
   const provided = encode(selectedJournal);
 
-  await t.test("accepts the exact 31-entry prefix of the actual 35-entry checkout", () => {
+  await t.test("accepts the exact 31-entry prefix of the actual 36-entry checkout", () => {
     const accepted = reviewedJournalPrefix(provided, original);
     assert.equal(accepted.entries.length, 31);
     assert.deepEqual(accepted.entries.at(-1), candidateEntry);
