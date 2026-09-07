@@ -1,3 +1,4 @@
+import { createWorkloadProfileAdmissionTablesV2 } from "./postgres/workload-profile-admission-schema.ts";
 import { createAccountSecurityTablesV1 } from "./schema/account-security.ts";
 import { createAgentTables } from "./schema/agent.ts";
 import { createIamTables } from "./schema/iam.ts";
@@ -297,8 +298,20 @@ export const agentRevisionRuntimeAdmissions = occSchema.table(
     auditEventId: text("audit_event_id")
       .notNull()
       .unique("agent_revision_runtime_admissions_audit_event_id_key"),
+    deployActorId: text("deploy_actor_id"),
+    deployCommand: jsonb("deploy_command"),
+    deployCanonical: text("deploy_canonical"),
   },
   (table): PgTableExtraConfigValue[] => [
+    check(
+      "revision_runtime_admissions_deploy_binding",
+      sql`(${table.deployActorId} IS NULL AND ${table.deployCommand} IS NULL AND ${table.deployCanonical} IS NULL)
+        OR (${table.deployActorId} IS NOT NULL AND ${table.deployCommand} IS NOT NULL AND ${table.deployCanonical} IS NOT NULL
+          AND ${table.deployActorId} ~ '^[A-Za-z0-9._:/-]{1,200}$'
+          AND occ.lifecycle_deploy_command_valid_v2(${table.deployCommand})
+          AND ${table.deployCommand}->>'operationRef' = ${table.runtimeTransitionRef}
+          AND octet_length(${table.deployCanonical}) BETWEEN 1 AND 65536)`,
+    ),
     foreignKey({
       name: "agent_revision_runtime_admissions_audit_event_id_fkey",
       columns: [table.auditEventId],
@@ -664,6 +677,12 @@ export const runtimePreparationOperations = occSchema.table(
     check("runtime_preparation_record_object", sql`jsonb_typeof(${table.record})='object'`),
   ],
 );
+
+export const {
+  workloadProfileAdmissions,
+  workloadProfileAdmissionHistory,
+  workloadProfileInvalidations,
+} = createWorkloadProfileAdmissionTablesV2(occSchema, { installation, namespaces });
 
 /** Inert preparation history; these records never confer admission authority. */
 export const { workloadProfileCapacity, workloadProfileOperations } = createWorkloadProfileTables(

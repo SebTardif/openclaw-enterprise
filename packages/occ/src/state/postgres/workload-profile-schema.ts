@@ -135,14 +135,15 @@ export function createWorkloadProfileTables(
           "workload_profile_record_shape",
           sql`(
           ${record} = jsonb_build_object(
-            'schemaVersion', 1, 'kind', 'inert-profile-preparation',
+            'schemaVersion', ${record}->'schemaVersion', 'kind', 'inert-profile-preparation',
             'scope', jsonb_build_object('installationId', ${table.installationId},
-              'namespaceId', ${table.namespaceId}, 'component', 'harness'),
+              'namespaceId', ${table.namespaceId}, 'component', CASE ${record}->>'schemaVersion' WHEN '1' THEN 'harness' ELSE 'gateway-harness-pair' END),
             'actor', jsonb_build_object('principalRef', ${table.principalRef}, 'accountRef', ${table.accountRef}),
             'operationRef', ${table.operationRef}, 'action', ${record}->>'action',
             'canonicalClientIntent', ${intentText}, 'clientIntentDigest', ${record}->>'clientIntentDigest',
             'allocated', ${allocated}, 'canonicalOperation', ${operationText},
             'operationDigest', ${record}->>'operationDigest', 'preparedAt', ${record}->>'preparedAt')
+          AND ${record}->'schemaVersion' IN ('1'::jsonb,'2'::jsonb)
           AND ${record}->>'action' IN ('admit', 'replace')
           AND ${record}->>'preparedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$'
           AND octet_length(${record}::text) BETWEEN 1 AND ${4 * byteLimit + 8192}
@@ -175,8 +176,8 @@ export function createWorkloadProfileTables(
         check(
           "workload_profile_intent",
           sql`(
-          ${intent} = jsonb_build_object('schemaVersion', 1, 'operationRef', ${table.operationRef},
-            'namespaceId', ${table.namespaceId}, 'component', 'harness',
+          ${intent} = jsonb_build_object('schemaVersion', ${record}->'schemaVersion', 'operationRef', ${table.operationRef},
+            'namespaceId', ${table.namespaceId}, 'component', CASE ${record}->>'schemaVersion' WHEN '1' THEN 'harness' ELSE 'gateway-harness-pair' END,
             'action', ${record}->>'action', 'expectedAdmission', ${expected}, 'manifest', ${manifest})
           AND CASE ${record}->>'action' WHEN 'admit' THEN ${expected} = 'null'::jsonb
             ELSE ${selection(expected)} END
@@ -190,7 +191,7 @@ export function createWorkloadProfileTables(
         check(
           "workload_profile_operation_envelope",
           sql`(
-          ${operationText}::jsonb = jsonb_build_object('schemaVersion', 1,
+          ${operationText}::jsonb = jsonb_build_object('schemaVersion', ${record}->'schemaVersion',
             'kind', 'inert-profile-preparation', 'scope', ${record}->'scope', 'actor', ${record}->'actor',
             'operationRef', ${table.operationRef}, 'action', ${record}->>'action',
             'clientIntentDigest', ${record}->>'clientIntentDigest', 'allocated', ${allocated},

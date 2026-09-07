@@ -1,4 +1,34 @@
+import {
+  decodeWorkloadProfileSelectionRequestV2,
+  type WorkloadProfileSelectionStorageV2,
+} from "../workload-profiles/selection.ts";
+import type {
+  WorkloadProfileMutationEnrollmentV2,
+  WorkloadProfileMutationAccountParticipantV2,
+  WorkloadProfileDeploymentUnitV2,
+  WorkloadProfileDraftUnitV2,
+  WorkloadProfileRecoveryUnitV2,
+  WorkloadProfileOwnedOperationV2,
+  WorkloadProfileActiveReaderV2,
+} from "../workload-profiles/admitted-use.ts";
+import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
+import type { UpdateAgentInput } from "../services/agent/port.ts";
+import type { WorkloadProfileAccountUnit } from "../services/workload-profile/port.ts";
+import type { AuthenticatedRequestHandleV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
+import {
+  createWorkloadProfileAdmissionRepositoryV2,
+  decodeWorkloadProfileAdmissionHeadV2,
+} from "../workload-profiles/admission-record.ts";
+import { createPostgresWorkloadProfileAdmissionBackendV2 } from "./postgres/workload-profile-admission.ts";
+import {
+  canonicalLifecycleDeployCommandV2,
+  parseLifecycleDeployV2,
+} from "@openclaw-enterprise/contracts/lifecycle-deploy-v2";
 import type { NativeIAMTransactionView } from "@openclaw-enterprise/iam";
+import {
+  decodeWorkloadProfileSelectionV1,
+  decodeWorkloadProfileUseV2,
+} from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type { GuardedDriverSelection } from "../application/driver-selection.ts";
 import {
   TurnCommandScopeV1,
@@ -45,6 +75,7 @@ import { DriverSelection } from "../application/driver-selection.ts";
 import { createGuardedWorkloadProfileUnit } from "./postgres/workload-profile-guard.ts";
 import type { GuardedWorkloadProfileUnit } from "../services/workload-profile/port.ts";
 import { createPostgresWorkloadProfile } from "./postgres/workload-profile.ts";
+import { InvalidProfileOperationError, profileUuid } from "../workload-profiles/types.ts";
 import {
   CredentialInventoryOwnerPhaseV1,
   WorkloadProfileUnitPhase,
@@ -119,6 +150,7 @@ import {
   serializeChannelBindingMutations,
   serializeRuntimeAssignmentMutations,
   isRuntimeAdmissionAudit,
+  workloadProfileAdmissionAuditV2,
 } from "./platform-state.ts";
 import type {
   RuntimeAssignmentRepository,
@@ -218,6 +250,8 @@ export interface PersistedNativeIAMPrincipalSeed {
 
 export { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 
+type ProfileDeploymentBindingV2 = readonly [principalId: string, input: DeployAgentCommandInput];
+type ProfileDraftBindingV2 = readonly [principalId: string, input: UpdateAgentInput];
 interface TransactionContext {
   readonly fresh?: FreshBootstrapExecutionV1;
   readonly turn?: TurnCommandExecutionV1;
@@ -228,9 +262,17 @@ interface TransactionContext {
   readonly credentialQuery: PostgresClient["query"];
   profilePolicyLocked?: boolean;
   profileToken?: object;
+  profileMutation?: boolean;
   protectedProfile?: ReturnType<typeof createGuardedWorkloadProfileUnit>;
   readView?: PlatformReadView;
   readonly lifetime: RepositoryTransactionLifetime;
+  readonly assertOwnerActive: () => void;
+  readonly readOnly: boolean;
+  readonly profileSignal: AbortSignal;
+  readonly abortProfile: () => void;
+  dataQueryStarted: boolean;
+  readonly profileEnrollments: Set<Promise<unknown>>;
+  profileEnrollmentClosed: boolean;
   readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly journalGuard: TurnJournalTransactionGuard;
   readonly lifecyclePhase: LifecycleAdmissionUnitPhase;
@@ -590,6 +632,12 @@ function installationFromRow(row: PostgresRow): Readonly<Installation> {
 }
 
 function agentFromRow(row: PostgresRow): Readonly<Agent> {
+  const selection =
+    row.workload_profile_selection == null
+      ? undefined
+      : decodeWorkloadProfileSelectionV1(row.workload_profile_selection);
+  if (selection?.kind === "invalid")
+    throw new DependencyUnavailableError("Persisted Agent workload selection is invalid.");
   const activeRevisionId = optionalText(row, "active_revision_id");
   const serviceAccountId = optionalText(row, "service_account_id");
   const providerId = row.provider_id === null ? null : text(row, "provider_id");
@@ -600,6 +648,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
     servicePrincipalId: text(row, "service_principal_id"),
     ...(serviceAccountId === undefined ? {} : { serviceAccountId }),
     ...(activeRevisionId === undefined ? {} : { activeRevisionId }),
@@ -623,7 +672,17 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
     service_account?: AgentRevision["serviceAccount"];
     secret_driver_id?: AgentRevision["secretDriverId"];
     secret_bindings?: AgentRevision["secretBindings"];
+    workload_profile_use?: AgentRevision["workloadProfileUse"];
   };
+  const use =
+    admitted.workload_profile_use === undefined
+      ? undefined
+      : decodeWorkloadProfileUseV2(admitted.workload_profile_use);
+  if (
+    use?.kind === "invalid" ||
+    (use !== undefined && use.value.namespaceId !== text(row, "namespace_id"))
+  )
+    throw new DependencyUnavailableError("Persisted revision workload profile Use is invalid.");
   const secretBindings =
     admitted.secret_bindings === undefined
       ? undefined
@@ -640,6 +699,7 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
     configuration: admitted.draft_spec,
     harness: admitted.harness,
     compute: admitted.compute,
+    ...(use === undefined ? {} : { workloadProfileUse: use.value }),
     ...(admitted.sandbox_driver_id === undefined
       ? {}
       : { sandboxDriverId: admitted.sandbox_driver_id }),
@@ -861,6 +921,18 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
+  readonly #profileAmbient = new AsyncLocalStorage<{
+    context: TransactionContext;
+    platform: PlatformUnitOfWork;
+  }>();
+  readonly #profileAccounts = new WeakMap<
+    WorkloadProfileAccountUnit,
+    ReturnType<typeof createGuardedWorkloadProfileUnit>
+  >();
+  readonly #profileSelectedUnits = new WeakMap<
+    object,
+    { context: TransactionContext; io: WorkloadProfileOwnedOperationV2; active: boolean }
+  >();
   readonly #freshReservations = new WeakMap<object, FreshInstallationRecordV1>();
   readonly #freshExecution = new AsyncLocalStorage<FreshBootstrapExecutionV1>();
   readonly #turnExecution = new AsyncLocalStorage<TurnCommandEnrollmentV1>();
@@ -1960,6 +2032,21 @@ export class PostgresPlatformState implements PlatformStateStore {
             installationId: installation.id,
             signal: options.signal,
             assertActive: () => context.lifetime.assertActive(),
+            assertOwnerActive: context.assertOwnerActive,
+            query: (statement, parameters) => context.profileQuery(statement, parameters),
+            resolveNamespace: async (admissionRef) => {
+              const result = rows(
+                (
+                  await context.profileQuery(
+                    "SELECT namespace_id FROM occ.workload_profile_admissions WHERE installation_id=$1 AND admission_ref=$2",
+                    [installation.id, admissionRef],
+                  )
+                ).rows,
+              );
+              if (result.length > 1)
+                throw new DependencyUnavailableError("The profile admission owner is ambiguous.");
+              return result[0] === undefined ? undefined : text(result[0], "namespace_id");
+            },
             assertSelection: () => {
               selected.assertCurrent();
               iam.assertCurrent();
@@ -1993,6 +2080,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             appendAudit: (event) => this.appendAudit(context, event, context.profileQuery),
           });
           context.protectedProfile = guarded;
+          this.#profileAccounts.set(guarded.unit.account, guarded);
           return work(guarded.unit);
         },
         options,
@@ -2002,6 +2090,627 @@ export class PostgresPlatformState implements PlatformStateStore {
       // execute has joined query cleanup and settled COMMIT/rollback before release.
       selected.release();
     }
+  }
+
+  /** This source recognizes only account objects created by this exact active
+   * owner. It carries no request registry or account/session authority. */
+  workloadProfileAccountOwnerV1() {
+    return Object.freeze({
+      bind: (unit: WorkloadProfileAccountUnit, terminalCleanup: () => void) => {
+        const owner = this.#profileAccounts.get(unit);
+        if (!owner)
+          throw new DependencyUnavailableError("The original profile account unit is unavailable.");
+        return owner.bindAccountOwner(terminalCleanup);
+      },
+    });
+  }
+
+  /** Server-owned composition over the original mutation/read callback. Missing
+   * authentic account participation refuses before the protected callback. */
+  workloadProfileMutationEnrollmentV2(
+    selection: DriverSelection,
+    account?: WorkloadProfileMutationAccountParticipantV2<
+      ProfileDeploymentBindingV2,
+      ProfileDraftBindingV2
+    >,
+  ): Readonly<{
+    enrollment: WorkloadProfileMutationEnrollmentV2<
+      ProfileDeploymentBindingV2,
+      ProfileDraftBindingV2
+    >;
+    activeReader: WorkloadProfileActiveReaderV2;
+  }> {
+    const runOwned = async <Value>(
+      kind: "deployment" | "agent-selection" | "deployment-recovery",
+      invocation: AuthenticatedRequestHandleV1,
+      original: ProfileDeploymentBindingV2 | ProfileDraftBindingV2,
+      work: (
+        unit:
+          | WorkloadProfileDeploymentUnitV2
+          | WorkloadProfileDraftUnitV2
+          | WorkloadProfileRecoveryUnitV2,
+        io: WorkloadProfileOwnedOperationV2,
+      ) => Promise<Value>,
+    ): Promise<Value> => {
+      const ambient = this.#profileAmbient.getStore();
+      if (
+        !ambient ||
+        !account ||
+        Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+        selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+        selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+      )
+        throw new DependencyUnavailableError(
+          "The genuine profile mutation enrollment is unavailable.",
+        );
+      const { context, platform } = ambient;
+      const binding = immutableCopy(original);
+      const [principalId, input] = binding;
+      if (
+        context.protectedProfile ||
+        context.turn ||
+        context.gateway ||
+        context.credential ||
+        context.fresh ||
+        (kind === "deployment-recovery") !== context.readOnly ||
+        !principalId ||
+        !input.namespaceId ||
+        !input.agentId
+      )
+        throw new ScopeViolationError("The profile mutation requires its original isolated owner.");
+      const command =
+        kind === "agent-selection"
+          ? undefined
+          : parseLifecycleDeployV2("command", (input as DeployAgentCommandInput).command);
+      const operationRef = command?.operationRef;
+      const policy = context.profilePhase.claimGuardedPolicy("mutation", () => {
+        if (!context.protectedProfile)
+          throw new ScopeViolationError("The original mutation operation is unavailable.");
+        context.protectedProfile.assertOperationActive();
+      });
+      if (context.readOnly) {
+        if (context.dataQueryStarted)
+          throw new ScopeViolationError("Recovery enrollment must precede the first data read.");
+        await context.profileQuery("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ WRITE");
+      }
+      const installation = await this.requireInitialized(context);
+      const driver = selection.selectedDriver("iam");
+      const selected = selection.acquireGuardedSelection("iam", driver);
+      let cleanupOwned = false;
+      try {
+        const token = Object.freeze({});
+        context.profileToken = token;
+        this.#profileContexts.set(token, context);
+        const iam = bindNativeIAMTransaction(driver, this, token);
+        const guarded = createGuardedWorkloadProfileUnit({
+          installationId: installation.id,
+          signal: context.profileSignal,
+          assertActive: () => context.lifetime.assertActive(),
+          assertOwnerActive: context.assertOwnerActive,
+          assertSelection: () => {
+            selected.assertCurrent();
+            iam.assertCurrent();
+          },
+          query: (statement, parameters) => context.profileQuery(statement, parameters),
+          accountQuery: (statement, parameters) => {
+            policy.assertPolicy();
+            return context.profileQuery(statement, parameters);
+          },
+          lockPolicy: async () => {
+            policy.assertPolicy();
+            await context.profileQuery("SELECT occ.lock_workload_profile_iam()");
+            context.lifetime.assertActive();
+            context.profilePolicyLocked = true;
+            policy.complete();
+          },
+          iam,
+          profiles: platform.workloadProfiles,
+          resolveNamespace: async () => {
+            throw new ScopeViolationError("Mutation enrollment cannot manage profile heads.");
+          },
+          findAudit: async () => {
+            throw new ScopeViolationError("Mutation enrollment cannot prepare profiles.");
+          },
+          appendAudit: (event) => this.appendAudit(context, event, context.profileQuery),
+        });
+        context.protectedProfile = guarded;
+        context.profileMutation = true;
+        this.#profileAccounts.set(guarded.unit.account, guarded);
+        guarded.unit.account.retainSecurityCleanup(() => selected.release());
+        cleanupOwned = true;
+        const timer = setTimeout(context.abortProfile, 3000);
+        guarded.unit.account.retainSecurityCleanup(() => clearTimeout(timer));
+        await context.profileQuery(
+          "SELECT set_config('statement_timeout','3000ms',true),set_config('transaction_timeout','3000ms',true)",
+        );
+        const request =
+          kind === "agent-selection"
+            ? {
+                purpose: "workload-profile-draft-selection" as const,
+                binding: binding as ProfileDraftBindingV2,
+              }
+            : {
+                purpose:
+                  kind === "deployment"
+                    ? ("workload-profile-deployment" as const)
+                    : ("workload-profile-deployment-recovery" as const),
+                binding: binding as ProfileDeploymentBindingV2,
+              };
+        const lease = await account.consume(invocation, request, guarded.unit.account);
+        const release = lease.release;
+        if (typeof release !== "function")
+          throw new DependencyUnavailableError("The account cleanup is unavailable.");
+        guarded.unit.account.retainSecurityCleanup(() => Reflect.apply(release, lease, []));
+        const current = lease.assertCurrent;
+        if (typeof current !== "function")
+          throw new DependencyUnavailableError("The account currentness is unavailable.");
+        guarded.unit.retainCurrentness(() => Reflect.apply(current, lease, []));
+        const actor = immutableCopy({
+          principal: lease.principal,
+          accountRef: lease.accountRef,
+          requestId: lease.requestId,
+          admissionDecisionId: lease.admissionDecisionId,
+        });
+        if (actor.principal.id !== principalId)
+          throw new ScopeViolationError("The original actor does not match the request.");
+        const configurationId =
+          kind === "agent-selection"
+            ? (input as UpdateAgentInput).configurationId
+            : (input as DeployAgentCommandInput).command.expectedDraft.configurationId;
+        const serviceAccountId =
+          kind === "agent-selection"
+            ? (input as UpdateAgentInput).serviceAccountId
+            : (input as DeployAgentCommandInput).command.expectedDraft.serviceAccountId;
+        const targets: Array<
+          Omit<import("@openclaw-enterprise/contracts").AuthorizationRequest, "principalId">
+        > = [
+          {
+            action:
+              kind === "deployment" ? "deploy" : kind === "agent-selection" ? "update" : "read",
+            resource: { kind: "agent", id: input.agentId, namespaceId: input.namespaceId },
+          },
+          {
+            action: "read",
+            resource: {
+              kind: "configuration",
+              id: configurationId,
+              namespaceId: input.namespaceId,
+            },
+          },
+          ...(serviceAccountId == null
+            ? []
+            : [
+                {
+                  action: "read" as const,
+                  resource: {
+                    kind: "service_account" as const,
+                    id: serviceAccountId,
+                    namespaceId: input.namespaceId,
+                  },
+                },
+              ]),
+        ];
+        return await guarded.runMutation(actor, targets, async (io, retain) => {
+          const common = {
+            installationId: installation.id,
+            namespaceId: input.namespaceId,
+            agentId: input.agentId,
+            signal: context.profileSignal,
+            retain,
+          };
+          const unit:
+            | WorkloadProfileDeploymentUnitV2
+            | WorkloadProfileDraftUnitV2
+            | WorkloadProfileRecoveryUnitV2 =
+            kind === "deployment-recovery"
+              ? Object.freeze({
+                  ...common,
+                  kind,
+                  operationRef: operationRef!,
+                  read: context.readView!,
+                })
+              : kind === "deployment"
+                ? Object.freeze({ ...common, kind, operationRef: operationRef!, platform })
+                : Object.freeze({ ...common, kind, platform });
+          const enrolled = { context, io, active: true };
+          this.#profileSelectedUnits.set(unit, enrolled);
+          retain({
+            assertCurrent: () => {
+              context.assertOwnerActive();
+              if (!enrolled.active) throw new ScopeViolationError("The profile unit expired.");
+              return undefined;
+            },
+            release: async () => {
+              enrolled.active = false;
+              this.#profileSelectedUnits.delete(unit);
+            },
+          });
+          return work(unit, io);
+        });
+      } catch (error) {
+        context.protectedProfile?.poison(error);
+        if (!context.protectedProfile)
+          void context.profilePhase.guard
+            .run(async () => {
+              throw error;
+            })
+            .catch(() => {});
+        throw error;
+      } finally {
+        if (!cleanupOwned) selected.release();
+      }
+    };
+    const run = <Value>(
+      kind: "deployment" | "agent-selection" | "deployment-recovery",
+      invocation: AuthenticatedRequestHandleV1,
+      binding: ProfileDeploymentBindingV2 | ProfileDraftBindingV2,
+      work: (
+        unit:
+          | WorkloadProfileDeploymentUnitV2
+          | WorkloadProfileDraftUnitV2
+          | WorkloadProfileRecoveryUnitV2,
+        io: WorkloadProfileOwnedOperationV2,
+      ) => Promise<Value>,
+    ): Promise<Value> => {
+      const ambient = this.#profileAmbient.getStore();
+      if (!ambient)
+        return Promise.reject(
+          new DependencyUnavailableError("The original profile transaction is unavailable."),
+        );
+      const { context } = ambient;
+      const reject = (error: unknown): never => {
+        context.protectedProfile?.poison(error);
+        void context.profilePhase.guard
+          .run(async () => {
+            throw error;
+          })
+          .catch(() => {});
+        throw error;
+      };
+      let result: Promise<Value>;
+      try {
+        if (context.profileEnrollmentClosed)
+          throw new ScopeViolationError("Profile enrollment admissions are closed.");
+        result = context.lifetime
+          .run(() => runOwned(kind, invocation, binding, work))
+          .catch(reject);
+      } catch (error) {
+        result = Promise.reject(error).catch(reject);
+      }
+      const joined = result.then(
+        () => {},
+        () => {},
+      );
+      context.profileEnrollments.add(joined);
+      void joined.then(() => context.profileEnrollments.delete(joined));
+      return result;
+    };
+    const enrollment: WorkloadProfileMutationEnrollmentV2<
+      ProfileDeploymentBindingV2,
+      ProfileDraftBindingV2
+    > = Object.freeze<
+      WorkloadProfileMutationEnrollmentV2<ProfileDeploymentBindingV2, ProfileDraftBindingV2>
+    >({
+      withDeployment: (invocation, binding, work) =>
+        run("deployment", invocation, binding, (unit, io) => {
+          if (unit.kind !== "deployment")
+            throw new ScopeViolationError("The deployment owner differs.");
+          return work(unit, io);
+        }),
+      withDraft: (invocation, binding, work) =>
+        run("agent-selection", invocation, binding, (unit, io) => {
+          if (unit.kind !== "agent-selection")
+            throw new ScopeViolationError("The draft owner differs.");
+          return work(unit, io);
+        }),
+      withRecovery: (invocation, binding, work) =>
+        run("deployment-recovery", invocation, binding, (unit, io) => {
+          if (unit.kind !== "deployment-recovery")
+            throw new ScopeViolationError("The recovery owner differs.");
+          return work(unit, io);
+        }),
+    });
+    const activeReader: WorkloadProfileActiveReaderV2 =
+      Object.freeze<WorkloadProfileActiveReaderV2>({
+        readLocked: async (requestInput, unit, io) => {
+          const record = this.#profileSelectedUnits.get(unit);
+          const request = immutableCopy(requestInput);
+          if (
+            !record?.active ||
+            record.io !== io ||
+            request.installationId !== unit.installationId ||
+            request.namespaceId !== unit.namespaceId ||
+            request.agentId !== unit.agentId
+          )
+            throw new ScopeViolationError("The exact selected profile read owner is unavailable.");
+          io.assertActive();
+          const namespace = rows(
+            (
+              await io.query(
+                "SELECT id FROM occ.namespaces WHERE id=$1 AND status='ready' AND deleted_at IS NULL FOR SHARE",
+                [unit.namespaceId],
+              )
+            ).rows,
+          );
+          if (namespace.length !== 1)
+            throw new ScopeViolationError("The selected Namespace is unavailable.");
+          const agent = rows(
+            (
+              await io.query(
+                "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE",
+                [unit.namespaceId, unit.agentId],
+              )
+            ).rows,
+          );
+          if (agent.length !== 1)
+            throw new ScopeViolationError("The selected Agent is unavailable.");
+          const backend = createPostgresWorkloadProfileAdmissionBackendV2(
+            {
+              scope: { installationId: unit.installationId },
+              transaction: { assertActive: () => io.assertActive() },
+              query: { query: io.query },
+            },
+            async () => {
+              throw new ScopeViolationError(
+                "A selected-use reader cannot append an admission audit.",
+              );
+            },
+          );
+          await backend.lockHeads(unit.namespaceId, [request.selection.admissionRef], "share");
+          const stored = await backend.head(unit.namespaceId, request.selection.admissionRef);
+          const head = decodeWorkloadProfileAdmissionHeadV2(stored);
+          if (
+            head.state !== "admitted" ||
+            head.selection.manifestRef !== request.selection.manifestRef ||
+            head.selection.manifestDigest !== request.selection.manifestDigest ||
+            head.selection.admissionVersion !== request.selection.admissionVersion
+          )
+            throw new ResourceConflictError("The selected profile admission changed.");
+          io.assertActive();
+          return Object.freeze({
+            head,
+            assertCurrent: () => {
+              record.context.assertOwnerActive();
+              if (!record.active)
+                throw new ScopeViolationError("The selected profile owner expired.");
+              return undefined;
+            },
+            release: async () => {},
+          });
+        },
+      });
+    return Object.freeze({ enrollment, activeReader });
+  }
+
+  /** Actual selected-use persistence on the original owner. This supplies no
+   * native/capability/H qualifier and recognizes no caller-provided unit shape. */
+  workloadProfileSelectionStorageV2(): WorkloadProfileSelectionStorageV2 {
+    return Object.freeze<WorkloadProfileSelectionStorageV2>({
+      enroll: async (input, unit, io) => {
+        const request = decodeWorkloadProfileSelectionRequestV2(input);
+        const deployment = this.#profileSelectedUnits.get(unit);
+        const gateway = this.#gatewayExecution.getStore();
+        const unavailable = () =>
+          new ScopeViolationError("The original selected profile storage unit is unavailable.");
+        const context = deployment?.context ?? gateway?.context;
+        const ownerCurrent = () => {
+          if (!context) throw unavailable();
+          context.assertOwnerActive();
+          if (deployment) {
+            if (
+              !deployment.active ||
+              deployment.io !== io ||
+              !("kind" in unit) ||
+              unit.kind !== "deployment" ||
+              unit.installationId !== request.installationId ||
+              unit.namespaceId !== request.namespaceId ||
+              unit.agentId !== request.agentId
+            )
+              throw unavailable();
+          } else {
+            if (
+              gateway?.version !== 2 ||
+              !gateway.active ||
+              gateway.unit !== unit ||
+              this.#gatewayContexts.get(gateway.token) !== gateway ||
+              gateway.context.gateway !== gateway.execution ||
+              gateway.policyState !== "locked" ||
+              gateway.installationId !== request.installationId ||
+              gateway.unit.subject.namespaceRef !== request.namespaceId ||
+              gateway.unit.subject.agentRef !== request.agentId ||
+              gateway.bounds.signal.aborted
+            )
+              throw unavailable();
+            gateway.selected.assertCurrent();
+          }
+        };
+        // The exact IO slot authenticates this acquisition only. Its original
+        // resolver clears that slot before retained final fences execute.
+        if (!deployment && (gateway?.version !== 2 || gateway.selectionIO !== io))
+          throw unavailable();
+        ownerCurrent();
+        io.assertActive();
+        const pending = new Set<Promise<unknown>>();
+        let active = true,
+          failed = false,
+          failure: unknown,
+          stage = 0;
+        let terminal: Promise<void> | undefined;
+        const poison = (error: unknown) => {
+          if (!failed) {
+            failed = true;
+            failure = error;
+          }
+          try {
+            io.poison(error);
+          } catch {
+            /* original failure remains primary */
+          }
+        };
+        const current = (): undefined => {
+          ownerCurrent();
+          if (!active) throw unavailable();
+          if (failed) throw failure;
+          if (pending.size) throw unavailable();
+          return undefined;
+        };
+        const operation = <Value>(expected: number, work: () => Promise<Value>): Promise<Value> => {
+          let result: Promise<Value>;
+          try {
+            current();
+            io.assertActive();
+            if (stage !== expected) throw unavailable();
+            stage++;
+            result = (async () => {
+              const value = await work();
+              ownerCurrent();
+              io.assertActive();
+              return value;
+            })();
+          } catch (error) {
+            result = Promise.reject(error);
+          }
+          pending.add(result);
+          void result.then(
+            () => pending.delete(result),
+            (error) => {
+              poison(error);
+              pending.delete(result);
+            },
+          );
+          return result;
+        };
+        const release = (): Promise<void> => {
+          if (terminal) return terminal;
+          active = false;
+          terminal = Promise.resolve().then(async () => {
+            while (pending.size) await Promise.allSettled([...pending]);
+          });
+          return terminal;
+        };
+        // SQL row/advisory locks remain owned by the outer transaction after the
+        // short acquisition closes; the returned fence never uses that expired IO.
+        return Object.freeze({
+          assertCurrent: current,
+          release,
+          lockNamespace: () =>
+            operation(0, async () => {
+              const found = rows(
+                (
+                  await io.query(
+                    "SELECT id FROM occ.namespaces WHERE id=$1 AND status='ready' AND deleted_at IS NULL FOR SHARE",
+                    [request.namespaceId],
+                  )
+                ).rows,
+              );
+              if (found.length !== 1 || text(found[0]!, "id") !== request.namespaceId)
+                throw unavailable();
+              return Object.freeze({ namespaceId: request.namespaceId });
+            }),
+          lockAgent: () =>
+            operation(1, async () => {
+              const found = rows(
+                (
+                  await io.query(
+                    "SELECT id,namespace_id FROM occ.agents WHERE namespace_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE",
+                    [request.namespaceId, request.agentId],
+                  )
+                ).rows,
+              );
+              if (
+                found.length !== 1 ||
+                text(found[0]!, "id") !== request.agentId ||
+                text(found[0]!, "namespace_id") !== request.namespaceId
+              )
+                throw unavailable();
+              return Object.freeze({ namespaceId: request.namespaceId, agentId: request.agentId });
+            }),
+          readAdmission: () =>
+            operation(2, async () => {
+              const backend = createPostgresWorkloadProfileAdmissionBackendV2(
+                {
+                  scope: { installationId: request.installationId },
+                  transaction: { assertActive: () => io.assertActive() },
+                  query: { query: (statement, parameters) => io.query(statement, parameters) },
+                },
+                async () => {
+                  throw unavailable();
+                },
+              );
+              await backend.lockHeads(
+                request.namespaceId,
+                [request.selection.admissionRef],
+                "share",
+              );
+              const head = decodeWorkloadProfileAdmissionHeadV2(
+                await backend.head(request.namespaceId, request.selection.admissionRef),
+              );
+              const found = rows(
+                (
+                  await io.query(
+                    `SELECT id,namespace_id,agent_id,admitted_spec FROM occ.agent_revisions
+            WHERE namespace_id=$1 AND agent_id=$2 AND id=$3 FOR SHARE`,
+                    [request.namespaceId, request.agentId, request.revisionId],
+                  )
+                ).rows,
+              );
+              if (found.length !== 1) throw unavailable();
+              const revision = found[0]!;
+              const spec = jsonObject(revision.admitted_spec);
+              const decoded = decodeWorkloadProfileUseV2(spec.workload_profile_use);
+              if (decoded.kind !== "valid") throw unavailable();
+              const use = decoded.value;
+              const configurationRef = spec.configuration_id,
+                configurationVersion = spec.configuration_generation;
+              if (
+                head.state !== "admitted" ||
+                head.scope.installationId !== request.installationId ||
+                head.scope.namespaceId !== request.namespaceId ||
+                head.selection.admissionRef !== use.admissionRef ||
+                head.selection.admissionVersion !== use.admissionVersion ||
+                head.selection.manifestRef !== use.manifestRef ||
+                head.selection.manifestDigest !== use.manifestDigest ||
+                use.installationId !== request.installationId ||
+                use.namespaceId !== request.namespaceId ||
+                use.admissionRef !== request.selection.admissionRef ||
+                use.admissionVersion !== request.selection.admissionVersion ||
+                use.manifestRef !== request.selection.manifestRef ||
+                use.manifestDigest !== request.selection.manifestDigest ||
+                configurationRef !== request.configurationRef ||
+                configurationVersion !== request.configurationVersion ||
+                Object.entries(use.profileRefs).some(([role, value]) => {
+                  const original = head.profileRefs[role as keyof typeof head.profileRefs];
+                  return (
+                    value.ref !== original.ref ||
+                    value.version !== original.version ||
+                    value.contentDigest !== original.contentDigest
+                  );
+                })
+              )
+                throw unavailable();
+              return immutableCopy({
+                schemaVersion: 2,
+                state: "admitted",
+                use,
+                canonicalManifest: head.canonicalManifest,
+                revision: {
+                  id: text(revision, "id"),
+                  namespaceId: text(revision, "namespace_id"),
+                  agentId: text(revision, "agent_id"),
+                  workloadProfileUse: use,
+                  configurationRef,
+                  configurationVersion,
+                },
+                configuration: {
+                  ref: configurationRef,
+                  version: configurationVersion,
+                  admittedConfigurationDigest: use.admittedConfigurationDigest,
+                },
+              });
+            }),
+        });
+      },
+    });
   }
 
   private assertGatewayAuthorityOperationV1(
@@ -2839,6 +3548,13 @@ export class PostgresPlatformState implements PlatformStateStore {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
+    if (context.protectedProfile !== undefined) {
+      const error = new ScopeViolationError(
+        "Profile enrollment requires its original tracked owner query.",
+      );
+      context.protectedProfile.poison(error);
+      throw error;
+    }
     if (context.gateway !== undefined) {
       const error = new ScopeViolationError("Gateway startup requires its isolated owner query.");
       context.gateway.phase?.poison(error);
@@ -2969,6 +3685,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         "Bounded platform reads require a bounded PostgreSQL pool.",
       );
     const readBegan = performance.now();
+    const profileAbort = new AbortController();
     const lifetime = new RepositoryTransactionLifetime();
     let expired = false;
     let closed = false;
@@ -2998,6 +3715,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       }
     };
     const abort = () => {
+      profileAbort.abort();
       credential?.phase.poison(abortFailure());
       gateway?.phase?.poison(abortFailure());
       turn?.phase?.poison(options?.signal.reason ?? abortFailure());
@@ -3034,6 +3752,9 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
+      context?.protectedProfile?.poison(
+        new DependencyUnavailableError("The profile transaction transport failed."),
+      );
       if (fresh !== undefined && !fresh.failed) {
         fresh.failed = true;
         fresh.failure = new DependencyUnavailableError(
@@ -3059,6 +3780,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       const underlying = raw;
       const query: PostgresClient["query"] = async (statement, parameters) => {
         lifetime.assertActive();
+        if (context !== undefined && trackProfileOrder) context.dataQueryStarted = true;
         if (closed || options?.signal.aborted) throw abortFailure();
         const query = underlying.query(statement, parameters);
         pending.add(query);
@@ -3118,7 +3840,11 @@ export class PostgresPlatformState implements PlatformStateStore {
                       ),
                     )
                   : lifecyclePhase.legacyQuery(() =>
-                      profilePhase.other(() => query(statement, parameters)),
+                      profilePhase.other(() => {
+                        if (context?.profileMutation)
+                          context.protectedProfile!.assertOperationActive();
+                        return query(statement, parameters);
+                      }),
                     )
             : query(statement, parameters),
         release: (destroy) => release(destroy ?? false),
@@ -3156,6 +3882,16 @@ export class PostgresPlatformState implements PlatformStateStore {
         ...(credential === undefined ? {} : { credential }),
         credentialQuery: query,
         lifetime,
+        readOnly,
+        profileSignal: options?.signal ?? profileAbort.signal,
+        abortProfile: abort,
+        dataQueryStarted: false,
+        profileEnrollments: new Set(),
+        profileEnrollmentClosed: false,
+        assertOwnerActive: () => {
+          if (closed || released || expired || discardClient || options?.signal.aborted)
+            throw abortFailure();
+        },
         authorityGuard,
         journalGuard,
         profilePhase,
@@ -3200,7 +3936,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       this.contexts.set(unit, context);
       const activeContext = context;
       running = Promise.resolve().then(() =>
-        this.#outerExecution.run(true, () => work(unit!, activeContext)),
+        this.#outerExecution.run(true, () =>
+          this.#profileAmbient.run({ context: activeContext, platform: unit! }, () =>
+            work(unit!, activeContext),
+          ),
+        ),
       );
       const result = await (cancelled === undefined ? running : Promise.race([running, cancelled]));
       if (fresh !== undefined) {
@@ -3229,6 +3969,9 @@ export class PostgresPlatformState implements PlatformStateStore {
         await credential.phase.runFinalization(credential.prepareCommit);
         await credential.phase.drainAccepted();
       }
+      context.profileEnrollmentClosed = true;
+      while (context.profileEnrollments.size)
+        await Promise.allSettled([...context.profileEnrollments]);
       lifecyclePhase.closeAdmissions();
       await context?.protectedProfile?.finish();
       await lifetime.finish();
@@ -3238,6 +3981,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       await profilePhase.guard.finish();
       if (expired || options?.signal.aborted) throw abortFailure();
       context?.protectedProfile?.assertCurrent();
+      profilePhase.guard.assertCurrent();
       if (gateway !== undefined) {
         if (gateway.version === 2) gateway.finalized = gateway.phase!.finalize();
         else gateway.finalized = gateway.phase!.finalize();
@@ -3328,6 +4072,11 @@ export class PostgresPlatformState implements PlatformStateStore {
         }
       }
       lifecyclePhase.closeAdmissions();
+      if (context !== undefined) {
+        context.profileEnrollmentClosed = true;
+        while (context.profileEnrollments.size)
+          await Promise.allSettled([...context.profileEnrollments]);
+      }
       try {
         await context?.protectedProfile?.finish();
       } catch {
@@ -3384,6 +4133,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       cleanup(() => lifecyclePhase.closeAdmissions());
       cleanup(() => context?.protectedProfile?.close());
       if (context?.profileToken !== undefined) this.#profileContexts.delete(context.profileToken);
+      if (context?.protectedProfile !== undefined)
+        this.#profileAccounts.delete(context.protectedProfile.unit.account);
       cleanup(() => gateway?.close());
       cleanup(() => credential?.close());
       cleanup(() => credential?.phase.close());
@@ -3432,6 +4183,17 @@ export class PostgresPlatformState implements PlatformStateStore {
               : "rolled-back";
         try {
           await turn.phase.finishTerminal(terminal);
+        } catch (error) {
+          if (!cleanupFailed) {
+            cleanupFailed = true;
+            cleanupFailure = error;
+          }
+        }
+      }
+      if (context?.protectedProfile !== undefined) {
+        try {
+          await context.protectedProfile.release();
+          context.protectedProfile.assertSettled();
         } catch (error) {
           if (!cleanupFailed) {
             cleanupFailed = true;
@@ -3668,7 +4430,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                     a.provider_id, a.service_principal_id, a.service_account_id,
-                    a.active_revision_id, a.created_at
+                    a.active_revision_id, a.created_at, a.workload_profile_selection
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
              WHERE a.namespace_id = $1 AND a.id = $2${lock ? " FOR UPDATE OF a" : ""}`,
@@ -3688,7 +4450,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                       a.provider_id, a.service_principal_id, a.service_account_id,
-                      a.active_revision_id, a.created_at
+                      a.active_revision_id, a.created_at, a.workload_profile_selection
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
                WHERE a.namespace_id = $1 ORDER BY a.created_at, a.id`,
@@ -3699,6 +4461,13 @@ export class PostgresPlatformState implements PlatformStateStore {
         return Object.freeze(found.map((row) => agentFromRow(row)));
       },
       createAgent: async (agent) => {
+        agent = immutableCopy(agent);
+        const selection =
+          agent.workloadProfileSelection === undefined
+            ? undefined
+            : decodeWorkloadProfileSelectionV1(agent.workloadProfileSelection);
+        if (selection?.kind === "invalid")
+          throw new ScopeViolationError("The Agent workload selection is invalid.");
         await this.requireInitialized(context);
         const namespace = await namespaces.lockNamespace(agent.namespaceId);
         if (
@@ -3716,8 +4485,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             service_principal_id, service_account_id, active_revision_id, created_at, workload_profile_selection)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
           [
             agent.id,
             agent.namespaceId,
@@ -3729,6 +4498,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             agent.serviceAccountId ?? null,
             agent.activeRevisionId ?? null,
             agent.createdAt,
+            selection === undefined ? null : JSON.stringify(selection.value),
           ],
         );
         await client.query(
@@ -3745,7 +4515,14 @@ export class PostgresPlatformState implements PlatformStateStore {
         executionMode,
         serviceAccountId,
         providerId,
+        workloadProfileSelection,
       ) => {
+        const selection =
+          workloadProfileSelection === undefined
+            ? undefined
+            : decodeWorkloadProfileSelectionV1(workloadProfileSelection);
+        if (selection?.kind === "invalid")
+          throw new ScopeViolationError("The Agent workload selection is invalid.");
         const configuration = await configurations.findConfiguration(namespaceId, configurationId);
         if (configuration === undefined)
           throw new ScopeViolationError("The Agent references an unavailable Configuration.");
@@ -3756,13 +4533,14 @@ export class PostgresPlatformState implements PlatformStateStore {
               `UPDATE occ.agents AS a
                SET configuration_id = $3, execution_mode = COALESCE($4::text, a.execution_mode),
                    service_account_id = CASE WHEN $5::boolean THEN $6::text ELSE a.service_account_id END,
-                   provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END
+                   provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END,
+                   workload_profile_selection = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.workload_profile_selection END
                FROM occ.namespaces AS n
                WHERE a.namespace_id = $1 AND a.id = $2
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection`,
               [
                 namespaceId,
                 agentId,
@@ -3772,6 +4550,8 @@ export class PostgresPlatformState implements PlatformStateStore {
                 serviceAccountId ?? null,
                 providerId !== undefined,
                 providerId ?? null,
+                selection !== undefined,
+                selection === undefined ? null : JSON.stringify(selection.value),
               ],
             )
           ).rows,
@@ -3794,7 +4574,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
           ).rows,
@@ -4042,7 +4822,88 @@ export class PostgresPlatformState implements PlatformStateStore {
       return runtimeIntentFromRow(found!);
     }
 
+    const deployCommandLocks = new Map<string, string>();
+    const deployScopeKey = (scope: RuntimeScope) =>
+      JSON.stringify([scope.namespaceId, scope.agentId]);
     const runtimeAdmissions: RuntimeAdmissionRepository = {
+      lockDeployCommand: async (scopeInput, operationRef) => {
+        const scope = immutableCopy(scopeInput);
+        if (
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            operationRef,
+          )
+        )
+          throw new ScopeViolationError("The deployment operation identity is invalid.");
+        const installation = await this.requireInitialized(context);
+        const prior = deployCommandLocks.get(operationRef);
+        if (prior !== undefined && prior !== deployScopeKey(scope))
+          throw new ResourceConflictError(
+            "The deployment operation belongs to different operands.",
+          );
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended('lifecycle-deploy-command:' || $1 || ':' || $2, 0))",
+          [installation.id, operationRef],
+        );
+        deployCommandLocks.set(operationRef, deployScopeKey(scope));
+      },
+      findCommittedDeployCommand: async (scopeInput, commandInput, actorId) => {
+        const scope = immutableCopy(scopeInput);
+        const command = parseLifecycleDeployV2("command", commandInput);
+        if (typeof actorId !== "string" || !/^[A-Za-z0-9._:/-]{1,200}$/.test(actorId))
+          throw new ScopeViolationError("The deployment actor is invalid.");
+        const installation = await this.requireInitialized(context);
+        const canonical = canonicalLifecycleDeployCommandV2(
+          {
+            installationId: installation.id,
+            namespaceId: scope.namespaceId,
+            agentId: scope.agentId,
+          },
+          command,
+        );
+        // Resolve the original transition globally before touching today's draft/head.
+        // A legacy or foreign owner conflicts; it is never hidden as an absent operation.
+        const found = rows(
+          (
+            await client.query(
+              `SELECT intent.actor_id AS intent_actor_id, intent.request_id,
+                  admission.deploy_actor_id, admission.deploy_command, admission.deploy_canonical
+           FROM occ.agent_runtime_intents intent
+           LEFT JOIN occ.agent_revision_runtime_admissions admission
+             ON admission.runtime_transition_ref=intent.transition_ref
+           WHERE intent.transition_ref=$1`,
+              [command.operationRef],
+            )
+          ).rows,
+        )[0];
+        if (found === undefined) return undefined;
+        if (
+          found.deploy_actor_id !== actorId ||
+          found.intent_actor_id !== actorId ||
+          found.deploy_canonical !== canonical ||
+          canonicalLifecycleDeployCommandV2(
+            {
+              installationId: installation.id,
+              namespaceId: scope.namespaceId,
+              agentId: scope.agentId,
+            },
+            found.deploy_command,
+          ) !== canonical
+        )
+          throw new ResourceConflictError(
+            "The deployment operation conflicts with retained state.",
+          );
+        const revision = await runtimeAdmissions.findCommittedAdmission(
+          scope,
+          command.operationRef,
+          {
+            actorId,
+            requestId: text(found, "request_id"),
+          },
+        );
+        if (revision === undefined)
+          throw new DependencyUnavailableError("The original deployment admission is incomplete.");
+        return revision;
+      },
       findRevisionAdmission: async (scope, revisionId) => {
         if (!(await runtimeOwner(scope))) return undefined;
         const found = rows(
@@ -4105,12 +4966,37 @@ export class PostgresPlatformState implements PlatformStateStore {
           return undefined;
         return revisionFromRow(jsonObject(found.revision));
       },
-      recordAdmission: async (admission) => {
-        await this.requireInitialized(context);
+      recordAdmission: async (admissionInput, deployInput) => {
+        const admission = immutableCopy(admissionInput);
+        const deploy = deployInput === undefined ? undefined : immutableCopy(deployInput);
+        const command =
+          deploy === undefined ? undefined : parseLifecycleDeployV2("command", deploy.command);
+        const installation = await this.requireInitialized(context);
+        if (
+          deploy !== undefined &&
+          (command!.operationRef !== admission.runtimeTransitionRef ||
+            deployCommandLocks.get(command!.operationRef) !== deployScopeKey(admission) ||
+            !/^[A-Za-z0-9._:/-]{1,200}$/.test(deploy.actorId))
+        )
+          throw new ScopeViolationError(
+            "The deployment command is not bound to this locked operation.",
+          );
+        const canonical =
+          command === undefined
+            ? undefined
+            : canonicalLifecycleDeployCommandV2(
+                {
+                  installationId: installation.id,
+                  namespaceId: admission.namespaceId,
+                  agentId: admission.agentId,
+                },
+                command,
+              );
         await client.query(
           `INSERT INTO occ.agent_revision_runtime_admissions
-           (namespace_id, agent_id, revision_id, runtime_transition_ref, lifecycle_generation, audit_event_id)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+           (namespace_id, agent_id, revision_id, runtime_transition_ref, lifecycle_generation, audit_event_id,
+            deploy_actor_id, deploy_command, deploy_canonical)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
           [
             admission.namespaceId,
             admission.agentId,
@@ -4118,6 +5004,9 @@ export class PostgresPlatformState implements PlatformStateStore {
             admission.runtimeTransitionRef,
             admission.lifecycleGeneration,
             admission.auditEventId,
+            deploy?.actorId ?? null,
+            command === undefined ? null : JSON.stringify(command),
+            canonical ?? null,
           ],
         );
       },
@@ -4273,22 +5162,79 @@ export class PostgresPlatformState implements PlatformStateStore {
       runtimeAssignments,
       context.authorityGuard,
     );
-    const profileRepository = createPostgresWorkloadProfile(
-      {
-        get scope() {
-          context.lifetime.assertActive();
-          if (!context.installation)
-            throw new ScopeViolationError(
-              "The server-owned Installation has not been initialized.",
-            );
-          return { installationId: context.installation.id };
-        },
-        transaction: context.lifetime,
-        query: { query: (statement, parameters) => context.profileQuery(statement, parameters) },
+    const profileContext = {
+      get scope() {
+        context.lifetime.assertActive();
+        if (!context.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
       },
+      transaction: context.lifetime,
+      query: {
+        query: (statement: string, parameters?: readonly unknown[]) =>
+          context.profileQuery(statement, parameters),
+      },
+    };
+    const profileRepository = createPostgresWorkloadProfile(
+      profileContext,
+      context.profilePhase.guard,
+    );
+    const profileAdmissions = createWorkloadProfileAdmissionRepositoryV2(
+      createPostgresWorkloadProfileAdmissionBackendV2(
+        profileContext,
+        async (attribution, history) => {
+          if (!context.protectedProfile)
+            throw new DependencyUnavailableError(
+              "The original profile authority owner is unavailable.",
+            );
+          const event = context.protectedProfile.decorateAudit(
+            workloadProfileAdmissionAuditV2(attribution, history),
+          );
+          await this.appendAudit(context, event, context.profileQuery);
+        },
+      ),
       context.profilePhase.guard,
     );
     const workloadProfiles = {
+      ...profileAdmissions,
+      readProfile: async (...args: Parameters<typeof profileAdmissions.readProfile>) => {
+        if (!context.readOnly) {
+          await this.requireInitialized(context);
+          return profileAdmissions.readProfile(...args);
+        }
+        // Ordinary PlatformReadView observes data in its existing RR/RO snapshot.
+        // It neither acquires a current-use lease nor upgrades that transaction.
+        return context.profilePhase.guard.run(async () => {
+          const [namespaceId, admissionRef] = args;
+          if (typeof namespaceId !== "string" || !namespaceId.startsWith("ns_"))
+            throw new InvalidProfileOperationError();
+          profileUuid(namespaceId.slice(3));
+          profileUuid(admissionRef);
+          const installation = await this.requireInitialized(context);
+          const found = rows(
+            (
+              await context.profileQuery(
+                `SELECT a.record FROM occ.workload_profile_admissions AS a
+             JOIN occ.namespaces AS n ON n.id=a.namespace_id
+             WHERE a.installation_id=$1 AND a.namespace_id=$2 AND a.admission_ref=$3
+               AND n.status='ready' AND n.deleted_at IS NULL`,
+                [installation.id, namespaceId, admissionRef],
+              )
+            ).rows,
+          );
+          if (found.length > 1)
+            throw new ScopeViolationError("The observed profile head is ambiguous.");
+          if (found.length === 0) return undefined;
+          const head = decodeWorkloadProfileAdmissionHeadV2(found[0]!.record);
+          if (
+            head.scope.installationId !== installation.id ||
+            head.scope.namespaceId !== namespaceId ||
+            head.selection.admissionRef !== admissionRef
+          )
+            throw new ScopeViolationError("The observed profile head belongs to another scope.");
+          return head;
+        });
+      },
       findOperation: async (...args: Parameters<typeof profileRepository.findOperation>) => {
         await this.requireInitialized(context);
         return profileRepository.findOperation(...args);

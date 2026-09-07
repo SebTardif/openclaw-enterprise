@@ -6,6 +6,7 @@ import {
   createWorkloadProfileRepository,
   ProfileOperationConflictError,
   type WorkloadProfileTransactionGuard,
+  type WorkloadProfileBackend,
 } from "../../workload-profiles/repository.ts";
 import {
   profileOperationKey,
@@ -29,67 +30,74 @@ export function createMemoryWorkloadProfile(
   identities?: ProfileIdentityAllocator,
   now?: () => string,
 ) {
+  return createWorkloadProfileRepository(
+    createMemoryWorkloadProfileBackend(context),
+    guard,
+    identities,
+    now,
+  );
+}
+
+/** Original preparation persistence, borrowed by active admission for the SAME prefix. */
+export function createMemoryWorkloadProfileBackend(
+  context: MemoryRepositoryFactoryContext<WorkloadProfileMemorySnapshot>,
+): WorkloadProfileBackend {
   const active = () => {
     context.transaction.assertActive();
     if (context.scope.namespaceId !== undefined)
       throw new ScopeViolationError("Workload profile operations require Installation scope.");
   };
-  return createWorkloadProfileRepository(
-    {
-      installationId: () => {
-        active();
-        return context.scope.installationId;
-      },
-      lockCapacity: async () => {
-        active();
-      },
-      lockOperation: async () => {
-        active();
-      },
-      capacity: async () => {
-        active();
-        return immutableCopy(
-          context.snapshot.capacities.get(context.scope.installationId) ?? {
-            ordinaryOperations: 0,
-            pendingOrdinaryOperations: 0,
-            terminalSlots: 0,
-          },
-        );
-      },
-      namespaceExists: async (namespaceId) => {
-        active();
-        const namespace = context.snapshot.namespaces.get(namespaceId);
-        return namespace?.status === "ready" && namespace.deletedAt === undefined;
-      },
-      operation: async (locator) => {
-        active();
-        return context.snapshot.operations.get(profileOperationKey(locator));
-      },
-      insert: async (record, capacity) => {
-        active();
-        const key = profileOperationKey({
-          installationId: record.scope.installationId,
-          actor: record.actor,
-          operationRef: record.operationRef,
-        });
-        if (context.snapshot.operations.has(key)) throw new ProfileOperationConflictError();
-        // Each future identity belongs to one immutable preparation in this Installation.
-        // Exact operation replay returned before insertion and does not reserve it again.
-        for (const retained of context.snapshot.operations.values()) {
-          if (
-            retained.scope.installationId === record.scope.installationId &&
-            PROFILE_ALLOCATION_KINDS.some(
-              (kind) => retained.allocated[kind] === record.allocated[kind],
-            )
-          )
-            throw new ProfileOperationConflictError();
-        }
-        context.snapshot.operations.set(key, immutableCopy(record));
-        context.snapshot.capacities.set(context.scope.installationId, immutableCopy(capacity));
-      },
+  return {
+    installationId: () => {
+      active();
+      return context.scope.installationId;
     },
-    guard,
-    identities,
-    now,
-  );
+    lockCapacity: async () => {
+      active();
+    },
+    lockOperation: async () => {
+      active();
+    },
+    capacity: async () => {
+      active();
+      return immutableCopy(
+        context.snapshot.capacities.get(context.scope.installationId) ?? {
+          ordinaryOperations: 0,
+          pendingOrdinaryOperations: 0,
+          terminalSlots: 0,
+        },
+      );
+    },
+    namespaceExists: async (namespaceId) => {
+      active();
+      const namespace = context.snapshot.namespaces.get(namespaceId);
+      return namespace?.status === "ready" && namespace.deletedAt === undefined;
+    },
+    operation: async (locator) => {
+      active();
+      return context.snapshot.operations.get(profileOperationKey(locator));
+    },
+    insert: async (record, capacity) => {
+      active();
+      const key = profileOperationKey({
+        installationId: record.scope.installationId,
+        actor: record.actor,
+        operationRef: record.operationRef,
+      });
+      if (context.snapshot.operations.has(key)) throw new ProfileOperationConflictError();
+      // Each future identity belongs to one immutable preparation in this Installation.
+      // Exact operation replay returned before insertion and does not reserve it again.
+      for (const retained of context.snapshot.operations.values()) {
+        if (
+          retained.scope.installationId === record.scope.installationId &&
+          PROFILE_ALLOCATION_KINDS.some(
+            (kind) => retained.allocated[kind] === record.allocated[kind],
+          )
+        )
+          throw new ProfileOperationConflictError();
+      }
+      context.snapshot.operations.set(key, immutableCopy(record));
+      context.snapshot.capacities.set(context.scope.installationId, immutableCopy(capacity));
+    },
+  };
 }

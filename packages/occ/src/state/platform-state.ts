@@ -1,3 +1,18 @@
+import { createMemoryWorkloadProfileAdmissionBackendV2 } from "./memory/workload-profile-admission.ts";
+import {
+  createWorkloadProfileAdmissionRepositoryV2,
+  decodeWorkloadProfileAdmissionHistoryV2,
+  type WorkloadProfileAdmissionAttributionV2,
+  type WorkloadProfileAdmissionHeadV2,
+  type WorkloadProfileAdmissionHistoryV2,
+  type WorkloadProfileInvalidationV2,
+} from "../workload-profiles/admission-record.ts";
+import {
+  canonicalLifecycleDeployCommandV2,
+  parseLifecycleDeployV2,
+  type LifecycleDeployCommandV2,
+} from "@openclaw-enterprise/contracts/lifecycle-deploy-v2";
+import { decodeWorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import { createMemoryRevisionRepository } from "./memory/revisions.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { legacyOperations } from "../lifecycle/protective-admission-v1.ts";
@@ -340,13 +355,27 @@ interface PlatformSnapshot {
   readonly auditExports: Map<string, Readonly<PendingAuditExportV1>>;
   readonly workloadProfileOperations: Map<string, StoredProfilePreparation>;
   readonly workloadProfileCapacities: Map<string, ProfileCapacity>;
+  readonly workloadProfileAdmissions: Map<string, WorkloadProfileAdmissionHeadV2>;
+  readonly workloadProfileHistory: Map<string, WorkloadProfileAdmissionHistoryV2>;
+  readonly workloadProfileInvalidations: Map<string, WorkloadProfileInvalidationV2>;
   readonly channelInstallations: Map<string, Readonly<ChannelInstallation>>;
   readonly channelHumans: Map<string, Readonly<ChannelHumanBinding>>;
   readonly channelAgents: Map<string, Readonly<ChannelAgentBinding>>;
   readonly runtimeIntents: Map<string, Readonly<RuntimeIntent>>;
   readonly runtimeHeads: Map<string, string>;
   readonly runtimeAllocations: Map<string, Readonly<RuntimeAllocation>>;
-  readonly runtimeAdmissions: Map<string, Readonly<RevisionRuntimeAdmission>>;
+  readonly runtimeAdmissions: Map<
+    string,
+    Readonly<
+      RevisionRuntimeAdmission & {
+        readonly deploy?: Readonly<{
+          command: LifecycleDeployCommandV2;
+          actorId: string;
+          canonical: string;
+        }>;
+      }
+    >
+  >;
   readonly runtimeAuthorityOperations: Map<string, StoredRuntimeAuthorityOperation>;
   readonly runtimePreparationOperations: Map<string, StoredRuntimePreparationOperation>;
   readonly runtimeServiceTrustRecords: Map<string, Readonly<RuntimeServiceTrustRecord>>;
@@ -381,6 +410,9 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
     runtimePreparationOperations: new Map(snapshot.runtimePreparationOperations),
     workloadProfileOperations: new Map(snapshot.workloadProfileOperations),
     workloadProfileCapacities: new Map(snapshot.workloadProfileCapacities),
+    workloadProfileAdmissions: new Map(snapshot.workloadProfileAdmissions),
+    workloadProfileHistory: new Map(snapshot.workloadProfileHistory),
+    workloadProfileInvalidations: new Map(snapshot.workloadProfileInvalidations),
     runtimeServiceTrustRecords: new Map(snapshot.runtimeServiceTrustRecords),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
@@ -665,6 +697,13 @@ function repositories(
           : [],
       ),
     createAgent: async (agent) => {
+      agent = immutableCopy(agent);
+      const selection =
+        agent.workloadProfileSelection === undefined
+          ? undefined
+          : decodeWorkloadProfileSelectionV1(agent.workloadProfileSelection);
+      if (selection?.kind === "invalid")
+        throw new ScopeViolationError("The Agent workload selection is invalid.");
       assertInitialized(snapshot);
       if (agent.executionMode !== "embedded" && agent.executionMode !== "dedicated")
         throw new ScopeViolationError("The Agent execution mode is invalid.");
@@ -720,7 +759,14 @@ function repositories(
       executionMode,
       serviceAccountId,
       providerId,
+      workloadProfileSelection,
     ) => {
+      const selection =
+        workloadProfileSelection === undefined
+          ? undefined
+          : decodeWorkloadProfileSelectionV1(workloadProfileSelection);
+      if (selection?.kind === "invalid")
+        throw new ScopeViolationError("The Agent workload selection is invalid.");
       const current = await agents.findAgent(namespaceId, agentId);
       if (!current) return undefined;
       if (providerId !== undefined && providerId !== null && !providerIdentifier.test(providerId))
@@ -749,6 +795,7 @@ function repositories(
         configurationId,
         providerId: nextProviderId,
         executionMode: executionMode ?? current.executionMode,
+        ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
         ...(association === undefined ? {} : { serviceAccountId: association }),
       });
       snapshot.agents.set(agentKey(namespaceId, agentId), updated);
@@ -784,6 +831,7 @@ function repositories(
       },
       namespaces: snapshot.namespaces,
       revisions: snapshot.revisions,
+      workloadProfileAdmissions: snapshot.workloadProfileAdmissions,
     },
     agents,
     revisionKey: agentKey,
@@ -982,12 +1030,75 @@ function repositories(
     return immutableCopy(intent);
   }
 
+  const deployCommandLocks = new Map<string, string>();
+  const deployScopeKey = (scope: RuntimeScope) =>
+    JSON.stringify([scope.namespaceId, scope.agentId]);
   const runtimeAdmissions: RuntimeAdmissionRepository = {
+    lockDeployCommand: async (scopeInput, operationRef) => {
+      const scope = immutableCopy(scopeInput);
+      assertInitialized(snapshot);
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(operationRef)
+      )
+        throw new ScopeViolationError("The deployment operation identity is invalid.");
+      const prior = deployCommandLocks.get(operationRef);
+      if (prior !== undefined && prior !== deployScopeKey(scope))
+        throw new ResourceConflictError("The deployment operation belongs to different operands.");
+      // The original memory owner serializes whole working-snapshot transactions.
+      deployCommandLocks.set(operationRef, deployScopeKey(scope));
+    },
+    findCommittedDeployCommand: async (scopeInput, commandInput, actorId) => {
+      const scope = immutableCopy(scopeInput);
+      const command = parseLifecycleDeployV2("command", commandInput);
+      assertInitialized(snapshot);
+      const installation = snapshot.installation!;
+      if (typeof actorId !== "string" || !/^[A-Za-z0-9._:/-]{1,200}$/.test(actorId))
+        throw new ScopeViolationError("The deployment actor is invalid.");
+      const canonical = canonicalLifecycleDeployCommandV2(
+        { installationId: installation.id, namespaceId: scope.namespaceId, agentId: scope.agentId },
+        command,
+      );
+      const intent = snapshot.runtimeIntents.get(command.operationRef);
+      const original = [...snapshot.runtimeAdmissions.values()].find(
+        (item) => item.runtimeTransitionRef === command.operationRef,
+      );
+      if (intent === undefined && original === undefined) return undefined;
+      if (
+        original?.deploy === undefined ||
+        intent === undefined ||
+        intent.actorId !== actorId ||
+        original.deploy.actorId !== actorId ||
+        original.deploy.canonical !== canonical ||
+        canonicalLifecycleDeployCommandV2(
+          {
+            installationId: installation.id,
+            namespaceId: scope.namespaceId,
+            agentId: scope.agentId,
+          },
+          original.deploy.command,
+        ) !== canonical
+      )
+        throw new ResourceConflictError("The deployment operation conflicts with retained state.");
+      const revision = await runtimeAdmissions.findCommittedAdmission(scope, command.operationRef, {
+        actorId,
+        requestId: intent.requestId,
+      });
+      if (revision === undefined)
+        throw new DependencyUnavailableError("The original deployment admission is incomplete.");
+      return revision;
+    },
     findRevisionAdmission: async (scope, revisionId) => {
       if (!(await runtimeOwner(scope))) return undefined;
       const admission = snapshot.runtimeAdmissions.get(revisionId);
       return admission?.namespaceId === scope.namespaceId && admission.agentId === scope.agentId
-        ? immutableCopy(admission)
+        ? immutableCopy({
+            namespaceId: admission.namespaceId,
+            agentId: admission.agentId,
+            revisionId: admission.revisionId,
+            runtimeTransitionRef: admission.runtimeTransitionRef,
+            lifecycleGeneration: admission.lifecycleGeneration,
+            auditEventId: admission.auditEventId,
+          })
         : undefined;
     },
     findCommittedAdmission: async (scope, transitionRef, attribution) => {
@@ -1033,7 +1144,34 @@ function repositories(
         return undefined;
       return immutableCopy(revision);
     },
-    recordAdmission: async (admission) => {
+    recordAdmission: async (admissionInput, deployInput) => {
+      const admission = immutableCopy(admissionInput);
+      const deploy = deployInput === undefined ? undefined : immutableCopy(deployInput);
+      const command =
+        deploy === undefined ? undefined : parseLifecycleDeployV2("command", deploy.command);
+      assertInitialized(snapshot);
+      const installation = snapshot.installation!;
+      if (
+        deploy !== undefined &&
+        (command!.operationRef !== admission.runtimeTransitionRef ||
+          deployCommandLocks.get(command!.operationRef) !== deployScopeKey(admission) ||
+          typeof deploy.actorId !== "string" ||
+          !/^[A-Za-z0-9._:/-]{1,200}$/.test(deploy.actorId))
+      )
+        throw new ScopeViolationError(
+          "The deployment command is not bound to this locked operation.",
+        );
+      const canonical =
+        command === undefined
+          ? undefined
+          : canonicalLifecycleDeployCommandV2(
+              {
+                installationId: installation.id,
+                namespaceId: admission.namespaceId,
+                agentId: admission.agentId,
+              },
+              command,
+            );
       const intent = await runtimeAssignments.findRuntimeIntent(
         admission,
         admission.runtimeTransitionRef,
@@ -1042,6 +1180,7 @@ function repositories(
       if (
         intent === undefined ||
         intent.desiredMode !== "running" ||
+        (deploy !== undefined && deploy.actorId !== intent.actorId) ||
         intent.revisionId !== admission.revisionId ||
         intent.generation !== admission.lifecycleGeneration ||
         audit === undefined ||
@@ -1050,6 +1189,46 @@ function repositories(
         throw new ScopeViolationError(
           "The revision admission does not match its exact intent and audit.",
         );
+      if (command !== undefined) {
+        const revision = await revisions.findRevision(
+          admission.namespaceId,
+          admission.agentId,
+          admission.revisionId,
+        );
+        const use = revision?.workloadProfileUse;
+        if (revision === undefined || use === undefined)
+          throw new ScopeViolationError(
+            "The deployment command requires its original admitted workload Use.",
+          );
+        const expected = canonicalLifecycleDeployCommandV2(
+          {
+            installationId: installation.id,
+            namespaceId: admission.namespaceId,
+            agentId: admission.agentId,
+          },
+          {
+            ...command,
+            expectedLifecycleGeneration: intent.generation === 1 ? null : intent.generation - 1,
+            expectedDraft: {
+              configurationId: revision.configurationId,
+              configurationGeneration: revision.configurationGeneration,
+              providerId: revision.providerId,
+              executionMode: revision.harness.mode,
+              serviceAccountId: revision.serviceAccount?.id ?? null,
+              workloadProfileSelection: {
+                manifestRef: use.manifestRef,
+                manifestDigest: use.manifestDigest,
+                admissionRef: use.admissionRef,
+                admissionVersion: use.admissionVersion,
+              },
+            },
+          },
+        );
+        if (canonical !== expected)
+          throw new ScopeViolationError(
+            "The deployment command does not match its exact revision and intent.",
+          );
+      }
       if (
         snapshot.runtimeAdmissions.has(admission.revisionId) ||
         [...snapshot.runtimeAdmissions.values()].some(
@@ -1059,7 +1238,15 @@ function repositories(
         )
       )
         throw new ResourceConflictError("The revision runtime admission is immutable.");
-      snapshot.runtimeAdmissions.set(admission.revisionId, immutableCopy(admission));
+      snapshot.runtimeAdmissions.set(
+        admission.revisionId,
+        immutableCopy({
+          ...admission,
+          ...(deploy === undefined
+            ? {}
+            : { deploy: { command: command!, actorId: deploy.actorId, canonical: canonical! } }),
+        }),
+      );
     },
   };
 
@@ -1096,22 +1283,34 @@ function repositories(
     runtimeAssignments,
     authorityGuard,
   );
-  const workloadProfiles = createMemoryWorkloadProfile(
-    {
-      transaction,
-      get scope() {
-        if (!snapshot.installation)
-          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
-        return { installationId: snapshot.installation.id };
-      },
-      snapshot: {
-        operations: snapshot.workloadProfileOperations,
-        capacities: snapshot.workloadProfileCapacities,
-        namespaces: snapshot.namespaces,
-      },
+  const profileContext = {
+    transaction,
+    get scope() {
+      if (!snapshot.installation)
+        throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+      return { installationId: snapshot.installation.id };
     },
-    profilePhase.guard,
-  );
+    snapshot: {
+      operations: snapshot.workloadProfileOperations,
+      capacities: snapshot.workloadProfileCapacities,
+      namespaces: snapshot.namespaces,
+      admissions: snapshot.workloadProfileAdmissions,
+      history: snapshot.workloadProfileHistory,
+      invalidations: snapshot.workloadProfileInvalidations,
+    },
+  };
+  const workloadProfiles = Object.freeze({
+    ...createMemoryWorkloadProfile(profileContext, profilePhase.guard),
+    ...createWorkloadProfileAdmissionRepositoryV2(
+      createMemoryWorkloadProfileAdmissionBackendV2(
+        profileContext,
+        async (attribution, history) => {
+          await audit.append(workloadProfileAdmissionAuditV2(attribution, history));
+        },
+      ),
+      profilePhase.guard,
+    ),
+  });
   const runtimePreparation = createMemoryRuntimePreparation(
     {
       transaction,
@@ -1299,6 +1498,9 @@ export class InMemoryPlatformState implements PlatformStateStore {
     runtimePreparationOperations: new Map(),
     workloadProfileOperations: new Map(),
     workloadProfileCapacities: new Map(),
+    workloadProfileAdmissions: new Map(),
+    workloadProfileHistory: new Map(),
+    workloadProfileInvalidations: new Map(),
     runtimeServiceTrustRecords: new Map(),
     installation: undefined,
     namespaces: new Map(),
@@ -1402,6 +1604,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
           .slice(committedAuditCount)
           .filter((event) => !working.auditExports.has(event.id)),
       );
+      profilePhase.guard.assertCurrent();
       this.snapshot = working;
       return result;
     } catch (error) {
@@ -1464,4 +1667,59 @@ export class InMemoryPlatformState implements PlatformStateStore {
       throw new DependencyUnavailableError("The platform audit repository is unavailable.");
     }
   }
+}
+
+/** Deterministic conversion of the original reserved audit UUID. Authentication
+ * remains with the admitting owner; this serializer only preserves attribution. */
+export function workloadProfileAdmissionAuditV2(
+  attribution: WorkloadProfileAdmissionAttributionV2,
+  input: WorkloadProfileAdmissionHistoryV2,
+): AuditEvent {
+  const history = decodeWorkloadProfileAdmissionHistoryV2(input);
+  const head = history.head;
+  const retained = head.state === "admitted" ? head.acceptance : head.withdrawal;
+  if (
+    attribution.actor.accountRef !== retained.actor.accountRef ||
+    attribution.actor.principalRef !== retained.actor.principalRef ||
+    attribution.operationRef !== retained.operationRef ||
+    attribution.requestRef !== retained.requestRef ||
+    attribution.decisionRef !== retained.decisionRef
+  )
+    throw new ScopeViolationError(
+      "The profile audit attribution differs from its original history.",
+    );
+  return immutableCopy({
+    id: `aud_${head.state === "admitted" ? head.acceptance.auditRef : head.terminal.auditRef}`,
+    installationId: head.scope.installationId,
+    namespaceId: head.scope.namespaceId,
+    occurredAt: retained.acceptedAt,
+    kind: "mutation",
+    actorId: retained.actor.principalRef,
+    schemaVersion: 1,
+    source: "occ",
+    requestId: retained.requestRef,
+    admissionDecisionId: retained.decisionRef,
+    action:
+      head.state === "admitted"
+        ? "openclaw.workload-profile.accept"
+        : "openclaw.workload-profile.withdraw",
+    resource: {
+      kind: "namespace",
+      id: head.scope.namespaceId,
+      namespaceId: head.scope.namespaceId,
+    },
+    outcome: "success",
+    details: {
+      accountRef: retained.actor.accountRef,
+      operationRef: retained.operationRef,
+      historyRef: history.historyRef,
+      admissionRef: head.selection.admissionRef,
+      admissionVersion: head.selection.admissionVersion,
+      manifestRef: head.selection.manifestRef,
+      manifestDigest: head.selection.manifestDigest,
+      ...(head.state === "withdrawn"
+        ? { reason: head.withdrawal.reason, invalidationRef: head.terminal.invalidationRef }
+        : {}),
+    },
+  });
 }
