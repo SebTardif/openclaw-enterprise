@@ -18,7 +18,10 @@ import {
   OpenClawController,
   PostgresPlatformState,
 } from "@openclaw-enterprise/occ";
+import { createWorkloadProfilePurposeAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import { createWorkloadProfileUseResolverV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import { createPostgresControllerAuth } from "../auth/index.ts";
+import { createControllerWorkloadProfileSessionSecurityV1 } from "../auth/workload-profile-session-security.ts";
 import { createDockerDevelopmentComputeDriverFromEnv } from "../drivers/compute/docker/index.ts";
 import { createFilesystemDevelopmentConfigurationDriverFromEnv } from "../drivers/configuration/filesystem/index.ts";
 import { createFastifyApp } from "../index.ts";
@@ -104,6 +107,11 @@ export async function composePostgresDevelopment(
       pool,
       secureCookies: false,
     });
+    // Development uses the same original session-derived request custody; it
+    // does not synthesize a handle from the development identity path.
+    const workloadProfileRequests = auth.admissionVerifier.createWorkloadProfileRequestCustodyV1({
+      maxRequestLifetimeMs: 30_000,
+    });
     const computeDriver = options.computeDriver ?? createDevelopmentDockerComputeDriver();
     const sandboxDriver = drivers?.sandboxDriver;
     const configurationDriver =
@@ -140,6 +148,29 @@ export async function composePostgresDevelopment(
     const loggingLevel = config.logging?.level ?? drivers?.installation.logging.level;
     const controller = new OpenClawController(persistedInstallation, {
       state,
+      workloadProfiles: {
+        invocations: workloadProfileRequests.invocations,
+        create(context) {
+          if (context.state !== state || context.installation.id !== persistedInstallation.id)
+            throw new Error("The workload profile factory requires the original controller state.");
+          const security = createControllerWorkloadProfileSessionSecurityV1({
+            requests: workloadProfileRequests,
+            reader: state.workloadProfileSessionSecurityV1(),
+          });
+          const account = createWorkloadProfilePurposeAccountParticipantV1({
+            owner: state.workloadProfileAccountOwnerV1(),
+            requests: workloadProfileRequests.requests,
+            security,
+          });
+          const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
+          return {
+            enrollment: profile.enrollment,
+            // TODO: Compose the original candidate, complete capability and
+            // inserted-row sources when qualified. Preparing Use stays unavailable.
+            use: createWorkloadProfileUseResolverV2(profile.activeReader),
+          };
+        },
+      },
       recordOperations: true,
       ...(loggingLevel === undefined ? {} : { loggingLevel }),
       ...(drivers === undefined ? {} : { providers: drivers.installation.provider }),
@@ -210,6 +241,7 @@ export async function composePostgresDevelopment(
             binaryPath,
           });
     const app = createFastifyApp({
+      workloadProfileRequests,
       controller,
       ...(runtimeServiceTrust === undefined ? {} : { runtimeServiceTrust }),
       iamDriver,

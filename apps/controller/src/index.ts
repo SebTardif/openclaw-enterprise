@@ -46,7 +46,13 @@ import {
   runtimeServiceTrustOperatorContext,
   parseRuntimeServiceTrustHttpBody,
 } from "./admission/runtime-service-trust.ts";
-import { isNonEmptyString } from "@openclaw-enterprise/utils";
+import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
+import type {
+  DeploymentBinding,
+  DraftBinding,
+  WorkloadProfilePurposeRequestV1,
+} from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import type { ControllerWorkloadProfileRequestCustodyV1 } from "./auth/workload-profile-request.ts";
 import type { LifecycleAcceptedReceiptV1 } from "@openclaw-enterprise/contracts/lifecycle-admission-v1";
 import { randomUUID } from "node:crypto";
 import {
@@ -112,6 +118,9 @@ import {
 } from "./gateway/contracts.ts";
 
 export interface ControllerAppOptions {
+  /** The same auth-owned instance created before the supplied controller.
+   * Its stable invocation source must already be in that controller's options. */
+  readonly workloadProfileRequests?: ControllerWorkloadProfileRequestCustodyV1;
   /** Optional qualified private-call and current lifecycle read producers.
    * Absent producers leave the read endpoints unavailable. */
   readonly lifecycleStatus?: LifecycleStatusHttpDependenciesV1;
@@ -202,6 +211,14 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   const admissions = new WeakMap<FastifyRequest, AdmittedCaller>();
   const contexts = new WeakMap<FastifyRequest, RequestContext>();
   const identityAuthorities = new WeakMap<FastifyRequest, { driver: IAMDriver; id: string }>();
+  const workloadProfileRequests = options.workloadProfileRequests;
+  workloadProfileRequests?.attachReceiver({
+    admissions,
+    contexts,
+    identityAuthorities,
+    resolveRecipient: () => controller,
+    selectedIAMDriver,
+  });
   const humanChannelInvocations = new WeakMap<
     object,
     {
@@ -593,6 +610,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
   app.addHook("onRequest", async (request, reply) => {
     requestStartedAt.set(request, process.hrtime.bigint());
+    // ServerResponse close also covers a client disconnect after its request
+    // body completed. Request-body completion itself does not close custody.
+    if (workloadProfileRequests !== undefined)
+      reply.raw.once("close", () => workloadProfileRequests.closeRequest(request));
     responseHeaders(reply, request.id);
     const contentLength = request.headers["content-length"];
     if (typeof contentLength === "string" && Number(contentLength) > bodyLimit)
@@ -600,6 +621,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   });
 
   app.addHook("onResponse", async (request, reply) => {
+    workloadProfileRequests?.closeRequest(request);
     const startedAt = requestStartedAt.get(request);
     const durationMs =
       startedAt === undefined ? undefined : Number(process.hrtime.bigint() - startedAt) / 1_000_000;
@@ -619,6 +641,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     ...(publicOrigin === undefined ? {} : { publicOrigin }),
     verifyAdmission: (request) => options.auth.admissionVerifier.verify(request),
     admissions,
+    ...(workloadProfileRequests === undefined ? {} : { workloadProfileRequests }),
     denial,
   });
   const resolveIdentity = createIdentityResolver({
@@ -1658,24 +1681,52 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           );
         return context;
       },
-      runAgentMutation: async (request, operation, context, mutate, resource, project) => {
+      runAgentMutation: async (
+        request,
+        operation,
+        context,
+        mutate,
+        resource,
+        project,
+        selectedUpdate,
+      ) => {
         const currentController = controller;
         if (!currentController)
           throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
-        return currentController.transact(async (unit) => {
-          const result = await mutate();
-          await unit.audit.append(event(operation, request, resource(result), "mutation", context));
-          return project(result);
+        const work = () =>
+          currentController.transact(async (unit) => {
+            const result = await mutate();
+            await unit.audit.append(
+              event(operation, request, resource(result), "mutation", context),
+            );
+            return project(result);
+          });
+        if (selectedUpdate === undefined) return work();
+        if (workloadProfileRequests === undefined) throw dependencyUnavailable();
+        const binding: DraftBinding = [context.actorId, selectedUpdate];
+        Object.freeze(binding);
+        const purpose: WorkloadProfilePurposeRequestV1 = Object.freeze({
+          purpose: "workload-profile-draft-selection",
+          binding,
         });
+        return workloadProfileRequests.withWorkloadProfileInvocation(request, purpose, work);
       },
       runDeployment: async (request, operation, context, { namespaceId, agentId, command }) => {
         const currentController = controller;
         if (!currentController)
           throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        if (workloadProfileRequests === undefined) throw dependencyUnavailable();
+        const input: DeploymentBinding[1] = immutableCopy({ namespaceId, agentId, command });
+        const binding: DeploymentBinding = [context.actorId, input];
+        Object.freeze(binding);
+        const deploymentPurpose: WorkloadProfilePurposeRequestV1 = Object.freeze({
+          purpose: "workload-profile-deployment",
+          binding,
+        });
         // The client retains this exact command before submission. A transport retry
         // keeps its operation identity and original expected draft across head edits.
         const admission: DeployAgentAdmissionContext = {
-          transitionRef: command.operationRef,
+          transitionRef: input.command.operationRef,
           requestId: request.id,
           createAuditEvent: (admitted) =>
             event(
@@ -1688,19 +1739,31 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         };
         let receipt: LifecycleAcceptedReceiptV1;
         try {
-          receipt = await currentController.transact(() =>
-            currentController.deployment.deployAgentCommand(
-              context.actorId,
-              { namespaceId, agentId, command },
-              options.resolveHarness,
-              admission,
-            ),
+          receipt = await workloadProfileRequests.withWorkloadProfileInvocation(
+            request,
+            deploymentPurpose,
+            () =>
+              currentController.transact(() =>
+                currentController.deployment.deployAgentCommand(
+                  context.actorId,
+                  input,
+                  options.resolveHarness,
+                  admission,
+                ),
+              ),
           );
         } catch (error) {
           if (error instanceof PostgresCommitOutcomeUnknownError) {
-            receipt = await currentController.deployment.recoverDeployAgentCommand(
-              context.actorId,
-              { namespaceId, agentId, command },
+            const recoveryPurpose: WorkloadProfilePurposeRequestV1 = Object.freeze({
+              purpose: "workload-profile-deployment-recovery",
+              binding,
+            });
+            // The original mutation and its invocation have both unwound. The
+            // auth owner retains the old deadline while issuing a fresh purpose.
+            receipt = await workloadProfileRequests.withWorkloadProfileInvocation(
+              request,
+              recoveryPurpose,
+              () => currentController.deployment.recoverDeployAgentCommand(context.actorId, input),
             );
           } else {
             if (error instanceof NamespaceNotReadyError)
