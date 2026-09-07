@@ -44,6 +44,8 @@ and perform no installation.
 [shared.ts](../../packages/occ/src/state/schema/shared.ts) owns the single
 `occSchema = pgSchema("occ")`, `collatedText` and `identifierPatterns` definitions.
 The five core table modules import those shared values directly.
+The [provider, audit and channel schema modules](schema-domain-modules.md)
+retain their original tables and explicit parent references through the aggregate.
 [postgres-schema.ts](../../packages/occ/src/state/postgres-schema.ts) imports and
 reexports the original public root and table names while retaining every other
 domain declaration and factory invocation. The existing auth composition
