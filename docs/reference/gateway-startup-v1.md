@@ -159,6 +159,63 @@ outstanding/late-create closure, or a genuine complete initial disposition.
 Neither API absence, host close, container status nor a public Boolean supplies
 this missing physical producer.
 
+## Agent Gateway subjects (V2)
+
+The versioned Agent Gateway source uses a closed `agent-gateway` subject containing
+`installationId`, `namespaceRef` and `agentRef`. Each head is unique under
+Installation and Agent; Namespace is immutable membership, not another head key.
+Different Agents may have distinct Gateway heads in one Installation. Independent
+Installation services retain their own identities. The historical V1
+Installation-only command domain, records and process calls remain separate;
+a V2 subject cannot be manufactured by relabelling a V1 call or Agent Runtime
+assignment.
+
+The V2 selected binding retains `manifestRef`, `manifestDigest`, `admissionRef`
+and `admissionVersion`, the five original role references and
+`admittedConfigurationDigest`. Existing `profileRef`/`profileVersion` operands
+still name the selected host/module definitions; they are not aliases for those
+four selection fields. Original Configuration generation, Agent revision,
+process generation and host runtime generation also retain their separate
+meanings. The admitted selector accepts the actual V1 or V2 owner unit through
+one implementation and fences a V2 subject's full Installation/Namespace/Agent
+correspondence. Genuine locked admission and capability participants remain
+required; a structurally valid binding cannot supply them.
+
+A new Agent head does not prove that an older Installation-wide process is gone.
+The explicit `retired-installation` predecessor bridge requires the authentic
+historical V1 withdrawal and independent physical/late-create closure through
+the original V1 process reader. That physical predecessor is separate from the
+new V2 event chain. Empty V2 storage cannot bypass an unresolved historical
+create. Operation, process, create-effect and audit identities remain globally
+unique while the generation and head checks respect their versioned subject.
+
+V2 keeps the same six process method meanings with separate typed calls and
+submission tickets. The original call owner must enroll the whole invocation
+and register its drain before asynchronous accepting, launch-plan or submission
+work. That invocation owns deferred assertions, provider settlement and late
+retention. It survives the short submission transaction's COMMIT and closes only
+at the actual call's terminal settlement. The newly committed submission ticket
+is consumed synchronously immediately before the one provider create. No SQL
+transaction is held over Kubernetes I/O, and an inner COMMIT does not settle the
+outer invocation.
+
+The PostgreSQL owner/backend, V2 schema factory, forward
+`0031_gateway_agent_subjects` SQL and original central binding must be composed
+together before use. The forward change preserves V1 history and partitions all
+four deferred history/head foreign keys and transition guards. The backend also
+uses those forward subject columns for historical V1 reads; replacing its code
+alone is insufficient. Numbered source or a factory import is not evidence that
+a migration ran or that a current participant is installed.
+
+The existing Installation service profile still has exactly its three selected
+commands. V2 source types do not add native registration, bootstrap transport,
+material delivery or service authorization automatically. The original owners
+must bind the exact Agent process, recipient, current admitted selection and
+whole-call lifetime to the actual authenticated source. Missing account/security,
+admission/renderer/placement/material or physical-settlement participants remain
+unavailable. Controlled V2 owner and selector tests qualify source behavior;
+they do not establish those production inputs or database execution.
+
 ## Verification and current limits
 
 The conformance suites exercise the real owner, phase, private submission ticket,
