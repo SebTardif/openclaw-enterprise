@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./gateway-channel-material": "./src/gateway-channel-material.ts"
   },
   "types": "./src/index.ts",
   "files": [
