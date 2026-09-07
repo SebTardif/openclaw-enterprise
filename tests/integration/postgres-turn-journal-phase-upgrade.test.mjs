@@ -115,21 +115,28 @@ async function reviewedMigrations(sql, expectedSqlHash) {
   );
   assert.equal(
     sha256(originalCatalogBytes),
-    "56af6028a4b53c4137e7a6c27d2cca1b0e052c437f076f82a8341e6f2156da6b",
-    "The reviewed original catalog through numbered 0028 must remain exact.",
+    "2df6652623dad2e6c3d25bdc58225b2b7fb61b97536e3cda573dc67e97ca57fb",
+    "The reviewed current checkout catalog with 34 entries must remain exact.",
   );
   const originalCatalog = JSON.parse(originalCatalogBytes);
+  assert.equal(originalCatalog.entries.length, 34);
+  const reviewedPrefix = { ...originalCatalog, entries: originalCatalog.entries.slice(0, 29) };
+  assert.equal(
+    journalHash,
+    "56af6028a4b53c4137e7a6c27d2cca1b0e052c437f076f82a8341e6f2156da6b",
+    "The supplied runner folder must contain the exact reviewed prefix through numbered 0028.",
+  );
   const selected = JSON.parse(journalBytes);
   assert.deepEqual(
     selected,
-    originalCatalog,
-    "Supply the same reviewed catalog as this checkout, including its numbered 0028 candidate.",
+    reviewedPrefix,
+    "Supply only this checkout's reviewed 29-entry prefix through numbered 0028.",
   );
-  const candidate = originalCatalog.entries.at(-1);
+  const candidate = selected.entries.at(-1);
   assert.deepEqual(candidate, phaseUpgradeDescriptor.entry);
   // The checkout already contains the candidate. Only the preceding entries
   // form the database's pre-upgrade ledger; do not expect an additional slot.
-  const baselineEntries = originalCatalog.entries.slice(0, -1);
+  const baselineEntries = selected.entries.slice(0, -1);
   assert.equal(
     baselineEntries.length,
     28,
