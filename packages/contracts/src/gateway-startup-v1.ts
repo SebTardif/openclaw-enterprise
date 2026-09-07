@@ -1,4 +1,5 @@
 import type { AuthorityCallV1 } from "./runtime-authority-v1.ts";
+import type { WorkloadProfileRolesV1, WorkloadProfileSelectionV1 } from "./workload-profile-v1.ts";
 
 /** Local types never authenticate a caller. Only their original private owner can enroll them. */
 declare const recipientBrand: unique symbol;
@@ -224,5 +225,142 @@ export interface GatewayProcessSubmissionOwnerV1 {
     submission: GatewayProcessSubmissionV1,
     input: GatewayProcessCreateInputV1,
     call: GatewayProcessCallV1,
+  ): undefined;
+}
+
+/** Versioned Agent Gateway subject. Namespace is immutable membership; the
+ * retained head key is Installation + Agent. Installation services remain
+ * independently owned subjects and cannot be represented by a synthetic Agent. */
+export type GatewayStartupSubjectV2 = Readonly<{
+  kind: "agent-gateway";
+  installationId: string;
+  namespaceRef: string;
+  agentRef: string;
+}>;
+export type GatewayStartupOperationLocatorV2 = Readonly<{
+  schemaVersion: 2;
+  subject: GatewayStartupSubjectV2;
+  processRef: string;
+  processGeneration: number;
+  operationRef: string;
+  operationDigest: string;
+}>;
+/** Original four-field selection and role/configuration association. Legacy host
+ * profile operands remain separately resolved by the original module/role owner;
+ * manifest/admission identities cannot be copied into those operands. Native
+ * configDigest, admittedConfigurationDigest and hostRuntimeGeneration remain
+ * distinct from one another and from this subject's process generation. */
+export type GatewayStartupBindingV2 = Readonly<
+  Omit<GatewayStartupBindingV1, "startup" | "selection"> & {
+    schemaVersion: 2;
+    startup: GatewayStartupOperationLocatorV2;
+    selection: WorkloadProfileSelectionV1;
+    profileRefs: WorkloadProfileRolesV1;
+    admittedConfigurationDigest: string;
+  }
+>;
+export type GatewayProcessCreateInputV2 = Readonly<{
+  binding: GatewayStartupBindingV2;
+  target: GatewayProcessTargetV1;
+  launchPlan: GatewayStartupRecordRefV1;
+}>;
+export type GatewayProcessObjectV2 = Readonly<
+  Omit<GatewayProcessObjectV1, "binding"> & { binding: GatewayStartupBindingV2 }
+>;
+export type GatewayProcessObservationInputV2 = Readonly<{ original: GatewayProcessObjectV2 }>;
+export type GatewayProcessRetirementInputV2 = Readonly<{
+  original: GatewayProcessObjectV2;
+  responsibility: GatewayStartupRecordRefV1;
+}>;
+/** The accepting owner must enroll the exact V2 call, component, complete input
+ * and current authority. A V1 call or a structural subject is not enrollment. */
+declare const processCallV2Brand: unique symbol;
+export interface GatewayProcessCallV2 {
+  readonly [processCallV2Brand]: true;
+  readonly authorityCall: AuthorityCallV1;
+}
+export type GatewayProcessFailureV2 =
+  | Readonly<{ kind: "denied" | "unavailable" }>
+  | Readonly<{ kind: "unknown"; operation: GatewayStartupOperationLocatorV2 }>;
+export type GatewayProcessCreateResultV2 =
+  GatewayProcessFailureV2 | Readonly<{ kind: "accepted-object"; original: GatewayProcessObjectV2 }>;
+export type GatewayProcessDiscoveryResultV2 =
+  | GatewayProcessFailureV2
+  | Readonly<{ kind: "found"; original: GatewayProcessObjectV2 }>
+  | Readonly<{ kind: "absent" | "ambiguous"; operation: GatewayStartupOperationLocatorV2 }>;
+export type GatewayProcessObservationResultV2 =
+  | GatewayProcessFailureV2
+  | Readonly<{
+      kind: "observed";
+      original: GatewayProcessObjectV2;
+      chain: GatewayProcessUidChainV1;
+      evidence: GatewayStartupRecordRefV1;
+      observedAt: string;
+    }>
+  | Readonly<{
+      kind: "absent";
+      original: GatewayProcessObjectV2;
+      evidence: GatewayStartupRecordRefV1;
+      observedAt: string;
+    }>
+  | Readonly<{ kind: "ambiguous"; original: GatewayProcessObjectV2 }>;
+export type GatewayProcessRetirementResultV2 =
+  | GatewayProcessFailureV2
+  | Readonly<{
+      kind: "requested";
+      original: GatewayProcessObjectV2;
+      responsibility: GatewayStartupRecordRefV1;
+      termination: "unknown";
+    }>;
+export type GatewayProcessRecoveryResultV2 = GatewayProcessDiscoveryResultV2;
+export type GatewayProcessDispositionResultV2 =
+  | GatewayProcessFailureV2
+  | Readonly<{
+      kind: "verified-disposition";
+      operation: GatewayStartupOperationLocatorV2;
+      disposition: "complete-initial" | "retired";
+      receipt: GatewayStartupRecordRefV1;
+    }>;
+export interface GatewayProcessParticipantV2 {
+  createOriginal(
+    input: GatewayProcessCreateInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessCreateResultV2>;
+  discoverOriginal(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDiscoveryResultV2>;
+  observeExact(
+    input: GatewayProcessObservationInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessObservationResultV2>;
+  requestRetirement(
+    input: GatewayProcessRetirementInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessRetirementResultV2>;
+  recoverOriginal(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessRecoveryResultV2>;
+  readReplacementDisposition(
+    locator: GatewayStartupOperationLocatorV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessDispositionResultV2>;
+}
+declare const submissionV2Brand: unique symbol;
+export interface GatewayProcessSubmissionV2 {
+  readonly [submissionV2Brand]: true;
+}
+export type GatewayProcessSubmissionResultV2 =
+  GatewayProcessFailureV2 | Readonly<{ kind: "claimed"; submission: GatewayProcessSubmissionV2 }>;
+export interface GatewayProcessSubmissionOwnerV2 {
+  claimOriginal(
+    input: GatewayProcessCreateInputV2,
+    call: GatewayProcessCallV2,
+  ): Promise<GatewayProcessSubmissionResultV2>;
+  consumeSubmission(
+    submission: GatewayProcessSubmissionV2,
+    input: GatewayProcessCreateInputV2,
+    call: GatewayProcessCallV2,
   ): undefined;
 }
