@@ -99,6 +99,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Retirement purge journal definitions](reference/retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
+- [Turn journal and completion](reference/turn-journal.md): PostgreSQL and explicitly configured process-local memory implementations; actual channel/runtime/canonical-store integration remains required. Memory provides no crash recovery.
 - [Authorized turn status and cancellation](reference/turn-management-v1.md): application-port definitions and codecs; accepting authentication and current scope guards remain required.
 - [Delegated authority library](reference/delegation.md): root grant constraints,
   request binding, and required owner interfaces; executable authority is not yet wired.

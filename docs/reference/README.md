@@ -84,8 +84,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Same-build recovery preflight](same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
 - [Retirement purge manifest definitions](retirement-purge-manifest.md): validate immutable manifests and store progress; complete inventory, current authority, physical settlement, and deletion remain separate.
 - [Retirement purge journal definitions](retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
-- [Turn journal and completion interfaces](turn-journal.md): versioned types and
-  strict codecs; durable journal storage and channel/runtime integration remain required.
+- [Turn journal and completion](turn-journal.md): PostgreSQL and explicitly configured process-local memory implementations; actual channel/runtime/canonical-store integration remains required. Memory provides no crash recovery.
 - [Authorized turn status and cancellation](turn-management-v1.md): application-port definitions and codecs; accepting authentication and current scope guards remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,
   strict codecs, and adapter ports; protected backend and runtime integration remain required.
