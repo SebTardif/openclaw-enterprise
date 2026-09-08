@@ -63,6 +63,7 @@ see [Testing](docs/testing.md) for suite coverage, credentials, setup, and comma
 
 ## Documentation
 
+- [`integration/dev` overview](docs/integration-dev-overview.md): concise team review of branch scope, system diagrams, and remaining integration work.
 - [Concepts](docs/guides/concepts.md): tenancy, revisions, execution, [configuration and Secrets](docs/guides/concepts.md#configuration-and-secrets), and access.
 - [Documentation map](docs/README.md): guides, references, and runtime flows.
 - [Observability](docs/guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
