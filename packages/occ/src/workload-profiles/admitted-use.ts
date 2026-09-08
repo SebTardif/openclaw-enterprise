@@ -742,3 +742,258 @@ export function createWorkloadProfileCandidateSourceV2(
     },
   });
 }
+
+/** Nonsecret observations captured by the original pre-head normalization slot.
+ * These data are not an enrollment token. The reader must recognize the exact
+ * original deployment unit/IO before exposing them, without new parent locks. */
+export interface WorkloadProfileCandidateRecordsV2 {
+  readonly configuration: CandidateConfigurationInputsV2;
+  readonly agent: Pick<
+    NonNullable<Awaited<ReturnType<PlatformUnitOfWork["agents"]["lockAgent"]>>>,
+    "id" | "namespaceId" | "servicePrincipalId" | "serviceAccountId" | "providerId"
+  >;
+  readonly serviceAccount: NonNullable<
+    Awaited<ReturnType<PlatformUnitOfWork["serviceAccounts"]["lockServiceAccount"]>>
+  >;
+  /** Undefined means this original normalization did not read a managed binding;
+   * it is never a fabricated API-key provider or a credential issuance proof. */
+  readonly providerBinding: Awaited<
+    ReturnType<PlatformUnitOfWork["serviceAccounts"]["findServiceAccountProviderBinding"]>
+  >;
+  /** Original lock observations in normalized binding-entry order, including
+   * repeated aliases. Backend metadata is private; material is never returned. */
+  readonly secrets: readonly NonNullable<
+    Awaited<ReturnType<PlatformUnitOfWork["secrets"]["lockSecret"]>>
+  >[];
+  readonly head: WorkloadProfileAdmissionHeadV2;
+}
+export interface WorkloadProfileCandidateRecordsLeaseV2 extends WorkloadProfileOwnedLeaseV2 {
+  /** Separate opaque token issued/recognized by the original private reader.
+   * It must not be the lease or expose its raw currentness/cleanup callbacks. */
+  readonly sourceIdentity: object;
+  readonly records: WorkloadProfileCandidateRecordsV2;
+}
+export interface WorkloadProfileCandidateRecordsReaderV2 {
+  readLocked(
+    request: WorkloadProfileSelectionRequestV2,
+    candidate: Readonly<AgentRevision>,
+    unit: WorkloadProfileDeploymentUnitV2,
+    io: WorkloadProfileOwnedOperationV2,
+  ): Promise<WorkloadProfileCandidateRecordsLeaseV2>;
+}
+
+/** Borrowed view of the captured original observation. Only the factory's
+ * guarded currentness callable is exposed; raw record callbacks remain private.
+ * The original reader's separate opaque identity authenticates correspondence
+ * only through its genuine owner, never from this interface shape. */
+export interface WorkloadProfileCandidateRecordsViewV2 {
+  readonly sourceIdentity: object;
+  readonly records: WorkloadProfileCandidateRecordsV2;
+  assertCurrent(): undefined;
+}
+/** Detached values plus guarded borrowed custody. Qualifiers recognize the same
+ * enrolled operation, original record identity and their own installed source.
+ * They return their own currentness/cleanup lease and never release this view. */
+export interface WorkloadProfileCandidateQualificationV2 {
+  readonly request: WorkloadProfileSelectionRequestV2;
+  readonly candidate: Readonly<AgentRevision>;
+  readonly manifest: DerivedWorkloadProfileManifestV2["content"];
+  readonly records: WorkloadProfileCandidateRecordsV2;
+}
+export type WorkloadProfileCandidateQualificationArgumentsV2 = [
+  input: WorkloadProfileCandidateQualificationV2,
+  originalRecords: WorkloadProfileCandidateRecordsViewV2,
+  unit: WorkloadProfileDeploymentUnitV2,
+  io: WorkloadProfileOwnedOperationV2,
+];
+export interface WorkloadProfileCandidateQualifiersV2 {
+  readonly native: {
+    /** Actual native/configuration/installed module semantics, not JSON shape. */
+    qualifyLocked(
+      ...args: WorkloadProfileCandidateQualificationArgumentsV2
+    ): Promise<WorkloadProfileOwnedLeaseV2>;
+  };
+  readonly credentials: {
+    /** Original issuer/import/current backend and model/provider association. */
+    resolveLocked(...args: WorkloadProfileCandidateQualificationArgumentsV2): Promise<
+      WorkloadProfileOwnedLeaseV2 & {
+        readonly association: CandidateResolvedBindingsV2["serviceAccountAssociation"];
+      }
+    >;
+  };
+  readonly storage: {
+    /** Original immutable logical policy members and installed mount mapping. */
+    resolveLocked(...args: WorkloadProfileCandidateQualificationArgumentsV2): Promise<
+      WorkloadProfileOwnedLeaseV2 & {
+        readonly bindings: CandidateResolvedBindingsV2["storePolicyBindings"];
+      }
+    >;
+  };
+  readonly roles: {
+    /** Exact admitted role records AND their current original semantic sources. */
+    resolveLocked(...args: WorkloadProfileCandidateQualificationArgumentsV2): Promise<
+      WorkloadProfileOwnedLeaseV2 & {
+        readonly bindings: CandidateResolvedBindingsV2["roleBindings"];
+      }
+    >;
+  };
+}
+
+/** Fixed pre-H composition. The existing outer CandidateSource and Use resolver
+ * keep their own holds, full capability acquisition and inserted-row checks.
+ * TODO(CTL-02): original Central/native/credential/store/role owners must install
+ * these genuine producers before production factories can compose this source.
+ * No default qualifier, new registry or provider-call authority is supplied. */
+export function createWorkloadProfileCandidateBindingsSourceV2(
+  records: WorkloadProfileCandidateRecordsReaderV2,
+  qualifiers: WorkloadProfileCandidateQualifiersV2,
+): WorkloadProfileCandidateBindingsSourceV2 {
+  const read = records?.readLocked?.bind(records);
+  const native = qualifiers?.native?.qualifyLocked?.bind(qualifiers.native);
+  const credentials = qualifiers?.credentials?.resolveLocked?.bind(qualifiers.credentials);
+  const storage = qualifiers?.storage?.resolveLocked?.bind(qualifiers.storage);
+  const roles = qualifiers?.roles?.resolveLocked?.bind(qualifiers.roles);
+  const source: WorkloadProfileCandidateBindingsSourceV2 = {
+    async resolveLocked(input, originalCandidate, originalManifest, unit, io) {
+      if (!read || !native || !credentials || !storage || !roles) unavailable();
+      const request = decodeWorkloadProfileSelectionRequestV2(input);
+      const held = heldWork(io, () => {
+        assertUnit(request, unit);
+        if (unit.kind !== "deployment") unavailable();
+      });
+      try {
+        held.acquiring();
+        const candidate = immutableCopy(originalCandidate);
+        const manifest = immutableCopy(originalManifest);
+        if (
+          candidate.id !== request.revisionId ||
+          candidate.agentId !== request.agentId ||
+          candidate.namespaceId !== request.namespaceId ||
+          candidate.configurationId !== request.configurationRef ||
+          candidate.configurationGeneration !== request.configurationVersion ||
+          candidate.configurationKind !== "agent" ||
+          candidate.serviceAccount === undefined ||
+          candidate.secretBindings === undefined ||
+          ("workloadProfileUse" in candidate && candidate.workloadProfileUse !== undefined)
+        )
+          mismatch();
+        // A separate use of the existing lifetime helper protects direct
+        // qualifier observations without recursively checking qualifier leases
+        // which themselves borrow this record view.
+        const recordGuard = held.retain(
+          heldWork(io, () => {
+            assertUnit(request, unit);
+            if (unit.kind !== "deployment") unavailable();
+          }),
+        );
+        const observation = recordGuard.retain(await read(request, candidate, unit, io));
+        const sourceIdentity = observation.sourceIdentity;
+        if (
+          sourceIdentity === null ||
+          typeof sourceIdentity !== "object" ||
+          sourceIdentity === observation
+        )
+          mismatch();
+        // Keep the genuine observation separate from detached data. All supplied
+        // getters are read only after its cleanup is in this composite.
+        const captured = immutableCopy(observation.records);
+        const head = selectedHead(captured.head, request);
+        const derived = deriveWorkloadProfileManifestV2(bytes.encode(head.canonicalManifest));
+        const account = captured.serviceAccount;
+        if (
+          !equalData(manifest, derived.content) ||
+          captured.agent.id !== request.agentId ||
+          captured.agent.namespaceId !== request.namespaceId ||
+          captured.agent.servicePrincipalId !== candidate.servicePrincipalId ||
+          captured.agent.serviceAccountId !== account.id ||
+          (captured.agent.providerId ?? null) !== (candidate.providerId ?? null) ||
+          account.namespaceId !== request.namespaceId ||
+          account.id !== candidate.serviceAccount.id ||
+          !equalData(account.credential, candidate.serviceAccount.credential) ||
+          (account.credential?.kind === "access_token" && captured.providerBinding === undefined) ||
+          captured.configuration.configurationRef !== request.configurationRef ||
+          captured.configuration.configurationGeneration !== request.configurationVersion ||
+          !equalData(captured.configuration.immutableConfigurationContent, {
+            kind: candidate.configurationKind,
+            values: candidate.configuration,
+            secretBindings: candidate.secretBindings,
+          })
+        )
+          mismatch();
+        const references = Object.values(candidate.secretBindings);
+        if (references.length !== captured.secrets.length) mismatch();
+        for (let index = 0; index < references.length; index++) {
+          const reference = references[index]!.source;
+          const secret = captured.secrets[index]!;
+          if (
+            reference.namespaceId !== request.namespaceId ||
+            secret.namespaceId !== request.namespaceId ||
+            reference.id !== secret.id
+          )
+            mismatch();
+        }
+        const qualification = Object.freeze({ request, candidate, manifest, records: captured });
+        const view: WorkloadProfileCandidateRecordsViewV2 = Object.freeze({
+          sourceIdentity,
+          records: captured,
+          assertCurrent: recordGuard.assertCurrent,
+        });
+        held.acquiring();
+        held.retain(await native(qualification, view, unit, io));
+        const credential = held.retain(await credentials(qualification, view, unit, io));
+        const association = immutableCopy(credential.association);
+        held.acquiring();
+        const stores = held.retain(await storage(qualification, view, unit, io));
+        const storePolicyBindings = immutableCopy(stores.bindings);
+        held.acquiring();
+        const selectedRoles = held.retain(await roles(qualification, view, unit, io));
+        const roleBindings = immutableCopy(selectedRoles.bindings);
+        // This is closed data validation AFTER independent qualification. It
+        // neither supplies native semantics nor constructs an admitted Use.
+        const projected = deriveAdmittedConfigurationV1({
+          manifestDigest: request.selection.manifestDigest,
+          ...captured.configuration,
+          resolvedProfileBindingParameters: {
+            installationId: request.installationId,
+            namespaceId: request.namespaceId,
+            agentId: request.agentId,
+            serviceAccountAssociation: association,
+            storePolicyBindings,
+            roleBindings,
+          },
+        }).projection.resolvedProfileBindingParameters;
+        if (
+          !equalData(projected.serviceAccountAssociation, {
+            servicePrincipalId: captured.agent.servicePrincipalId,
+            serviceAccount: { id: account.id, credential: account.credential },
+          }) ||
+          !equalData(projected.roleBindings, head.profileRefs)
+        )
+          mismatch();
+        const declaredStores = (["gateway", "harness"] as const).flatMap((component) =>
+          manifest.launchConfiguration[component].mounts.map((mount) => ({ component, ...mount })),
+        );
+        const order = (
+          left: CandidateResolvedBindingsV2["storePolicyBindings"][number],
+          right: CandidateResolvedBindingsV2["storePolicyBindings"][number],
+        ) => left.component.localeCompare(right.component) || left.name.localeCompare(right.name);
+        if (!equalData([...projected.storePolicyBindings].sort(order), declaredStores.sort(order)))
+          mismatch();
+        const bindings = Object.freeze({
+          serviceAccountAssociation: projected.serviceAccountAssociation,
+          storePolicyBindings: projected.storePolicyBindings,
+          roleBindings: projected.roleBindings,
+        });
+        held.acquiring();
+        return Object.freeze({
+          bindings,
+          assertCurrent: held.assertCurrent,
+          release: held.release,
+        });
+      } catch (error) {
+        return held.reject(error);
+      }
+    },
+  };
+  return Object.freeze(source);
+}
