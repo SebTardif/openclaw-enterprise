@@ -80,6 +80,34 @@ those input observations and external-effect endpoints, but the application
 must use their real owners. Missing joins remain unavailable and cannot be
 replaced with test-issued admission, completion or commit decisions.
 
+### Pending PostgreSQL replay capacity
+
+The replay schema reserves a permanent slot before a new channel installation
+acquires activation responsibility. A pending reservation retains the exact
+Installation, channel ID, creation operation and original transaction reference.
+It starts at version 1 with no activated target or lineage. The Installation has
+10,000 slots; retirement and purge do not reclaim them.
+
+The internal PostgreSQL participant uses the existing journal guard and the
+outer owner's client. It locks the Installation intake mutex before the exact
+channel parents. The deferred channel-parent constraint permits a pending
+reservation before its new parent INSERT only within the same transaction; a
+missing parent prevents commit. An existing reservation preserves its original
+correspondence and does not authorize another creation or audit.
+
+Registration includes the schema's constraints, triggers and restricted
+application grants. The application role can insert pending heads and lock them,
+but cannot delete reservations or mutate their state, owner or lineage. The
+activation validator remains unavailable, and retirement publication refuses
+insertion. Measured clock health, activation and retirement authority are not
+supplied by pending metadata.
+
+The complete channel reserve, parent INSERT and mandatory same-client audit
+command still needs its dedicated owner phase, authorization, failure drainage
+and original commit-disposition handling. Schema and participant checks do not
+establish that join. The process-local journal has no corresponding durable
+replay-capacity implementation.
+
 ## Admission and native acknowledgement
 
 The journal consumes the actual `openclaw/plugin-sdk/channel-inbound` envelope,

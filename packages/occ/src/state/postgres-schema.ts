@@ -34,6 +34,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 import { createTurnJournalTables } from "./postgres/turn-journal-schema.ts";
+import { createTurnJournalReplayTables } from "./postgres/turn-journal-replay-schema.ts";
 
 export { serviceAccountDriverBindings };
 
@@ -631,6 +632,20 @@ export const {
   turnJournalDeliveries,
   turnJournalDeliveryAttempts,
 } = createTurnJournalTables(occSchema, { installation, agents, channelInstallations });
+
+/** Pending replay capacity; the paired DDL owns deferred parents and closed activation guards. */
+export const {
+  turnJournalReplayHeads,
+  turnJournalReplayLineage,
+  turnJournalRetiredIdentities,
+  turnJournalRetirementPublications,
+  turnJournalRetirementObservations,
+} = createTurnJournalReplayTables(occSchema, {
+  installation,
+  namespaces,
+  agents,
+  channelInstallations,
+});
 
 /** Internal immutable preparation history; retention never grants provider admission. */
 export const runtimePreparationOperations = occSchema.table(

@@ -260,6 +260,13 @@
       "when": 1788855973541,
       "tag": "0036_revision_credential_validator_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788857839274,
+      "tag": "0037_turn_journal_replay",
+      "breakpoints": true
     }
   ]
 }
