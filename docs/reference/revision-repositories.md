@@ -22,6 +22,12 @@ checks. Returned records and history are immutable copies. PostgreSQL history
 uses revision-number order; memory retains its stored insertion order. Ordinary
 deployment admission creates sequential revisions.
 
+The PostgreSQL application role has explicit execution permission on the read-only
+credential-selection CHECK validator. The validator runs with the caller's own
+privileges and verifies the stored selection's shape and Installation/Namespace/
+Agent/revision scope. Revision update and delete privileges remain absent; the
+validation grant supplies no credential-use or runtime authority.
+
 Repository methods share the outer transaction lifetime. Operations accepted
 before the callback closes drain through their internal collaborators; escaped
 handles reject subsequent calls. PostgreSQL commit/rollback, authority poisoning,
@@ -52,3 +58,13 @@ owner and Secret checks, lifetime closure and rollback with sibling resources,
 active revision, work and audit. They do not access a live runtime or Secret
 backend. Relevant deployment/CAS and repository commit-outcome regressions remain
 part of validation when composing a storage change.
+
+The credential-validator privilege regression uses `OCC_TEST_DATABASE_URL` with
+`occ_app` on an explicitly selected, migrated disposable database. It checks the
+actual function ACL, creates and reads revisions through the PostgreSQL store,
+and verifies database rejection of malformed or mismatched credential records.
+Its transaction rolls back every fixture row:
+
+```sh
+node --test tests/integration/postgres-revision-validator-privilege.test.mjs
+```
