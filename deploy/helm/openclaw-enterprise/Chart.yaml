@@ -1,6 +1,6 @@
 apiVersion: v2
 name: openclaw-enterprise
-description: Private OpenClaw Enterprise controller and authenticated Codex runtime
+description: Private OpenClaw Control Plane for OpenClaw Enterprise managed Agent runtimes
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -10,6 +10,11 @@ Report suspected vulnerabilities privately to
 Read [AGENTS.md](AGENTS.md) for repository boundaries and verification rules.
 The [platform design](docs/design.md) owns architecture; the
 [documentation map](docs/README.md) identifies current references and procedures.
+Keep [core architecture](docs/ARCHITECTURE.md) concise and update it only when
+core components, boundaries, or interactions change. Document new Driver
+implementations in their reference and flow pages. Put test settings and
+prerequisites in [Testing](docs/testing.md), and deployment and runtime settings
+in the [settings reference](docs/reference/settings.md).
 Check open issues and pull requests before starting overlapping work. Discuss
 new capabilities and changes outside approved milestones with maintainers first.
 

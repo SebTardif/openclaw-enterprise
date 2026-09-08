@@ -1,6 +1,6 @@
 # Quickstart
 
-Start [OpenClaw Control Center (OCC)](concepts.md#control-plane-and-tenancy)
+Start [OpenClaw Control Plane (OCC)](concepts.md#control-plane-and-tenancy)
 locally and read its Installation through an authenticated API request. This
 proves the controller is usable; it does not deploy an
 [Agent](concepts.md#agents-and-revisions) or make a model call.

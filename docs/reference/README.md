@@ -8,7 +8,7 @@ specifications. They are not proposals or promises of future capabilities.
 
 The [platform design](../design.md) remains the architectural authority. Its
 target scope can exceed the current implementation; the
-[architecture overview](../ARCHITECTURE.md) identifies implemented components.
+[architecture overview](../ARCHITECTURE.md) describes OCE's core components and boundaries.
 Use the [quickstart](../guides/quickstart.md) or [deployment guide](../guides/deploy.md)
 for deployment procedures, the [observability guide](../guides/observability.md)
 for logging and Collector setup, and [flow docs](../README.md#understand-the-code)
@@ -33,8 +33,10 @@ procedure needs a public Docker-only OpenClaw/Codex runtime image.
 | [Harness execution](harness-execution.md)        | Runtime selection, topology, and admitted execution constraints.                     |
 | [Controller reconciliation](controller.md)       | Durable lifecycle work, authorization refresh, claims, retries, and recovery.        |
 | [Security](security.md)                          | Kubernetes workload and credential boundaries and enforcement limitations.           |
-| [Settings](settings.md)                          | Supported environment variables and programmatic configuration.                      |
+| [Settings](settings.md)                          | Deployment and runtime environment variables and programmatic configuration.         |
 | [HTTP API](api.md)                               | Generated routes, wire schemas, and declared permissions.                            |
+
+Test-only settings and prerequisites are maintained in [Testing](../testing.md#test-environment-settings).
 
 Generated schemas describe wire shape. The feature pages additionally own
 behavioral rules such as cross-resource ownership, lifecycle ordering, and failure

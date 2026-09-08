@@ -1,20 +1,23 @@
 ---
-title: OpenClaw as the Open Enterprise Agent Platform
+title: OpenClaw Enterprise platform design
 authors:
   - Kevin Lin
 created: 2026-07-08
-last_updated: 2026-08-24
+last_updated: 2026-09-08
 ---
 
-# OpenClaw as the Open Enterprise Agent Platform
+# OpenClaw Enterprise platform design
 
 ## Summary
 
-OpenClaw Enterprise provides a multi-tenant control plane for configuring,
-deploying, and operating agents. Each deployment owns exactly one Installation
-containing multiple isolated Namespaces.
+OpenClaw Enterprise (OCE) is the platform for configuring, deploying, and
+operating agents. It includes the control plane and managed Agent runtimes.
+Each deployment owns exactly one Installation containing multiple isolated
+Namespaces.
 
-Enterprise functionality is mediated by the OpenClaw Controller (OCC). This is a new component that is responsible for provisioning and orchestrating agents.
+OpenClaw Control Plane (OCC) names OCE's control-plane components, including
+the API and controller worker responsible for provisioning and orchestrating
+agents.
 
 The platform introduces a small set of resource primitives for managing agents.
 OCC owns these platform resources and their lifecycles; external systems own
@@ -79,8 +82,8 @@ runtime detail.
 
 ## Proposal
 
-1. Introduce OCC as the owner of the multi-tenant control plane, platform
-   resources, authorization, deployment, integration dispatch, and audit.
+1. Use OCC to own platform resources, authorization, deployment, integration
+   dispatch, and audit within OCE.
    `OCC API` and `OCC Console` name product surfaces; production API and console
    contracts remain outside this architecture specification.
 2. Use an Ingress Gateway as the public control-plane boundary. It forwards
@@ -114,8 +117,8 @@ flowchart TB
     USERS["Users and automation"] --> INGRESS["Ingress Gateway"]
     INGRESS <-->|"identity verification and admission"| OAG["OpenClaw Access Gateway"]
 
-    subgraph CONTROL["Control plane"]
-        OCC["OpenClaw Controller"]
+    subgraph CONTROL["OpenClaw Control Plane (OCC)"]
+        CONTROLLER["Controller"]
         IAM["IAMDriver"]
         BROKER["SecretBroker (deferred)"]
         API["OCC API"]
@@ -126,10 +129,10 @@ flowchart TB
         REVISION["AgentRevision"]
 
         CONSOLE -->|"resource operations"| API
-        API -->|"admitted requests"| OCC
-        OCC -->|"authorizes exact resources"| IAM
-        OCC -->|"manages"| AGENT
-        OCC -->|"future broker operations"| BROKER
+        API -->|"admitted requests"| CONTROLLER
+        CONTROLLER -->|"authorizes exact resources"| IAM
+        CONTROLLER -->|"manages"| AGENT
+        CONTROLLER -->|"future broker operations"| BROKER
         CONFIG -->|"configures"| AGENT
         SERVICE_ACCOUNT -->|"supplies credential reference"| AGENT
         AGENT -->|"deployment creates"| REVISION
@@ -169,18 +172,18 @@ flowchart TB
     end
 
     GATEWAY <-->|"Agent-owned runtime traffic"| WORKLOAD
-    OCC -->|"namespace-scoped ensureNamespace"| COMPUTE
-    OCC -->|"revision-scoped prepareRevision"| COMPUTE
-    OCC -->|"dispatches authorized service account operation"| SERVICE_ACCOUNT_DRIVER
-    OCC -->|"dispatches authorized model inference"| INFERENCE_DRIVER
+    CONTROLLER -->|"namespace-scoped ensureNamespace"| COMPUTE
+    CONTROLLER -->|"revision-scoped prepareRevision"| COMPUTE
+    CONTROLLER -->|"dispatches authorized service account operation"| SERVICE_ACCOUNT_DRIVER
+    CONTROLLER -->|"dispatches authorized model inference"| INFERENCE_DRIVER
     BROKER -->|"dispatches exact namespace operation"| SECRET_DRIVER
     REVISION -->|"immutable deployment configuration"| COMPUTE
 ```
 
 The Ingress Gateway is the public control-plane boundary. An external identity
 provider authenticates the caller, OAG verifies the resulting identity evidence
-and tenant admission, and OCC authorizes the exact platform operation. The
-control plane contains OCC. Each Agent's OpenClaw gateway runs alongside its
+and tenant admission, and OCC authorizes the exact platform operation. OCC is
+the control plane within OCE. Each Agent's OpenClaw gateway runs alongside its
 workload in the selected data plane. `IAMDriver` evaluates the selected
 authorization policy. The selected `ComputeDriver` reconciles Agent-owned
 gateways and workloads in the same tenant boundary; the bundled

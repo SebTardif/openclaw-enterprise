@@ -1,6 +1,8 @@
 # OpenClaw Enterprise
 
-OpenClaw Enterprise is the open platform for managing agents.
+OpenClaw Enterprise (OCE) is the open platform for managing agents. Its
+[OpenClaw Control Plane (OCC)](guides/concepts.md#control-plane-and-tenancy)
+manages platform resources and Agent runtimes.
 
 ## Start and deploy
 
@@ -8,12 +10,12 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Quickstart](guides/quickstart.md): start locally, sign in, and make an authenticated request.
 - [Deploy](guides/deploy.md): configure Docker Compose or Kubernetes, verify your deployment, run the development end-to-end TUI proof, and troubleshoot startup.
 - [Observability](guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
-- [Testing](testing.md): choose test suites, prepare credentials and infrastructure, and interpret results.
+- [Testing](testing.md): choose test suites, configure test settings, prepare credentials and infrastructure, and interpret results.
 
 ## Architecture
 
 - [Platform design](design.md): platform architecture and resource model.
-- [Current architecture](ARCHITECTURE.md): API, worker, storage, and Agent execution.
+- [Core architecture](ARCHITECTURE.md): OCE components, ownership boundaries, and their interactions.
 
 ## Reference
 

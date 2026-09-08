@@ -1,11 +1,14 @@
 # Concepts
 
-Use these concepts to understand what you configure and deploy in OpenClaw Enterprise.
+Use these concepts to understand what you configure and deploy in OpenClaw
+Enterprise (OCE), the platform that includes the control plane and managed Agent
+runtimes.
 
 ## Control plane and tenancy
 
-**OpenClaw Control Center (OCC)** manages platform resources. Its API accepts
-authorized changes; its worker provisions and updates workloads asynchronously.
+**OpenClaw Control Plane (OCC)** manages platform resources within OCE. Its API
+accepts authorized changes; its worker provisions and updates workloads
+asynchronously.
 
 An **Installation** is one deployment of the platform. A [Namespace](../reference/namespaces.md)
 groups and isolates its Agents, configuration, and credentials. Fresh bootstrap

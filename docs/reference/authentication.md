@@ -1,6 +1,6 @@
 # Authentication
 
-OpenClaw Control Center (OCC) authenticates human and programmatic controller
+OpenClaw Control Plane (OCC) authenticates human and programmatic controller
 API clients with Better Auth email/password sessions or service API keys. Better
 Auth owns password verification, revocable session cookies, and hashed API-key
 storage. The selected IAM Driver resolves the authenticated account or service
@@ -281,7 +281,7 @@ Agent exclusion, and audit attribution.
 separately cover stored hashing, foreign-Installation rejection, cross-instance
 revocation, and deletion during concurrent verification. These focused tests
 do not prove a production installation; their commands and required
-[test environment](settings.md#postgresql-test-environment) are linked from the
+[test environment](../testing.md#postgresql-test-environment) are linked from the
 [service API key flow](../flows/service-api-keys.md#debugging-and-verification).
 
 - [Service API key flow](../flows/service-api-keys.md)

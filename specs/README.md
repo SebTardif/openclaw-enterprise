@@ -6,6 +6,11 @@ existing filenames and historical content remain intact in [`.archive/`](.archiv
 A title containing “Feature Spec” does not make the document the current feature
 specification.
 
+Current naming uses **OCE (OpenClaw Enterprise)** for the platform and
+**OCC (OpenClaw Control Plane)** for its control-plane components. Historical
+records retain their original terminology; see the current
+[concepts](../docs/guides/concepts.md#control-plane-and-tenancy) for the distinction.
+
 For supported behavior at this repository version, use the
 [living feature reference](../docs/reference/README.md). The
 [platform design](../docs/design.md) remains the architectural authority. Source

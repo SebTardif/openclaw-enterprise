@@ -82,8 +82,8 @@ Configuration in an explicitly selected external Namespace returns
 | `failed`       | Provisioning encountered a permanent failure.                               |
 | `deleting`     | Authorized deletion has started; new Agents and deployments are rejected.   |
 
-The OpenClaw Controller owns these transitions. Its selected Compute Driver
-reports infrastructure readiness, but does not choose whether a Namespace is
+The OpenClaw Control Plane (OCC) owns these transitions. Its selected Compute
+Driver reports infrastructure readiness, but does not choose whether a Namespace is
 ready. An Agent can be created while its Namespace is `provisioning`; deploying
 an Agent requires the Namespace to be `ready`.
 

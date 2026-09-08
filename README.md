@@ -2,8 +2,10 @@
 
 <img src="docs/assets/lobster-mech-transparent.png" alt="Comic-style lobster in a mech suit" width="200" />
 
-The open [control plane](docs/guides/concepts.md#control-plane-and-tenancy) for
-deploying and managing [Agents](docs/guides/concepts.md#agents-and-revisions).
+OpenClaw Enterprise (OCE) is the open platform for deploying and managing
+[Agents](docs/guides/concepts.md#agents-and-revisions). Its
+[OpenClaw Control Plane (OCC)](docs/guides/concepts.md#control-plane-and-tenancy)
+manages platform resources and the Agent runtimes that execute workloads.
 
 ## Getting Started
 
@@ -70,7 +72,7 @@ Use `npm run docs:build` for the full static build. See the
 - [Concepts](docs/guides/concepts.md): tenancy, revisions, execution, [configuration and Secrets](docs/guides/concepts.md#configuration-and-secrets), and access.
 - [Documentation map](docs/README.md): guides, references, and runtime flows.
 - [Observability](docs/guides/observability.md): configure operational log export, Collector metrics, and delivery checks.
-- [Platform design](docs/design.md) and [current architecture](docs/ARCHITECTURE.md): target design and implemented components.
+- [Platform design](docs/design.md) and [core architecture](docs/ARCHITECTURE.md): target design and core component boundaries.
 - [Feature reference](docs/reference/README.md): supported behavior and Driver contracts.
 - [Platform console](docs/reference/console.md): login, Namespace selection, Agent creation, revision inspection, and supported channel draft edits.
 - [Providers](docs/reference/providers.md): authenticated clients, related Drivers, and optional Agent association.

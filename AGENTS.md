@@ -1,5 +1,14 @@
 # OpenClaw Enterprise repository instructions
 
+## Naming
+
+Use **OCE (OpenClaw Enterprise)** for the whole project and platform, including
+its control plane and managed Agent runtimes. Use **OCC (OpenClaw Control Plane)**
+for the control-plane components, including the API and controller worker.
+Keep OCC names for control-plane interfaces and identifiers; classify their
+ownership before renaming them. Preserve terminology in historical
+implementation specifications and Manual Notes.
+
 ## Active workspace boundary
 
 Approved milestones permit the active TypeScript/pnpm workspace, its selected
@@ -25,8 +34,16 @@ Do not create a competing architecture specification in this checkout.
 
 Use the [documentation map](docs/README.md) and keep these ownership boundaries:
 
-- Root `README.md`, `docs/README.md`, `docs/design.md`, and `docs/ARCHITECTURE.md`
-  own orientation, navigation, authoritative target design, and current architecture.
+- Root `README.md`, `docs/README.md`, and `docs/design.md` own orientation,
+  navigation, and authoritative target design.
+- `docs/ARCHITECTURE.md` is a succinct overview of OCE's core components,
+  ownership boundaries, and interactions. Update it judiciously when those
+  fundamentals change; adding a Driver implementation does not by itself warrant
+  an architecture update. Keep core diagrams compact and put execution traces
+  in `docs/flows/`.
+- `docs/testing.md` owns test settings, prerequisites, and verification procedures.
+  Keep test-only settings out of `docs/reference/settings.md`, which owns
+  deployment and runtime settings.
 - `docs/reference/` owns living specifications for supported features and Driver
   contracts. State development, production, and verification-only limits explicitly;
   do not promote a proposed capability into current reference before implementation.
@@ -126,7 +143,7 @@ Run all integration tests with `pnpm test:integration`, or target one case with
 Docker Compose or Kubernetes integrations with explicitly selected runtime
 images and existing authorized model credentials. Follow the
 [testing guide](docs/testing.md) and
-[test environment settings](docs/reference/settings.md#docker-compose-development-test-environment)
+[test environment settings](docs/testing.md#docker-compose-development-test-environment)
 for each selected suite. Never substitute a fake runtime or skip a requested
 runtime integration.
 
@@ -134,7 +151,7 @@ For PostgreSQL integration, start the reviewed local database, migrate it with
 the migrator role, and run tests with the less-privileged application role.
 Before enabling production bootstrap coverage, separately prepare its empty
 disposable database using the
-[PostgreSQL test database instructions](docs/reference/settings.md#postgresql-test-environment):
+[PostgreSQL test database instructions](docs/testing.md#postgresql-test-environment):
 
 ```sh
 pnpm db:up

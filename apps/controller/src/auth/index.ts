@@ -367,7 +367,7 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
   const expectedBrowserOrigin = new URL(options.baseURL).origin;
   const issuer = betterAuthIssuer(options.installationId);
   const auth = betterAuth<BetterAuthOptions & { plugins: ReturnType<typeof apiKey>[] }>({
-    appName: "OpenClaw Enterprise Controller",
+    appName: "OpenClaw Control Plane",
     baseURL: options.baseURL,
     basePath: "/auth",
     secret: options.secret,

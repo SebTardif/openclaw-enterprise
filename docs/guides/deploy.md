@@ -1,6 +1,6 @@
 # Deploy OpenClaw Enterprise
 
-Start OpenClaw Control Center (OCC), verify authenticated access, then deploy
+Start OpenClaw Control Plane (OCC), verify authenticated access, then deploy
 Agents when you are ready to prove a workload. Run commands from the repository
 root. Startup needs no model credential.
 

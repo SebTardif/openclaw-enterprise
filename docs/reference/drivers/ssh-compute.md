@@ -246,4 +246,4 @@ never leaves it held, so it needs no manual cleanup.
 - [Driver selection](selection.md)
 - [Settings](../settings.md#ssh-compute-driver)
 - [Deployment](../../guides/deploy.md)
-- [SSH real-host test settings](../settings.md#ssh-real-host-test-environment)
+- [SSH real-host test settings](../../testing.md#ssh-real-host-test-environment)

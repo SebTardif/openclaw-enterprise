@@ -8,9 +8,10 @@ last_updated_session: codex/01a05f95-dd80-7011-990f-d1c46b5bb3cc
 
 ## Overview
 
-The OCC API and controller worker start as separate Node.js processes, resolve
-the same singleton Installation and trusted Driver selections, and coordinate
-through PostgreSQL. Each process constructs its own shared Driver instances;
+The OpenClaw Control Plane (OCC) API and controller worker start as separate
+Node.js processes, resolve the same singleton Installation and trusted Driver
+selections, and coordinate through PostgreSQL. Each process constructs its own
+shared Driver instances;
 when a ServiceAccount Driver is selected, only the API additionally initializes
 its Provider client and Driver. PostgreSQL-backed development uses the
 Docker Compute Driver by default, while the development filesystem

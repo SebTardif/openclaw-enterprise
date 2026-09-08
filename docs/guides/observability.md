@@ -1,9 +1,9 @@
 # Configure platform observability
 
 Configure operational log levels, export reviewed logs to your backend, and
-check the collection pipeline. This guide is for operators of OpenClaw Control
-Center (OCC) and its managed gateway and Codex workloads. Run commands from the
-repository root.
+check the collection pipeline. This guide is for operators of OpenClaw Enterprise
+(OCE), including its control plane (OCC) and managed gateway and Codex workloads.
+Run commands from the repository root.
 
 | Signal                                     | Available path                                                                                      |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
