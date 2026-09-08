@@ -15,6 +15,7 @@ import { serviceAccounts } from "./schema/service-account.ts";
 export { occSchema, installation, namespaces, configurations, secrets, serviceAccounts };
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
+import { createSecurityEventDeliveryTablesV1 } from "./postgres/security-event-delivery-schema-v1.ts";
 import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import { createGatewayStartupTablesV2 } from "./postgres/gateway-startup-schema.ts";
 import { sql } from "drizzle-orm";
@@ -720,6 +721,9 @@ export const {
   auditEvents,
   runtimeAssignmentAllocations,
 });
+
+export const { capacity: securityEventCapacityV1, records: securityEventRecordsV1 } =
+  createSecurityEventDeliveryTablesV1(occSchema, { installation, auditExportOutbox });
 
 export const {
   credentialInventoryRecords,
