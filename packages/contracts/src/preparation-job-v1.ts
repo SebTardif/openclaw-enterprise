@@ -470,6 +470,17 @@ export type PreparationJobClosureResultV1 = Immutable<
  * Every effect authenticates call/current responsibility at the accepting boundary.
  * Canonical admission atomically checks owner/UID/RV/fence and retains possible
  * submissions before effects. Cancellation never abandons the retained original.
+ * BEFORE any staging write, including release, init or startup, the original
+ * persistence/store owner and canonical lifecycle accepting owner must establish
+ * the exact current candidate/incarnation/plan, staging binding/version and physical
+ * object/subpath/mount policy: either fresh candidate-exclusive allocation with no
+ * serving/other-candidate alias or prior possible writer, or the applicable retained
+ * store reservation and prior-writer barrier resolving every possible predecessor.
+ * Competing writer admission is excluded and currentness is rechecked at the actual
+ * accepting boundary after waits. Unknown/missing producer coverage denies writes;
+ * a store reference, Job UID, receipt or later closure does not satisfy this rule.
+ * Existing StoreBindingV1 / WorkspaceHandoffEvidenceV1 ownership and applicability
+ * remain unchanged; see docs/reference/preparation-job.md#pre-write-staging-admission.
  * Reads require fresh authorized calls; an expired original effect may still be
  * read or fenced, but cannot be resubmitted with refreshed identity or deadline. */
 export interface PreparationJobEffectsV1 {
