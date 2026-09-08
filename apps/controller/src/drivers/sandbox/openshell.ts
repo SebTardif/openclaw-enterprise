@@ -89,6 +89,17 @@ export interface OpenShellSandboxDriverSelection {
   readonly gatewayClient?: OpenShellGatewayClient;
 }
 
+interface NativeGatewayCall {
+  readonly client: OpenShellGatewayClient;
+  closeRequested: boolean;
+}
+
+function closeNativeGatewayCall(call: NativeGatewayCall): void {
+  if (call.closeRequested) return;
+  call.closeRequested = true;
+  call.client.close();
+}
+
 class OpenShellSandboxConfigurationFailure extends Error {}
 
 const DEFAULT_WORKSPACE = "default";
@@ -777,7 +788,9 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   readonly facets = Object.freeze(["networking", "filesystem", "process"] as const);
   private readonly options: OpenShellSandboxDriverOptions;
   private readonly injectedGatewayClient: OpenShellGatewayClient | undefined;
-  private readonly gatewayClients = new Map<string, OpenShellGatewayClient>();
+  private readonly activeNativeCalls = new Set<NativeGatewayCall>();
+  private closed = false;
+  private injectedCloseRequested = false;
 
   static validateConfiguration(configuration: unknown): void {
     validateConfiguration(configuration);
@@ -843,15 +856,17 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   }
 
   async ensureNamespace(context: SandboxNamespaceContext): Promise<void> {
+    this.assertOpen();
     const namespace = namespaceName(context.namespace);
     await applyResources(context, this.options.gateway.networkPolicyResources);
     if (this.options.gateway.readiness !== undefined) {
       await waitForGatewayReadiness(context, this.options.gateway.readiness);
     }
-    await this.gatewayClientForNamespace(namespace).health(context.signal);
+    await this.withGatewayClient(namespace, (client) => client.health(context.signal));
   }
 
   async provisionHarness(context: SandboxHarnessContext): Promise<SandboxResourceRef> {
+    this.assertOpen();
     if (context.revision.namespaceId !== context.namespace.id) {
       throw new OpenShellSandboxConfigurationFailure(
         "Refusing an AgentRevision outside its selected Namespace.",
@@ -872,19 +887,21 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     }
     labels(context.requirements.labels, "Harness workload labels");
     const sandbox = this.sandboxRef(context);
-    const created = await this.gatewayClientForNamespace(sandbox.namespaceName).createSandbox(
-      {
-        name: sandbox.resourceName,
-        workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
-        labels: context.requirements.labels,
-        annotations: {
-          "openclaw.dev/namespace-id": context.revision.namespaceId,
-          "openclaw.dev/agent-id": context.revision.agentId,
-          "openclaw.dev/revision-id": context.revision.id,
+    const created = await this.withGatewayClient(sandbox.namespaceName, (client) =>
+      client.createSandbox(
+        {
+          name: sandbox.resourceName,
+          workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
+          labels: context.requirements.labels,
+          annotations: {
+            "openclaw.dev/namespace-id": context.revision.namespaceId,
+            "openclaw.dev/agent-id": context.revision.agentId,
+            "openclaw.dev/revision-id": context.revision.id,
+          },
+          spec: sandboxSpec(this.options, context.requirements),
         },
-        spec: sandboxSpec(this.options, context.requirements),
-      },
-      context.signal,
+        context.signal,
+      ),
     );
     if (created.name !== sandbox.resourceName) {
       throw new OpenShellSandboxConfigurationFailure(
@@ -897,6 +914,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   async cleanup(
     context: SandboxNamespaceContext & { readonly revision?: Readonly<AgentRevision> },
   ): Promise<void> {
+    this.assertOpen();
     if (context.revision !== undefined) {
       if (
         context.revision.namespaceId !== context.namespace.id ||
@@ -907,12 +925,14 @@ export class OpenShellSandboxDriver implements SandboxDriver {
         );
       }
       const sandbox = this.sandboxRef({ namespace: context.namespace, revision: context.revision });
-      await this.gatewayClientForNamespace(sandbox.namespaceName).deleteSandbox(
-        {
-          name: sandbox.resourceName,
-          workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
-        },
-        context.signal,
+      await this.withGatewayClient(sandbox.namespaceName, (client) =>
+        client.deleteSandbox(
+          {
+            name: sandbox.resourceName,
+            workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
+          },
+          context.signal,
+        ),
       );
       return;
     }
@@ -927,21 +947,71 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   }
 
   close(): void {
-    this.injectedGatewayClient?.close();
-    for (const client of this.gatewayClients.values()) {
-      client.close();
+    if (this.closed) return;
+    this.closed = true;
+    const errors: unknown[] = [];
+    for (const call of this.activeNativeCalls) {
+      try {
+        closeNativeGatewayCall(call);
+      } catch (error) {
+        errors.push(error);
+      }
     }
-    this.gatewayClients.clear();
+    if (this.injectedGatewayClient !== undefined && !this.injectedCloseRequested) {
+      this.injectedCloseRequested = true;
+      try {
+        this.injectedGatewayClient.close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "OpenShell gateway cancellation failed.");
+    }
   }
 
-  private gatewayClientForNamespace(namespace: string): OpenShellGatewayClient {
-    if (this.injectedGatewayClient !== undefined) return this.injectedGatewayClient;
-    const options = gatewayClientOptions(this.options, namespace);
-    const existing = this.gatewayClients.get(options.endpoint);
-    if (existing !== undefined) return existing;
-    const created = new GoOpenShellGatewayClient(options);
-    this.gatewayClients.set(options.endpoint, created);
-    return created;
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new OpenShellSandboxConfigurationFailure("OpenShell Sandbox Driver is closed.");
+    }
+  }
+
+  private async withGatewayClient<T>(
+    namespace: string,
+    operation: (client: OpenShellGatewayClient) => Promise<T>,
+  ): Promise<T> {
+    // Preparation may have awaited Kubernetes work since public admission.
+    this.assertOpen();
+    if (this.injectedGatewayClient !== undefined) return operation(this.injectedGatewayClient);
+    const call: NativeGatewayCall = {
+      client: new GoOpenShellGatewayClient(gatewayClientOptions(this.options, namespace)),
+      closeRequested: false,
+    };
+    let operationFailed = false;
+    let operationError: unknown;
+    try {
+      this.activeNativeCalls.add(call);
+      return await operation(call.client);
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
+      throw error;
+    } finally {
+      try {
+        closeNativeGatewayCall(call);
+      } catch (error) {
+        if (operationFailed) {
+          throw new AggregateError(
+            [operationError, error],
+            "OpenShell gateway operation and retirement failed.",
+          );
+        }
+        throw error;
+      } finally {
+        // Cancellation requests alone do not retire unresolved calls.
+        this.activeNativeCalls.delete(call);
+      }
+    }
   }
 
   private sandboxRef(

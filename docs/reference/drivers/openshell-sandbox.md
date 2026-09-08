@@ -135,8 +135,48 @@ The native gateway adapter separately snapshots its plain gateway options,
 including authentication file paths. File contents remain operation-scoped:
 credential and certificate rotation at the accepted paths continues to work as
 described below. A gateway client supplied through the driver's constructor
-selection remains the same capability object and follows the driver's existing
-close lifecycle.
+selection remains the same capability object and has the close ownership
+specified below.
+
+### Gateway client lifetime
+
+Each native gateway call owns a separate adapter. The driver retains adapters
+only for unresolved health, create, and revision-delete calls. Settlement
+requests adapter close once and removes the call from the active set; completed
+calls leave no endpoint or Namespace history. Repeated Namespace creation does
+not depend on Namespace cleanup to retire adapters. Two Namespaces using the
+same endpoint have independent native calls, so one call's settlement or
+cancellation does not close the other's adapter.
+
+The concrete driver's synchronous `close(): void` is terminal: it rejects newly
+admitted `ensureNamespace`, `provisionHarness`, and `cleanup` operations, and
+prevents gateway admission after asynchronous preparation. It requests close
+once for every active native adapter and for the original injected capability,
+attempts every notification even if another throws, and reports notification
+failures together as an `AggregateError`. Repeated or reentrant close does not
+repeat those requests. An injected capability remains shared by identity and is
+never closed per operation.
+
+Close requests cancellation; it does not wait for a joined drain or prove
+subprocess reaping or provider termination. Active native calls remain owned
+until their underlying promises settle, including calls whose signal aborted,
+whose deadline elapsed, or whose close request threw. A call that never settles
+remains owned. Retention therefore follows unresolved work, without a fixed
+numeric concurrency or memory limit. A retirement failure after settlement is
+reported to that operation; if the operation also failed, both errors are
+reported together. Settled failures leave no retained error history, and a
+failed close request is not proof of resource release.
+
+Kubernetes work already admitted before close keeps its original context signal
+and can continue applying resources or checking readiness. The driver checks
+terminal state again before calling the gateway. Namespace-only cleanup does
+not close other calls or issue a gateway operation. `configureAgent` is a pure
+configuration projection and remains usable after close.
+
+This is the concrete OpenShell driver's ownership boundary. The common Driver
+contract and worker shutdown do not currently wire this close method; these
+semantics do not establish automatic platform shutdown or Namespace cleanup
+integration.
 
 ### Gateway transport and authentication
 
@@ -315,6 +355,23 @@ invokes the actual driver through its supported injected gateway client. It
 checks outgoing launch configuration, stable provisioning and cleanup identity
 after caller mutations, frozen input acceptance, and invalid configuration
 rejection. This test does not execute the native adapter or an upstream gateway.
+
+The [client lifetime conformance test](../../../tests/conformance/openshell-client-lifecycle.test.mjs)
+exercises the actual driver's ownership methods with controlled clients at the
+existing native-client import and injected-client boundaries. A test-local
+native Kubernetes SDK subclass controls only public effect methods to cover
+preparation and cleanup races. These controls exercise driver behavior; they do
+not qualify the Go adapter, subprocess deadlines, native protocol, or a cluster.
+
+The lifetime suite requires Node's `--experimental-test-module-mocks` flag. With
+matching installed workspace dependencies, run the focused files with:
+
+```sh
+node --experimental-test-module-mocks scripts/test-files.mjs --test-concurrency=1 --test-reporter=tap -- tests/conformance/openshell-client-lifecycle.test.mjs tests/conformance/openshell-options-ownership.test.mjs tests/integration/sandbox-driver-startup.test.mjs
+```
+
+The `test` and `test:conformance` scripts supply that flag. The focused
+invocation above supplies it explicitly.
 
 The [native OpenShell package tests](../../../components/runtime-security/openshell/)
 use actual local gRPC servers and TLS certificates to exercise the generated
