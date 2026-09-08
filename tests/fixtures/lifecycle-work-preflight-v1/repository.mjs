@@ -56,8 +56,14 @@ export async function repositoryFixture(t, databaseUrl) {
       "Use an allocated loopback test database.",
     );
   }
+  // Bounded platform reads require checkout to settle within their pool deadline.
   const pool = databaseUrl
-    ? new pg.Pool({ connectionString: databaseUrl, max: 3, query_timeout: 3000 })
+    ? new pg.Pool({
+        connectionString: databaseUrl,
+        max: 3,
+        connectionTimeoutMillis: 250,
+        query_timeout: 3000,
+      })
     : undefined;
   let namespaceId;
   t.after(async () => {
