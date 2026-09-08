@@ -27,21 +27,21 @@ model and tools.
 
 ```mermaid
 flowchart TB
-    User["Human or automation client"] --> API["OCC API and console"]
+    User["Human or<br/>automation client"] --> API["OCC API<br/>and console"]
     subgraph Control["Control plane"]
-        API --> IAM["Identity and exact-resource authorization"]
-        API --> State[("PostgreSQL: resources, work, audit")]
+        API --> IAM["Identity and<br/>exact-resource<br/>authorization"]
+        API --> State[("PostgreSQL<br/>Resources, work, audit")]
         Worker["Controller worker"] --> State
         Worker --> IAM
-        Worker --> Compute["Selected Compute Driver"]
+        Worker --> Compute["Selected<br/>Compute Driver"]
     end
-    Compute -.->|"requires completed admission path"| Gateway
-    Compute -.->|"requires completed admission path"| Harness
-    subgraph Agent["One Agent: dedicated topology"]
-        Gateway["Agent-owned gateway<br/>Channel transport and private state"]
-        Harness["Dedicated Harness<br/>Model and tool execution"]
-        Gateway <-->|"authenticated transport"| Harness
-        Gateway --> Workspace[("Same-Agent shared workspace")]
+    Compute -.->|"Admission path<br/>required"| Gateway
+    Compute -.->|"Admission path<br/>required"| Harness
+    subgraph Agent["One Agent: dedicated"]
+        Gateway["Agent-owned gateway<br/>Channel transport<br/>Private state"]
+        Harness["Dedicated Harness<br/>Model and tool<br/>execution"]
+        Gateway <-->|"Authenticated<br/>transport"| Harness
+        Gateway --> Workspace[("Same-Agent<br/>shared workspace")]
         Harness --> Workspace
     end
 ```
@@ -75,11 +75,11 @@ selected workload profile before committing a revision, work, and audit together
 An accepted response is an **operation receipt**, not a running-Agent guarantee.
 
 ```mermaid
-flowchart LR
-    Draft["Saved draft +<br/>V2 operation identity"] --> Admission{"Current authority +<br/>profile admission inputs?"}
-    Admission -->|"missing: current default"| Unavailable["Unavailable<br/>No new deployment admitted"]
-    Admission -->|"all supplied and valid"| Commit["Commit revision,<br/>work, and audit"]
-    Commit --> Receipt["202 operation receipt"]
+flowchart TB
+    Draft["Saved draft +<br/>V2 operation identity"] --> Admission{"Current authority +<br/>profile admission<br/>inputs valid?"}
+    Admission -->|"Missing inputs<br/>(current default)"| Unavailable["Unavailable<br/>No deployment admitted"]
+    Admission -->|"Supplied and valid"| Commit["Commit revision,<br/>work, and audit"]
+    Commit --> Receipt["202 accepted<br/>operation receipt"]
     Commit --> Worker["Worker reauthorizes<br/>and prepares runtime"]
     Worker --> Activate["Activate revision;<br/>retire predecessor"]
 ```
