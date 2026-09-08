@@ -1,8 +1,8 @@
 # Concepts
 
 Use these concepts to understand what you configure and deploy in OpenClaw
-Enterprise (OCE), the platform that includes the control plane and managed Agent
-runtimes.
+Enterprise (OCE), the platform that includes the OpenClaw Control Plane and
+OpenClaw Data Plane.
 
 ## Control plane and tenancy
 
@@ -24,6 +24,13 @@ Deploying creates an immutable **AgentRevision**: a snapshot of the Agent's
 configuration and execution settings. The worker provisions it, then activates
 it to receive traffic. Editing an Agent or Configuration does not change the
 running revision; deploy again to apply those changes.
+
+## Data plane
+
+The **OpenClaw Data Plane** is where Agents run. It includes the selected
+**ComputeDriver**, Agent gateways, and Harnesses. ComputeDriver provisions and
+observes workloads using deployment intent admitted by OCC; the control plane
+retains platform resource ownership, authorization, and lifecycle decisions.
 
 ## Gateways and Harnesses
 

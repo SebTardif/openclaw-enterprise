@@ -1,8 +1,9 @@
 # OpenClaw Enterprise architecture
 
-OpenClaw Enterprise (OCE) consists of the OpenClaw Control Plane (OCC) and
-managed Agent runtimes. OCC owns platform resources, authorization, deployment
-intent, and audit evidence; Agent runtimes execute model turns and tools.
+OpenClaw Enterprise (OCE) consists of the OpenClaw Control Plane (OCC) and the
+OpenClaw Data Plane, where Agents run. OCC owns platform resources,
+authorization, deployment intent, and audit evidence. The data plane comprises
+the selected ComputeDriver, Agent gateways, and Harnesses.
 
 This page describes the core components and their boundaries. Update it when
 those boundaries or interactions change. Driver implementations, settings,
@@ -19,11 +20,15 @@ flowchart LR
     subgraph OCC["OpenClaw Control Plane (OCC)"]
         API["API and console"] --> STATE["PostgreSQL state and work queue"]
         WORKER["Controller worker"] -->|"claims work and records results"| STATE
-        API --> DRIVERS["Selected Drivers"]
-        WORKER --> DRIVERS
     end
-    DRIVERS -->|"Compute provisions and observes"| RUNTIME["Agent gateway and Harness"]
-    CLIENT -->|"Agent traffic"| RUNTIME
+    subgraph DATA_PLANE["OpenClaw Data Plane"]
+        COMPUTE["ComputeDriver"] -->|"provisions and observes"| GATEWAY["Agent gateway"]
+        COMPUTE -->|"provisions and observes"| HARNESS["Harness"]
+        GATEWAY <-->|"Agent turns"| HARNESS
+    end
+    API --> COMPUTE
+    WORKER -->|"reconciles admitted deployments"| COMPUTE
+    CLIENT -->|"Agent traffic"| GATEWAY
 ```
 
 | Component         | Responsibility                                                                                                                                       |
@@ -35,8 +40,10 @@ flowchart LR
 | Agent runtime     | Run an Agent-owned gateway for connections and messages, and a Harness for Agent turns and tools.                                                    |
 
 The API and worker run as separate processes and coordinate through persistent
-state. Drivers provide the integration boundary; adding an implementation does
-not add a new core architectural component. See [Driver selection and contracts](reference/drivers/selection.md).
+state. OCC calls ComputeDriver to provision and observe the data plane while
+retaining authorization and lifecycle decisions. Drivers provide the integration
+boundary; adding an implementation does not add a new core architectural
+component. See [Driver selection and contracts](reference/drivers/selection.md).
 
 ## Ownership and lifecycle
 
