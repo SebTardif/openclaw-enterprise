@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -44,6 +45,10 @@ import {
   projectNodeObservation,
   waitForOwnedCommand,
   establishFilesystemOwner,
+  validateDockerConfiguration,
+  dockerArguments,
+  observeNode,
+  createLocalResourceCustody,
 } from "../fixtures/spire-first-observation-v1/node-observer.mjs";
 
 // Source-machinery tests only. These synthetic log frames are never actual
@@ -322,6 +327,8 @@ test("early exits, deadline, spawn failure and output callback failure are expli
 const podAUID = "12345678-1234-1234-1234-123456789abc";
 const podBUID = "abcdef01-1234-1234-1234-123456789abc";
 const syntheticHash = (character) => character.repeat(64);
+const emptyDockerConfig = "{}\n";
+const emptyDockerConfigSHA256 = createHash("sha256").update(emptyDockerConfig).digest("hex");
 function profileFixture() {
   return {
     schemaVersion: 1,
@@ -363,6 +370,8 @@ function profileFixture() {
       kubectlPath: "/unit/bin/kubectl",
       k3dPath: "/unit/bin/k3d",
       dockerPath: "/unit/bin/docker",
+      dockerConfigDirectory: "/unit/runtime/docker-config",
+      dockerConfigSHA256: emptyDockerConfigSHA256,
     },
     paths: {
       evidenceDir: "/unit/evidence",
@@ -460,6 +469,188 @@ test("profile admission freezes explicit identities and rejects ambient or unbou
     mutate(invalid);
     assert.throws(() => validateProfile(invalid), /Invalid explicit SPIRE observation profile/);
   }
+});
+
+test("profile requires explicit canonical Docker configuration and its digest", () => {
+  const admitted = validateProfile(profileFixture());
+  assert.equal(admitted.cluster.dockerConfigSHA256, emptyDockerConfigSHA256);
+  for (const mutate of [
+    (p) => {
+      delete p.cluster.dockerConfigDirectory;
+    },
+    (p) => {
+      delete p.cluster.dockerConfigSHA256;
+    },
+    (p) => {
+      p.cluster.dockerConfigDirectory = "relative/config";
+    },
+    (p) => {
+      p.cluster.dockerConfigDirectory = "/unit/../ambient";
+    },
+    (p) => {
+      p.cluster.dockerConfigSHA256 = "not-a-digest";
+    },
+  ]) {
+    const invalid = profileFixture();
+    mutate(invalid);
+    assert.throws(() => validateProfile(invalid), /Invalid explicit SPIRE observation profile/);
+  }
+});
+
+async function withDockerConfiguration(check) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "spire-docker-config-unit-")));
+  const directory = join(root, "selected-config");
+  try {
+    await mkdir(directory, { mode: 0o700 });
+    await writeFile(join(directory, "config.json"), emptyDockerConfig, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    const options = {
+      dockerConfigDirectory: directory,
+      dockerConfigSHA256: emptyDockerConfigSHA256,
+      filesystemOwnerUID: (await lstat(directory)).uid,
+    };
+    await check(options, root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("Docker configuration validates actual ownership, exact bytes and protected filesystem shape", async () => {
+  await withDockerConfiguration(async (options, root) => {
+    const directory = options.dockerConfigDirectory;
+    const config = join(directory, "config.json");
+    const result = validateDockerConfiguration(options);
+    assert.deepEqual(result, {
+      directory,
+      sha256: emptyDockerConfigSHA256,
+      filesystemOwnerUID: options.filesystemOwnerUID,
+    });
+    assert.equal(Object.isFrozen(result), true);
+    const rejects = (input = options) =>
+      assert.throws(
+        () => validateDockerConfiguration(input),
+        (error) =>
+          ["DOCKER_CONFIG_INVALID", "DOCKER_CONFIG_INPUT_INVALID"].includes(error.code) &&
+          error.message === error.code &&
+          !String(error).includes(root),
+      );
+    rejects({ ...options, dockerConfigSHA256: "0".repeat(64) });
+    rejects({ ...options, filesystemOwnerUID: options.filesystemOwnerUID + 1 });
+    rejects({ ...options, dockerConfigDirectory: join(root, ".docker") });
+    rejects({ ...options, dockerConfigDirectory: join(root, "absent") });
+    rejects({ ...options, dockerConfigDirectory: join(root, "absent-parent", "selected-config") });
+    rejects({ ...options, dockerConfigDirectory: `${root}/./selected-config` });
+    await chmod(root, 0o755);
+    rejects();
+    assert.equal((await lstat(root)).mode & 0o7777, 0o755);
+    await chmod(root, 0o700);
+    const parentAlias = join(root, "parent-alias");
+    await symlink(root, parentAlias);
+    rejects({ ...options, dockerConfigDirectory: join(parentAlias, "selected-config") });
+    await rm(parentAlias);
+    await rm(config);
+    rejects();
+    await writeFile(config, emptyDockerConfig, { mode: 0o600, flag: "wx" });
+    await chmod(directory, 0o755);
+    rejects();
+    await chmod(directory, 0o700);
+    await chmod(config, 0o644);
+    rejects();
+    await chmod(config, 0o600);
+    await writeFile(config, '{"credsStore":"unexpected"}\n');
+    rejects({
+      ...options,
+      dockerConfigSHA256: createHash("sha256")
+        .update(await readFile(config))
+        .digest("hex"),
+    });
+    await writeFile(config, emptyDockerConfig);
+    const extra = join(directory, "unexpected-entry");
+    await writeFile(extra, "", { mode: 0o600, flag: "wx" });
+    rejects();
+    await rm(extra);
+    const alias = join(root, "config-alias");
+    await symlink(directory, alias);
+    rejects({ ...options, dockerConfigDirectory: alias });
+    const target = join(root, "owned-config-target");
+    await writeFile(target, emptyDockerConfig, { mode: 0o600, flag: "wx" });
+    await rm(config);
+    await symlink(target, config);
+    rejects();
+    await rm(config);
+    await link(target, config);
+    rejects();
+    assert.equal(await readFile(target, "utf8"), emptyDockerConfig);
+  });
+});
+
+test("Docker argv binds the selected config and Unix socket and revalidates before reuse", async () => {
+  await withDockerConfiguration(async (options) => {
+    const args = ["inspect", "k3d-unit-observation-server-0"];
+    assert.deepEqual(dockerArguments(options, args), [
+      "--config",
+      options.dockerConfigDirectory,
+      "--host",
+      "unix:///var/run/docker.sock",
+      ...args,
+    ]);
+    assert.deepEqual(args, ["inspect", "k3d-unit-observation-server-0"]);
+    await writeFile(join(options.dockerConfigDirectory, "config.json"), "{}");
+    assert.throws(() => dockerArguments(options, args), /DOCKER_CONFIG_INVALID/);
+  });
+});
+
+test("observer passes explicit Docker configuration to an owned local helper and settles its failure", async (t) => {
+  // This executes a Node argv recorder, never Docker or a runtime. Its deliberate
+  // exit 1 must leave the real observer unqualified with settled local custody.
+  await withDockerConfiguration(async (configuration, root) => {
+    const capture = join(root, "captured-argv.json");
+    const helper = join(root, "owned-argv-recorder");
+    await writeFile(
+      helper,
+      `#!${process.execPath}\n` +
+        `require("node:fs").writeFileSync(${JSON.stringify(capture)}, JSON.stringify({` +
+        "argv:process.argv.slice(2),env:process.env,pid:process.pid}));process.exit(1);\n",
+      { mode: 0o700, flag: "wx" },
+    );
+    const { options } = nodeFixture();
+    const result = await observeNode({
+      ...options,
+      ...configuration,
+      dockerPath: helper,
+      timeoutMs: 3000,
+    });
+    assert.equal(result.status, "unqualified");
+    assert.equal(result.reasonCode, "COMMAND_FAILED");
+    assert.equal(result.identityQualified, false);
+    assert.equal(result.custodyHeld, false);
+    assert.equal(result.ownedChild, null);
+    assert.equal(result.observation, null);
+    const recorded = JSON.parse(await readFile(capture, "utf8"));
+    assert.deepEqual(recorded.argv, [
+      "--config",
+      configuration.dockerConfigDirectory,
+      "--host",
+      "unix:///var/run/docker.sock",
+      "inspect",
+      options.nodeName,
+      "--format",
+      '{"id":{{json .Id}},"startedAt":{{json .State.StartedAt}},"running":{{json .State.Running}}}',
+    ]);
+    assert.deepEqual(recorded.env, { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C" });
+    assert(Number.isSafeInteger(recorded.pid) && recorded.pid > 0);
+    for (const pid of [recorded.pid, -recorded.pid]) {
+      assert.throws(
+        () => process.kill(pid, 0),
+        (error) => error.code === "ESRCH",
+      );
+    }
+    t.diagnostic(
+      `owned-argv-helper-settled pid=${recorded.pid} exitCode=1 processGroupAbsent=true`,
+    );
+  });
 });
 
 test("profile rejects expired allocation, cross-identity collapse and runtime weakening", () => {
@@ -624,6 +815,9 @@ function nodeFixture() {
     expectedRuntimeHandler: p.runtime.handler,
     expectedRuntimeFlags: p.runtime.flags,
     dockerPath: p.cluster.dockerPath,
+    dockerConfigDirectory: p.cluster.dockerConfigDirectory,
+    dockerConfigSHA256: p.cluster.dockerConfigSHA256,
+    filesystemOwnerUID: 1000,
   };
   const raw = {
     pid: 441,
@@ -988,6 +1182,85 @@ test("filesystem owner preflight rejects unsafe parents without changing modes, 
     assert.equal(await readFile(regularFile, "utf8"), "unit sentinel");
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("declared local close failure remains held after an independently owned Node command settles", async (t) => {
+  const custody = createLocalResourceCustody();
+  assert.equal(Object.isFrozen(custody), true);
+  for (const error of [null, new Error("ordinary failure"), { custodyHeld: "true" }]) {
+    custody.recordFailure(error);
+  }
+  assert.deepEqual(custody.disposition(true), {
+    localResourceCustodyHeld: false,
+    custodyHeld: false,
+  });
+  assert.deepEqual(custody.disposition(false), {
+    localResourceCustodyHeld: false,
+    custodyHeld: true,
+  });
+  for (const value of [undefined, null, 0, 1, "true"]) {
+    assert.throws(() => custody.disposition(value));
+  }
+  // This is a declared close-failure input to the real latch, not an injected
+  // OS close syscall. The separate Node command below really exits and settles.
+  custody.recordFailure(
+    Object.assign(new Error("declared unit close failure"), {
+      custodyHeld: true,
+    }),
+  );
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30)"], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const closed = new Promise((resolve) =>
+    child.once("close", (code, signal) => resolve({ code, signal })),
+  );
+  let cleanupTimer;
+  try {
+    assert(Number.isSafeInteger(child.pid) && child.pid > 0);
+    const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");
+    const startTicks = stat
+      .slice(stat.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/)[19];
+    const result = await waitForOwnedCommand(child, {
+      timeoutMs: 2000,
+      identity: { pid: child.pid, startTicks, processGroupID: child.pid },
+    });
+    assert.equal(result.reasonCode, "COMMAND_OK");
+    assert.equal(result.custodyHeld, false);
+    assert.equal(result.ownedChild, null);
+    for (const pid of [child.pid, -child.pid]) {
+      assert.throws(
+        () => process.kill(pid, 0),
+        (error) => error.code === "ESRCH",
+      );
+    }
+    const held = custody.disposition(true);
+    assert.equal(Object.isFrozen(held), true);
+    assert.deepEqual(held, { localResourceCustodyHeld: true, custodyHeld: true });
+    custody.recordFailure(new Error("later ordinary failure"));
+    custody.recordFailure({ custodyHeld: false });
+    assert.deepEqual(custody.disposition(true), held);
+    t.diagnostic(
+      `local-close-failure=declared owned-helper-settled pid=${child.pid} processGroupAbsent=true localResourceCustodyHeld=true`,
+    );
+  } finally {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => {
+        cleanupTimer = setTimeout(
+          () => reject(new Error("owned custody-unit helper failed to close")),
+          2000,
+        );
+      }),
+    ]).finally(() => clearTimeout(cleanupTimer));
   }
 });
 

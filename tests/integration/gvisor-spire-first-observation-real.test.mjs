@@ -21,6 +21,9 @@ import {
 import {
   observeNode,
   establishFilesystemOwner,
+  validateDockerConfiguration,
+  dockerArguments,
+  createLocalResourceCustody,
 } from "../fixtures/spire-first-observation-v1/node-observer.mjs";
 
 // This case consumes a separately prepared, exclusively owned environment. It
@@ -530,13 +533,20 @@ const os=require('node:os'), net=require('node:net');
 })().catch(()=>{process.stdout.write('{"failed":true}\\n');process.exitCode=1});
 `;
 
-async function runObservation(profile, emit) {
+async function runObservation(profile, emit, filesystemOwnerUID) {
+  const dockerConfig = {
+    dockerConfigDirectory: profile.cluster.dockerConfigDirectory,
+    dockerConfigSHA256: profile.cluster.dockerConfigSHA256,
+    filesystemOwnerUID,
+  };
+  const localResourceCustody = createLocalResourceCustody();
   const writeReceipt = emit;
   let receiptFailed = false;
   emit = async (...args) => {
     try {
       await writeReceipt(...args);
-    } catch {
+    } catch (error) {
+      localResourceCustody.recordFailure(error);
       receiptFailed = true;
     }
   };
@@ -667,14 +677,12 @@ async function runObservation(profile, emit) {
     const observed = json(
       await children.command(
         p.cluster.dockerPath,
-        [
-          "--host",
-          "unix:///var/run/docker.sock",
+        dockerArguments(dockerConfig, [
           "inspect",
           p.cluster.nodeName,
           "--format",
           '{"id":{{json .Id}},"startedAt":{{json .State.StartedAt}},"running":{{json .State.Running}}}',
-        ],
+        ]),
         commandDeadline(),
       ),
     );
@@ -1242,11 +1250,14 @@ async function runObservation(profile, emit) {
           expectedRuntimeHandler: p.runtime.handler,
           timeoutMs: Math.max(1000, Math.min(30000, caseDeadline - Date.now())),
           dockerPath: p.cluster.dockerPath,
+          ...dockerConfig,
         });
         // The protected helper owns its closed output schema, including any
         // unresolved child custody; preserve that before refusing qualification.
         await emit("protected-node-observation", { case: owned.case, result });
-        if (result.custodyHeld === true || result.reasonCode === "COMMAND_SETTLEMENT_UNKNOWN")
+        if (result.custodyHeld === true && result.localResourcesSettled === false)
+          localResourceCustody.recordFailure(result);
+        else if (result.custodyHeld === true || result.reasonCode === "COMMAND_SETTLEMENT_UNKNOWN")
           unknownEffect = true;
         need(
           result.status === "observed" && result.reasonCode === "OBSERVED",
@@ -1361,6 +1372,7 @@ async function runObservation(profile, emit) {
       });
     }
   } catch (error) {
+    localResourceCustody.recordFailure(error);
     failure = safeCode(error);
     for (const name of ["a", "b"])
       if (outcomes[name] === "entered")
@@ -1392,6 +1404,7 @@ async function runObservation(profile, emit) {
             statusCode === 0 ? "deleted-and-absence-observed" : "not-found-and-absence-observed",
         });
       } catch (error) {
+        localResourceCustody.recordFailure(error);
         settled = false;
         await emit("entry-custody-held", { entryID: entry.id, reasonCode: safeCode(error) });
       }
@@ -1418,9 +1431,7 @@ async function runObservation(profile, emit) {
         await runtimeBoundary();
         const runtimeBytes = await children.command(
           p.cluster.dockerPath,
-          [
-            "--host",
-            "unix:///var/run/docker.sock",
+          dockerArguments(dockerConfig, [
             "exec",
             dockerNodeIdentity.id,
             "timeout",
@@ -1433,7 +1444,7 @@ async function runObservation(profile, emit) {
             `io.kubernetes.pod.uid=${owned.uid}`,
             "-o",
             "json",
-          ],
+          ]),
           commandDeadline(),
         );
         const runtime = json(runtimeBytes);
@@ -1443,9 +1454,7 @@ async function runObservation(profile, emit) {
           : []) {
           const bytes = await children.command(
             p.cluster.dockerPath,
-            [
-              "--host",
-              "unix:///var/run/docker.sock",
+            dockerArguments(dockerConfig, [
               "exec",
               dockerNodeIdentity.id,
               "timeout",
@@ -1457,7 +1466,7 @@ async function runObservation(profile, emit) {
               'if [ -e "$1" ]; then cat "$1"; else printf absent; fi',
               "sh",
               `/proc/${processIdentity.pid}/stat`,
-            ],
+            ]),
             commandDeadline(),
           );
           const value = bytes.toString();
@@ -1485,6 +1494,7 @@ async function runObservation(profile, emit) {
           observedRuntimeProcessesAbsent: Boolean(owned.mapping),
         });
       } catch (error) {
+        localResourceCustody.recordFailure(error);
         settled = false;
         await emit("pod-custody-held", {
           case: owned.case,
@@ -1495,6 +1505,7 @@ async function runObservation(profile, emit) {
       }
     }
     if (!(await children.settle(Math.min(Date.now() + 5000, finalDeadline)))) settled = false;
+    const disposition = localResourceCustody.disposition(settled);
     await emit("final-disposition", {
       outcomes,
       counts: {
@@ -1515,7 +1526,7 @@ async function runObservation(profile, emit) {
             closeObserved: false,
           },
       ),
-      custodyHeld: !settled,
+      ...disposition,
       unknownEffect,
       entries: entries.map((e) => ({ id: e.id, absent: e.absent })),
       pods: pods.map((pod) => ({ uid: pod.uid, apiAbsent: pod.absent })),
@@ -1523,7 +1534,7 @@ async function runObservation(profile, emit) {
       fullQualification: false,
       laterMatrixGroups: "unentered",
     });
-    need(settled, "CUSTODY_HELD");
+    need(!localResourceCustody.disposition(settled).custodyHeld, "CUSTODY_HELD");
     need(!receiptFailed, "EVIDENCE_WRITE_FAILED");
   }
   need(
@@ -1562,6 +1573,11 @@ test(
         p.cluster.kubeconfigSHA256,
         principal.filesystemOwnerUID,
       );
+      const dockerConfig = validateDockerConfiguration({
+        dockerConfigDirectory: p.cluster.dockerConfigDirectory,
+        dockerConfigSHA256: p.cluster.dockerConfigSHA256,
+        filesystemOwnerUID: principal.filesystemOwnerUID,
+      });
       await binary(p.cluster.kubectlPath, p.artifacts.kubectlSHA256);
       await binary(p.cluster.dockerPath, p.artifacts.dockerSHA256);
       emit = await receipts(p.paths.evidenceDir, principal.filesystemOwnerUID);
@@ -1571,14 +1587,15 @@ test(
         sourceCommit: p.sourceCommit,
         kubectlSHA256: p.artifacts.kubectlSHA256,
         dockerSHA256: p.artifacts.dockerSHA256,
+        dockerConfig,
         absoluteDeadlineEpochMs: p.deadlineEpochMs,
       });
-      await runObservation(p, emit);
+      await runObservation(p, emit, principal.filesystemOwnerUID);
     } catch (error) {
       // Native parser/process errors can contain input. Only closed reason codes
       // cross the TAP boundary; detailed allowed metadata is in private receipts.
       throw new Error(
-        error?.custodyHeld === true ? "FILESYSTEM_PROBE_CUSTODY_HELD" : safeCode(error),
+        error?.custodyHeld === true ? "LOCAL_RESOURCE_CUSTODY_HELD" : safeCode(error),
       );
     }
   },

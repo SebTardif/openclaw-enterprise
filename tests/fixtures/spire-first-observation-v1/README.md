@@ -112,6 +112,24 @@ bypass the ownership requirement. Profile and kubeconfig files must be
 canonical regular files with mode `0600`, one link and at most 16 KiB, inside
 mode `0700` directories owned by the observed filesystem principal. The new
 evidence directory must have an existing mode `0700` parent with that owner.
+
+The profile also requires `cluster.dockerConfigDirectory` and
+`cluster.dockerConfigSHA256`. The operator prepares a fresh canonical directory
+with mode `0700`, owned by the same observed filesystem principal. Its parent
+must also be canonical, mode `0700`, and owned by that principal; validation
+checks the parent before and after reading the selected configuration, before
+each Docker invocation. Paths containing a literal `.docker` component are
+rejected. The directory contains exactly one
+regular, single-link file, `config.json`, with that owner, mode
+`0600`, and the exact UTF-8 bytes `{}\n` (an empty object followed by a newline).
+The SHA-256 binds those file bytes. Every Docker invocation explicitly supplies
+`--config DIRECTORY` before the fixed `--host` argument, including calls from
+the node observer with its restricted environment. There is no home-directory
+or environment fallback, and this operator configuration is not injected into
+fixture images.
+Unsettled validation descriptors or ownership-probe cleanup retain local-resource
+custody even when unrelated helpers have settled.
+
 The preparation owner finalizes
 `management.trustBundleSHA256` after fresh Server startup and binds the kubelet
 CA with `management.kubeletCASHA256`. The real test verifies the exact public

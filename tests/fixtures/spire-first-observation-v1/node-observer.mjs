@@ -6,12 +6,14 @@ import {
   fstatSync,
   lstatSync,
   openSync,
+  opendirSync,
+  readSync,
   readFileSync,
   realpathSync,
   unlinkSync,
 } from "node:fs";
-import { randomBytes } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "oce.spire-first-node-observation/v1";
@@ -44,6 +46,9 @@ function optionsOf(input) {
     "expectedRuntimeHandler",
     "timeoutMs",
     "dockerPath",
+    "dockerConfigDirectory",
+    "dockerConfigSHA256",
+    "filesystemOwnerUID",
   ];
   requireFact(
     Object.keys(input).every((key) => keys.includes(key)),
@@ -73,6 +78,7 @@ function optionsOf(input) {
       !/[\x00-\x1f\x7f]/.test(input.dockerPath),
     "INPUT_INVALID",
   );
+  dockerConfigurationInput(input);
   const timeoutMs = input.timeoutMs ?? 60000;
   requireFact(
     Number.isSafeInteger(timeoutMs) && timeoutMs >= 1000 && timeoutMs <= 60000,
@@ -694,6 +700,171 @@ export async function waitForOwnedCommand(child, options, budget = { bytes: 0 })
   });
 }
 
+function dockerConfigurationInput(input) {
+  const directory = input?.dockerConfigDirectory;
+  requireFact(
+    typeof directory === "string" &&
+      directory.length <= 1024 &&
+      /^\/[A-Za-z0-9_./-]+$/.test(directory) &&
+      directory !== "/" &&
+      resolve(directory) === directory &&
+      !directory.endsWith("/") &&
+      !directory.split("/").includes(".docker") &&
+      typeof input.dockerConfigSHA256 === "string" &&
+      ID.test(input.dockerConfigSHA256) &&
+      Number.isSafeInteger(input.filesystemOwnerUID) &&
+      input.filesystemOwnerUID >= 0,
+    "DOCKER_CONFIG_INPUT_INVALID",
+  );
+}
+
+// Read only the explicit, empty operator configuration. Directory enumeration
+// and file reads are bounded; no HOME, account lookup, or Docker defaults enter
+// this path. Same-user mutation remains an operator custody assumption.
+export function validateDockerConfiguration(input) {
+  dockerConfigurationInput(input);
+  const directory = input.dockerConfigDirectory;
+  const parent = dirname(directory);
+  let parentFD, directoryFD, fileFD, entries;
+  try {
+    requireFact(realpathSync(parent) === parent, "DOCKER_CONFIG_INVALID");
+    parentFD = openSync(
+      parent,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const parentStat = fstatSync(parentFD);
+    const sameParent = (stat) =>
+      stat.isDirectory() &&
+      stat.dev === parentStat.dev &&
+      stat.ino === parentStat.ino &&
+      stat.uid === input.filesystemOwnerUID &&
+      (stat.mode & 0o7777) === 0o700;
+    requireFact(sameParent(parentStat) && sameParent(lstatSync(parent)), "DOCKER_CONFIG_INVALID");
+    requireFact(realpathSync(directory) === directory, "DOCKER_CONFIG_INVALID");
+    directoryFD = openSync(
+      directory,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const directoryStat = fstatSync(directoryFD);
+    const sameDirectory = (stat) =>
+      stat.isDirectory() &&
+      stat.dev === directoryStat.dev &&
+      stat.ino === directoryStat.ino &&
+      stat.uid === input.filesystemOwnerUID &&
+      (stat.mode & 0o7777) === 0o700;
+    requireFact(sameDirectory(lstatSync(directory)), "DOCKER_CONFIG_INVALID");
+    const anchoredDirectory = `/proc/self/fd/${directoryFD}`;
+    entries = opendirSync(anchoredDirectory);
+    requireFact(
+      entries.readSync()?.name === "config.json" && entries.readSync() === null,
+      "DOCKER_CONFIG_INVALID",
+    );
+    const selectedFile = lstatSync(`${anchoredDirectory}/config.json`);
+    requireFact(
+      selectedFile.isFile() &&
+        selectedFile.uid === input.filesystemOwnerUID &&
+        (selectedFile.mode & 0o7777) === 0o600 &&
+        selectedFile.nlink === 1 &&
+        selectedFile.size === 3,
+      "DOCKER_CONFIG_INVALID",
+    );
+    fileFD = openSync(
+      `${anchoredDirectory}/config.json`,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(fileFD);
+    const sameFile = (stat) =>
+      stat.isFile() &&
+      stat.dev === before.dev &&
+      stat.ino === before.ino &&
+      stat.uid === input.filesystemOwnerUID &&
+      (stat.mode & 0o7777) === 0o600 &&
+      stat.nlink === 1 &&
+      stat.size === 3 &&
+      stat.mtimeMs === before.mtimeMs &&
+      stat.ctimeMs === before.ctimeMs;
+    requireFact(sameFile(before) && sameFile(selectedFile), "DOCKER_CONFIG_INVALID");
+    const bytes = Buffer.alloc(4);
+    requireFact(
+      readSync(fileFD, bytes, 0, 4, 0) === 3 && bytes.subarray(0, 3).equals(Buffer.from("{}\n")),
+      "DOCKER_CONFIG_INVALID",
+    );
+    const sha256 = createHash("sha256").update(bytes.subarray(0, 3)).digest("hex");
+    requireFact(
+      sha256 === input.dockerConfigSHA256 &&
+        sameFile(fstatSync(fileFD)) &&
+        sameFile(lstatSync(`${directory}/config.json`)) &&
+        sameDirectory(fstatSync(directoryFD)) &&
+        sameDirectory(lstatSync(directory)) &&
+        realpathSync(directory) === directory &&
+        sameParent(fstatSync(parentFD)) &&
+        sameParent(lstatSync(parent)) &&
+        realpathSync(parent) === parent,
+      "DOCKER_CONFIG_INVALID",
+    );
+    return Object.freeze({ directory, sha256, filesystemOwnerUID: input.filesystemOwnerUID });
+  } catch {
+    throw new ObservationFailure("DOCKER_CONFIG_INVALID");
+  } finally {
+    let settled = true;
+    for (const close of [
+      () => {
+        if (entries !== undefined) entries.closeSync();
+      },
+      () => {
+        if (fileFD !== undefined) closeSync(fileFD);
+      },
+      () => {
+        if (directoryFD !== undefined) closeSync(directoryFD);
+      },
+      () => {
+        if (parentFD !== undefined) closeSync(parentFD);
+      },
+    ]) {
+      try {
+        close();
+      } catch {
+        settled = false;
+      }
+    }
+    if (!settled) {
+      const error = new ObservationFailure("DOCKER_CONFIG_CLOSE_UNSETTLED");
+      error.custodyHeld = true;
+      throw error;
+    }
+  }
+}
+
+// A reported local-resource cleanup hold is sticky. Later successful process
+// settlement cannot establish that a different descriptor or probe was closed.
+export function createLocalResourceCustody() {
+  let held = false;
+  return Object.freeze({
+    recordFailure(error) {
+      held ||= error?.custodyHeld === true;
+    },
+    disposition(resourcesSettled) {
+      requireFact(typeof resourcesSettled === "boolean", "SETTLEMENT_INPUT_INVALID");
+      return Object.freeze({
+        localResourceCustodyHeld: held,
+        custodyHeld: held || !resourcesSettled,
+      });
+    },
+  });
+}
+
+export function dockerArguments(options, args) {
+  requireFact(
+    Array.isArray(args) &&
+      args.length <= 64 &&
+      ["inspect", "exec"].includes(args[0]) &&
+      args.every((arg) => typeof arg === "string" && arg.length <= 8192 && !arg.includes("\0")),
+    "DOCKER_ARGUMENTS_INVALID",
+  );
+  const config = validateDockerConfiguration(options);
+  return ["--config", config.directory, "--host", "unix:///var/run/docker.sock", ...args];
+}
+
 // Remote reads also have their own timeout. Local Docker exit never establishes
 // remote process termination. The caller retains any returned custody hold.
 function commandRunner(options) {
@@ -702,9 +873,10 @@ function commandRunner(options) {
   return async (args) => {
     const remaining = deadline - performance.now();
     requireFact(remaining > 0, "OBSERVATION_TIMEOUT");
+    const argv = dockerArguments(options, args);
     let child;
     try {
-      child = spawn(options.dockerPath, ["--host", "unix:///var/run/docker.sock", ...args], {
+      child = spawn(options.dockerPath, argv, {
         stdio: ["ignore", "pipe", "pipe"],
         detached: true,
         env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C" },
@@ -738,6 +910,13 @@ export async function observeNode(input) {
   const startedAt = new Date().toISOString();
   try {
     const options = optionsOf(input);
+    const principal = await establishFilesystemOwner(dirname(options.dockerConfigDirectory));
+    requireFact(
+      principal.probeSettled === true &&
+        principal.provenance === "fresh-protected-file-observation" &&
+        principal.filesystemOwnerUID === options.filesystemOwnerUID,
+      "DOCKER_CONFIG_OWNER_UNQUALIFIED",
+    );
     const docker = commandRunner(options);
     const exec = (...args) =>
       docker(["exec", options.nodeName, "timeout", "-s", "KILL", "8", ...args]);
@@ -822,12 +1001,15 @@ export async function observeNode(input) {
     snapshot.nodeAfter = await node();
     return { ...projectNodeObservation(options, snapshot), startedAt };
   } catch (error) {
-    return result(
+    const failed = result(
       startedAt,
       safeCode(error),
       null,
       error instanceof ObservationFailure ? error.ownedChild : null,
     );
+    return error?.custodyHeld === true
+      ? { ...failed, custodyHeld: true, localResourcesSettled: false }
+      : failed;
   }
 }
 

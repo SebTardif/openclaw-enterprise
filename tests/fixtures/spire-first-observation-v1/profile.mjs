@@ -159,8 +159,13 @@ export function validateProfile(input, { nowMs = Date.now() } = {}) {
     "kubectlPath",
     "k3dPath",
     "dockerPath",
+    "dockerConfigDirectory",
+    "dockerConfigSHA256",
   ]);
   string(c.kubeconfigSHA256, sha);
+  string(c.dockerConfigSHA256, sha);
+  absolute(c.dockerConfigDirectory);
+  need(!c.dockerConfigDirectory.split("/").includes(".docker"));
   for (const key of ["name", "nodeName"]) string(c[key], namePattern);
   need(c.context === `k3d-${c.name}` && c.nodeName === `k3d-${c.name}-server-0`);
   for (const key of ["nodeIPv4", "apiIPv4"]) need(typeof c[key] === "string" && isIP(c[key]) === 4);
