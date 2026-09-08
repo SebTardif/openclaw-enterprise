@@ -39,8 +39,10 @@ Use the [documentation map](docs/README.md) and keep these ownership boundaries:
 - `docs/ARCHITECTURE.md` is a succinct overview of OCE's core components,
   ownership boundaries, and interactions. Update it judiciously when those
   fundamentals change; adding a Driver implementation does not by itself warrant
-  an architecture update. Keep core diagrams compact and put execution traces
-  in `docs/flows/`.
+  an architecture update. Keep this section order: System overview, Concepts,
+  Control Plane, Agent Execution, Security Boundaries, Deployment, Limitations,
+  Related docs. Keep the overview and Agent execution sequence diagrams compact;
+  detailed execution traces belong in `docs/flows/`.
 - `docs/testing.md` owns test settings, prerequisites, and verification procedures.
   Keep test-only settings out of `docs/reference/settings.md`, which owns
   deployment and runtime settings.
