@@ -576,3 +576,7 @@ summary:focus-visible {
     monospace;
   tab-size: 2;
 }
+
+.workspace-files .configuration-editor {
+  min-height: 200px;
+}

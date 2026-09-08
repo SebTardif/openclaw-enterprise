@@ -13,6 +13,7 @@ import { InMemoryPlatformState, OpenClawController } from "../../packages/occ/sr
 import { authenticatedHeaders, signInWithEmailPassword } from "./auth-session.mjs";
 import { createTestConfigurationDriver } from "./configuration-driver.mjs";
 import { createTestSecretDriver } from "./secret-driver.mjs";
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 
 export const providerFixtures = Object.freeze([
   Object.freeze({
@@ -119,6 +120,12 @@ export async function createConsoleAppFixture(t, options = {}) {
     computeDriver: computeDriver(),
     configurationDriver: createTestConfigurationDriver({ id: "console-configuration" }),
     ...(secretDriver === undefined || secretDriver === null ? {} : { secretDriver }),
+    ...(options.workspaceFilesAccess === undefined
+      ? {}
+      : { workspaceFilesAccess: options.workspaceFilesAccess }),
+    ...(options.workspaceFileRequestTimeoutMs === undefined
+      ? {}
+      : { workspaceFileRequestTimeoutMs: options.workspaceFileRequestTimeoutMs }),
     resolveHarness: resolveApprovedHarness,
     createController(installation) {
       controller = new OpenClawController(installation, {
@@ -275,9 +282,22 @@ export async function createConsoleAppFixture(t, options = {}) {
   }
 
   async function deployAgent(namespaceId, agentId) {
-    const revision = await request("POST", `/namespaces/${namespaceId}/agents/${agentId}/deploy`);
-    assert.equal(revision.status, 202);
-    return revision.data;
+    assert.ok(controller, "bootstrap must create the controller before Agent deployment");
+    const head = await platformState.read((view) =>
+      view.runtimeAssignments.findRuntimeIntentHead({ namespaceId, agentId }),
+    );
+    const revision = await controller.deployAgent(
+      seed.principal.id,
+      { namespaceId, agentId, expectedLifecycleGeneration: head?.generation ?? null },
+      resolveApprovedHarness,
+      createRuntimeAdmissionContext(installationId, seed.principal.id),
+    );
+    const projected = await request(
+      "GET",
+      `/namespaces/${namespaceId}/agents/${agentId}/revisions/${revision.id}`,
+    );
+    assert.equal(projected.status, 200);
+    return projected.data;
   }
 
   async function activateRevision(namespaceId, agentId, revisionId, expectedRevisionId) {

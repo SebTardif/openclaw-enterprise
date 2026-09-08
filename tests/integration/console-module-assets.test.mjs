@@ -12,6 +12,7 @@ const modules = [
   "agents/list",
   "agents/create",
   "agents/detail",
+  "agents/workspace",
   "channels/slack",
   "channels/teams",
   "channels/shared-ui",

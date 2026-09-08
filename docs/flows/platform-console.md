@@ -166,17 +166,35 @@ references, mixed Slack mention settings, and unsupported plugin shapes.
 
 Saving channels first rereads the Agent and Configuration, then checks that the
 Agent still references the same Configuration generation. The subsequent PATCH
-sends `{ values: updatedValues }` and omits `secretBindings`, so the backend
-retains existing bindings. This client-side generation check detects common
-stale-editor cases but is not atomic lost-update protection; the API accepts the
-last valid writer.
+sends `{ values: updatedValues, expectedGeneration: snapshot.generation }` and omits `secretBindings`, so the backend
+retains existing bindings. The backend rejects a changed Configuration generation with `409`, including a
+write that races the preflight. The Agent association preflight is a separate read.
 An interrupted or unavailable PATCH reply keeps the result unknown and blocks
 another channel write until Refresh. Draft channel disablement changes only
 Configuration values; it does not stop a running Agent. The
 [operator workflow](operator-workflow.md) records the executable management
 commands and the lifecycle procedures still unavailable in this API.
 
-### 5. Commit only the current response, or clear the view
+### 5. Read and replace live workspace files
+
+`apps/controller/src/console/agents/workspace.mjs:renderWorkspaceFiles` opens from
+`tab=workspace` after an exact Agent read. It bypasses Configuration and revision
+history reads, because workspace contents belong to the live Agent. An Agent
+without an active revision gets an unavailable explanation without file requests.
+
+The editor issues one GET for each supported filename. A successful response
+populates that file's editor; `404` permits an explicit create attempt, and other
+failures leave it disabled. Save sends `{ content }` to the same exact-Agent PUT
+route. It neither patches Configuration nor admits a revision. The existing
+[workspace flow](workspace-files.md) owns authorization and native file transport.
+Each result stays local to its file. Unknown write outcomes require a successful
+reload before another save; the editor never retries a write automatically.
+
+Creation uses the channel editor to update the initial Configuration JSON before
+its POST. It cannot send initial workspace files because the create API has no
+file fields and workspace access requires a deployed gateway.
+
+### 6. Commit only the current response, or clear the view
 
 `apps/controller/src/console/console.mjs:loadPage`, `logout`
 

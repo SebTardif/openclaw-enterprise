@@ -84,7 +84,14 @@ on an ephemeral loopback port. Configuration and Compute helpers are test-only.
 The Agent browser suite seeds active revision pointers only to render admitted
 history; that fixture does not prove runtime dispatch, worker leases, Compute
 Driver effects, PostgreSQL persistence, live Provider health, or deployed Agent
-runtime behavior.
+runtime behavior. The channel creation suite verifies staged Slack/Teams values
+through real Configuration and Agent requests, and the channel generation case
+races a real Configuration update against the browser's PATCH. The workspace
+browser suite uses the real authenticated Fastify file routes with a file-backed
+workspace access fixture. It verifies editor loading, independent saves, missing
+file creation, permission/error handling, and reload after an uncertain write.
+That fixture does not exercise the native gateway transport; use the separate
+[Kubernetes workspace-file proof](#kubernetes-model-turns-and-secrets) for that boundary.
 
 Run the API/static boundary checks without a browser:
 

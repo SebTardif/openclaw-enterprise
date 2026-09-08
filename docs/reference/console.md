@@ -2,8 +2,8 @@
 
 The controller serves a browser console at `/console/` on its existing origin.
 Sign in, select a Namespace, inspect accessible Agents, Providers, and
-Namespaces, create Agents with editable Configuration JSON, and edit selected channel
-settings on an Agent's saved Configuration draft. Agent deployment, rollback,
+Namespaces, create Agents with editable Configuration JSON and Slack/Teams settings,
+edit channel drafts, and read or replace supported live workspace files. Agent deployment, rollback,
 live runtime health, and Agent deletion are unavailable in the console.
 The [operator workflow](../flows/operator-workflow.md) connects the supported
 management API commands and runtime checks, including current lifecycle and
@@ -66,6 +66,16 @@ provision the required credentials before deployment. Changing execution mode
 updates untouched JSON; use **Reset template** to replace your edits. The form
 requires valid JSON with an object at its root.
 
+Use the Slack and Microsoft Teams cards to configure initial channels before creating
+the Agent. Their settings update the same Configuration JSON, including the required
+plugin entries. No channel request is sent until you submit **Create Agent**. Enabled
+channels require Dedicated execution and operator-provisioned credentials.
+
+Workspace files cannot be initialized during creation: the backend accepts files
+only after the Agent has an active revision and a reachable gateway. Create and
+deploy the Agent, then open **Workspace files** to load or create the four supported
+files. The creation form does not store unsaved file contents.
+
 Choose an optional Provider and service account from the select lists. Provider
 discovery requires Installation `administer`; service accounts are readable
 accounts in the selected Namespace. Select the two associations independently.
@@ -116,9 +126,9 @@ be shared by multiple Agents, channel edits can affect future deployments of
 other Agents that reference the same Configuration.
 
 Before saving, the browser rereads the Agent and Configuration and checks that
-the Agent still references the same Configuration and its generation is unchanged. That detects common
-stale-editor cases, but it is not atomic lost-update protection; the API accepts
-the last valid writer. Refresh before retrying a conflict or uncertain save.
+the Agent still references the same Configuration and its generation is unchanged. The PATCH also supplies the loaded `expectedGeneration`, so the backend rejects
+a concurrent Configuration update with `409` instead of overwriting it. The Agent
+association preflight remains a separate read. Refresh before retrying a conflict or uncertain save.
 An unconfirmed PATCH shows **Outcome unknown**, closes the editor, and disables
 channel writes until Refresh loads current saved state. The write may have
 succeeded; there is no automatic replay. **Disable Slack** and **Disable
@@ -159,6 +169,28 @@ Logout immediately hides private content and stops pending reads. The console
 returns to login after sign-out succeeds or a session check confirms that the
 session is absent. If it cannot confirm logout, it stays on a blocking error with
 Retry. Do not treat that error as confirmation that the server session was revoked.
+
+## Edit workspace files
+
+Open **Workspace files** on an Agent to load `AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
+and `USER.md`. This view reads the live Agent workspace independently of the
+Configuration draft or browsed AgentRevision. It requires an active revision and
+reachable gateway; selection alone does not prove access. Files remain in the
+Agent workspace and are never copied into a Configuration or revision.
+
+Each file has its own **Save** and **Reload** action. A save creates or replaces
+only that file through the [workspace file API](agents.md#workspace-files).
+The editor enforces the API's 16 KiB UTF-8 and Unicode limits. A missing file can
+be created; other failed reads keep editing disabled. Agent `read` permits
+loading, while `operate` is required to save. Reload replaces unsaved edits with
+the current file. Workspace writes have no version check; the last writer wins.
+
+A failed write preserves the editor contents. An unknown outcome disables that
+file's Save action until a successful reload, so an uncertain write is never
+replayed automatically. Review the loaded contents before deciding whether to
+write again. Files load and save independently; success for one file says
+nothing about another file's result. For unavailable gateways, follow the
+[workspace access setup](../guides/deploy.md#agent-workspace-files).
 
 ## Routes and packaging
 

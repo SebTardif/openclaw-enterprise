@@ -1,5 +1,6 @@
 import { element, button } from "../dom.mjs";
 import { renderChannels } from "../channels.mjs";
+import { renderWorkspaceFiles } from "./workspace.mjs";
 import { displayDate, shortId, namespacePath, link, message } from "./list.mjs";
 
 function errorPanel(error, context, retry) {
@@ -44,7 +45,8 @@ export async function renderAgentDetail(context) {
   if (!context.isCurrent()) return;
   context.setTitle(agent.name);
   const selected = url.searchParams.get("revision") ?? agent.activeRevisionId ?? "draft";
-  const selectedTab = url.searchParams.get("tab") === "channels" ? "channels" : "configuration";
+  const tab = url.searchParams.get("tab");
+  const selectedTab = ["channels", "workspace"].includes(tab) ? tab : "configuration";
   const target = (revision = selected, tab = selectedTab) =>
     `agents/${agentId}?revision=${encodeURIComponent(revision)}&tab=${tab}`;
   const change = (revision, tab) => context.navigate(target(revision, tab));
@@ -70,6 +72,7 @@ export async function renderAgentDetail(context) {
   for (const [id, label] of [
     ["configuration", "Configuration"],
     ["channels", "Channels"],
+    ["workspace", "Workspace files"],
   ])
     tabs.append(
       button(label, () => change(selected, id), {
@@ -87,6 +90,16 @@ export async function renderAgentDetail(context) {
       "The API supplies no serving observation. Selecting or admitting a revision does not confirm runtime health, completed cutover, or shutdown. An operator must verify the installed runtime separately.",
     ),
   );
+  if (selectedTab === "workspace") {
+    view.replaceChildren(
+      header,
+      identity,
+      serving,
+      tabs,
+      renderWorkspaceFiles(context, agent, path),
+    );
+    return;
+  }
   view.replaceChildren(header, identity, serving, selector, tabs, content);
   const results = await Promise.allSettled([
     request(`${path}/revisions`),
@@ -233,7 +246,10 @@ export async function renderAgentDetail(context) {
           mutationStarted = true;
           await request(
             `${namespacePath(namespaceId)}/configurations/${encodeURIComponent(snapshot.id)}`,
-            { method: "PATCH", body: { values: updatedValues } },
+            {
+              method: "PATCH",
+              body: { values: updatedValues, expectedGeneration: snapshot.generation },
+            },
           );
           if (context.isCurrent()) change("draft", "channels");
         } catch (error) {

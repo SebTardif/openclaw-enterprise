@@ -13,6 +13,7 @@ import {
   signInToControllerApp,
 } from "../helpers/auth-session.mjs";
 import { createTestConfigurationDriver } from "../helpers/configuration-driver.mjs";
+import { createRuntimeAdmissionContext } from "../fixtures/runtime-admission-context.mjs";
 
 const installationId = "ins_4033697e-6397-4cc6-9b04-8ec17af78cf1";
 // Bootstrap allocates the first Namespace ID for the initial default Namespace.
@@ -258,21 +259,28 @@ async function createAgent(fixture, namespace, name) {
     body: { name, configurationId: configuration.payload.data.id },
   });
   assert.equal(created.response.status, 201);
-  const deployed = await request(
-    fixture.app,
-    `/namespaces/${namespace.id}/agents/${created.payload.data.id}/deploy`,
-    { method: "POST" },
+  // Seed an admitted revision through the controller: the public v2 deploy route
+  // now returns an asynchronous command receipt, not a revision. These tests
+  // exercise workspace HTTP access, not deployment command dispatch.
+  const revision = await fixture.controller.deployAgent(
+    fixture.administrator.id,
+    {
+      namespaceId: namespace.id,
+      agentId: created.payload.data.id,
+      expectedLifecycleGeneration: null,
+    },
+    resolveApprovedDevelopmentHarness,
+    createRuntimeAdmissionContext(installationId, fixture.administrator.id),
   );
-  assert.equal(deployed.response.status, 202);
   await fixture.controller.transact((unit) =>
     unit.agents.compareAndSetActiveRevision(
       namespace.id,
       created.payload.data.id,
       undefined,
-      deployed.payload.data.id,
+      revision.id,
     ),
   );
-  return { agent: created.payload.data, revision: deployed.payload.data };
+  return { agent: created.payload.data, revision };
 }
 
 function fileAudits(fixture) {
