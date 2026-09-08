@@ -22,10 +22,10 @@ import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs
 // Composes actual Controller/Deployment normalization, private Central enrollment,
 // active reader, CandidateSource, new bindings factory, full fixed aggregator,
 // Use resolver, original selector/storage, first revision INSERT and replay.
-// SQL/account/Drivers/qualifiers are controlled external peers. The pending
-// Central record reader is explicitly modeled over its REAL context recognition
-// plus scripted row observations; this does not qualify that missing producer,
-// PostgreSQL locking, native support, credential issuance or provider execution.
+// The actual Central records reader supplies its captured observations over
+// scripted SQL. Account/Drivers/native/credential/storage/role/capability suppliers
+// remain controlled; this does not qualify PostgreSQL locking, native support,
+// credential issuance or provider execution.
 // This selected command does not request the separate credential sidecar.
 const copy = structuredClone;
 const noop = async () => {};
@@ -422,40 +422,26 @@ function scenario(options = {}) {
               trace.push("records");
               selectedUnit = unit;
               const before = sql.length;
-              const original = await captured.contexts.readLocked(request, candidate, unit, io);
-              assert.equal(
-                sql.length,
-                before,
-                "private context recognition must not relock parents after head",
-              );
-              // Pending Central records adapter is controlled HERE, over a genuine
-              // original context observation and explicit scripted account/Agent rows.
-              const sourceIdentity = Object.freeze({ controlledRecord: randomUUID() });
-              const record = {
-                ...original,
-                sourceIdentity,
-                records: {
-                  configuration: original.configuration,
-                  agent: {
-                    id: agentRow.id,
-                    namespaceId: agentRow.namespace_id,
-                    servicePrincipalId: agentRow.service_principal_id,
-                    serviceAccountId: accountRow.id,
-                    providerId: null,
-                  },
-                  serviceAccount: {
-                    id: accountRow.id,
-                    namespaceId: accountRow.namespace_id,
-                    name: accountRow.name,
-                    credential: accountRow.credential,
-                  },
-                  providerBinding: undefined,
-                  secrets: [],
-                  head: profile.head,
-                },
-              };
-              observations.add(sourceIdentity);
-              return record;
+              const original = await captured.records.readLocked(request, candidate, unit, io);
+              try {
+                assert.equal(
+                  sql.length,
+                  before,
+                  "captured record observation must not relock parents after head",
+                );
+                observations.add(original.sourceIdentity);
+                // Forward the original lease unchanged; the factory owns it from here.
+                return original;
+              } catch (error) {
+                // A failed observation still belongs to this wrapper until handoff.
+                try {
+                  io.poison(error);
+                } catch {}
+                try {
+                  await original.release();
+                } catch {}
+                throw error;
+              }
             },
           };
           function qualify(name, output) {
