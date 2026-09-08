@@ -11,7 +11,10 @@ import type {
   DeploymentCandidateOperandsV2,
   DeploymentCandidateResultV2,
 } from "../../ports/workload-profile-candidate.ts";
-import type { WorkloadProfileDeploymentUnitV2 } from "../../workload-profiles/admitted-use.ts";
+import type {
+  WorkloadProfileDeploymentUnitV2,
+  WorkloadProfileCandidateRecordsV2,
+} from "../../workload-profiles/admitted-use.ts";
 import { canonicalizeWorkloadProfileJson } from "../../workload-profiles/canonical.ts";
 import { ScopeViolationError } from "../../errors.ts";
 
@@ -26,7 +29,10 @@ type ResultOf<
   Group extends keyof Repositories,
   Method extends keyof Repositories[Group],
 > = Repositories[Group][Method] extends (...args: never[]) => Promise<infer Value> ? Value : never;
-export interface CandidateObservedConfigurationV2 {
+export interface CandidateObservedConfigurationV2 extends Pick<
+  WorkloadProfileCandidateRecordsV2,
+  "agent" | "serviceAccount" | "providerBinding" | "secrets"
+> {
   readonly metadata: Readonly<ConfigurationOwnership>;
   readonly validated: Readonly<Configuration>;
   readonly secretBindings: SecretBindings;
@@ -60,6 +66,7 @@ export function makeTrackedCandidateOperations(owner: CandidateOperationOwnerV2)
   let headRead = false;
   let account: ResultOf<"serviceAccounts", "lockServiceAccount">;
   let providerBindingRead = false;
+  let providerBinding: ResultOf<"serviceAccounts", "findServiceAccountProviderBinding">;
   let metadata: Readonly<ConfigurationOwnership> | undefined;
   let bindings: SecretBindings | undefined;
   const lockedSecrets: Readonly<Secret>[] = [];
@@ -341,6 +348,7 @@ export function makeTrackedCandidateOperations(owner: CandidateOperationOwnerV2)
               id,
             );
             providerBindingRead = true;
+            providerBinding = result === undefined ? undefined : immutableCopy(result);
             return result;
           }),
       }),
@@ -637,6 +645,18 @@ export function makeTrackedCandidateOperations(owner: CandidateOperationOwnerV2)
           metadata: metadata!,
           validated: validated!,
           secretBindings: candidateBindings,
+          agent: Object.freeze({
+            id: agent!.id,
+            namespaceId: agent!.namespaceId,
+            servicePrincipalId: agent!.servicePrincipalId,
+            ...(agent!.serviceAccountId === undefined
+              ? {}
+              : { serviceAccountId: agent!.serviceAccountId }),
+            providerId: agent!.providerId,
+          }),
+          serviceAccount: account!,
+          providerBinding,
+          secrets: Object.freeze([...lockedSecrets]),
         });
       } catch (error) {
         return fail(error);

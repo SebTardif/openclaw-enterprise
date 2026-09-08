@@ -70,6 +70,10 @@ The focused `workload-profile-admission` test verifies missing-participant denia
 
 [`createWorkloadProfileCandidateBindingsSourceV2`](../../packages/occ/src/workload-profiles/admitted-use.ts) composes an original `WorkloadProfileCandidateRecordsReaderV2` with four fixed qualifiers. Construct it with the genuine suppliers, then pass the result to `createWorkloadProfileCandidateSourceV2(contexts, bindings)` for the existing Use resolver. The records reader must recognize the original deployment unit and tracked operation, returning its captured locked normalization records and separate opaque source identity without acquiring new parent locks.
 
+The PostgreSQL state's `workloadProfileCandidateContextV2(...)` supplies this reader as `records`, beside `candidates` and `contexts`. It reads the same completed normalization slot and selected admission head. Returned observations include the normalized Configuration, locked Agent and ServiceAccount, actual optional provider-binding lookup, and Secret metadata in original binding-entry order, including repeated aliases. API-key normalization leaves the provider binding undefined. Reads issue no new SQL or Driver resolution. The opaque identity belongs to the original slot; copied units or another operation cannot use it to enroll.
+
+Each record lease owns only its observation. Retain it through the original transaction's final currentness checks, then release it; the enclosing owner retains and cleans up the original Driver guards. Currentness is synchronous, remains valid after acquisition closes while the owner is live, and fails after observer release, owner expiry or a guarded source change. Reusing a released observation poisons the recognized owner. The component protocol is exercised by `node --test tests/conformance/workload-profile-candidate-context.test.mjs` with actual state, repositories and normalizer over controlled SQL and Driver peers; it does not establish PostgreSQL locking or the four semantic qualifications below.
+
 Each qualifier recognizes the same original records and supplies its own retained lease:
 
 - `native`: installed native Configuration and module semantics.

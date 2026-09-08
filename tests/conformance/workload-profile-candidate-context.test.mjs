@@ -68,7 +68,22 @@ function protocol(options = {}) {
     backend_uid: `uid-${index}`,
     created_at: profileAcceptedAt,
   }));
-  const credential = { kind: "api_key", secretRef: { name: "credential", key: "value" } };
+  const credential = {
+    kind: options.managed ? "access_token" : "api_key",
+    secretRef: { name: "credential", key: "value" },
+  };
+  const provider = {
+    id: "controlled-provider",
+    type: "chatgpt",
+    drivers: { service_account: "controlled-account-driver" },
+    configuration: { workspaceId: "controlled-workspace", apiKeyPath: "/controlled/provider-key" },
+  };
+  const providerRow = {
+    provider_id: provider.id,
+    driver_id: provider.drivers.service_account,
+    workspace_id: provider.configuration.workspaceId,
+    credential_issued: true,
+  };
   const metadata = {
     id: configurationId,
     namespaceId: profile.namespaceId,
@@ -89,7 +104,7 @@ function protocol(options = {}) {
     namespace_id: profile.namespaceId,
     name: "controlled-agent",
     configuration_id: configurationId,
-    provider_id: null,
+    provider_id: options.managed ? provider.id : null,
     execution_mode: "dedicated",
     service_principal_id: "controlled/service-principal",
     service_account_id: serviceAccountId,
@@ -104,7 +119,7 @@ function protocol(options = {}) {
     expectedDraft: {
       configurationId,
       configurationGeneration: 1,
-      providerId: null,
+      providerId: agentRow.provider_id,
       executionMode: "dedicated",
       serviceAccountId,
       workloadProfileSelection: profile.head.selection,
@@ -194,6 +209,10 @@ function protocol(options = {}) {
       if (statement.includes("FROM occ.agent_runtime_intents")) {
         trace.push("lifecycle-head");
         return response();
+      }
+      if (statement.includes("FROM occ.service_account_driver_bindings")) {
+        trace.push("provider-binding");
+        return response(options.missingProviderBinding ? [] : [providerRow]);
       }
       if (statement.includes("FROM occ.service_accounts")) {
         trace.push("lock-account");
@@ -358,7 +377,7 @@ function protocol(options = {}) {
         trace.push("authorize");
       },
     },
-    providers: new Map(),
+    providers: new Map(options.managed ? [[provider.id, provider]] : []),
     loggingLevel: "info",
     async configurationOperation(operation) {
       trace.push("configuration-wrapper");
@@ -411,6 +430,14 @@ function protocol(options = {}) {
     owner.unit.retain(observation);
     return observation;
   };
+  const readRecords = async (owner, result, changed = result.candidate) => {
+    const before = sql.length;
+    const observation = await candidate.records.readLocked(request, changed, owner.unit, owner.io);
+    assert.equal(sql.length, before, "records read must not issue post-head SQL");
+    held.push(observation);
+    owner.unit.retain(observation);
+    return observation;
+  };
   const head = (owner) => profileOwner.activeReader.readLocked(request, owner.unit, owner.io);
   return {
     ...profile,
@@ -421,6 +448,7 @@ function protocol(options = {}) {
     run,
     capture,
     read,
+    readRecords,
     head,
     candidate,
     request,
@@ -430,6 +458,7 @@ function protocol(options = {}) {
     sql,
     secretIds,
     configurationDocument,
+    transportRows: { agentRow, credential, providerRow, secretRows },
     get inserts() {
       return inserts;
     },
@@ -512,6 +541,224 @@ test("real state and original normalizer capture once before head, copied data r
   assert.ok(f.trace.indexOf("COMMIT") < f.trace.indexOf("release-security"));
   assert.equal(revision.workloadProfileUse.schemaVersion, 2);
   assert.throws(() => lease.assertCurrent());
+});
+
+test("records expose the same captured rows and selected head with an opaque slot identity", async () => {
+  let lease;
+  const f = protocol({
+    atCommit() {
+      assert.throws(() => f.io.assertActive());
+      assert.equal(lease.assertCurrent(), undefined);
+    },
+  });
+  await f.run((owner) =>
+    f.capture(owner, async (result) => {
+      const selected = await f.head(owner);
+      const context = await f.read(owner, result);
+      lease = await f.readRecords(owner, result, copy(result.candidate));
+      const second = await f.readRecords(owner, result);
+      assert.strictEqual(second.sourceIdentity, lease.sourceIdentity);
+      assert.notStrictEqual(lease.sourceIdentity, lease);
+      assert.equal(Object.getPrototypeOf(lease.sourceIdentity), null);
+      assert.deepEqual(Reflect.ownKeys(lease.sourceIdentity), []);
+      assert.equal(Object.isFrozen(lease.sourceIdentity), true);
+      assert.strictEqual(lease.records.configuration, context.configuration);
+      assert.strictEqual(lease.records.head, selected.head);
+      assert.deepEqual(lease.records.agent, {
+        id: result.lockedAgent.id,
+        namespaceId: f.namespaceId,
+        servicePrincipalId: "controlled/service-principal",
+        serviceAccountId: result.lockedAgent.serviceAccountId,
+        providerId: null,
+      });
+      assert.deepEqual(lease.records.serviceAccount, {
+        id: result.lockedAgent.serviceAccountId,
+        namespaceId: f.namespaceId,
+        name: "controlled-account",
+        credential: { kind: "api_key", secretRef: { name: "credential", key: "value" } },
+      });
+      assert.equal(lease.records.providerBinding, undefined);
+      assert.deepEqual(lease.records.secrets, []);
+      assert.deepEqual(
+        lease.records.configuration.immutableConfigurationContent.secretBindings,
+        {},
+      );
+      assert.throws(() => {
+        lease.records.serviceAccount.credential.secretRef.name = "changed";
+      });
+      assert.throws(() => {
+        lease.records.agent.servicePrincipalId = "changed";
+      });
+      assert.throws(() => {
+        lease.records.secrets.push({});
+      });
+      assert.equal(f.trace.includes("provider-binding"), false);
+    }),
+  );
+  assert.equal(f.trace.includes("COMMIT"), true);
+  assert.throws(() => lease.assertCurrent());
+});
+
+test("managed records retain actual provider binding and B,A,B Secret observations before head", async () => {
+  const f = protocol({ managed: true, secrets: true });
+  await f.run((owner) =>
+    f.capture(owner, async (result) => {
+      await f.head(owner);
+      // Change the controlled transport inputs after normalization. The reader
+      // must return its original repository observations, with no new lookup.
+      f.transportRows.providerRow.workspace_id = "later-workspace";
+      f.transportRows.agentRow.service_principal_id = "later-principal";
+      f.transportRows.secretRows[1].backend_uid = "later-uid";
+      f.transportRows.credential.secretRef.name = "later-credential";
+      const before = [...f.trace];
+      const lease = await f.readRecords(owner, result);
+      assert.deepEqual(f.trace, before);
+      assert.deepEqual(lease.records.providerBinding, {
+        providerId: "controlled-provider",
+        driverId: "controlled-account-driver",
+        workspaceId: "controlled-workspace",
+        credentialIssued: true,
+      });
+      assert.equal(lease.records.agent.providerId, "controlled-provider");
+      assert.equal(lease.records.agent.servicePrincipalId, "controlled/service-principal");
+      assert.equal(lease.records.serviceAccount.credential.kind, "access_token");
+      assert.equal(lease.records.serviceAccount.credential.secretRef.name, "credential");
+      assert.deepEqual(
+        lease.records.secrets.map((secret) => secret.id),
+        [f.secretIds[1], f.secretIds[0], f.secretIds[1]],
+      );
+      assert.deepEqual(
+        lease.records.secrets.map((secret) => secret.backendRef.uid),
+        ["uid-1", "uid-0", "uid-1"],
+      );
+      assert.equal(f.trace.filter((value) => value === "provider-binding").length, 1);
+      assert.ok(f.trace.indexOf("provider-binding") < f.trace.indexOf("lock-configuration"));
+      assert.ok(f.trace.indexOf("provider-binding") < f.trace.indexOf("head-share"));
+      assert.deepEqual(
+        f.trace.filter((value) => value.startsWith("resolve:")),
+        [f.secretIds[1], f.secretIds[0]].map((id) => `resolve:${id}`),
+      );
+    }),
+  );
+});
+
+test("missing managed provider binding never publishes records", async () => {
+  const f = protocol({ managed: true, missingProviderBinding: true });
+  let published = false;
+  await assert.rejects(
+    f.run((owner) =>
+      f.capture(owner, async () => {
+        published = true;
+      }),
+    ),
+  );
+  assert.equal(published, false);
+  assert.equal(f.trace.includes("head-share"), false);
+  assert.equal(f.trace.includes("COMMIT"), false);
+});
+
+for (const phase of ["before-normalization", "before-head", "after-callback"])
+  test(`records refuse ${phase} and poison a recognized owner`, async () => {
+    const f = protocol();
+    await assert.rejects(
+      f.run(async (owner) => {
+        let candidate = {};
+        const read = () =>
+          f.candidate.records.readLocked(f.request, candidate, owner.unit, owner.io);
+        if (phase === "before-normalization") return read().catch(() => {});
+        await f.capture(owner, async (result) => {
+          candidate = result.candidate;
+          if (phase === "before-head") await read().catch(() => {});
+          else await f.head(owner);
+        });
+        if (phase === "after-callback") await read().catch(() => {});
+      }),
+    );
+    assert.equal(f.trace.includes("COMMIT"), false);
+    assert.ok(f.trace.includes("ROLLBACK"));
+  });
+
+for (const kind of ["copied-unit", "foreign-io", "request", "candidate"])
+  test(`records reject ${kind} without post-head SQL`, async () => {
+    const f = protocol();
+    await assert.rejects(
+      f.run((owner) =>
+        f.capture(owner, async (result) => {
+          await f.head(owner);
+          const before = f.sql.length;
+          await assert.rejects(
+            f.candidate.records.readLocked(
+              kind === "request" ? { ...f.request, configurationVersion: 2 } : f.request,
+              kind === "candidate" ? { ...result.candidate, configuration: {} } : result.candidate,
+              kind === "copied-unit" ? { ...owner.unit } : owner.unit,
+              kind === "foreign-io" ? { ...owner.io } : owner.io,
+            ),
+          );
+          assert.equal(f.sql.length, before);
+          // An unrecognized copied unit has no original owner to poison. Propagate
+          // that refusal; failures on recognized units remain latched if caught.
+          if (kind === "copied-unit") throw new Error("copied owner refused");
+        }),
+      ),
+    );
+    assert.equal(f.trace.includes("COMMIT"), false);
+  });
+
+test("record observer release is local and idempotent; the original Driver hold stays owned", async () => {
+  const f = protocol();
+  const replacement = { ...f.configurationDriver, id: "next-configuration" };
+  f.selection.registerDriver(replacement);
+  await f.run((owner) =>
+    f.capture(owner, async (result) => {
+      await f.head(owner);
+      const first = await f.candidate.records.readLocked(
+        f.request,
+        result.candidate,
+        owner.unit,
+        owner.io,
+      );
+      const second = await f.readRecords(owner, result);
+      assert.strictEqual(first.sourceIdentity, second.sourceIdentity);
+      await first.release();
+      await first.release();
+      assert.equal(second.assertCurrent(), undefined);
+      assert.throws(() => f.selection.selectDriver("configuration", replacement.id));
+    }),
+  );
+  assert.strictEqual(f.selection.selectDriver("configuration", replacement.id), replacement);
+});
+
+test("released record reuse latches the first failure and poisons sibling observations", async () => {
+  const f = protocol();
+  let firstFailure;
+  await assert.rejects(
+    f.run((owner) =>
+      f.capture(owner, async (result) => {
+        await f.head(owner);
+        const first = await f.candidate.records.readLocked(
+          f.request,
+          result.candidate,
+          owner.unit,
+          owner.io,
+        );
+        const second = await f.readRecords(owner, result);
+        await first.release();
+        assert.throws(
+          () => first.assertCurrent(),
+          (error) => {
+            firstFailure = error;
+            return true;
+          },
+        );
+        assert.throws(
+          () => second.assertCurrent(),
+          (error) => error === firstFailure,
+        );
+      }),
+    ),
+    (error) => error === firstFailure,
+  );
+  assert.equal(f.trace.includes("COMMIT"), false);
 });
 
 test("actual repeated binding locks preserve B,A,B and distinct resolve B,A without sorted reordering", async () => {
@@ -639,6 +886,7 @@ test("a method change after the operation poisons retained currentness before CO
       f.capture(owner, async (result) => {
         await f.head(owner);
         await f.read(owner, result);
+        await f.readRecords(owner, result);
       }),
     ),
   );

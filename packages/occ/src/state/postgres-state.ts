@@ -20,6 +20,8 @@ import type {
   WorkloadProfileOwnedOperationV2,
   WorkloadProfileActiveReaderV2,
   WorkloadProfileCandidateContextReaderV2,
+  WorkloadProfileCandidateRecordsReaderV2,
+  WorkloadProfileCandidateRecordsV2,
 } from "../workload-profiles/admitted-use.ts";
 import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
 import type { UpdateAgentInput } from "../services/agent/port.ts";
@@ -317,6 +319,11 @@ interface ProfileCandidateSlotV2 {
   completed: boolean;
   headStarted: boolean;
   head?: WorkloadProfileAdmissionHeadV2;
+  readonly sourceIdentity: object;
+  observations?: Pick<
+    WorkloadProfileCandidateRecordsV2,
+    "agent" | "serviceAccount" | "providerBinding" | "secrets"
+  >;
   snapshot?: Readonly<AgentRevision>;
   configuration?: Awaited<
     ReturnType<WorkloadProfileCandidateContextReaderV2["readLocked"]>
@@ -2380,6 +2387,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   ): Readonly<{
     candidates: WorkloadProfileCandidateContinuationV2;
     contexts: WorkloadProfileCandidateContextReaderV2;
+    records: WorkloadProfileCandidateRecordsReaderV2;
   }> {
     const fail = (record: ProfileSelectedEnrollmentV2, error: unknown): never => {
       const slot = record.candidate;
@@ -2450,57 +2458,88 @@ export class PostgresPlatformState implements PlatformStateStore {
       });
       return task;
     };
+    const observe = (
+      ...[input, suppliedCandidate, unit, io]: Parameters<
+        WorkloadProfileCandidateContextReaderV2["readLocked"]
+      >
+    ) => {
+      const record = recognized(unit, io, true);
+      try {
+        const slot = record.candidate;
+        if (
+          !slot?.accepting ||
+          !slot.completed ||
+          !slot.head ||
+          !slot.snapshot ||
+          !slot.configuration ||
+          !slot.observations
+        )
+          throw new ScopeViolationError(
+            "No completed original candidate and profile head are captured.",
+          );
+        const request = decodeWorkloadProfileSelectionRequestV2(input);
+        const candidate = immutableCopy(suppliedCandidate);
+        const expected = record.deploymentBinding![1].command.expectedDraft;
+        if (
+          request.installationId !== unit.installationId ||
+          request.namespaceId !== unit.namespaceId ||
+          request.agentId !== unit.agentId ||
+          request.revisionId !== slot.snapshot.id ||
+          request.configurationRef !== slot.configuration.configurationRef ||
+          request.configurationVersion !== slot.configuration.configurationGeneration ||
+          !sameCandidateDataV2(request.selection, expected.workloadProfileSelection) ||
+          !sameCandidateDataV2(request.selection, slot.head.selection) ||
+          !sameCandidateDataV2(candidate, slot.snapshot)
+        )
+          throw new ScopeViolationError(
+            "The copied candidate differs from original normalization.",
+          );
+        let released = false;
+        const current = (): undefined => {
+          recognized(unit, io, false);
+          if (released || !slot.completed || record.candidate !== slot)
+            return fail(record, new ScopeViolationError("The candidate observation expired."));
+          slot.assertCurrent();
+          return undefined;
+        };
+        current();
+        return Object.freeze({
+          configuration: slot.configuration,
+          observations: slot.observations,
+          head: slot.head,
+          sourceIdentity: slot.sourceIdentity,
+          assertCurrent: current,
+          release: async () => {
+            released = true;
+          },
+        });
+      } catch (error) {
+        return fail(record, error);
+      }
+    };
     const contexts = Object.freeze<WorkloadProfileCandidateContextReaderV2>({
-      readLocked: async (input, suppliedCandidate, unit, io) => {
-        const record = recognized(unit, io, true);
-        try {
-          const slot = record.candidate;
-          if (
-            !slot?.accepting ||
-            !slot.completed ||
-            !slot.head ||
-            !slot.snapshot ||
-            !slot.configuration
-          )
-            throw new ScopeViolationError(
-              "No completed original candidate and profile head are captured.",
-            );
-          const request = decodeWorkloadProfileSelectionRequestV2(input);
-          const candidate = immutableCopy(suppliedCandidate);
-          const expected = record.deploymentBinding![1].command.expectedDraft;
-          if (
-            request.installationId !== unit.installationId ||
-            request.namespaceId !== unit.namespaceId ||
-            request.agentId !== unit.agentId ||
-            request.revisionId !== slot.snapshot.id ||
-            request.configurationRef !== slot.configuration.configurationRef ||
-            request.configurationVersion !== slot.configuration.configurationGeneration ||
-            !sameCandidateDataV2(request.selection, expected.workloadProfileSelection) ||
-            !sameCandidateDataV2(request.selection, slot.head.selection) ||
-            !sameCandidateDataV2(candidate, slot.snapshot)
-          )
-            throw new ScopeViolationError(
-              "The copied candidate differs from original normalization.",
-            );
-          let released = false;
-          const current = (): undefined => {
-            recognized(unit, io, false);
-            if (released || !slot.completed || record.candidate !== slot)
-              return fail(record, new ScopeViolationError("The candidate observation expired."));
-            slot.assertCurrent();
-            return undefined;
-          };
-          current();
-          return Object.freeze({
-            configuration: slot.configuration,
-            assertCurrent: current,
-            release: async () => {
-              released = true;
-            },
-          });
-        } catch (error) {
-          return fail(record, error);
-        }
+      readLocked: async (...args) => {
+        const observed = observe(...args);
+        return Object.freeze({
+          configuration: observed.configuration,
+          assertCurrent: observed.assertCurrent,
+          release: observed.release,
+        });
+      },
+    });
+    const records = Object.freeze<WorkloadProfileCandidateRecordsReaderV2>({
+      readLocked: async (...args) => {
+        const observed = observe(...args);
+        return Object.freeze({
+          sourceIdentity: observed.sourceIdentity,
+          records: Object.freeze({
+            configuration: observed.configuration,
+            ...observed.observations,
+            head: observed.head,
+          }),
+          assertCurrent: observed.assertCurrent,
+          release: observed.release,
+        });
       },
     });
     const candidates = Object.freeze<WorkloadProfileCandidateContinuationV2>({
@@ -2541,6 +2580,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           accepting: true,
           completed: false,
           headStarted: false,
+          sourceIdentity: Object.freeze(Object.create(null)) as object,
           failed: false,
           pending: new Set(),
           assertCurrent: capture.assertCurrent,
@@ -2585,6 +2625,12 @@ export class PostgresPlatformState implements PlatformStateStore {
                 secretBindings: observed.secretBindings,
               },
             });
+            slot.observations = Object.freeze({
+              agent: observed.agent,
+              serviceAccount: observed.serviceAccount,
+              providerBinding: observed.providerBinding,
+              secrets: observed.secrets,
+            });
             slot.completed = true;
             capture.assertCurrent();
             return await work(result);
@@ -2596,7 +2642,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         });
       },
     });
-    return Object.freeze({ candidates, contexts });
+    return Object.freeze({ candidates, contexts, records });
   }
 
   /** Server-owned composition over the original mutation/read callback. Missing
