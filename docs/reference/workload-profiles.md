@@ -1,6 +1,6 @@
 # Workload profile contracts and retained preparations
 
-Workload profile support currently provides closed selection contracts, a strict canonical byte codec, a closed manifest decoder and projections, and storage adapters for inert preparation records. The operator service is unavailable, and its route definitions are not registered in the controller. Retaining a candidate does not approve it, authorize deployment, select Compute, or establish current runtime protection.
+Workload profile support currently provides closed selection contracts, a strict canonical byte codec, a closed manifest decoder and projections, storage adapters for inert preparation records, and internal [candidate binding qualification](#candidate-binding-qualification). The operator service is unavailable, and its route definitions are not registered in the controller. Retaining a candidate does not approve it, authorize deployment, select Compute, or establish current runtime protection.
 
 An immutable selection names `manifestRef`, `manifestDigest`, `admissionRef`, and `admissionVersion`. A runtime use additionally identifies its Installation, Namespace, `harness` component, five immutable profile roles, canonical format, and admitted configuration digest. These references identify intended bytes; current authorization must be checked separately when accepting or using them.
 
@@ -65,3 +65,29 @@ In this unit, successful preparation and its mandatory attributable local audit 
 The service contains prepare and original-actor readback control flow around this unit, but its genuine account participant is not implemented or installed. That participant must consume the original method and canonical request once, verify actual human/session/account eligibility in the same transaction and hold its currentness through terminal cleanup. The existing channel request handle cannot substitute. Missing participation returns dependency-unavailable; memory authentication has no equivalent shared transaction. All operator routes and active acceptance, withdrawal and current-use methods remain unavailable. Internal PostgreSQL tests with synthetic actor records establish policy/storage ordering only, never authenticated human admission.
 
 The focused `workload-profile-admission` test verifies missing-participant denials and actual runtime instance/selection correspondence without a database. Its explicitly selected `workload-profile-admission-postgres` companion verifies actual policy writer contention, audit rollback, bounded cancellation and uncertain COMMIT on a dedicated migrated database. Successful internal tests do not remove the missing account, invalidation, runtime-definition or active-use prerequisites.
+
+## Candidate binding qualification
+
+[`createWorkloadProfileCandidateBindingsSourceV2`](../../packages/occ/src/workload-profiles/admitted-use.ts) composes an original `WorkloadProfileCandidateRecordsReaderV2` with four fixed qualifiers. Construct it with the genuine suppliers, then pass the result to `createWorkloadProfileCandidateSourceV2(contexts, bindings)` for the existing Use resolver. The records reader must recognize the original deployment unit and tracked operation, returning its captured locked normalization records and separate opaque source identity without acquiring new parent locks.
+
+Each qualifier recognizes the same original records and supplies its own retained lease:
+
+- `native`: installed native Configuration and module semantics.
+- `credentials`: exact ServiceAccount credential/backend and model-provider association.
+- `storage`: original logical storage policy and installed mount mapping.
+- `roles`: admitted role records and their current original semantic sources.
+
+The factory compares captured Agent, Configuration, ServiceAccount, provider, ordered Secret references and admission-head associations. Qualified outputs must match the original account credential reference, admitted roles and declared gateway/Harness mounts. Manifest expectations, generic JSON validation and copied records cannot supply the missing qualification producers.
+
+The returned lease exposes `bindings`, synchronous `assertCurrent()` and idempotent asynchronous `release()`. Cleanup is retained before supplied data is inspected. Failed currentness remains latched; release joins pending assertions and closes acquired leases in reverse order. Currentness checks fail after release completes. Acquisition failure poisons the original tracked operation and joins captured cleanup. Consumers retain the lease through the original owner's terminal checks and cleanup. The outer Use resolver still owns complete capability acquisition and inserted-row verification.
+
+Missing genuine records or qualifiers remain unavailable. This factory installs no production default, mints no admitted Use and grants no provider-call authority. For an `unavailable` result, inspect missing suppliers, original enrollment, cancellation and currentness; for `selection-mismatch`, inspect the exact captured references and qualified outputs. Do not substitute caller-provided records for an unavailable original source.
+
+With Node.js 24 or newer and matching workspace dependencies prepared, run:
+
+```sh
+node --test tests/conformance/workload-profile-candidate-bindings.test.mjs
+node --test tests/integration/workload-profile-candidate-mock-e2e.test.mjs
+```
+
+The focused suite checks fixed composition, detached inputs, correspondence, retained currentness and joined cleanup with controlled record and qualifier issuers. The composed suite calls the actual controller deployment service with the candidate source, binding factory, capability aggregator, Use resolver and selector. It checks first-insert Use correspondence, selected-row verification, commit/cleanup ordering, exact replay and refusals over scripted SQL and controlled account, Driver and qualification dependencies. Neither suite establishes a production records producer, authentic authority, PostgreSQL locking or durability, credential issuance, native support or provider execution. The composed suite does not exercise HTTP routes, the worker or a live runtime.
