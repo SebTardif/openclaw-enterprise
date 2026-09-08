@@ -37,24 +37,106 @@ scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID"
 3. Read the Namespace and confirm `data.status` is `ready`. Check the selected
    runtime, required credentials, and deployment prerequisites in the
    [deployment guide](../guides/deploy.md).
-4. Admit the current draft using the bodyless deploy operation:
+4. Check the prerequisites for
+   [identified deployment](../guides/deploy.md#submit-an-identified-deployment).
+   The default composition lacks complete profile-admission suppliers and remains
+   unavailable. A valid command or prepared client directory does not enable it.
+5. When those suppliers are installed, prepare the complete
+   [V2 command](../reference/lifecycle-deploy-v2.md#command-identity) using the
+   actual saved draft and lifecycle generation from authorized sources. Retain
+   one lowercase UUID-v4 operation reference and every explicit expectation.
+   Missing state cannot be represented as a guessed value or a latest profile.
 
-```sh
-scripts/occ-api GET "/namespaces/$NAMESPACE_ID"
-scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy"
+### Retain and submit one command
+
+With Node 24 and the repository's prepared dependencies,
+`scripts/occ-deploy.mjs` offers three finite actions: `prepare`, `send`, and
+`read`. Its protected input file contains this existing V2 binding shape:
+
+```text
+{
+  "action": "agent.deploy",
+  "scope": { "installationId": "...", "namespaceId": "...", "agentId": "..." },
+  "command": { ...the complete V2 command... }
+}
 ```
 
-The API returns HTTP `202` with an immutable revision in `data` and a request ID
-in `meta.requestId`. Save the returned revision ID as `REVISION_ID` for subsequent
-reads. Admission schedules reconciliation; it does not confirm serving. See
-[revisions and deployment](../reference/agents.md#revisions-and-deployment) for
-permission and validation requirements.
+The placeholders above describe the shape, not runnable values. Obtain the
+Installation, Namespace and Agent IDs from authorized inventory and use the
+complete command specified in the linked reference. The supplied scope and
+controller origin are retained target data, never proof of server identity or
+permission. The binding's Installation is not an HTTP body operand.
 
-If the deploy response is lost, the result is **unknown**. Inspect Agent and
-revision history before issuing new intent. This route has no documented
-idempotency key or operation-status lookup; revision history alone may not
-uniquely identify which of concurrent requests was accepted. Do not blindly
-repeat the POST or infer that no revision was admitted from an absent response.
+Set `OCC_URL` to the exact controller origin without a trailing slash, path,
+query, credentials or fragment. HTTPS is supported; HTTP is restricted to
+`127.0.0.1` or `[::1]` for development. Choose one current authentication source:
+the documented protected `OCC_SERVICE_KEY_FILE` or the protected
+`OCC_SESSION_COOKIE_JAR` from
+[human sign-in](../guides/deploy.md#sign-in-as-a-human-administrator).
+Before `prepare`, set `OCC_AUTH_BASE_URL` to the configured authentication origin
+if it differs from `OCC_URL`; otherwise it defaults to the connection origin.
+Both must use their canonical origin form. Cookie mutations send that separately
+retained authentication Origin. The client consumes an
+unexpired exact-host `/` session cookie from the curl jar. It does not sign in,
+refresh credentials or fall back between credential types. A service key cannot
+substitute for a human session where the server requires one.
+
+Create an operator-owned private parent directory (`0700`) beneath ancestors
+owned by that operator or the filesystem's root owner, and keep the binding
+input and credential files private (`0600`). Choose a new child directory for
+this one command, outside the repository and shared receipts:
+
+```sh
+node scripts/occ-deploy.mjs prepare "$DEPLOY_DIRECTORY" "$DEPLOY_BINDING_FILE"
+node scripts/occ-deploy.mjs send "$DEPLOY_DIRECTORY"
+```
+
+`prepare` validates the original bytes with the strict binding codec and
+exclusively publishes canonical `binding.json`, exact `command.json`,
+`target.json`, and a final `prepared` marker. It syncs files and directories
+before success and opens no connection. `send` uses only those retained command
+bytes and the retained Namespace/Agent route. An altered binding, command or
+target, a different supplied `OCC_URL` or `OCC_AUTH_BASE_URL`, or incomplete
+preparation refuses before connecting. Later actions may omit those variables
+to use the retained origins. The final preparation marker separately pins both
+origins so changing the target file alone cannot redirect a request.
+
+Before opening its sole POST, `send` exclusively creates and syncs
+`may-have-sent`. Every later `send` refuses, including after a crash, timeout,
+denial, invalid response or failure to save the acknowledgement. Preserve the
+directory and marker; never remove them to retry. Partial preparation files are
+also preserved for inspection. Filesystem durability requires a local filesystem
+with working file and directory sync; this is not protection against a hostile
+process running as the same OS user, disk loss or coordinated file replacement.
+
+A validated HTTP `202` minimal deploy receipt is retained separately as
+`acknowledgement.json`. It identifies accepted intent; it contains no revision
+document and establishes no serving, provider creation or termination result.
+The client checks operation reference, deploy kind and expected next lifecycle
+generation. It neither needs nor invents scope fields absent from that receipt.
+
+If the response is lost, the result remains **unknown** across client processes.
+With current authorized access, perform one exact historical operation read:
+
+```sh
+node scripts/occ-deploy.mjs read "$DEPLOY_DIRECTORY"
+```
+
+`read` uses only the retained exact-operation GET and validates the current
+operation-status response codec. It records the minimal historical operation,
+including `requestedRevisionId`, in a separate `readback-*.json` file. It does
+not query a newer head or infer serving from observations. Missing, denied,
+foreign, malformed or unavailable readback stays unresolved; no old local
+acknowledgement substitutes for current read permission. Each action has a
+30-second request deadline and a bounded response; redirects are refused.
+Credentials, cookies and raw backend errors are never printed or retained.
+
+There is no resend, replay, automatic retry, replacement operation ID or draft
+regeneration action. Follow the canonical
+[lifecycle recovery procedure](../guides/lifecycle-recovery.md) for the remaining
+operator decisions and independently authorized revision reads. This client
+does not enable the currently unavailable lifecycle-reader or deployment
+suppliers.
 
 ## Inspect selection and runtime
 
@@ -75,9 +157,9 @@ steps](../guides/deploy.md) to check the actual workload, allowed and denied
 connections, and a real interaction. Control-plane readiness, revision
 selection, and an open connection each establish only their own result. They
 do not prove a completed model turn, safe cancellation, or restart continuity.
-Repeat reads after a conflict or failure and retain the request/revision identity
-with the observed result. A stale-generation lifecycle conflict and its recovery
-cannot yet be exercised through a supported Agent lifecycle endpoint.
+Keep the admitted operation and requested revision distinct from current
+selection. The [lifecycle recovery procedure](../guides/lifecycle-recovery.md)
+owns conflict handling and the separately authorized status reader's limits.
 
 ## Disable, stop, retention, and purge limits
 
@@ -126,3 +208,11 @@ requests. These tests verify the management surface and its failure behavior.
 They do not prove PostgreSQL durability, live Slack/Teams interaction, runtime
 cutover, disable/stop, retention, or purge. See the [test guide](../testing.md)
 for the independently required environment checks.
+
+`node --test tests/integration/occ-deploy-client.test.mjs` exercises actual CLI
+child processes, private files and bounded loopback HTTP transport using the
+real command and response codecs. It covers preparation failures, restart,
+concurrent send attempts, interruption, response loss, deadline expiry,
+target changes, exact readback and secret diagnostic canaries. The HTTP fixture
+does not establish controller authentication or authorization, server COMMIT,
+real deployment suppliers, runtime effects or disk power-loss durability.
