@@ -21,9 +21,11 @@ that adapter. Core/auth metadata projections cannot replace it. BetterAuth
 assembly, quota injection, plugins, logging and account policy remain in the
 controller package. Sharing a pool does not join auth, quota and OCC transactions.
 
-This producer is available through its supported export. The existing production
-auth helper has not yet adopted it; that original-owner integration and real
-authentication/PostgreSQL acceptance remain separate work. The binding provides
+The controller’s `createPostgresControllerAuth` now consumes this supported
+factory in both production and development PostgreSQL composition. It passes the
+returned database and complete schema directly to its own BetterAuth adapter and
+retains its existing sign-in quota store on the same caller-owned pool. Real
+authentication/PostgreSQL acceptance remains separate work. The binding provides
 no current-account or effect authority.
 
 After explicit dependency preparation, run
@@ -38,3 +40,16 @@ producer, BetterAuth adapter and expected type rejections through supported
 imports. Emitted-import checks cover the package dependency boundary. These tests
 perform no database execution and do not establish transaction isolation or
 integrated authentication behavior.
+
+The [controller adoption tests](../../tests/conformance/postgres-controller-auth-binding.test.mjs)
+run with `node --experimental-test-module-mocks --test tests/conformance/postgres-controller-auth-binding.test.mjs`.
+Delegating observation wrappers call the real supported binding and BetterAuth
+adapter, checking the exact database/schema pair, adapter options and caller pool
+identity. Construction checks cover structural pools with configuration-like
+fields and production cookie defaults and overrides. The returned controller’s
+real `signInEmail` method is exercised directly with a controlled pool connection
+refusal; this checks quota wiring and the sanitized dependency-unavailable result,
+not HTTP route registration or successful authentication. Isolated, bounded child
+processes also refuse actual binding dependency resolution and check original
+error identity without pool acquisition or teardown. These tests execute no SQL
+and do not establish persistence, transaction isolation or actual quota accounting.

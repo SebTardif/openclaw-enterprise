@@ -4,8 +4,8 @@
 the controller's auth composition. It preserves the existing PostgreSQL pool,
 canonical schema objects and BetterAuth adapter options. The definitions now have
 an [OCC-owned binding producer](postgres-auth-binding.md) and extracted core table
-modules. The existing controller auth composition retains its original producer
-until that composition adopts the supported factory.
+modules. The controller auth composition now consumes that supported factory and
+keeps BetterAuth assembly and sign-in quota ownership in the controller.
 
 ## Supported imports
 
@@ -48,9 +48,9 @@ The [provider, audit and channel schema modules](schema-domain-modules.md)
 retain their original tables and explicit parent references through the aggregate.
 [postgres-schema.ts](../../packages/occ/src/state/postgres-schema.ts) imports and
 reexports the original public root and table names while retaining every other
-domain declaration and factory invocation. The existing auth composition
-uses this **complete module namespace object** for `drizzle(pool, { schema })`.
-The supported producer supplies the same namespace with the explicit
+domain declaration and factory invocation. The controller auth composition
+receives this **complete module namespace object** from the supported producer.
+The producer supplies that namespace with the explicit
 `drizzle({ client: pool, schema })` overload, so a structural pool cannot be
 mistaken for Drizzle configuration. The controller supplies the binding's exact
 schema object to `drizzleAdapter`.
@@ -127,10 +127,12 @@ domain factories invoked twice.
 Aggregate wiring and supported exports stay with the composition owner.
 [drizzle.config.ts](../../drizzle.config.ts), migrations and generated snapshots
 remain with their existing owners. Agent, runtime, journal, ProviderAccountLinks
-and auth-repair source are excluded from this extraction. The current auth
-dependency anchor and private source-URL import remain until actual adapter
-adoption; only then may the three corresponding
-[boundary exceptions](../../scripts/module-boundaries/exceptions.json) be removed.
+and auth-repair source are excluded from this extraction. The controller now uses
+the supported auth binding instead of its former
+dependency anchor and private source-URL import. Its three obsolete
+[boundary exceptions](../../scripts/module-boundaries/exceptions.json) have been
+removed with that adoption. Construction and controlled-refusal coverage does
+not establish the PostgreSQL transaction acceptance below.
 
 The implementation acceptance checks must establish:
 

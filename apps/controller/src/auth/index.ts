@@ -1,5 +1,4 @@
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
-import { createRequire } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { APIError, betterAuth, type Auth, type BetterAuthOptions } from "better-auth";
@@ -10,6 +9,7 @@ import type { ApiKey } from "@better-auth/api-key/types";
 import type { ServicePrincipal } from "@openclaw-enterprise/contracts";
 import { createAuthPrincipalSeed, type AuthPrincipalSeed } from "@openclaw-enterprise/iam";
 import type { PostgresPool } from "@openclaw-enterprise/occ";
+import { createPostgresAuthBinding } from "@openclaw-enterprise/occ/auth-persistence/postgres-auth-binding";
 import type {
   AdmissionHeaders,
   AdmissionRequest,
@@ -251,33 +251,14 @@ async function sendAuthEndpoint(
   }
 }
 
-const requireOccDependency = createRequire(
-  new URL("../../../../packages/occ/package.json", import.meta.url),
-);
-
 async function createOccAuthDatabase(
   pool: PostgresPool,
 ): Promise<NonNullable<BetterAuthOptions["database"]>> {
-  const { drizzle } = (await import(requireOccDependency.resolve("drizzle-orm/node-postgres"))) as {
-    drizzle: (pool: unknown, config: { readonly schema: unknown }) => unknown;
-  };
-  const { drizzleAdapter } = (await import("better-auth/adapters/drizzle")) as unknown as {
-    drizzleAdapter: (
-      database: unknown,
-      options: {
-        readonly provider: "pg";
-        readonly schema: unknown;
-        readonly camelCase: true;
-        readonly transaction: true;
-      },
-    ) => NonNullable<BetterAuthOptions["database"]>;
-  };
-  const occPostgresSchema = await import(
-    new URL("../../../../packages/occ/src/state/postgres-schema.ts", import.meta.url).href
-  );
-  return drizzleAdapter(drizzle(pool, { schema: occPostgresSchema }), {
+  const binding = await createPostgresAuthBinding(pool);
+  const { drizzleAdapter } = await import("better-auth/adapters/drizzle");
+  return drizzleAdapter(binding.database, {
     provider: "pg",
-    schema: occPostgresSchema,
+    schema: binding.schema,
     camelCase: true,
     transaction: true,
   });
