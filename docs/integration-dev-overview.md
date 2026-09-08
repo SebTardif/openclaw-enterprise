@@ -37,8 +37,14 @@ flowchart TB
     end
     Compute -.->|"Admission path<br/>required"| Gateway
     Compute -.->|"Admission path<br/>required"| Harness
+    subgraph Channels["External channels"]
+        Slack["Slack"]
+        Teams["Microsoft Teams"]
+    end
+    Slack -->|"Socket Mode<br/>events"| Gateway
+    Teams -.->|"HTTPS webhook<br/>not deployed"| Gateway
     subgraph Agent["One Agent: dedicated"]
-        Gateway["Agent-owned gateway<br/>Channel transport<br/>Private state"]
+        Gateway["Agent-owned gateway<br/>Native channel plugins<br/>Private state"]
         Harness["Dedicated Harness<br/>Model and tool<br/>execution"]
         Gateway <-->|"Authenticated<br/>transport"| Harness
         Gateway --> Workspace[("Same-Agent<br/>shared workspace")]
@@ -46,10 +52,25 @@ flowchart TB
     end
 ```
 
-The diagram summarizes component ownership; dashed links mark the incomplete
-default deployment path. Each Installation contains isolated Namespaces. Agents,
-Configurations, Secrets, and ServiceAccounts belong to a Namespace; deployment
-captures an immutable AgentRevision. Creating an Agent starts no workload.
+The diagram summarizes component ownership; dashed links mark incomplete
+integration paths. Channel arrows show message delivery. Each Installation
+contains isolated Namespaces. Agents, Configurations, Secrets, and ServiceAccounts
+belong to a Namespace; deployment captures an immutable AgentRevision. Creating
+an Agent starts no workload.
+
+**Channel entry points:**
+
+- **Slack:** the gateway opens an outbound Socket Mode WebSocket through the
+  configured channel egress proxy. Slack delivers events over that connection
+  to the native Slack plugin.
+- **Teams:** Microsoft sends authenticated HTTPS requests to the native Teams
+  plugin's `/api/messages` webhook. Public ingress and end-to-end verification
+  remain outstanding; the private gateway route does not expose this webhook.
+
+The native plugins send replies through the provider APIs. The OCC API manages
+configuration and infrastructure; its work queue is not a channel inbox. See the
+[channel delivery flow](flows/channel-delivery.md) for transport and credential
+ownership.
 
 The dedicated topology separates gateway and Harness identities, credentials,
 and private state. Embedded OpenClaw combines gateway and Harness in one workload.
