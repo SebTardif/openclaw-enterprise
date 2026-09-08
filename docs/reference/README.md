@@ -47,6 +47,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 
 ## Development internals
 
+- [Fresh Installation bootstrap](fresh-installation-bootstrap.md): account and Installation ordering, partial failure, and uncertain-outcome recovery.
 - [Admitted-undispatched journal interfaces](admitted-undispatched-journal.md): consume admission-phase status and cancellation definitions; durable producer amendments, current authority, and physical-stop or release proof remain separate.
 - [Build graph](build.md): explicit language and image prerequisites, offline source
   compilation, artifact identity, and runtime verification limits.
@@ -63,8 +64,11 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Repository preparation interfaces](repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
 - [Preparation Job interfaces](preparation-job.md): versioned preparation identity, Job and Pod lineage, conditional effect observations, and retained staging handoff; definitions do not establish live provider authority.
 - [Lifecycle admission and durable work definitions](lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
+- [Identified deployment commands](lifecycle-deploy-v2.md): explicit V2 command identity, saved-draft expectations, and required admission participants.
+- [Lifecycle status API](lifecycle-status-api.md): authorized intent and operation reads; the default composition returns dependency-unavailable without its production source and authenticated currentness bridge.
 - [Lifecycle handler and observation definitions](lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
+- [Worker lease cancellation](worker-lease-cancellation.md): installed claim renewal and cooperative effect cancellation; claim loss does not establish provider termination or safe replay.
 - [Lifecycle work codec and preflight](lifecycle-work-preflight.md): encode inert work data and inspect original work through read-only preflight; queue/handler installation and actual accepting-use guards remain separate.
 - [Lifecycle status projections](lifecycle-status-projections.md): sanitize canonical read results without granting access; server-owned readers retain current owner and authorization checks, and authentic runtime observations remain separate.
 - [Schema and auth persistence boundary](schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
@@ -82,6 +86,7 @@ effects. Do not hand-edit the generated API page; use `pnpm openapi:generate` an
 - [Retirement purge journal definitions](retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Turn journal and completion interfaces](turn-journal.md): versioned types and
   strict codecs; durable journal storage and channel/runtime integration remain required.
+- [Authorized turn status and cancellation](turn-management-v1.md): application-port definitions and codecs; accepting authentication and current scope guards remain required.
 - [Protected credential storage interfaces](credential-storage.md): versioned types,
   strict codecs, and adapter ports; protected backend and runtime integration remain required.
 - [Credential backend profile](credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
@@ -110,5 +115,3 @@ Change a reference in the same PR that changes its supported behavior. Keep
 proposal rationale, implementation tasks, and historical alternatives in
 [top-level implementation specs](../../specs/README.md); keep runtime traces in
 `docs/flows/`. Reference pages use stable feature names rather than milestone numbers.
-
-- [Authorized turn status and cancellation](turn-management-v1.md)

@@ -27,7 +27,7 @@ file. Fresh bootstrap also creates the initial platform
 provisions its backing infrastructure.
 
 The helper reuses an existing runtime image tag. After changing the runtime
-recipe or package versions, [rebuild and verify the image](../../deploy/runtime/README.md#rebuild-an-existing-image)
+recipe or package versions, [rebuild and verify the image](../../deploy/runtime/README.md#quickstart-image-selection-and-rebuilding)
 before running the helper again.
 
 Expected output includes:

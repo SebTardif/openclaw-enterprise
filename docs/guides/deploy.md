@@ -112,10 +112,12 @@ changing shared Docker/containerd defaults or restarting services.
 Use a disposable cluster for the [gVisor HTTP fixture verification](../testing.md#gvisor-alpha-http-fixture).
 Configure the verified binary with explicit systrap and strict sidecar usage.
 Missing artifacts fail locally; obtain them through an authorized supply path.
-The fixture exercises actual gVisor execution and Compute lifecycle behavior;
-model/tool compatibility, credential mediation, and OpenShell/Kata/SPIRE
-reference acceptance require their own evidence. Alpha status does not prevent
-explicit production selection.
+The fixture exercises actual gVisor execution and Compute lifecycle behavior.
+Full gateway/Codex model compatibility, SPIRE workload identity and credential
+mediation require their own evidence on the selected gVisor profile.
+OpenShell/Kata is a separate runtime profile with its own VM-host prerequisites
+and guest-specific qualification. Alpha status does not prevent explicit
+production selection.
 
 ## Production
 

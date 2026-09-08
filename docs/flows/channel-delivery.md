@@ -52,7 +52,7 @@ Source entry points:
 - [Revision lifecycle](../../apps/controller/src/worker.ts) and
   [controller ownership](../../packages/occ/src/index.ts).
 - [Kubernetes channel requirements, network, credentials, and claims](../../apps/controller/src/drivers/compute/kubernetes/index.ts).
-- [Runtime launch and readiness wrappers](../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts).
+- [Runtime launch and readiness wrappers](../../apps/controller/src/drivers/compute/runtime/runtime-entrypoints.ts).
 - [Native channel draft editor](../../apps/controller/src/console/channels.mjs).
 - [Production PostgreSQL composition](../../apps/controller/src/composition/production.ts)
   and [infrastructure work queue](../../packages/occ/src/state/postgres-work-queue.ts).

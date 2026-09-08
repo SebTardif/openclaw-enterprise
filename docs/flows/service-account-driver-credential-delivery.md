@@ -137,7 +137,7 @@ Secret API permission.
 
 ### 6. Authenticate Codex under the exact workspace
 
-`apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts:AGENT_RUNTIME_ENTRYPOINT`
+`apps/controller/src/drivers/compute/runtime/runtime-entrypoints.ts:AGENT_RUNTIME_ENTRYPOINT`
 
 `AGENT_RUNTIME_ENTRYPOINT` authenticates with the projected token and workspace:
 

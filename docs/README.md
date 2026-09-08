@@ -18,6 +18,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Security events](reference/security-events.md): versioned projection, audit access, and retention contracts; production emitters and durable sinks remain unimplemented.
 - [Operational diagnostic records](reference/operational-diagnostics.md): submit bounded lifecycle and security projections to Pino; production invocation, durable audit delivery, and Collector verification remain separate.
 - [Startup diagnostics](reference/startup-diagnostics.md): interpret bounded startup failures and verify configuration privately.
+- [Fresh Installation bootstrap](reference/fresh-installation-bootstrap.md): understand account and Installation ordering, partial failure, and uncertain-outcome recovery.
 - [Build graph](reference/build.md): inspect explicit TypeScript, Rust, and image dependencies; prepare inputs separately from offline source builds.
 
 - [Workload identity](reference/workload-identity.md): configure the local SPIFFE identity source and run its metadata-only diagnostic.
@@ -56,6 +57,8 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Harness execution](reference/harness-execution.md) and
   [Controller reconciliation](reference/controller.md): runtime topology, deployment,
   and revision activation.
+- [Identified deployment commands](reference/lifecycle-deploy-v2.md): explicit V2 command identity, saved-draft expectations, and required admission participants.
+- [Lifecycle status API](reference/lifecycle-status-api.md): authorized intent and operation reads; the default composition returns dependency-unavailable without its production source and authenticated currentness bridge.
 - [Runtime authority interfaces](reference/runtime-authority.md): immutable bindings,
   purpose-specific results, trusted-context requirements, and contract verification.
 - [Runtime activation](reference/runtime-activation-v1.md): bounded conditional routing,
@@ -78,6 +81,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Lifecycle admission and durable work definitions](reference/lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](reference/lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.
 - [Lifecycle worker effect guard](reference/lifecycle-worker-guard.md): inspect local effect guards and controlled verification; installed worker adoption, durable cleanup, and actual runtime/provider fences remain separate.
+- [Worker lease cancellation](reference/worker-lease-cancellation.md): installed claim renewal and cooperative effect cancellation; claim loss does not establish provider termination or safe replay.
 - [Lifecycle work codec and preflight](reference/lifecycle-work-preflight.md): encode inert work data and inspect original work through read-only preflight; queue/handler installation and actual accepting-use guards remain separate.
 - [Lifecycle status projections](reference/lifecycle-status-projections.md): sanitize canonical read results without granting access; server-owned readers retain current owner and authorization checks, and authentic runtime observations remain separate.
 - [Schema and auth persistence boundary](reference/schema-auth-boundary-v1.md): consume canonical schema and auth binding types; these definitions create no database or table ownership.
@@ -95,6 +99,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Retirement purge journal definitions](reference/retirement-purge-journal.md): consume publication, observation, and exact-history contracts; atomic persistence, trusted provenance, and runtime enforcement remain separate.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
+- [Authorized turn status and cancellation](reference/turn-management-v1.md): application-port definitions and codecs; accepting authentication and current scope guards remain required.
 - [Delegated authority library](reference/delegation.md): root grant constraints,
   request binding, and required owner interfaces; executable authority is not yet wired.
 - [External model egress packaging](reference/egress.md): isolated DNS and
@@ -142,5 +147,3 @@ OpenClaw Enterprise is the open platform for managing agents.
 [Channel-hosting roadmap](../specs/22-channel-hosting-roadmap.md): proposed stages
 from direct gateways to durable intake, shared-app brokerage, and optional
 stronger availability; not current feature or release acceptance.
-
-- [Authorized turn status and cancellation](reference/turn-management-v1.md)

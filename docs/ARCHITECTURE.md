@@ -164,6 +164,12 @@ Agent runtime provisioning is asynchronous. Agent creation records resource
 state only; `deploy` admits an immutable `AgentRevision`, and the worker later
 invokes the selected Compute Driver for runtime effects.
 
+The deployment sequence below requires the genuine current request/authority,
+profile-binding, capability and inserted-row suppliers. The default composition
+does not supply the complete profile admission path. With those inputs installed,
+the [identified V2 command](reference/lifecycle-deploy-v2.md) returns an accepted
+operation receipt; it does not return the revision document or its identifier.
+
 ```mermaid
 sequenceDiagram
     participant Client
@@ -188,12 +194,13 @@ sequenceDiagram
     Compute->>Runtime: Create backing network or namespace
     Worker->>DB: Persist Namespace readiness and audit
 
-    Client->>API: Create Configuration, create Agent, deploy Agent
+    Client->>API: Create Configuration and Agent, save profile selection
+    Client->>API: Deploy with V2 command and exact saved-draft expectations
     API->>API: Check direct transport and session or service API key
     API->>IAM: Authorize exact Agent and referenced resources
     API->>OCC: Admit immutable AgentRevision
     OCC->>DB: Persist revision, audit, and work
-    API-->>Client: 202 AgentRevision
+    API-->>Client: 202 accepted-operation receipt
     Worker->>DB: Claim revision work
     Worker->>IAM: Reauthorize deploy and references
     Worker->>Compute: prepareRevision(revision)
@@ -214,9 +221,12 @@ See [Agent management](reference/agents.md) and the
 ## Channels and delivery state
 
 The [`apps/gateway` application](reference/hosted-gateway.md) composes the local
-Slack and Teams hosted channel lifecycle for programmatic consumers. Protected
-executable startup remains unavailable while its admitted startup consumer is
-missing. Production process-owner composition is not implemented.
+Slack and Teams hosted channel lifecycle for programmatic consumers. Its admitted
+startup consumer invokes the original enrolled startup port once and awaits the
+owned lifetime. The [protected Gateway startup components](reference/gateway-startup-v1.md)
+implement command and process ownership. Executable deployment remains unavailable
+until genuine protected bootstrap, authority, material and physical-settlement
+participants are connected; the unbound startup reader fails closed.
 
 The Kubernetes channel profile runs native Slack and Teams configuration in
 each Agent's dedicated gateway, with gateway-only channel credentials and private

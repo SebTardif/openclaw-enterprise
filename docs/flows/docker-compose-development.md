@@ -93,7 +93,7 @@ missing. Custom image references must already exist; an incomplete custom
 selection fails before startup is reported successful.
 
 Existing tags are reused even after the runtime recipe changes. Operators
-[rebuild and verify the image](../../deploy/runtime/README.md#rebuild-an-existing-image)
+[rebuild and verify the image](../../deploy/runtime/README.md#quickstart-image-selection-and-rebuilding)
 explicitly to pick up package changes. The runtime recipe owns packaged channel
 plugins and gateway/Codex compatibility checks; `dev-up` does not install
 missing plugins or verify a model turn.
