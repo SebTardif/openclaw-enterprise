@@ -254,7 +254,7 @@ export function renderCreateAgent(context) {
             "Channels require Dedicated execution. Select Dedicated or disable configured channels before creating the Agent.",
           )
         : null;
-    channelEditor.replaceChildren(channels, modeWarning);
+    channelEditor.replaceChildren(...[channels, modeWarning].filter(Boolean));
     updateControls();
   }
   const updateControls = () => {
