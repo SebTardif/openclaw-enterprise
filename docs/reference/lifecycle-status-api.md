@@ -154,14 +154,27 @@ Errors retain `{ "error": { "code", "message", "details"? }, "meta":
 | 500  | `INTERNAL_ERROR`         | An explicit sanitized internal failure.                                                                                     |
 | 503  | `DEPENDENCY_UNAVAILABLE` | Required call/source missing, unavailable or invalid, or a result suppressed after cancellation or dependency replacement.  |
 
-The existing bodyless `POST /namespaces/:namespaceId/agents/:agentId/deploy`
-continues to return its existing HTTP 202 AgentRevision response. These GETs do
-not change that body or receipt contract and do not enable public
-disable/stop/resume handlers. The separate canonical lifecycle mutation protocol
-has minimal accepted and unchanged receipts; those receipts are not status,
-discovery or exact-operation responses and must not be expanded using mutation
-permission. See [lifecycle recovery](../guides/lifecycle-recovery.md) for the
-supported procedure and remaining runtime recovery limits.
+The separate `POST /namespaces/:namespaceId/agents/:agentId/deploy` requires the
+[identified V2 command](lifecycle-deploy-v2.md): a retained `operationRef`, explicit
+`expectedLifecycleGeneration` and complete saved-draft expectations, including
+the exact workload-profile selection. Its HTTP 202 envelope contains
+`data: { disposition: "accepted", operation }` and `meta.requestId`. The operation
+has only `operationRef`, `lifecycleGeneration`, `acceptedAt`, `kind: "deploy"`,
+`revisionSource: "saved-draft"` and `desiredMode: "running"`; it returns no
+AgentRevision document or `data.id` revision locator.
+
+An accepted receipt is not status, discovery or an exact-operation response and
+does not grant their current read permissions. Read `requestedRevisionId` through
+the authorized exact-operation endpoint; revision documents require their own
+Agent and AgentRevision read permissions. Exact committed replay retains the
+original command and association and requires fresh original-operand
+authorization before today's draft/head comparison. Unknown outcomes do not
+authorize a new operationRef or automatic POST retry.
+
+These reads do not supply missing genuine deployment collaborators or enable
+public disable/stop/resume handlers. The default deployment composition still
+lacks complete profile suppliers. See [lifecycle recovery](../guides/lifecycle-recovery.md)
+for the conditional submission procedure and remaining runtime recovery limits.
 
 The [portable sanitized examples](../../tests/fixtures/lifecycle-status-projector-v1/sanitized.json)
 are synthetic presentation fixtures, not observed installation state. Schema,

@@ -15,24 +15,53 @@ unavailable read must remain unavailable.
 
 ## Start with the existing deployment contract
 
-The current deployment procedure remains in the
-[deployment guide](deploy.md). The existing request is bodyless:
+The [deployment guide](deploy.md#submit-an-identified-deployment) uses the
+[identified V2 command](../reference/lifecycle-deploy-v2.md). Before the first
+submission, retain one lowercase UUID-v4 `operationRef` and the complete command
+in a protected file. The body requires `schemaVersion: 2`,
+`revisionSource: "saved-draft"`, `expectedLifecycleGeneration` and `expectedDraft`.
+The draft expectations are the exact saved `configurationId`, Configuration
+`configurationGeneration`, `providerId`, `executionMode`, `serviceAccountId` and
+all four `workloadProfileSelection` fields: `manifestRef`, `manifestDigest`,
+`admissionRef` and `admissionVersion`.
+
+Use the actual known lifecycle generation, or explicit `null` only for a known
+absent head. Configuration generation is a separate value. An unavailable read
+cannot supply either expectation; omitted fields, guessed profile values or
+`null` in place of unknown state do not select an admissible draft. Complete
+current request, authority, profile-binding, capability and inserted-row suppliers
+must be installed before this submission can work. The default composition lacks
+the complete profile suppliers and leaves admission unavailable.
+
+When those prerequisites are satisfied, submit the retained command once as a
+deliberate action:
 
 ```sh
-scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy"
+: "${DEPLOY_COMMAND_FILE:?set the protected retained V2 command file}"
+scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy" "$DEPLOY_COMMAND_FILE"
 ```
 
-Submit it only as a deliberate deployment action. Its HTTP 202 response still
-contains the existing AgentRevision as `data`, not a new lifecycle operation
-receipt. Repeated POSTs are not an idempotent retry protocol and can admit
-distinct revisions. The lifecycle read API does not change that behavior or
-install public disable, stop or resume commands.
+HTTP 202 contains `data.disposition: "accepted"` and `data.operation`, with the
+original `operationRef`, `lifecycleGeneration`, `acceptedAt`, `kind: "deploy"`,
+`revisionSource: "saved-draft"` and `desiredMode: "running"`. The response also
+contains `meta.requestId` for diagnostics. It contains no AgentRevision document
+or revision ID at `data.id`; acceptance is not a serving observation.
 
-Keep any actual returned revision ID and diagnostic request ID in the appropriate
-protected operator record. A revision ID, request ID, matching draft or timestamp
-does not identify a lost lifecycle operation. Do not convert one into an
-`operationRef` or construct an accepted receipt. The existing exact Agent and
-revision reads remain available under their own current permissions:
+Keep the original command and any actual receipt in the protected operator
+record. An exact committed replay uses that same command and operation identity:
+after fresh authorization over the original operands, the server resolves the
+original revision, intent, work and mutation audit before comparing today's
+draft or lifecycle head. It does not reassert the old intent or admit another
+revision. Do not rebuild the retained command from an edited draft, mint a new
+operationRef to settle an unknown outcome, or automatically repeat POST. A
+transport request ID, revision ID or timestamp cannot replace the operationRef.
+The read API does not install public disable, stop or resume commands.
+
+Obtain an operation's `requestedRevisionId` through its separately authorized
+exact operation read below. An Agent's `activeRevisionId` is its currently
+selected revision and may have advanced since the operation. Use only an
+actually known revision ID for the existing exact Agent and revision reads,
+under their own current permissions:
 
 ```sh
 scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID"
@@ -62,8 +91,8 @@ separate; receiving another response does not refresh the source observation.
 Read each condition, rather than treating a generic converged phase as proof of
 every outcome.
 
-If an exact operation locator is already known from an actual accepted operation
-or independently established recovery association, read that locator:
+If the exact operation locator is retained in the original command, an actual
+accepted receipt or an independently established recovery association, read it:
 
 ```sh
 scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/lifecycle/operations/$OPERATION_REF"
@@ -102,7 +131,11 @@ Do not guess a row, fabricate an operation or repeat POST automatically.
 
 A server's definitive admission recovery requires a fresh authorized read after
 the failed transaction has unwound and a complete match to the original retained
-immutable association. Public discovery is not a replacement for that recovery.
+immutable command and association. It uses the same operationRef without admitting
+another revision, changing the head or submitting provider work. An unavailable
+readback does not prove rollback. Public discovery is not a replacement for that
+recovery, and this guide defines no separate public acknowledgement-recovery
+endpoint.
 Choosing a later deployment is a separate deliberate action with its own current
 authorization and consequences; it does not resolve what the earlier request did.
 

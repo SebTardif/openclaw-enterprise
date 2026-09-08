@@ -507,8 +507,8 @@ export NAMESPACE_ID
 
 Poll `scripts/occ-api GET "/namespaces/$NAMESPACE_ID"` until `data.status` is
 `ready`. Create `configuration.json` from the embedded OpenClaw example in
-[Configure the Agent runtime](#configure-the-agent-runtime), then create and
-deploy the Agent:
+[Configure the Agent runtime](#configure-the-agent-runtime), then create the
+Agent:
 
 ```bash
 CONFIGURATION_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/configurations" configuration.json)"
@@ -516,12 +516,38 @@ CONFIGURATION_ID="$(printf '%s' "$CONFIGURATION_RESPONSE" | python3 -c 'import j
 printf '{"name":"tui-agent","configurationId":"%s","executionMode":"embedded"}\n' "$CONFIGURATION_ID" > agent.json
 AGENT_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents" agent.json)"
 AGENT_ID="$(printf '%s' "$AGENT_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
-REVISION_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy")"
-REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
-export AGENT_ID REVISION_ID
+export AGENT_ID
 ```
 
-After `GET /namespaces/$NAMESPACE_ID` reports `ready` and
+Continue with [Submit an identified deployment](#submit-an-identified-deployment)
+only when its genuine suppliers, selected ServiceAccount and saved profile
+selection are available. The default composition leaves that admission path
+unavailable; the Configuration and Agent creation above do not supply those
+inputs. Prepare and retain the exact V2 command as described there, then submit
+that file:
+
+```bash
+: "${DEPLOY_COMMAND_FILE:?set the protected retained V2 command file}"
+OPERATION_REF="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["operationRef"])' "$DEPLOY_COMMAND_FILE")"
+export OPERATION_REF
+DEPLOY_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy" "$DEPLOY_COMMAND_FILE")"
+printf '%s' "$DEPLOY_RESPONSE" | python3 -c 'import json,os,sys; data=json.load(sys.stdin)["data"]; assert data["disposition"] == "accepted" and data["operation"]["operationRef"] == os.environ["OPERATION_REF"]'
+```
+
+Stop on an error or uncertain response and follow [lifecycle recovery](lifecycle-recovery.md).
+The accepted receipt supplies no revision ID. When the lifecycle reader and
+fresh exact Agent-read permission are available, obtain the original operation's
+revision through a separate read:
+
+```bash
+OPERATION_RESPONSE="$(scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/lifecycle/operations/$OPERATION_REF")"
+REVISION_ID="$(printf '%s' "$OPERATION_RESPONSE" | python3 -c 'import json,os,sys; op=json.load(sys.stdin)["data"]["operation"]; assert op["operationRef"] == os.environ["OPERATION_REF"] and op["kind"] == "deploy" and isinstance(op["requestedRevisionId"], str); print(op["requestedRevisionId"])')"
+export REVISION_ID
+```
+
+An unavailable operation read leaves this continuation unavailable. Do not infer
+the original operation's revision from a newer Agent selection. After
+`GET /namespaces/$NAMESPACE_ID` reports `ready` and
 `GET /namespaces/$NAMESPACE_ID/agents/$AGENT_ID` reports the deployed
 `activeRevisionId`, discover the single owned Docker gateway container:
 
@@ -703,21 +729,73 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
 Do not store the native API key in Helm values, Installation YAML,
 Configurations, shell history, or this repository.
 
-Deploy the Agent and capture the immutable revision ID:
+### Submit an identified deployment
+
+This step requires the genuine current request/authority, profile-binding,
+capability and inserted-row suppliers in the accepting composition. The default
+composition does not yet supply the complete profile admission path. A runtime
+image, created Agent or schema-valid command does not enable it. The selected V2
+admission also requires an applicable ServiceAccount association and an explicitly
+saved workload-profile selection; Agent creation without those values is not a
+completed deployment setup.
+
+When those inputs are installed, prepare the complete
+[identified V2 command](../reference/lifecycle-deploy-v2.md) in a protected file
+and retain it before submitting. Set `schemaVersion: 2` and
+`revisionSource: "saved-draft"`; retain one lowercase UUID-v4 `operationRef`.
+Supply the actual `expectedLifecycleGeneration` (`null` only for a known absent
+head) and all saved-draft expectations: `configurationId`, Configuration
+`configurationGeneration`, `providerId`, `executionMode`, `serviceAccountId` and
+`workloadProfileSelection` with its exact `manifestRef`, `manifestDigest`,
+`admissionRef` and `admissionVersion`. Obtain those values through authorized
+sources; do not invent an approved profile or use null for unavailable state.
+Keep the file unchanged across acknowledgement recovery or exact replay, even
+if the draft changes later.
+
+Submit the file once and verify the minimal accepted receipt's original
+operation identity:
 
 ```bash
-REVISION_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy")"
-REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
-export REVISION_ID
-printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,os,sys; data=json.load(sys.stdin)["data"]; assert data["id"] == os.environ["REVISION_ID"] and data["agentId"] == os.environ["AGENT_ID"] and data["configurationId"] == os.environ["CONFIGURATION_ID"]'
+: "${DEPLOY_COMMAND_FILE:?set the protected retained V2 command file}"
+OPERATION_REF="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["operationRef"])' "$DEPLOY_COMMAND_FILE")"
+export OPERATION_REF
+DEPLOY_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy" "$DEPLOY_COMMAND_FILE")"
+printf '%s' "$DEPLOY_RESPONSE" | python3 -c 'import json,os,sys; data=json.load(sys.stdin)["data"]; assert data["disposition"] == "accepted" and data["operation"]["operationRef"] == os.environ["OPERATION_REF"]'
 ```
 
-`scripts/occ-api` exits on non-2xx responses; deploy returns HTTP `202` with
-the AgentRevision as `data`. If `configuration.json` includes OCC
-`secretBindings`, the caller and Agent service principal must have `operate` on
-every selected Secret before deploy. Binding changes are authorized by OCC IAM;
-Kubernetes RoleBindings only allow the API to materialize backing tenant
-Secrets.
+`scripts/occ-api` exits on non-2xx responses. Stop on an error or uncertain outcome;
+do not automatically repeat POST, choose a new operationRef or reset a deadline.
+Follow [lifecycle recovery](lifecycle-recovery.md) using the retained command.
+Exact committed replay requires fresh authorization over the original operands
+and returns the original association before comparing today's draft or head;
+it does not create another revision, work item or mutation audit.
+
+HTTP `202` returns `data.disposition: "accepted"` and `data.operation`, containing
+`operationRef`, `lifecycleGeneration`, `acceptedAt`, `kind: "deploy"`,
+`revisionSource: "saved-draft"` and `desiredMode: "running"`, plus
+`meta.requestId`. It returns no AgentRevision document or revision ID at `data.id`.
+Acceptance does not establish that the runtime is serving.
+
+When the separately authorized lifecycle reader is available, read the retained
+operation to obtain its `requestedRevisionId`:
+
+```bash
+OPERATION_RESPONSE="$(scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/lifecycle/operations/$OPERATION_REF")"
+REVISION_ID="$(printf '%s' "$OPERATION_RESPONSE" | python3 -c 'import json,os,sys; op=json.load(sys.stdin)["data"]["operation"]; assert op["operationRef"] == os.environ["OPERATION_REF"] and op["kind"] == "deploy" and isinstance(op["requestedRevisionId"], str); print(op["requestedRevisionId"])')"
+export REVISION_ID
+scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/revisions/$REVISION_ID"
+```
+
+Each read needs its own current permission; the revision document additionally
+requires AgentRevision read. The default lifecycle source/currentness bridge is
+unavailable, so retain that outcome rather than guessing a revision from the
+receipt, history or a newer `activeRevisionId`. Public disable, stop and resume
+commands and an approved unreachable-runtime teardown remain unimplemented.
+
+If `configuration.json` includes OCC `secretBindings`, the caller and Agent
+service principal must have `operate` on every selected Secret before deploy.
+Binding changes are authorized by OCC IAM; Kubernetes RoleBindings only allow
+the API to materialize backing tenant Secrets.
 
 ### Agent workspace files
 
