@@ -3,9 +3,10 @@
 The versioned turn journal defines the OCC boundary for shared Agent admission,
 execution consumption, completed-context publication and delivery. It includes
 strict value decoders, pure consistency classifiers and a callback wrapper that
-keeps initiation behind the outer transaction commit. A database implementation
-and integration with the actual channel, runtime and canonical-store owners are
-required before this contract can operate a shared Agent.
+keeps initiation behind the outer transaction commit. PostgreSQL and explicitly
+configured process-local memory implementations use the same journal protocol.
+Integration with the actual channel, runtime and canonical-store owners remains
+required before either implementation can operate a shared Agent.
 
 ## One journal and two storage authorities
 
@@ -22,6 +23,62 @@ separate evidence from their actual trusted owners.
 journal, side transaction or independent audit write. The outer transaction owns
 all admission records and its audit intent. Failed mutation poisons that unit even
 when its callback catches the error.
+
+### Process-local memory implementation
+
+`InMemoryPlatformState` accepts an optional `turnJournal` configuration. Omitting
+it preserves the unavailable default: the Store cannot invoke journal work or
+an initiation callback. Configuration requires the actual canonical route-key
+function, all three Installation capacities, and a `bind(context)` provider for
+admission, rejected and non-turn intake, authorization, and all seven evidence
+observations. The provider borrows the existing repository scope, transaction
+lifetime and current Installation. It receives no journal maps or commit control.
+The evidence port exposes inspection methods; authority and verification issuers
+remain with their original providers.
+The configuration and capacities are retained independently of caller mutation;
+each capacity is an integer from one through 100,000. An optional server-owned
+millisecond clock supports deterministic component checks. It supplies neither
+provenance nor authority, and invalid or backward readings within a transaction
+fail closed. The unchanged Store still owns its separate initiation clock.
+
+The memory journal owns fresh opaque state inside the platform snapshot. It
+implements all eleven read and twelve mutation methods, including rejected and
+non-turn owner carriers. Composite indexes retain the complete scoped tuples,
+original event and logical ownership, and incoming conflict links. One Agent
+reservation covers its conversations; there is no executable queue. Existing
+owner, incoming-link and attempt capacities do not evict history. The common
+pending limit remains 32 per Installation, and outcome history reserves capacity
+for the terminal, cancellation, allocation, completion and release records.
+
+Each transaction clones its indexes and owns decoded immutable input and returned
+values. Verified handles and abort signals preserve their original identity.
+The original transaction guard serializes mutations, poisons the unit after a
+thrown mutation even if caught, and drains accepted work before publication.
+Closing callback admission rejects escaped use while accepted operations finish.
+The existing platform transaction publishes journal, resource, work and local
+audit state together. Failure discards the working snapshot. The final owner
+checks retained references and call liveness before publishing it, then confirms
+the original guard synchronously. Only that exact outward unit can make its
+newly created consumption claim eligible for the Store's one initiation.
+
+Checkpoint allocation, completion CAS, cancellation, release and delivery use
+the existing strict codecs and consistency rules. Public head reads remain
+unresolved while a reservation is held; owned completion checks can inspect the
+working head. Unknown outcomes keep consumption, and expiration alone never
+releases a reservation. Delivery retains the original 120-second episode, at
+most three CREATE attempts after definitive transient no-effect, and one
+eligible known-ID status UPDATE. Missing legacy status classification cannot
+be inferred as prior unknown.
+
+Memory publication is an in-process commit only. It provides no crash recovery,
+cross-process exclusion, durable transport acknowledgement, PostgreSQL isolation
+or migration evidence. An external audit sink may already have received an
+append when later local publication is refused; the memory owner cannot undo
+external I/O. The product journal does not issue native, account, policy,
+canonical-store, workspace or no-mutator evidence. Component tests can control
+those input observations and external-effect endpoints, but the application
+must use their real owners. Missing joins remain unavailable and cannot be
+replaced with test-issued admission, completion or commit decisions.
 
 ## Admission and native acknowledgement
 

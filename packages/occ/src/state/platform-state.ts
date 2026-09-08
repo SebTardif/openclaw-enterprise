@@ -1,5 +1,15 @@
 import { createMemoryWorkloadProfileAdmissionBackendV2 } from "./memory/workload-profile-admission.ts";
 import {
+  createMemoryTurnJournal,
+  createMemoryTurnJournalSnapshot,
+  cloneMemoryTurnJournalSnapshot,
+  retainMemoryTurnJournalOptions,
+  assertMemoryTurnJournalSnapshot,
+  MemoryTurnJournalParticipant,
+  type MemoryTurnJournalOptions,
+  type MemoryTurnJournalSnapshot,
+} from "./memory/turn-journal.ts";
+import {
   createWorkloadProfileAdmissionRepositoryV2,
   decodeWorkloadProfileAdmissionHistoryV2,
   type WorkloadProfileAdmissionAttributionV2,
@@ -346,10 +356,13 @@ export function serializeRuntimeAssignmentMutations(
 }
 
 export interface InMemoryPlatformStateOptions {
+  /** Explicit original provenance owners; absent configuration stays unavailable. */
+  readonly turnJournal?: MemoryTurnJournalOptions;
   readonly auditSink?: PlatformAuditSink;
 }
 
 interface PlatformSnapshot {
+  readonly turnJournal: MemoryTurnJournalSnapshot;
   readonly lifecycleAdmissions: Map<string, Readonly<LifecycleAdmissionAssociationV1>>;
   readonly cleanupResponsibilities: Map<string, Readonly<RuntimeCleanupResponsibilityV1>>;
   readonly auditExports: Map<string, Readonly<PendingAuditExportV1>>;
@@ -396,6 +409,7 @@ function agentKey(namespaceId: string, agentId: string): string {
 
 function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
   return {
+    turnJournal: cloneMemoryTurnJournalSnapshot(snapshot.turnJournal),
     lifecycleAdmissions: new Map(snapshot.lifecycleAdmissions),
     cleanupResponsibilities: new Map(snapshot.cleanupResponsibilities),
     auditExports: new Map(snapshot.auditExports),
@@ -565,6 +579,10 @@ function repositories(
   authorityGuard = new RuntimeAuthorityTransactionGuard(),
   profilePhase = new WorkloadProfileUnitPhase(),
   lifecyclePhase = new LifecycleAdmissionUnitPhase(),
+  journal?: Readonly<{
+    options: MemoryTurnJournalOptions;
+    participant: MemoryTurnJournalParticipant;
+  }>,
 ): PlatformUnitOfWork {
   const installations: InstallationRepository = {
     findInstallation: async (installationId) =>
@@ -1382,7 +1400,47 @@ function repositories(
     resourceKey: agentKey,
     appendAudit: (event) => audit.append(event),
   });
+  const turnJournal =
+    journal === undefined
+      ? undefined
+      : createMemoryTurnJournal(
+          {
+            snapshot: snapshot.turnJournal,
+            participant: journal.participant,
+            transaction,
+            get scope() {
+              transaction.assertActive();
+              if (!snapshot.installation)
+                throw new ScopeViolationError(
+                  "The server-owned Installation has not been initialized.",
+                );
+              return { installationId: snapshot.installation.id };
+            },
+            currentInstallation: async () => {
+              transaction.assertActive();
+              const installation = await installations.getInstallation();
+              transaction.assertActive();
+              return installation;
+            },
+            agentExists: async (key) => {
+              transaction.assertActive();
+              return (
+                snapshot.installation?.id === key.installationRef &&
+                snapshot.agents.has(agentKey(key.namespaceRef, key.agentRef))
+              );
+            },
+            channelExists: async (installation, channel) => {
+              transaction.assertActive();
+              return (
+                snapshot.installation?.id === installation &&
+                snapshot.channelInstallations.get(channel)?.installationId === installation
+              );
+            },
+          },
+          journal.options,
+        );
   return {
+    ...(turnJournal === undefined ? {} : { turnJournal }),
     lifecycleAdmissions,
     workloadProfiles,
     runtimePreparation,
@@ -1484,6 +1542,7 @@ function repositories(
 /** Process-local, single-writer state. No restart or multi-process durability. */
 export class InMemoryPlatformState implements PlatformStateStore {
   private snapshot: PlatformSnapshot = {
+    turnJournal: createMemoryTurnJournalSnapshot(),
     lifecycleAdmissions: new Map(),
     cleanupResponsibilities: new Map(),
     auditExports: new Map(),
@@ -1514,9 +1573,23 @@ export class InMemoryPlatformState implements PlatformStateStore {
   };
   private pending: Promise<void> = Promise.resolve();
   private readonly auditSink: PlatformAuditSink | undefined;
+  private readonly turnJournal: MemoryTurnJournalOptions | undefined;
 
   constructor(options: InMemoryPlatformStateOptions = {}) {
     this.auditSink = options.auditSink;
+    this.turnJournal =
+      options.turnJournal === undefined
+        ? undefined
+        : retainMemoryTurnJournalOptions(options.turnJournal);
+  }
+
+  private journalParticipant() {
+    return this.turnJournal === undefined
+      ? undefined
+      : {
+          options: this.turnJournal,
+          participant: new MemoryTurnJournalParticipant(this.turnJournal.clock),
+        };
   }
 
   pendingOperations(): readonly Readonly<PlatformOperation>[] {
@@ -1530,13 +1603,24 @@ export class InMemoryPlatformState implements PlatformStateStore {
     options?: PlatformReadOptions,
   ): Promise<T> {
     const lifetime = new RepositoryTransactionLifetime();
+    const journal = this.journalParticipant();
     let cancel: (() => void) | undefined;
     let signal: AbortSignal | undefined;
     try {
       if (options === undefined) {
         await this.pending;
         return await work(
-          createPlatformReadView(repositories(cloneSnapshot(this.snapshot), lifetime), lifetime),
+          createPlatformReadView(
+            repositories(
+              cloneSnapshot(this.snapshot),
+              lifetime,
+              undefined,
+              undefined,
+              undefined,
+              journal,
+            ),
+            lifetime,
+          ),
         );
       }
       if (
@@ -1553,7 +1637,17 @@ export class InMemoryPlatformState implements PlatformStateStore {
           await this.pending;
           if (boundedSignal.aborted) throw new DependencyUnavailableError();
           const result = await work(
-            createPlatformReadView(repositories(cloneSnapshot(this.snapshot), lifetime), lifetime),
+            createPlatformReadView(
+              repositories(
+                cloneSnapshot(this.snapshot),
+                lifetime,
+                undefined,
+                undefined,
+                undefined,
+                journal,
+              ),
+              lifetime,
+            ),
           );
           if (boundedSignal.aborted) throw new DependencyUnavailableError();
           return result;
@@ -1568,7 +1662,11 @@ export class InMemoryPlatformState implements PlatformStateStore {
       ]);
     } finally {
       if (cancel) signal?.removeEventListener("abort", cancel);
-      await lifetime.finish();
+      try {
+        await lifetime.finish();
+      } finally {
+        journal?.participant.guard.close();
+      }
     }
   }
 
@@ -1582,20 +1680,34 @@ export class InMemoryPlatformState implements PlatformStateStore {
     const profilePhase = new WorkloadProfileUnitPhase();
     const lifecyclePhase = new LifecycleAdmissionUnitPhase();
     const lifetime = new RepositoryTransactionLifetime();
+    const journal = this.journalParticipant();
+    // Observe poison immediately while the existing lifetime drains all accepted
+    // operations. A rejected unawaited mutation must never become an unhandled
+    // rejection or allow publication.
+    const finishJournal = () =>
+      journal === undefined
+        ? Promise.resolve({ ok: true as const })
+        : journal.participant.guard.finish().then(
+            () => ({ ok: true as const }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
     try {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
-      const result = await work(
-        bindPlatformUnitOfWork(
-          repositories(working, lifetime, authorityGuard, profilePhase, lifecyclePhase),
-          lifetime,
-          profilePhase,
-          lifecyclePhase,
-        ),
+      const unit = bindPlatformUnitOfWork(
+        repositories(working, lifetime, authorityGuard, profilePhase, lifecyclePhase, journal),
+        lifetime,
+        profilePhase,
+        lifecyclePhase,
       );
+      journal?.participant.guard.bind(unit);
+      const result = await work(unit);
+      const journalFinished = finishJournal();
       lifecyclePhase.closeAdmissions();
       await lifetime.finish();
+      const journalResult = await journalFinished;
+      if (!journalResult.ok) throw journalResult.error;
       await lifecyclePhase.finish();
       await authorityGuard.finish();
       await profilePhase.guard.finish();
@@ -1605,11 +1717,24 @@ export class InMemoryPlatformState implements PlatformStateStore {
           .filter((event) => !working.auditExports.has(event.id)),
       );
       profilePhase.guard.assertCurrent();
+      journal?.participant.assertCurrent();
+      if (journal)
+        assertMemoryTurnJournalSnapshot(working.turnJournal, {
+          installationId: working.installation?.id,
+          hasAgent: (key) => working.agents.has(agentKey(key.namespaceRef, key.agentRef)),
+          hasChannel: (channel) =>
+            working.channelInstallations.get(channel)?.installationId === working.installation?.id,
+        });
       this.snapshot = working;
+      // Process-local publication and confirmation are one synchronous owner
+      // step, with no user callback or fallible external operation in between.
+      journal?.participant.guard.confirmCommitted();
       return result;
     } catch (error) {
+      const journalFinished = finishJournal();
       lifecyclePhase.closeAdmissions();
       await lifetime.finish();
+      await journalFinished;
       try {
         await lifecyclePhase.finish();
       } catch {
@@ -1630,6 +1755,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     } finally {
       lifecyclePhase.closeAdmissions();
       lifetime.close();
+      journal?.participant.guard.close();
       release?.();
     }
   }

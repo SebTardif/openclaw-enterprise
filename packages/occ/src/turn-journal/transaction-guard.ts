@@ -16,7 +16,7 @@ interface ClaimState {
 const transactionOwners = new WeakMap<PlatformUnitOfWork, TurnJournalTransactionGuard>();
 const claims = new WeakMap<PendingInitiationClaimV1, ClaimState>();
 
-/** The PostgreSQL transaction owner alone binds and confirms this internal guard.
+/** The original PostgreSQL or memory transaction owner alone binds and confirms this internal guard.
  * Returned business decisions may commit; a thrown mutation failure poisons the
  * whole transaction, even when the outer callback catches the rejection.
  */
@@ -72,7 +72,7 @@ export class TurnJournalTransactionGuard {
 
   /** Called only after inserting a new immutable consumption in this transaction.
    * This opaque local identity carries no authority until the real owner confirms
-   * COMMIT. Readback and copied/serialized values cannot manufacture membership.
+   * its commit boundary. Readback and copied/serialized values cannot manufacture membership.
    */
   createClaim(operation: ExactConsumptionOperationV1, expiresAt: string): PendingInitiationClaimV1 {
     this.assertActive();
@@ -94,8 +94,8 @@ export class TurnJournalTransactionGuard {
     this.finished = true;
   }
 
-  /** Pure local marker, called synchronously after a verified COMMIT acknowledgement.
-   * Invalid lifecycle state withholds claims without throwing after durable COMMIT.
+  /** Pure local marker after verified PostgreSQL COMMIT or memory snapshot publication.
+   * Invalid lifecycle state withholds claims without throwing after publication.
    */
   confirmCommitted(): void {
     if (this.active && this.finished && !this.failed && this.unit !== undefined)

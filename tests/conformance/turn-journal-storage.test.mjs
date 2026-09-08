@@ -533,14 +533,14 @@ test("claims cannot be constructed outside an admitted mutation or rebound to an
   second.close();
 });
 
-test("unsupported memory journal fails before invoking read, transaction, or initiation callbacks", async () => {
+test("unconfigured memory journal fails before invoking read, transaction, or initiation callbacks", async () => {
   const provenance = storageProvenance();
   const store = new TurnJournalStore({
     state: new InMemoryPlatformState(),
     clock: provenance.clock,
     initiation: provenance.initiation,
   });
-  const unexpected = async () => assert.fail("unsupported backend called user work");
+  const unexpected = async () => assert.fail("unconfigured backend called user work");
   await assert.rejects(store.read(unexpected, provenance.call()), DependencyUnavailableError);
   assert.deepEqual(await store.transact(ref("transaction"), unexpected, provenance.call()), {
     kind: "unavailable",

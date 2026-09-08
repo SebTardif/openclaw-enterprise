@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 import { runtimeCommitAckProxy } from "../fixtures/postgres-runtime-assignment-commit-ack-fault.mjs";
@@ -1090,25 +1091,40 @@ test(
     );
 
     await t.test(
-      "released failed first execution cannot reset its used context to a fresh empty head",
+      "held first execution remains unresolved and released failed context cannot become empty",
       async () => {
         const h = journalHarness(pool);
         const owner = await seedJournalOwner(h.state);
         const v = journalValues(owner);
         await admit(h, v);
         await dispatch(h, v);
+        // Dispatch makes the context used, but its held reservation still owns
+        // unresolved work before any canonical checkpoint has been published.
+        same(await h.read((j) => j.readHead(v.context, h.call)), {
+          kind: "unavailable",
+          reason: "unresolved-work",
+        });
         await consume(h, v);
         assert.equal(
           valueOf(await h.write((j) => j.recordOutcome(h.issue("outcome", v.outcome), h.call)))
             .kind,
           "recorded",
         );
+        same(await h.read((j) => j.readHead(v.context, h.call)), {
+          kind: "unavailable",
+          reason: "unresolved-work",
+        });
         assert.equal(
           valueOf(await h.write((j) => j.releaseReservation(h.issue("release", v.release), h.call)))
             .kind,
           "released",
         );
-        assert.equal((await h.read((j) => j.readHead(v.context, h.call))).kind, "unavailable");
+        // Release ends unresolved ownership; it cannot create an empty canonical
+        // context after execution has already used it without a checkpoint.
+        same(await h.read((j) => j.readHead(v.context, h.call)), {
+          kind: "unavailable",
+          reason: "store-unavailable",
+        });
         const successor = journalValues(owner, {
           conversationRef: v.context.conversationRef,
           head: v.head,
@@ -1741,6 +1757,8 @@ test(
           async (t) => {
             const seed = await statusFixture(pool);
             const publication = await publishStatusCompletion(seed);
+            // Foreign resource IDs retain their canonical formats so these cases
+            // exercise scope denial instead of failing the value decoder.
             const cases = [
               ["outdated version", { outcomeVersion: 3 }, "denied"],
               ["same prior version", { outcomeVersion: 4 }, "denied"],
@@ -1762,17 +1780,17 @@ test(
               ],
               [
                 "foreign installation",
-                { attempt: { ...seed.v.attempt, installationRef: ref("foreign-installation") } },
+                { attempt: { ...seed.v.attempt, installationRef: `ins_${randomUUID()}` } },
                 "denied",
               ],
               [
                 "foreign namespace",
-                { attempt: { ...seed.v.attempt, namespaceRef: ref("foreign-namespace") } },
+                { attempt: { ...seed.v.attempt, namespaceRef: `ns_${randomUUID()}` } },
                 "denied",
               ],
               [
                 "foreign agent",
-                { attempt: { ...seed.v.attempt, agentRef: ref("foreign-agent") } },
+                { attempt: { ...seed.v.attempt, agentRef: `agt_${randomUUID()}` } },
                 "denied",
               ],
               [
