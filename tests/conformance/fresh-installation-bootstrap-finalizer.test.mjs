@@ -44,6 +44,7 @@ const tables = [
   "iam_access_bindings",
   "iam_restrictions",
 ];
+const iamWriterLock = "SELECT occ.lock_fresh_bootstrap_iam_v1()";
 const clone = structuredClone;
 const result = (rows = [], command = "SELECT") => ({ rows, rowCount: rows.length, command });
 const deferred = () => {
@@ -141,7 +142,7 @@ function peer(options = {}) {
           return result([], "COMMIT");
         }
         assert.ok(pending, "every data query belongs to the checked-out transaction");
-        if (sql.startsWith("LOCK TABLE")) return result([], "LOCK");
+        if (sql === iamWriterLock) return result();
         if (sql.includes("AS retained_count"))
           return result([
             { retained_count: String(tables.reduce((n, t) => n + pending[t].length, 0)) },
@@ -267,7 +268,10 @@ test("definite reservation precedes real Controller/MutationRunner and same-clie
   assert.equal(p.db.audit_events.filter((row) => row.kind === "bootstrap").length, 1);
   assert.equal(p.db.iam_identities.length, 2);
   const queries = p.calls.filter((c) => c.number === 2).map((c) => c.sql);
-  const lock = queries.findIndex((s) => s.startsWith("LOCK TABLE"));
+  const installationLock = queries.findIndex((s) => s.endsWith("FOR SHARE"));
+  const lock = queries.findIndex((s) => s === iamWriterLock);
+  assert.equal(queries.filter((s) => s === iamWriterLock).length, 1);
+  assert.ok(installationLock >= 0 && installationLock < lock);
   const empty = queries.findIndex((s) => s.includes("AS retained_count"));
   const seedWrite = queries.findIndex((s) => s.startsWith("INSERT INTO occ.iam_identities"));
   const iamRead = queries.findIndex((s) => s.startsWith("SELECT id, namespace_id, agent_id, kind"));
@@ -565,7 +569,7 @@ for (const stage of ["installation-lock", "iam-writer-lock"])
           number === 2 &&
           (stage === "installation-lock"
             ? sql.includes("FROM occ.installation") && sql.endsWith("FOR SHARE")
-            : sql.startsWith("LOCK TABLE"))
+            : sql === iamWriterLock)
         )
           throw failure;
       },
@@ -584,7 +588,7 @@ for (const stage of ["installation-lock", "iam-writer-lock"])
     );
     if (stage === "installation-lock")
       assert.equal(
-        calls.some((call) => call.sql.startsWith("LOCK TABLE")),
+        calls.some((call) => call.sql === iamWriterLock),
         false,
       );
     assert.equal(calls.filter((call) => call.sql === "ROLLBACK").length, 1);
@@ -655,7 +659,7 @@ for (const kind of ["unlisted", "inherited", "accessor", "descriptor-trap", "non
     // which itself does not inspect code; only diagnostics see its descriptor.
     const { p, reservation, original } = await reserved({
       query: ({ number, sql }) => {
-        if (number === 2 && sql.startsWith("LOCK TABLE")) throw failure;
+        if (number === 2 && sql === iamWriterLock) throw failure;
       },
     });
     const observed = await failedFinalization(p, reservation, original);
@@ -722,7 +726,7 @@ test("diagnostic keeps the first query failure across rollback and release failu
     failure: secondary,
     releaseFailure: 2,
     query: ({ number, sql }) => {
-      if (number === 2 && sql.startsWith("LOCK TABLE")) throw first;
+      if (number === 2 && sql === iamWriterLock) throw first;
       if (number === 2 && sql === "ROLLBACK") throw secondary;
     },
   });
@@ -830,7 +834,7 @@ test("diagnostic reused outward error is refused after a separate fresh database
   const failure = Object.assign(new Error("reused driver error object"), { code: "42501" });
   const p = peer({
     query: ({ sql }) => {
-      if (sql.startsWith("LOCK TABLE")) throw failure;
+      if (sql === iamWriterLock) throw failure;
     },
   });
   const original = seed();

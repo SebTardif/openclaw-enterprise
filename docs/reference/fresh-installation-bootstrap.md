@@ -6,6 +6,12 @@ The original state store retains the successful fresh-insert association. It cap
 
 An existing Installation follows the existing administrator-account and Principal verification path. An Installation identifier or empty IAM tables cannot authorize bootstrap finalization. Conflicting, repeated or uncertain attempts are refused.
 
+## PostgreSQL locking
+
+Finalization locks and compares the original Installation row, then excludes writers from all six IAM tables before checking for empty policy state. These locks, IAM seed writes and default Namespace creation use the same transaction. The IAM barrier uses `SHARE ROW EXCLUSIVE` mode and lasts until that transaction ends.
+
+The application role can lock the Installation row using a narrow privilege on its immutable identifier; the existing trigger still rejects identifier updates. A fixed, owner-executed database function acquires the IAM barrier without granting the application general IAM update or delete privileges. These database privileges supply locking only. The original state-store reservation and authorization checks still decide whether finalization may proceed.
+
 ## Failure handling
 
 The Installation reservation and authentication writes are separate from the final controller transaction. Failure of that final transaction does not roll back earlier account or service-key effects. Retained account-security records and tombstones keep their Installation association; bootstrap does not delete the Installation to simulate rollback.

@@ -1755,8 +1755,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     // Same original six-table writer barrier, before empty-state observation and
     // seed persistence. No NativeIAM policy projection or second evaluator.
     await this.#freshFailureStages.run({ record, stage: "iam-writer-lock" }, () =>
-      context.client.query(`LOCK TABLE occ.iam_identities, occ.iam_roles, occ.iam_groups,
-      occ.iam_group_memberships, occ.iam_access_bindings, occ.iam_restrictions IN SHARE ROW EXCLUSIVE MODE`),
+      context.client.query("SELECT occ.lock_fresh_bootstrap_iam_v1()"),
     );
     const countRows = await this.#freshFailureStages.run({ record, stage: "iam-empty-read" }, () =>
       context.client.query(`SELECT

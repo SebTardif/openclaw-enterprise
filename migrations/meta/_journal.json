@@ -274,6 +274,13 @@
       "when": 1788860622946,
       "tag": "0038_security_event_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788864165460,
+      "tag": "0039_fresh_bootstrap_lock_privileges",
+      "breakpoints": true
     }
   ]
 }
