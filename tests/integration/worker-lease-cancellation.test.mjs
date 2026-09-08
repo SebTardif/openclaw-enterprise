@@ -263,3 +263,98 @@ test("an ordinary effect error retains its identity when the claim was not lost"
   );
   assert.equal(queue.calls.length, 1);
 });
+
+// These required-currentness controls exercise the installed helper's ordering.
+// The full source-data comparison is exercised by worker-current-intent.test.mjs.
+for (const boundary of ["before-renewal", "after-renewal", "before-effect", "after-effect"]) {
+  test(`running revision currentness failure ${boundary} preserves its own first error`, async () => {
+    const { worker } = context();
+    const error = new Error("controlled intent change");
+    const calls = [];
+    const failAt = {
+      "before-renewal": 1,
+      "after-renewal": 2,
+      "before-effect": 3,
+      "after-effect": 4,
+    }[boundary];
+    let reads = 0;
+    const currentness = {
+      async assertCurrent() {
+        calls.push("current");
+        if (++reads === failAt) throw error;
+      },
+    };
+    const queue = {
+      async heartbeat() {
+        calls.push("heartbeat");
+        return worker.claim;
+      },
+    };
+    await assert.rejects(
+      leased(queue).runRevision(worker, currentness, async () => {
+        calls.push("effect");
+        return "late value";
+      }),
+      (received) => received === error,
+    );
+    assert.equal(calls.includes("heartbeat"), boundary !== "before-renewal");
+    assert.equal(calls.includes("effect"), boundary === "after-effect");
+  });
+}
+
+test(
+  "a periodic revision currentness failure aborts the effect and is joined without claim-loss relabeling",
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const entered = deferred();
+    const { worker } = context();
+    const error = new Error("controlled periodic intent change");
+    let checks = 0;
+    let effects = 0;
+    const helper = leased({ heartbeat: async () => worker.claim }, async (signal, effect) => {
+      await effect();
+      if (!signal.aborted)
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      assert.equal(signal.reason, error);
+      return "late provider response";
+    });
+    const rejected = assert.rejects(
+      helper.runRevision(
+        worker,
+        {
+          async assertCurrent() {
+            if (++checks >= 4) throw error;
+          },
+        },
+        async () => {
+          effects++;
+          entered.resolve();
+        },
+      ),
+      (received) => received === error,
+    );
+    await entered.promise;
+    t.mock.timers.tick(10);
+    await rejected;
+    assert.equal(effects, 1);
+  },
+);
+
+test("required revision currentness cannot be omitted or replaced by a successful renewal", async () => {
+  const { worker } = context();
+  let effects = 0;
+  let renewals = 0;
+  await assert.rejects(
+    leased({
+      heartbeat: async () => {
+        renewals++;
+        return worker.claim;
+      },
+    }).runRevision(worker, undefined, async () => {
+      effects++;
+    }),
+  );
+  assert.equal(effects, 0);
+  assert.equal(renewals, 0);
+});

@@ -4105,19 +4105,24 @@ export class PostgresPlatformState implements PlatformStateStore {
     work: (state: PlatformUnitOfWork, queue: PostgresWorkQueue) => Promise<T>,
     options: PostgresWorkQueueOptions = {},
   ): Promise<T> {
-    return this.execute(false, async (state, context) =>
-      work(
-        state,
-        new Proxy(new PostgresWorkQueue(context.client, options), {
-          get(target, property, receiver) {
-            const value = Reflect.get(target, property, receiver);
-            return typeof value === "function"
-              ? (...args: unknown[]) =>
-                  context.lifetime.run(async () => Reflect.apply(value, target, args))
-              : value;
-          },
-        }),
-      ),
+    // Final queue publication reads a fresh head after the original parent locks.
+    return this.execute(
+      false,
+      async (state, context) =>
+        work(
+          state,
+          new Proxy(new PostgresWorkQueue(context.client, options), {
+            get(target, property, receiver) {
+              const value = Reflect.get(target, property, receiver);
+              return typeof value === "function"
+                ? (...args: unknown[]) =>
+                    context.lifetime.run(async () => Reflect.apply(value, target, args))
+                : value;
+            },
+          }),
+        ),
+      undefined,
+      true,
     );
   }
 

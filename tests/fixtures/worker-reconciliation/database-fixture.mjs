@@ -41,6 +41,7 @@ export async function setup(context, { leaseDurationMs = 30_000 } = {}) {
     connectionString: process.env.OCC_TEST_DATABASE_URL,
     application_name: applicationName,
     max: 1,
+    connectionTimeoutMillis: 250,
   });
   const state = new PostgresPlatformState(observerPool);
   const events = [];

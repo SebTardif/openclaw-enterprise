@@ -4,6 +4,7 @@ import type {
   ComputeRevisionContext,
 } from "@openclaw-enterprise/contracts";
 import type { LeasedEffects, WorkerClaimContext } from "./leased-effect.ts";
+import type { WorkerRevisionCurrentness } from "./revision-currentness.ts";
 import type { RevisionDispatchResult } from "./runner.ts";
 
 export interface WorkerRevisionCleanupOptions {
@@ -15,7 +16,7 @@ export interface WorkerRevisionCleanupOptions {
     | "prepareRevision"
     | "retireRevision"
   >;
-  readonly effects: Pick<LeasedEffects, "run">;
+  readonly effects: Pick<LeasedEffects, "run" | "runRevision">;
   readonly mode: "development" | "production";
   readonly maintenanceIntervalMs: number | undefined;
   readonly listRevisions: (
@@ -51,10 +52,13 @@ export class WorkerRevisionCleanup {
     execution: WorkerClaimContext,
     activated: Readonly<AgentRevision>,
     result: RevisionDispatchResult,
+    currentness: WorkerRevisionCurrentness,
   ): Promise<void> {
     const { compute, effects, mode } = this.options;
     if (mode === "production" && compute.activationOrder !== "beforeCommit") {
-      await effects.run(execution, () => this.stage("activateRevision", activated, result.context));
+      await effects.runRevision(execution, currentness, () =>
+        this.stage("activateRevision", activated, result.context),
+      );
     }
     if (result.previous !== undefined) {
       await effects.run(execution, () => compute.retireRevision(result.previous!));
@@ -65,10 +69,11 @@ export class WorkerRevisionCleanup {
     execution: WorkerClaimContext,
     revision: Readonly<AgentRevision>,
     context: ComputeRevisionContext,
+    currentness: WorkerRevisionCurrentness,
   ): Promise<RevisionDispatchResult | undefined> {
     const { compute, effects, mode } = this.options;
     if (this.options.maintenanceIntervalMs !== undefined) {
-      const observation = await effects.run(execution, () =>
+      const observation = await effects.runRevision(execution, currentness, () =>
         compute.prepareRevision(revision, context),
       );
       if (!this.options.validObservation(observation, revision)) {
@@ -79,7 +84,9 @@ export class WorkerRevisionCleanup {
       }
     }
     if (mode === "production") {
-      await effects.run(execution, () => this.stage("activateRevision", revision, context));
+      await effects.runRevision(execution, currentness, () =>
+        this.stage("activateRevision", revision, context),
+      );
     }
     const earlier = (
       await this.options.listRevisions(revision.namespaceId, revision.agentId)

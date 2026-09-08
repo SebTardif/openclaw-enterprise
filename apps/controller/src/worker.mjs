@@ -72,7 +72,7 @@ try {
     computeDriver = createDevelopmentDockerComputeDriver();
     if (typeof computeDriver.preflight === "function") await computeDriver.preflight();
   }
-  pool = new pg.Pool({ connectionString: databaseUrl });
+  pool = new pg.Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 250 });
   worker = createControllerWorker({
     pool,
     mode,

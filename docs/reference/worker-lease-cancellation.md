@@ -2,29 +2,35 @@
 
 The installed controller worker uses
 [`LeasedEffects`](../../apps/controller/src/worker/leased-effect.ts) to renew its
-existing queue claim before each external operation and to pass cooperative
-cancellation through the selected Driver's abort-signal bridge. The worker
-factory supplies its existing queue, lease duration, and abort bridge; this
-behavior requires no additional configuration.
+existing queue claim and carry cooperative cancellation through the selected
+Driver's abort-signal bridge. Running revision effects require `runRevision` and
+the original execution's
+[`WorkerRevisionCurrentness`](../../apps/controller/src/worker/revision-currentness.ts).
+Each currentness check reads the original admission and retained intent against
+a fresh head; it never turns those records into account or provider authority.
+The existing `run` path remains for Namespace effects and separately classified
+legacy cleanup. The installed worker's original pool supplies a 250ms acquisition
+timeout for the bounded currentness reads.
 
-An already cancelled worker run cannot renew its claim or start another effect.
-The wrapper checks cancellation immediately before renewal and after the
-heartbeat settles. It also checks after registering its cancellation listener
-and immediately before invoking the effect callback, including when the abort
-bridge delays that callback. Cancellation observed in either gap prevents the
-effect from starting.
+An already cancelled run cannot renew its claim or start another effect.
+Running revisions check currentness before and after renewal and around the
+effect wait. The same owned callback checks the wrapper's first-failure latch at
+the preparation-to-activation or deactivation boundary. A provider that ignores
+abort and returns late cannot start that next stage after observed claim loss,
+even when its revision's intent head is unchanged.
 
-While an effect runs, periodic heartbeats remain serialized. Once cancellation
-or claim loss is observed, queued callbacks stop issuing new heartbeats. A
-heartbeat already in flight is allowed to settle. The wrapper drains that
-pending heartbeat work before returning, clears its timer, and removes its
-cancellation listener.
+While an effect runs, periodic renewals remain serialized. The first observed
+cancellation, claim loss or revision-currentness failure stops queued renewals
+and aborts the operation signal. Once the effect settles, the wrapper clears its
+timer and listener, then joins pending heartbeat work. Later errors cannot replace
+its latched first failure. No database lock spans a Compute wait.
 
-Missing or expired claims and cancellation continue to use the existing
-`WorkClaimLostError` class, so the worker runner retains its claim-loss
-classification. Separate error instances may be constructed. An initial
-heartbeat rejection continues to propagate its original error. Ordinary effect
-results and errors remain unchanged while the worker retains its claim.
+Missing or expired claims and cancellation retain `WorkClaimLostError`, including
+cancellation during a rejecting currentness read. A changed running intent uses
+`WorkerRevisionCurrentnessLostError` and suppresses stale running effects and
+successful publication. A live signal's repository error remains unchanged;
+ordinary namespace and legacy cleanup behavior retain their existing path.
+These checks neither authorize retirement nor create a new queue terminal state.
 
 Cancellation is cooperative. An effect that has already started may have changed
 external state even if the wrapper later reports claim loss. The wrapper waits

@@ -266,6 +266,19 @@ export class ControllerWorker {
                   ),
                   markNamespaceDeleted: unit.namespaces.markNamespaceDeleted.bind(unit.namespaces),
                 }),
+                runtimeAdmissions: Object.freeze({
+                  findRevisionAdmission: unit.runtimeAdmissions.findRevisionAdmission.bind(
+                    unit.runtimeAdmissions,
+                  ),
+                }),
+                runtimeAssignments: Object.freeze({
+                  findRuntimeIntent: unit.runtimeAssignments.findRuntimeIntent.bind(
+                    unit.runtimeAssignments,
+                  ),
+                  findRuntimeIntentHead: unit.runtimeAssignments.findRuntimeIntentHead.bind(
+                    unit.runtimeAssignments,
+                  ),
+                }),
                 audit: Object.freeze({ append: unit.audit.append.bind(unit.audit) }),
               }),
               Object.freeze({
@@ -280,6 +293,7 @@ export class ControllerWorker {
           this.queueOptions,
         ),
       installation: () => this.installation,
+      readCurrentness: (action, options) => this.state.read((view) => action(view), options),
       iamDriverId: this.iamDriverId,
       computeDriverId: this.compute.id,
       convergenceTimeoutMs: this.convergenceTimeoutMs,
@@ -319,29 +333,34 @@ export class ControllerWorker {
         finalization.finalize(execution, namespace, result),
     });
     const revisions = new RevisionReconciler({
-      read: (action) =>
-        this.state.read((view) =>
-          action(
-            Object.freeze({
-              namespaces: Object.freeze({
-                findNamespace: view.namespaces.findNamespace.bind(view.namespaces),
+      read: (action, options) =>
+        this.state.read(
+          (view) =>
+            action(
+              Object.freeze({
+                namespaces: Object.freeze({
+                  findNamespace: view.namespaces.findNamespace.bind(view.namespaces),
+                }),
+                agents: Object.freeze({ findAgent: view.agents.findAgent.bind(view.agents) }),
+                revisions: Object.freeze({
+                  findRevision: view.revisions.findRevision.bind(view.revisions),
+                }),
+                runtimeAdmissions: Object.freeze({
+                  findRevisionAdmission: view.runtimeAdmissions.findRevisionAdmission.bind(
+                    view.runtimeAdmissions,
+                  ),
+                }),
+                runtimeAssignments: Object.freeze({
+                  findRuntimeIntent: view.runtimeAssignments.findRuntimeIntent.bind(
+                    view.runtimeAssignments,
+                  ),
+                  findRuntimeIntentHead: view.runtimeAssignments.findRuntimeIntentHead.bind(
+                    view.runtimeAssignments,
+                  ),
+                }),
               }),
-              agents: Object.freeze({ findAgent: view.agents.findAgent.bind(view.agents) }),
-              revisions: Object.freeze({
-                findRevision: view.revisions.findRevision.bind(view.revisions),
-              }),
-              runtimeAdmissions: Object.freeze({
-                findRevisionAdmission: view.runtimeAdmissions.findRevisionAdmission.bind(
-                  view.runtimeAdmissions,
-                ),
-              }),
-              runtimeAssignments: Object.freeze({
-                findRuntimeIntent: view.runtimeAssignments.findRuntimeIntent.bind(
-                  view.runtimeAssignments,
-                ),
-              }),
-            }),
-          ),
+            ),
+          options,
         ),
       installation: () => this.installation,
       compute: this.compute,

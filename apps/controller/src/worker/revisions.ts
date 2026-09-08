@@ -10,6 +10,11 @@ import { WorkClaimLostError, type PlatformReadView } from "@openclaw-enterprise/
 import type { WorkerRevisionCleanup } from "./cleanup.ts";
 import type { WorkerFinalization } from "./finalization.ts";
 import type { LeasedEffects, WorkerClaimContext } from "./leased-effect.ts";
+import {
+  WorkerRevisionCurrentness,
+  WorkerRevisionCurrentnessLostError,
+} from "./revision-currentness.ts";
+import type { PlatformReadOptions } from "@openclaw-enterprise/occ/ports/transaction";
 import { validRevisionObservation, type WorkerRevisionInputs } from "./revision-inputs.ts";
 import type { RevisionDispatchResult } from "./runner.ts";
 
@@ -18,11 +23,17 @@ export interface RevisionReconcilerView {
   readonly agents: Pick<PlatformReadView["agents"], "findAgent">;
   readonly revisions: Pick<PlatformReadView["revisions"], "findRevision">;
   readonly runtimeAdmissions: Pick<PlatformReadView["runtimeAdmissions"], "findRevisionAdmission">;
-  readonly runtimeAssignments: Pick<PlatformReadView["runtimeAssignments"], "findRuntimeIntent">;
+  readonly runtimeAssignments: Pick<
+    PlatformReadView["runtimeAssignments"],
+    "findRuntimeIntent" | "findRuntimeIntentHead"
+  >;
 }
 
 export interface RevisionReconcilerOptions {
-  readonly read: <T>(action: (view: RevisionReconcilerView) => Promise<T>) => Promise<T>;
+  readonly read: <T>(
+    action: (view: RevisionReconcilerView) => Promise<T>,
+    options?: PlatformReadOptions,
+  ) => Promise<T>;
   readonly installation: () => Readonly<Installation> | undefined;
   readonly compute: Pick<
     ComputeDriver,
@@ -42,7 +53,7 @@ export interface RevisionReconcilerOptions {
     WorkerFinalization,
     "finalizeRevision" | "completeActivatedRevision" | "finalizeActiveRevision"
   >;
-  readonly effects: Pick<LeasedEffects, "run" | "renew">;
+  readonly effects: Pick<LeasedEffects, "runRevision" | "renewRevision">;
 }
 
 /** Revalidates admitted revision work before invoking the selected leased effects. */
@@ -150,6 +161,12 @@ export class RevisionReconciler {
         });
         return;
       }
+      const currentness = new WorkerRevisionCurrentness(
+        (action, options) => this.options.read(action, options),
+        this.options.installation()?.id ?? "",
+        execution,
+      );
+      await currentness.assertCurrent();
       const approvedHarness = this.options.resolveApprovedHarness(
         revision.harness.id,
         revision.harness.mode,
@@ -189,7 +206,7 @@ export class RevisionReconciler {
         return;
       }
       if (this.options.compute.bindAgent !== undefined) {
-        await this.options.effects.run(execution, async () => {
+        await this.options.effects.runRevision(execution, currentness, async () => {
           await this.options.compute.bindAgent!({ namespace, agent });
         });
       }
@@ -212,6 +229,7 @@ export class RevisionReconciler {
             execution,
             revision,
             secretContext.context,
+            currentness,
           );
           if (incomplete !== undefined) {
             if (incomplete.outcome === "permanent") {
@@ -226,7 +244,11 @@ export class RevisionReconciler {
             return;
           }
         } catch (error) {
-          if (error instanceof WorkClaimLostError) throw error;
+          if (
+            error instanceof WorkClaimLostError ||
+            error instanceof WorkerRevisionCurrentnessLostError
+          )
+            throw error;
           await this.options.finalization.finalizeActiveRevision(
             execution,
             revision,
@@ -249,16 +271,21 @@ export class RevisionReconciler {
         });
         return;
       }
-      await this.options.effects.renew(execution);
+      await this.options.effects.renewRevision(execution, currentness);
       result = await this.observeRevision(
         execution,
         revision,
         previous,
         agent.activeRevisionId,
         secretContext.context,
+        currentness,
       );
     } catch (error) {
-      if (error instanceof WorkClaimLostError) throw error;
+      if (
+        error instanceof WorkClaimLostError ||
+        error instanceof WorkerRevisionCurrentnessLostError
+      )
+        throw error;
       result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
     }
     await this.options.finalization.finalizeRevision(execution, result);
@@ -270,20 +297,25 @@ export class RevisionReconciler {
     previous: Readonly<AgentRevision> | undefined,
     expectedActiveRevisionId: string | undefined,
     context: ComputeRevisionContext,
+    currentness: WorkerRevisionCurrentness,
   ): Promise<RevisionDispatchResult> {
-    return this.options.effects.run(execution, async () => {
+    return this.options.effects.runRevision(execution, currentness, async (assertCurrent) => {
       const observation = await this.options.compute.prepareRevision(revision, context);
       if (!validRevisionObservation(observation, revision))
         return { outcome: "permanent", code: "INVALID_DRIVER_OBSERVATION" };
       if (!observation.ready) return { outcome: "pending", code: "REVISION_INCOMPLETE" };
       if (this.options.compute.activationOrder === "beforeCommit") {
+        await assertCurrent();
         await this.options.cleanup.stage("activateRevision", revision, context);
+        await assertCurrent();
       } else if (
         this.options.mode === "production" &&
         revision.harness.mode === "dedicated" &&
         expectedActiveRevisionId === undefined
       ) {
+        await assertCurrent();
         await this.options.cleanup.stage("deactivateRevision", revision);
+        await assertCurrent();
       }
       return {
         outcome: "success",

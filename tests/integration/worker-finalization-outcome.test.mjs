@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WorkerRevisionCurrentnessLostError } from "../../apps/controller/src/worker/revision-currentness.ts";
 import { WorkerFinalization } from "../../apps/controller/src/worker/finalization.ts";
 import { WorkClaimLostError } from "../../packages/occ/src/state/postgres-work-queue.ts";
 import { claim } from "../fixtures/worker-lease-cancellation/controlled-queue.mjs";
@@ -36,6 +37,19 @@ function controlledFinalization({
     servicePrincipalId: revision.servicePrincipalId,
     activeRevisionId: revision.id,
   };
+  const original = {
+    installationId: "installation/finalization",
+    namespaceId: execution.claim.namespaceId,
+    agentId: execution.claim.agentId,
+    revisionId: execution.claim.revisionId,
+    transitionRef: execution.claim.runtimeTransitionRef,
+    generation: execution.claim.lifecycleGeneration,
+    desiredMode: "running",
+    actorId: execution.claim.actorId,
+    requestId: "request/finalization",
+    createdAt: execution.claim.createdAt.toISOString(),
+  };
+  let head = original;
   const unit = {
     agents: {
       async lockAgent() {
@@ -47,7 +61,36 @@ function controlledFinalization({
         return current;
       },
     },
-    namespaces: {},
+    namespaces: {
+      async lockNamespace(id) {
+        calls.push("lockNamespace");
+        assert.equal(id, execution.claim.namespaceId);
+        return { id, status: "ready" };
+      },
+    },
+    runtimeAdmissions: {
+      async findRevisionAdmission() {
+        calls.push("readAdmission");
+        return {
+          namespaceId: original.namespaceId,
+          agentId: original.agentId,
+          revisionId: original.revisionId,
+          runtimeTransitionRef: original.transitionRef,
+          lifecycleGeneration: original.generation,
+          auditEventId: "aud_original",
+        };
+      },
+    },
+    runtimeAssignments: {
+      async findRuntimeIntent() {
+        calls.push("readOriginal");
+        return original;
+      },
+      async findRuntimeIntentHead() {
+        calls.push("readHead");
+        return head;
+      },
+    },
     audit: {
       async append(event) {
         calls.push(event.action);
@@ -75,6 +118,7 @@ function controlledFinalization({
       return value;
     },
     installation: () => ({ id: "installation/finalization" }),
+    readCurrentness: (action) => action(unit),
     iamDriverId: "native-iam",
     computeDriverId: "compute/finalization",
     convergenceTimeoutMs: 60_000,
@@ -91,7 +135,18 @@ function controlledFinalization({
       calls.push("emit");
     },
   });
-  return { execution, revision, current, calls, events, finalizer };
+  return {
+    execution,
+    revision,
+    current,
+    calls,
+    events,
+    finalizer,
+    original,
+    replaceHead(value) {
+      head = value;
+    },
+  };
 }
 
 for (const method of ["finalize", "finalizeRevision"]) {
@@ -146,8 +201,12 @@ for (const method of ["finalizeRevision", "completeActivatedRevision"]) {
       assert.equal(fixture.events[0].outcome, attemptCount === 5 ? "permanent" : "retry");
       assert.equal(fixture.events[0].code, "ACTIVE_REVISION_CHANGED");
       assert.deepEqual(fixture.calls, [
-        "heartbeat",
+        "lockNamespace",
         "lockAgent",
+        "heartbeat",
+        "readAdmission",
+        "readOriginal",
+        "readHead",
         "retry",
         "transaction:1:ready",
         "transaction:1:committed",
@@ -231,14 +290,22 @@ test("revision activation waits for commit, cleanup and observation commit befor
   cleanup.resolve();
   await running;
   assert.deepEqual(fixture.calls, [
-    "heartbeat",
+    "lockNamespace",
     "lockAgent",
+    "heartbeat",
+    "readAdmission",
+    "readOriginal",
+    "readHead",
     "compareAndSetActiveRevision",
     "transaction:1:ready",
     "transaction:1:committed",
     "cleanup",
-    "heartbeat",
+    "lockNamespace",
     "lockAgent",
+    "heartbeat",
+    "readAdmission",
+    "readOriginal",
+    "readHead",
     "openclaw.agents.lifecycle.activate",
     "complete",
     "transaction:2:ready",
@@ -423,3 +490,61 @@ for (const stage of ["activation", "observation"]) {
     );
   }
 }
+
+for (const mode of ["disabled", "stopped"]) {
+  for (const method of [
+    "finalizeRevision",
+    "completeActivatedRevision",
+    "finalizeActiveRevision",
+  ]) {
+    test(`${method} refuses a ${mode} current intent without success or maintenance publication`, async () => {
+      const fixture = controlledFinalization({ maintenanceIntervalMs: 1000 });
+      fixture.execution.claim.idempotencyKey = `agent_revision:${fixture.revision.id}:maintenance:1`;
+      fixture.replaceHead({ ...fixture.original, desiredMode: mode, generation: 2 });
+      const args =
+        method === "finalizeActiveRevision"
+          ? [fixture.execution, fixture.revision, "NOT_READY"]
+          : [
+              fixture.execution,
+              { outcome: "success", code: "REVISION_ACTIVATED", revision: fixture.revision },
+            ];
+      await assert.rejects(fixture.finalizer[method](...args), WorkerRevisionCurrentnessLostError);
+      assert.deepEqual(fixture.calls, [
+        "lockNamespace",
+        "lockAgent",
+        "heartbeat",
+        "readAdmission",
+        "readOriginal",
+        "readHead",
+      ]);
+      assert.deepEqual(fixture.events, []);
+    });
+  }
+}
+
+test("the second original transaction rejects an intent changed during cleanup", async () => {
+  let fixture;
+  fixture = controlledFinalization({
+    cleanup() {
+      fixture.replaceHead({
+        ...fixture.original,
+        generation: 2,
+        transitionRef: "00000000-0000-4000-8000-000000000099",
+      });
+    },
+  });
+  await assert.rejects(
+    fixture.finalizer.finalizeRevision(fixture.execution, {
+      outcome: "success",
+      code: "REVISION_ACTIVATED",
+      revision: fixture.revision,
+      expectedActiveRevisionId: fixture.revision.id,
+    }),
+    WorkerRevisionCurrentnessLostError,
+  );
+  assert.ok(fixture.calls.includes("transaction:1:committed"));
+  assert.ok(fixture.calls.includes("cleanup"));
+  assert.equal(fixture.calls.includes("complete"), false);
+  assert.equal(fixture.calls.includes("openclaw.agents.lifecycle.activate"), false);
+  assert.deepEqual(fixture.events, []);
+});

@@ -14,8 +14,15 @@ import {
 import type { WorkerRevisionCleanup } from "./cleanup.ts";
 import type { WorkerClaimContext } from "./leased-effect.ts";
 import type { DispatchResult, RevisionDispatchResult } from "./runner.ts";
+import {
+  assertRevisionCurrentness,
+  WorkerRevisionCurrentness,
+  WorkerRevisionCurrentnessLostError,
+  type RevisionCurrentnessRead,
+  type RevisionCurrentnessView,
+} from "./revision-currentness.ts";
 
-export interface WorkerFinalizationUnit {
+export interface WorkerFinalizationUnit extends RevisionCurrentnessView {
   readonly agents: Pick<PlatformUnitOfWork["agents"], "lockAgent" | "compareAndSetActiveRevision">;
   readonly namespaces: Pick<
     PlatformUnitOfWork["namespaces"],
@@ -34,6 +41,7 @@ export interface WorkerFinalizationOptions {
     action: (unit: WorkerFinalizationUnit, queue: WorkerFinalizationQueue) => Promise<T>,
   ) => Promise<T>;
   readonly installation: () => Readonly<Installation> | undefined;
+  readonly readCurrentness: RevisionCurrentnessRead;
   readonly iamDriverId: string;
   readonly computeDriverId: string;
   readonly convergenceTimeoutMs: number;
@@ -76,6 +84,29 @@ export class WorkerFinalization {
     this.options = options;
   }
 
+  /** Same original transaction and parent order as supported intent writers.
+   * Queue renewal follows parent locks; no database lock spans a Compute wait.
+   */
+  private async lockCurrentRevision(
+    unit: WorkerFinalizationUnit,
+    queue: WorkerFinalizationQueue,
+    execution: WorkerClaimContext,
+  ) {
+    const { claim, signal } = execution;
+    if (signal.aborted) throw new WorkClaimLostError();
+    if (claim.agentId === undefined || claim.revisionId === undefined)
+      throw new WorkerRevisionCurrentnessLostError();
+    const namespace = await unit.namespaces.lockNamespace(claim.namespaceId);
+    const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId);
+    if (signal.aborted || (await queue.heartbeat(claim)) === undefined)
+      throw new WorkClaimLostError();
+    if (namespace === undefined || namespace.status !== "ready" || agent === undefined)
+      throw new WorkerRevisionCurrentnessLostError();
+    await assertRevisionCurrentness(unit, this.options.installation()?.id ?? "", claim);
+    if (signal.aborted) throw new WorkClaimLostError();
+    return agent;
+  }
+
   async finalizeRevision(
     execution: WorkerClaimContext,
     result: RevisionDispatchResult,
@@ -89,11 +120,15 @@ export class WorkerFinalization {
       : result;
     const applied = await this.options.transact(
       async (unit, queue): Promise<RevisionFinalizationDisposition> => {
-        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+        const current =
+          resolved.outcome === "success"
+            ? await this.lockCurrentRevision(unit, queue, execution)
+            : undefined;
+        if (resolved.outcome !== "success" && (await queue.heartbeat(claim)) === undefined)
+          throw new WorkClaimLostError();
         if (resolved.supersededBy !== undefined && resolved.outcome === "success") {
           await this.appendRevisionSuperseded(unit, claim, resolved.supersededBy);
         } else if (resolved.revision !== undefined && resolved.outcome === "success") {
-          const current = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
           if (
             current === undefined ||
             current.servicePrincipalId !== resolved.revision.servicePrincipalId ||
@@ -126,9 +161,22 @@ export class WorkerFinalization {
     );
     if (applied.kind === "activated") {
       try {
-        await this.options.cleanup.afterActivation(execution, applied.revision, resolved);
+        await this.options.cleanup.afterActivation(
+          execution,
+          applied.revision,
+          resolved,
+          new WorkerRevisionCurrentness(
+            this.options.readCurrentness,
+            this.options.installation()?.id ?? "",
+            execution,
+          ),
+        );
       } catch (error) {
-        if (error instanceof WorkClaimLostError) throw error;
+        if (
+          error instanceof WorkClaimLostError ||
+          error instanceof WorkerRevisionCurrentnessLostError
+        )
+          throw error;
         await this.finalizeRevision(execution, {
           outcome: "pending",
           code: "REVISION_FINALIZATION_INCOMPLETE",
@@ -159,8 +207,7 @@ export class WorkerFinalization {
     if (revision === undefined) throw new Error("The activated Agent revision is unavailable.");
     const applied = await this.options.transact(
       async (unit, queue): Promise<AppliedWorkOutcome> => {
-        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
-        const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+        const agent = await this.lockCurrentRevision(unit, queue, execution);
         if (
           agent === undefined ||
           agent.id !== revision.agentId ||
@@ -203,8 +250,7 @@ export class WorkerFinalization {
     }
     const applied = await this.options.transact(
       async (unit, queue): Promise<AppliedWorkOutcome> => {
-        if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
-        const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+        const agent = await this.lockCurrentRevision(unit, queue, execution);
         if (
           agent === undefined ||
           agent.servicePrincipalId !== revision.servicePrincipalId ||

@@ -3,6 +3,7 @@ import {
   type ClaimedWork,
   type PostgresWorkQueue,
 } from "@openclaw-enterprise/occ";
+import type { WorkerRevisionCurrentness } from "./revision-currentness.ts";
 
 /** The exact claimed work and cancellation owned by this worker run. */
 export interface WorkerClaimContext {
@@ -30,43 +31,97 @@ export class LeasedEffects {
     if (context.signal.aborted || renewed === undefined) throw new WorkClaimLostError();
   }
 
-  async run<T>(context: WorkerClaimContext, effect: () => Promise<T>): Promise<T> {
-    // Short consecutive effects still renew before each call, even when their
-    // individual timers never fire during the longer reconciliation sequence.
+  async renewRevision(
+    context: WorkerClaimContext,
+    currentness: Pick<WorkerRevisionCurrentness, "assertCurrent">,
+  ): Promise<void> {
+    if (context.signal.aborted) throw new WorkClaimLostError();
+    await currentness.assertCurrent();
     await this.renew(context);
-    let lost = false;
+    await currentness.assertCurrent();
+    if (context.signal.aborted) throw new WorkClaimLostError();
+  }
+
+  /** Running revision effects cannot omit their original current-state reader. */
+  async runRevision<T>(
+    context: WorkerClaimContext,
+    currentness: Pick<WorkerRevisionCurrentness, "assertCurrent">,
+    effect: (assertCurrent: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    if (currentness === undefined || typeof currentness.assertCurrent !== "function")
+      throw new TypeError("Running revision currentness is required.");
+    return this.runOwned(context, effect, currentness);
+  }
+
+  /** Namespace effects and separately classified legacy cleanup retain this path. */
+  async run<T>(context: WorkerClaimContext, effect: () => Promise<T>): Promise<T> {
+    return this.runOwned(context, effect);
+  }
+
+  private async runOwned<T>(
+    context: WorkerClaimContext,
+    effect: (assertCurrent: () => Promise<void>) => Promise<T>,
+    currentness?: Pick<WorkerRevisionCurrentness, "assertCurrent">,
+  ): Promise<T> {
+    const renew = () =>
+      currentness === undefined ? this.renew(context) : this.renewRevision(context, currentness);
+    await renew();
+    let failed = false;
+    let failure: unknown;
     let pending = Promise.resolve();
     const operation = new AbortController();
-    const abandon = () => {
-      lost = true;
-      operation.abort(new WorkClaimLostError());
+    const abandon = (error: unknown) => {
+      if (!failed) {
+        failed = true;
+        failure = error;
+      }
+      operation.abort(failure);
     };
-    context.signal.addEventListener("abort", abandon, { once: true });
-    if (context.signal.aborted) abandon();
+    const assertOwnedCurrent = async () => {
+      if (failed) throw failure;
+      if (context.signal.aborted) throw new WorkClaimLostError();
+      if (currentness !== undefined) await currentness.assertCurrent();
+      if (failed) throw failure;
+      if (context.signal.aborted) throw new WorkClaimLostError();
+    };
+    const cancelled = () => abandon(new WorkClaimLostError());
+    context.signal.addEventListener("abort", cancelled, { once: true });
+    if (context.signal.aborted) cancelled();
     const heartbeat = setInterval(
       () => {
         pending = pending.then(async () => {
-          if (lost) return;
-          await this.renew(context);
-        });
-        pending.catch(() => {
-          abandon();
+          if (failed) return;
+          try {
+            await renew();
+          } catch (error) {
+            // Preserve the original legacy classification. Revision currentness
+            // and genuine queue claim loss retain their exact first error.
+            abandon(currentness === undefined ? new WorkClaimLostError() : error);
+          }
         });
       },
       Math.max(1, Math.floor(this.options.leaseDurationMs / 3)),
     );
     heartbeat.unref();
     try {
-      if (lost) throw new WorkClaimLostError();
-      return await this.options.withAbortSignal(operation.signal, () => {
-        if (lost || context.signal.aborted) throw new WorkClaimLostError();
-        return effect();
+      if (failed) throw failure;
+      // A completed renewal is not a durable permit across a later await.
+      await assertOwnedCurrent();
+      const result = await this.options.withAbortSignal(operation.signal, () => {
+        if (failed) throw failure;
+        if (context.signal.aborted) throw new WorkClaimLostError();
+        return effect(assertOwnedCurrent);
       });
+      await assertOwnedCurrent();
+      return result;
+    } catch (error) {
+      if (currentness !== undefined) abandon(error);
+      throw error;
     } finally {
       clearInterval(heartbeat);
-      context.signal.removeEventListener("abort", abandon);
-      await pending.catch(() => {});
-      if (lost) throw new WorkClaimLostError();
+      context.signal.removeEventListener("abort", cancelled);
+      await pending;
+      if (failed) throw failure;
     }
   }
 }

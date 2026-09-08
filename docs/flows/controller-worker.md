@@ -172,15 +172,17 @@ account binding before Compute effects. It uses a read-only projection and has
 no Provider client or admin key. The
 [Provider-managed credential delivery flow](service-account-driver-credential-delivery.md) owns these checks.
 
-Before `bindAgent` or any other Compute call, `processRevision()` independently
-reads the exact revision's original admission and its retained intent. It checks
-the Installation, Namespace, Agent, revision, original initiating actor, and
-recorded pair. A malformed or missing required association fails without
-Compute calls; an unavailable lookup retries without effects. Both-null work
-fields select historical behavior only when the revision itself has no original
-admission association. Maintenance copies the validated original pair through
-both successful observation and failed active-maintenance replacement. Reading
-a newer head never relabels older work or supplies provider fencing.
+Before `bindAgent` or another running revision effect, `RevisionReconciler`
+checks the exact revision's original admission and retained intent, including its
+Installation, Namespace, Agent, revision, initiating actor and recorded pair.
+`WorkerRevisionCurrentness` then reads that association against a fresh running
+intent head around renewal and effect waits. A stopped, disabled or later
+same-revision generation cannot reuse the original work. Both-null work fields
+retain historical behavior only when both the original admission and current
+lineage are absent. Missing required correspondence suppresses effects; the
+current head never relabels old work or supplies account or provider authority.
+Maintenance retains the validated original pair and must pass the same fresh
+currentness checks before running or publishing another observation.
 
 Revoked actors and denied operations become permanent results before runtime
 creation. A revision older than the current active revision completes as
@@ -191,7 +193,7 @@ than changing the active pointer again.
 
 `apps/controller/src/worker.ts:ControllerWorker.observe`,
 `apps/controller/src/worker.ts:ControllerWorker.observeRevision`,
-`apps/controller/src/worker.ts:ControllerWorker.withClaimHeartbeat`
+`apps/controller/src/worker/leased-effect.ts:LeasedEffects.runRevision`
 
 Namespace dispatch calls `ensureNamespace` or `deleteNamespace`. Revision
 dispatch optionally binds the exact Agent, then calls `prepareRevision` with its
@@ -199,14 +201,18 @@ immutable snapshot. The worker validates the returned observation's owner and
 shape before treating it as ready. A pending observation defers convergence;
 an invalid observation fails permanently.
 
-`withClaimHeartbeat()` renews the claim before starting each effect and then
-roughly every third of its lease duration while the effect runs. The initial
-renewal also keeps a sequence of short effects alive when no individual effect
-lasts long enough for its timer to fire. It propagates an abort signal into
-Compute. A lost lease, failed
-heartbeat, or worker shutdown aborts the operation context and raises
-`WorkClaimLostError`. The stale worker cannot publish its result under an expired
-or replaced token.
+`LeasedEffects.runRevision()` requires the original currentness reader, renews
+the exact claim before each effect and roughly every third of the lease while
+it runs, and carries the worker's abort signal into Compute. It checks fresh
+currentness before and after renewal and after effect waits. The nested
+preparation-to-activation or deactivation check also reads the same wrapper's
+first-failure latch, so a late provider return cannot start a second stage after
+observed claim loss. Pending heartbeats and the provider call are joined before
+the wrapper returns. `WorkClaimLostError` retains claim-loss classification;
+`WorkerRevisionCurrentnessLostError` denies stale running work separately.
+Namespace effects and exact legacy retirement retain their existing leased
+path. These observations do not prove an already-started external effect stopped
+or authorize replay of an uncertain operation.
 
 Compute owns infrastructure dispatch, including delegation to a configured
 Sandbox Driver. For example, the
@@ -230,14 +236,18 @@ credential setup so a lost claim cannot submit a new RPC during those waits.
 ### 6. Persist the result and finish revision activation
 
 `apps/controller/src/worker.ts:ControllerWorker.finalize`,
-`apps/controller/src/worker.ts:ControllerWorker.finalizeRevision`,
-`apps/controller/src/worker.ts:ControllerWorker.completeActivatedRevision`
+`apps/controller/src/worker/finalization.ts:WorkerFinalization.finalizeRevision`,
+`apps/controller/src/worker/finalization.ts:WorkerFinalization.completeActivatedRevision`
 
-Finalization uses `transactWithQueue()` and renews the exact claim inside the
-transaction before publishing state. Namespace success transitions provisioning
-to ready or records completed deletion, appends lifecycle evidence, and completes
-the queue item atomically. A failed provisioning target can transition to failed;
-incomplete deletion does not publish successful deletion.
+Finalization uses the original `transactWithQueue()` with explicit READ
+COMMITTED isolation. Revision success and active-maintenance publication lock
+Namespace, then Agent, renew the original claim, and read the original
+admission, retained intent and current head on that same transaction before
+CAS, audit or queue publication. The parent locks retain this correspondence
+through the transaction terminal; no lock is held across Compute. Namespace
+success retains its existing provisioning/deletion transitions, lifecycle
+evidence and atomic queue completion. Failed provisioning and incomplete
+deletion keep their existing outcomes.
 
 Revision activation crosses a separate infrastructure boundary. Once preparation
 is ready, a Driver selecting `activationOrder: beforeCommit` activates before
@@ -246,12 +256,16 @@ claim-protected compare-and-set of `Agent.activeRevisionId`; the first dedicated
 revision is staged inactive until that commit. A changed active pointer causes
 `ACTIVE_REVISION_CHANGED` and retry instead of overwriting a concurrent result.
 
-After the pointer commit, the worker finishes required activation and retires
-the predecessor. `completeActivatedRevision()` then rechecks the exact active
-revision and claim, appends activation evidence, and completes work in a second
-transaction. This deliberately does not claim that infrastructure effects and
-database state are one atomic transaction. Interrupted finalization is retried;
-the already-active branch finishes activation and retirement safely.
+After the pointer commit, the worker finishes required activation through the
+currentness-aware effect path and separately retires the exact predecessor.
+`completeActivatedRevision()` repeats the Namespace, Agent, claim and fresh
+intent checks in the second original transaction before activation evidence,
+queue completion or maintenance publication. A head change during cleanup
+prevents that successful publication. The first pointer commit and external
+effects may already have happened: this does not make infrastructure and database
+state atomic, establish durable exact cleanup acceptance, or grant uncertain
+replay. Existing retry/maintenance handling remains for dependency failures;
+currentness loss does not invent a new durable terminal outcome.
 
 ### 7. Defer, retry, or stop and hand off the next iteration
 

@@ -18,6 +18,7 @@ import { withComputeAbortSignal } from "../../apps/controller/src/drivers/comput
 import { WorkerRevisionCleanup } from "../../apps/controller/src/worker/cleanup.ts";
 import { WorkerFinalization } from "../../apps/controller/src/worker/finalization.ts";
 import { LeasedEffects } from "../../apps/controller/src/worker/leased-effect.ts";
+import { WorkerRevisionCurrentness } from "../../apps/controller/src/worker/revision-currentness.ts";
 import { RevisionReconciler } from "../../apps/controller/src/worker/revisions.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createInstallationDriverConfiguration as installation } from "../helpers/installation-driver-configuration.mjs";
@@ -281,7 +282,7 @@ test("production embedded and dedicated replacements preserve their active Servi
     });
     const now = new Date();
     const claim = {
-      idempotencyKey: `revision:${candidate.id}:reconcile`,
+      idempotencyKey: `agent_revision:${candidate.id}:reconcile`,
       namespaceId,
       agentId,
       revisionId: candidate.id,
@@ -297,6 +298,21 @@ test("production embedded and dedicated replacements preserve their active Servi
     // This selector unit assumes a live claim at the queue boundary; actual
     // renewal/loss is exercised by the PostgreSQL worker and stale-claim suites.
     const execution = { claim, signal: new AbortController().signal };
+    // This controlled selector fixture represents original pre-admission V0 work.
+    // Actual currentness code reads both absent admission and absent lineage;
+    // a callback merely asserting currentness would not exercise that boundary.
+    const currentnessView = {
+      runtimeAdmissions: { findRevisionAdmission: async () => undefined },
+      runtimeAssignments: {
+        findRuntimeIntent: async () => undefined,
+        findRuntimeIntentHead: async () => undefined,
+      },
+    };
+    const currentness = new WorkerRevisionCurrentness(
+      (action) => action(currentnessView),
+      "installation/selector-fixture",
+      execution,
+    );
     let renewals = 0;
     const effects = new LeasedEffects({
       queue: {
@@ -349,6 +365,7 @@ test("production embedded and dedicated replacements preserve their active Servi
       predecessor,
       predecessor.id,
       {},
+      currentness,
     );
     assert.equal(renewals, 1);
     assert.deepEqual(service.spec.selector, activeSelector);
@@ -367,8 +384,10 @@ test("production embedded and dedicated replacements preserve their active Servi
     const finalization = new WorkerFinalization({
       transact: async (transaction) => {
         transactions++;
-        await transaction(
+        return await transaction(
           {
+            ...currentnessView,
+            namespaces: { lockNamespace: async () => ({ id: namespaceId, status: "ready" }) },
             agents: {
               lockAgent: async (...arguments_) => {
                 assert.deepEqual(arguments_, [namespaceId, agentId]);
@@ -393,7 +412,8 @@ test("production embedded and dedicated replacements preserve their active Servi
           },
         );
       },
-      installation: outsideObservation,
+      installation: () => ({ id: "installation/selector-fixture" }),
+      readCurrentness: (action) => action(currentnessView),
       iamDriverId: drivers.installation.drivers.iam.id,
       computeDriverId: computeDriver.id,
       convergenceTimeoutMs: 900_000,
@@ -486,6 +506,7 @@ test("production embedded and dedicated replacements preserve their active Servi
       undefined,
       undefined,
       {},
+      currentness,
     );
     assert.equal(renewals, 2);
     assert.equal(initial.outcome, "success");
