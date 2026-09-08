@@ -10,3 +10,7 @@ packages:
 allowBuilds:
   esbuild: true
   protobufjs: true
+
+overrides:
+  # Drizzle 0.31.10 uses tsx; remove this exception when upstream drops the stale dependency.
+  "drizzle-kit@0.31.10>@esbuild-kit/esm-loader": "-"
