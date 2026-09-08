@@ -102,11 +102,11 @@ activation validator remains unavailable, and retirement publication refuses
 insertion. Measured clock health, activation and retirement authority are not
 supplied by pending metadata.
 
-The complete channel reserve, parent INSERT and mandatory same-client audit
-command still needs its dedicated owner phase, authorization, failure drainage
-and original commit-disposition handling. Schema and participant checks do not
-establish that join. The process-local journal has no corresponding durable
-replay-capacity implementation.
+The production and development PostgreSQL controller factories install the
+[reserved channel creation command](channel-administration.md#reserved-channel-creation-in-postgresql),
+which joins reservation, parent INSERT and mandatory same-client audit with the
+service's authorization and original transaction commit handling. The
+process-local journal has no corresponding durable replay-capacity implementation.
 
 ## Admission and native acknowledgement
 
