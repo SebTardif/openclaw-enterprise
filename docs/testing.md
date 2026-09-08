@@ -673,6 +673,39 @@ Kubernetes/OpenShell/Kata guest attestation and current runtime authorization.
 The earlier TypeScript implementation's tests are historical checkpoint
 receipts, not validation of the native components.
 
+The [SPIRE first observation fixture](../tests/fixtures/spire-first-observation-v1/README.md)
+adds separate test-only H0/H1/H2 coverage: actual SPIRE receiver PID metadata,
+protected Pod/sandbox mapping, and complete delivered X.509 identity sets for
+two coexisting gVisor Pods whose identity-observer phases run serially. It
+requires a separately prepared disposable environment, with no default
+kubeconfig or provider selection:
+
+```sh
+OCC_TEST_SPIRE_FIRST_OBSERVATION_REAL=1 \
+OCC_SPIRE_FIRST_OBSERVATION_PROFILE=/absolute/operator/profile.json \
+OCC_SPIRE_FIRST_OBSERVATION_PROFILE_SHA256='<sha256-of-exact-profile-bytes>' \
+node --test --test-concurrency=1 tests/integration/gvisor-spire-first-observation-real.test.mjs
+```
+
+The preparation owner retains cluster/runtime/image and SPIRE management
+ownership; the selected test owns its A/B Pods, registrations and observer
+children. Unit checks and offline builds verify fixture machinery only. Live
+coverage remains unexecuted until separately allocated and run; even a passing
+first slice does not establish native Codex consumption, identity renewal,
+replacement/replay behavior or current production authorization. See the
+fixture README for its exact profile contract, metadata limits and settlement
+requirements.
+
+The selected gVisor flags include `--network=none` alongside systrap/STRICT and
+`--host-uds=open`. The live test requires loopback-only guest interfaces and
+unreachable results for fixed operator-owned management endpoints. Default-deny
+NetworkPolicy alone does not prove isolation from the workload's own node.
+The effective runtime/network checks remain unrun, and unsupported UDS or
+network-none behavior has no automatic fallback.
+Configured RBAC checks verify the expected grants; they do not rule out other
+grants to the same ServiceAccounts or groups. Full effective RBAC qualification
+remains separate.
+
 Run the native controller process tests from the repository root:
 
 ```sh

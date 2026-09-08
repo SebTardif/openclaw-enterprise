@@ -47,6 +47,22 @@ and provider errors are never diagnostic output. This verifies the local
 Workload API. Runtime attestation, remote-peer authentication and current
 runtime authorization require separate integration and verification.
 
+## Test-only full-set observation
+
+`testfixtures/spire-first-observation` is a separate bounded Go observer for
+real SPIRE delivery inside explicitly prepared gVisor workloads. It observes
+every delivered X.509 entry before SDK selection and requires a denied request,
+protected registration/mapping gate, delivery on the same connection, and
+confirmed close. Its metadata output does not establish native application
+consumption or current runtime authority. The ordinary `identity check`
+diagnostic reports its selected identity and cannot establish full-set
+exclusivity. See the [fixture README](../../tests/fixtures/spire-first-observation-v1/README.md)
+for build checks, the explicit profile artifact/hash selectors, live opt-in and
+separate ownership of the prepared environment. The selected runtime requires
+systrap/STRICT, `--host-uds=open` and `--network=none`; effective runtime and
+guest-network isolation checks remain part of the unrun live integration.
+Both workload Pods coexist; only their identity-observer phases run serially.
+
 ## Controller protocol
 
 `oce-runtime-security openshell` reads one versioned JSON request from standard
