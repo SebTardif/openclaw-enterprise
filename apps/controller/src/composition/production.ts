@@ -7,6 +7,7 @@ import {
 } from "@openclaw-enterprise/iam";
 import {
   OpenClawController,
+  type ControllerOptions,
   PostgresPlatformState,
   RuntimeServiceTrustService,
 } from "@openclaw-enterprise/occ";
@@ -147,6 +148,15 @@ export async function composeProduction(config: ProductionConfig) {
 
     const controller = new OpenClawController(persistedInstallation, {
       state,
+      reservedChannelInstallationCreate: Object.freeze<
+        NonNullable<ControllerOptions["reservedChannelInstallationCreate"]>
+      >({
+        state,
+        create: (prepared, currentness) =>
+          state.transact((unit) =>
+            unit.channelBindings.createReservedChannelInstallation(prepared, currentness),
+          ),
+      }),
       workloadProfiles: {
         invocations: workloadProfileRequests.invocations,
         create(context) {

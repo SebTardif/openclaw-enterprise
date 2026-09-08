@@ -16,6 +16,7 @@ import {
 import {
   RuntimeServiceTrustService,
   OpenClawController,
+  type ControllerOptions,
   PostgresPlatformState,
 } from "@openclaw-enterprise/occ";
 import { createWorkloadProfilePurposeAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
@@ -148,6 +149,15 @@ export async function composePostgresDevelopment(
     const loggingLevel = config.logging?.level ?? drivers?.installation.logging.level;
     const controller = new OpenClawController(persistedInstallation, {
       state,
+      reservedChannelInstallationCreate: Object.freeze<
+        NonNullable<ControllerOptions["reservedChannelInstallationCreate"]>
+      >({
+        state,
+        create: (prepared, currentness) =>
+          state.transact((unit) =>
+            unit.channelBindings.createReservedChannelInstallation(prepared, currentness),
+          ),
+      }),
       workloadProfiles: {
         invocations: workloadProfileRequests.invocations,
         create(context) {

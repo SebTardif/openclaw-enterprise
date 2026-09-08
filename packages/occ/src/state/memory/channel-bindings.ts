@@ -190,6 +190,11 @@ export const createMemoryChannelBindingRepository: RepositoryFactory<
         ),
         options,
       ),
+    // TODO: Supply same-snapshot replay reservation support before selecting this command in memory.
+    createReservedChannelInstallation: async () => {
+      transaction.assertActive();
+      return Object.freeze({ kind: "recovery-required", reason: "reservation-unavailable" });
+    },
     createChannelInstallation: async (record) => {
       validateChannelMetadata(record, "chi");
       if (

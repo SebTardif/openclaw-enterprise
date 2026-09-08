@@ -14,7 +14,10 @@ export * from "./runtime-authority/binding-candidate.ts";
 export * from "./runtime-preparation/types.ts";
 export * from "./runtime-preparation/repository.ts";
 export type * from "./ports/repositories/runtime-preparation.ts";
-import { ChannelBindingService } from "./channel-bindings.ts";
+import {
+  ChannelBindingService,
+  type ReservedChannelInstallationCreateV1,
+} from "./channel-bindings.ts";
 export * from "./channel-bindings.ts";
 export {
   TurnJournalStore,
@@ -285,6 +288,7 @@ export interface ControllerWorkloadProfileFactoryV2 {
 }
 
 export interface ControllerOptions {
+  readonly reservedChannelInstallationCreate?: ReservedChannelInstallationCreateV1;
   /** Created once before Agent/Deployment capture. Missing genuine collaborators
    * remain unavailable; the original stable invocation source is shared. */
   readonly workloadProfiles?: ControllerWorkloadProfileFactoryV2;
@@ -382,6 +386,9 @@ export class OpenClawController {
       createId: () => this.nextIdentifier("service_account"),
     });
     this.channelBindings = new ChannelBindingService({
+      ...(options.reservedChannelInstallationCreate === undefined
+        ? {}
+        : { reservedChannelInstallationCreate: options.reservedChannelInstallationCreate }),
       installationId: this.installation.id,
       state: this.state,
       iam: () => this.selectedDriver("iam"),

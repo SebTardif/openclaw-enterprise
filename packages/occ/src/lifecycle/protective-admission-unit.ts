@@ -3,16 +3,21 @@ import type { PlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 
 /** The original transaction owner closes and drains this phase; it is not authority. */
 export class LifecycleAdmissionUnitPhase {
-  private mode: "idle" | "other" | "protective" = "idle";
+  private mode: "idle" | "other" | "protective" | "channel-first-create" = "idle";
   private accepting = true;
   private finished = false;
   private failed = false;
   private failure: unknown;
   private readonly pending = new Set<Promise<void>>();
+  private channelClosed = false;
+  private channelDispatched = false;
 
   private reject<T>(message: string): Promise<T> {
     const error = new ScopeViolationError(message);
-    if (this.accepting && !this.failed) {
+    if (
+      (this.accepting || (this.mode === "channel-first-create" && !this.channelClosed)) &&
+      !this.failed
+    ) {
       this.failed = true;
       this.failure = error;
     }
@@ -24,7 +29,7 @@ export class LifecycleAdmissionUnitPhase {
 
   other<T>(work: () => Promise<T>): Promise<T> {
     if (!this.accepting) return this.reject("The lifecycle transaction is closed.");
-    if (this.mode === "protective")
+    if (this.mode === "protective" || this.mode === "channel-first-create")
       return this.reject("Protective admission requires an isolated ordered transaction.");
     this.mode = "other";
     return work();
@@ -32,7 +37,7 @@ export class LifecycleAdmissionUnitPhase {
 
   /** Internal continuation of an already accepted legacy operation; lifetime guards its backend. */
   legacyQuery<T>(work: () => Promise<T>): Promise<T> {
-    if (this.mode === "protective")
+    if (this.mode === "protective" || this.mode === "channel-first-create")
       return this.reject("Protective admission cannot borrow an outward query.");
     this.mode = "other";
     return work();
@@ -64,6 +69,66 @@ export class LifecycleAdmissionUnitPhase {
     return result;
   }
 
+  /** Claim synchronously before the one outward lifetime admission. The raw
+   * complete operation is already captured by the original unit dispatcher. */
+  runChannelFirstCreate<T>(work: () => Promise<T>): Promise<T> {
+    if (!this.accepting || this.mode !== "idle")
+      return this.reject("Channel first creation requires an isolated original transaction.");
+    this.mode = "channel-first-create";
+    let result: Promise<T>;
+    try {
+      this.assertChannelFirstCreateActive();
+      result = work();
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    const observed = result.catch((error: unknown) => {
+      this.poisonChannelFirstCreate(error);
+      throw error;
+    });
+    const settled = observed.then(
+      () => {},
+      () => {},
+    );
+    this.pending.add(settled);
+    void settled.then(() => this.pending.delete(settled));
+    return observed;
+  }
+
+  assertChannelFirstCreateActive(): void {
+    if (this.failed) throw this.failure;
+    if (this.mode !== "channel-first-create" || this.channelClosed || this.channelDispatched)
+      throw new ScopeViolationError("The channel first-create continuation is unavailable.");
+  }
+
+  poisonChannelFirstCreate(error: unknown): void {
+    if (this.mode === "channel-first-create" && !this.failed) {
+      this.failed = true;
+      this.failure = error;
+    }
+  }
+
+  assertChannelCommitReady(): void {
+    if (this.mode !== "channel-first-create") return;
+    this.assertChannelFirstCreateActive();
+    if (this.accepting || !this.finished || this.pending.size !== 0)
+      throw new ScopeViolationError("The channel first-create operation has not settled.");
+  }
+
+  markChannelCommitDispatched(): void {
+    if (this.mode !== "channel-first-create") return;
+    this.assertChannelCommitReady();
+    this.channelDispatched = true;
+  }
+
+  assertChannelOutcome(): void {
+    if (this.mode === "channel-first-create" && this.failed) throw this.failure;
+  }
+
+  closeChannelFirstCreate(): void {
+    this.channelClosed = true;
+  }
+
   assertProtective(): void {
     if (this.finished || this.mode !== "protective")
       throw new ScopeViolationError("The protective transaction phase is unavailable.");
@@ -93,7 +158,12 @@ export class LifecycleAdmissionUnitPhase {
                 if (typeof invoke !== "function")
                   throw new TypeError("A repository method is required.");
                 const work = () => Reflect.apply(invoke, repository, args) as Promise<unknown>;
-                if (name === "installations" && method !== "createInstallation") return work();
+                if (
+                  name === "installations" &&
+                  method !== "createInstallation" &&
+                  this.mode !== "channel-first-create"
+                )
+                  return work();
                 if (name === "lifecycleAdmissions" && method === "applyProtective")
                   return this.apply(work);
                 return this.other(work);

@@ -1,4 +1,17 @@
 import type {
+  PreparedReservedChannelInstallationV1,
+  ReservedChannelInstallationCurrentnessV1,
+  ReservedChannelInstallationLocatorV1,
+  ReservedChannelInstallationProvisionalV1,
+} from "../ports/repositories/channel-bindings.ts";
+import type { ChannelInstallation } from "@openclaw-enterprise/contracts/channel-bindings";
+import { consumeReservedChannelInstallationAttemptV1 } from "../channel-bindings.ts";
+import { createPostgresTurnJournalReplayParticipant } from "./postgres/turn-journal-replay.ts";
+import {
+  parseReplayReservationTargetV1,
+  replayReservationTargetsMatchV1,
+} from "../turn-journal/replay-barrier.ts";
+import type {
   DeploymentCandidateNormalizerV2,
   DeploymentCandidateOriginalOperationsV2,
   WorkloadProfileCandidateContinuationV2,
@@ -344,7 +357,23 @@ interface ProfileSelectedEnrollmentV2 {
   active: boolean;
   candidate?: ProfileCandidateSlotV2;
 }
+interface ChannelFirstCreateExecutionV1 {
+  readonly prepared: PreparedReservedChannelInstallationV1;
+  readonly locator: ReservedChannelInstallationLocatorV1;
+  readonly currentness: ReservedChannelInstallationCurrentnessV1;
+  readonly assertSelectedIAM: ReservedChannelInstallationCurrentnessV1["assertSelectedIAM"];
+  checking: boolean;
+  failed: boolean;
+  failure?: unknown;
+  reserved: boolean;
+  inserted: boolean;
+  audited: boolean;
+  completed: boolean;
+  noEffect: boolean;
+}
 interface TransactionContext {
+  channelFirstCreate?: ChannelFirstCreateExecutionV1;
+  readonly channelCreateQuery: PostgresClient["query"];
   readonly fresh?: FreshBootstrapExecutionV1;
   readonly turn?: TurnCommandExecutionV1;
   readonly turnQuery: PostgresClient["query"];
@@ -1020,6 +1049,10 @@ export class PostgresPlatformState implements PlatformStateStore {
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
   readonly #profileContexts = new WeakMap<object, TransactionContext>();
+  readonly #channelCreationFailures = new WeakMap<
+    object,
+    Readonly<ReservedChannelInstallationLocatorV1> | null
+  >();
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
@@ -1053,6 +1086,271 @@ export class PostgresPlatformState implements PlatformStateStore {
     this.auditSink = {
       append: async (event) => this.transact(async (state) => state.audit.append(event)),
     };
+  }
+
+  /** Diagnostic correlation for this state's exact failed command only. The
+   * locator proves neither commit nor permission to retry or recover. */
+  channelFirstCreateFailureLocatorV1(
+    error: unknown,
+  ): Readonly<ReservedChannelInstallationLocatorV1> | undefined {
+    if ((typeof error !== "object" || error === null) && typeof error !== "function")
+      return undefined;
+    return this.#channelCreationFailures.get(error) ?? undefined;
+  }
+
+  private rememberChannelFailure(context: TransactionContext | undefined, error: unknown): void {
+    const locator = context?.channelFirstCreate?.locator;
+    if (!locator || ((typeof error !== "object" || error === null) && typeof error !== "function"))
+      return;
+    if (this.#channelCreationFailures.has(error)) this.#channelCreationFailures.set(error, null);
+    else this.#channelCreationFailures.set(error, locator);
+  }
+
+  private recordChannelFirstCreateFailure(context: TransactionContext, error: unknown): unknown {
+    context.lifecyclePhase.poisonChannelFirstCreate(error);
+    try {
+      context.lifecyclePhase.assertChannelOutcome();
+    } catch (first) {
+      error = first;
+    }
+    const execution = context.channelFirstCreate;
+    if (execution) {
+      execution.failed = true;
+      execution.failure = error;
+    }
+    return error;
+  }
+
+  private rejectChannelFirstCreate(context: TransactionContext, error: unknown): never {
+    throw this.recordChannelFirstCreateFailure(context, error);
+  }
+
+  private assertChannelFirstCreateOwner(context: TransactionContext): void {
+    try {
+      context.lifecyclePhase.assertChannelFirstCreateActive();
+      context.lifetime.assertActive();
+      context.assertOwnerActive();
+      const ambient = this.#profileAmbient.getStore();
+      if (
+        !ambient ||
+        ambient.context !== context ||
+        this.contexts.get(ambient.platform) !== context ||
+        context.readOnly ||
+        context.credential ||
+        context.gateway ||
+        context.turn ||
+        context.fresh ||
+        context.profileToken ||
+        context.profilePolicyLocked
+      )
+        throw new ScopeViolationError("The original channel first-create owner is unavailable.");
+    } catch (error) {
+      this.rejectChannelFirstCreate(context, error);
+    }
+  }
+
+  private assertChannelFirstCreateCurrent(context: TransactionContext, final = false): undefined {
+    const execution = context.channelFirstCreate;
+    try {
+      if (!execution || execution.checking)
+        throw new ScopeViolationError("The channel first-create currentness is unavailable.");
+      if (execution.failed) throw execution.failure;
+      execution.checking = true;
+      if (final) {
+        context.assertOwnerActive();
+        context.lifecyclePhase.assertChannelCommitReady();
+      } else this.assertChannelFirstCreateOwner(context);
+      if (execution.currentness.assertSelectedIAM !== execution.assertSelectedIAM)
+        throw new ScopeViolationError("The original channel currentness method changed.");
+      const current: unknown = execution.assertSelectedIAM.call(execution.currentness);
+      if (current !== undefined) {
+        const error = new ScopeViolationError(
+          "Channel currentness must return undefined synchronously.",
+        );
+        const first = this.recordChannelFirstCreateFailure(context, error);
+        // Invalid asynchronous return is never awaited as authorization. Observe
+        // rejection safely, including thenables, without retaining an unbounded peer.
+        void Promise.resolve(current).catch(() => {});
+        throw first;
+      }
+      context.assertOwnerActive();
+      if (execution.failed) throw execution.failure;
+      if (final) context.lifecyclePhase.assertChannelCommitReady();
+      else this.assertChannelFirstCreateOwner(context);
+      return undefined;
+    } catch (error) {
+      return this.rejectChannelFirstCreate(context, error);
+    } finally {
+      if (execution) execution.checking = false;
+    }
+  }
+
+  private async completeChannelFirstCreate(
+    context: TransactionContext,
+    prepared: () => PreparedReservedChannelInstallationV1,
+    currentness: ReservedChannelInstallationCurrentnessV1,
+    insertPrepared: () => Promise<Readonly<ChannelInstallation>>,
+    originalPrepared: PreparedReservedChannelInstallationV1,
+  ): Promise<ReservedChannelInstallationProvisionalV1> {
+    try {
+      this.assertChannelFirstCreateOwner(context);
+      if (context.channelFirstCreate || context.dataQueryStarted)
+        throw new ScopeViolationError(
+          "Channel first creation requires its original unused transaction.",
+        );
+      if (!consumeReservedChannelInstallationAttemptV1(originalPrepared, this, currentness))
+        return Object.freeze({
+          kind: "recovery-required",
+          reason: "original-association-unavailable",
+        });
+      const retained = prepared();
+      const record = retained.record;
+      const audit = retained.audit;
+      const expectedFields = [
+        "id",
+        "installationId",
+        "version",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "createdBy",
+        "updatedBy",
+        "platform",
+        "providerTenantRef",
+        "recipientAppRef",
+      ].sort();
+      if (
+        !record ||
+        !audit ||
+        Object.keys(record).sort().join("|") !== expectedFields.join("|") ||
+        record.version !== 1 ||
+        record.status !== "enabled" ||
+        record.createdAt !== record.updatedAt ||
+        record.createdBy !== record.updatedBy ||
+        (record.platform !== "slack" && record.platform !== "msteams") ||
+        !/^chi_[0-9a-f-]{36}$/.test(record.id) ||
+        !Number.isFinite(Date.parse(record.createdAt)) ||
+        audit.installationId !== record.installationId ||
+        audit.namespaceId !== undefined ||
+        audit.resource?.kind !== "installation" ||
+        audit.resource.id !== record.installationId ||
+        audit.resource.namespaceId !== undefined ||
+        audit.kind !== "mutation" ||
+        audit.outcome !== "success" ||
+        audit.source !== "occ" ||
+        audit.schemaVersion !== 1 ||
+        audit.action !== "openclaw.channel-bindings.installation.create" ||
+        audit.actorId !== record.createdBy ||
+        audit.actor?.principalId !== record.createdBy ||
+        typeof audit.requestId !== "string" ||
+        !audit.requestId ||
+        typeof audit.iamDriverId !== "string" ||
+        !audit.iamDriverId ||
+        audit.authorization?.principalId !== record.createdBy ||
+        audit.authorization.action !== "administer" ||
+        audit.authorization.resource.kind !== "installation" ||
+        audit.authorization.resource.id !== record.installationId ||
+        audit.details?.recordKind !== "installation" ||
+        audit.details.recordId !== record.id ||
+        audit.details.previous !== null ||
+        !sameCandidateDataV2(audit.details.current, { status: "enabled", version: 1 }) ||
+        !Array.isArray(audit.details.checks) ||
+        audit.details.checks.length === 0 ||
+        Object.hasOwn(audit.details, "reservedChannelCreation")
+      )
+        throw new ScopeViolationError("The prepared channel creation and audit do not correspond.");
+      const target = parseReplayReservationTargetV1({
+        schemaVersion: 1,
+        scope: { installationId: record.installationId },
+        channelInstallationRef: record.id,
+        creationOperationRef: retained.creationOperationRef,
+        subject: { kind: "channel-installation" },
+      });
+      const locator = Object.freeze({
+        channelInstallationRef: record.id,
+        creationOperationRef: retained.creationOperationRef,
+        reservationRef: retained.reservationRef,
+        originalTransactionRef: `channel-create-tx:${randomUUID()}`,
+      });
+      const execution: ChannelFirstCreateExecutionV1 = {
+        prepared: retained,
+        locator,
+        currentness,
+        assertSelectedIAM: currentness.assertSelectedIAM,
+        checking: false,
+        failed: false,
+        reserved: false,
+        inserted: false,
+        audited: false,
+        completed: false,
+        noEffect: false,
+      };
+      context.channelFirstCreate = execution;
+      if (typeof execution.assertSelectedIAM !== "function")
+        throw new ScopeViolationError("The original selected IAM currentness is unavailable.");
+      this.assertChannelFirstCreateCurrent(context);
+      await this.requireInstallation(context, record.installationId, context.channelCreateQuery);
+      this.assertChannelFirstCreateCurrent(context);
+      const participant = createPostgresTurnJournalReplayParticipant({
+        scope: { installationId: record.installationId },
+        transaction: { assertActive: () => this.assertChannelFirstCreateOwner(context) },
+        query: { query: context.channelCreateQuery },
+        currentInstallation: () => this.currentInstallation(context, context.channelCreateQuery),
+        guard: context.journalGuard,
+      });
+      const reservation = await participant.reserveCapacity({
+        target,
+        reservationRef: locator.reservationRef,
+        originalTransactionRef: locator.originalTransactionRef,
+      });
+      this.assertChannelFirstCreateCurrent(context);
+      if (reservation.kind !== "reserved") {
+        execution.noEffect = true;
+        execution.completed = true;
+        if (reservation.kind === "existing")
+          return Object.freeze({ kind: "recovery-required", reason: "existing-reservation" });
+        if (reservation.kind === "unavailable")
+          return Object.freeze({ kind: "recovery-required", reason: "reservation-unavailable" });
+        if (reservation.kind === "conflict" || reservation.kind === "capacity-exhausted")
+          return Object.freeze({ kind: reservation.kind });
+        throw new ScopeViolationError("The reservation result is unavailable.");
+      }
+      const reserved = reservation.record;
+      if (
+        !replayReservationTargetsMatchV1(reserved.target, target) ||
+        reserved.reservationRef !== locator.reservationRef ||
+        reserved.originalTransactionRef !== locator.originalTransactionRef ||
+        reserved.state !== "reserved" ||
+        reserved.recordVersion !== 1 ||
+        reserved.activatedTarget !== null ||
+        reserved.lineage !== null
+      )
+        throw new ScopeViolationError(
+          "The fresh channel reservation differs from the original command.",
+        );
+      execution.reserved = true;
+      const saved = await insertPrepared();
+      this.assertChannelFirstCreateCurrent(context);
+      if (!sameCandidateDataV2(saved, record))
+        throw new ScopeViolationError(
+          "The inserted channel parent differs from the prepared record.",
+        );
+      execution.inserted = true;
+      await this.appendAudit(
+        context,
+        immutableCopy({
+          ...audit,
+          details: { ...audit.details, reservedChannelCreation: { schemaVersion: 1, ...locator } },
+        }),
+        context.channelCreateQuery,
+      );
+      this.assertChannelFirstCreateCurrent(context);
+      execution.audited = true;
+      execution.completed = true;
+      return Object.freeze({ kind: "created-provisional", record: saved, locator });
+    } catch (error) {
+      return this.rejectChannelFirstCreate(context, error);
+    }
   }
 
   /** Only the exact outward failure from this state has a terminal diagnostic.
@@ -4320,6 +4618,10 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
+      if (context?.channelFirstCreate) {
+        const error = new DependencyUnavailableError("The channel transaction transport failed.");
+        this.recordChannelFirstCreateFailure(context, error);
+      }
       context?.protectedProfile?.poison(
         new DependencyUnavailableError("The profile transaction transport failed."),
       );
@@ -4475,6 +4777,16 @@ export class PostgresPlatformState implements PlatformStateStore {
       context = {
         ...(fresh === undefined ? {} : { fresh }),
         ...(turn === undefined ? {} : { turn }),
+        channelCreateQuery: async (statement, parameters) => {
+          try {
+            this.assertChannelFirstCreateCurrent(context!);
+            const result = await query(statement, parameters);
+            this.assertChannelFirstCreateCurrent(context!);
+            return result;
+          } catch (error) {
+            return this.rejectChannelFirstCreate(context!, error);
+          }
+        },
         turnQuery: query,
         ...(gateway === undefined ? {} : { gateway }),
         gatewayQuery: query,
@@ -4591,6 +4903,21 @@ export class PostgresPlatformState implements PlatformStateStore {
             return result;
           }
         }
+        if (context.channelFirstCreate) {
+          this.assertChannelFirstCreateCurrent(context, true);
+          const complete = context.channelFirstCreate;
+          if (
+            !complete.completed ||
+            (complete.noEffect
+              ? complete.reserved || complete.inserted || complete.audited
+              : !complete.reserved || !complete.inserted || !complete.audited)
+          )
+            this.rejectChannelFirstCreate(
+              context,
+              new ScopeViolationError("The complete channel creation has not settled."),
+            );
+        }
+        lifecyclePhase.assertChannelCommitReady();
         credential?.assertCommitReady();
         credential?.phase.assertCommitReady();
         // All asynchronous drains precede the final synchronous Gateway fence.
@@ -4602,6 +4929,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         if (fresh !== undefined) this.captureFreshFailure(fresh, error, "completion-check");
         throw error;
       }
+      lifecyclePhase.markChannelCommitDispatched();
       commitDisposition = "sent";
       if (fresh !== undefined) fresh.disposition = "sent";
       if (turn !== undefined) turn.sent = true;
@@ -4637,10 +4965,14 @@ export class PostgresPlatformState implements PlatformStateStore {
       // Claims stay provisional through every nested callback and uncertain COMMIT.
       // This marker performs no external work; initiation waits for the outer return.
       if (!readOnly) journalGuard.confirmCommitted();
+      lifecyclePhase.assertChannelOutcome();
       if (expired || options?.signal.aborted) throw abortFailure();
       return result;
     } catch (error) {
       primaryFailure = true;
+      // An outer callback failure and accepted command failures share the same
+      // first-error latch; a later catch/rethrow cannot replace its original cause.
+      lifecyclePhase.poisonChannelFirstCreate(error);
       if (fresh !== undefined) {
         fresh.accepting = false;
         if (!fresh.failed) {
@@ -4717,6 +5049,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       } catch {
         /* Preserve the original failure. */
       }
+      try {
+        lifecyclePhase.assertChannelOutcome();
+      } catch (first) {
+        error = first;
+      }
       if (started && !released && raw !== undefined) {
         try {
           await raw.query("ROLLBACK");
@@ -4729,7 +5066,11 @@ export class PostgresPlatformState implements PlatformStateStore {
         !establishedNoCommit &&
         (commitDisposition === "acknowledged" || commitDisposition === "sent");
       discardClient ||= unknownCommit || expired;
-      throw unknownCommit ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
+      const outward = unknownCommit
+        ? new PostgresCommitOutcomeUnknownError()
+        : databaseError(error);
+      this.rememberChannelFailure(context, outward);
+      throw outward;
     } finally {
       if (fresh !== undefined) {
         fresh.accepting = false;
@@ -4811,14 +5152,18 @@ export class PostgresPlatformState implements PlatformStateStore {
           }
         }
       }
+      cleanup(() => lifecyclePhase.assertChannelOutcome());
+      cleanup(() => lifecyclePhase.closeChannelFirstCreate());
       if (cleanupFailed && !primaryFailure) {
         if (fresh !== undefined)
           this.captureFreshFailure(fresh, cleanupFailure, "terminal-cleanup");
         const possibleCommit =
           !readOnly && commitDisposition !== "not-sent" && !establishedNoCommit;
-        throw possibleCommit
+        const outward = possibleCommit
           ? new PostgresCommitOutcomeUnknownError()
           : databaseError(cleanupFailure);
+        this.rememberChannelFailure(context, outward);
+        throw outward;
       }
     }
   }
@@ -4840,8 +5185,11 @@ export class PostgresPlatformState implements PlatformStateStore {
     return context.installation;
   }
 
-  private async requireInitialized(context: TransactionContext): Promise<Readonly<Installation>> {
-    const installation = await this.currentInstallation(context);
+  private async requireInitialized(
+    context: TransactionContext,
+    query: PostgresClient["query"] = context.profileQuery,
+  ): Promise<Readonly<Installation>> {
+    const installation = await this.currentInstallation(context, query);
     if (installation === undefined)
       throw new ScopeViolationError("The server-owned Installation has not been initialized.");
     return installation;
@@ -4850,8 +5198,9 @@ export class PostgresPlatformState implements PlatformStateStore {
   private async requireInstallation(
     context: TransactionContext,
     installationId: string,
+    query: PostgresClient["query"] = context.profileQuery,
   ): Promise<Readonly<Installation>> {
-    const installation = await this.requireInitialized(context);
+    const installation = await this.requireInitialized(context, query);
     if (installation.id !== installationId)
       throw new ScopeViolationError(
         "The resource does not belong to the server-owned Installation.",
@@ -4864,7 +5213,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     event: AuditEvent,
     query: PostgresClient["query"],
   ): Promise<void> {
-    await this.requireInstallation(context, event.installationId);
+    await this.requireInstallation(context, event.installationId, query);
     if (context.turn !== undefined) {
       const record = this.#turnExecution.getStore();
       if (record === undefined || record.context !== context)
@@ -5242,6 +5591,19 @@ export class PostgresPlatformState implements PlatformStateStore {
       transaction: { assertActive: () => context.lifetime.assertActive() },
       query: { query: (statement, parameters) => client.query(statement, parameters) },
       currentInstallation: () => this.currentInstallation(context),
+      reservedCreate: {
+        query: { query: context.channelCreateQuery },
+        currentInstallation: () => this.currentInstallation(context, context.channelCreateQuery),
+        assertActive: () => this.assertChannelFirstCreateOwner(context),
+        complete: (prepared, currentness, insertPrepared, originalPrepared) =>
+          this.completeChannelFirstCreate(
+            context,
+            prepared,
+            currentness,
+            insertPrepared,
+            originalPrepared,
+          ),
+      },
     });
 
     const runtimeAssignments: RuntimeAssignmentRepository = {

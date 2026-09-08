@@ -119,6 +119,54 @@ committed withdrawals. A withdrawal that races an already authorized mutation
 has no new global revocation guarantee here. Cross-process invocation proofs and
 account recovery invalidation are also outside this component.
 
+## Reserved channel creation in PostgreSQL
+
+The production and development PostgreSQL controller factories explicitly install
+the complete reserved-creation command when constructing the channel service.
+The service captures that command once, bound to its original platform store.
+The existing create endpoint and sealed human-administrator checks remain the
+entry point; request data cannot select or replace this construction choice.
+
+Only that admitted service invocation registers its exact immutable prepared
+object, original store and currentness check in private process memory. The
+complete command consumes that association once before creating a transaction
+reference or issuing data queries. Copied, reconstructed, foreign-store,
+wrong-currentness, reused or closed inputs require recovery without reservation
+or new references. The service closes the original association when its command
+settles, including when it rejects before executing the transaction. This
+recognition adds no permission and is not a durable recovery registry.
+
+A create prepares its channel metadata, creation and reservation references, and
+authorization audit once. One PostgreSQL transaction reserves pending replay
+capacity, inserts the exact channel installation, and appends the mandatory
+audit. Success reaches the caller only after the enclosing transaction commits.
+An INSERT conflict or audit failure rolls back both the new reservation and the
+channel, including when a transaction callback catches the command's rejection.
+Other outward repository operations cannot share this command's transaction.
+The selected IAM object and Driver ID must remain current across each database
+operation and the final commit check.
+
+Conflicting retained identity returns the existing conflict response. Exhausted
+or unavailable capacity and an existing reservation requiring recovery return
+the existing dependency-unavailable response. These outcomes never fall back to
+ordinary creation or regenerate the prepared references. Ordinary memory
+construction retains its separate supported creation path; an explicit reserved
+command on memory returns unavailable before effects.
+
+The audit's `reservedChannelCreation` detail retains the channel, creation,
+reservation, and original-transaction references. If acknowledgment or subsequent
+cleanup fails after COMMIT may have been sent, the existing unknown-commit error
+remains conservative. The original PostgreSQL store can correlate that exact
+error through `channelFirstCreateFailureLocatorV1(error)`. This process-local
+locator proves neither commitment nor permission to retry. There is no durable
+cross-process recovery or automatic retry, and a new transaction does not reuse
+the original prepared attempt or transaction identity.
+
+This command creates administrative metadata with a pending capacity reservation.
+It does not activate a replay lineage, supply clock or provider authority, or add
+a global session/IAM revocation guarantee. The currentness check preserves the
+selected IAM instance; the authorization limits described above still apply.
+
 ## Exact revision disclosure
 
 An exact AgentRevision read first authorizes `read` on the requested Agent, then
@@ -148,3 +196,21 @@ uses a disposable supported PostgreSQL database selected by
 actual database constraints; without those explicit test URLs it skips that
 integration. Neither suite verifies a live channel provider, account security
 epoch, or production deployment.
+
+The complete reserved-creation checks are:
+
+```sh
+node --test tests/conformance/channel-binding-reserved-create.test.mjs
+node --test tests/integration/postgres-channel-binding-reserved-create.test.mjs
+```
+
+The component suite covers service selection and the actual transaction-phase
+failure boundaries. The PostgreSQL suite requires
+`OCC_RESERVED_CHANNEL_CREATE_DATABASE_URL` to select a dedicated, migrated
+loopback database named `openclaw_reserved_channel_*` using the limited `occ_app`
+role. It provisions genuine native-IAM bootstrap data and exercises the actual
+reservation, parent and audit transaction, selected-IAM changes, rollback,
+authenticated HTTP completion, lost COMMIT acknowledgment, and cleanup failure
+after acknowledgment. It retains committed fixture records and skips explicitly
+when its database URL is absent. Controlled fault scheduling does not establish
+live provider behavior or cross-process recovery.

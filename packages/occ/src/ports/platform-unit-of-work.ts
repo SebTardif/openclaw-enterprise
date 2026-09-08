@@ -109,6 +109,7 @@ export function bindPlatformUnitOfWork(
       "findAgentBindingByChannel",
       "listAgentBindings",
       "createChannelInstallation",
+      "createReservedChannelInstallation",
       "createHumanBinding",
       "createAgentBinding",
       "setChannelInstallationStatus",
@@ -238,7 +239,26 @@ export function bindPlatformUnitOfWork(
       ),
     ) as unknown as PlatformUnitOfWork;
   }
-  if (rejectIsolated === undefined) return credential;
+  if (rejectIsolated === undefined) {
+    if (lifecyclePhase === undefined) return credential;
+    const raw = repositories.channelBindings.createReservedChannelInstallation;
+    return Object.freeze({
+      ...credential,
+      channelBindings: Object.freeze({
+        ...credential.channelBindings,
+        createReservedChannelInstallation: (...args: Parameters<typeof raw>) => {
+          // A credential owner keeps its final rejecting projection. Only the
+          // ordinary original owner may enter this named complete command.
+          if (credentialPhase !== undefined)
+            return credential.channelBindings.createReservedChannelInstallation(...args);
+          return lifecyclePhase.runChannelFirstCreate(() => {
+            const invoke = () => lifetime.run(() => raw.apply(repositories.channelBindings, args));
+            return profilePhase === undefined ? invoke() : profilePhase.other(invoke);
+          });
+        },
+      }),
+    });
+  }
   // Internal owner isolation only; this projection creates no authority.
   return Object.freeze(
     Object.fromEntries(

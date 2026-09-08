@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AuditEvent,
   AuthorizationDecision,
   AuthorizationRequest,
   ChannelAgentBinding,
@@ -34,6 +35,12 @@ import type {
   PlatformUnitOfWork,
 } from "./state/platform-state.ts";
 
+import type {
+  PreparedReservedChannelInstallationV1,
+  ReservedChannelInstallationCurrentnessV1,
+  ReservedChannelInstallationProvisionalV1,
+} from "./ports/repositories/channel-bindings.ts";
+
 export class ChannelBindingInvalidError extends ScopeViolationError {
   constructor(message = "The channel binding request is invalid.") {
     super(message);
@@ -64,7 +71,45 @@ export type HumanChannelAdministrationOperation =
   | "getChannelHumanBinding"
   | "listChannelHumanBindings"
   | "setChannelHumanBindingStatus";
+/** Fixed startup collaborator; completion includes the original state's outer transaction. */
+export interface ReservedChannelInstallationCreateV1 {
+  readonly state: PlatformStateStore;
+  readonly create: (
+    prepared: PreparedReservedChannelInstallationV1,
+    currentness: ReservedChannelInstallationCurrentnessV1,
+  ) => Promise<ReservedChannelInstallationProvisionalV1>;
+}
+const reservedChannelInstallationAttemptsV1 = new WeakMap<
+  PreparedReservedChannelInstallationV1,
+  {
+    readonly state: PlatformStateStore;
+    readonly currentness: ReservedChannelInstallationCurrentnessV1;
+    active: boolean;
+    consumed: boolean;
+  }
+>();
+
+/** Reject-only observation of one original service attempt; it cannot issue an attempt. */
+export function consumeReservedChannelInstallationAttemptV1(
+  prepared: PreparedReservedChannelInstallationV1,
+  state: PlatformStateStore,
+  currentness: ReservedChannelInstallationCurrentnessV1,
+): boolean {
+  const attempt = reservedChannelInstallationAttemptsV1.get(prepared);
+  if (
+    attempt === undefined ||
+    !attempt.active ||
+    attempt.consumed ||
+    attempt.state !== state ||
+    attempt.currentness !== currentness
+  )
+    return false;
+  attempt.consumed = true;
+  return true;
+}
+
 export interface ChannelBindingServiceOptions {
+  readonly reservedChannelInstallationCreate?: ReservedChannelInstallationCreateV1;
   readonly installationId: string;
   readonly state: PlatformStateStore;
   readonly iam: () => IAMDriver;
@@ -187,9 +232,62 @@ export async function lookupChannelHuman(
   return immutableCopy(identity);
 }
 
+/** Builds the existing server audit from captured values without effects. */
+function channelBindingAudit(
+  installationId: string,
+  context: ChannelBindingContext,
+  kind: string,
+  saved: ChannelBindingMetadata,
+  before: ChannelBindingMetadata | undefined,
+  checks: readonly Check[],
+  id: string,
+  occurredAt: string,
+): Readonly<AuditEvent> {
+  return immutableCopy({
+    id,
+    installationId,
+    occurredAt,
+    kind: "mutation",
+    actorId: context.actorId,
+    source: "occ",
+    schemaVersion: 1,
+    requestId: context.requestId,
+    ...(context.admissionDecisionId === undefined
+      ? {}
+      : { admissionDecisionId: context.admissionDecisionId }),
+    actor: {
+      principalId: context.actorId,
+      ...(context.issuer === undefined ? {} : { issuer: context.issuer }),
+      ...(context.subject === undefined ? {} : { subject: context.subject }),
+    },
+    action: `openclaw.channel-bindings.${kind}.${before === undefined ? "create" : "status"}`,
+    resource: { kind: "installation", id: installationId },
+    outcome: "success",
+    iamDriverId: checks[0]!.decision.driverId,
+    authorization: checks[0]!.request,
+    details: {
+      recordKind: kind,
+      recordId: saved.id,
+      previous: before === undefined ? null : { status: before.status, version: before.version },
+      current: { status: saved.status, version: saved.version },
+      ...(kind === "agent"
+        ? {
+            namespaceId: (saved as ChannelAgentBinding).namespaceId,
+            agentId: (saved as ChannelAgentBinding).agentId,
+          }
+        : {}),
+      checks: checks.map(({ request, decision }) => ({
+        ...request,
+        evidence: decision.evidence,
+      })),
+    },
+  });
+}
+
 /** Authenticated callers use the selected IAM authority; repositories remain internal. */
 export class ChannelBindingService {
   private readonly options: ChannelBindingServiceOptions;
+  private readonly reservedCreate: ReservedChannelInstallationCreateV1["create"] | undefined;
   private humanAdministratorVerifier?: (
     context: ChannelBindingContext,
     operation: HumanChannelAdministrationOperation,
@@ -197,7 +295,15 @@ export class ChannelBindingService {
   private humanAdministrationStarted = false;
 
   constructor(options: ChannelBindingServiceOptions) {
-    this.options = options;
+    const { installationId, state, iam, reservedChannelInstallationCreate: reserved } = options;
+    this.options = Object.freeze({ installationId, state, iam });
+    if (reserved !== undefined) {
+      const owner = reserved.state;
+      const create = reserved.create;
+      if (owner !== state || typeof create !== "function")
+        throw new TypeError("The reserved channel command requires the original service state.");
+      this.reservedCreate = (prepared, currentness) => create.call(reserved, prepared, currentness);
+    }
   }
 
   /** Trusted startup wiring only; the verifier must own and consume original request custody. */
@@ -330,45 +436,18 @@ export class ChannelBindingService {
     checks: readonly Check[],
   ): Promise<void> {
     if (before?.version === saved.version) return;
-    await state.audit.append({
-      id: `aud_${randomUUID()}`,
-      installationId: this.options.installationId,
-      occurredAt: new Date().toISOString(),
-      kind: "mutation",
-      actorId: context.actorId,
-      source: "occ",
-      schemaVersion: 1,
-      requestId: context.requestId,
-      ...(context.admissionDecisionId === undefined
-        ? {}
-        : { admissionDecisionId: context.admissionDecisionId }),
-      actor: {
-        principalId: context.actorId,
-        ...(context.issuer === undefined ? {} : { issuer: context.issuer }),
-        ...(context.subject === undefined ? {} : { subject: context.subject }),
-      },
-      action: `openclaw.channel-bindings.${kind}.${before === undefined ? "create" : "status"}`,
-      resource: { kind: "installation", id: this.options.installationId },
-      outcome: "success",
-      iamDriverId: checks[0]!.decision.driverId,
-      authorization: checks[0]!.request,
-      details: {
-        recordKind: kind,
-        recordId: saved.id,
-        previous: before === undefined ? null : { status: before.status, version: before.version },
-        current: { status: saved.status, version: saved.version },
-        ...(kind === "agent"
-          ? {
-              namespaceId: (saved as ChannelAgentBinding).namespaceId,
-              agentId: (saved as ChannelAgentBinding).agentId,
-            }
-          : {}),
-        checks: checks.map(({ request, decision }) => ({
-          ...request,
-          evidence: decision.evidence,
-        })),
-      },
-    });
+    await state.audit.append(
+      channelBindingAudit(
+        this.options.installationId,
+        context,
+        kind,
+        saved,
+        before,
+        checks,
+        `aud_${randomUUID()}`,
+        new Date().toISOString(),
+      ),
+    );
   }
   private version(input: ChangeChannelBindingStatus): void {
     closed(input, ["expectedVersion", "status"]);
@@ -406,6 +485,51 @@ export class ChannelBindingService {
     references(input.providerTenantRef, input.recipientAppRef);
     if (input.platform !== "slack" && input.platform !== "msteams")
       throw new ChannelBindingInvalidError();
+    const reservedCreate = this.reservedCreate;
+    if (reservedCreate !== undefined) {
+      const record = immutableCopy({ ...this.metadata("chi", context), ...input });
+      const prepared = immutableCopy({
+        record,
+        creationOperationRef: `channel-create:${randomUUID()}`,
+        reservationRef: `channel-reservation:${randomUUID()}`,
+        audit: channelBindingAudit(
+          this.options.installationId,
+          context,
+          "installation",
+          record,
+          undefined,
+          checks,
+          `aud_${randomUUID()}`,
+          new Date().toISOString(),
+        ),
+      });
+      const selectedId = checks[0]!.decision.driverId;
+      const currentness = Object.freeze({
+        assertSelectedIAM: () => {
+          assertChannelIAM(this.options, driver, selectedId);
+          return undefined;
+        },
+      });
+      const attempt = {
+        state: this.options.state,
+        currentness,
+        active: true,
+        consumed: false,
+      };
+      reservedChannelInstallationAttemptsV1.set(prepared, attempt);
+      let provisional: ReservedChannelInstallationProvisionalV1;
+      try {
+        provisional = await reservedCreate(prepared, currentness);
+      } finally {
+        attempt.active = false;
+      }
+      if (provisional.kind === "created-provisional") return provisional.record;
+      if (provisional.kind === "conflict")
+        throw new ResourceConflictError(
+          "The channel binding conflicts with retained identity, ownership or state.",
+        );
+      throw new DependencyUnavailableError();
+    }
     return this.options.state.transact(async (state) => {
       await this.initialized(state);
       assertChannelIAM(this.options, driver, checks[0]!.decision.driverId);

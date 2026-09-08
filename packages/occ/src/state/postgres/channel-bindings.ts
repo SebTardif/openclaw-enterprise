@@ -1,13 +1,18 @@
 import type {
+  ChannelInstallation,
   ChannelBindingMetadata,
   ChannelBindingStatus,
 } from "@openclaw-enterprise/contracts/channel-bindings";
 import { isChannelBindingReference } from "@openclaw-enterprise/contracts/channel-bindings";
 import type { Installation } from "@openclaw-enterprise/contracts/resources/installation";
+import { immutableCopy } from "@openclaw-enterprise/utils";
 import { ResourceConflictError, ScopeViolationError } from "../../errors.ts";
 import type {
   ChannelBindingListOptions,
   ChannelBindingRepository,
+  PreparedReservedChannelInstallationV1,
+  ReservedChannelInstallationCurrentnessV1,
+  ReservedChannelInstallationProvisionalV1,
 } from "../../ports/repositories/channel-bindings.ts";
 import type { QueryRepositoryFactoryContext } from "../../ports/repository-factory.ts";
 import { validateChannelBindingList } from "../channel-binding-validation.ts";
@@ -19,7 +24,21 @@ import {
   type PostgresChannelBindingRow,
 } from "./channel-binding-rows.ts";
 
+/** Private original-owner access, never projected onto the outward unit. */
+export interface ChannelFirstCreateBackendV1 {
+  readonly query: QueryRepositoryFactoryContext["query"];
+  currentInstallation(): Promise<Readonly<Installation> | undefined>;
+  assertActive(): void;
+  complete(
+    prepared: () => PreparedReservedChannelInstallationV1,
+    currentness: ReservedChannelInstallationCurrentnessV1,
+    insertPrepared: () => Promise<Readonly<ChannelInstallation>>,
+    originalPrepared: PreparedReservedChannelInstallationV1,
+  ): Promise<ReservedChannelInstallationProvisionalV1>;
+}
+
 export interface PostgresChannelBindingRepositoryContext extends QueryRepositoryFactoryContext {
+  readonly reservedCreate?: ChannelFirstCreateBackendV1;
   currentInstallation(): Promise<Readonly<Installation> | undefined>;
 }
 
@@ -27,17 +46,38 @@ export interface PostgresChannelBindingRepositoryContext extends QueryRepository
 export function createPostgresChannelBindingRepository(
   context: PostgresChannelBindingRepositoryContext,
 ): ChannelBindingRepository {
-  async function withinTransaction<T>(work: () => Promise<T>): Promise<T> {
-    context.transaction.assertActive();
+  type ChannelAccess = Pick<
+    ChannelFirstCreateBackendV1,
+    "query" | "currentInstallation" | "assertActive"
+  >;
+  const ordinaryAccess: ChannelAccess = {
+    query: context.query,
+    currentInstallation: () => context.currentInstallation(),
+    assertActive: () => context.transaction.assertActive(),
+  };
+  const reservedOwner = context.reservedCreate;
+  const reservedCreate =
+    reservedOwner === undefined
+      ? undefined
+      : Object.freeze({
+          query: reservedOwner.query,
+          currentInstallation: reservedOwner.currentInstallation.bind(reservedOwner),
+          assertActive: reservedOwner.assertActive.bind(reservedOwner),
+          complete: reservedOwner.complete.bind(reservedOwner),
+        });
+  async function withinTransaction<T>(work: () => Promise<T>, access = ordinaryAccess): Promise<T> {
+    access.assertActive();
     const result = await work();
-    context.transaction.assertActive();
+    access.assertActive();
     return result;
   }
 
-  async function currentInstallation(): Promise<Readonly<Installation> | undefined> {
-    context.transaction.assertActive();
-    const installation = await context.currentInstallation();
-    context.transaction.assertActive();
+  async function currentInstallation(
+    access = ordinaryAccess,
+  ): Promise<Readonly<Installation> | undefined> {
+    access.assertActive();
+    const installation = await access.currentInstallation();
+    access.assertActive();
     // Scope stays lazy so an empty store can be bootstrapped in this same unit of work.
     if (installation !== undefined && context.scope.installationId !== installation.id)
       throw new ScopeViolationError(
@@ -52,9 +92,9 @@ export function createPostgresChannelBindingRepository(
       "The channel binding conflicts with retained identity, ownership or state.",
     );
   };
-  const channelQuery = async (sql: string, values: unknown[]) => {
+  const channelQuery = async (sql: string, values: unknown[], query = context.query) => {
     try {
-      return await context.query.query(sql, values);
+      return await query.query(sql, values);
     } catch (error) {
       const code = error instanceof Error && "code" in error ? error.code : undefined;
       if (
@@ -113,9 +153,10 @@ export function createPostgresChannelBindingRepository(
     decode: (row: PostgresChannelBindingRow) => Readonly<T>,
     record: T,
     additional: readonly [string, unknown][],
+    access: ChannelAccess = ordinaryAccess,
   ): Promise<Readonly<T>> =>
     withinTransaction(async () => {
-      const installation = await currentInstallation();
+      const installation = await currentInstallation(access);
       if (!installation || record.installationId !== installation.id) channelConflict();
       // Reject malformed Unicode before the PostgreSQL client can replace its bytes.
       if (
@@ -142,11 +183,12 @@ export function createPostgresChannelBindingRepository(
       const result = await channelQuery(
         `INSERT INTO occ.${table} (${fields.map(([name]) => name).join(",")}) VALUES (${fields.map((_, i) => `$${i + 1}`).join(",")}) ON CONFLICT DO NOTHING RETURNING *`,
         fields.map(([, value]) => value),
+        access.query,
       );
       const row = rows(result.rows)[0];
       if (!row) channelConflict();
       return decode(row!);
-    });
+    }, access);
   const channelStatus = <T extends ChannelBindingMetadata>(
     table: ChannelTable,
     decode: (row: PostgresChannelBindingRow) => Readonly<T>,
@@ -215,6 +257,41 @@ export function createPostgresChannelBindingRepository(
       ),
     listAgentBindings: (parentId, options) =>
       channelList("channel_agent_bindings", channelAgentFromRow, options, parentId),
+    createReservedChannelInstallation: (prepared, currentness) => {
+      if (reservedCreate === undefined) {
+        context.transaction.assertActive();
+        return Promise.resolve(
+          Object.freeze({
+            kind: "recovery-required",
+            reason: "reservation-unavailable",
+          }),
+        );
+      }
+      reservedCreate.assertActive();
+      let retained: PreparedReservedChannelInstallationV1 | undefined;
+      const snapshot = () => (retained ??= immutableCopy(prepared));
+      // The owner recognizes the original attempt before inspecting its payload.
+      // Validation and the private parent INSERT share one immutable snapshot.
+      return reservedCreate.complete(
+        snapshot,
+        currentness,
+        () => {
+          const { record } = snapshot();
+          return channelCreate(
+            "channel_installations",
+            channelInstallationFromRow,
+            record,
+            [
+              ["platform", record.platform],
+              ["provider_tenant_ref", record.providerTenantRef],
+              ["recipient_app_ref", record.recipientAppRef],
+            ],
+            reservedCreate,
+          );
+        },
+        prepared,
+      );
+    },
     createChannelInstallation: (record) =>
       channelCreate("channel_installations", channelInstallationFromRow, record, [
         ["platform", record.platform],
