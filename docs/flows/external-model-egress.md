@@ -63,8 +63,10 @@ The TLS adapter captures the first request through Hyper HTTP/1 with a 16 MiB
 body ceiling. It rejects an excessive declared length before reading the body and
 reserves the declared length once. Each received chunk is checked against that
 declaration and the ceiling. It checks the fixed route, parsed security headers,
-JSON framing, and selected client-tool categories. The parsed tree is dropped
-after field validation; hashing and forwarding retain the original bytes.
+JSON framing, and selected client-tool categories. Request and decoded metadata
+JSON each enforce 20,000 values and depth 64 during parsing before constructing
+an excessive tree. The parsed tree is dropped after field validation; hashing
+and forwarding retain the original bytes.
 Synchronous validation must finish within the same five-second acquisition
 window before its socket guard is removed or authority work begins.
 
