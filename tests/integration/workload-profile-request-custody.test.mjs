@@ -8,7 +8,10 @@ import { createHttpAdmission } from "../../apps/controller/src/http/admission.ts
 import { requestFailure, failure } from "../../apps/controller/src/http/errors.ts";
 import { createIdentityResolver } from "../../apps/controller/src/http/identity.ts";
 import { createControllerWorkloadProfileSessionSecurityV1 } from "../../apps/controller/src/auth/workload-profile-session-security.ts";
-import { createWorkloadProfilePurposeAccountParticipantV1, createWorkloadProfileOperatorAccountParticipantV1 } from "../../packages/occ/src/account-authority/workload-profile.ts";
+import {
+  createWorkloadProfilePurposeAccountParticipantV1,
+  createWorkloadProfileOperatorAccountParticipantV1,
+} from "../../packages/occ/src/account-authority/workload-profile.ts";
 
 // Actual controller capture/admission/custody/security and account consumer,
 // with controlled verifier-result, identity and transaction-reader collaborators.
@@ -295,14 +298,21 @@ function fixture(t, options = {}) {
     };
   }
   async function acquire(transaction, input, selectedSecurity = security(transaction).source) {
-    const participant = (input.purpose === "workload-profile-operator"
-      ? createWorkloadProfileOperatorAccountParticipantV1 : createWorkloadProfilePurposeAccountParticipantV1)({
+    const participant = (
+      input.purpose === "workload-profile-operator"
+        ? createWorkloadProfileOperatorAccountParticipantV1
+        : createWorkloadProfilePurposeAccountParticipantV1
+    )({
       owner: transaction.source,
       requests: custody.requests,
       security: selectedSecurity,
     });
     const handle = await custody.invocations.forCurrentInvocation();
-    return participant.consume(handle, input.purpose === "workload-profile-operator" ? input.binding : input, transaction.unit);
+    return participant.consume(
+      handle,
+      input.purpose === "workload-profile-operator" ? input.binding : input,
+      transaction.unit,
+    );
   }
   return {
     hooks,
@@ -890,23 +900,35 @@ test("wall-clock rollback during verifier wait cannot extend the original sessio
 });
 
 const operatorMethods = {
-  prepare: "prepareWorkloadProfile", accept: "acceptWorkloadProfile", withdraw: "withdrawWorkloadProfile",
-  readOperation: "getWorkloadProfileOperation", readProfile: "getWorkloadProfile",
+  prepare: "prepareWorkloadProfile",
+  accept: "acceptWorkloadProfile",
+  withdraw: "withdrawWorkloadProfile",
+  readOperation: "getWorkloadProfileOperation",
+  readProfile: "getWorkloadProfile",
 };
 function operatorPurpose(method) {
-  const references = method === "readProfile" ? { admissionRef: "admission-fixture" }
-    : method === "withdraw" ? { operationRef: "operation-fixture", admissionRef: "admission-fixture" }
-    : { operationRef: "operation-fixture" };
-  return { purpose: "workload-profile-operator", binding: {
-    method, ...references, canonicalInput: JSON.stringify(references),
-  } };
+  const references =
+    method === "readProfile"
+      ? { admissionRef: "admission-fixture" }
+      : method === "withdraw"
+        ? { operationRef: "operation-fixture", admissionRef: "admission-fixture" }
+        : { operationRef: "operation-fixture" };
+  return {
+    purpose: "workload-profile-operator",
+    binding: {
+      method,
+      ...references,
+      canonicalInput: JSON.stringify(references),
+    },
+  };
 }
 for (const [method, operation] of Object.entries(operatorMethods))
   test(`operator ${method} consumes exact original custody and retains security through transaction cleanup`, async (t) => {
     const f = fixture(t, { operation });
     if (method.startsWith("read")) f.req.method = "GET";
     await f.admit();
-    const tx = f.owner(), input = operatorPurpose(method);
+    const tx = f.owner(),
+      input = operatorPurpose(method);
     await f.custody.withWorkloadProfileInvocation(f.req, input, async () => {
       const lease = await f.acquire(tx, input);
       assert.equal(lease.principal.id, f.principalId);
@@ -924,12 +946,19 @@ for (const [method, operation] of Object.entries(operatorMethods))
 test("operator custody refuses a changed canonical command and a different operation", async (t) => {
   const f = fixture(t, { operation: "acceptWorkloadProfile" });
   await f.admit();
-  await assert.rejects(f.custody.withWorkloadProfileInvocation(f.req, operatorPurpose("prepare"), async () => {
-    assert.fail("wrong operation entered");
-  }), unavailable);
-  const input = operatorPurpose("accept"), tx = f.owner();
+  await assert.rejects(
+    f.custody.withWorkloadProfileInvocation(f.req, operatorPurpose("prepare"), async () => {
+      assert.fail("wrong operation entered");
+    }),
+    unavailable,
+  );
+  const input = operatorPurpose("accept"),
+    tx = f.owner();
   await f.custody.withWorkloadProfileInvocation(f.req, input, async () => {
-    await assert.rejects(f.acquire(tx, { ...input, binding: { ...input.binding, canonicalInput: "{}" } }), unavailable);
+    await assert.rejects(
+      f.acquire(tx, { ...input, binding: { ...input.binding, canonicalInput: "{}" } }),
+      unavailable,
+    );
     assert.equal(f.events.includes("reader.query"), false);
     await tx.finish();
   });
@@ -937,7 +966,8 @@ test("operator custody refuses a changed canonical command and a different opera
 test("operator currentness and original abort signal close with the authenticated request", async (t) => {
   const f = fixture(t, { operation: "acceptWorkloadProfile" });
   await f.admit();
-  const tx = f.owner(), input = operatorPurpose("accept");
+  const tx = f.owner(),
+    input = operatorPurpose("accept");
   await f.custody.withWorkloadProfileInvocation(f.req, input, async () => {
     const signal = f.custody.signalForRequest(f.req);
     const lease = await f.acquire(tx, input);

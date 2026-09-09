@@ -35,26 +35,41 @@ const encoder = new TextEncoder();
 export const workloadProfileOperatorBinding = Object.freeze({
   prepare(input: Parameters<WorkloadProfileServicePort["prepare"]>[1]) {
     const normalized = normalizeAnyProfilePreparation(input);
-    return Object.freeze({ method: "prepare" as const,
-      operationRef: normalized.request.operationRef, canonicalInput: normalized.canonicalClientIntent });
+    return Object.freeze({
+      method: "prepare" as const,
+      operationRef: normalized.request.operationRef,
+      canonicalInput: normalized.canonicalClientIntent,
+    });
   },
   reference(method: "accept" | "readOperation", operationRef: string) {
     profileUuid(operationRef);
-    return Object.freeze({ method, operationRef, canonicalInput: JSON.stringify({ operationRef }) });
+    return Object.freeze({
+      method,
+      operationRef,
+      canonicalInput: JSON.stringify({ operationRef }),
+    });
   },
   readProfile(admissionRef: string) {
     profileUuid(admissionRef);
-    return Object.freeze({ method: "readProfile" as const, admissionRef,
-      canonicalInput: JSON.stringify({ admissionRef }) });
+    return Object.freeze({
+      method: "readProfile" as const,
+      admissionRef,
+      canonicalInput: JSON.stringify({ admissionRef }),
+    });
   },
   withdraw(admissionRef: string, input: Parameters<WorkloadProfileServicePort["withdraw"]>[2]) {
     profileUuid(admissionRef);
     const decoded = decodeWorkloadProfileWithdrawV2(input);
     if (decoded.kind !== "valid" || decoded.value.expectedAdmission.admissionRef !== admissionRef)
       throw new ScopeViolationError("The profile withdrawal is unavailable.");
-    return Object.freeze({ method: "withdraw" as const, admissionRef,
-      operationRef: decoded.value.operationRef, canonicalInput: new TextDecoder().decode(
-        canonicalizeWorkloadProfileJson(decoded.value, "operator-envelope")) });
+    return Object.freeze({
+      method: "withdraw" as const,
+      admissionRef,
+      operationRef: decoded.value.operationRef,
+      canonicalInput: new TextDecoder().decode(
+        canonicalizeWorkloadProfileJson(decoded.value, "operator-envelope"),
+      ),
+    });
   },
 });
 

@@ -12,8 +12,16 @@ import {
   PostgresPlatformState,
   RuntimeServiceTrustService,
 } from "@openclaw-enterprise/occ";
-import { createWorkloadProfilePurposeAccountParticipantV1, createWorkloadProfileOperatorAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
-import { createWorkloadProfileUseResolverV2, createWorkloadProfileCandidateBindingsSourceV2, createWorkloadProfileCandidateSourceV2, createWorkloadProfileCapabilityAggregatorV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import {
+  createWorkloadProfilePurposeAccountParticipantV1,
+  createWorkloadProfileOperatorAccountParticipantV1,
+} from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import {
+  createWorkloadProfileUseResolverV2,
+  createWorkloadProfileCandidateBindingsSourceV2,
+  createWorkloadProfileCandidateSourceV2,
+  createWorkloadProfileCapabilityAggregatorV2,
+} from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import { createAdmittedWorkloadProfileSelectorV2 } from "@openclaw-enterprise/occ/workload-profiles/selection";
 import { createWorkloadProfileService } from "@openclaw-enterprise/occ/services/workload-profile/service";
 import type { WorkloadProfileServicePort } from "@openclaw-enterprise/occ/services/workload-profile/port";
@@ -197,18 +205,29 @@ export async function composeProduction(config: ProductionConfig) {
             ...(renderer === undefined ? {} : { renderer }),
           });
           const bindings = createWorkloadProfileCandidateBindingsSourceV2(candidateContext.records);
-          const candidates = createWorkloadProfileCandidateSourceV2(candidateContext.contexts, bindings);
+          const candidates = createWorkloadProfileCandidateSourceV2(
+            candidateContext.contexts,
+            bindings,
+          );
           const selector = createAdmittedWorkloadProfileSelectorV2(
-            state.workloadProfileSelectionStorageV2(), capabilities);
+            state.workloadProfileSelectionStorageV2(),
+            capabilities,
+          );
           workloadProfileService = createWorkloadProfileService({
-            state, selection: context.selection,
+            state,
+            selection: context.selection,
             account: createWorkloadProfileOperatorAccountParticipantV1(accountSources),
             definitions: capabilities,
           });
           return {
             enrollment: profile.enrollment,
             candidates: candidateContext.candidates,
-            use: createWorkloadProfileUseResolverV2(profile.activeReader, candidates, capabilities, selector),
+            use: createWorkloadProfileUseResolverV2(
+              profile.activeReader,
+              candidates,
+              capabilities,
+              selector,
+            ),
           };
         },
       },

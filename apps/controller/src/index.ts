@@ -28,7 +28,10 @@ import {
 } from "./http/operation-registry.ts";
 import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
 import { workloadProfileApiRoutes } from "@openclaw-enterprise/contracts/api/workload-profile/routes";
-import { createWorkloadProfileOperationHandlers, installWorkloadProfileJsonParser } from "./routes/workload-profile.ts";
+import {
+  createWorkloadProfileOperationHandlers,
+  installWorkloadProfileJsonParser,
+} from "./routes/workload-profile.ts";
 import type { WorkloadProfileServicePort } from "@openclaw-enterprise/occ/services/workload-profile/port";
 import { createWorkloadProfileService } from "@openclaw-enterprise/occ/services/workload-profile/service";
 import { createConfigurationOperationHandlers } from "./routes/configuration.ts";
@@ -1586,8 +1589,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       },
       withInvocation: (request, binding, work) => {
         if (!workloadProfileRequests) throw dependencyUnavailable();
-        return workloadProfileRequests.withWorkloadProfileInvocation(request,
-          { purpose: "workload-profile-operator", binding }, work);
+        return workloadProfileRequests.withWorkloadProfileInvocation(
+          request,
+          { purpose: "workload-profile-operator", binding },
+          work,
+        );
       },
     });
     for (const descriptor of workloadProfileApiRoutes) {
@@ -1598,16 +1604,22 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         method: descriptor.method,
         url: descriptor.path,
         bodyLimit: 65_536,
-        schema: { ...descriptor.schema, operationId: descriptor.operationId,
-          summary: descriptor.summary, tags: [...descriptor.tags],
+        schema: {
+          ...descriptor.schema,
+          operationId: descriptor.operationId,
+          summary: descriptor.summary,
+          tags: [...descriptor.tags],
           security: [{ sessionCookie: [] }],
           "x-openclaw-permissions": requiredPermissions(operation),
         } as DocumentedFastifySchema,
         onRequest: async (request) => admit(request, operation, "ordinary"),
         preValidation: async (request) => {
-          if (!Object.hasOwn(descriptor.schema, "body") &&
-            (request.body !== undefined || Number(request.headers["content-length"] ?? 0) > 0 ||
-              request.headers["transfer-encoding"] !== undefined))
+          if (
+            !Object.hasOwn(descriptor.schema, "body") &&
+            (request.body !== undefined ||
+              Number(request.headers["content-length"] ?? 0) > 0 ||
+              request.headers["transfer-encoding"] !== undefined)
+          )
             throw failure(400, "INVALID_REQUEST", "This operation has no request body.");
         },
         preHandler: async (request) => {

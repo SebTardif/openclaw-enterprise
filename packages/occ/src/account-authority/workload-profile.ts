@@ -70,10 +70,12 @@ export type WorkloadProfilePurposeRequestV1 = Parameters<
 export type WorkloadProfileOperatorRequestV1 = Parameters<
   WorkloadProfileAccountParticipant["consume"]
 >[1];
-export type WorkloadProfileRequestV1 = WorkloadProfilePurposeRequestV1 | Readonly<{
-  purpose: "workload-profile-operator";
-  binding: WorkloadProfileOperatorRequestV1;
-}>;
+export type WorkloadProfileRequestV1 =
+  | WorkloadProfilePurposeRequestV1
+  | Readonly<{
+      purpose: "workload-profile-operator";
+      binding: WorkloadProfileOperatorRequestV1;
+    }>;
 
 export interface WorkloadProfileRequestCustodySourceV1 {
   /** Authenticate exact original handle, purpose, immutable command and recipient;
@@ -118,19 +120,29 @@ const purposes: ReadonlySet<string> = new Set([
   "workload-profile-deployment-recovery",
 ]);
 function validOperatorRequest(request: WorkloadProfileOperatorRequestV1): boolean {
-  if (!request || typeof request.canonicalInput !== "string" ||
-      request.canonicalInput.length === 0 || new TextEncoder().encode(request.canonicalInput).length > 65_536)
+  if (
+    !request ||
+    typeof request.canonicalInput !== "string" ||
+    request.canonicalInput.length === 0 ||
+    new TextEncoder().encode(request.canonicalInput).length > 65_536
+  )
     return false;
   const keys = Object.keys(request).sort().join(",");
   switch (request.method) {
-    case "prepare": case "accept": case "readOperation":
+    case "prepare":
+    case "accept":
+    case "readOperation":
       return keys === "canonicalInput,method,operationRef" && reference(request.operationRef);
     case "withdraw":
-      return keys === "admissionRef,canonicalInput,method,operationRef" &&
-        reference(request.operationRef) && reference(request.admissionRef);
+      return (
+        keys === "admissionRef,canonicalInput,method,operationRef" &&
+        reference(request.operationRef) &&
+        reference(request.admissionRef)
+      );
     case "readProfile":
       return keys === "admissionRef,canonicalInput,method" && reference(request.admissionRef);
-    default: return false;
+    default:
+      return false;
   }
 }
 function timestamp(value: string): number {
@@ -163,7 +175,11 @@ export function createWorkloadProfileOperatorAccountParticipantV1(
   const participant = createWorkloadProfileAccountParticipantV1(options);
   return Object.freeze<WorkloadProfileAccountParticipant>({
     consume(invocation, binding, unit) {
-      return participant.consume(invocation, { purpose: "workload-profile-operator", binding }, unit);
+      return participant.consume(
+        invocation,
+        { purpose: "workload-profile-operator", binding },
+        unit,
+      );
     },
   });
 }

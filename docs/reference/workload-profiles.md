@@ -36,8 +36,8 @@ Memory storage borrows an isolated working snapshot and transaction lifetime. It
 
 The registered operator contracts expose these controller paths:
 
-| Method and path                                              | Purpose                                                                                             |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Method and path                                          | Purpose                                                                                             |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `POST /workload-profile-operations`                      | Retain the caller's exact preparation and allocated identities.                                     |
 | `POST /workload-profile-operations/:operationRef/accept` | Accept an exact retained preparation with a fresh current authority check; the request is bodyless. |
 | `GET /workload-profile-operations/:operationRef`         | Read an original-actor operation under current read authority.                                      |

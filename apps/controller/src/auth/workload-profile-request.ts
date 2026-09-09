@@ -413,7 +413,8 @@ export function createControllerWorkloadProfileRequestCustodyV1(
         !context ||
         !authority ||
         !recipient ||
-        (purpose.purpose !== "workload-profile-operator" && context.actorId !== purpose.binding[0]) ||
+        (purpose.purpose !== "workload-profile-operator" &&
+          context.actorId !== purpose.binding[0]) ||
         context.issuer !== record.session.issuer ||
         context.subject !== record.session.accountId ||
         context.admissionDecisionId !== record.admitted.decisionId ||
@@ -427,9 +428,12 @@ export function createControllerWorkloadProfileRequestCustodyV1(
         readOperation: "getWorkloadProfileOperation",
         readProfile: "getWorkloadProfile",
       } as const;
-      const expectedOperation = purpose.purpose === "workload-profile-operator"
-        ? operatorOperations[purpose.binding.method]
-        : purpose.purpose === "workload-profile-draft-selection" ? "updateAgent" : "deployAgent";
+      const expectedOperation =
+        purpose.purpose === "workload-profile-operator"
+          ? operatorOperations[purpose.binding.method]
+          : purpose.purpose === "workload-profile-draft-selection"
+            ? "updateAgent"
+            : "deployAgent";
       if (context.operation.operationId !== expectedOperation) throw unavailable();
       record.purposes.add(purpose.purpose);
       const handle = Object.freeze({}) as AuthenticatedRequestHandleV1;
