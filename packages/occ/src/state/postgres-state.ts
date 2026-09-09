@@ -1,3 +1,4 @@
+import { readRuntimePreparationSubmissionV1 } from "./postgres/runtime-preparation-submission.ts";
 import { createPostgresDelegationRepository } from "../delegation/postgres.ts";
 import type { DelegationRepository, DelegationTransactionHost } from "../delegation/repository.ts";
 import type {
@@ -124,6 +125,25 @@ import type {
 } from "../credential-inventory-v1/ports.ts";
 import type { CredentialStorageCallBoundsV1 } from "@openclaw-enterprise/contracts/credential-storage-v1";
 import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
+import { retainRuntimePreparationOriginV1 } from "./postgres/runtime-preparation-origin.ts";
+import { parseRuntimePreparationSessionOriginV1 } from "../runtime-preparation/origin.ts";
+import type {
+  RuntimePreparationCurrentUseRequestV1,
+  RuntimePreparationCurrentUseLeaseV1,
+} from "../runtime-preparation/current-use.ts";
+import {
+  canonicalRuntimePreparation,
+  requirePreparation,
+  samePreparationValue,
+} from "../runtime-preparation/types.ts";
+import {
+  decodeRuntimePreparationOperation,
+  projectRuntimePreparation,
+} from "../runtime-preparation/repository.ts";
+import type { WorkloadProfileAdmissionRecordV2 } from "../workload-profiles/selection.ts";
+import type { WorkloadProfileCapabilitySourceV2 } from "../workload-profiles/selection.ts";
+import { deriveWorkloadProfileManifestV2 } from "../workload-profiles/projections.ts";
+import type { RuntimePreparationSubmissionResultV1 } from "../runtime-preparation/submission.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
 import type { ProviderAccountLinks } from "../ports/provider-account-links.ts";
@@ -2634,8 +2654,349 @@ export class PostgresPlatformState implements PlatformStateStore {
     });
   }
 
-  /** The original profile account object is the only accepting unit. A returned
-   * reader grants no request provenance and never opens another checkout. */
+  /** Original asynchronous worker acquisition. A queue token locates current
+   * work; the independently retained admission origin and fresh locked session,
+   * NativeIAM, intent and profile provide the other necessary checks. This is
+   * transaction-local preparation data, not a post-COMMIT execution permit. */
+  async withRuntimePreparationWorkerCurrentUseV1<Value>(
+    selection: DriverSelection,
+    claim: import("../ports/repositories/work.ts").WorkClaim,
+    input: RuntimePreparationCurrentUseRequestV1,
+    options: PlatformReadOptions,
+    work: (
+      lease: RuntimePreparationCurrentUseLeaseV1,
+      io: WorkloadProfileOwnedOperationV2,
+    ) => Promise<Value>,
+    capabilities?: WorkloadProfileCapabilitySourceV2,
+  ): Promise<Value> {
+    canonicalRuntimePreparation(input);
+    const request = immutableCopy({
+      ...input,
+      selection: decodeWorkloadProfileSelectionRequestV2(input.selection),
+    });
+    const originalClaim = immutableCopy(claim);
+    requirePreparation(Object.keys(originalClaim).sort().join(",") === "claimToken,idempotencyKey");
+    requirePreparation(
+      typeof originalClaim.idempotencyKey === "string" &&
+        originalClaim.idempotencyKey.length <= 1024,
+    );
+    profileUuid(originalClaim.claimToken);
+    profileUuid(request.preparationRef);
+    profileUuid(request.effectRef);
+    requirePreparation(
+      Number.isSafeInteger(request.preparationVersion) && request.preparationVersion > 0,
+    );
+    if (options.timeoutMs > 3000)
+      throw new ScopeViolationError("Preparation current use exceeds its bound.");
+    return this.workloadProfileTransaction(
+      selection,
+      async (accountUnit) => {
+        const ambient = this.#profileAmbient.getStore();
+        const owner = this.#profileAccounts.get(accountUnit.account);
+        if (!ambient || !owner || ambient.context.protectedProfile !== owner)
+          throw new ScopeViolationError("The original preparation transaction is unavailable.");
+        const { context, platform } = ambient;
+        const scope = request.selection;
+        // Historical origin is read before the current account lock. Its table is
+        // immutable; this read neither authenticates a caller nor seals IAM.
+        const origins = rows(
+          (
+            await accountUnit.account.query(
+              `SELECT origin.*,revision.admitted_spec->'service_account'->>'id' AS service_account_id
+          FROM occ.runtime_preparation_admission_origins origin
+          JOIN occ.agent_revisions revision ON revision.namespace_id=origin.namespace_id
+           AND revision.agent_id=origin.agent_id AND revision.id=origin.revision_id
+          JOIN occ.controller_work work ON work.namespace_id=origin.namespace_id
+           AND work.agent_id=origin.agent_id AND work.revision_id=origin.revision_id
+           AND work.runtime_transition_ref=origin.intent_ref
+           AND work.lifecycle_generation=origin.lifecycle_generation AND work.actor_id=origin.actor_id
+         WHERE origin.installation_id=$1 AND origin.namespace_id=$2 AND origin.agent_id=$3
+           AND origin.revision_id=$4 AND work.idempotency_key=$5 AND work.claim_token=$6::uuid
+           AND work.state='claimed' AND work.lease_expires_at>clock_timestamp()`,
+              [
+                scope.installationId,
+                scope.namespaceId,
+                scope.agentId,
+                scope.revisionId,
+                originalClaim.idempotencyKey,
+                originalClaim.claimToken,
+              ],
+            )
+          ).rows,
+        );
+        requirePreparation(origins.length === 1);
+        const originRow = origins[0]!;
+        const origin = parseRuntimePreparationSessionOriginV1(originRow.session_origin);
+        requirePreparation(origin.installationId === scope.installationId);
+        const session = await this.workloadProfileSessionSecurityV1().lock(
+          accountUnit.account,
+          origin,
+        );
+        requirePreparation(
+          session &&
+            session.incarnation === origin.accountIncarnation &&
+            session.accountVersion === origin.accountVersion,
+        );
+        const assertSession = () => session.assertCurrent();
+        accountUnit.retainCurrentness(assertSession);
+        const actor = {
+          principal: {
+            kind: "principal" as const,
+            id: text(originRow, "actor_id"),
+            issuer: origin.issuer,
+            subject: origin.subject,
+          },
+          accountRef: origin.accountId,
+          requestId: text(originRow, "request_id"),
+          admissionDecisionId: text(originRow, "admission_decision_id"),
+        };
+        return owner.runMutation(
+          actor,
+          [
+            {
+              action: "deploy",
+              resource: { kind: "agent", id: scope.agentId, namespaceId: scope.namespaceId },
+            },
+            {
+              action: "read",
+              resource: {
+                kind: "configuration",
+                id: scope.configurationRef,
+                namespaceId: scope.namespaceId,
+              },
+            },
+            ...(originRow.service_account_id == null
+              ? []
+              : [
+                  {
+                    action: "read" as const,
+                    resource: {
+                      kind: "service_account" as const,
+                      id: text(originRow, "service_account_id"),
+                      namespaceId: scope.namespaceId,
+                    },
+                  },
+                ]),
+          ],
+          async (io, retain) => {
+            // Match the existing preparation writer's advisory-before-Agent order.
+            await io.query(
+              "SELECT pg_advisory_xact_lock_shared(hashtextextended('runtime-preparation:'||$1,0))",
+              [`preparation:${request.preparationRef}`],
+            );
+            const unit: WorkloadProfileDeploymentUnitV2 = Object.freeze({
+              kind: "deployment",
+              installationId: scope.installationId,
+              namespaceId: scope.namespaceId,
+              agentId: scope.agentId,
+              operationRef: text(originRow, "intent_ref"),
+              signal: options.signal,
+              platform,
+              retain,
+            });
+            const record: ProfileSelectedEnrollmentV2 = {
+              context,
+              io,
+              selection,
+              profileToken: context.profileToken!,
+              profileOwner: owner,
+              platform,
+              active: true,
+            };
+            this.#profileSelectedUnits.set(unit, record);
+            retain({
+              assertCurrent: () => {
+                context.assertOwnerActive();
+                requirePreparation(record.active);
+                return undefined;
+              },
+              release: async () => {
+                record.active = false;
+                this.#profileSelectedUnits.delete(unit);
+              },
+            });
+            const selected = await this.workloadProfileSelectionStorageV2().enroll(scope, unit, io);
+            // Capture original cleanup immediately. The selected storage's final
+            // no-pending fence is valid only after its three acquisition methods
+            // settle; tracked IO uses the still-live original owner during them.
+            let selectionAcquired = false;
+            retain({
+              assertCurrent: () => {
+                context.assertOwnerActive();
+                requirePreparation(record.active);
+                if (selectionAcquired) selected.assertCurrent();
+                return undefined;
+              },
+              release: () => selected.release(),
+            });
+            await selected.lockNamespace();
+            await selected.lockAgent();
+            const profile = (await selected.readAdmission()) as WorkloadProfileAdmissionRecordV2;
+            selectionAcquired = true;
+            selected.assertCurrent();
+            // The profile phase requires its exact tracked IO, not an ordinary
+            // repository call. Reuse the original revision decoder after locks.
+            const revisionRows = rows(
+              (
+                await io.query(
+                  `SELECT revision.*,
+              agent.service_principal_id FROM occ.agent_revisions revision
+              JOIN occ.agents agent ON agent.namespace_id=revision.namespace_id AND agent.id=revision.agent_id
+              WHERE revision.namespace_id=$1 AND revision.agent_id=$2 AND revision.id=$3`,
+                  [scope.namespaceId, scope.agentId, scope.revisionId],
+                )
+              ).rows,
+            );
+            requirePreparation(revisionRows.length === 1);
+            const revision = revisionFromRow(revisionRows[0]!);
+            requirePreparation(samePreparationValue(revision.workloadProfileUse, profile.use));
+            if (capabilities) {
+              const manifest = deriveWorkloadProfileManifestV2(
+                new TextEncoder().encode(profile.canonicalManifest),
+              );
+              const qualified = await capabilities.acquire(
+                scope,
+                manifest.content,
+                profile.use,
+                unit,
+                io,
+              );
+              retain(qualified);
+            }
+            const history = rows(
+              (
+                await io.query(
+                  "SELECT record FROM occ.runtime_preparation_operations WHERE preparation_ref=$1 ORDER BY local_version",
+                  [request.preparationRef],
+                )
+              ).rows,
+            ).map((row) => decodeRuntimePreparationOperation(row.record));
+            const preparation = projectRuntimePreparation(history);
+            requirePreparation(
+              preparation &&
+                preparation.localState === "open" &&
+                preparation.localVersion === request.preparationVersion &&
+                samePreparationValue(preparation.guard, request.guard) &&
+                preparation.target.installationId === scope.installationId &&
+                preparation.target.namespaceId === scope.namespaceId &&
+                preparation.target.agentId === scope.agentId &&
+                preparation.target.revisionId === scope.revisionId,
+            );
+            const child = preparation.children.find(
+              (entry) => entry.child.effect.effectRef === request.effectRef,
+            );
+            requirePreparation(
+              child &&
+                child.child.request.kind === "create" &&
+                samePreparationValue(child.child.guard, request.guard),
+            );
+            requirePreparation(
+              child.child.request.admittedRuntime.configurationDigest ===
+                profile.use.admittedConfigurationDigest &&
+                child.child.request.preparation.admittedProfileDigest ===
+                  profile.use.manifestDigest,
+            );
+            const current = rows(
+              (
+                await io.query(
+                  `SELECT intent.* FROM occ.agent_runtime_intents intent
+          JOIN occ.agent_runtime_intent_heads head USING(namespace_id,agent_id,generation,transition_ref)
+          WHERE head.namespace_id=$1 AND head.agent_id=$2 FOR SHARE OF head`,
+                  [scope.namespaceId, scope.agentId],
+                )
+              ).rows,
+            );
+            requirePreparation(current.length === 1);
+            const intent = runtimeIntentFromRow(current[0]!);
+            requirePreparation(
+              intent.installationId === scope.installationId &&
+                intent.desiredMode === "running" &&
+                intent.transitionRef === request.guard.intentRef &&
+                intent.transitionRef === text(originRow, "intent_ref") &&
+                intent.generation === request.guard.lifecycleGeneration &&
+                intent.revisionId === scope.revisionId,
+            );
+            const began = performance.now();
+            const claimed = rows(
+              (
+                await io.query(
+                  `SELECT actor_id,runtime_transition_ref,revision_id,
+          floor(extract(epoch FROM (lease_expires_at-clock_timestamp()))*1000)::text AS remaining_ms
+          FROM occ.controller_work WHERE idempotency_key=$1 AND claim_token=$2::uuid AND state='claimed'
+           AND namespace_id=$3 AND agent_id=$4 AND lease_expires_at>clock_timestamp() FOR SHARE`,
+                  [
+                    originalClaim.idempotencyKey,
+                    originalClaim.claimToken,
+                    scope.namespaceId,
+                    scope.agentId,
+                  ],
+                )
+              ).rows,
+            );
+            requirePreparation(
+              claimed.length === 1 &&
+                text(claimed[0]!, "actor_id") === actor.principal.id &&
+                text(claimed[0]!, "runtime_transition_ref") === intent.transitionRef &&
+                text(claimed[0]!, "revision_id") === scope.revisionId,
+            );
+            const until = began + Number(text(claimed[0]!, "remaining_ms"));
+            requirePreparation(Number.isFinite(until) && performance.now() < until);
+            const assertCurrent = (): undefined => {
+              context.assertOwnerActive();
+              assertSession();
+              selected.assertCurrent();
+              requirePreparation(
+                record.active && !options.signal.aborted && performance.now() < until,
+              );
+              return undefined;
+            };
+            retain({ assertCurrent, release: async () => {} });
+            assertCurrent();
+            const value = await work(
+              Object.freeze({
+                request,
+                profile,
+                revision,
+                unit,
+                child: child.child,
+                providerWireUtf8: child.providerWireUtf8,
+                retain,
+                assertCurrent,
+                release: async () => {},
+              }),
+              io,
+            );
+            assertCurrent();
+            return value;
+          },
+        );
+      },
+      options,
+    );
+  }
+
+  /** Exact readback uses the original current worker/session/IAM scope, with no
+   * renderer launch or SDK mutation. Missing/uncertain receipts never resubmit. */
+  async readRuntimePreparationSubmissionV1(
+    selection: DriverSelection,
+    claim: import("../ports/repositories/work.ts").WorkClaim,
+    request: RuntimePreparationCurrentUseRequestV1,
+    options: PlatformReadOptions,
+  ): Promise<RuntimePreparationSubmissionResultV1> {
+    try {
+      const retained = await this.withRuntimePreparationWorkerCurrentUseV1(
+        selection,
+        claim,
+        request,
+        options,
+        (lease, io) => readRuntimePreparationSubmissionV1(lease, io),
+      );
+      return retained ?? Object.freeze({ status: "unknown", effectRef: request.effectRef });
+    } catch {
+      return Object.freeze({ status: "unavailable", effectRef: request.effectRef });
+    }
+  }
+
   workloadProfileSessionSecurityV1(): WorkloadProfileSessionSecurityReaderV1 {
     return Object.freeze<WorkloadProfileSessionSecurityReaderV1>({
       lock: (unit, lookup) => {
@@ -3176,7 +3537,27 @@ export class PostgresPlatformState implements PlatformStateStore {
               this.#profileSelectedUnits.delete(unit);
             },
           });
-          return work(unit, io);
+          const value = await work(unit, io);
+          // First admission only: the completed original normalization slot is
+          // absent on exact replay. Historical admissions are never backfilled
+          // with a later caller's session. This write shares revision/intent/work
+          // COMMIT and inherits the original account/session final fences.
+          if (
+            kind === "deployment" &&
+            enrolled.candidate?.snapshot &&
+            lease.preparationSessionOrigin
+          ) {
+            await retainRuntimePreparationOriginV1(io, {
+              deployment: input as DeployAgentCommandInput,
+              revisionId: enrolled.candidate.snapshot.id,
+              principalId,
+              accountRef: lease.accountRef,
+              requestId: lease.requestId,
+              admissionDecisionId: lease.admissionDecisionId,
+              origin: lease.preparationSessionOrigin,
+            });
+          }
+          return value;
         });
       } catch (error) {
         context.protectedProfile?.poison(error);
@@ -3299,7 +3680,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           const agent = rows(
             (
               await io.query(
-                "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE",
+                "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR SHARE",
                 [unit.namespaceId, unit.agentId],
               )
             ).rows,
@@ -3475,7 +3856,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               const found = rows(
                 (
                   await io.query(
-                    "SELECT id,namespace_id FROM occ.agents WHERE namespace_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE",
+                    "SELECT id,namespace_id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR SHARE",
                     [request.namespaceId, request.agentId],
                   )
                 ).rows,
@@ -3508,11 +3889,14 @@ export class PostgresPlatformState implements PlatformStateStore {
               const head = decodeWorkloadProfileAdmissionHeadV2(
                 await backend.head(request.namespaceId, request.selection.admissionRef),
               );
+              // Revisions are immutable and the application has no UPDATE
+              // privilege. Mutable Namespace, Agent and profile heads are held;
+              // an immutable revision read must not require FOR SHARE privilege.
               const found = rows(
                 (
                   await io.query(
                     `SELECT id,namespace_id,agent_id,admitted_spec FROM occ.agent_revisions
-            WHERE namespace_id=$1 AND agent_id=$2 AND id=$3 FOR SHARE`,
+            WHERE namespace_id=$1 AND agent_id=$2 AND id=$3`,
                     [request.namespaceId, request.agentId, request.revisionId],
                   )
                 ).rows,

@@ -5,6 +5,7 @@ import type {
   Namespace,
   WorkloadLaunchContext,
 } from "@openclaw-enterprise/contracts";
+import { isDeepStrictEqual } from "node:util";
 import { immutableCopy } from "@openclaw-enterprise/utils";
 import { currentComputeAbortSignal } from "./operation-context.ts";
 
@@ -50,6 +51,19 @@ function hookFailure(phase: HookPhase, owner: SelectedDriver): Error {
 
 export class ComputeLifecycleDispatcher {
   readonly #drivers: readonly SelectedDriver[];
+  // Captured only after this original dispatcher actually completes its hooks.
+  // These operands prove construction provenance, never admission or effects.
+  readonly #launches = new Map<
+    string,
+    {
+      readonly revision: Readonly<AgentRevision>;
+      readonly launch: Readonly<WorkloadLaunchContext> | undefined;
+      readonly signal: AbortSignal;
+    }
+  >();
+
+  readonly #revisionCleanup = new Map<string, number>();
+  readonly #namespaceCleanup = new Map<string, number>();
 
   constructor(drivers: readonly Driver[]) {
     this.#drivers = drivers.map(({ capability, id, computeLifecycleHooks: hooks }) => ({
@@ -79,7 +93,7 @@ export class ComputeLifecycleDispatcher {
         completed.push(owner);
         signal.throwIfAborted();
       } catch {
-        await this.#cleanup("beforeNamespaceDelete", preparedNamespace, completed, signal, true);
+        await this.#deleteNamespace(preparedNamespace, completed, signal, true);
         throw hookFailure("afterNamespacePrepared", owner);
       }
     }
@@ -90,6 +104,15 @@ export class ComputeLifecycleDispatcher {
   ): Promise<Readonly<WorkloadLaunchContext>> {
     const preparedRevision = immutableCopy(revision);
     const signal = currentComputeAbortSignal() ?? FALLBACK_SIGNAL;
+    if (
+      this.#revisionCleanup.has(preparedRevision.id) ||
+      this.#namespaceCleanup.has(preparedRevision.namespaceId) ||
+      (this.#launches.has(preparedRevision.id) &&
+        this.#launches.get(preparedRevision.id)!.launch === undefined)
+    )
+      throw new Error("The original workload launch is already changing.");
+    const acquisition = { revision: preparedRevision, signal, launch: undefined };
+    this.#launches.set(preparedRevision.id, acquisition);
     const completed: SelectedDriver[] = [];
     const launch: WorkloadLaunchContext = { environment: {} };
     let currentOwner: SelectedDriver | undefined;
@@ -106,21 +129,62 @@ export class ComputeLifecycleDispatcher {
         signal.throwIfAborted();
       }
 
+      signal.throwIfAborted();
+      if (this.#launches.get(preparedRevision.id) !== acquisition)
+        throw new Error("The original workload launch acquisition was superseded.");
       validateLaunch(launch);
-      return immutableCopy(launch);
+      const captured = immutableCopy(launch);
+      this.#launches.set(preparedRevision.id, {
+        revision: preparedRevision,
+        launch: captured,
+        signal,
+      });
+      return captured;
     } catch {
-      await this.#cleanup("beforeWorkloadStop", preparedRevision, completed, signal, true);
+      if (this.#launches.get(preparedRevision.id) === acquisition)
+        this.#launches.delete(preparedRevision.id);
+      await this.#stopRevision(preparedRevision, completed, signal, true);
       if (currentOwner === undefined) throw new Error("Compute workload preparation failed");
       throw hookFailure("beforeWorkloadStart", currentOwner);
     }
+  }
+
+  /** Resolve the actual return from this dispatcher's original launch action.
+   * A copied context or matching environment cannot acquire operand custody. */
+  acquireLaunchOperands(
+    revision: Readonly<AgentRevision>,
+    launch: Readonly<WorkloadLaunchContext>,
+  ) {
+    const captured = this.#launches.get(revision.id);
+    let released = false;
+    const assertCurrent = (): undefined => {
+      if (
+        released ||
+        captured === undefined ||
+        captured.launch === undefined ||
+        captured.launch !== launch ||
+        !isDeepStrictEqual(captured.revision, revision) ||
+        captured.signal.aborted ||
+        this.#launches.get(revision.id) !== captured
+      )
+        throw new Error("The original workload launch operands are unavailable.");
+      return undefined;
+    };
+    assertCurrent();
+    return Object.freeze({
+      environment: captured!.launch!.environment,
+      assertCurrent,
+      release: async () => {
+        released = true;
+      },
+    });
   }
 
   async beforeWorkloadStop(
     revision: Readonly<AgentRevision>,
     options?: { readonly cleanup?: boolean },
   ): Promise<void> {
-    await this.#cleanup(
-      "beforeWorkloadStop",
+    await this.#stopRevision(
       immutableCopy(revision),
       this.#drivers,
       currentComputeAbortSignal() ?? FALLBACK_SIGNAL,
@@ -129,12 +193,59 @@ export class ComputeLifecycleDispatcher {
   }
 
   async beforeNamespaceDelete(namespace: Readonly<Namespace>): Promise<void> {
-    await this.#cleanup(
-      "beforeNamespaceDelete",
+    return this.#deleteNamespace(
       immutableCopy(namespace),
       this.#drivers,
       currentComputeAbortSignal() ?? FALLBACK_SIGNAL,
     );
+  }
+
+  async #deleteNamespace(
+    namespace: Readonly<Namespace>,
+    drivers: readonly SelectedDriver[],
+    signal: AbortSignal,
+    recoverCancelled = false,
+  ): Promise<void> {
+    const key = namespace.id;
+    this.#namespaceCleanup.set(key, (this.#namespaceCleanup.get(key) ?? 0) + 1);
+    const invalidate = () => {
+      for (const [id, capture] of this.#launches)
+        if (capture.revision.namespaceId === key) this.#launches.delete(id);
+    };
+    invalidate();
+    try {
+      await this.#cleanup(
+        "beforeNamespaceDelete",
+        immutableCopy(namespace),
+        drivers,
+        signal,
+        recoverCancelled,
+      );
+    } finally {
+      invalidate();
+      const remaining = this.#namespaceCleanup.get(key)! - 1;
+      if (remaining) this.#namespaceCleanup.set(key, remaining);
+      else this.#namespaceCleanup.delete(key);
+    }
+  }
+
+  async #stopRevision(
+    revision: Readonly<AgentRevision>,
+    drivers: readonly SelectedDriver[],
+    signal: AbortSignal,
+    recoverCancelled = false,
+  ): Promise<void> {
+    const key = revision.id;
+    this.#revisionCleanup.set(key, (this.#revisionCleanup.get(key) ?? 0) + 1);
+    this.#launches.delete(key);
+    try {
+      await this.#cleanup("beforeWorkloadStop", revision, drivers, signal, recoverCancelled);
+    } finally {
+      this.#launches.delete(key);
+      const remaining = this.#revisionCleanup.get(key)! - 1;
+      if (remaining) this.#revisionCleanup.set(key, remaining);
+      else this.#revisionCleanup.delete(key);
+    }
   }
 
   async #cleanup(

@@ -539,6 +539,36 @@ export class FixedWorkloadRenderer {
     return this.#definition;
   }
 
+  /** Shared original Harness constructor, fed by the actual completed launcher.
+   * Both historical reconciliation and prepared-wire comparison use this path. */
+  harnessRevision(
+    revision: Readonly<AgentRevision>,
+    namespace: string,
+    environment: Readonly<Record<string, string>>,
+    loggingLevel: LoggingLevel,
+    resourcePlan?: KubernetesWorkloadResourcePlan,
+  ): DesiredKubernetesObject<"Deployment"> {
+    const agentName = `agent-${sha256Hex(revision.agentId, 12)}`;
+    return this.deployment({
+      name: `${agentName}-rev-${sha256Hex(revision.id, 12)}`,
+      ownership: {
+        namespaceId: revision.namespaceId,
+        agentId: revision.agentId,
+        servicePrincipalId: revision.servicePrincipalId,
+        revisionId: revision.id,
+      },
+      namespace,
+      image: this.#definition.images.harness,
+      serviceAccountName: agentName,
+      component: "agent",
+      environment,
+      loggingLevel,
+      embedded: false,
+      ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
+      ...(resourcePlan === undefined ? {} : { resourcePlan }),
+    });
+  }
+
   deployment(supplied: FixedWorkloadInput): DesiredKubernetesObject<"Deployment"> {
     const input = immutableCopy(supplied);
     return fixedWorkloadDeployment(

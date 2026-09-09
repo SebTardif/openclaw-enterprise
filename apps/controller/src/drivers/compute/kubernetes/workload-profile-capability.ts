@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { immutableCopy } from "@openclaw-enterprise/utils";
-import type { ComputeDriver } from "@openclaw-enterprise/contracts";
+import type { ComputeDriver, WorkloadLaunchContext } from "@openclaw-enterprise/contracts";
 import type {
   GatewayStartupAcceptedOperationV1,
   GatewayStartupOwnerLeaseV1,
@@ -43,6 +43,12 @@ export interface SelectedKubernetesRendererDefinition {
 
 export interface InstalledKubernetesRendererLease extends GatewayStartupOwnerLeaseV1 {
   readonly accounting: Readonly<Record<"gateway" | "harness", KubernetesResourceContributionMap>>;
+  /** Exact actual dispatcher return and image projection resolved by the original
+   * installed source. Optional means unavailable, never an empty environment. */
+  readonly harnessOperands?: Readonly<{
+    launch: Readonly<WorkloadLaunchContext>;
+    imageSetDigest: string;
+  }>;
 }
 
 /** Original Runtime/definition-owner adapter, installed by composition. It
@@ -291,6 +297,35 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
       (lease) => {
         if (!snapshot) unavailable();
         qualifyResources(this.#definition, snapshot.manifest.content, lease);
+      },
+    );
+  }
+
+  /** Same original source acquisition; comparison consumes its actual operands
+   * without invoking any launch hook in the current SQL transaction. */
+  async verifyPreparedHarnessLocked(
+    input: RevisionArguments,
+    compare: (lease: InstalledKubernetesRendererLease) => void,
+  ): Promise<GatewayStartupOwnerLeaseV1> {
+    const acquire = this.#acquireRevision;
+    if (!acquire) unavailable();
+    const [request, manifest, use, unit, io] = input;
+    const snapshot = immutableCopy({ request, manifest, use });
+    return acquireRendererLease(
+      io,
+      () =>
+        acquire(
+          this.#selected,
+          this.#definition,
+          snapshot.request,
+          snapshot.manifest,
+          snapshot.use,
+          unit,
+          io,
+        ),
+      (lease) => {
+        qualifyResources(this.#definition, snapshot.manifest, lease);
+        compare(lease);
       },
     );
   }

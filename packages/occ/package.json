@@ -60,7 +60,9 @@
     "./auth-persistence/postgres-auth-binding": "./src/auth-persistence/postgres-auth-binding.ts",
     "./gateway-startup-v1/owner": "./src/gateway-startup-v1/owner.ts",
     "./gateway-startup-v1/installation-service": "./src/gateway-startup-v1/installation-service.ts",
-    "./gateway-startup-v1/material-delivery": "./src/gateway-startup-v1/material-delivery.ts"
+    "./gateway-startup-v1/material-delivery": "./src/gateway-startup-v1/material-delivery.ts",
+    "./runtime-preparation/current-use": "./src/runtime-preparation/current-use.ts",
+    "./runtime-preparation/submission": "./src/runtime-preparation/submission.ts"
   },
   "types": "./src/index.ts",
   "files": [

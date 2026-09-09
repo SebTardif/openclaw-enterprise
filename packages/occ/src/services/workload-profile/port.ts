@@ -99,6 +99,9 @@ export interface WorkloadProfileAccountLease {
   readonly accountRef: string;
   readonly requestId: string;
   readonly admissionDecisionId: string;
+  /** Original protected session association for asynchronous preparation. Its
+   * presence is historical correlation; every later use rechecks live security. */
+  readonly preparationSessionOrigin?: import("../../runtime-preparation/origin.ts").RuntimePreparationSessionOriginV1;
   /** Actual source/account/session eligibility and expiry; no cached allow. */
   assertCurrent(): void;
   /** Synchronous local release after the owner has joined database cleanup. */

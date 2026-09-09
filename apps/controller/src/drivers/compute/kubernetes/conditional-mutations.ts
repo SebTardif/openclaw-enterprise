@@ -3,6 +3,7 @@ import type {
   CoreV1Api,
   KubernetesObjectApi,
   NetworkingV1Api,
+  V1Deployment,
 } from "@kubernetes/client-node";
 import { asRecord } from "@openclaw-enterprise/utils";
 import { ConfigurationFailure, required } from "./resources/identity.ts";
@@ -78,6 +79,26 @@ export class KubernetesConditionalMutations {
     await this.reconcileObserved(desired, existing, namespace, clients);
   }
 
+  /** The real selected SDK response, never the desired object. Ordinary apply
+   * remains distinct from conditional runtime-effect admission. */
+  async reconcileDeployment(
+    desired: ManagedKubernetesObject<"Deployment">,
+    ownership: Ownership,
+    namespace: string,
+  ): Promise<V1Deployment> {
+    const clients = await this.dependencies.clients();
+    const existing = await this.dependencies.getOwned(
+      "Deployment",
+      desired.metadata.name,
+      namespace,
+      ownership,
+    );
+    const result = await this.reconcileObserved(desired, existing, namespace, clients);
+    if (result === undefined)
+      throw new ConfigurationFailure("The Kubernetes Deployment response is unavailable.");
+    return result;
+  }
+
   async reconcileServiceForSelector(
     desired: ManagedKubernetesObject<"Service">,
     ownership: Ownership,
@@ -107,7 +128,7 @@ export class KubernetesConditionalMutations {
     existing: ManagedKubernetesObject | undefined,
     namespace: string | undefined,
     clients: Awaited<ReturnType<KubernetesMutationDependencies["clients"]>>,
-  ): Promise<void> {
+  ): Promise<V1Deployment | void> {
     if (existing !== undefined) {
       if (desired.kind === "ConfigMap") {
         const annotations = desired.metadata.annotations ?? {};
@@ -137,7 +158,7 @@ export class KubernetesConditionalMutations {
       fieldManager: FIELD_MANAGER,
       force: false,
     };
-    await this.dependencies.request(
+    return this.dependencies.request(
       async () => {
         switch (desired.kind) {
           case "Namespace":
@@ -180,11 +201,10 @@ export class KubernetesConditionalMutations {
             );
             return;
           case "Deployment":
-            await clients.apps.patchNamespacedDeployment(
+            return clients.apps.patchNamespacedDeployment(
               { ...request, namespace: required(namespace, "Deployment namespace") },
               this.dependencies.patchOptions(),
             );
-            return;
           case "NetworkPolicy":
             await clients.networking.patchNamespacedNetworkPolicy(
               { ...request, namespace: required(namespace, "NetworkPolicy namespace") },
