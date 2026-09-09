@@ -1,12 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
-import {
-  loadInstallationConfiguration,
-  loadStartupConfigurationSnapshot,
-} from "./composition/installation-config.ts";
-import { composeProduction } from "./composition/production.ts";
-import { validateWorkspaceFilesApiKeyPath } from "./composition/workspace-files.ts";
+import { loadStartupConfigurationSnapshot } from "./composition/startup-config/read.ts";
 import { startupDiagnostic } from "./startup-diagnostics.ts";
 import { createOccLogger } from "./logging.ts";
 
@@ -175,9 +170,11 @@ async function start() {
   const logging = startupConfiguration.logging;
   const logger = createOccLogger({ component: "occ-api", level: logging.level });
   if (settings.gatewayApiKeyPath !== undefined) {
+    const { validateWorkspaceFilesApiKeyPath } = await import("./composition/workspace-files.ts");
     await validateWorkspaceFilesApiKeyPath(settings.gatewayApiKeyPath);
   }
   const compositionSettings = { ...settings, logger, logging };
+  const { loadInstallationConfiguration } = await import("./composition/installation-config.ts");
   const drivers = await loadInstallationConfiguration({
     mode: settings.mode,
     startupConfiguration,
@@ -235,6 +232,7 @@ async function start() {
   let app;
   if (settings.mode === "production") {
     if (drivers === undefined) throw new Error("Production Driver configuration is unavailable.");
+    const { composeProduction } = await import("./composition/production.ts");
     app = await composeProduction({
       ...compositionSettings,
       drivers,

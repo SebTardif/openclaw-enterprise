@@ -1,12 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { loadYaml } from "@kubernetes/client-node";
 import { type LoggingConfiguration, operationalLoggingConfiguration } from "../../logging.ts";
-import {
-  validateStartupConfiguration,
-  type ConfigurationRecord,
-  type StartupConfigurationSnapshot,
-} from "./schema.ts";
+import type { ConfigurationRecord, StartupConfigurationSnapshot } from "./schema.ts";
 
 export async function startupConfiguration(
   options: {
@@ -35,6 +30,11 @@ export async function startupConfiguration(
     throw new Error("The configured Installation startup YAML is unavailable.");
   }
 
+  // Missing or unreadable configuration must fail before loading runtime dependencies.
+  const [{ loadYaml }, { validateStartupConfiguration }] = await Promise.all([
+    import("@kubernetes/client-node"),
+    import("./schema.ts"),
+  ]);
   let parsed: unknown;
   try {
     parsed = loadYaml(contents);

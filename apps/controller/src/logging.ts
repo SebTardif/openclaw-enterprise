@@ -1,4 +1,4 @@
-import { normalizeLoggingLevel, type LoggingLevel } from "@openclaw-enterprise/contracts";
+import { normalizeLoggingLevel, type LoggingLevel } from "@openclaw-enterprise/contracts/logging";
 import pino, { type Logger } from "pino";
 
 export interface LoggingConfiguration {

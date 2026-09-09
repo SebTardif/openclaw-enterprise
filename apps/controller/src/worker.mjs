@@ -1,12 +1,9 @@
 import { unlink, writeFile } from "node:fs/promises";
-import pg from "pg";
 import {
-  loadInstallationConfiguration,
   loadOperationalLoggingConfiguration,
   loadStartupConfigurationSnapshot,
-} from "./composition/installation-config.ts";
+} from "./composition/startup-config/read.ts";
 import { createOccLogger, createWorkerLogEmitter, emitOccLogEvent } from "./logging.ts";
-import { createControllerWorker } from "./worker.ts";
 import { startupDiagnostic } from "./startup-diagnostics.ts";
 
 function positiveEnvironment(name, fallback) {
@@ -64,6 +61,7 @@ try {
       if (error?.code !== "ENOENT") throw error;
     }
   }
+  const { loadInstallationConfiguration } = await import("./composition/installation-config.ts");
   const drivers = await loadInstallationConfiguration({ mode, startupConfiguration });
   let computeDriver;
   if (drivers === undefined && mode === "development") {
@@ -72,6 +70,10 @@ try {
     computeDriver = createDevelopmentDockerComputeDriver();
     if (typeof computeDriver.preflight === "function") await computeDriver.preflight();
   }
+  const [{ default: pg }, { createControllerWorker }] = await Promise.all([
+    import("pg"),
+    import("./worker.ts"),
+  ]);
   pool = new pg.Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 250 });
   worker = createControllerWorker({
     pool,
