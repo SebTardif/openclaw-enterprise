@@ -13,6 +13,12 @@ the Agent's explicit `embedded` or `dedicated` placement and provider-neutral ac
 in its AgentRevision, and asks Compute to start that topology. The flow ends after guarded route
 publication, predecessor retirement, and exactly-once activation audit.
 
+This trace describes the legacy direct Docker/Kubernetes Compute runtime path.
+It is not qualification of the separate
+[admitted native Gateway startup](../reference/gateway-startup-agent-bootstrap.md).
+The hosted executable supplier remains unbound, and complete workload-profile
+admission still requires its missing original contributors.
+
 ## Entry Points
 
 - Trigger: exact-Agent `POST /namespaces/:namespaceId/agents/:agentId/deploy` and durable revision
@@ -22,6 +28,10 @@ publication, predecessor retirement, and exactly-once activation audit.
 - Assumptions: authorized actor; ready Namespace; same-Namespace native agent Configuration;
   explicit Agent execution mode; and either operator-materialized API-key credentials or a
   Driver-issued, account-owned access-token Secret.
+- Admission additionally requires an identified V2 saved-draft command, the exact
+  saved workload-profile selection and genuine current admission/capability
+  suppliers. See [identified deployment commands](../reference/lifecycle-deploy-v2.md).
+  This trace describes runtime effects after successful admission.
 
 ## Flow
 
@@ -147,18 +157,27 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 - Check guarded activation and recovery:
   `node --test tests/integration/postgres-worker-agent-revision.test.mjs` with its explicitly
   provisioned application-role PostgreSQL database.
-- Run real disposable-k3d Kubernetes coverage for both production topologies, exact identity and
-  model-key placement, authenticated dedicated transport, isolated networking, and active routing;
-  an HTTP fixture or skipped cluster scenario is not model-turn proof.
-- Run `node --test tests/integration/docker-compute-real.test.mjs` for real Docker Compose
-  embedded and dedicated model turns, or
-  `node --test tests/integration/harness-topology-k3d-real.test.mjs` for real Kubernetes
-  model turns. Select each suite's runtime images, infrastructure, and credentials through the
-  [test environment settings](../reference/settings.md#docker-compose-development-test-environment).
-- Verify provider-backed dedicated Codex separately with
-  `node --test tests/integration/service-account-driver-real.test.mjs`,
-  `OCC_TEST_CHATGPT_SERVICE_ACCOUNT_REAL=1`, and an authorized mounted
-  `OCC_TEST_CHATGPT_ADMIN_KEY_PATH`; this scenario does not use `OPENAI_API_KEY`.
+- `harness-topology-k3d-real.test.mjs` and `production-tui-k3d-real.test.mjs` use
+  identified [V2 deployment commands](../reference/lifecycle-deploy-v2.md), verify
+  the operation acknowledgement, then separately read the requested revision.
+  Their setup still requires complete admission suppliers and the applicable
+  ServiceAccount and admitted workload profile saved for each Agent. Missing
+  saved setup fails before submission; it is not a model-turn or denial result.
+- `docker-compute-real.test.mjs` and `service-account-driver-real.test.mjs` still
+  submit bodyless deployment requests and expect revision-shaped responses. They
+  require current command and response handling as well as complete admission
+  setup before establishing current model-turn coverage.
+- Once that setup is complete, real disposable-k3d coverage must verify the
+  selected topology, exact identity and model-key placement, authenticated
+  dedicated transport, enforced networking, active routing and provider-backed
+  turns. Select the actual runtime images, infrastructure and credentials through
+  the [test environment settings](../reference/settings.md#docker-compose-development-test-environment).
+  An HTTP fixture, readiness response or historical receipt does not establish
+  those outcomes on the current source.
+- Provider-backed dedicated Codex coverage additionally selects
+  `OCC_TEST_CHATGPT_SERVICE_ACCOUNT_REAL=1` and an authorized mounted
+  `OCC_TEST_CHATGPT_ADMIN_KEY_PATH`; this scenario does not use `OPENAI_API_KEY`
+  and remains subject to the service-account suite's deployment blocker above.
 - Treat unavailable credentials, runtime images, provider access, or either real model response as
   a verification failure. Never substitute a readiness probe, handshake, fixture, or skipped test.
 

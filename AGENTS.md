@@ -235,8 +235,18 @@ test -n "${OPENAI_API_KEY:-}"
 export OPENAI_API_KEY
 export OCC_TEST_OPENAI_MODEL=gpt-5.1
 export OCC_TEST_SLACK_LIVE=0
+export OCC_TEST_GATEWAY_ROUTING_REAL=0
+export OCC_TEST_OTEL_LOGS=0
 node --test tests/integration/harness-topology-k3d-real.test.mjs
 ```
+
+These commands select intended live coverage. The suites also require the genuine
+admission contributors and qualifiers, an applicable ServiceAccount, and a
+workload-profile selection saved for every Agent. Current setup does not supply
+all of these inputs. The V2 deployment helper fails before submission when saved
+prerequisites are absent; that failure is not a successful denial or model test.
+See [current live prerequisites](docs/testing.md#kubernetes-model-turns-and-secrets)
+for the remaining model-credential contract conflict and selected-profile limits.
 
 `OCC_TEST_KUBERNETES_KUBECONFIG` and `OCC_TEST_KUBERNETES_CONTEXT` must still
 explicitly select the disposable loopback `k3d` cluster. Set
@@ -251,12 +261,11 @@ otherwise Kubernetes attempts a remote pull and reports `ImagePullBackOff`.
 Optional
 `OCC_TEST_KUBERNETES_OPENCLAW_VERSION` and `OCC_TEST_KUBERNETES_CODEX_VERSION`
 assert the actual image versions; Codex defaults to `0.153.0`. The ordinary
-real-runtime suite has four cases: one OCC gateway administration case,
-`dedicated` Codex, `embedded` OpenClaw with a persisted provider credential, and
-`embedded` OpenClaw with the Secret API. The gateway administration case also
-requires `helm` on `PATH`, or an executable selected by `OCC_HELM_BIN`, to render
-and apply the checked-in chart RBAC for the fixed `pods/exec` helper path. Each
-case must produce real provider-backed model responses or real gateway command
+real-runtime suite has three ordinary cases: `dedicated` Codex, `embedded`
+OpenClaw with a persisted provider credential, and `embedded` OpenClaw with the
+Secret API. One Envoy routing case and two OTLP cases have independent opt-ins;
+disable both flags above when selecting only the ordinary cases. Each selected
+case must produce its required provider-backed model responses and runtime
 evidence. Embedded OpenClaw uses one combined gateway/Agent Pod; dedicated Codex
 uses separate gateway and authenticated app-server Pods. All cases require
 operator-owned Agent-specific transport/model Secrets, exact projected
@@ -272,7 +281,7 @@ under `models.providers.codex`, with `api: "openai-responses"` and a fail-closed
 the Codex Agent, which alone receives the model credential.
 
 `OCC_TEST_SLACK_LIVE=1` selects the separate live Slack case and suppresses the
-ordinary four real-runtime cases. That case posts real Slack messages and waits
+ordinary three real-runtime cases. That case posts real Slack messages and waits
 for a gateway-authored reply; follow
 [the Slack testing guide](docs/testing.md#slack) before selecting it.
 

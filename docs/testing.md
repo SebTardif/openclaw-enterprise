@@ -431,6 +431,31 @@ verified.
 
 ## Kubernetes model turns and Secrets
 
+The `harness-topology-k3d-real.test.mjs` and `production-tui-k3d-real.test.mjs`
+suites use identified [V2 deployment commands](guides/deploy.md#submit-an-identified-deployment).
+Their shared client helper reads the saved Agent, Configuration generation and
+lifecycle head, retains one command before submission, and reads the accepted
+operation and requested revision through separately authorized GETs. It does not
+retry a POST or treat HTTP 202 as a revision document.
+
+Both suites still require complete production admission suppliers and an
+applicable ServiceAccount and admitted workload profile saved for each Agent.
+Their current setup does not supply these inputs. Missing saved association or
+profile fails before deployment and is not a passing model-turn or denial test.
+The commands below select intended coverage after setup is completed.
+
+The Secret API model scenario has an additional contract conflict: identified
+V2 deployment requires a ServiceAccount association, while `validateModelBinding`
+rejects an `OPENAI_API_KEY` Secret binding when a ServiceAccount is associated.
+That model scenario needs reconciliation of the deployment and credential-binding
+contracts before it can pass. Supplying admission owners or adding an account to
+the fixture alone cannot resolve the conflict.
+
+Commands survive temporary test teardown in the private, caller-owned directory
+selected by `OCC_TEST_LIFECYCLE_COMMAND_DIRECTORY`, defaulting to
+`~/.cache/openclaw-enterprise/lifecycle-commands`. Retained command files are
+recovery inputs, not authority or evidence of acceptance.
+
 Use the disposable cluster and `openclaw_k8s_*` database above, an exported
 `OPENAI_API_KEY`, and approved real gateway/Codex images. Import local image
 tags, then register their corresponding immutable references inside k3s.
@@ -516,10 +541,12 @@ The ordinary native-runtime command below leaves this additional routing case
 unselected. The earlier Docker manual-proxy proof has been removed because
 Docker does not implement automatic private Agent routes.
 
-Run the ordinary runtime cases independently of Slack:
+After resolving the setup gaps above, select the ordinary runtime cases
+independently of Slack and the optional routing/logging cases:
 
 ```sh
 OCC_TEST_HARNESS_K3D_REAL=1 OCC_TEST_SLACK_LIVE=0 \
+  OCC_TEST_GATEWAY_ROUTING_REAL=0 OCC_TEST_OTEL_LOGS=0 \
   node --env-file="$TEST_ENV_FILE" --test tests/integration/harness-topology-k3d-real.test.mjs
 ```
 
@@ -527,7 +554,22 @@ Three non-Slack runtime cases must pass: dedicated Codex, embedded OpenClaw with
 a persisted service-account credential, and embedded OpenClaw using the Secret
 API. The Secret API case verifies native SecretRefs, exact grants and denial,
 shared Secrets, rotation, and redeployment. It prepares those Secrets and grants
-itself. The independent Slack case is expected to skip in this run.
+itself. The dedicated case also checks retained conversations and images across
+Pod replacement. The independent Slack, Envoy routing and two OTLP cases skip
+under this selection; all three ordinary cases must pass before their outcomes
+are reported as verified.
+
+The fixture requires `OPENAI_API_KEY`; an existing Codex server login alone does
+not satisfy this input. Keep credentials in protected files or the existing
+process environment without printing them. The suite provisions scoped RBAC and
+Agent Secrets and changes the disposable cluster's existing `local-path`
+StorageClass for shared filesystem tests.
+
+These ordinary runtime fixtures do not select `gvisor-systrap` or establish
+actual gVisor execution. They cannot replace the required selected-profile
+coverage described above. The gVisor HTTP fixture likewise does not establish a
+native gateway/Codex model turn; each evidence claim needs its corresponding
+real execution.
 
 This suite uses the real production API and worker in the Node test process.
 It does not install the controller with Helm. Missing selected-suite

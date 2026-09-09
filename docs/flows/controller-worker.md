@@ -107,8 +107,10 @@ and maps the accepted operation to `PostgresWorkQueue.enqueue`. The state,
 admission audit, and queue entry commit together; a rollback does not leave
 orphan work for the worker.
 
-For deploy, the API retains a UUID transition locator and its sanitized request
-ID before opening the transaction. Canonical `deployAgent` checks the stored
+For HTTP deployment, the caller retains one identified V2 command before
+submission. The API validates that command and preserves its `operationRef` and
+sanitized request ID through the transaction; it does not allocate a replacement
+operation for an uncertain response. Canonical `deployAgent` checks the stored
 runtime intent under the Agent lock, rejects a disabled or stopped head, and
 initializes or advances a running intent selecting the newly frozen revision.
 It appends the trusted success audit, immutable original admission association,
@@ -135,7 +137,15 @@ work have neither field.
 `apps/controller/src/worker.ts:ControllerWorker.run`,
 `packages/occ/src/state/postgres-work-queue.ts:PostgresWorkQueue.claim`
 
-Each loop first calls `recoverStale()`, then `claim()`. The
+Each loop first offers work to the runtime-profile cleanup handler, then the
+runtime-fault handler. A handled item completes that iteration. Both handlers
+currently retain and defer their exact responsibility with
+`PROVIDER_FENCE_UNAVAILABLE` because the authenticated provider fence/stop owner
+is not installed. A successful queue-health observation does not establish
+physical cleanup.
+
+When neither handler claims work, the loop calls `recoverStale()`, then `claim()`
+for ordinary Namespace and revision work. The
 [PostgreSQL queue](../../packages/occ/src/state/postgres-work-queue.ts) selects
 eligible queued work with `FOR UPDATE SKIP LOCKED`, assigns a fresh claim token
 and lease deadline, and increments the attempt count. Another live claim for

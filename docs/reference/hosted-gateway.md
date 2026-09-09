@@ -32,6 +32,11 @@ or recovery-required results fail without retry or disclosure of the operation
 locator. Failed or unknown local cleanup also fails. The genuine bootstrap,
 material and currentness producers must be connected before deployment is supported.
 
+The [Agent/V2 bootstrap](gateway-startup-agent-bootstrap.md) supplies a separate
+programmatic local owner and material join. It does not install the executable
+supplier. The existing direct Compute runtime path is a separate integration;
+its execution does not qualify this hosted application's admitted native startup.
+
 ## Compose actual dependencies
 
 `createGatewayComposition` accepts the existing `GatewayHostConfigurationV1`,
@@ -111,6 +116,24 @@ Agent, revision, assignment, generations, profiles and state paths. The existing
 unbound allocation and mapping-only channel resolver do not establish current
 serving authority. Required but missing production dependencies must leave the
 application unavailable before channel activation.
+
+### Agent/V2 material delivery
+
+`createGatewayChannelMaterialClientV2`,
+`createGatewayStartupMaterialServiceSourceV2`, the Controller's
+`createChannelMaterialNativeServiceV2` and the original
+`createGatewayMaterialDeliveryV2` owner implement the separate Agent material
+path. They preserve the full Agent startup subject and confirmed claim. The
+[local bootstrap](gateway-startup-agent-bootstrap.md) binds material to its
+original consumer parent after the sole confirmed startup consume. These
+constructors still require the original Source, account, registration, selected
+material and lifetime participants; they create no installed startup authority.
+
+`gateway-agent-material-native.test.mjs` exercises the actual TypeScript endpoints,
+Go child, Workload API and mutual TLS with controlled startup, registration,
+account, current-selection and payload peers. A successful byte exchange qualifies
+that transport boundary. It does not establish live material custody, complete
+workload-profile capabilities, hosted readiness or a provider-backed turn.
 
 ## Native lifecycle
 

@@ -216,6 +216,12 @@ admission/renderer/placement/material or physical-settlement participants remain
 unavailable. Controlled V2 owner and selector tests qualify source behavior;
 they do not establish those production inputs or database execution.
 
+The [Agent/V2 local bootstrap and material reference](gateway-startup-agent-bootstrap.md)
+describes the implemented Source, local consumer parent and separate V2 material
+client/receiver. Those programmatic components preserve the exact Agent subject;
+they do not supply the executable's missing enrollment, original registration or
+physical-settlement participants.
+
 ## Verification and current limits
 
 The conformance suites exercise the real owner, phase, private submission ticket,

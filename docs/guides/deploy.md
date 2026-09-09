@@ -12,7 +12,9 @@ Python 3, and a combined local runtime image. To let the helper build a missing
 [prepared runtime build context](#prepare-the-runtime-build-context) through
 `OCC_RUNTIME_BUILD_CONTEXT`. Set `GO_BASE_IMAGE` in your
 environment or Compose `.env` to an approved digest-pinned Go 1.26 or newer
-builder image for the native controller components.
+builder image for the native controller components. Also select the frozen SDK
+build inputs described below; Compose requires their context path and manifest
+hash before it can build the controller.
 
 ```bash
 ./scripts/dev-up
@@ -64,6 +66,34 @@ trigger this default-image preparation path. The helper does not create a
 context, rebuild the SDK, or substitute registry packages when inputs are
 missing. See [development settings](../reference/settings.md#required-development-controller-environment)
 for image selection and the context variable.
+
+### Controller SDK build inputs
+
+Root Dockerfile targets `development` and `runtime` consume a frozen upstream
+SDK input context in addition to the full runtime package context. Obtain the
+reviewed SDK context and expected manifest hash from its preparation owner:
+
+```bash
+export OCC_BUILD_UPSTREAM_SDK_CONTEXT='/absolute/path/frozen-upstream-inputs'
+export OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256='<64-lowercase-hexadecimal-digits>'
+export NODE_BASE_IMAGE='registry.example.com/approved/node-24@sha256:<approved-digest>'
+```
+
+Select Node.js 24.15.0 or newer within Node.js 24. Both the controller SDK stage
+and full runtime recipe reject earlier minors or different major versions.
+Use Docker BuildKit with named context support. The SDK context contains
+`layout.json` and its reviewed package, archive and dependency inputs. Docker
+copies that context to `/opt/oce-upstream-inputs`; the manifest's absolute source
+and dependency paths must address that container layout. A host-only manifest
+or a worktree `.build/upstream-sdk` directory cannot replace these inputs.
+See the [SDK layout contract](../reference/build.md#local-upstream-sdk-declarations)
+for inventory requirements and verification limits.
+
+Compose maps the two SDK environment variables into its named build context
+and manifest-hash argument. Direct Docker builds must supply both explicitly,
+as in the recipes below. The `image-controller` build-graph target also requires
+a canonical absolute context directory without symlink traversal and a
+lowercase 64-digit SHA-256. Keep private manifests outside tracked source.
 
 ### Verify development
 
@@ -159,8 +189,9 @@ Replace the example
 registry and repository, and select the platform matching your Kubernetes
 nodes. Prepare and verify `OCC_RUNTIME_BUILD_CONTEXT` using the
 [runtime context procedure](#prepare-the-runtime-build-context) before building.
-The base image below matches the [runtime recipe](../../deploy/runtime/README.md),
-which owns the source-artifact and frozen dependency-policy requirements.
+Select the [controller SDK inputs](#controller-sdk-build-inputs) before building.
+The [runtime recipe](../../deploy/runtime/README.md) owns the source-artifact and
+frozen dependency-policy requirements.
 
 The runtime must include the channel plugins its Agents enable, with their
 runtime dependencies available from a fresh home directory. The standard recipe
@@ -175,13 +206,15 @@ startup is not part of this deployment procedure.
 export OCC_IMAGE_REPOSITORY='registry.example.com/your-team/openclaw-enterprise'
 export OCC_IMAGE_TAG="$(git rev-parse HEAD)"
 export OCC_IMAGE_PLATFORM='linux/amd64'
-export NODE_BASE_IMAGE='node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584'
+export NODE_BASE_IMAGE='registry.example.com/approved/node-24@sha256:<approved-node-24.15-or-newer-digest>'
 export GO_BASE_IMAGE='registry.example.com/approved/golang@sha256:<approved-digest>'
 docker login registry.example.com
 
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" --target runtime \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
   --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
+  --build-context oce-upstream-inputs="$OCC_BUILD_UPSTREAM_SDK_CONTEXT" \
+  --build-arg OCE_UPSTREAM_SDK_MANIFEST_SHA256="$OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256" \
   -t "$OCC_IMAGE_REPOSITORY/controller:$OCC_IMAGE_TAG" .
 node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker buildx build --push --platform "$OCC_IMAGE_PLATFORM" \
@@ -422,15 +455,18 @@ export KUBECONFIG_FILE="$OCC_EXAMPLE_DIRECTORY/kubeconfig"
 export CONTEXT="k3d-$CLUSTER"
 ```
 
-Build and import the images. Set `GO_BASE_IMAGE` to an approved digest-pinned
+Build and import the images. Select the [controller SDK inputs](#controller-sdk-build-inputs)
+and `NODE_BASE_IMAGE` first. Set `GO_BASE_IMAGE` to an approved digest-pinned
 Go 1.26 or newer builder as described above, and prepare
 `OCC_RUNTIME_BUILD_CONTEXT` with the [local package procedure](#prepare-the-runtime-build-context).
 These local builds and imports do not require a registry push:
 
 ```bash
 docker build --target runtime \
-  --build-arg NODE_BASE_IMAGE=node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584 \
+  --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
   --build-arg GO_BASE_IMAGE="$GO_BASE_IMAGE" \
+  --build-context oce-upstream-inputs="$OCC_BUILD_UPSTREAM_SDK_CONTEXT" \
+  --build-arg OCE_UPSTREAM_SDK_MANIFEST_SHA256="$OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256" \
   -t "localhost/$CLUSTER/controller:local" .
 node deploy/runtime/prepare-local-packages.mjs --verify-context "$OCC_RUNTIME_BUILD_CONTEXT"
 docker build -f deploy/runtime/Dockerfile \
@@ -744,6 +780,12 @@ image, created Agent or schema-valid command does not enable it. The selected V2
 admission also requires an applicable ServiceAccount association and an explicitly
 saved workload-profile selection; Agent creation without those values is not a
 completed deployment setup.
+
+An `OPENAI_API_KEY` binding through the Secret API currently conflicts with this
+required association: the model-binding validator rejects that binding whenever
+a ServiceAccount is selected. The Secret API model path therefore needs contract
+reconciliation in addition to the missing admission suppliers; adding a
+ServiceAccount alone does not make that scenario deployable.
 
 When those inputs are installed, prepare the complete
 [identified V2 command](../reference/lifecycle-deploy-v2.md) in a protected file

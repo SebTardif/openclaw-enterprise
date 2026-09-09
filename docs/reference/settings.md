@@ -128,6 +128,14 @@ worker require initialized state and do not read those credentials or output.
 | `OCC_BOOTSTRAP_SERVICE_KEY_FILE`      | Required private absolute output path; written only on fresh initialization. | Compose supplies `/var/lib/openclaw/bootstrap/initial-admin-service-key.json` on its bootstrap-only volume. Existing Installations do not issue or replace output.                                                                          |
 | `OPENAI_API_KEY`                      | Existing authorized provider credential.                                     | Used only by the Agent-owned combined embedded container or dedicated Codex container for real model turns; never print or commit it.                                                                                                       |
 
+Compose controller image builds additionally require
+`OCC_BUILD_UPSTREAM_SDK_CONTEXT`, the absolute frozen upstream SDK input context,
+and `OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256`, its reviewed lowercase 64-digit
+manifest SHA-256. These are build inputs, separate from `OCC_RUNTIME_BUILD_CONTEXT`.
+Select a Node.js 24.15.0 or newer base within Node.js 24 and an approved Go builder;
+see [controller SDK build inputs](../guides/deploy.md#controller-sdk-build-inputs)
+for the named context and direct Docker arguments.
+
 Generate `OCC_AUTH_SECRET` with `openssl rand -hex 32`; do not commit it, log
 it, or reuse another installation's secret. Local `.env` files are ignored by
 Git. Docker Compose reads them through native Compose precedence; do not source
@@ -590,7 +598,8 @@ for disposable `k3d` setup, fixture image import, and PostgreSQL-backed
 coverage. Kubernetes API-and-worker coverage rejects the ordinary
 `openclaw_enterprise` development database. The real-cluster suite uses an HTTP
 fixture and does not establish a real gateway, authenticated Codex connection,
-or model turn. A separate real-runtime lane below provides model-turn proof.
+or model turn. The separate real-runtime lane below defines intended model-turn
+coverage and its outstanding setup requirements.
 
 ### Kubernetes real-runtime test environment
 
@@ -598,14 +607,30 @@ or model turn. A separate real-runtime lane below provides model-turn proof.
 is independently opt-in. Set `OCC_TEST_HARNESS_K3D_REAL=1` or explicitly select
 a real runtime image to enable the ordinary runtime suite. Once selected,
 missing cluster, image, database, credential, or NetworkPolicy prerequisites
-fail instead of skipping. The ordinary suite verifies dedicated Codex, embedded
-OpenClaw with a persisted provider credential, and embedded OpenClaw with the
+fail instead of skipping. The ordinary suite is intended to verify dedicated
+Codex, embedded OpenClaw with a persisted provider credential, and embedded OpenClaw with the
 Secret API through real Enterprise gateways on an explicitly selected disposable
 k3d cluster. It does not prove Agent workspace-file private routing until
 Compute HTTPRoutes, real Envoy Gateway, cert-manager, OCC, and the native Agent
 runtime are tested together. For dedicated Codex coverage, set `OCC_TEST_OPENAI_MODEL` to an
 authorized model that supports Codex custom tools, such as `gpt-5.1`; the source
 default remains `gpt-4.1`.
+
+The live Kubernetes and Helm TUI suites use identified deployment commands, but
+their setup still needs complete admission suppliers and an applicable
+ServiceAccount and admitted workload profile saved for each Agent. Missing
+setup fails before submission. The Secret API model scenario also needs contract
+reconciliation: V2 requires a ServiceAccount, while the model-binding validator
+rejects an `OPENAI_API_KEY` Secret binding with that association. See
+[live deployment prerequisites](../testing.md#kubernetes-model-turns-and-secrets).
+
+Both suites accept `OCC_TEST_LIFECYCLE_COMMAND_DIRECTORY`: an absolute path to a
+private, caller-owned directory for original commands, defaulting to
+`~/.cache/openclaw-enterprise/lifecycle-commands`. The helper writes mode-0600
+files and syncs each file and its directory before a single POST. Files survive
+temporary test cleanup for recovery after an uncertain response; they do not
+establish authorization or acceptance. An existing Codex server login does not
+replace these suites' `OPENAI_API_KEY` input.
 
 | Variable                               | Requirement or default                                                                                 |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
