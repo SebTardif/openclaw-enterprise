@@ -101,6 +101,7 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Shared receipt identity](reference/shared-turn-receipts.md): internal event identity
   and replay classification, before authorization or durable admission.
 - [Turn journal and completion](reference/turn-journal.md): PostgreSQL and explicitly configured process-local memory implementations; actual channel/runtime/canonical-store integration remains required. Memory provides no crash recovery.
+- [Hosted native execution owner](reference/hosted-native-execution.md): concrete native socket custody, one original journal consumption, and independent ongoing control; composed runtime acceptance remains required.
 - [Authorized turn status and cancellation](reference/turn-management-v1.md): application-port definitions and codecs; accepting authentication and current scope guards remain required.
 - [Delegated authority library](reference/delegation.md): root grant constraints,
   request binding, and required owner interfaces; executable authority is not yet wired.

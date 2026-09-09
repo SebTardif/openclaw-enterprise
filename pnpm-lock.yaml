@@ -149,6 +149,9 @@ importers:
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@types/pg@8.21.0)(kysely@0.28.17)(pg@8.23.0)
+      openclaw:
+        specifier: link:../../.build/upstream-sdk/openclaw
+        version: link:../../.build/upstream-sdk/openclaw
       pg:
         specifier: 8.23.0
         version: 8.23.0
