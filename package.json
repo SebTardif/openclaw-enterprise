@@ -9,6 +9,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "build:workspace-snapshots": "go -C components/workspace-snapshots build -o ./bin/oce-workspace-snapshot ./cmd/oce-workspace-snapshot",
+    "test:workspace-snapshots": "go -C components/workspace-snapshots test -race ./... && go -C components/workspace-snapshots vet ./...",
     "build": "tsc --build tsconfig.json --pretty false",
     "build:mvp": "node scripts/build-mvp.mjs build",
     "build:dataplane": "node scripts/build-mvp.mjs native",

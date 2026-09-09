@@ -1,6 +1,7 @@
 # Workspace snapshot providers and portable state
 
-Status: Implementing.
+Status: Standalone storage component implemented and locally qualified on 2026-09-09.
+Production runtime integration remains separate.
 
 ## Problem and selected implementation
 
@@ -55,8 +56,10 @@ parent delta. Explicitly version the supported metadata and chunking profile.
 Capture must read a stable directory supplied by the capture provider or an
 externally enforced no-writer boundary. It must not promise point-in-time
 consistency for an arbitrary live directory. Repository/staging paths cannot be
-inside the captured source. Errors and unsupported filesystem entries prevent
-publication; limits apply to file count, content bytes, metadata, and restore.
+inside the captured source. Unsupported filesystem entries and incomplete data
+prevent reference publication. An error after publication can leave a complete
+artifact whose durability acknowledgment is uncertain; callers must reconcile
+it. Limits apply to file count, content bytes, metadata, and restore.
 
 Verify object hashes before use. Restore into a new protected destination, with
 safe path handling and explicit supported file, directory and symlink semantics.
@@ -76,7 +79,7 @@ transport, and user-facing session forks. Those integrations remain explicit
 work after this standalone storage slice. Existing retained-volume recovery
 continues to describe its own supported scope.
 
-The living reference will be `docs/reference/workspace-snapshots.md` and records
+The [living reference](../docs/reference/workspace-snapshots.md) records
 actual source behavior, invocation, metadata limits and verification evidence.
 
 ## Initial package API and fidelity profile

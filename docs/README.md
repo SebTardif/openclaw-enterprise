@@ -41,6 +41,8 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [Namespaces](reference/namespaces.md), [Agents](reference/agents.md), and
   [Configuration](reference/configuration.md): create, organize, and configure Agents.
 - [Agent workspace files](reference/agents.md#workspace-files): read and replace four native Agent workspace files.
+- [Workspace snapshot utility](reference/workspace-snapshots.md): host Btrfs capture,
+  incremental export, and portable filesystem restoration.
 - [Gateway routing with Envoy](reference/gateway-routing.md): private routes, service-key bootstrap, TLS, and network enforcement.
 - [AgentRevision repositories](reference/revision-repositories.md): admitted snapshots,
   transaction ownership, and storage verification.

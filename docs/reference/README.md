@@ -18,6 +18,10 @@ procedure needs a public Docker-only OpenClaw/Codex runtime image.
 
 ## Features
 
+The [workspace snapshot utility](workspace-snapshots.md) supplies standalone host
+storage operations and portable filesystem restoration. It is not yet invoked
+automatically by Agent execution.
+
 | Reference                                               | Owns                                                                                        |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | [Platform console](console.md)                          | Login, Agent creation, draft channels, revision inspection, and Namespace selection.        |

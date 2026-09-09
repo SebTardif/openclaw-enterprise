@@ -23,3 +23,6 @@ output/playwright/
 
 # Keep the testing guide visible when a global ignore matches its name.
 !/docs/testing.md
+
+# Native workspace snapshot utility build output.
+/components/workspace-snapshots/bin/
