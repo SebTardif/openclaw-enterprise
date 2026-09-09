@@ -629,8 +629,12 @@ async function selectedProtocolServer({
   toolchain,
   bareRoot,
   allowAnonymousGit,
-  signal,
+  signal: callerSignal,
 }) {
+  const lifetime = new AbortController();
+  const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+  const requests = new Set();
+  let closing = false;
   const observations = [];
   const mutations = [];
   const createAttempts = [];
@@ -670,7 +674,7 @@ async function selectedProtocolServer({
     defaultBranchRef: { name: repository.base },
     parent: null,
   };
-  const server = createTlsServer({ key, cert }, async (request, response) => {
+  const handleRequest = async (request, response) => {
     const path = new URL(request.url, "https://github.com");
     const record = {
       method: request.method,
@@ -1085,6 +1089,15 @@ async function selectedProtocolServer({
       return;
     }
     error();
+  };
+  const server = createTlsServer({ key, cert }, (request, response) => {
+    if (closing) {
+      request.destroy();
+      return;
+    }
+    const pending = handleRequest(request, response).catch(() => response.destroy());
+    requests.add(pending);
+    void pending.then(() => requests.delete(pending));
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -1099,6 +1112,7 @@ async function selectedProtocolServer({
   });
   proxy.on("connect", (request, socket, head) => {
     if (
+      closing ||
       !["github.com:443", "api.github.com:443"].includes(request.url) ||
       tunnelTargets.length >= 80
     ) {
@@ -1127,13 +1141,18 @@ async function selectedProtocolServer({
     });
   });
   const close = async () => {
+    closing = true;
+    lifetime.abort();
     for (const socket of sockets) socket.destroy();
+    const listeners = [server, proxy].map(
+      (listener) => new Promise((resolve) => listener.close(resolve)),
+    );
+    // Handler settlement includes GraphQL readback subprocess close. Once all
+    // handlers settle, no request can create another smart-HTTP backend.
+    await Promise.all([...requests]);
     const pending = [...backends.values()];
     for (const backend of pending) backend.stop();
-    await Promise.all([
-      ...pending.map((backend) => backend.settled),
-      ...[server, proxy].map((listener) => new Promise((resolve) => listener.close(resolve))),
-    ]);
+    await Promise.all([...pending.map((backend) => backend.settled), ...listeners]);
   };
   try {
     await listenLoopback(server, signal);
@@ -1156,8 +1175,7 @@ async function selectedProtocolServer({
 }
 
 /** Called only inside an explicitly selected native test body. Creates a real
- * tiny Git object graph with the selected binary; it is synthetic input, not the
- * separately admitted product repository or its five-file hash packet.
+ * tiny synthetic Git object graph with the selected binary for protocol tests.
  */
 export async function prepareSelectedNativeCase(t, config, id, root) {
   const controller = new AbortController();
