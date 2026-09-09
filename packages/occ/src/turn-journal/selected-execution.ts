@@ -1,5 +1,6 @@
 import {
   parseTurnJournalV1,
+  type AuthorizedDispatchV1,
   type ExactExecutionInterruptionV1,
   type ExactSelectedExecutionV1,
   type JournalExecutionStartV1,
@@ -8,9 +9,11 @@ import {
   type VerifiedExecutionInterruptionV1,
   type VerifiedExecutionStartV1,
 } from "@openclaw-enterprise/contracts/turn-journal-v1";
+import type { ExactAttemptV1 } from "@openclaw-enterprise/contracts/completed-context-v1";
 import type { AuthorityCallV1 } from "@openclaw-enterprise/contracts/runtime-authority-v1";
 import { DependencyUnavailableError } from "../errors.ts";
 import { sameJournalValue } from "./rows.ts";
+import { sampleDispatchClock, takeDispatchClockForExecution } from "./dispatcher-clock.ts";
 import { TurnJournalStore } from "./store.ts";
 
 /** An observation returned by the actual native owner. That owner must retain
@@ -104,52 +107,84 @@ export class SelectedExecutionController {
   }
 
   consume(input: VerifiedConsumptionV1, call: AuthorityCallV1) {
-    return this.journal.consumeAndInitiate(
-      input,
-      async (_attempt, guard) => {
-        if (!guard.executionIntent || this.admittedOwners >= this.maximumOwnedExecutions)
-          throw unavailable();
-        // Reserve before the first await, including an unknown native acceptance.
-        // Without complete closure there is no slot reclamation.
-        this.admittedOwners++;
-        await guard.assertCurrent();
-        const receipt = await this.native.accept(guard, call);
-        const start = parseTurnJournalV1("executionStart", receipt.start);
-        if (!sameJournalValue(start.intent, guard.executionIntent)) throw unavailable();
-        const locator = key(start.intent.execution);
-        if (this.executions.has(locator)) throw unavailable();
-        const owned: OwnedExecution = {
-          native: receipt,
-          start,
-          tail: Promise.resolve(),
-          confirmationAttempted: false,
-          interruption: undefined,
-          interruptionAttempted: false,
-        };
-        // Retain original ownership before any following wait. Exceptions and lost
-        // acknowledgments leave this same ready execution gated/unknown.
-        this.executions.set(locator, owned);
-        await this.serial(owned, async () => {
-          await guard.assertCurrent();
-          await this.native.assertCurrent(receipt, "continue", call);
-          await guard.assertCurrent();
-          const retained = await this.journal.transact(
-            start.operationRef,
-            (j) => j.retainExecutionStart(receipt.evidence, call),
-            call,
-          );
-          if (
-            retained.kind !== "committed" ||
-            !["recorded", "existing"].includes(retained.value.kind) ||
-            !("record" in retained.value) ||
-            !sameJournalValue(retained.value.record, start)
-          )
-            throw unavailable();
-          await this.confirm(owned, call);
-        });
-      },
-      call,
-    );
+    return this.initiate(input, call);
+  }
+
+  dispatchAndConsume(
+    dispatch: AuthorizedDispatchV1,
+    input: VerifiedConsumptionV1,
+    call: AuthorityCallV1,
+  ) {
+    return this.initiate(input, call, dispatch);
+  }
+
+  private initiate(
+    input: VerifiedConsumptionV1,
+    call: AuthorityCallV1,
+    dispatch?: AuthorizedDispatchV1,
+  ) {
+    const start =
+      dispatch === undefined
+        ? this.journal.consumeAndInitiate.bind(this.journal)
+        : this.journal.dispatchAndConsumeAndInitiate.bind(this.journal, dispatch);
+    return start(input, (attempt, guard) => this.acceptInitiation(attempt, guard, call), call);
+  }
+
+  /** Join an already claimed original callback without consuming again. The
+   * actual store guard's private clock membership is spent once across controller
+   * instances; copied/serialized guards and a reopened journal cannot enter. */
+  async acceptInitiation(
+    attempt: ExactAttemptV1,
+    guard: JournalInitiationGuardV1,
+    originalCall: AuthorityCallV1,
+  ): Promise<void> {
+    const call = Object.freeze({ ...originalCall });
+    if (!sameJournalValue(attempt, guard.executionIntent?.execution.attempt)) throw unavailable();
+    takeDispatchClockForExecution(guard, call);
+
+    if (!guard.executionIntent || this.admittedOwners >= this.maximumOwnedExecutions)
+      throw unavailable();
+    // Reserve before the first await, including an unknown native acceptance.
+    // Without complete closure there is no slot reclamation.
+    this.admittedOwners++;
+    // Only the original committed clock owner may reach native admission.
+    // The native owner still samples its own authenticated challenge and must
+    // qualify clock correspondence before opening any execution gate.
+    await sampleDispatchClock(guard, call.requestRef);
+    const receipt = await this.native.accept(guard, call);
+    const start = parseTurnJournalV1("executionStart", receipt.start);
+    if (!sameJournalValue(start.intent, guard.executionIntent)) throw unavailable();
+    const locator = key(start.intent.execution);
+    if (this.executions.has(locator)) throw unavailable();
+    const owned: OwnedExecution = {
+      native: receipt,
+      start,
+      tail: Promise.resolve(),
+      confirmationAttempted: false,
+      interruption: undefined,
+      interruptionAttempted: false,
+    };
+    // Retain original ownership before any following wait. Exceptions and lost
+    // acknowledgments leave this same ready execution gated/unknown.
+    this.executions.set(locator, owned);
+    await this.serial(owned, async () => {
+      await guard.assertCurrent();
+      await this.native.assertCurrent(receipt, "continue", call);
+      await guard.assertCurrent();
+      const retained = await this.journal.transact(
+        start.operationRef,
+        (j) => j.retainExecutionStart(receipt.evidence, call),
+        call,
+      );
+      if (
+        retained.kind !== "committed" ||
+        !["recorded", "existing"].includes(retained.value.kind) ||
+        !("record" in retained.value) ||
+        !sameJournalValue(retained.value.record, start)
+      )
+        throw unavailable();
+      await this.confirm(owned, call);
+    });
   }
 
   /** Exact readback can resolve only this controller's original pending native

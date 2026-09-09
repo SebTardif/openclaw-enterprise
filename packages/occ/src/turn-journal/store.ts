@@ -4,6 +4,8 @@ import {
   createJournalInitiatorV1,
   parseTurnJournalV1,
   type AttemptRecordV1,
+  type AuthorizedDispatchV1,
+  type PendingInitiationClaimV1,
   type ExactConsumptionOperationV1,
   type JournalCommitResultV1,
   type TurnJournalReadV1,
@@ -16,7 +18,10 @@ import type { PlatformReadView } from "../ports/platform-read-view.ts";
 import type { PlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import type { PlatformStateStore } from "../ports/transaction.ts";
 import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
-import { takeCommittedTurnJournalClaim } from "./transaction-guard.ts";
+import {
+  bindCommittedTurnJournalClock,
+  takeCommittedTurnJournalClaim,
+} from "./transaction-guard.ts";
 
 export interface TurnJournalClock {
   now(): Date;
@@ -135,11 +140,22 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
     );
   }
 
-  readonly consumeAndInitiate: TurnJournalStoreV1["consumeAndInitiate"] = async (
+  readonly consumeAndInitiate: TurnJournalStoreV1["consumeAndInitiate"] = (input, initiate, call) =>
+    this.initiate(input, initiate, call);
+
+  readonly dispatchAndConsumeAndInitiate: TurnJournalStoreV1["dispatchAndConsumeAndInitiate"] = (
+    dispatch,
     input,
     initiate,
-    originalCall,
-  ) => {
+    call,
+  ) => this.initiate(input, initiate, call, dispatch);
+
+  private async initiate(
+    input: Parameters<TurnJournalStoreV1["consumeAndInitiate"]>[0],
+    initiate: Parameters<TurnJournalStoreV1["consumeAndInitiate"]>[1],
+    originalCall: AuthorityCallV1,
+    dispatch?: AuthorizedDispatchV1,
+  ): ReturnType<TurnJournalStoreV1["consumeAndInitiate"]> {
     const cancellation = new AbortController();
     const call = Object.freeze({
       ...originalCall,
@@ -147,6 +163,7 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
     });
     const clock = this.options.clock;
     let transactionUnit: PlatformUnitOfWork | undefined;
+    let committedClockClaim: PendingInitiationClaimV1 | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const detach = new Set<() => void>();
     let latest: number;
@@ -214,9 +231,23 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
         consume: (consumption, boundedCall) =>
           this.commit(
             boundedCall.requestRef,
-            (unit, journal) => {
+            async (unit, journal) => {
               transactionUnit = unit;
-              return journal.consumeAttempt(consumption, boundedCall);
+              let dispatchedAttempt: ExactConsumptionOperationV1["attempt"] | undefined;
+              if (dispatch !== undefined) {
+                const recorded = await journal.recordDispatchIntent(dispatch, boundedCall);
+                if (recorded.kind !== "recorded") throw unavailable();
+                dispatchedAttempt = recorded.record.binding.attempt;
+              }
+              const consumed = await journal.consumeAttempt(consumption, boundedCall);
+              // No partial dispatch may commit if its paired consumption fails.
+              if (
+                dispatch !== undefined &&
+                (consumed.kind !== "claim-pending" ||
+                  !isDeepStrictEqual(consumed.claim.operation.attempt, dispatchedAttempt))
+              )
+                throw unavailable();
+              return consumed;
             },
             boundedCall,
           ),
@@ -225,6 +256,7 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
           const retained = takeCommittedTurnJournalClaim(transactionUnit, claim);
           if (retained === undefined) return undefined;
           shortenDeadline(retained.expiresAt);
+          if (retained.dispatchClock !== undefined) committedClockClaim = claim;
 
           const assertCurrent = async () => {
             assertWithinDeadline();
@@ -284,6 +316,10 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
         async (attempt, guard) => {
           // The contract helper never retries the callback. Bound an owner that
           // ignores cancellation and observe its eventual rejection after timeout.
+          const closeClock =
+            committedClockClaim === undefined || transactionUnit === undefined
+              ? undefined
+              : bindCommittedTurnJournalClock(transactionUnit, committedClockClaim, guard, call);
           let rejectAbort: (() => void) | undefined;
           const aborted = new Promise<never>((_resolve, reject) => {
             rejectAbort = () => reject(unavailable());
@@ -302,6 +338,7 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
             ]);
             assertWithinDeadline();
           } finally {
+            closeClock?.();
             if (rejectAbort !== undefined) guard.signal.removeEventListener("abort", rejectAbort);
           }
         },
@@ -314,5 +351,5 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
       for (const remove of detach) remove();
       cancellation.abort();
     }
-  };
+  }
 }

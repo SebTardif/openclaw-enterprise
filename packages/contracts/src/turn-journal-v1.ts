@@ -210,22 +210,35 @@ export type ExactSelectedExecutionV1 = Readonly<{
   executionRef: string;
   recipientRef: string;
 }>;
-export type JournalExecutionIntentV1 = Readonly<{
+export type PreCommitDispatchClockV1 = Readonly<{
+  kind: "pre-commit-monotonic-v1";
+  clockSourceRef: string;
+  clockEpochRef: string;
+  anchorAtMs: number;
+  deadlineAtMs: number;
+}>;
+/** Historical data only; cannot establish a new active clock owner. */
+export type HistoricalDispatchClockV1 = Readonly<{
+  clockSourceRef: string;
+  clockEpochRef: string;
+  committedAtMs: number;
+  deadlineAtMs: number;
+}>;
+export type JournalExecutionSelectionV1 = Readonly<{
   execution: ExactSelectedExecutionV1;
   operationRef: string;
   operationDigest: string;
   executionLimitRef: string;
   executionLimitVersion: number;
   maximumExecutionMs: number;
-  /** Original committed dispatch clock and ceiling, authenticated by its owner.
-   * Neither consumption time nor a later native start may replace this anchor. */
-  dispatchClock: Readonly<{
-    clockSourceRef: string;
-    clockEpochRef: string;
-    committedAtMs: number;
-    deadlineAtMs: number;
-  }>;
 }>;
+export type JournalExecutionIntentV1 = JournalExecutionSelectionV1 &
+  Readonly<{
+    /** Genuine pre-commit lower-bound anchor from the original dispatch writer.
+     * A known COMMIT transfers ownership; it does not turn this into a measured
+     * physical COMMIT timestamp. Native readiness never renews the ceiling. */
+    dispatchClock: PreCommitDispatchClockV1 | HistoricalDispatchClockV1;
+  }>;
 export type JournalExecutionStartV1 = Readonly<{
   intent: JournalExecutionIntentV1;
   operationRef: string;
@@ -671,6 +684,14 @@ export type JournalCommitResultV1<T> =
  * callback catches that failure. Unknown commit preserves original operation IDs.
  */
 export interface TurnJournalStoreV1 {
+  /** Dispatch and consume under the same original outer transaction. Only a new
+   * dispatch and new consumption may commit and transfer the pre-commit clock. */
+  dispatchAndConsumeAndInitiate(
+    dispatch: AuthorizedDispatchV1,
+    input: VerifiedConsumptionV1,
+    initiate: (attempt: ExactAttemptV1, guard: JournalInitiationGuardV1) => Promise<void>,
+    call: AuthorityCallV1,
+  ): ReturnType<TurnJournalStoreV1["consumeAndInitiate"]>;
   read<T>(work: (view: TurnJournalReadV1) => Promise<T>, call: AuthorityCallV1): Promise<T>;
   transact<T>(
     transactionRef: string,
@@ -867,19 +888,31 @@ export const ExactSelectedExecutionSchemaV1 = object({
   executionRef: ref,
   recipientRef: ref,
 });
-export const JournalExecutionIntentSchemaV1 = object({
+export const JournalExecutionSelectionSchemaV1 = object({
   execution: ExactSelectedExecutionSchemaV1,
   operationRef: ref,
   operationDigest: digest,
   executionLimitRef: ref,
   executionLimitVersion: version,
   maximumExecutionMs: Type.Integer({ minimum: 1, maximum: TURN_JOURNAL_LIMITS_V1.maximumTurnMs }),
-  dispatchClock: object({
-    clockSourceRef: ref,
-    clockEpochRef: ref,
-    committedAtMs: sequence,
-    deadlineAtMs: sequence,
-  }),
+});
+export const JournalExecutionIntentSchemaV1 = object({
+  ...JournalExecutionSelectionSchemaV1.properties,
+  dispatchClock: Type.Union([
+    object({
+      kind: Type.Literal("pre-commit-monotonic-v1"),
+      clockSourceRef: ref,
+      clockEpochRef: ref,
+      anchorAtMs: sequence,
+      deadlineAtMs: sequence,
+    }),
+    object({
+      clockSourceRef: ref,
+      clockEpochRef: ref,
+      committedAtMs: sequence,
+      deadlineAtMs: sequence,
+    }),
+  ]),
 });
 export const JournalExecutionStartSchemaV1 = object({
   intent: JournalExecutionIntentSchemaV1,
@@ -1027,6 +1060,7 @@ export const JournalReleaseObservationSchemaV1 = object({
 
 export const TurnJournalSchemasV1 = Object.freeze({
   selectedExecution: ExactSelectedExecutionSchemaV1,
+  executionSelection: JournalExecutionSelectionSchemaV1,
   executionIntent: JournalExecutionIntentSchemaV1,
   executionStart: JournalExecutionStartSchemaV1,
   executionInterruption: ExactExecutionInterruptionSchemaV1,
@@ -1050,6 +1084,7 @@ export const TurnJournalSchemasV1 = Object.freeze({
 });
 export interface TurnJournalWireValuesV1 {
   selectedExecution: ExactSelectedExecutionV1;
+  executionSelection: JournalExecutionSelectionV1;
   executionIntent: JournalExecutionIntentV1;
   executionStart: JournalExecutionStartV1;
   executionInterruption: ExactExecutionInterruptionV1;
@@ -1182,9 +1217,11 @@ function checkIntrinsic(input: unknown): void {
   }
   if (v.dispatchClock !== undefined) {
     const c = v.dispatchClock as JournalExecutionIntentV1["dispatchClock"];
+    const anchor = "kind" in c ? c.anchorAtMs : c.committedAtMs;
     if (
-      c.deadlineAtMs <= c.committedAtMs ||
-      c.deadlineAtMs - c.committedAtMs > TURN_JOURNAL_LIMITS_V1.maximumTurnMs
+      c.deadlineAtMs <= anchor ||
+      c.deadlineAtMs - anchor > TURN_JOURNAL_LIMITS_V1.maximumTurnMs ||
+      ("kind" in c && c.deadlineAtMs - anchor !== TURN_JOURNAL_LIMITS_V1.maximumTurnMs)
     )
       invalid();
   }
@@ -1201,7 +1238,10 @@ function checkIntrinsic(input: unknown): void {
       start.clockSourceRef === start.intent.dispatchClock.clockSourceRef &&
       start.clockEpochRef === start.intent.dispatchClock.clockEpochRef &&
       (start.dispatchDeadlineAtMs !== start.intent.dispatchClock.deadlineAtMs ||
-        start.startedAtMs < start.intent.dispatchClock.committedAtMs)
+        start.startedAtMs <
+          ("kind" in start.intent.dispatchClock
+            ? start.intent.dispatchClock.anchorAtMs
+            : start.intent.dispatchClock.committedAtMs))
     )
       invalid();
   }
@@ -2079,6 +2119,9 @@ export interface JournalEvidenceProvenanceV1 {
     | Readonly<{
         operation: ExactConsumptionOperationV1;
         binding: JournalAttemptBindingV1;
+        /** Selected by the original consumption authority; the writer supplies its clock. */
+        executionSelection?: JournalExecutionSelectionV1;
+        /** Historical input is explicitly refused for new selected writes. */
         executionIntent?: JournalExecutionIntentV1;
       }>
     | JournalDeniedV1
