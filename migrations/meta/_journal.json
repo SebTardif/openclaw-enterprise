@@ -351,6 +351,13 @@
       "when": 1788864165470,
       "tag": "0049_runtime_profile_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788864165471,
+      "tag": "0050_agent_draft_selection_update_grant",
+      "breakpoints": true
     }
   ]
 }

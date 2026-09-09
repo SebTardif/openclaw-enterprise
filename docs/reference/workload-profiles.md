@@ -6,6 +6,17 @@ An immutable selection names `manifestRef`, `manifestDigest`, `admissionRef`, an
 
 Agent draft updates accept `workloadProfileSelection`. Deployment requires the [identified V2 command](lifecycle-deploy-v2.md), including exact saved-draft expectations and a retained operation identity; bodyless deployment requests are rejected. The Agent update and deployment services consume the selection and admitted-configuration definitions, but still require the original authenticated request, transaction enrollment, active admission and capability implementations. The default composition lacks the complete profile suppliers and leaves profile-backed admission unavailable. `Agent.providerId` continues to select the model provider.
 
+The PostgreSQL application role can update the draft selection through a
+column-scoped grant. It has no table-wide Agent update permission; Agent identity
+and ownership columns remain protected. Saving selection data does not admit a
+profile or authorize deployment, and the database rejects malformed selections.
+
+Verify these permissions and real repository updates with
+`tests/integration/postgres-agent-draft-selection.test.mjs`. Set
+`OCC_AGENT_DRAFT_SELECTION_TEST_DATABASE_URL` to a separately migrated, empty
+disposable database using the restricted `occ_app` role. The test refuses an
+existing Installation or queued work and skips explicitly when its URL is absent.
+
 The canonical JSON utility accepts UTF-8 bytes, rejects duplicate object keys, and sorts ASCII property names. It preserves Unicode scalar values and array order. It rejects malformed UTF-8, unpaired surrogates, negative numbers, fractions, exponent notation, unsafe integers, and null manifest content. Operator envelopes permit their explicitly declared null first-admission expectation. Lexical validity alone does not validate a complete manifest; the preparation repository also invokes the closed manifest decoder.
 
 The manifest decoder recognizes one dedicated `codex/1.0.0` Harness definition for direct `occ/kubernetes-gvisor`, Linux/amd64, and a separate trusted gateway. Its eight required sections are target, profile roles, artifacts, launch configuration, containment, endpoints, evidence requirements, and capabilities, alongside schema version 1. Every nested shape, role, claim, capability, unresolved code and server-binding position is closed. Unknown fields or roles, cross-reference substitutions, unsupported controls, alternate units and path aliases reject. Resource quantities use integer millicpu and bytes. The decoder sorts only the declared sets and rejects duplicate identities; the init-before-main container sequence remains ordered.
