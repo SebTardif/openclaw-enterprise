@@ -405,6 +405,9 @@ test("a timed-out read retains its occupied slot and close joins subsequent clea
   const first = f.run();
   await until(() => count(f, "read") === 1);
   assert.equal((await first).kind, "unavailable");
+  // The monotonic timer can refuse before the wall deadline. Give this
+  // separate retry an explicitly expired deadline to exercise input denial.
+  f.bounds.deadline = "2000-01-01T00:00:00.000Z";
   assert.equal((await f.run()).kind, "denied");
   // A fresh deadline still cannot enter the occupied factory.
   f.bounds.deadline = "2099-01-01T00:00:00.000Z";

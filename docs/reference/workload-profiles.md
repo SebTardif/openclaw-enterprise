@@ -38,11 +38,11 @@ The unregistered operator contracts define the following eventual paths:
 
 | Method and path                                              | Purpose                                                                                             |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `POST /api/workload-profile-operations`                      | Retain the caller's exact preparation and allocated identities.                                     |
-| `POST /api/workload-profile-operations/:operationRef/accept` | Accept an exact retained preparation with a fresh current authority check; the request is bodyless. |
-| `GET /api/workload-profile-operations/:operationRef`         | Read an original-actor operation under current read authority.                                      |
-| `GET /api/workload-profiles/:admissionRef`                   | Read a sanitized retained profile.                                                                  |
-| `POST /api/workload-profiles/:admissionRef/withdraw`         | Atomically consume an admission-owned reserved terminal template.                                   |
+| `POST /workload-profile-operations`                      | Retain the caller's exact preparation and allocated identities.                                     |
+| `POST /workload-profile-operations/:operationRef/accept` | Accept an exact retained preparation with a fresh current authority check; the request is bodyless. |
+| `GET /workload-profile-operations/:operationRef`         | Read an original-actor operation under current read authority.                                      |
+| `GET /workload-profiles/:admissionRef`                   | Read a sanitized retained profile.                                                                  |
+| `POST /workload-profiles/:admissionRef/withdraw`         | Atomically consume an admission-owned reserved terminal template.                                   |
 
 Every mutation acknowledgement is limited to its operation reference, action and exact scope. It must not expose retained manifest content, allocated identities, accounts, grants or audit records under mutation authority alone. An uncertain commit returns only the preknown operation locator and `exact-readback-only`; recovery must resolve that actor's own durable operation before any retry. Retained reads require current `read` and `administer` permission on the Installation plus the registered management class. A fresh protective withdrawal does not require an additional read permission.
 
