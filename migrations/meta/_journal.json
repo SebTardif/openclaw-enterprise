@@ -281,6 +281,13 @@
       "when": 1788864165460,
       "tag": "0039_fresh_bootstrap_lock_privileges",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788864165461,
+      "tag": "0040_delegation",
+      "breakpoints": true
     }
   ]
 }

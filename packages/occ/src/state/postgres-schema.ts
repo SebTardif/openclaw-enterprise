@@ -1,3 +1,4 @@
+import { createDelegationTables } from "./postgres/delegation-schema.ts";
 import { createWorkloadProfileAdmissionTablesV2 } from "./postgres/workload-profile-admission-schema.ts";
 import { createAccountSecurityTablesV1 } from "./schema/account-security.ts";
 import { createAgentTables } from "./schema/agent.ts";
@@ -746,3 +747,10 @@ export const { accountSecurityRecords } = createAccountSecurityTablesV1(occSchem
   user,
   account,
 });
+
+export const {
+  delegationRoots,
+  delegationOperations,
+  delegationRootHistory,
+  delegationOperationHistory,
+} = createDelegationTables(occSchema, { installation, agents });

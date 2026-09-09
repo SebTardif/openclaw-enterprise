@@ -2,9 +2,10 @@
 
 The internal OCC delegation library provides root grant constraint checks,
 persisted runtime-owner inspection, and extraction of a Codex model request's
-opaque turn reference. It is currently a **library only**. No controller route,
-workload authentication, durable grant store, grant issuer, provider proxy or
-runtime startup path calls it. Development and production behavior is unchanged.
+opaque turn reference. It includes a transaction-bound PostgreSQL grant store. No controller route,
+workload authentication, grant issuer, provider proxy or runtime startup path
+calls that store. The accepting authority still needs genuine current workload,
+turn and policy producers before it can authorize provider use.
 
 The [platform design](../design.md) remains authoritative. See
 [authorization](authorization.md) for current IAM enforcement,
@@ -33,10 +34,11 @@ through the OCC package entrypoint.
   missing or mismatched ownership and stale lifecycle intent. Matching records
   return `unbound`, including historical component allocations whose ownership
   still matches. They never return executable currentness.
-- `repository.ts` declares the required transaction-local storage contract.
-  It has no storage implementation. Grant insertion, monotonic retirement,
-  request consumption and audit must share a real platform transaction before
-  an issuer can use that contract.
+- `repository.ts` declares the transaction-local storage contract. `postgres.ts`
+  implements it on the original PostgreSQL platform connection. Root and operation
+  transitions have database guards and mandatory immutable storage history. Genuine
+  attributable authorization audit must still be appended through the same platform
+  transaction by the accepting authority.
 - `operation-contract.ts` parses operation records and checks supplied dispatch,
   inspection and continuation state. Dispatch requires an accepted reservation
   before its immutable deadline. Continuation requires a dispatched operation;
@@ -77,14 +79,61 @@ consumed reservation cannot authorize sending again; there is no provider retry.
 Renewing a live stream never changes the original dispatch deadline. Unknown
 effects retain their active reservation until verified reconciliation; completed
 execution or guaranteed no dispatch releases concurrency once without refunding
-the charged request. These are required port semantics; no implementation or
-exactly-once external-effect guarantee is supplied by this library.
+the charged request. The PostgreSQL implementation enforces these storage transitions; it supplies no
+exactly-once external-effect guarantee.
 
 Operation expiry is separate from the first-dispatch deadline; neither renews.
 Explicit outcome records distinguish ended, verified stopped, never dispatched
 and unknown work. Ended/stopped does not imply business success. The consumed
 dispatch marker remains present even when later evidence proves zero provider
 application bytes were sent.
+
+## PostgreSQL storage
+
+`PostgresPlatformState.delegationTransactionHost().transact((unit, grants) => ...)`
+provides the original platform unit and a borrowed delegation repository. The host
+loads the server-owned Installation. Existing platform callers can use
+`delegationInTransaction(unit)` after loading that Installation in their ordinary
+write transaction. The repository rejects another Installation and expires with
+the callback. It cannot join protected profile, turn-command, credential-inventory,
+gateway or bootstrap owner transactions through this ordinary adapter.
+
+Root insertion preserves the complete immutable input. Exact replay returns its
+current lifecycle and counters, including after retirement; changed binding or
+context reuse conflicts. Retirement checks the expected version and only permits
+active-to-closed/revoked or closed-to-revoked. Each operation reservation is unique
+within its Installation, Namespace and Agent, across roots. Admission replay returns
+the original operation's current state without a new charge.
+
+Mutations require READ COMMITTED isolation and lock Namespace then Agent. Database
+guards serialize admission, retirement
+and dispatch, check root versions, selected model tuples, validity and immutable
+deadlines using the database wall clock, and reject illegal state changes. Total
+requests are derived from retained operation rows; active requests include accepted,
+dispatched and unknown rows. Completion and cancellation release the active count
+without deleting rows or refunding total requests. Expiry and retirement alone do
+not release unknown work. The accepting owner must supply actual reconciliation
+evidence before requesting a known outcome.
+
+Every transition appends immutable storage history in the same SQL statement.
+These records carry no credentials or request body. Storage history is not an
+attributable authorization audit. The accepting owner must authenticate its caller,
+resolve current runtime/turn/policy facts, append its genuine audit through
+`unit.audit`, and enforce the canonical Agent-wide capacity policy in the same
+owning transaction. This adapter enforces each root's request and concurrency
+ceilings; the existing grant contract does not define an Agent-wide limit.
+
+All results inside the callback are provisional. External dispatch must wait for
+the original transaction's acknowledged return. A `PostgresCommitOutcomeUnknownError`
+requires exact readback/reconciliation; a persisted dispatch marker never permits
+resending. No provider effect belongs inside the transaction callback.
+
+Run `node --test tests/integration/postgres-delegation.test.mjs` with
+`OCC_TEST_DATABASE_URL` selecting an isolated migrated PostgreSQL 18.6 database as
+`occ_app`. The suite exercises the real platform owner, limited-role SQL guards,
+concurrent clients, rollback, borrowed lifetimes, database deadlines, and a real
+protocol fault that drops a COMMIT acknowledgment. It is storage verification;
+no workload identity, current-turn authority or provider dispatch is exercised.
 
 ## Codex request context extraction
 
@@ -102,7 +151,7 @@ required body context. Additional tool metadata can differ between body and
 header. A header alone cannot provide the reference. No trimming, name
 normalization or active-turn fallback takes place.
 
-Local bounds are 1 MiB of body, 8 KiB per metadata value, 128 header entries,
+Local bounds are 16 MiB of body, 8 KiB per metadata value, 128 header entries,
 64 JSON nesting levels and 20,000 JSON values per parsed document. The HTTP
 acceptor must preserve duplicate header information, bound all header names and
 the aggregate header bytes, enforce framing/content type and receive limits,
@@ -167,7 +216,7 @@ storage and must never be treated as serving permission. Grant denials do not
 consume budget or change persisted state.
 
 Before wiring executable use, integrate canonical grant tables/constraints and
-the transaction repository, current identity/runtime purpose resolution, exact
+the accepting transaction integration, current identity/runtime purpose resolution, exact
 admitted original-turn state, current IAM and common/model policy, attributable
 audit and the accepting service's effect/revocation protocol. Keep storage
 evidence, authentication, authorization, dispatch and external outcomes distinct.
