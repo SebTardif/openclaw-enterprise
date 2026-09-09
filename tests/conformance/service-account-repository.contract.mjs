@@ -66,10 +66,13 @@ export async function assertServiceAccountClosed(repository, account, writable =
       () => repository.updateCredential(namespaceId, id, accountCredential()),
       () => repository.deleteServiceAccount(namespaceId, id),
     );
+  // Retained methods must reject with the exact scope error after owner closure.
+  // The outer lifecycle phase or the borrowed repository lifetime can fence the
+  // call first; their diagnostic text is not a shared repository contract.
   for (const call of calls)
-    await assert.rejects(call(), {
-      name: "ScopeViolationError",
-      message: "The platform transaction is closed.",
+    await assert.rejects(call(), (error) => {
+      assert.equal(error.constructor, ScopeViolationError);
+      return true;
     });
 }
 
