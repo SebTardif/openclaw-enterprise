@@ -97,3 +97,12 @@ The existing OpenShell command and identity diagnostic are separate consumers.
 See [authenticated runtime operation readback](../../docs/reference/runtime-service-transport.md)
 for the exact admitted source/profile, independent validator binary selection,
 listener startup file, framing, repeated current checks and real tests.
+
+## Node physical execution source
+
+`cmd/oce-node-observer` and `nodeobserver` implement a dedicated node source for
+actual API, CRI, runsc and kernel observations over the service-peer transport.
+The [node execution observer reference](../../docs/reference/node-execution-observer.md)
+describes protected inputs, currentness, focused checks and the remaining live
+installation and enrollment prerequisites. This component does not issue runtime
+bindings or establish complete effective profiles.
