@@ -23,7 +23,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -72,6 +72,7 @@ pub struct Config {
     #[serde(default)]
     pub development_loopback_http: bool,
     pub max_concurrent: usize,
+    pub response_idle_timeout_ms: u64,
 }
 
 pub struct Service {
@@ -104,6 +105,7 @@ impl Service {
                 .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
             || config.max_concurrent == 0
             || config.max_concurrent > 8
+            || !(100..=300_000).contains(&config.response_idle_timeout_ms)
             || config.listener_authority.is_empty()
             || config.listener_authority.len() > 253
             || !config
@@ -247,6 +249,100 @@ impl Drop for SocketDeadline {
         }
     }
 }
+// Response progress has an independent clock: a blocked currentness RPC or an
+// unpolled/backpressured response body cannot postpone exact socket shutdown.
+// One resettable worker per exchange is joined with the exchange's other work.
+struct IdleDeadline {
+    state: Arc<(Mutex<IdleState>, Condvar)>,
+    timeout: Duration,
+    worker: Option<thread::JoinHandle<()>>,
+}
+struct IdleState {
+    deadline: Instant,
+    stopped: bool,
+    expired: bool,
+}
+impl IdleDeadline {
+    fn start(
+        timeout: Duration,
+        dispatched_at: Instant,
+        upstream: TcpStream,
+        downstream: TcpStream,
+    ) -> Result<Self, Refusal> {
+        let deadline = dispatched_at.checked_add(timeout).ok_or(Refusal::Bounds)?;
+        let state = Arc::new((
+            Mutex::new(IdleState {
+                deadline,
+                stopped: false,
+                expired: false,
+            }),
+            Condvar::new(),
+        ));
+        let owner = state.clone();
+        let worker = thread::Builder::new()
+            .name("oce-response-idle".into())
+            .spawn(move || {
+                let (lock, wake) = &*owner;
+                let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+                loop {
+                    if state.stopped {
+                        return;
+                    }
+                    let remaining = state.deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        state.expired = true;
+                        drop(state);
+                        let _ = upstream.shutdown(Shutdown::Both);
+                        let _ = downstream.shutdown(Shutdown::Both);
+                        return;
+                    }
+                    // Recheck under the same lock after every wake, including
+                    // spurious wakes; a reset never loses its notification.
+                    state = wake
+                        .wait_timeout(state, remaining)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
+                }
+            })
+            .map_err(|_| Refusal::Io)?;
+        Ok(Self {
+            state,
+            timeout,
+            worker: Some(worker),
+        })
+    }
+    fn current(&self) -> Result<(), Refusal> {
+        let state = self.state.0.lock().map_err(|_| Refusal::Denied)?;
+        if state.stopped || state.expired || Instant::now() >= state.deadline {
+            Err(Refusal::Timeout)
+        } else {
+            Ok(())
+        }
+    }
+    fn activity(&self) -> Result<(), Refusal> {
+        let mut state = self.state.0.lock().map_err(|_| Refusal::Denied)?;
+        let now = Instant::now();
+        if state.stopped || state.expired || now >= state.deadline {
+            return Err(Refusal::Timeout);
+        }
+        state.deadline = now.checked_add(self.timeout).ok_or(Refusal::Bounds)?;
+        self.state.1.notify_one();
+        Ok(())
+    }
+}
+impl Drop for IdleDeadline {
+    fn drop(&mut self) {
+        {
+            let mut state = self.state.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.stopped = true;
+            self.state.1.notify_one();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 struct Slot(Arc<AtomicUsize>);
 impl Drop for Slot {
     fn drop(&mut self) {
