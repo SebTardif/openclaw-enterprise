@@ -732,7 +732,7 @@ mod tests {
             for (phase, label) in ENCODER_PHASES {
                 let elapsed_us = self.elapsed[phase as usize].map(|time| time.as_micros());
                 eprintln!(
-                    "crd43_encoder_phase phase={label} elapsed_us={elapsed_us:?} trace_invalid={}",
+                    "proxy_encoder_phase phase={label} elapsed_us={elapsed_us:?} trace_invalid={}",
                     self.invalid
                 );
             }
@@ -1240,7 +1240,7 @@ mod tests {
         let refusal = encoded.as_ref().err().copied();
         let frame_bytes = encoded.as_ref().map_or(0, |frame| frame.len());
         eprintln!(
-            "crd43_encoder_result body_bytes={} payload_limit={} elapsed_ms={} success={} refusal={refusal:?} frame_bytes={frame_bytes}",
+            "proxy_encoder_result body_bytes={} payload_limit={} elapsed_ms={} success={} refusal={refusal:?} frame_bytes={frame_bytes}",
             request.body.len(), ADMISSION_LIMIT, encode_started.elapsed().as_millis(), encoded.is_ok()
         );
         trace.report();

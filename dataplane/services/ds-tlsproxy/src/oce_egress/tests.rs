@@ -864,29 +864,29 @@ enum NormalStream {
     IdleDeadline,
     PausedReader,
 }
-const CRD43_INITIAL: &str = concat!(
+const PROXY_INITIAL: &str = concat!(
     ": ordinary heartbeat\r\n\r\n",
     "event: response.created\r\n",
-    "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_crd43\",\"status\":\"in_progress\"}}\r\n\r\n",
-    "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"item_id\":\"msg_crd43\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello, 世界 🌍\"}\n\n"
+    "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_proxy\",\"status\":\"in_progress\"}}\r\n\r\n",
+    "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"item_id\":\"msg_proxy\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello, 世界 🌍\"}\n\n"
 );
 #[derive(Default)]
 struct StreamProgress {
     written: AtomicUsize,
     writing: AtomicBool,
 }
-const CRD43_PADDING_EVENTS: usize = 512;
-const CRD43_PADDING_BYTES: usize = 16 * 1024;
+const PROXY_PADDING_EVENTS: usize = 512;
+const PROXY_PADDING_BYTES: usize = 16 * 1024;
 
-fn crd43_terminal(normal: NormalStream) -> String {
+fn proxy_terminal(normal: NormalStream) -> String {
     let status = match normal {
         NormalStream::Failed => "failed",
         NormalStream::Incomplete => "incomplete",
         _ => "completed",
     };
-    format!("event: response.{status}\ndata: {{\"type\":\"response.{status}\",\"sequence_number\":2,\"response\":{{\"id\":\"resp_crd43\",\"status\":\"{status}\"}}}}\n\n")
+    format!("event: response.{status}\ndata: {{\"type\":\"response.{status}\",\"sequence_number\":2,\"response\":{{\"id\":\"resp_proxy\",\"status\":\"{status}\"}}}}\n\n")
 }
-fn crd43_write_chunk(
+fn proxy_write_chunk(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     data: &[u8],
 ) -> io::Result<()> {
@@ -905,8 +905,8 @@ fn normal_provider_stream(
     tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
     // Split actual upstream HTTP data across UTF-8, SSE and CRLF boundaries.
     // No terminal is available until the downstream has seen this first phase.
-    for chunk in CRD43_INITIAL.as_bytes().chunks(3) {
-        crd43_write_chunk(tls, chunk).unwrap();
+    for chunk in PROXY_INITIAL.as_bytes().chunks(3) {
+        proxy_write_chunk(tls, chunk).unwrap();
     }
     first_received.recv_timeout(Duration::from_secs(3)).unwrap();
     if matches!(
@@ -930,20 +930,20 @@ fn normal_provider_stream(
     if matches!(normal, NormalStream::PausedReader) {
         // Reuse one bounded event buffer. The downstream stops polling while
         // these writes run; no harness gate delays the provider's data writes.
-        let mut padding = vec![b'z'; CRD43_PADDING_BYTES];
+        let mut padding = vec![b'z'; PROXY_PADDING_BYTES];
         padding[0] = b':';
         let n = padding.len();
         padding[n - 2..].copy_from_slice(b"\n\n");
-        for _ in 0..CRD43_PADDING_EVENTS {
+        for _ in 0..PROXY_PADDING_EVENTS {
             progress.writing.store(true, Ordering::Release);
-            let written = crd43_write_chunk(tls, &padding);
+            let written = proxy_write_chunk(tls, &padding);
             progress.writing.store(false, Ordering::Release);
             written.unwrap();
             progress.written.fetch_add(padding.len(), Ordering::Release);
         }
     }
-    for chunk in crd43_terminal(normal).as_bytes().chunks(2) {
-        crd43_write_chunk(tls, chunk).unwrap();
+    for chunk in proxy_terminal(normal).as_bytes().chunks(2) {
+        proxy_write_chunk(tls, chunk).unwrap();
     }
     if matches!(normal, NormalStream::TerminalWithoutHttpEnd) {
         // The client must observe the valid terminal before the provider closes
@@ -1037,8 +1037,8 @@ fn normal_client(
                 let data = frame.into_data().unwrap();
                 assert!(bytes.len() + data.len() <= 9 * 1024 * 1024);
                 bytes.extend_from_slice(&data);
-                if !first && bytes.len() >= CRD43_INITIAL.len() {
-                    assert_eq!(&bytes[..CRD43_INITIAL.len()], CRD43_INITIAL.as_bytes());
+                if !first && bytes.len() >= PROXY_INITIAL.len() {
+                    assert_eq!(&bytes[..PROXY_INITIAL.len()], PROXY_INITIAL.as_bytes());
                     first = true;
                     first_seen.send(()).unwrap();
                     if matches!(normal, NormalStream::ClientClose) {
@@ -1073,7 +1073,7 @@ fn normal_client(
                 }
                 if matches!(normal, NormalStream::TerminalWithoutHttpEnd)
                     && !terminal_seen
-                    && bytes.ends_with(crd43_terminal(normal).as_bytes())
+                    && bytes.ends_with(proxy_terminal(normal).as_bytes())
                 {
                     terminal_seen = true;
                     first_seen.send(()).unwrap();
@@ -1103,7 +1103,7 @@ fn normal_client(
 }
 
 #[test]
-fn crd43_phased_unicode_stream_requires_terminal_and_clean_http() {
+fn proxy_phased_unicode_stream_requires_terminal_and_clean_http() {
     for normal in [
         NormalStream::Completed,
         NormalStream::Failed,
@@ -1113,17 +1113,17 @@ fn crd43_phased_unicode_stream_requires_terminal_and_clean_http() {
             transport_with_controls(Scenario::Allowed, wire(&body()), false, true, Some(normal));
         assert_eq!(
             observed.response,
-            format!("{}{}", CRD43_INITIAL, crd43_terminal(normal))
+            format!("{}{}", PROXY_INITIAL, proxy_terminal(normal))
         );
         assert_eq!(observed.receipts, vec!["completed"]);
-        crd43_assert_one_owned_flow(&observed);
+        proxy_assert_one_owned_flow(&observed);
         assert!(observed.handler_error.is_none());
         // Failed/incomplete establish an ended response, not a successful model outcome.
     }
 }
 
 #[test]
-fn crd43_client_close_preserves_unknown_and_one_upstream_attempt() {
+fn proxy_client_close_preserves_unknown_and_one_upstream_attempt() {
     let observed = transport_with_controls(
         Scenario::Allowed,
         wire(&body()),
@@ -1131,9 +1131,9 @@ fn crd43_client_close_preserves_unknown_and_one_upstream_attempt() {
         true,
         Some(NormalStream::ClientClose),
     );
-    assert_eq!(observed.response, CRD43_INITIAL);
+    assert_eq!(observed.response, PROXY_INITIAL);
     assert_eq!(observed.receipts, vec!["unknown"]);
-    crd43_assert_one_owned_flow(&observed);
+    proxy_assert_one_owned_flow(&observed);
     assert!(observed.provider_observed_close);
     assert!(observed.elapsed < Duration::from_secs(3));
     for sink in [
@@ -1146,7 +1146,7 @@ fn crd43_client_close_preserves_unknown_and_one_upstream_attempt() {
 }
 
 #[test]
-fn crd43_idle_stream_ends_at_original_operation_deadline() {
+fn proxy_idle_stream_ends_at_original_operation_deadline() {
     let observed = transport_with_controls(
         Scenario::Allowed,
         wire(&body()),
@@ -1154,16 +1154,16 @@ fn crd43_idle_stream_ends_at_original_operation_deadline() {
         true,
         Some(NormalStream::IdleDeadline),
     );
-    assert_eq!(observed.response, CRD43_INITIAL);
+    assert_eq!(observed.response, PROXY_INITIAL);
     assert_eq!(observed.receipts, vec!["unknown"]);
-    crd43_assert_one_owned_flow(&observed);
+    proxy_assert_one_owned_flow(&observed);
     assert!(observed.provider_observed_close);
     assert!(observed.elapsed >= Duration::from_millis(1000));
     assert!(observed.elapsed < Duration::from_secs(3));
 }
 
 #[test]
-fn crd43_reader_pause_constrains_provider_then_resumes_exact_stream() {
+fn proxy_reader_pause_constrains_provider_then_resumes_exact_stream() {
     let observed = transport_with_controls(
         Scenario::Allowed,
         wire(&body()),
@@ -1172,37 +1172,37 @@ fn crd43_reader_pause_constrains_provider_then_resumes_exact_stream() {
         Some(NormalStream::PausedReader),
     );
     let (before, after) = observed.paused_progress.unwrap();
-    assert!(before > 0 && before < CRD43_PADDING_EVENTS * CRD43_PADDING_BYTES);
+    assert!(before > 0 && before < PROXY_PADDING_EVENTS * PROXY_PADDING_BYTES);
     assert_eq!(
         before, after,
         "provider writes must stop progressing while the client is paused"
     );
-    assert!(observed.response.starts_with(CRD43_INITIAL));
+    assert!(observed.response.starts_with(PROXY_INITIAL));
     assert!(observed
         .response
-        .ends_with(&crd43_terminal(NormalStream::PausedReader)));
+        .ends_with(&proxy_terminal(NormalStream::PausedReader)));
     assert_eq!(
         observed.response.len(),
-        CRD43_INITIAL.len()
-            + CRD43_PADDING_EVENTS * CRD43_PADDING_BYTES
-            + crd43_terminal(NormalStream::PausedReader).len()
+        PROXY_INITIAL.len()
+            + PROXY_PADDING_EVENTS * PROXY_PADDING_BYTES
+            + proxy_terminal(NormalStream::PausedReader).len()
     );
-    let middle = &observed.response.as_bytes()[CRD43_INITIAL.len()
-        ..observed.response.len() - crd43_terminal(NormalStream::PausedReader).len()];
-    let mut expected = vec![b'z'; CRD43_PADDING_BYTES];
+    let middle = &observed.response.as_bytes()[PROXY_INITIAL.len()
+        ..observed.response.len() - proxy_terminal(NormalStream::PausedReader).len()];
+    let mut expected = vec![b'z'; PROXY_PADDING_BYTES];
     expected[0] = b':';
-    expected[CRD43_PADDING_BYTES - 2..].copy_from_slice(b"\n\n");
-    let mut chunks = middle.chunks_exact(CRD43_PADDING_BYTES);
+    expected[PROXY_PADDING_BYTES - 2..].copy_from_slice(b"\n\n");
+    let mut chunks = middle.chunks_exact(PROXY_PADDING_BYTES);
     for chunk in &mut chunks {
         assert_eq!(chunk, expected.as_slice());
     }
     assert!(chunks.remainder().is_empty());
     assert_eq!(observed.receipts, vec!["completed"]);
-    crd43_assert_one_owned_flow(&observed);
+    proxy_assert_one_owned_flow(&observed);
 }
 
 #[test]
-fn crd43_valid_tls_incomplete_body_times_out_without_exposing_canaries() {
+fn proxy_valid_tls_incomplete_body_times_out_without_exposing_canaries() {
     let complete = wire(&body());
     let body_start = complete.find("\r\n\r\n").unwrap() + 4;
     // A normal client pauses after valid TLS and headers with its request body
@@ -1233,7 +1233,7 @@ fn crd43_valid_tls_incomplete_body_times_out_without_exposing_canaries() {
     }
 }
 
-fn crd43_assert_one_owned_flow(observed: &Observed) {
+fn proxy_assert_one_owned_flow(observed: &Observed) {
     assert_eq!(
         (
             observed.admissions,
@@ -1252,7 +1252,7 @@ fn crd43_assert_one_owned_flow(observed: &Observed) {
 }
 
 #[test]
-fn crd43_provider_terminal_without_http_end_preserves_unknown() {
+fn proxy_provider_terminal_without_http_end_preserves_unknown() {
     let observed = transport_with_controls(
         Scenario::Allowed,
         wire(&body()),
@@ -1264,25 +1264,25 @@ fn crd43_provider_terminal_without_http_end_preserves_unknown() {
         observed.response,
         format!(
             "{}{}",
-            CRD43_INITIAL,
-            crd43_terminal(NormalStream::TerminalWithoutHttpEnd)
+            PROXY_INITIAL,
+            proxy_terminal(NormalStream::TerminalWithoutHttpEnd)
         )
     );
     assert_eq!(observed.receipts, vec!["unknown"]);
     assert!(observed.handler_error.is_some());
-    crd43_assert_one_owned_flow(&observed);
+    proxy_assert_one_owned_flow(&observed);
 }
 
 // This fixture is separate from the streaming fixtures: its peer never sends a
 // TLS handshake response. Peer/RPC reads and writes are nonblocking, with bounded
 // frames, absolute deadlines and cancellation if a setup assertion unwinds.
-struct Crd43DeadlineWorkers {
+struct ProxyDeadlineWorkers {
     stop: Arc<AtomicBool>,
     deadline: Instant,
     downstream: Option<TcpStream>,
     workers: Vec<thread::JoinHandle<Result<(), &'static str>>>,
 }
-impl Crd43DeadlineWorkers {
+impl ProxyDeadlineWorkers {
     fn new() -> Self {
         Self {
             stop: Arc::new(AtomicBool::new(false)),
@@ -1329,67 +1329,67 @@ impl Crd43DeadlineWorkers {
         failure.map_or(Ok(()), Err)
     }
 }
-impl Drop for Crd43DeadlineWorkers {
+impl Drop for ProxyDeadlineWorkers {
     fn drop(&mut self) {
         if let Err(error) = self.settle() {
             // Never turn incomplete cleanup into a pass, or double-panic while
             // unwinding. The externally bounded test process owns any hold.
             if thread::panicking() {
-                eprintln!("crd43_tls_deadline_cleanup_failed: {error}");
+                eprintln!("proxy_tls_deadline_cleanup_failed: {error}");
             } else {
-                panic!("crd43_tls_deadline_cleanup_failed: {error}");
+                panic!("proxy_tls_deadline_cleanup_failed: {error}");
             }
         }
     }
 }
-fn crd43_checkpoint(stop: &AtomicBool, deadline: Instant) -> Result<(), &'static str> {
+fn proxy_checkpoint(stop: &AtomicBool, deadline: Instant) -> Result<(), &'static str> {
     if stop.load(Ordering::Acquire) || Instant::now() >= deadline {
         Err("fixture cancelled or absolute deadline reached")
     } else {
         Ok(())
     }
 }
-fn crd43_retry(error: &io::Error) -> bool {
+fn proxy_retry(error: &io::Error) -> bool {
     matches!(
         error.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
     )
 }
-fn crd43_read_exact(
+fn proxy_read_exact(
     socket: &mut impl Read,
     mut bytes: &mut [u8],
     stop: &AtomicBool,
     deadline: Instant,
 ) -> Result<(), &'static str> {
     while !bytes.is_empty() {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match socket.read(bytes) {
             Ok(0) => return Err("fixture frame ended early"),
             Ok(n) => bytes = &mut bytes[n..],
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture frame read failed"),
         }
     }
     Ok(())
 }
-fn crd43_write_all(
+fn proxy_write_all(
     socket: &mut impl Write,
     mut bytes: &[u8],
     stop: &AtomicBool,
     deadline: Instant,
 ) -> Result<(), &'static str> {
     while !bytes.is_empty() {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match socket.write(bytes) {
             Ok(0) => return Err("fixture frame write made no progress"),
             Ok(n) => bytes = &bytes[n..],
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture frame write failed"),
         }
     }
     Ok(())
 }
-struct Crd43WireExchange {
+struct ProxyWireExchange {
     request: Value,
     response: Value,
     received: Instant,
@@ -1398,33 +1398,33 @@ struct Crd43WireExchange {
     request_payload_bytes: usize,
     request_payload_sha256: String,
 }
-struct Crd43RpcLimits {
+struct ProxyRpcLimits {
     request_bytes: usize,
     requests: usize,
     handler_ended: Option<Arc<AtomicBool>>,
 }
 #[derive(Default)]
-struct Crd43RpcProgress {
+struct ProxyRpcProgress {
     frames_complete: AtomicUsize,
     parsed: AtomicUsize,
     replies_written: AtomicUsize,
 }
-struct Crd43RpcWitness {
-    progress: Arc<Crd43RpcProgress>,
+struct ProxyRpcWitness {
+    progress: Arc<ProxyRpcProgress>,
     connections: Arc<AtomicUsize>,
     idle_after_handler: Arc<AtomicBool>,
 }
-fn crd43_deadline_rpc(
-    workers: &mut Crd43DeadlineWorkers,
+fn proxy_deadline_rpc(
+    workers: &mut ProxyDeadlineWorkers,
     path: PathBuf,
-    records: Arc<Mutex<Vec<Crd43WireExchange>>>,
+    records: Arc<Mutex<Vec<ProxyWireExchange>>>,
     respond: impl FnMut(&Value) -> Value + Send + 'static,
 ) {
-    crd43_deadline_rpc_with_limits(
+    proxy_deadline_rpc_with_limits(
         workers,
         path,
         records,
-        Crd43RpcLimits {
+        ProxyRpcLimits {
             request_bytes: 16 * 1024,
             requests: 4,
             handler_ended: None,
@@ -1432,21 +1432,21 @@ fn crd43_deadline_rpc(
         respond,
     );
 }
-fn crd43_deadline_rpc_with_limits(
-    workers: &mut Crd43DeadlineWorkers,
+fn proxy_deadline_rpc_with_limits(
+    workers: &mut ProxyDeadlineWorkers,
     path: PathBuf,
-    records: Arc<Mutex<Vec<Crd43WireExchange>>>,
-    limits: Crd43RpcLimits,
+    records: Arc<Mutex<Vec<ProxyWireExchange>>>,
+    limits: ProxyRpcLimits,
     mut respond: impl FnMut(&Value) -> Value + Send + 'static,
-) -> Crd43RpcWitness {
+) -> ProxyRpcWitness {
     assert!(limits.request_bytes > 0 && limits.request_bytes <= 33_619_968);
     assert!(limits.requests > 0 && limits.requests <= 16);
     let listener = UnixListener::bind(path).unwrap();
     listener.set_nonblocking(true).unwrap();
     let stop = workers.stop.clone();
     let deadline = workers.deadline;
-    let witness = Crd43RpcWitness {
-        progress: Arc::new(Crd43RpcProgress::default()),
+    let witness = ProxyRpcWitness {
+        progress: Arc::new(ProxyRpcProgress::default()),
         connections: Arc::new(AtomicUsize::new(0)),
         idle_after_handler: Arc::new(AtomicBool::new(false)),
     };
@@ -1471,7 +1471,7 @@ fn crd43_deadline_rpc_with_limits(
                     idle_after_handler.store(true, Ordering::Release);
                     return Ok(());
                 }
-                Err(error) if crd43_retry(&error) => {
+                Err(error) if proxy_retry(&error) => {
                     thread::sleep(Duration::from_millis(1));
                     continue;
                 }
@@ -1487,13 +1487,13 @@ fn crd43_deadline_rpc_with_limits(
                 .map_err(|_| "fixture RPC setup failed")?;
             let io_deadline = deadline.min(Instant::now() + Duration::from_millis(750));
             let mut header = [0; 4];
-            crd43_read_exact(&mut socket, &mut header, &stop, io_deadline)?;
+            proxy_read_exact(&mut socket, &mut header, &stop, io_deadline)?;
             let length = u32::from_be_bytes(header) as usize;
             if length == 0 || length > limits.request_bytes {
                 return Err("fixture RPC frame bound exceeded");
             }
             let mut payload = vec![0; length];
-            crd43_read_exact(&mut socket, &mut payload, &stop, io_deadline)?;
+            proxy_read_exact(&mut socket, &mut payload, &stop, io_deadline)?;
             let received = Instant::now();
             progress.frames_complete.fetch_add(1, Ordering::Release);
             let request = json::parse(&payload).map_err(|_| "fixture RPC JSON failed")?;
@@ -1504,32 +1504,32 @@ fn crd43_deadline_rpc_with_limits(
                 return Err("fixture RPC reply bound exceeded");
             }
             let before_write = Instant::now();
-            crd43_write_all(
+            proxy_write_all(
                 &mut socket,
                 &(bytes.len() as u32).to_be_bytes(),
                 &stop,
                 io_deadline,
             )?;
-            crd43_write_all(&mut socket, &bytes, &stop, io_deadline)?;
+            proxy_write_all(&mut socket, &bytes, &stop, io_deadline)?;
             progress.replies_written.fetch_add(1, Ordering::Release);
             records
                 .lock()
                 .map_err(|_| "fixture RPC record poisoned")?
-                .push(Crd43WireExchange {
+                .push(ProxyWireExchange {
                     request,
                     response,
                     received,
                     before_write,
                     request_prefix: header,
                     request_payload_bytes: length,
-                    request_payload_sha256: crd43_body_digest(&payload),
+                    request_payload_sha256: proxy_body_digest(&payload),
                 });
         }
         Ok(())
     });
     witness
 }
-struct Crd43StalledPeer {
+struct ProxyStalledPeer {
     accepted: Instant,
     hello: Instant,
     closed: Instant,
@@ -1537,17 +1537,17 @@ struct Crd43StalledPeer {
     hello_bytes: usize,
     attempts: usize,
 }
-fn crd43_stalled_peer(
+fn proxy_stalled_peer(
     listener: TcpListener,
     stop: &AtomicBool,
     handler_ended: &AtomicBool,
     deadline: Instant,
-) -> Result<Crd43StalledPeer, &'static str> {
+) -> Result<ProxyStalledPeer, &'static str> {
     let mut socket = loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match listener.accept() {
             Ok((socket, _)) => break socket,
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture provider accept failed"),
         }
     };
@@ -1558,14 +1558,14 @@ fn crd43_stalled_peer(
     let mut acceptor = rustls::server::Acceptor::default();
     let mut hello_bytes = 0;
     let hello = loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         if hello_bytes >= 64 * 1024 {
             return Err("fixture ClientHello byte bound exceeded");
         }
         match acceptor.read_tls(&mut (&mut socket).take((64 * 1024 - hello_bytes) as u64)) {
             Ok(0) => return Err("provider connection closed before ClientHello"),
             Ok(n) => hello_bytes += n,
-            Err(error) if crd43_retry(&error) => {
+            Err(error) if proxy_retry(&error) => {
                 thread::sleep(Duration::from_millis(1));
                 continue;
             }
@@ -1590,18 +1590,18 @@ fn crd43_stalled_peer(
         }
     };
     let closed = loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match socket.read(&mut [0; 1]) {
             Ok(0) => break Instant::now(),
             Ok(_) => return Err("unexpected upstream bytes after ClientHello"),
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break Instant::now(),
             Err(_) => return Err("fixture peer closure read failed"),
         }
     };
     let mut attempts = 1;
     let backlog_checked = loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         // Load the explicit handler-end signal BEFORE this accept. Thus the
         // final WouldBlock observation really occurs after exchange settlement.
         let ended_before_accept = handler_ended.load(Ordering::Acquire);
@@ -1623,7 +1623,7 @@ fn crd43_stalled_peer(
             Err(_) => return Err("fixture final accept failed"),
         }
     };
-    Ok(Crd43StalledPeer {
+    Ok(ProxyStalledPeer {
         accepted,
         hello,
         closed,
@@ -1634,16 +1634,16 @@ fn crd43_stalled_peer(
 }
 
 #[test]
-fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
+fn proxy_upstream_tls_stall_ends_at_selected_connect_deadline() {
     const DNS_TTL_MS: u64 = 1500;
     const AUTHORITY_TTL_MS: u64 = 4000;
     const DISPATCH_TTL_MS: u64 = 5000;
     const OPERATION_TTL_MS: u64 = 60_000;
     let dir = Dir::new();
-    let mut workers = Crd43DeadlineWorkers::new();
+    let mut workers = ProxyDeadlineWorkers::new();
     let authority = Arc::new(Mutex::new(Vec::new()));
     let dns = Arc::new(Mutex::new(Vec::new()));
-    crd43_deadline_rpc(
+    proxy_deadline_rpc(
         &mut workers,
         dir.0.join("authority"),
         authority.clone(),
@@ -1665,7 +1665,7 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
             "server_time_ms":n,"valid_until_ms":n+AUTHORITY_TTL_MS})
         },
     );
-    crd43_deadline_rpc(&mut workers, dir.0.join("dns"), dns.clone(), |request| {
+    proxy_deadline_rpc(&mut workers, dir.0.join("dns"), dns.clone(), |request| {
         if request["method"] != "resolve" {
             return json!({"version":1,"ok":false});
         }
@@ -1694,7 +1694,7 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
     let ended = handler_ended.clone();
     let deadline = workers.deadline;
     workers.spawn(move || {
-        let observed = crd43_stalled_peer(provider, &stop, &ended, deadline)?;
+        let observed = proxy_stalled_peer(provider, &stop, &ended, deadline)?;
         *output
             .lock()
             .map_err(|_| "fixture provider record poisoned")? = Some(observed);
@@ -1706,10 +1706,10 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
         TcpStream::connect_timeout(&listener.local_addr().unwrap(), Duration::from_millis(500))
             .unwrap();
     let socket = loop {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         match listener.accept() {
             Ok((socket, _)) => break socket,
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => panic!("fixture downstream accept failed"),
         }
     };
@@ -1734,7 +1734,7 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
         .map(|b| format!("{b:02x}"))
         .collect();
     let sent_before = Instant::now();
-    crd43_write_all(
+    proxy_write_all(
         &mut client,
         wire(&exact_body).as_bytes(),
         &workers.stop,
@@ -1743,7 +1743,7 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
     .unwrap();
     let mut response = Vec::new();
     let response_ended = loop {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         let mut bytes = [0; 512];
         match client.read(&mut bytes) {
             Ok(0) => break Instant::now(),
@@ -1754,14 +1754,14 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
                 );
                 response.extend_from_slice(&bytes[..n]);
             }
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => panic!("fixture refusal response read failed"),
         }
     };
     // Observe the provider's closure and post-handler backlog BEFORE cleanup can
     // close any fixture socket. A missing observation cannot be manufactured by Drop.
     while peer.lock().unwrap().is_none() {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         thread::sleep(Duration::from_millis(1));
     }
     workers.settle().unwrap();
@@ -1902,19 +1902,19 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
     assert!(response_body == "{\"error\":\"egress_denied\"}\n");
     // Only bounded timing/count metadata is emitted. No raw RPC, credential,
     // certificate, ClientHello or downstream payload is printed.
-    eprintln!("crd43_tls_deadline dns_ttl_ms={dns_ttl} rpc_start_bracket_ms={} hello_ms={} close_ms={} handler_ms={} attempts={} admissions=1 resolves=1 binds=0 dispatches=0 completion_not_dispatched=1 workers_settled=true",
+    eprintln!("proxy_tls_deadline dns_ttl_ms={dns_ttl} rpc_start_bracket_ms={} hello_ms={} close_ms={} handler_ms={} attempts={} admissions=1 resolves=1 binds=0 dispatches=0 completion_not_dispatched=1 workers_settled=true",
         (resolve.received-admit.before_write).as_millis(), (peer.hello-sent_before).as_millis(),
         (peer.closed-sent_before).as_millis(), (handler_finished-sent_before).as_millis(), peer.attempts);
 }
 
-fn crd43_body_digest(bytes: &[u8]) -> String {
+fn proxy_body_digest(bytes: &[u8]) -> String {
     ring::digest::digest(&ring::digest::SHA256, bytes)
         .as_ref()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
 }
-fn crd43_client_config(incoming: &Certificates) -> Arc<ClientConfig> {
+fn proxy_client_config(incoming: &Certificates) -> Arc<ClientConfig> {
     let mut roots = RootCertStore::empty();
     for certificate in CertificateDer::pem_slice_iter(incoming.root_pem.as_bytes()) {
         roots.add(certificate.unwrap()).unwrap();
@@ -1925,8 +1925,8 @@ fn crd43_client_config(incoming: &Certificates) -> Arc<ClientConfig> {
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Arc::new(config)
 }
-fn crd43_start_handler(
-    workers: &mut Crd43DeadlineWorkers,
+fn proxy_start_handler(
+    workers: &mut ProxyDeadlineWorkers,
     service: Service,
     ended: Arc<AtomicBool>,
     result: Arc<Mutex<Option<(Result<(), Refusal>, Instant)>>>,
@@ -1937,10 +1937,10 @@ fn crd43_start_handler(
         TcpStream::connect_timeout(&listener.local_addr().unwrap(), Duration::from_millis(500))
             .unwrap();
     let socket = loop {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         match listener.accept() {
             Ok((socket, _)) => break socket,
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => panic!("fixture downstream accept failed"),
         }
     };
@@ -1957,7 +1957,7 @@ fn crd43_start_handler(
     });
     client
 }
-fn crd43_tcp_idle_after_handler(
+fn proxy_tcp_idle_after_handler(
     listener: &TcpListener,
     stop: &AtomicBool,
     ended: &AtomicBool,
@@ -1965,7 +1965,7 @@ fn crd43_tcp_idle_after_handler(
     connections: &AtomicUsize,
 ) -> Result<(), &'static str> {
     loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         let ended_before_accept = ended.load(Ordering::Acquire);
         match listener.accept() {
             Ok((socket, _)) => {
@@ -1976,32 +1976,32 @@ fn crd43_tcp_idle_after_handler(
             Err(error) if error.kind() == io::ErrorKind::WouldBlock && ended_before_accept => {
                 return Ok(())
             }
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture provider backlog check failed"),
         }
     }
 }
-fn crd43_flush(
+fn proxy_flush(
     writer: &mut impl Write,
     stop: &AtomicBool,
     deadline: Instant,
 ) -> Result<(), &'static str> {
     loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match writer.flush() {
             Ok(()) => return Ok(()),
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture TLS flush failed"),
         }
     }
 }
-struct Crd43BodyPeer {
+struct ProxyBodyPeer {
     bytes: usize,
     digest: String,
     exact: bool,
     terminal_and_http_end_written: bool,
 }
-fn crd43_body_provider(
+fn proxy_body_provider(
     listener: TcpListener,
     config: Arc<ServerConfig>,
     expected: Arc<[u8]>,
@@ -2009,12 +2009,12 @@ fn crd43_body_provider(
     ended: &AtomicBool,
     deadline: Instant,
     connections: &AtomicUsize,
-) -> Result<Crd43BodyPeer, &'static str> {
+) -> Result<ProxyBodyPeer, &'static str> {
     let socket = loop {
-        crd43_checkpoint(stop, deadline)?;
+        proxy_checkpoint(stop, deadline)?;
         match listener.accept() {
             Ok((socket, _)) => break socket,
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(_) => return Err("fixture provider accept failed"),
         }
     };
@@ -2036,7 +2036,7 @@ fn crd43_body_provider(
             return Err("fixture provider header bound exceeded");
         }
         let mut byte = [0; 1];
-        crd43_read_exact(&mut tls, &mut byte, stop, deadline)?;
+        proxy_read_exact(&mut tls, &mut byte, stop, deadline)?;
         headers.push(byte[0]);
     }
     if tls.conn.server_name() != Some(FIXED_HOST)
@@ -2093,43 +2093,43 @@ fn crd43_body_provider(
         return Err("fixture provider header policy mismatch");
     }
     let mut captured = vec![0; length.unwrap()];
-    crd43_read_exact(&mut tls, &mut captured, stop, deadline)?;
-    let mut observed = Crd43BodyPeer {
+    proxy_read_exact(&mut tls, &mut captured, stop, deadline)?;
+    let mut observed = ProxyBodyPeer {
         bytes: captured.len(),
-        digest: crd43_body_digest(&captured),
+        digest: proxy_body_digest(&captured),
         exact: captured.as_slice() == expected.as_ref(),
         terminal_and_http_end_written: false,
     };
     drop(captured);
-    crd43_write_all(&mut tls, b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", stop, deadline)?;
-    let terminal = crd43_terminal(NormalStream::Completed);
-    crd43_write_all(
+    proxy_write_all(&mut tls, b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", stop, deadline)?;
+    let terminal = proxy_terminal(NormalStream::Completed);
+    proxy_write_all(
         &mut tls,
         format!("{:x}\r\n", terminal.len()).as_bytes(),
         stop,
         deadline,
     )?;
-    crd43_write_all(&mut tls, terminal.as_bytes(), stop, deadline)?;
-    crd43_write_all(&mut tls, b"\r\n0\r\n\r\n", stop, deadline)?;
-    crd43_flush(&mut tls, stop, deadline)?;
+    proxy_write_all(&mut tls, terminal.as_bytes(), stop, deadline)?;
+    proxy_write_all(&mut tls, b"\r\n0\r\n\r\n", stop, deadline)?;
+    proxy_flush(&mut tls, stop, deadline)?;
     observed.terminal_and_http_end_written = true;
     tls.conn.send_close_notify();
-    crd43_flush(&mut tls, stop, deadline)?;
+    proxy_flush(&mut tls, stop, deadline)?;
     drop(tls);
-    crd43_tcp_idle_after_handler(&listener, stop, ended, deadline, connections)?;
+    proxy_tcp_idle_after_handler(&listener, stop, ended, deadline, connections)?;
     Ok(observed)
 }
 // All diagnostic states and values are fixture-owned metadata. In particular,
 // an unobserved handler is not reported as success or inferred cancellation.
-fn crd43_large_diagnostic(
+fn proxy_large_diagnostic(
     phase: &'static str,
     started: Instant,
-    workers: &Crd43DeadlineWorkers,
+    workers: &ProxyDeadlineWorkers,
     handler: &Mutex<Option<(Result<(), Refusal>, Instant)>>,
-    authority: &Crd43RpcWitness,
-    dns: &Crd43RpcWitness,
+    authority: &ProxyRpcWitness,
+    dns: &ProxyRpcWitness,
     attempts: &AtomicUsize,
-    peer: &Mutex<Option<Crd43BodyPeer>>,
+    peer: &Mutex<Option<ProxyBodyPeer>>,
 ) {
     let (handler_state, handler_outcome, handler_elapsed_ms) = match handler.lock() {
         Ok(record) => match *record {
@@ -2143,39 +2143,39 @@ fn crd43_large_diagnostic(
         Err(_) => ("lock_poisoned", None, None),
     };
     let peer_present = peer.lock().ok().map(|record| record.is_some());
-    eprintln!("crd43_large_fixture phase={phase} handler_state={handler_state} handler_outcome={handler_outcome:?} handler_elapsed_ms={handler_elapsed_ms:?} provider_attempts={} provider_record_present={peer_present:?} stop_requested={} deadline_elapsed={} elapsed_ms={} remaining_worker_handles={}",
+    eprintln!("proxy_large_fixture phase={phase} handler_state={handler_state} handler_outcome={handler_outcome:?} handler_elapsed_ms={handler_elapsed_ms:?} provider_attempts={} provider_record_present={peer_present:?} stop_requested={} deadline_elapsed={} elapsed_ms={} remaining_worker_handles={}",
         attempts.load(Ordering::Acquire), workers.stop.load(Ordering::Acquire), Instant::now() >= workers.deadline,
         started.elapsed().as_millis(), workers.workers.len());
     for (service, witness) in [("authority", authority), ("dns", dns)] {
-        eprintln!("crd43_large_rpc phase={phase} service={service} accepts={} frames_complete={} parsed={} replies_written={} idle_after_handler={}",
+        eprintln!("proxy_large_rpc phase={phase} service={service} accepts={} frames_complete={} parsed={} replies_written={} idle_after_handler={}",
             witness.connections.load(Ordering::Acquire), witness.progress.frames_complete.load(Ordering::Acquire),
             witness.progress.parsed.load(Ordering::Acquire), witness.progress.replies_written.load(Ordering::Acquire),
             witness.idle_after_handler.load(Ordering::Acquire));
     }
 }
-fn crd43_authority_record_diagnostic(
+fn proxy_authority_record_diagnostic(
     started: Instant,
-    records: &Mutex<Vec<Crd43WireExchange>>,
+    records: &Mutex<Vec<ProxyWireExchange>>,
 ) -> bool {
     // A worker may still own the record lock after unsuccessful settlement.
     // Do not add a wait or reduce missing records to zero observed effects.
     let records = match records.try_lock() {
         Ok(records) => records,
         Err(std::sync::TryLockError::WouldBlock) => {
-            eprintln!("crd43_authority_records state=lock_busy");
+            eprintln!("proxy_authority_records state=lock_busy");
             return false;
         }
         Err(std::sync::TryLockError::Poisoned(_)) => {
-            eprintln!("crd43_authority_records state=lock_poisoned");
+            eprintln!("proxy_authority_records state=lock_poisoned");
             return false;
         }
     };
     if records.len() > 16 {
-        eprintln!("crd43_authority_records state=record_bound_exceeded");
+        eprintln!("proxy_authority_records state=record_bound_exceeded");
         return false;
     }
     eprintln!(
-        "crd43_authority_records state=observed records={}",
+        "proxy_authority_records state=observed records={}",
         records.len()
     );
     let mut valid_times = true;
@@ -2204,12 +2204,12 @@ fn crd43_authority_record_diagnostic(
             received_us.is_some() && before_reply_us.is_some() && receiver_processing_us.is_some();
         // These timestamps precede reply writes. A retained record does not
         // establish that the caller received its reply before its own deadline.
-        eprintln!("crd43_authority_record index={index} method={method} frame_payload_bytes={} received_us={received_us:?} before_reply_us={before_reply_us:?} receiver_processing_us={receiver_processing_us:?}", record.request_payload_bytes);
+        eprintln!("proxy_authority_record index={index} method={method} frame_payload_bytes={} received_us={received_us:?} before_reply_us={before_reply_us:?} receiver_processing_us={receiver_processing_us:?}", record.request_payload_bytes);
     }
     valid_times
 }
 
-fn crd43_large_client(
+fn proxy_large_client(
     socket: TcpStream,
     config: Arc<ClientConfig>,
     body: Arc<[u8]>,
@@ -2273,7 +2273,7 @@ fn crd43_large_client(
 }
 
 #[test]
-fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
+fn proxy_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
     // The large field is ordinary ASCII instructions, not whitespace padding.
     // Scripted control peers qualify this adapter's real transport path only.
     let mut template = json::parse(body().as_bytes()).unwrap();
@@ -2289,9 +2289,9 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
         .into_bytes()
         .into();
     assert_eq!(exact.len(), 16_777_216);
-    let digest = crd43_body_digest(&exact);
+    let digest = proxy_body_digest(&exact);
     let dir = Dir::new();
-    let mut workers = Crd43DeadlineWorkers::new();
+    let mut workers = ProxyDeadlineWorkers::new();
     let ended = Arc::new(AtomicBool::new(false));
     let authority = Arc::new(Mutex::new(Vec::new()));
     let dns = Arc::new(Mutex::new(Vec::new()));
@@ -2299,11 +2299,11 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
     let mut admitted_digest = String::new();
     let mut before = 0;
     let mut expires = 0;
-    let authority_witness = crd43_deadline_rpc_with_limits(
+    let authority_witness = proxy_deadline_rpc_with_limits(
         &mut workers,
         dir.0.join("authority"),
         authority.clone(),
-        Crd43RpcLimits {
+        ProxyRpcLimits {
             request_bytes: 33_619_968,
             requests: 16,
             handler_ended: Some(ended.clone()),
@@ -2328,11 +2328,11 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
             json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1","authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,"operation_id":"operation-a","reservation_ref":reservation,"request_sha256":admitted_digest,"assignment_id":ASSIGNMENT,"generation":1,"policy_version":1,"provider_binding_ref":"provider-test","credential_binding":descriptor(),"operation_state":state,"dispatch_before_ms":before,"operation_expires_at_ms":expires,"server_time_ms":n,"valid_until_ms":(n+4000).min(if state=="accepted"{before}else{expires})})
         },
     );
-    let dns_witness = crd43_deadline_rpc_with_limits(
+    let dns_witness = proxy_deadline_rpc_with_limits(
         &mut workers,
         dir.0.join("dns"),
         dns.clone(),
-        Crd43RpcLimits {
+        ProxyRpcLimits {
             request_bytes: 16 * 1024,
             requests: 16,
             handler_ended: Some(ended.clone()),
@@ -2371,7 +2371,7 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
     let peer_ended = ended.clone();
     let deadline = workers.deadline;
     workers.spawn(move || {
-        let observed = crd43_body_provider(
+        let observed = proxy_body_provider(
             provider,
             certs.server,
             expected,
@@ -2386,10 +2386,10 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
         Ok(())
     });
     let handler = Arc::new(Mutex::new(None));
-    let client = crd43_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let client = proxy_start_handler(&mut workers, service, ended.clone(), handler.clone());
     let client_started = Instant::now();
     let client_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crd43_large_client(client, crd43_client_config(&incoming), exact.clone())
+        proxy_large_client(client, proxy_client_config(&incoming), exact.clone())
     }));
     let (client_state, client_status, response_bytes) = match &client_result {
         Ok((status, response)) => ("returned", Some(status.as_u16()), Some(response.len())),
@@ -2415,8 +2415,8 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
         thread::sleep(Duration::from_millis(1));
     }
     let peers_ready_before_settle = peers_ready();
-    eprintln!("crd43_large_client state={client_state} status={client_status:?} response_bytes={response_bytes:?} elapsed_ms={}", client_started.elapsed().as_millis());
-    crd43_large_diagnostic(
+    eprintln!("proxy_large_client state={client_state} status={client_status:?} response_bytes={response_bytes:?} elapsed_ms={}", client_started.elapsed().as_millis());
+    proxy_large_diagnostic(
         "before_settle",
         client_started,
         &workers,
@@ -2427,7 +2427,7 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
         &peer,
     );
     let settled = workers.settle();
-    crd43_large_diagnostic(
+    proxy_large_diagnostic(
         "after_settle",
         client_started,
         &workers,
@@ -2439,8 +2439,8 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
     );
     // This Result contains only fixture-owned static failure labels, never I/O
     // errors, bodies, control messages, or a caught panic's arbitrary payload.
-    eprintln!("crd43_large_settle result={settled:?}");
-    let authority_records_observed = crd43_authority_record_diagnostic(client_started, &authority);
+    eprintln!("proxy_large_settle result={settled:?}");
+    let authority_records_observed = proxy_authority_record_diagnostic(client_started, &authority);
     let (status, response) = match client_result {
         Ok(response) => response,
         Err(panic) => std::panic::resume_unwind(panic),
@@ -2468,7 +2468,7 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
     assert!(peer.terminal_and_http_end_written);
     assert_eq!(attempts.load(Ordering::Acquire), 1);
     assert!(
-        response == crd43_terminal(NormalStream::Completed).as_bytes(),
+        response == proxy_terminal(NormalStream::Completed).as_bytes(),
         "downstream terminal body changed"
     );
     let authority = authority.lock().unwrap();
@@ -2593,32 +2593,32 @@ fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
             "original DNS flow tuple changed"
         );
     }
-    eprintln!("crd43_request_ceiling body_bytes={} body_sha256={} admission_payload_bytes={} admission_payload_sha256={} admissions=1 dispatches=1 provider_attempts=1 completed=1 workers_settled=true", exact.len(), digest, admit.request_payload_bytes, admit.request_payload_sha256);
+    eprintln!("proxy_request_ceiling body_bytes={} body_sha256={} admission_payload_bytes={} admission_payload_sha256={} admissions=1 dispatches=1 provider_attempts=1 completed=1 workers_settled=true", exact.len(), digest, admit.request_payload_bytes, admit.request_payload_sha256);
 }
 
 #[test]
-fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
+fn proxy_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
     let dir = Dir::new();
-    let mut workers = Crd43DeadlineWorkers::new();
+    let mut workers = ProxyDeadlineWorkers::new();
     let ended = Arc::new(AtomicBool::new(false));
     let authority = Arc::new(Mutex::new(Vec::new()));
     let dns = Arc::new(Mutex::new(Vec::new()));
-    let authority_witness = crd43_deadline_rpc_with_limits(
+    let authority_witness = proxy_deadline_rpc_with_limits(
         &mut workers,
         dir.0.join("authority"),
         authority.clone(),
-        Crd43RpcLimits {
+        ProxyRpcLimits {
             request_bytes: 16 * 1024,
             requests: 1,
             handler_ended: Some(ended.clone()),
         },
         |_| json!({"version":1,"ok":false}),
     );
-    let dns_witness = crd43_deadline_rpc_with_limits(
+    let dns_witness = proxy_deadline_rpc_with_limits(
         &mut workers,
         dir.0.join("dns"),
         dns.clone(),
-        Crd43RpcLimits {
+        ProxyRpcLimits {
             request_bytes: 16 * 1024,
             requests: 1,
             handler_ended: Some(ended.clone()),
@@ -2642,14 +2642,14 @@ fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
     let peer_ended = ended.clone();
     let deadline = workers.deadline;
     workers.spawn(move || {
-        crd43_tcp_idle_after_handler(&provider, &stop, &peer_ended, deadline, &counted)?;
+        proxy_tcp_idle_after_handler(&provider, &stop, &peer_ended, deadline, &counted)?;
         idle.store(true, Ordering::Release);
         Ok(())
     });
     let handler = Arc::new(Mutex::new(None));
-    let socket = crd43_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let socket = proxy_start_handler(&mut workers, service, ended.clone(), handler.clone());
     let connection = rustls::ClientConnection::new(
-        crd43_client_config(&incoming),
+        proxy_client_config(&incoming),
         "localhost".try_into().unwrap(),
     )
     .unwrap();
@@ -2657,11 +2657,11 @@ fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
     let start = Instant::now();
     // Send valid framing through real incoming TLS, but withhold every body byte
     // and leave the client write side open. A body-acquisition timeout is a failure.
-    crd43_write_all(&mut client, b"POST /v1/responses HTTP/1.1\r\nHost: localhost:8443\r\nAuthorization: Bearer workload-only-canary\r\nContent-Type: application/json\r\nContent-Length: 16777217\r\n\r\n", &workers.stop, workers.deadline).unwrap();
-    crd43_flush(&mut client, &workers.stop, workers.deadline).unwrap();
+    proxy_write_all(&mut client, b"POST /v1/responses HTTP/1.1\r\nHost: localhost:8443\r\nAuthorization: Bearer workload-only-canary\r\nContent-Type: application/json\r\nContent-Length: 16777217\r\n\r\n", &workers.stop, workers.deadline).unwrap();
+    proxy_flush(&mut client, &workers.stop, workers.deadline).unwrap();
     let mut response = Vec::new();
     loop {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         let mut bytes = [0; 512];
         match client.read(&mut bytes) {
             Ok(0) => break,
@@ -2669,7 +2669,7 @@ fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
                 assert!(response.len() + n <= 4096);
                 response.extend_from_slice(&bytes[..n]);
             }
-            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(_) => panic!("fixture refusal response read failed"),
         }
@@ -2679,7 +2679,7 @@ fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
         || !authority_witness.idle_after_handler.load(Ordering::Acquire)
         || !dns_witness.idle_after_handler.load(Ordering::Acquire)
     {
-        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
         thread::sleep(Duration::from_millis(1));
     }
     let (outcome, finished) = handler.lock().unwrap().take().unwrap();
@@ -2703,5 +2703,5 @@ fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
         .contains("\r\nconnection: close"));
     assert!(body == "{\"error\":\"egress_denied\"}\n");
     workers.settle().unwrap();
-    eprintln!("crd43_request_ceiling declared_bytes=16777217 refusal=Bounds elapsed_ms={} authority_accepts=0 dns_accepts=0 provider_accepts=0 completion=0 workers_settled=true", finished.duration_since(start).as_millis());
+    eprintln!("proxy_request_ceiling declared_bytes=16777217 refusal=Bounds elapsed_ms={} authority_accepts=0 dns_accepts=0 provider_accepts=0 completion=0 workers_settled=true", finished.duration_since(start).as_millis());
 }

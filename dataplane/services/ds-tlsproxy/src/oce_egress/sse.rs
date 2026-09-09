@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn crd43_bytewise_unicode_lifecycle_preserves_terminal_boundary() {
+    fn proxy_bytewise_unicode_lifecycle_preserves_terminal_boundary() {
         let mut observer = Observer::new();
         let initial = concat!(
             ": heartbeat\r\n\r\n",
