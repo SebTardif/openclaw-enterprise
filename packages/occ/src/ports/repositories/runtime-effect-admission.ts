@@ -1,3 +1,4 @@
+import type { RuntimeProfileWorkV1 } from "../../lifecycle/runtime-profile-work-v1.ts";
 import type {
   ExactRuntimeFaultOperationV1,
   ExactRuntimeFaultV1,
@@ -42,7 +43,21 @@ export interface RuntimeFaultStorageWriteV1 {
   readonly audit: Readonly<AuditEvent>;
 }
 
+/** Original invalidation association only; this readback confers no effect authority. */
+export interface StoredRuntimeProfileClosureV1 {
+  readonly invalidationRef: string;
+  readonly priorGuard: RuntimeGateGuardV1;
+  readonly closedGuard: RuntimeGateGuardV1;
+  readonly work: RuntimeProfileWorkV1;
+  readonly recordedAt: string;
+}
+
 export interface RuntimeEffectAdmissionReadRepository {
+  findProfileClosure(
+    scope: RuntimeAuthorityScopeV1,
+    invalidationRef: string,
+  ): Promise<StoredRuntimeProfileClosureV1 | undefined>;
+
   findGate(scope: RuntimeAuthorityScopeV1): Promise<StoredRuntimeEffectGateV1 | undefined>;
   findFaultRequest(
     operation: ExactRuntimeFaultOperationV1,

@@ -58,8 +58,14 @@ export function createControllerWorkTable(
       namespaceTarget: text("namespace_target"),
       runtimeTransitionRef: text("runtime_transition_ref"),
       lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }),
-      workSchemaVersion: smallint("work_schema_version").$type<0 | 1 | 2>().notNull().default(0),
-      handler: text("handler").$type<"ReconcileAgentLifecycleV1" | "ReconcileRuntimeFaultV1">(),
+      workSchemaVersion: smallint("work_schema_version")
+        .$type<0 | 1 | 2 | 3>()
+        .notNull()
+        .default(0),
+      handler: text("handler").$type<
+        "ReconcileAgentLifecycleV1" | "ReconcileRuntimeFaultV1" | "ReconcileRuntimeProfileV1"
+      >(),
+      profileWork: jsonb("profile_work"),
       faultWork: jsonb("fault_work"),
       legacyRuntimeTransitionRef: text("legacy_runtime_transition_ref").generatedAlwaysAs(
         sql`CASE WHEN work_schema_version = 0 THEN runtime_transition_ref ELSE NULL END`,
@@ -127,16 +133,17 @@ export function createControllerWorkTable(
           .onDelete("restrict"),
         check(
           "controller_work_runtime_pair_valid",
-          sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND ${table.faultWork} IS NULL AND (
+          sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NULL AND (
           (${table.runtimeTransitionRef} IS NULL AND ${table.lifecycleGeneration} IS NULL)
           OR (${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
             AND ${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
             AND ${table.namespaceTarget} IS NULL
             AND ${table.runtimeTransitionRef} ~ ${runtimeReferencePattern}
             AND ${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991)))
-        OR (${table.workSchemaVersion} IN (1,2) AND ${table.handler} IS NOT NULL
-          AND ((${table.workSchemaVersion}=1 AND ${table.handler}='ReconcileAgentLifecycleV1' AND ${table.faultWork} IS NULL)
-            OR (${table.workSchemaVersion}=2 AND ${table.handler}='ReconcileRuntimeFaultV1' AND ${table.faultWork} IS NOT NULL))
+        OR (${table.workSchemaVersion} IN (1,2,3) AND ${table.handler} IS NOT NULL
+          AND ((${table.workSchemaVersion}=1 AND ${table.handler}='ReconcileAgentLifecycleV1' AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NULL)
+            OR (${table.workSchemaVersion}=2 AND ${table.handler}='ReconcileRuntimeFaultV1' AND ${table.faultWork} IS NOT NULL AND ${table.profileWork} IS NULL)
+            OR (${table.workSchemaVersion}=3 AND ${table.handler}='ReconcileRuntimeProfileV1' AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NOT NULL))
           AND ${table.runtimeTransitionRef} IS NOT NULL AND ${table.lifecycleGeneration} IS NOT NULL
           AND ${table.agentId} IS NOT NULL
           AND ${table.namespaceTarget} IS NULL
@@ -165,15 +172,16 @@ export function createControllerWorkTable(
         ),
         check(
           "controller_work_namespace_target_valid",
-          sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND ${table.faultWork} IS NULL AND (
+          sql`(${table.workSchemaVersion} = 0 AND ${table.handler} IS NULL AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NULL AND (
           (${table.agentId} IS NULL AND ${table.revisionId} IS NULL
             AND ${table.namespaceTarget} IS NOT NULL
             AND ${table.namespaceTarget} IN ('ready', 'deleted'))
           OR (${table.agentId} IS NOT NULL AND ${table.revisionId} IS NOT NULL
             AND ${table.namespaceTarget} IS NULL)))
-        OR (${table.workSchemaVersion} IN (1,2) AND ${table.handler} IS NOT NULL
-          AND ((${table.workSchemaVersion}=1 AND ${table.handler}='ReconcileAgentLifecycleV1' AND ${table.faultWork} IS NULL)
-            OR (${table.workSchemaVersion}=2 AND ${table.handler}='ReconcileRuntimeFaultV1' AND ${table.faultWork} IS NOT NULL))
+        OR (${table.workSchemaVersion} IN (1,2,3) AND ${table.handler} IS NOT NULL
+          AND ((${table.workSchemaVersion}=1 AND ${table.handler}='ReconcileAgentLifecycleV1' AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NULL)
+            OR (${table.workSchemaVersion}=2 AND ${table.handler}='ReconcileRuntimeFaultV1' AND ${table.faultWork} IS NOT NULL AND ${table.profileWork} IS NULL)
+            OR (${table.workSchemaVersion}=3 AND ${table.handler}='ReconcileRuntimeProfileV1' AND ${table.faultWork} IS NULL AND ${table.profileWork} IS NOT NULL))
           AND ${table.agentId} IS NOT NULL AND ${table.namespaceTarget} IS NULL)`,
         ),
         check(

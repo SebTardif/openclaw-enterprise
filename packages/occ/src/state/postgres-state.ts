@@ -2780,6 +2780,13 @@ export class PostgresPlatformState implements PlatformStateStore {
                 ]),
           ],
           async (io, retain) => {
+            // The original source writer takes this exclusive prefix before any
+            // profile head row. Retain the shared prefix before Namespace/Agent
+            // so supported direct withdrawal cannot invert their lock order.
+            await io.query(
+              "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))",
+              [scope.installationId],
+            );
             // Match the existing preparation writer's advisory-before-Agent order.
             await io.query(
               "SELECT pg_advisory_xact_lock_shared(hashtextextended('runtime-preparation:'||$1,0))",
@@ -3493,6 +3500,12 @@ export class PostgresPlatformState implements PlatformStateStore {
               ]),
         ];
         return await guarded.runMutation(actor, targets, async (io, retain) => {
+          // Original deployment/draft normalization can lock Namespace/Agent
+          // before selecting a profile. Share the source writer's earlier prefix.
+          await io.query(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))",
+            [installation.id],
+          );
           const common = {
             installationId: installation.id,
             namespaceId: input.namespaceId,
@@ -6616,7 +6629,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       ...profileAdmissions,
       readProfile: async (...args: Parameters<typeof profileAdmissions.readProfile>) => {
         if (!context.readOnly) {
-          await this.requireInitialized(context);
+          const installation = await this.requireInitialized(context);
+          await context.profileQuery(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))",
+            [installation.id],
+          );
           return profileAdmissions.readProfile(...args);
         }
         // Ordinary PlatformReadView observes data in its existing RR/RO snapshot.

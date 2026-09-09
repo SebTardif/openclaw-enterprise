@@ -1,3 +1,4 @@
+import { parseRuntimeProfileWorkV1 } from "../../lifecycle/runtime-profile-work-v1.ts";
 import {
   canonicalRuntimeFaultRequestV1,
   parseRuntimeEffectsV1,
@@ -124,6 +125,26 @@ export function createPostgresRuntimeEffectAdmission(
   };
   return {
     findGate: (scope) => readGate(scope),
+    findProfileClosure: async (scope, invalidationRef) => {
+      const rows = await query(
+        `SELECT * FROM occ.runtime_cleanup_responsibilities
+        WHERE installation_id=$1 AND namespace_id=$2 AND agent_id=$3
+          AND origin_kind='runtime-profile-v1' AND profile_invalidation_ref=$4`,
+        [...(await scopeValues(scope)), invalidationRef],
+      );
+      if (rows[0] === undefined) return undefined;
+      const row = rows[0];
+      return immutableCopy({
+        invalidationRef,
+        priorGuard: parseRuntimeEffectsV1("gateGuard", row.profile_prior_guard),
+        closedGuard: parseRuntimeEffectsV1("gateGuard", row.profile_closed_guard),
+        work: parseRuntimeProfileWorkV1(row.profile_work),
+        recordedAt: (row.created_at instanceof Date
+          ? row.created_at
+          : new Date(String(row.created_at))
+        ).toISOString(),
+      });
+    },
     findFaultRequest: async (input) => {
       const operation = parseRuntimeEffectsV1("faultOperation", input);
       const rows = await query(
@@ -143,6 +164,17 @@ export function createPostgresRuntimeEffectAdmission(
       // acquires this earlier prefix after taking the Agent lock.
       await query("SELECT pg_advisory_xact_lock(hashtextextended('runtime-preparation:'||$1,0))", [
         `operation:${preparationOperationRef}`,
+      ]);
+      const prefix = await query(
+        `SELECT canonical_request::jsonb#>>'{target,revisionId}' AS revision_id
+        FROM occ.runtime_preparation_operations WHERE operation_ref=$1 AND installation_id=$2
+          AND namespace_id=$3 AND agent_id=$4 AND operation_kind='retain-plan'`,
+        [preparationOperationRef, ...(await scopeValues(scope))],
+      );
+      if (typeof prefix[0]?.revision_id !== "string") return unavailable();
+      await query("SELECT occ.lock_runtime_gate_profile_v1($1,$2,$3,$4)", [
+        ...(await scopeValues(scope)),
+        prefix[0].revision_id,
       ]);
       const values = await lockOwner(scope);
       const original = await query(

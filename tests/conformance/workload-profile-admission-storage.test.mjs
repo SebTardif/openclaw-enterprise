@@ -577,6 +577,13 @@ function centralProtocol(options = {}) {
         if (statement.startsWith("UPDATE occ.gateway_startup_heads"))
           return result([{ head_version: 1 }]);
       }
+      if (
+        statement ===
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))"
+      ) {
+        assert.deepEqual(parameters, [f.installationId]);
+        return result();
+      }
       if (options.deployment || options.gateway) {
         if (statement.includes("FROM occ.namespaces")) return result([{ id: f.namespaceId }]);
         if (statement.includes("FROM occ.agents"))

@@ -33,7 +33,7 @@ the internal storage result is not `RuntimeEffectAdmissionV1` authority.
 Original disable/stop intent advancement closes this same gate in its transaction.
 An older runtime-intent writer cannot supersede a retained gate without the exact
 cleanup owner. Gate rows and original cleanup records cannot be deleted or reopened.
-Other source-loss producers, including account/session, IAM and profile withdrawal,
+Other source-loss producers, including account/session and IAM,
 still require their original accepting integrations before ordinary effects can
 be enabled.
 
@@ -55,6 +55,43 @@ provisioned limited `OCC_RUNTIME_GATE_WORKER_DATABASE_URL` for that same databas
 and the operator fixture URL in `OCC_MIGRATION_DATABASE_URL`. The fixture exercises
 claim, deferral, restart recovery and capability withdrawal; it performs no
 provider work. The work-codec test covers strict serialized input.
+
+### Original profile withdrawal and replacement
+
+The gate binds its immutable target to the original admitted Agent revision. Its
+`workload_profile_use` identifies the exact profile admission, version, manifest,
+and profile references. A gate initializes only while that original profile is
+still admitted. A legacy revision without a profile remains an unassociated
+closed gate.
+
+The original profile invalidation insert closes every matching gate in the same
+transaction as withdrawal or replacement. Closure advances the gate version and
+fence epoch without changing the runtime intent or lifecycle generation. The
+existing cleanup responsibility stores `runtime-profile-v1`, the original
+invalidation reference, prior/closed guards, retained allocation membership, and
+an exact schema-3 `ReconcileRuntimeProfileV1` work item in `controller_work`.
+Historical readback remains available by scope and invalidation after later
+lifecycle changes. It grants no execution or human authority.
+
+The existing profile capacity advisory lock orders source management and gate
+initialization. Original current-use, deployment/draft enrollment, and mutable
+profile reads take its shared form before Namespace/Agent locks. Source writes
+hold its exclusive form; affected Agents are locked in stable ID order before
+their gates. This covers those original service paths and supported direct
+profile DML. Arbitrary callers that acquire unrelated parent locks before entering
+an original owner are outside that ordering protocol.
+
+Migration 0049 uses the same source helper for already-withdrawn profiles that
+have matching closed gates. This retains negative cleanup only, preserves the
+original invalidation timestamp, and is idempotent by invalidation plus Agent.
+It does not create an admitted profile or reopen a gate.
+
+Schema-3 work requires the separately installed original lifecycle-worker marker
+and a live `runtime_profile_version=1` compatibility record. The worker reads the
+original association, reports `PROVIDER_FENCE_UNAVAILABLE`, and defers the same
+claim. Restart recovery preserves pending responsibility; neither a queue result
+nor missing capability establishes provider termination. Ordinary and sealer
+admission remain closed until the genuine protected provider owner is available.
 
 ## Repository operations
 

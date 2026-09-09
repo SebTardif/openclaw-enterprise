@@ -23,7 +23,7 @@ const url = process.env.OCC_RUNTIME_GATE_DATABASE_URL;
 const selected = url === undefined ? undefined : new URL(url);
 if (selected) {
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(selected.hostname));
-  assert.match(selected.pathname, /^\/openclaw_runtime_gate_[a-z0-9_]+$/);
+  assert.match(selected.pathname, /^\/openclaw_(?:runtime_gate|profile_withdrawal)_[a-z0-9_]+$/);
 }
 const skip =
   url === undefined

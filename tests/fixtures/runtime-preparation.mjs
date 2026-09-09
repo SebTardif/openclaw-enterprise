@@ -109,8 +109,8 @@ export function writablePreparationPlan(fixture) {
 // Actual store ownership, immutable revision, admission audit and original work are
 // committed through the supported repositories. Synthetic profile/Compute values
 // below are representation inputs only and never establish current authority.
-export async function seedPreparation(store, { admitted = true } = {}) {
-  const owner = await seedRuntimeOwner(store);
+export async function seedPreparation(store, { admitted = true, owner: originalOwner } = {}) {
+  const owner = originalOwner ?? (await seedRuntimeOwner(store));
   const actorId = "test/runtime-preparation-owner";
   const admission = createRuntimeAdmissionContext(owner.installation.id, actorId);
   const attribution = { actorId, requestId: admission.requestId };
