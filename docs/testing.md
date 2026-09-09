@@ -425,6 +425,10 @@ activation leaves routing inactive. The HTTP fixture does not establish real
 activation/cutover, gateway, Codex, model, or external credential behavior. Run those acceptance
 checks separately for the selected Alpha deployment.
 
+A skipped suite leaves the selected gVisor development coverage unverified.
+Required coverage must be executed on the selected profile before reporting it
+verified.
+
 ## Kubernetes model turns and Secrets
 
 Use the disposable cluster and `openclaw_k8s_*` database above, an exported

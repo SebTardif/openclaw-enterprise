@@ -10,6 +10,10 @@ commands from the repository root. Set `GO_BASE_IMAGE` in your environment or
 Compose `.env` to an approved digest-pinned Go 1.26 or newer builder image; the
 controller build uses it to compile the native OpenShell/SPIFFE components.
 
+Provide an existing combined runtime image. If the default runtime image is
+absent, also provide Node.js 24+ and `OCC_RUNTIME_BUILD_CONTEXT` prepared using the
+[runtime build-context procedure](deploy.md#prepare-the-runtime-build-context).
+
 ## Start the local stack
 
 Run the helper:

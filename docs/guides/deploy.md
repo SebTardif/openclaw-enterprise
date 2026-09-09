@@ -99,7 +99,11 @@ inspection, supported channel draft edits, and error recovery. Deployment,
 rollback, Agent deletion, Configuration listing, and live gateway health remain
 API or operator procedures outside the console.
 
-### Optional gVisor isolation (Alpha)
+### gVisor isolation for Kubernetes development (Alpha)
+
+The selected Kubernetes development composition requires gVisor systrap/STRICT.
+Select the profile explicitly and retain actual runtime evidence for its required
+coverage.
 
 The [gVisor profile](../reference/drivers/gvisor.md) is available in
 both development and production through explicit Kubernetes Compute

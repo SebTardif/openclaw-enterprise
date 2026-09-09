@@ -4,8 +4,8 @@ The bundled Kubernetes Compute Driver accepts an explicit
 `isolationProfile: gvisor-systrap` selection in both development and production.
 **Support is Alpha.** The Agent workload requests the separately installed
 `oce-gvisor-systrap` RuntimeClass; its trusted gateway retains the existing
-runtime selection. The optional real-cluster suite exercises the HTTP fixture
-through gVisor, revision preparation and replacement, retained workspace data, and containment
+runtime selection. The explicitly selected real-cluster suite exercises the HTTP
+fixture through gVisor, revision preparation and replacement, retained workspace data, and containment
 of observed unsafe placement. Full gateway/Codex and model compatibility require
 separate qualification.
 
