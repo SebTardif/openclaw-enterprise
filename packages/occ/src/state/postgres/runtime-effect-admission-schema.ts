@@ -3,6 +3,7 @@ import {
   check,
   foreignKey,
   jsonb,
+  index,
   primaryKey,
   text,
   unique,
@@ -16,6 +17,7 @@ export function createRuntimeEffectAdmissionTables(
   parents: {
     installation: { id: AnyPgColumn };
     agents: { namespaceId: AnyPgColumn; id: AnyPgColumn };
+    agentRevisions: { namespaceId: AnyPgColumn; agentId: AnyPgColumn; id: AnyPgColumn };
     runtimePreparationOperations: { operationRef: AnyPgColumn };
   },
 ) {
@@ -34,6 +36,7 @@ export function createRuntimeEffectAdmissionTables(
           onDelete: "restrict",
           onUpdate: "restrict",
         }),
+      revisionId: text("revision_id").generatedAlwaysAs(sql`target->>'revisionId'`),
       target: jsonb("target").$type<StoredRuntimeEffectGateV1["target"]>().notNull(),
       gateGuard: jsonb("gate_guard").$type<StoredRuntimeEffectGateV1["guard"]>().notNull(),
       plan: jsonb("plan").$type<StoredRuntimeEffectGateV1["plan"]>().notNull(),
@@ -53,6 +56,22 @@ export function createRuntimeEffectAdmissionTables(
       })
         .onDelete("restrict")
         .onUpdate("restrict"),
+      foreignKey({
+        name: "runtime_effect_gates_revision_owner",
+        columns: [table.namespaceId, table.agentId, table.revisionId],
+        foreignColumns: [
+          parents.agentRevisions.namespaceId,
+          parents.agentRevisions.agentId,
+          parents.agentRevisions.id,
+        ],
+      })
+        .onDelete("restrict")
+        .onUpdate("restrict"),
+      index("runtime_gate_original_revision").on(
+        table.namespaceId,
+        table.agentId,
+        table.revisionId,
+      ),
       unique("runtime_effect_gates_preparation_unique").on(table.preparationOperationRef),
       check(
         "runtime_effect_gates_admission_closed",

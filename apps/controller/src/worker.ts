@@ -1,3 +1,4 @@
+import { RuntimeProfileWorker } from "./worker/runtime-profile.ts";
 import { isPositiveSafeInteger } from "@openclaw-enterprise/utils";
 import { isSandboxFacet } from "@openclaw-enterprise/contracts";
 import type {
@@ -373,6 +374,16 @@ export class ControllerWorker {
       effects,
     });
     this.runner = new WorkerRunner({
+      runtimeProfiles: new RuntimeProfileWorker({
+        queue: this.queue,
+        findProfile: (scope, invalidationRef) =>
+          this.state.read(async (view) => {
+            if (view.runtimeEffectAdmission === undefined)
+              throw new Error("The original runtime profile reader is unavailable.");
+            return view.runtimeEffectAdmission.findProfileClosure(scope, invalidationRef);
+          }),
+        emit: this.emit,
+      }),
       runtimeFaults: new RuntimeFaultWorker({
         queue: this.queue,
         findFault: (operation) =>

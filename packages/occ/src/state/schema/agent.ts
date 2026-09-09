@@ -1,6 +1,15 @@
 import type { HarnessExecutionMode } from "@openclaw-enterprise/contracts";
 import { sql } from "drizzle-orm";
-import { bigint, check, foreignKey, jsonb, text, timestamp, unique } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  foreignKey,
+  index,
+  jsonb,
+  text,
+  timestamp,
+  unique,
+} from "drizzle-orm/pg-core";
 import type { AnyPgColumn, PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 import { collatedText, identifierPatterns } from "./shared.ts";
 
@@ -115,6 +124,9 @@ export function createAgentTables(
       admittedAt: timestamp("admitted_at", { withTimezone: true }).notNull(),
     },
     (table): PgTableExtraConfigValue[] => [
+      index("runtime_revision_profile_use")
+        .on(table.namespaceId, sql`(${table.admittedSpec}#>>'{workload_profile_use,admissionRef}')`)
+        .where(sql`${table.admittedSpec}->'workload_profile_use' IS NOT NULL`),
       unique("agent_revisions_namespace_id_agent_id_id_unique").on(
         table.namespaceId,
         table.agentId,

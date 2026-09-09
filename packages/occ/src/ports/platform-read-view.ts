@@ -95,6 +95,7 @@ export function createPlatformReadView(
           runtimeEffectAdmission: bindRepository(repositories.runtimeEffectAdmission, lifetime, [
             "findGate",
             "findFaultRequest",
+            "findProfileClosure",
           ]),
         }),
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [

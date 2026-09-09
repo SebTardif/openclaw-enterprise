@@ -67,6 +67,7 @@ export function bindPlatformUnitOfWork(
           runtimeEffectAdmission: bindRepository(repositories.runtimeEffectAdmission, lifetime, [
             "findGate",
             "findFaultRequest",
+            "findProfileClosure",
             "retainClosedGate",
             "retainFaultRequest",
           ]),

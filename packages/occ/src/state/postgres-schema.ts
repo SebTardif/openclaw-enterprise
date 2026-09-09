@@ -703,6 +703,7 @@ export const {
 } = createWorkloadProfileAdmissionTablesV2(occSchema, { installation, namespaces });
 
 export const { runtimeEffectGates } = createRuntimeEffectAdmissionTables(occSchema, {
+  agentRevisions,
   installation,
   agents,
   runtimePreparationOperations,
@@ -721,6 +722,7 @@ export const {
   auditExportOutbox,
   lifecycleCapabilities,
 } = createLifecycleAdmissionTables(occSchema, {
+  workloadProfileInvalidations,
   installation,
   namespaces,
   agents,

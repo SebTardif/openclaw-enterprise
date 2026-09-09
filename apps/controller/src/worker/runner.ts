@@ -30,6 +30,7 @@ export interface RevisionDispatchResult extends DispatchResult {
 }
 
 export interface WorkerRunnerOptions {
+  readonly runtimeProfiles?: { runOne(signal: AbortSignal): Promise<boolean> };
   readonly runtimeFaults?: { runOne(signal: AbortSignal): Promise<boolean> };
   readonly queue: Pick<PostgresWorkQueue, "recoverStale" | "claim" | "pending">;
   readonly signal: AbortSignal;
@@ -53,6 +54,10 @@ export class WorkerRunner {
     const options = this.options;
     while (!options.stopping()) {
       try {
+        if (await options.runtimeProfiles?.runOne(options.signal)) {
+          await this.health(true);
+          continue;
+        }
         if (await options.runtimeFaults?.runOne(options.signal)) {
           await this.health(true);
           continue;

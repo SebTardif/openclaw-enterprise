@@ -22,6 +22,7 @@ import {
  * Scope follows the existing singleton Installation and canonical intent. */
 export interface LifecycleAdmissionSchemaParents {
   installation: { id: AnyPgColumn };
+  workloadProfileInvalidations: { installationId: AnyPgColumn; invalidationRef: AnyPgColumn };
   namespaces: { id: AnyPgColumn };
   agents: { namespaceId: AnyPgColumn; id: AnyPgColumn };
   agentRuntimeIntents: {
@@ -175,9 +176,13 @@ export function createLifecycleAdmissionTables(
         .$type<1>()
         .notNull(),
       originKind: text("origin_kind")
-        .$type<"lifecycle-protective-v1" | "runtime-fault-v1">()
+        .$type<"lifecycle-protective-v1" | "runtime-fault-v1" | "runtime-profile-v1">()
         .notNull(),
       originOperationRef: text("origin_operation_ref").notNull(),
+      profileInvalidationRef: text("profile_invalidation_ref"),
+      profilePriorGuard: jsonb("profile_prior_guard"),
+      profileClosedGuard: jsonb("profile_closed_guard"),
+      profileWork: jsonb("profile_work"),
       faultRequest: jsonb("fault_request"),
       faultCanonicalRequest: text("fault_canonical_request"),
       faultClosedGuard: jsonb("fault_closed_guard"),
@@ -188,7 +193,7 @@ export function createLifecycleAdmissionTables(
       }),
       faultWriterRef: text("fault_writer_ref"),
       intentRef: text("intent_ref").generatedAlwaysAs(
-        sql`CASE WHEN origin_kind='lifecycle-protective-v1' THEN origin_operation_ref ELSE fault_request#>>'{guard,intentRef}' END`,
+        sql`CASE origin_kind WHEN 'lifecycle-protective-v1' THEN origin_operation_ref WHEN 'runtime-fault-v1' THEN fault_request#>>'{guard,intentRef}' WHEN 'runtime-profile-v1' THEN profile_prior_guard->>'intentRef' END`,
       ),
       lifecycleAdmissionRef: text("lifecycle_admission_ref").generatedAlwaysAs(
         sql`CASE WHEN origin_kind='lifecycle-protective-v1' THEN origin_operation_ref ELSE NULL END`,
@@ -211,6 +216,22 @@ export function createLifecycleAdmissionTables(
         name: "runtime_cleanup_responsibilities_pk",
         columns: [table.responsibilityRef, table.responsibilityVersion],
       }),
+      foreignKey({
+        name: "runtime_cleanup_profile_invalidation_owner",
+        columns: [table.installationId, table.profileInvalidationRef],
+        foreignColumns: [
+          parents.workloadProfileInvalidations.installationId,
+          parents.workloadProfileInvalidations.invalidationRef,
+        ],
+      })
+        .onDelete("restrict")
+        .onUpdate("restrict"),
+      uniqueIndex("runtime_profile_closure_source")
+        .on(table.installationId, table.namespaceId, table.agentId, table.profileInvalidationRef)
+        .where(sql`${table.originKind}='runtime-profile-v1'`),
+      uniqueIndex("runtime_profile_work_unique")
+        .on(sql`(${table.profileWork}->>'workId')`)
+        .where(sql`${table.originKind}='runtime-profile-v1'`),
       uniqueIndex("runtime_fault_work_unique")
         .on(sql`(${table.faultWork}->>'workId')`)
         .where(sql`${table.originKind}='runtime-fault-v1'`),
@@ -280,16 +301,22 @@ export function createLifecycleAdmissionTables(
       check("runtime_cleanup_responsibilities_version", sql`${table.responsibilityVersion} = 1`),
       check(
         "runtime_cleanup_responsibilities_origin",
-        sql`(${table.originOperationRef} ~ ${referencePattern} AND (
-          (${table.originKind}='lifecycle-protective-v1' AND ${table.faultRequest} IS NULL
-            AND ${table.faultCanonicalRequest} IS NULL AND ${table.faultClosedGuard} IS NULL AND ${table.faultWork} IS NULL
-            AND ${table.faultAuditId} IS NULL AND ${table.faultWriterRef} IS NULL)
-          OR (${table.originKind}='runtime-fault-v1' AND ${table.responsibilityVersion}=1 AND ${table.faultRequest} IS NOT NULL
-            AND ${table.faultCanonicalRequest} IS NOT NULL AND ${table.faultClosedGuard} IS NOT NULL AND ${table.faultWork} IS NOT NULL
-            AND ${table.faultAuditId} IS NOT NULL AND ${table.faultWriterRef} IS NOT NULL AND ${table.kind} IN ('protective-fence','retained-stop')
-            AND ${table.intentRef} IS NOT NULL AND ${table.predecessorRef}=${table.intentRef} AND ${table.predecessorGeneration}=${table.lifecycleGeneration}
-            AND octet_length(${table.faultRequest}::text)<=1048576 AND octet_length(${table.faultCanonicalRequest})<=1048576
-            AND octet_length(${table.faultWork}::text)<=4096))) IS TRUE`,
+        sql.raw(`
+    (origin_operation_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    AND (((profile_invalidation_ref IS NULL AND profile_prior_guard IS NULL AND profile_closed_guard IS NULL AND profile_work IS NULL) AND ((origin_kind='lifecycle-protective-v1' AND fault_request IS NULL
+      AND fault_canonical_request IS NULL AND fault_closed_guard IS NULL AND fault_work IS NULL
+      AND fault_audit_id IS NULL AND fault_writer_ref IS NULL)
+    OR (origin_kind='runtime-fault-v1' AND responsibility_version=1 AND fault_request IS NOT NULL
+      AND fault_canonical_request IS NOT NULL AND fault_closed_guard IS NOT NULL AND fault_work IS NOT NULL
+      AND fault_audit_id IS NOT NULL AND fault_writer_ref IS NOT NULL AND kind IN ('protective-fence','retained-stop')
+      AND intent_ref IS NOT NULL AND predecessor_ref=intent_ref AND predecessor_generation=lifecycle_generation
+      AND octet_length(fault_request::text)<=1048576 AND octet_length(fault_canonical_request)<=1048576
+      AND octet_length(fault_work::text)<=4096)))
+ OR (origin_kind='runtime-profile-v1' AND responsibility_version=1 AND kind='protective-fence'
+ AND profile_invalidation_ref IS NOT NULL AND profile_prior_guard IS NOT NULL AND profile_closed_guard IS NOT NULL AND profile_work IS NOT NULL
+ AND fault_request IS NULL AND fault_canonical_request IS NULL AND fault_closed_guard IS NULL AND fault_work IS NULL AND fault_audit_id IS NULL AND fault_writer_ref IS NULL
+ AND intent_ref IS NOT NULL AND predecessor_ref=intent_ref AND predecessor_generation=lifecycle_generation
+ AND octet_length(profile_prior_guard::text)<=65536 AND octet_length(profile_closed_guard::text)<=65536 AND octet_length(profile_work::text)<=4096))) IS TRUE`),
       ),
       check(
         "runtime_cleanup_responsibilities_generation",
@@ -428,6 +455,7 @@ export function createLifecycleAdmissionTables(
       workerVersion: smallint("worker_version").$type<1>(),
       maintenanceVersion: smallint("maintenance_version").$type<1>(),
       receivingVersion: smallint("receiving_version").$type<1>(),
+      runtimeProfileVersion: smallint("runtime_profile_version").$type<1>(),
       runtimeFaultVersion: smallint("runtime_fault_version").$type<1>(),
     },
     (table): PgTableExtraConfigValue[] => [
@@ -439,6 +467,10 @@ export function createLifecycleAdmissionTables(
         .onUpdate("restrict")
         .onDelete("restrict"),
       check("lifecycle_capabilities_schema_version", sql`${table.schemaVersion} = 1`),
+      check(
+        "lifecycle_capabilities_runtime_profile_version_check",
+        sql`${table.runtimeProfileVersion} IS NULL OR ${table.runtimeProfileVersion}=1`,
+      ),
       check(
         "lifecycle_capabilities_runtime_fault_version_check",
         sql`${table.runtimeFaultVersion} IS NULL OR ${table.runtimeFaultVersion}=1`,

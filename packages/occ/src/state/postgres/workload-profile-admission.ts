@@ -237,6 +237,8 @@ export function createPostgresWorkloadProfileAdmissionBackendV2(
         throw new ResourceConflictError("The profile admission changed before withdrawal.");
       await insertHistory(history);
       const queued = await query(
+        // The original invalidation also closes matching runtime gates and
+        // retains cleanup/work in this same transaction (including replacement).
         `INSERT INTO occ.workload_profile_invalidations
         (installation_id,namespace_id,admission_ref,admission_version,manifest_ref,manifest_digest,invalidation_ref,record)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,

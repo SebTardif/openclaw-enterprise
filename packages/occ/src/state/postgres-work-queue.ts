@@ -1,3 +1,7 @@
+import {
+  parseRuntimeProfileWorkV1,
+  type RuntimeProfileWorkV1,
+} from "../lifecycle/runtime-profile-work-v1.ts";
 import { isNonEmptyString, isPositiveSafeInteger } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
@@ -63,6 +67,11 @@ export interface RecoverySummary {
 
 export interface ClaimedRuntimeFaultWorkV1 {
   readonly work: Readonly<RuntimeFaultWorkV1>;
+  readonly claim: Readonly<WorkClaim>;
+  readonly leaseExpiresAt: Date;
+}
+export interface ClaimedRuntimeProfileWorkV1 {
+  readonly work: Readonly<RuntimeProfileWorkV1>;
   readonly claim: Readonly<WorkClaim>;
   readonly leaseExpiresAt: Date;
 }
@@ -339,6 +348,78 @@ export class PostgresWorkQueue {
     ) UPDATE occ.controller_work w SET state='queued',claim_token=NULL,lease_expires_at=NULL,
         available_at=clock_timestamp(),updated_at=clock_timestamp()
       FROM stale WHERE w.work_schema_version=2 AND w.idempotency_key=stale.idempotency_key RETURNING w.idempotency_key`);
+    return result.rowCount ?? 0;
+  }
+
+  /** Claims only the installed profile-cleanup variant. The database independently
+   * checks its exact retained responsibility and operator-owned compatibility.
+   * This claim grants no provider operation or initiating human authority. */
+  async claimRuntimeProfile(): Promise<ClaimedRuntimeProfileWorkV1 | undefined> {
+    if (this.workKind !== "all") return undefined;
+    const token = randomUUID();
+    const result = await this.client.query(
+      `WITH candidate AS (
+      SELECT w.idempotency_key FROM occ.controller_work w
+      JOIN occ.runtime_cleanup_responsibilities r ON r.origin_kind='runtime-profile-v1' AND r.profile_work=w.profile_work
+      JOIN occ.lifecycle_capabilities c ON c.installation_id=r.installation_id
+      WHERE w.work_schema_version=3 AND w.handler='ReconcileRuntimeProfileV1'
+        AND w.state='queued' AND w.available_at<=clock_timestamp()
+        AND c.stage='live' AND c.runtime_profile_version=1
+        AND pg_has_role(current_user,to_regrole('occ_lifecycle_worker_v1'),'USAGE')
+        AND NOT EXISTS(SELECT 1 FROM occ.controller_work running WHERE running.state='claimed'
+          AND COALESCE(running.agent_id,running.namespace_id)=w.agent_id)
+      ORDER BY w.available_at,w.created_at,w.idempotency_key
+      FOR UPDATE OF w SKIP LOCKED LIMIT 1
+    ) UPDATE occ.controller_work w SET state='claimed',attempt_count=w.attempt_count+1,
+        claim_token=$1::uuid,lease_expires_at=clock_timestamp()+$2::double precision*interval '1 millisecond',
+        updated_at=clock_timestamp()
+      FROM candidate WHERE w.work_schema_version=3 AND w.idempotency_key=candidate.idempotency_key
+      RETURNING w.profile_work,w.idempotency_key,w.claim_token,w.lease_expires_at`,
+      [token, this.leaseDurationMs],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (row === undefined) return undefined;
+    const work = parseRuntimeProfileWorkV1(row.profile_work);
+    if (row.idempotency_key !== work.workId || row.claim_token !== token)
+      throw new WorkClaimLostError();
+    return Object.freeze({
+      work,
+      claim: Object.freeze({ idempotencyKey: work.workId, claimToken: token }),
+      leaseExpiresAt: asDate(row.lease_expires_at as Date | string),
+    });
+  }
+
+  /** Missing stop/fence capability leaves the same responsibility pending. No
+   * attempt count, queue result or cancellation acknowledges physical stop. */
+  async deferRuntimeProfile(claim: WorkClaim): Promise<void> {
+    validateClaim(claim);
+    const result = await this.client.query(
+      `UPDATE occ.controller_work
+      SET state='queued',claim_token=NULL,lease_expires_at=NULL,
+        available_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
+      WHERE work_schema_version=3 AND handler='ReconcileRuntimeProfileV1' AND idempotency_key=$1
+        AND state='claimed' AND claim_token=$2::uuid AND lease_expires_at>clock_timestamp()
+      RETURNING idempotency_key`,
+      [claim.idempotencyKey, claim.claimToken],
+    );
+    if (result.rowCount !== 1) throw new WorkClaimLostError();
+  }
+
+  /** Restart recovery uses the original queue and preserves the accepted profile invalidation
+   * indefinitely. Recovery never promotes unknown provider effects to terminal. */
+  async recoverRuntimeProfile(): Promise<number> {
+    if (this.workKind !== "all") return 0;
+    const result = await this.client.query(`WITH stale AS (
+      SELECT w.idempotency_key FROM occ.controller_work w
+      JOIN occ.runtime_cleanup_responsibilities r ON r.origin_kind='runtime-profile-v1' AND r.profile_work=w.profile_work
+      JOIN occ.lifecycle_capabilities c ON c.installation_id=r.installation_id
+      WHERE w.work_schema_version=3 AND w.state='claimed' AND w.lease_expires_at<=clock_timestamp()
+        AND c.stage='live' AND c.runtime_profile_version=1
+        AND pg_has_role(current_user,to_regrole('occ_lifecycle_worker_v1'),'USAGE')
+      ORDER BY w.lease_expires_at,w.idempotency_key FOR UPDATE OF w SKIP LOCKED LIMIT 100
+    ) UPDATE occ.controller_work w SET state='queued',claim_token=NULL,lease_expires_at=NULL,
+        available_at=clock_timestamp(),updated_at=clock_timestamp()
+      FROM stale WHERE w.work_schema_version=3 AND w.idempotency_key=stale.idempotency_key RETURNING w.idempotency_key`);
     return result.rowCount ?? 0;
   }
 
