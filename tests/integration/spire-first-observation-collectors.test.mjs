@@ -19,6 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import {
   LIMITS,
   parseFrame,
@@ -70,6 +71,112 @@ const denial = (extra = {}) => ({
 });
 const line = (value) => Buffer.from(JSON.stringify(value) + "\n");
 const secret = "DO-NOT-RETAIN-raw-key-or-error";
+
+// Execute the real consumer's pure validators without registering or selecting
+// its opt-in runtime test. The extracted function bodies are not reimplemented.
+const consumerSource = readFileSync(
+  new URL("./gvisor-spire-first-observation-real.test.mjs", import.meta.url),
+  "utf8",
+);
+const consumerBlock = (start, end) => {
+  const first = consumerSource.indexOf(start);
+  const last = consumerSource.indexOf(end, first);
+  assert.ok(first >= 0 && last > first);
+  return consumerSource.slice(first, last);
+};
+const consumerValidators = runInNewContext(
+  consumerBlock("const ENTRY_ID =", "const ENV =") +
+    consumerBlock("class Failure extends Error", "const safeCode =") +
+    consumerBlock("function same(a, b)", "export function successfulBatch").replaceAll(
+      "export function",
+      "function",
+    ) +
+    "({ sortedSelectors, validateEntry })",
+);
+
+test("consumer admits required Kubernetes selector types and preserves canonical sorting", () => {
+  const input = [
+    { type: "k8s_psat", value: "agent_sa:spire-agent" },
+    { type: "k8s_psat", value: "cluster:unit-cluster" },
+  ];
+  const expected = ["k8s_psat:agent_sa:spire-agent", "k8s_psat:cluster:unit-cluster"];
+  assert.deepEqual(Array.from(consumerValidators.sortedSelectors(input)), expected);
+  assert.deepEqual(Array.from(consumerValidators.sortedSelectors(input.toReversed())), expected);
+  assert.deepEqual(
+    Array.from(consumerValidators.sortedSelectors([{ type: "unix", value: "uid:0" }])),
+    ["unix:uid:0"],
+  );
+});
+
+test("consumer selector admission retains type, value, count and duplicate refusals", () => {
+  for (const type of ["k9s", "k8s_other", "K8S", "k8s-psat", "8", "", null])
+    assert.throws(
+      () => consumerValidators.sortedSelectors([{ type, value: "ns:harnesses" }]),
+      /SELECTORS_INVALID/,
+    );
+  for (const value of ["", "space value", "x".repeat(513), 1])
+    assert.throws(
+      () => consumerValidators.sortedSelectors([{ type: "k8s", value }]),
+      /SELECTORS_INVALID/,
+    );
+  assert.throws(() => consumerValidators.sortedSelectors(null), /SELECTORS_INVALID/);
+  assert.throws(
+    () =>
+      consumerValidators.sortedSelectors(
+        Array.from({ length: 17 }, (_, i) => ({ type: "k8s", value: `ns:n${i}` })),
+      ),
+    /SELECTORS_INVALID/,
+  );
+  for (const type of ["k8s", "k8s_psat"])
+    assert.throws(
+      () =>
+        consumerValidators.sortedSelectors([
+          { type, value: "ns:harnesses" },
+          { type, value: "ns:harnesses" },
+        ]),
+      /SELECTORS_DUPLICATE/,
+    );
+  assert.equal(
+    consumerValidators.sortedSelectors([{ type: "k8s", value: "x".repeat(512) }]).length,
+    1,
+  );
+});
+
+test("consumer validates authored k8s registrations and rejects changed selector authority", () => {
+  const p = profileFixture();
+  const parent = `spiffe://${p.management.trustDomain}/spire/agent/k8s_psat/${p.management.clusterID}/12345678-1234-1234-1234-123456789abc`;
+  const registration = buildRegistration(p, "a", "12345678-1234-1234-1234-123456789abc", parent);
+  const id = (value) => {
+    const url = new URL(value);
+    return { trust_domain: url.hostname, path: url.pathname };
+  };
+  const entry = {
+    id: "entry-a",
+    spiffe_id: id(registration.spiffeID),
+    parent_id: id(parent),
+    selectors: registration.selectors.toReversed(),
+    hint: "",
+    x509_svid_ttl: 300,
+    admin: false,
+    downstream: false,
+    store_svid: false,
+    federates_with: [],
+    dns_names: [],
+    expires_at: "0",
+  };
+  assert.equal(consumerValidators.validateEntry(entry, registration, entry.id), entry.id);
+  for (const changed of [
+    entry.selectors.slice(1),
+    [...entry.selectors, { type: "unix", value: "uid:0" }],
+    entry.selectors.map((s, i) => (i === 0 ? { ...s, type: "k8s_psat" } : s)),
+    entry.selectors.map((s, i) => (i === 0 ? { ...s, value: "ns:another" } : s)),
+  ])
+    assert.throws(
+      () =>
+        consumerValidators.validateEntry({ ...entry, selectors: changed }, registration, entry.id),
+      /ENTRY_SELECTOR_MISMATCH/,
+    );
+});
 
 test("projection is closed and retains provenance without invented socket credentials", () => {
   const result = projectDenial(denial({ error: secret, unrelated: { privateKey: secret } }));
@@ -185,7 +292,7 @@ test("record and serialized-output budgets reject whole observations", () => {
   assert.equal(output.snapshot().records, 0);
 });
 
-test("CLI binds explicit config/binary hashes, finite lifetime and private logging profile", async () => {
+test("CLI binds explicit config/binary hashes, finite lifetime and private logging profile", async (t) => {
   const argv = [
     "--binary",
     process.execPath,
@@ -212,8 +319,11 @@ test("CLI binds explicit config/binary hashes, finite lifetime and private loggi
   await assert.rejects(runAgent({ ...parseArgs(argv), lifetimeMs: 50 }), /input-hash-mismatch/);
   // A matching installed binary is still not launched when config identity is
   // wrong. This exercises the real pre-spawn checks without executing SPIRE.
-  const file = fileURLToPath(import.meta.url),
-    binarySHA256 = createHash("sha256").update(readFileSync(process.execPath)).digest("hex");
+  const directory = await mkdtemp(join(tmpdir(), "spire-config-hash-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "agent.conf");
+  await writeFile(file, 'agent { log_level = "ERROR" log_format = "JSON" }', { mode: 0o600 });
+  const binarySHA256 = createHash("sha256").update(readFileSync(process.execPath)).digest("hex");
   await assert.rejects(
     runAgent({
       binary: process.execPath,

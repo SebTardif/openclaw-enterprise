@@ -37,6 +37,11 @@ delivery can qualify. The exact required flags are `--platform=systrap`,
 Unsupported UDS access or this networking configuration fails qualification;
 there is no alternate runtime or networking fallback.
 
+The observation consumer accepts SPIRE's `k8s_psat` node-attestation selector
+type and the `k8s` workload selector type authored by the registration builder.
+Selector values remain bounded and duplicate-free; registration readback must
+match the exact expected selector set, including selector types.
+
 [profile.mjs](profile.mjs) validates the explicit profile and exports builders
 for management manifests, SPIRE configuration, workload Pods and genuine
 registration plans. These builders produce objects and configuration; calling
