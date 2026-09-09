@@ -256,7 +256,7 @@ test("selected execution is explicitly unavailable in the memory journal", async
           h.issue("consumption", {
             operation: h.v.consumption,
             binding: h.v.binding,
-            executionIntent: {},
+            executionSelection: {},
           }),
           call,
         ),

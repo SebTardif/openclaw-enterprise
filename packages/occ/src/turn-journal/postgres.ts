@@ -512,6 +512,11 @@ export function createPostgresTurnJournal(
             sameJournalValue(existing.record, start)
             ? ({ kind: "existing", record: existing.record } as const)
             : conflict;
+        if (
+          !("kind" in start.intent.dispatchClock) ||
+          start.intent.dispatchClock.kind !== "pre-commit-monotonic-v1"
+        )
+          return unavailable;
         const intent = await executionOperation(attempt, "execution-intent");
         const row = await getAttempt(attempt);
         const record = row && parseAttemptRow(row);
@@ -1323,6 +1328,7 @@ export function createPostgresTurnJournal(
           if (cancellations.length) return denied;
           const head = await getHead(binding.attempt);
           if (!head || !sameJournalValue(head.head, binding.expectedHead)) return conflict;
+          context.guard.captureDispatch(binding);
           await updateAttempt(binding.attempt, result.record);
           active(call);
           return result;
@@ -1335,10 +1341,12 @@ export function createPostgresTurnJournal(
           active(call);
           if (failure(observed)) return observed;
           const operation = parseTurnJournalV1("consumption", observed.operation);
-          const executionIntent =
-            observed.executionIntent === undefined
+          // The original authority selects limits and target, never the clock.
+          if (observed.executionIntent !== undefined) return unavailable;
+          const selection =
+            observed.executionSelection === undefined
               ? undefined
-              : parseTurnJournalV1("executionIntent", observed.executionIntent);
+              : parseTurnJournalV1("executionSelection", observed.executionSelection);
           if (
             operation.attempt.installationRef !== auth.installation.id ||
             !(await agentLock(operation.attempt))
@@ -1351,8 +1359,10 @@ export function createPostgresTurnJournal(
             const retainedIntent = await executionOperation(operation.attempt, "execution-intent");
             if (
               !sameJournalValue(
-                retainedIntent?.operationKind === "execution-intent" ? retainedIntent.record : null,
-                executionIntent ?? null,
+                retainedIntent?.operationKind === "execution-intent"
+                  ? (({ dispatchClock: _clock, ...selected }) => selected)(retainedIntent.record)
+                  : null,
+                selection ?? null,
               )
             )
               return conflict;
@@ -1366,7 +1376,8 @@ export function createPostgresTurnJournal(
           if (
             !sameJournalValue(observed.operation, operation) ||
             !sameJournalValue(observed.binding, record.binding) ||
-            !sameJournalValue(observed.executionIntent ?? null, executionIntent ?? null)
+            observed.executionIntent !== undefined ||
+            !sameJournalValue(observed.executionSelection ?? null, selection ?? null)
           )
             return denied;
           if (
@@ -1392,6 +1403,10 @@ export function createPostgresTurnJournal(
               consumedAt,
             },
           });
+          const executionIntent =
+            selection === undefined
+              ? undefined
+              : context.guard.executionIntent(selection, record.binding);
           if (executionIntent !== undefined) {
             if (
               !sameJournalValue(executionIntent.execution.consumption, operation) ||

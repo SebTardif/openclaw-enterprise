@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
+import { bindCommittedTurnJournalClock } from "../../packages/occ/src/turn-journal/transaction-guard.ts";
+import { sampleDispatchClock } from "../../packages/occ/src/turn-journal/dispatcher-clock.ts";
 import { SelectedExecutionController } from "../../packages/occ/src/turn-journal/selected-execution.ts";
 import { parseTurnJournalV1 } from "../../packages/contracts/src/turn-journal-v1.ts";
 import {
@@ -44,11 +46,6 @@ async function fixture(pool, existing) {
   const v = journalValues(await seedJournalOwner(h.state));
   assert.equal(
     committed(await h.write((j) => j.admit(h.issue("admission", v.observation), h.call))).kind,
-    "recorded",
-  );
-  assert.equal(
-    committed(await h.write((j) => j.recordDispatchIntent(h.issue("dispatch", v.binding), h.call)))
-      .kind,
     "recorded",
   );
   const execution = {
@@ -100,11 +97,46 @@ async function fixture(pool, existing) {
     h.issue("consumption", {
       operation: v.consumption,
       binding: v.binding,
-      executionIntent: intent,
+      executionSelection: (({ dispatchClock: _clock, ...selection }) => selection)(intent),
     });
+  const dispatch = () => h.issue("dispatch", v.binding);
+  const bindIntent = (retained) => {
+    Object.assign(intent, retained);
+    Object.assign(start, {
+      clockSourceRef: retained.dispatchClock.clockSourceRef,
+      clockEpochRef: retained.dispatchClock.clockEpochRef,
+      startedAtMs: retained.dispatchClock.anchorAtMs + 1,
+      deadlineAtMs: retained.dispatchClock.deadlineAtMs,
+      dispatchDeadlineAtMs: retained.dispatchClock.deadlineAtMs,
+    });
+  };
+  const consumeIn = async (j) => {
+    const dispatched = await j.recordDispatchIntent(dispatch(), h.call);
+    if (dispatched.kind !== "recorded") return dispatched;
+    const result = await j.consumeAttempt(consume(), h.call);
+    if (result.kind === "claim-pending") {
+      const retained = await j.findExecution(execution, h.call);
+      assert.equal(retained.kind, "intent-only");
+      bindIntent(retained.intent);
+    }
+    return result;
+  };
   const retain = () =>
     h.write((j) => j.retainExecutionStart(h.issue("consumption", start), h.call));
-  return { h, p, v, execution, intent, start, interruption, consume, retain };
+  return {
+    h,
+    p,
+    v,
+    execution,
+    intent,
+    start,
+    interruption,
+    consume,
+    retain,
+    dispatch,
+    bindIntent,
+    consumeIn,
+  };
 }
 const columns =
   "installation_id,namespace_id,agent_id,conversation_ref,turn_ref,attempt_ref,reservation_ref,operation_kind,operation_ref,request,record";
@@ -140,10 +172,40 @@ test(
         async () => {
           const f = await fixture(pool);
           let callbacks = 0;
-          const result = await f.h.store.consumeAndInitiate(
+          let originalGuard;
+          const before = process.hrtime.bigint();
+          const result = await f.h.store.dispatchAndConsumeAndInitiate(
+            f.dispatch(),
             f.consume(),
             async (attempt, guard) => {
               callbacks++;
+              originalGuard = guard;
+              assert.equal(Object.isFrozen(guard), true);
+              assert.throws(() => {
+                guard.assertCurrent = async () => {};
+              }, TypeError);
+              f.bindIntent(guard.executionIntent);
+              const sample = await sampleDispatchClock(guard, ref("challenge"));
+              same(sample.dispatchClock, f.intent.dispatchClock);
+              assert.equal(sample.dispatchClock.kind, "pre-commit-monotonic-v1");
+              assert.equal(
+                sample.dispatchClock.deadlineAtMs - sample.dispatchClock.anchorAtMs,
+                900000,
+              );
+              assert.ok(sample.sampledAtMs >= sample.dispatchClock.anchorAtMs);
+              assert.ok(
+                sample.sampledAtMs - sample.dispatchClock.anchorAtMs <=
+                  Number(process.hrtime.bigint() - before) / 1e6 + 2,
+              );
+              await assert.rejects(sampleDispatchClock({ ...guard }, ref("copied")));
+              assert.throws(() =>
+                bindCommittedTurnJournalClock(
+                  {},
+                  { operation: f.v.consumption },
+                  { ...guard },
+                  f.h.call,
+                ),
+              );
               same(attempt, f.v.attempt);
               same(guard.executionIntent, f.intent);
               await guard.assertCurrent();
@@ -152,6 +214,25 @@ test(
           );
           assert.equal(result.kind, "initiated");
           assert.equal(callbacks, 1);
+          await assert.rejects(sampleDispatchClock(originalGuard, ref("closed")));
+          const originalClock = structuredClone(f.intent.dispatchClock);
+          assert.equal(
+            (
+              await f.h.store.dispatchAndConsumeAndInitiate(
+                f.dispatch(),
+                f.consume(),
+                async () => {
+                  callbacks++;
+                },
+                f.h.call,
+              )
+            ).kind,
+            "unavailable",
+          );
+          same(
+            (await f.h.read((j) => j.findExecution(f.execution, f.h.call))).intent.dispatchClock,
+            originalClock,
+          );
           assert.equal(
             (
               await f.h.store.consumeAndInitiate(
@@ -172,13 +253,104 @@ test(
         },
       );
       await t.test(
+        "paired consumption denial rolls back dispatch and cannot export a clock",
+        async () => {
+          const f = await fixture(pool);
+          const invalid = f.h.issue("consumption", {
+            operation: f.v.consumption,
+            binding: { ...f.v.binding, authorityDecisionRef: ref("changed") },
+            executionSelection: (({ dispatchClock, ...selection }) => selection)(f.intent),
+          });
+          let callbacks = 0;
+          assert.equal(
+            (
+              await f.h.store.dispatchAndConsumeAndInitiate(
+                f.dispatch(),
+                invalid,
+                async () => {
+                  callbacks++;
+                },
+                f.h.call,
+              )
+            ).kind,
+            "unavailable",
+          );
+          const record = (await f.h.read((j) => j.findAttempt(f.v.attempt, f.h.call))).record;
+          assert.equal(record.outcome.kind, "accepted-undispatched");
+          assert.equal(
+            (await f.h.read((j) => j.findExecution(f.execution, f.h.call))).kind,
+            "absent",
+          );
+          assert.equal(callbacks, 0);
+        },
+      );
+      await t.test(
+        "dispatch A and unselected consumption B cannot commit as a paired initiation",
+        async () => {
+          const a = await fixture(pool);
+          const b = await fixture(pool, a);
+          assert.equal(
+            committed(await b.h.write((j) => j.recordDispatchIntent(b.dispatch(), b.h.call))).kind,
+            "recorded",
+          );
+          let callbacks = 0;
+          const unselected = b.h.issue("consumption", {
+            operation: b.v.consumption,
+            binding: b.v.binding,
+          });
+          const result = await a.h.store.dispatchAndConsumeAndInitiate(
+            a.dispatch(),
+            unselected,
+            async () => {
+              callbacks++;
+            },
+            a.h.call,
+          );
+          assert.equal(result.kind, "unavailable");
+          assert.equal(callbacks, 0);
+          const afterA = (await a.h.read((j) => j.findAttempt(a.v.attempt, a.h.call))).record;
+          const afterB = (await b.h.read((j) => j.findAttempt(b.v.attempt, b.h.call))).record;
+          assert.equal(afterA.outcome.kind, "accepted-undispatched");
+          assert.equal(afterA.consumption, null);
+          assert.equal(afterB.outcome.kind, "dispatch-intent");
+          assert.equal(afterB.consumption, null);
+        },
+      );
+      await t.test(
+        "a separately committed dispatch cannot renew its clock during consumption",
+        async () => {
+          const f = await fixture(pool);
+          assert.equal(
+            committed(await f.h.write((j) => j.recordDispatchIntent(f.dispatch(), f.h.call))).kind,
+            "recorded",
+          );
+          let callbacks = 0;
+          assert.equal(
+            (
+              await f.h.store.consumeAndInitiate(
+                f.consume(),
+                async () => {
+                  callbacks++;
+                },
+                f.h.call,
+              )
+            ).kind,
+            "unavailable",
+          );
+          const record = (await f.h.read((j) => j.findAttempt(f.v.attempt, f.h.call))).record;
+          assert.equal(record.outcome.kind, "dispatch-intent");
+          assert.equal(record.consumption, null);
+          assert.equal(callbacks, 0);
+        },
+      );
+      await t.test(
         "rollback and orphan or late direct intent cannot retain selected ownership",
         async () => {
           const f = await fixture(pool);
           assert.equal(
             (
               await f.h.write(async (j) => {
-                await j.consumeAttempt(f.consume(), f.h.call);
+                await f.consumeIn(j);
                 throw new Error("rollback");
               })
             ).kind,
@@ -196,12 +368,13 @@ test(
             code: "23514",
           });
           committed(
-            await f.h.write((j) =>
-              j.consumeAttempt(
+            await f.h.write(async (j) => {
+              await j.recordDispatchIntent(f.dispatch(), f.h.call);
+              return j.consumeAttempt(
                 f.h.issue("consumption", { operation: f.v.consumption, binding: f.v.binding }),
                 f.h.call,
-              ),
-            ),
+              );
+            }),
           );
           await assert.rejects(sqlInsert(pool, f.v.attempt, "execution-intent", f.intent), {
             code: "23514",
@@ -212,7 +385,7 @@ test(
         "same-unit concurrent retention is exact; changed start or clock cannot overwrite",
         async () => {
           const f = await fixture(pool);
-          committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+          committed(await f.h.write((j) => f.consumeIn(j)));
           const handle = f.h.issue("consumption", f.start);
           const result = committed(
             await f.h.write((j) =>
@@ -261,9 +434,12 @@ test(
         "database validates exact native record and refuses earlier dispatch deadline renewal",
         async () => {
           const f = await fixture(pool);
-          committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+          committed(await f.h.write((j) => f.consumeIn(j)));
           for (const change of [
-            { startedAtMs: 99, deadlineAtMs: 900099 },
+            {
+              startedAtMs: f.intent.dispatchClock.anchorAtMs - 1,
+              deadlineAtMs: f.start.deadlineAtMs - 1,
+            },
             { deadlineAtMs: 901100 },
             { dispatchDeadlineAtMs: 901100, deadlineAtMs: 901100 },
             { annotation: "not-closed" },
@@ -297,10 +473,10 @@ test(
       );
       await t.test("one native turn cannot acquire a second canonical execution", async () => {
         const f = await fixture(pool);
-        committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+        committed(await f.h.write((j) => f.consumeIn(j)));
         committed(await f.retain());
         const other = await fixture(pool, f);
-        committed(await other.h.write((j) => j.consumeAttempt(other.consume(), other.h.call)));
+        committed(await other.h.write((j) => other.consumeIn(j)));
         const alias = {
           ...other.start,
           nativeIncarnationRef: f.start.nativeIncarnationRef,
@@ -314,11 +490,12 @@ test(
           (await other.h.read((j) => j.findExecution(other.execution, other.h.call))).kind,
           "intent-only",
         );
-        const changed = { ...f.intent, executionLimitVersion: 2 };
+        const { dispatchClock: _clock, ...selected } = f.intent;
+        const changed = { ...selected, executionLimitVersion: 2 };
         const handle = f.h.issue("consumption", {
           operation: f.v.consumption,
           binding: f.v.binding,
-          executionIntent: changed,
+          executionSelection: changed,
         });
         assert.equal(
           committed(await f.h.write((j) => j.consumeAttempt(handle, f.h.call))).kind,
@@ -329,7 +506,7 @@ test(
         "native provenance revoked while waiting for Agent lock cannot retain start",
         async () => {
           const f = await fixture(pool);
-          committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+          committed(await f.h.write((j) => f.consumeIn(j)));
           const locker = await pool.connect();
           await locker.query("BEGIN");
           await locker.query("SELECT id FROM occ.agents WHERE id=$1 FOR UPDATE", [
@@ -371,7 +548,8 @@ test(
             proxy.arm();
             assert.equal(
               (
-                await h.store.consumeAndInitiate(
+                await h.store.dispatchAndConsumeAndInitiate(
+                  f.dispatch(),
                   f.consume(),
                   async () => {
                     callbacks++;
@@ -410,7 +588,7 @@ test(
         "lost start COMMIT acknowledgment permits exact immutable readback only",
         async () => {
           const f = await fixture(pool);
-          committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+          committed(await f.h.write((j) => f.consumeIn(j)));
           const proxy = await runtimeCommitAckProxy(databaseUrl);
           const faultPool = new pg.Pool({
             connectionString: proxy.url,
@@ -449,7 +627,7 @@ test(
         "interruption retains exact original start and never releases an unknown reservation",
         async () => {
           const f = await fixture(pool);
-          committed(await f.h.write((j) => j.consumeAttempt(f.consume(), f.h.call)));
+          committed(await f.h.write((j) => f.consumeIn(j)));
           committed(await f.retain());
           const handle = f.h.issue("consumption", f.interruption);
           assert.equal(
@@ -529,6 +707,13 @@ test(
             async accept(guard) {
               accepts++;
               await guard.assertCurrent();
+              f.bindIntent(guard.executionIntent);
+              receipt.evidence = f.h.issue("consumption", f.start);
+              const otherController = new SelectedExecutionController(h.store, native, 10);
+              await assert.rejects(otherController.acceptInitiation(f.v.attempt, guard, h.call));
+              await assert.rejects(
+                otherController.acceptInitiation(f.v.attempt, { ...guard }, h.call),
+              );
               same(guard.executionIntent, f.intent);
               return receipt;
             },
@@ -557,7 +742,10 @@ test(
           };
           const controller = new SelectedExecutionController(h.store, native, 10);
           try {
-            assert.equal((await controller.consume(f.consume(), h.call)).kind, "execution-unknown");
+            assert.equal(
+              (await controller.dispatchAndConsume(f.dispatch(), f.consume(), h.call)).kind,
+              "execution-unknown",
+            );
             assert.equal(proxy.observedCommit, true);
             assert.equal(accepts, 1);
             assert.equal(gates, 0);
@@ -628,6 +816,8 @@ test(
           const native = {
             async accept(guard) {
               await guard.assertCurrent();
+              f.bindIntent(guard.executionIntent);
+              receipt.evidence = f.h.issue("consumption", f.start);
               accepts++;
               return receipt;
             },
@@ -650,7 +840,20 @@ test(
           };
           const controller = new SelectedExecutionController(h.store, native, 1);
           try {
-            assert.equal((await controller.consume(f.consume(), h.call)).kind, "initiated");
+            assert.equal(
+              (
+                await h.store.dispatchAndConsumeAndInitiate(
+                  f.dispatch(),
+                  f.consume(),
+                  async (attempt, guard) => {
+                    await assert.rejects(controller.acceptInitiation(attempt, guard, f.p.call()));
+                    await controller.acceptInitiation(attempt, guard, h.call);
+                  },
+                  h.call,
+                )
+              ).kind,
+              "initiated",
+            );
             await assert.rejects(controller.interrupt(f.interruption, f.p.call()));
             assert.equal(proxy.observedCommit, true);
             assert.equal(submits, 0);
@@ -692,10 +895,11 @@ test(
             },
           };
           const controller = new SelectedExecutionController(f.h.store, native, 1);
-          const first = controller.consume(f.consume(), f.h.call);
+          const first = controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call);
           await started;
           assert.equal(
-            (await controller.consume(second.consume(), f.p.call())).kind,
+            (await controller.dispatchAndConsume(second.dispatch(), second.consume(), f.p.call()))
+              .kind,
             "execution-unknown",
           );
           release();
@@ -705,6 +909,7 @@ test(
       );
       await t.test("cancelled selected consumption retains no intent or native start", async () => {
         const f = await fixture(pool);
+        committed(await f.h.write((j) => j.recordDispatchIntent(f.dispatch(), f.h.call)));
         const cancellation = { ...f.v.cancellation, expectedAttemptVersion: 2 };
         assert.equal(
           committed(

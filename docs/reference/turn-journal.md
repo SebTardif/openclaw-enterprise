@@ -189,6 +189,32 @@ boundary when supplied the actual transactional owner and live guard. It does
 not implement database uniqueness or validate an arbitrary claimant supplied by
 an external caller.
 
+Selected execution uses `TurnJournalStore.dispatchAndConsumeAndInitiate` to record
+new dispatch and consumption in the same original outer transaction. Both current
+authority inspections, reservation checks and capacity rules still apply. If either
+operation cannot newly succeed, the transaction rolls back. A prior dispatch or
+consumption cannot renew its execution clock.
+
+The original PostgreSQL writer samples `process.hrtime.bigint()` immediately before
+the new dispatch update under its existing serialized mutation and Agent lock. The
+`pre-commit-monotonic-v1` clock records `anchorAtMs` and a fixed
+`deadlineAtMs = anchorAtMs + 900000`, in one process-owned epoch. This anchor is a
+conservative lower bound preceding COMMIT, not a measurement of physical COMMIT
+time. The original consumption authority supplies an `executionSelection` with
+exact target and limits; it cannot supply this clock. The same transaction guard
+combines them and transfers the private clock owner only with its newly committed,
+single-use claim. Rollback or an unknown COMMIT exports no sample owner.
+
+`sampleDispatchClock` accepts only the actual original initiation guard and checks
+its current authority before sampling. It echoes the exchange challenge, full
+execution locator and unchanged dispatch clock with `sampledAtMs`. Ceiling-rounded
+samples conservatively reduce remaining duration. The local owner closes with the
+original initiation callback; serialized values, a copied guard or a restarted
+process cannot recreate it. A native connection must bind the sample to its own
+authenticated exchange and qualify relative clock rate and error. Applying remaining
+time at response receipt would extend the ceiling by transit time and is unsupported.
+Missing peer, clock correspondence or rate qualification keeps execution gated.
+
 Nested `OCC.transact` can return its callback result before its enclosing
 transaction commits. It must not be used as the outer commit signal. Rollback,
 lost commit acknowledgement, unavailable state or already-consumed readback
@@ -337,6 +363,11 @@ Cross-clock correspondence is an evidence locator whose actual owner must be
 verified; JSON alone proves no clock mapping or currentness. Missing or uncertain
 clock/incarnation correspondence keeps the native execution gated or unknown.
 
+Historical untagged clocks containing `committedAtMs` remain closed read data.
+New intent and start writes require `pre-commit-monotonic-v1`; historical data
+cannot establish an active clock owner. Exact reads and independently authorized
+interruption of an already retained historical start remain available.
+
 `retainExecutionStart` requires the selected native evidence inspector before and
 after accepting locks and again before insertion. Missing inspection refuses the
 write. One immutable exact start is retained; a changed native identity, original
@@ -372,3 +403,12 @@ acknowledgments and interruption without reservation release. Controlled externa
 evidence in those tests does not establish a production human grant, native
 connection, protected clock, model request or shell execution. Those producers
 must be installed by the actual authenticated transport composition.
+
+The controller's `acceptInitiation(attempt, guard, call)` joins an already claimed
+original callback without consuming again. It requires the actual store guard's
+private clock membership and spends admission once across controller instances.
+`dispatchAndConsume` delegates its original callback into this same path. The
+current canonical writer and local monotonic producer are connected; a production
+channel dispatcher, authenticated native socket owner, and current original human
+and whole-execution grants still require their concrete composition. This local
+storage path alone does not establish a provider-backed model or native shell turn.

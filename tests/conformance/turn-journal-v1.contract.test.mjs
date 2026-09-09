@@ -1344,3 +1344,58 @@ test("rejected exact replay exception does not broaden other original-link resul
     }),
   );
 });
+
+test("dispatch clocks distinguish the pre-commit anchor from historical commit labels", () => {
+  const selection = {
+    execution: {
+      attempt: v.attempt,
+      dispatchOperationRef: v.attemptRecord.binding.dispatchOperationRef,
+      consumption: v.attemptRecord.consumption.operation,
+      executionRef: "execution-clock",
+      recipientRef: "native-recipient",
+    },
+    operationRef: "intent-clock",
+    operationDigest: "a".repeat(64),
+    executionLimitRef: "limit",
+    executionLimitVersion: 1,
+    maximumExecutionMs: 900000,
+  };
+  const clock = {
+    kind: "pre-commit-monotonic-v1",
+    clockSourceRef: "original-clock",
+    clockEpochRef: "original-epoch",
+    anchorAtMs: 100,
+    deadlineAtMs: 900100,
+  };
+  const intent = { ...selection, dispatchClock: clock };
+  assert.equal(parseTurnJournalV1("executionIntent", intent).dispatchClock.anchorAtMs, 100);
+  assert.equal(parseTurnJournalV1("executionSelection", selection).maximumExecutionMs, 900000);
+  assert.throws(() => parseTurnJournalV1("executionSelection", intent));
+  for (const changed of [
+    { ...clock, committedAtMs: 100 },
+    { ...clock, kind: "caller-clock" },
+    { ...clock, deadlineAtMs: 900101 },
+    { ...clock, deadlineAtMs: 900099 },
+    {
+      ...clock,
+      anchorAtMs: Number.MAX_SAFE_INTEGER,
+      deadlineAtMs: Number.MAX_SAFE_INTEGER + 900000,
+    },
+    { ...clock, anchorAtMs: 100.5 },
+  ])
+    assert.throws(() =>
+      parseTurnJournalV1("executionIntent", { ...selection, dispatchClock: changed }),
+    );
+  // Closed history decoding preserves the old data without qualifying a sampler.
+  const historical = {
+    clockSourceRef: clock.clockSourceRef,
+    clockEpochRef: clock.clockEpochRef,
+    committedAtMs: 100,
+    deadlineAtMs: 900100,
+  };
+  assert.equal(
+    parseTurnJournalV1("executionIntent", { ...selection, dispatchClock: historical }).dispatchClock
+      .committedAtMs,
+    100,
+  );
+});
