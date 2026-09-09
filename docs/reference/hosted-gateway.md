@@ -8,7 +8,7 @@ authority.
 
 ## Current implementation boundary
 
-The application contains a fixed two-channel composition and lifecycle wrappers
+The application contains a composition with explicitly selected channels and lifecycle wrappers
 around the public `openclaw/plugin-sdk/gateway-host`, `slack-hosted` and
 `msteams-hosted` exports. These wrappers own local startup and cleanup. They do
 not supply human authorization, journal provenance, admitted startup or an
@@ -41,10 +41,26 @@ its execution does not qualify this hosted application's admitted native startup
 
 `createGatewayComposition` accepts the existing `GatewayHostConfigurationV1`,
 the existing policy hooks and genuine identity, Harness and persistence modules,
-plus the native adapters' public input types. It adds exactly the Slack and Teams
-channel modules and preserves the admitted module order. Missing, duplicate or
+plus the native adapters' public input types. Each channel input is either its
+complete selected configuration or explicit `null`. It adds only the selected
+Slack and Teams modules and preserves the admitted module order. A no-channel
+composition still requires the identity, Harness and persistence owners and all
+policy callbacks. Omitted inputs, missing configured channels, duplicate or
 mismatched selections are unavailable. Required module functions are structural
 checks; their presence does not prove a production implementation or permission.
+
+The V2 workload-profile manifest can likewise select no channel modules while
+retaining its complete core-module, material, path and capability requirements.
+This removes a local composition prerequisite; it does not install the genuine
+Agent/V2 material factory or make the unbound executable available.
+
+The currently prepared upstream `startGatewayHostV1` still requires at least four
+modules and one channel. Its schema rejects a configuration containing only the
+three core modules with `INVALID_CONFIG` before the required-channel check.
+No-channel support here covers manifest representation, material borrowing and
+local preparation/cleanup. Starting that configuration additionally requires a
+reviewed upstream host change and refreshed SDK artifact. This application does
+not add a placeholder channel to bypass that requirement.
 
 `loadGatewayCompositionFactories` loads only the three fixed public package
 entrypoints. Trusted composition passes those actual exported functions to the

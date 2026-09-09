@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { requireAdmittedGatewayConfiguration } from "../../apps/gateway/src/admitted-configuration.ts";
@@ -7,6 +8,8 @@ import {
   prepareGatewayComposition,
 } from "../../apps/gateway/src/composition.ts";
 
+// Resolve the public SDK exports from the Gateway workspace that owns them.
+const gatewayRequire = createRequire(new URL("../../apps/gateway/package.json", import.meta.url));
 const admittedUrl = new URL("../../apps/gateway/src/admitted-configuration.ts", import.meta.url);
 const mainUrl = new URL("../../apps/gateway/src/main.mjs", import.meta.url);
 const diagnostic = "Hosted gateway unavailable: startup or cleanup is not confirmed.\n";
@@ -356,6 +359,69 @@ function compositionFixture() {
   };
 }
 
+test("explicit no-channel preparation contains only the original core modules and owns their cleanup", async () => {
+  const f = compositionFixture();
+  f.input.slack = null;
+  f.input.teams = null;
+  f.input.configuration.modules = f.input.configuration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  const closed = [];
+  for (const module of f.modules)
+    module.close = async () => {
+      closed.push(module.id);
+    };
+  let calls = 0;
+  f.factories.slack = () => {
+    calls++;
+    throw Error("No selected Slack channel");
+  };
+  f.factories.teams = () => {
+    calls++;
+    throw Error("No selected Teams channel");
+  };
+  const prepared = createGatewayComposition(f.input, f.factories);
+  assert.equal(prepared.slack, null);
+  assert.deepEqual(await prepared.close(), { cleanup: "finished" });
+  assert.deepEqual(closed, ["identity", "harness", "persistence"]);
+  assert.equal(calls, 0);
+  assert.equal(f.starts, 0, "This is preparation/cleanup evidence, never positive host readiness");
+});
+
+test("no-channel preparation cannot drop an admitted channel or a required core owner", () => {
+  const f = compositionFixture();
+  f.input.slack = null;
+  f.input.teams = null;
+  assert.throws(() => createGatewayComposition(f.input, f.factories), /unavailable/);
+  f.input.configuration.modules = f.input.configuration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  f.input.dependencies.modules.pop();
+  assert.throws(() => createGatewayComposition(f.input, f.factories), /unavailable/);
+});
+
+test("prepared upstream host retains its channel requirement after local no-channel preparation", async () => {
+  const { startGatewayHostV1 } = await import(
+    gatewayRequire.resolve("openclaw/plugin-sdk/gateway-host")
+  );
+  const f = compositionFixture();
+  f.input.slack = null;
+  f.input.teams = null;
+  f.input.configuration.modules = f.input.configuration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  const prepared = createGatewayComposition(f.input, { ...f.factories, host: startGatewayHostV1 });
+  try {
+    // TODO(no-channel SDK): replace this refusal with actual host lifecycle coverage
+    // when the reviewed upstream host permits the complete core-only module set.
+    // Its minimum of four modules rejects the three core owners before the
+    // separate required-channel check, process reservation or module startup.
+    assert.throws(() => prepared.start(), /INVALID_CONFIG/);
+  } finally {
+    assert.deepEqual(await prepared.close(), { cleanup: "finished" });
+  }
+});
+
 test("prepared close prevents synchronous start and joins every original module once", async () => {
   const f = compositionFixture();
   const pending = deferred();
@@ -453,13 +519,13 @@ test("fixed preparation resolves only the three selected public factories withou
   };
   // Controlled module exports exercise the real fixed loader and composition;
   // they do not qualify the installed factory or any native provider.
-  t.mock.module("openclaw/plugin-sdk/gateway-host", {
+  t.mock.module(gatewayRequire.resolve("openclaw/plugin-sdk/gateway-host"), {
     namedExports: { startGatewayHostV1: f.factories.host },
   });
-  t.mock.module("openclaw/plugin-sdk/slack-hosted", {
+  t.mock.module(gatewayRequire.resolve("openclaw/plugin-sdk/slack-hosted"), {
     namedExports: { createSlackHostedAdapterV1: refuseNative },
   });
-  t.mock.module("openclaw/plugin-sdk/msteams-hosted", {
+  t.mock.module(gatewayRequire.resolve("openclaw/plugin-sdk/msteams-hosted"), {
     namedExports: { createMSTeamsHostedIngress: refuseNative },
   });
   const prepared = await prepareGatewayComposition(f.input);

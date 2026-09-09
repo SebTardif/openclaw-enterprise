@@ -14,8 +14,9 @@ export type GatewayCompositionInput = Readonly<{
   configuration: GatewayHostConfigurationV1;
   /** Genuine identity, Harness and persistence owners, with the existing policy ports. */
   dependencies: GatewayHostDependenciesV1;
-  slack: Parameters<typeof createSlackGatewayModule>[0];
-  teams: Parameters<typeof createTeamsGatewayModule>[0];
+  /** Explicit null means that the accepted module selection has no such channel. */
+  slack: Parameters<typeof createSlackGatewayModule>[0] | null;
+  teams: Parameters<typeof createTeamsGatewayModule>[0] | null;
 }>;
 
 /** Exact public factories loaded by trusted code, never selected from startup JSON. */
@@ -29,11 +30,11 @@ export type GatewayCompositionClose = Readonly<{ cleanup: GatewayStartupCloseV1[
 
 export type GatewayComposition = Readonly<{
   close(): Promise<GatewayCompositionClose>;
-  slack: SlackGatewayModule["native"];
+  slack: SlackGatewayModule["native"] | null;
   start(): ReturnType<typeof startGatewayHostV1>;
 }>;
 
-/** Prepare the fixed two-channel composition without starting either transport. */
+/** Prepare only the explicitly selected fixed channels, without starting transport. */
 export function createGatewayComposition(
   input: GatewayCompositionInput,
   factories: GatewayCompositionFactories,
@@ -68,9 +69,16 @@ export function createGatewayComposition(
   )
     throw unavailable();
 
-  const slack = createSlackGatewayModule(input.slack, factories.slack);
-  const teams = createTeamsGatewayModule(input.teams, factories.teams);
-  const available = [...external, slack.module, teams];
+  if (input.slack === undefined || input.teams === undefined) throw unavailable();
+  const slack =
+    input.slack === null ? null : createSlackGatewayModule(input.slack, factories.slack);
+  const teams =
+    input.teams === null ? null : createTeamsGatewayModule(input.teams, factories.teams);
+  const available = [
+    ...external,
+    ...(slack === null ? [] : [slack.module]),
+    ...(teams === null ? [] : [teams]),
+  ];
   if (
     configuration.modules.length !== available.length ||
     new Set(available.map((module) => module.id)).size !== available.length ||
@@ -90,7 +98,7 @@ export function createGatewayComposition(
   let closePromise: Promise<GatewayCompositionClose> | undefined;
   return Object.freeze({
     /** Retain only these existing native ports when wiring the genuine Slack receiver. */
-    slack: slack.native,
+    slack: slack?.native ?? null,
     start() {
       if (started || closed) throw unavailable();
       started = true;

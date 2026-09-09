@@ -10,7 +10,10 @@ import {
   createAdmittedWorkloadProfileSelectorV2,
   WorkloadProfileSelectionError,
 } from "../../packages/occ/src/workload-profiles/selection.ts";
-import { workloadProfileDigest } from "../../packages/occ/src/workload-profiles/canonical.ts";
+import {
+  canonicalizeWorkloadProfileJson,
+  workloadProfileDigest,
+} from "../../packages/occ/src/workload-profiles/canonical.ts";
 import { GatewayStartupOwnerPhaseV1 } from "../../packages/occ/src/gateway-startup-v1/owner.ts";
 import {
   createPostgresGatewayStartupV1,
@@ -126,8 +129,7 @@ function manifest() {
     },
   };
 }
-function setup(version = 1) {
-  const value = manifest();
+function setup(version = 1, value = manifest()) {
   const derived = deriveWorkloadProfileManifestV2(bytes(value));
   const selection = {
     manifestRef: uuid(1),
@@ -816,4 +818,81 @@ test("one captured version observation selects the V2 subject fence", async () =
   );
   assert.equal(observations, 1);
   assert.deepEqual(f.events, ["poison"]);
+});
+
+test("pair manifest represents no channels with the complete identity, harness and persistence selection", () => {
+  const selected = manifest();
+  const withChannel = deriveWorkloadProfileManifestV2(bytes(selected));
+  selected.launchConfiguration.modules = selected.launchConfiguration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  const decoded = decodeWorkloadProfileManifestV2(bytes(selected));
+  assert.deepEqual(
+    decoded.content.launchConfiguration.modules.map((module) => module.kind),
+    ["identity", "harness", "persistence"],
+  );
+  assert.deepEqual(
+    canonicalizeWorkloadProfileJson(decoded.content.launchConfiguration.credentials),
+    canonicalizeWorkloadProfileJson(selected.launchConfiguration.credentials),
+  );
+  assert.equal(
+    decoded.content.launchConfiguration.credentials.deliveryMode,
+    "installation-channel-material-v1",
+  );
+  assert.equal(
+    decoded.content.launchConfiguration.credentials.harnessPlatformCredentials,
+    "forbidden",
+  );
+  assert.deepEqual(decoded.content.evidenceRequirements, withChannel.content.evidenceRequirements);
+  assert.deepEqual(
+    decoded.content.launchConfiguration.resourceEnvelope,
+    withChannel.content.launchConfiguration.resourceEnvelope,
+  );
+  const derived = deriveWorkloadProfileManifestV2(bytes(selected));
+  assert.notEqual(derived.digests.manifestDigest, withChannel.digests.manifestDigest);
+  assert.deepEqual(deriveWorkloadProfileManifestV2(decoded.canonicalBytes), derived);
+  assert.throws(() => decodeWorkloadProfileManifest(bytes(selected)));
+});
+
+test("no-channel pair still rejects absent or duplicate mandatory modules and omitted material selection", () => {
+  const selected = manifest();
+  selected.launchConfiguration.modules = selected.launchConfiguration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  for (const kind of ["identity", "harness", "persistence"]) {
+    const absent = copy(selected);
+    absent.launchConfiguration.modules = absent.launchConfiguration.modules.filter(
+      (module) => module.kind !== kind,
+    );
+    assert.throws(() => decodeWorkloadProfileManifestV2(bytes(absent)), kind);
+    const duplicate = copy(selected);
+    const module = duplicate.launchConfiguration.modules.find((module) => module.kind === kind);
+    duplicate.launchConfiguration.modules.push({ ...copy(module), id: kind + "-duplicate" });
+    assert.throws(() => decodeWorkloadProfileManifestV2(bytes(duplicate)), kind);
+  }
+  for (const key of ["materialSelection", "pathCustody", "harnessPlatformCredentials"]) {
+    const omitted = copy(selected);
+    delete omitted.launchConfiguration.credentials[key];
+    assert.throws(() => decodeWorkloadProfileManifestV2(bytes(omitted)), key);
+  }
+  for (const value of [undefined, []]) {
+    const absent = copy(selected);
+    absent.launchConfiguration.modules = value;
+    assert.throws(() => decodeWorkloadProfileManifestV2(bytes(absent)));
+  }
+});
+
+test("no-channel manifest does not supply missing active selection or capability owners", async () => {
+  const value = manifest();
+  value.launchConfiguration.modules = value.launchConfiguration.modules.filter(
+    (module) => module.kind !== "channel",
+  );
+  const f = setup(1, value);
+  for (const selector of [
+    createAdmittedWorkloadProfileSelectorV2(),
+    createAdmittedWorkloadProfileSelectorV2(f.storage),
+  ]) {
+    await assert.rejects(selector.resolveLocked(f.request, f.unit, f.io), { code: "unavailable" });
+  }
+  assert.deepEqual(f.events, []);
 });

@@ -954,7 +954,9 @@ export function decodeWorkloadProfileManifestV2(
   for (const kind of ["identity", "harness", "persistence"] as const)
     if (launch.modules.filter((item) => item.kind === kind).length !== 1)
       reject("invalid-reference");
-  if (!launch.modules.some((item) => item.kind === "channel")) reject("invalid-reference");
+  // Channels are selected explicitly by their module entries. An empty channel
+  // set still requires the original identity, harness and persistence modules,
+  // material/path selection and every capability; source owners verify topology.
   for (const component of ["gateway", "harness"] as const) {
     const process = launch[component];
     unique(process.mounts.map((item) => item.name));

@@ -202,6 +202,14 @@ Use the same verified runtime image for both slots unless you have separately
 verified the gateway/Codex image pair. Runtime package installation at gateway
 startup is not part of this deployment procedure.
 
+The separate [hosted Gateway application](../reference/hosted-gateway.md) can
+represent no external channel or a selected subset of Slack and Teams. Its
+internal composition requires explicit absence for unselected channels and exact
+material for configured channels. This does not enable deployment through its
+still-unbound protected entrypoint or supply the genuine Agent/V2 material factory.
+The currently prepared upstream host separately requires a channel module, so
+no-channel host startup also needs a reviewed SDK change and refreshed artifact.
+
 ```bash
 export OCC_IMAGE_REPOSITORY='registry.example.com/your-team/openclaw-enterprise'
 export OCC_IMAGE_TAG="$(git rev-parse HEAD)"

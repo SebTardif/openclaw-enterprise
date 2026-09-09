@@ -10,6 +10,15 @@ The independent intake and broker in the
 
 ## Native configuration to the gateway
 
+The separate [hosted Gateway composition](../reference/hosted-gateway.md) represents
+each absent Slack or Teams channel with explicit `null` in its selection and
+material input. It constructs only selected channel modules; no-channel startup
+still requires the original identity, Harness, persistence, policy, material and
+path owners. This local composition support does not install the missing
+protected Agent startup or material factory and does not establish live delivery.
+The currently prepared upstream host also rejects a core-only module set; its
+channel requirement must be addressed before no-channel host startup can succeed.
+
 The Teams provider edge below requires a separately reviewed public webhook;
 the current native-channel deployment does not provision or verify that path.
 

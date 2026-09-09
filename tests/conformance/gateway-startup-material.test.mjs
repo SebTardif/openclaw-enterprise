@@ -227,6 +227,134 @@ function fixture() {
 const reject = (promise) =>
   assert.rejects(promise, (error) => error.message === "Gateway startup material unavailable");
 
+function selectChannels(f, channels) {
+  for (const channel of ["slack", "teams"]) {
+    if (!channels.includes(channel)) {
+      f.selected[channel] = null;
+      f.input[channel] = null;
+    }
+  }
+  f.selected.binding.modules = f.selected.binding.modules.filter(
+    (module) => module.kind !== "channel" || channels.includes(module.id),
+  );
+  f.input.configuration.modules = structuredClone(f.selected.binding.modules);
+  f.lease.observed = structuredClone(f.selected);
+}
+
+for (const channels of [[], ["slack"], ["teams"]]) {
+  test(`explicit selected channels ${JSON.stringify(channels)} preserve original material ownership`, async () => {
+    const f = fixture();
+    selectChannels(f, channels);
+    const joined = deferred();
+    f.owner.joinConsumers = () => joined.promise;
+    const borrower = createGatewayStartupMaterialBorrowerV1(f.owner, f.selected, f.source);
+    const material = await borrower.borrowMaterial();
+    assert.equal(material.input.slack === null, !channels.includes("slack"));
+    assert.equal(material.input.teams === null, !channels.includes("teams"));
+    assert.deepEqual(
+      material.input.configuration.modules.map((module) => module.kind),
+      ["identity", "harness", "persistence", ...channels.map(() => "channel")],
+    );
+    assert.deepEqual(f.events, ["acquire"], "Borrowing retains one original source acquisition");
+    f.parent.abort();
+    assert.throws(() => material.assertCurrent(), /unavailable/);
+    const close = material.close();
+    await Promise.resolve();
+    assert.deepEqual(f.events, ["acquire"], "Core consumers still own the source until their join");
+    joined.resolve();
+    assert.equal(await close, "finished");
+    assert.deepEqual(f.events, ["acquire", "release"]);
+  });
+}
+
+for (const change of [
+  (f) => {
+    f.input.slack = undefined;
+  },
+  (f) => {
+    f.selected.teams = undefined;
+    f.lease.observed.teams = undefined;
+  },
+  (f) => {
+    f.selected.binding.modules.push({
+      id: "slack",
+      kind: "channel",
+      profileRef: "slack",
+      requiredCapabilities: [],
+    });
+    f.input.configuration.modules = structuredClone(f.selected.binding.modules);
+    f.lease.observed = structuredClone(f.selected);
+  },
+  (f) => {
+    f.input.dependencies.modules.pop();
+  },
+  (f) => {
+    f.input.dependencies.authorizeOperation = undefined;
+  },
+]) {
+  test("explicit no-channel material still refuses missing or mismatched original selections/owners", () => {
+    const f = fixture();
+    selectChannels(f, []);
+    change(f);
+    assert.throws(
+      () => inspectGatewayMaterialInputV1(f.selected, f.lease.observed, f.input),
+      /unavailable/,
+    );
+  });
+}
+
+test("a selected channel still requires its complete material when the other channel is absent", () => {
+  for (const [channel, change] of [
+    [
+      "slack",
+      (f) => {
+        f.input.slack.options.botToken = "";
+      },
+    ],
+    [
+      "slack",
+      (f) => {
+        f.input.slack.options.profile = {
+          ...f.input.slack.options.profile,
+          installationRef: "other",
+        };
+      },
+    ],
+    [
+      "teams",
+      (f) => {
+        f.input.teams.ingress.credentialRef = "other";
+      },
+    ],
+    [
+      "teams",
+      (f) => {
+        f.input.teams.ingress.getBotToken = undefined;
+      },
+    ],
+    [
+      "slack",
+      (f) => {
+        f.input.slack = null;
+      },
+    ],
+    [
+      "teams",
+      (f) => {
+        f.input.teams = null;
+      },
+    ],
+  ]) {
+    const f = fixture();
+    selectChannels(f, [channel]);
+    change(f);
+    assert.throws(
+      () => inspectGatewayMaterialInputV1(f.selected, f.lease.observed, f.input),
+      /unavailable/,
+    );
+  }
+});
+
 test("one borrower snapshots data, preserves original callbacks and releases only after consumer settlement", async () => {
   const f = fixture();
   const joined = deferred();

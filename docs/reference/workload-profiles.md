@@ -4,6 +4,16 @@ Workload profile support currently provides closed selection contracts, a strict
 
 An immutable selection names `manifestRef`, `manifestDigest`, `admissionRef`, and `admissionVersion`. A runtime use additionally identifies its Installation, Namespace, `harness` component, five immutable profile roles, canonical format, and admitted configuration digest. These references identify intended bytes; current authorization must be checked separately when accepting or using them.
 
+The V2 pair manifest permits an explicit zero-channel module selection. It still
+requires exactly one identity, Harness and persistence module, the complete
+material/path selection, resource envelope and every declared capability.
+Removing channel modules changes the canonical manifest digest. Static decoding
+does not supply missing admission, capability or runtime owners, and configured
+channels still require their exact selected material.
+The [hosted Gateway reference](hosted-gateway.md#compose-actual-dependencies)
+records the prepared SDK's remaining channel requirement; accepting these static
+bytes does not make that runtime support no-channel startup.
+
 Agent draft updates accept `workloadProfileSelection`. Deployment requires the [identified V2 command](lifecycle-deploy-v2.md), including exact saved-draft expectations and a retained operation identity; bodyless deployment requests are rejected. The Agent update and deployment services consume the selection and admitted-configuration definitions, but still require the original authenticated request, transaction enrollment, active admission and capability implementations. The default composition lacks the complete profile suppliers and leaves profile-backed admission unavailable. `Agent.providerId` continues to select the model provider.
 
 The PostgreSQL application role can update the draft selection through a

@@ -26,17 +26,26 @@ route accepts these arguments or reconstructs their capabilities from JSON.
 | Source           | Original protected reader for that exact recipient; current immutable material versions, source invalidation, conservative original lease time and one owned release callback.    |
 | Consumer join    | Original lifecycle owner's completion of pending preparation and every native consumer, including failures before an owned prepared handle was returned.                          |
 
-The selected Slack bot/app credential references and versions, bot identity,
-channel profiles, Teams credential reference/version, tenant/app, team, service
-origin, endpoint and listener must correspond exactly. The local comparison
+An absent Slack or Teams channel is explicit `null` in both the selected metadata
+and supplied composition. Omitting an input is not absence. A configured channel
+cannot be dropped, and an absent channel cannot add credentials or a module.
+For selected channels, the Slack bot/app credential references and versions, bot
+identity, channel profiles, Teams credential reference/version, tenant/app, team,
+service origin, endpoint and listener must correspond exactly. The local comparison
 also checks the complete Gateway configuration, native configuration digest,
-state paths and the five selected modules. A digest comparison supplies data
+state paths and every selected module. The identity, Harness and persistence
+owners and policy callbacks remain required with no channels. A digest comparison supplies data
 correspondence only; the original protected source still establishes actual
 bytes, immutable versions and path ownership.
 
 The original identity, harness and persistence modules and admission callbacks
 remain their owners' implementations. This borrower neither installs replacement
 authority nor derives serving readiness from a successful comparison.
+
+No-channel borrowing and preparation do not establish host startup: the currently
+prepared upstream host still requires a channel module. See the
+[hosted Gateway boundary](hosted-gateway.md#compose-actual-dependencies) for the
+additional SDK and production-composition prerequisites.
 
 ## Borrowing and currentness
 
@@ -70,7 +79,7 @@ That exact correspondence remains an original admission-owner obligation.
 
 ## Native credential delivery and limits
 
-Slack requires two Gateway-only strings in the native composition. Each must be
+When selected, Slack requires two Gateway-only strings in the native composition. Each must be
 nonempty, well-formed UTF-8, contain no NUL and fit 32,768 bytes. The owned Slack
 material plus a current Teams token result must fit 65,536 bytes. Inputs are
 denied rather than truncated. These are local material bounds, not a claim about
@@ -125,7 +134,8 @@ in returned diagnostics, logs or receipts.
 The focused tests are
 `tests/conformance/gateway-startup-material-custody.test.mjs` and
 `tests/conformance/gateway-startup-material.test.mjs`. They exercise local owned
-callbacks with synthetic material: selected-input mismatch, no duplicate borrow,
+callbacks with synthetic material: explicit absent-channel selection, required
+core owners and configured-channel material, selected-input mismatch, no duplicate borrow,
 late acquisition, invalidation, rejected fences, byte limits, uncached exact-target
 token requests, consumer-settlement ordering and uncertain cleanup.
 

@@ -13,8 +13,8 @@ import {
   type GatewayMaterialCleanupV1,
 } from "./startup-material-custody.ts";
 
-type SlackProfile = GatewayCompositionInput["slack"]["options"]["profile"];
-type TeamsProfile = GatewayCompositionInput["teams"]["ingress"]["profile"];
+type SlackProfile = NonNullable<GatewayCompositionInput["slack"]>["options"]["profile"];
+type TeamsProfile = NonNullable<GatewayCompositionInput["teams"]>["ingress"]["profile"];
 type MaterialVersion = Readonly<{ ref: string; version: number }>;
 
 /** Nonsecret expectations captured from original owners, never startup authority. */
@@ -29,7 +29,7 @@ export type GatewayMaterialSelectionV1 = Readonly<{
     botUserId: string;
     botCredential: MaterialVersion;
     appCredential: MaterialVersion;
-  }>;
+  }> | null;
   teams: Readonly<{
     moduleId: string;
     profile: TeamsProfile;
@@ -37,8 +37,8 @@ export type GatewayMaterialSelectionV1 = Readonly<{
     teamRef: string;
     serviceUrl: string;
     messagingEndpoint: `/${string}`;
-    listener: GatewayCompositionInput["teams"]["listener"];
-  }>;
+    listener: NonNullable<GatewayCompositionInput["teams"]>["listener"];
+  }> | null;
 }>;
 
 function unavailable(): never {
@@ -83,9 +83,20 @@ export function inspectGatewayMaterialInputV1(
   try {
     if (!isDeepStrictEqual(selected, observed)) unavailable();
     if (!selected.recipientRef || !selected.recipientIncarnation) unavailable();
-    version(selected.slack.botCredential);
-    version(selected.slack.appCredential);
-    version(selected.teams.credential);
+    if (
+      selected.slack === undefined ||
+      selected.teams === undefined ||
+      input.slack === undefined ||
+      input.teams === undefined ||
+      (selected.slack === null) !== (input.slack === null) ||
+      (selected.teams === null) !== (input.teams === null)
+    )
+      unavailable();
+    if (selected.slack !== null) {
+      version(selected.slack.botCredential);
+      version(selected.slack.appCredential);
+    }
+    if (selected.teams !== null) version(selected.teams.credential);
     const binding = selected.binding;
     const config = input.configuration;
     const expected = {
@@ -117,18 +128,25 @@ export function inspectGatewayMaterialInputV1(
     const slack = input.slack;
     const teams = input.teams;
     if (
-      slack.id !== selected.slack.moduleId ||
-      !isDeepStrictEqual(slack.options.profile, selected.slack.profile) ||
-      slack.options.botUserId !== selected.slack.botUserId ||
-      teams.id !== selected.teams.moduleId ||
-      !isDeepStrictEqual(teams.ingress.profile, selected.teams.profile) ||
-      teams.ingress.credentialRef !== selected.teams.credential.ref ||
-      teams.ingress.teamRef !== selected.teams.teamRef ||
-      teams.ingress.serviceUrl !== selected.teams.serviceUrl ||
-      teams.ingress.messagingEndpoint !== selected.teams.messagingEndpoint ||
-      !isDeepStrictEqual(teams.listener, selected.teams.listener) ||
-      selected.slack.profile.installationRef !== binding.startup.installationId ||
-      selected.teams.profile.installationRef !== binding.startup.installationId
+      slack !== null &&
+      (selected.slack === null ||
+        slack.id !== selected.slack.moduleId ||
+        !isDeepStrictEqual(slack.options.profile, selected.slack.profile) ||
+        slack.options.botUserId !== selected.slack.botUserId ||
+        selected.slack.profile.installationRef !== binding.startup.installationId)
+    )
+      unavailable();
+    if (
+      teams !== null &&
+      (selected.teams === null ||
+        teams.id !== selected.teams.moduleId ||
+        !isDeepStrictEqual(teams.ingress.profile, selected.teams.profile) ||
+        teams.ingress.credentialRef !== selected.teams.credential.ref ||
+        teams.ingress.teamRef !== selected.teams.teamRef ||
+        teams.ingress.serviceUrl !== selected.teams.serviceUrl ||
+        teams.ingress.messagingEndpoint !== selected.teams.messagingEndpoint ||
+        !isDeepStrictEqual(teams.listener, selected.teams.listener) ||
+        selected.teams.profile.installationRef !== binding.startup.installationId)
     )
       unavailable();
     const external = input.dependencies.modules;
@@ -141,16 +159,24 @@ export function inspectGatewayMaterialInputV1(
       unavailable();
     const modules = [
       ...external,
-      {
-        id: slack.id,
-        kind: "channel",
-        profileRef: slack.options.profile.adapterProfileRef,
-      },
-      {
-        id: teams.id,
-        kind: "channel",
-        profileRef: teams.ingress.profile.adapterProfileRef,
-      },
+      ...(slack === null
+        ? []
+        : [
+            {
+              id: slack.id,
+              kind: "channel",
+              profileRef: slack.options.profile.adapterProfileRef,
+            },
+          ]),
+      ...(teams === null
+        ? []
+        : [
+            {
+              id: teams.id,
+              kind: "channel",
+              profileRef: teams.ingress.profile.adapterProfileRef,
+            },
+          ]),
     ];
     if (
       binding.modules.length !== modules.length ||
@@ -175,43 +201,49 @@ export function inspectGatewayMaterialInputV1(
         input.dependencies.authorizeOperation,
         input.dependencies.consumeAttempt,
         input.dependencies.reauthorizeOutput,
-        slack.options.assertCurrent,
-        slack.options.authorizeOutput,
-        slack.receiver.receive,
-        teams.ingress.getBotToken,
-        teams.ingress.resolveReply,
-        teams.ingress.authority.assertCurrent,
-        teams.ingress.authority.resolveHuman,
-        teams.ingress.authority.resolveConversation,
-        teams.ingress.authority.readClock,
-        teams.ingress.admission.assertCurrent,
-        teams.ingress.admission.admit,
-        teams.ingress.admission.consumeAttempt,
-        teams.ingress.admission.reauthorizeOutput,
-        teams.ingress.admission.isCompletionCommitted,
-        teams.ingress.admission.reserveDelivery,
-        teams.ingress.admission.recordDelivery,
-        teams.ingress.admission.authorizeCancel,
-        teams.ingress.admission.commitCancellation,
+        ...(slack === null
+          ? []
+          : [slack.options.assertCurrent, slack.options.authorizeOutput, slack.receiver.receive]),
+        ...(teams === null
+          ? []
+          : [
+              teams.ingress.getBotToken,
+              teams.ingress.resolveReply,
+              teams.ingress.authority.assertCurrent,
+              teams.ingress.authority.resolveHuman,
+              teams.ingress.authority.resolveConversation,
+              teams.ingress.authority.readClock,
+              teams.ingress.admission.assertCurrent,
+              teams.ingress.admission.admit,
+              teams.ingress.admission.consumeAttempt,
+              teams.ingress.admission.reauthorizeOutput,
+              teams.ingress.admission.isCompletionCommitted,
+              teams.ingress.admission.reserveDelivery,
+              teams.ingress.admission.recordDelivery,
+              teams.ingress.admission.authorizeCancel,
+              teams.ingress.admission.commitCancellation,
+            ]),
       ].some((method) => typeof method !== "function")
     )
       unavailable();
     if (
       [
-        slack.options.receiveNonTurn,
-        slack.options.onHealth,
-        teams.ingress.admission.onNativeEvent,
+        slack?.options.receiveNonTurn,
+        slack?.options.onHealth,
+        teams?.ingress.admission.onNativeEvent,
       ].some((method) => method !== undefined && typeof method !== "function")
     )
       unavailable();
-    const native = teams.ingress.admission.native;
+    const native = teams?.ingress.admission.native;
     if (
       native !== undefined &&
       (!native || typeof native.dispatch !== "function" || typeof native.cancel !== "function")
     )
       unavailable();
     const slackMaterialBytes =
-      materialBytes(slack.options.botToken) + materialBytes(slack.options.appToken);
+      slack === null
+        ? 0
+        : materialBytes(slack.options.botToken) + materialBytes(slack.options.appToken);
     if (slackMaterialBytes > GATEWAY_MATERIAL_LIMITS_V1.bundleBytes) unavailable();
     return Object.freeze({ slackMaterialBytes });
   } catch {
@@ -419,89 +451,73 @@ function createBorrower(
       // Snapshot every data value and capture the original callback implementations.
       // Native state paths are data here; the original source still owns their lease.
       const configuration = freezeData(structuredClone(raw.configuration));
-      const slackAssert = raw.slack.options.assertCurrent.bind(raw.slack.options);
-      const getToken = raw.teams.ingress.getBotToken.bind(raw.teams.ingress);
-      const teamsAssert = raw.teams.ingress.authority.assertCurrent.bind(
-        raw.teams.ingress.authority,
-      );
-      const admissionAssert = raw.teams.ingress.admission.assertCurrent.bind(
-        raw.teams.ingress.admission,
-      );
-      const admission = raw.teams.ingress.admission;
-      const native = admission.native;
-      const tokenTarget = Object.freeze({
-        credentialRef: selected.teams.credential.ref,
-        appId: selected.teams.profile.recipientAppRef,
-        tenantId: selected.teams.profile.providerTenantRef,
-        scope: "https://api.botframework.com/.default" as const,
-      });
-      const input: GatewayCompositionInput = Object.freeze({
-        configuration,
-        dependencies: Object.freeze({
-          ...raw.dependencies,
-          modules: Object.freeze(
-            raw.dependencies.modules.map((module) =>
-              Object.freeze({
-                id: module.id,
-                kind: module.kind,
-                profileRef: module.profileRef,
-                start: module.start.bind(module),
-                close: module.close.bind(module),
-              }),
-            ),
-          ),
-          authorizeOperation: raw.dependencies.authorizeOperation.bind(raw.dependencies),
-          consumeAttempt: raw.dependencies.consumeAttempt.bind(raw.dependencies),
-          reauthorizeOutput: raw.dependencies.reauthorizeOutput.bind(raw.dependencies),
-        }),
-        slack: Object.freeze({
-          ...raw.slack,
+      const captureSlack = (): GatewayCompositionInput["slack"] => {
+        const slack = raw.slack;
+        if (slack === null) return null;
+        const slackAssert = slack.options.assertCurrent.bind(slack.options);
+        return Object.freeze({
+          ...slack,
           receiver: Object.freeze({
-            ...raw.slack.receiver,
-            receive: raw.slack.receiver.receive.bind(raw.slack.receiver),
+            ...slack.receiver,
+            receive: slack.receiver.receive.bind(slack.receiver),
           }),
           options: Object.freeze({
-            ...raw.slack.options,
-            profile: freezeData(structuredClone(raw.slack.options.profile)),
+            ...slack.options,
+            profile: freezeData(structuredClone(slack.options.profile)),
             assertCurrent: () => {
               assertCurrent();
               assertGatewayMaterialCurrentV1(slackAssert);
               assertCurrent();
             },
-            authorizeOutput: raw.slack.options.authorizeOutput.bind(raw.slack.options),
-            ...(raw.slack.options.receiveNonTurn === undefined
+            authorizeOutput: slack.options.authorizeOutput.bind(slack.options),
+            ...(slack.options.receiveNonTurn === undefined
               ? {}
               : {
-                  receiveNonTurn: raw.slack.options.receiveNonTurn.bind(raw.slack.options),
+                  receiveNonTurn: slack.options.receiveNonTurn.bind(slack.options),
                 }),
-            ...(raw.slack.options.onHealth === undefined
+            ...(slack.options.onHealth === undefined
               ? {}
               : {
-                  onHealth: raw.slack.options.onHealth.bind(raw.slack.options),
+                  onHealth: slack.options.onHealth.bind(slack.options),
                 }),
           }),
-        }),
-        teams: Object.freeze({
-          ...raw.teams,
-          listener: freezeData(structuredClone(raw.teams.listener)),
+        });
+      };
+      const captureTeams = (): GatewayCompositionInput["teams"] => {
+        const teams = raw.teams;
+        if (teams === null) return null;
+        const selectedTeams = selected.teams;
+        if (selectedTeams === null) return unavailable();
+        const getToken = teams.ingress.getBotToken.bind(teams.ingress);
+        const teamsAssert = teams.ingress.authority.assertCurrent.bind(teams.ingress.authority);
+        const admissionAssert = teams.ingress.admission.assertCurrent.bind(teams.ingress.admission);
+        const admission = teams.ingress.admission;
+        const native = admission.native;
+        const tokenTarget = Object.freeze({
+          credentialRef: selectedTeams.credential.ref,
+          appId: selectedTeams.profile.recipientAppRef,
+          tenantId: selectedTeams.profile.providerTenantRef,
+          scope: "https://api.botframework.com/.default" as const,
+        });
+        return Object.freeze({
+          ...teams,
+          listener: freezeData(structuredClone(teams.listener)),
           ingress: Object.freeze({
-            ...raw.teams.ingress,
-            resolveReply: raw.teams.ingress.resolveReply.bind(raw.teams.ingress),
-            profile: freezeData(structuredClone(raw.teams.ingress.profile)),
+            ...teams.ingress,
+            resolveReply: teams.ingress.resolveReply.bind(teams.ingress),
+            profile: freezeData(structuredClone(teams.ingress.profile)),
             authority: Object.freeze({
-              ...raw.teams.ingress.authority,
+              ...teams.ingress.authority,
               assertCurrent: () => {
                 assertCurrent();
                 assertGatewayMaterialCurrentV1(teamsAssert);
                 assertCurrent();
               },
-              resolveHuman: raw.teams.ingress.authority.resolveHuman.bind(
-                raw.teams.ingress.authority,
+              resolveHuman: teams.ingress.authority.resolveHuman.bind(teams.ingress.authority),
+              resolveConversation: teams.ingress.authority.resolveConversation.bind(
+                teams.ingress.authority,
               ),
-              resolveConversation: raw.teams.ingress.authority.resolveConversation.bind(
-                raw.teams.ingress.authority,
-              ),
-              readClock: raw.teams.ingress.authority.readClock.bind(raw.teams.ingress.authority),
+              readClock: teams.ingress.authority.readClock.bind(teams.ingress.authority),
             }),
             admission: Object.freeze({
               ...admission,
@@ -559,7 +575,29 @@ function createBorrower(
               return track(work);
             },
           }),
+        });
+      };
+      const input: GatewayCompositionInput = Object.freeze({
+        configuration,
+        dependencies: Object.freeze({
+          ...raw.dependencies,
+          modules: Object.freeze(
+            raw.dependencies.modules.map((module) =>
+              Object.freeze({
+                id: module.id,
+                kind: module.kind,
+                profileRef: module.profileRef,
+                start: module.start.bind(module),
+                close: module.close.bind(module),
+              }),
+            ),
+          ),
+          authorizeOperation: raw.dependencies.authorizeOperation.bind(raw.dependencies),
+          consumeAttempt: raw.dependencies.consumeAttempt.bind(raw.dependencies),
+          reauthorizeOutput: raw.dependencies.reauthorizeOutput.bind(raw.dependencies),
         }),
+        slack: captureSlack(),
+        teams: captureTeams(),
       });
       assertAcquiring();
       clearTimeout(acquisitionTimer);
