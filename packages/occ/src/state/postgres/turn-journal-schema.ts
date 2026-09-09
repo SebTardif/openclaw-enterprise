@@ -327,7 +327,16 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
     {
       ...attemptScope(),
       operationKind: text("operation_kind")
-        .$type<"checkpoint-allocation" | "completion" | "outcome" | "cancellation" | "release">()
+        .$type<
+          | "checkpoint-allocation"
+          | "completion"
+          | "outcome"
+          | "cancellation"
+          | "release"
+          | "execution-intent"
+          | "execution-start"
+          | "execution-interruption"
+        >()
         .notNull(),
       operationRef: text("operation_ref").notNull(),
       request: jsonb("request").notNull(),
@@ -341,7 +350,7 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
       attemptOwner("turn_journal_operations_attempt", table),
       check(
         "turn_journal_operations_kind",
-        sql`${table.operationKind} IN ('checkpoint-allocation','completion','outcome','cancellation','release')`,
+        sql`${table.operationKind} IN ('checkpoint-allocation','completion','outcome','cancellation','release','execution-intent','execution-start','execution-interruption')`,
       ),
       boundedObject("turn_journal_operations_request", table.request),
       boundedObject("turn_journal_operations_record", table.record),
@@ -350,6 +359,29 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
         .where(
           sql`${table.operationKind} IN ('checkpoint-allocation','completion','cancellation','release')`,
         ),
+      uniqueIndex("turn_journal_execution_once")
+        .on(...attemptColumns(table), table.operationKind)
+        .where(
+          sql`${table.operationKind} IN ('execution-intent','execution-start','execution-interruption')`,
+        ),
+      uniqueIndex("turn_journal_execution_lookup")
+        .on(table.installationId, sql`(${table.request}#>>'{execution,executionRef}')`)
+        .where(sql`${table.operationKind} = 'execution-intent'`),
+      uniqueIndex("turn_journal_native_execution")
+        .on(
+          table.installationId,
+          sql`(${table.request}->>'nativeIncarnationRef')`,
+          sql`(${table.request}->>'nativeExecutionRef')`,
+        )
+        .where(sql`${table.operationKind} = 'execution-start'`),
+      uniqueIndex("turn_journal_native_turn")
+        .on(
+          table.installationId,
+          sql`(${table.request}->>'nativeIncarnationRef')`,
+          sql`(${table.request}->>'nativeSessionRef')`,
+          sql`(${table.request}->>'nativeTurnRef')`,
+        )
+        .where(sql`${table.operationKind} = 'execution-start'`),
       uniqueIndex("turn_journal_checkpoint_allocation_id")
         .on(table.installationId, sql`(${table.request}->>'checkpointId')`)
         .where(sql`${table.operationKind} = 'checkpoint-allocation'`),

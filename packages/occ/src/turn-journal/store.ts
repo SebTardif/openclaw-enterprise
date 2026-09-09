@@ -271,6 +271,9 @@ export class TurnJournalStore implements TurnJournalStoreV1 {
             attempt: retained.operation.attempt,
             signal: call.signal,
             validUntil: latest,
+            ...(retained.executionIntent === undefined
+              ? {}
+              : { executionIntent: retained.executionIntent }),
             assertCurrent,
           };
         },

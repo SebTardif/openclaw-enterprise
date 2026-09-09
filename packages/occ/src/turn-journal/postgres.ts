@@ -223,6 +223,10 @@ export function createPostgresTurnJournal(
     if (authorized.kind !== "authorized") return authorized;
     const value = await work(authorized.installation);
     active(call);
+    if (method === "findExecution" || method === "findExecutionInterruption") {
+      const current = await authorize(method, input, call);
+      if (current.kind !== "authorized") return current;
+    }
     return value;
   };
   const mutate = <T>(call: AuthorityCallV1, work: () => Promise<T>) =>
@@ -442,7 +446,140 @@ export function createPostgresTurnJournal(
     auditIntentRef,
   });
 
+  const executionOperation = async (attempt: ExactAttemptV1, kind: string) => {
+    const rows = await query(
+      `SELECT * FROM occ.turn_journal_operations WHERE ${attemptWhere} AND operation_kind=$8`,
+      [...attemptValues(attempt), kind],
+    );
+    return rows[0] ? parseOperationRow(rows[0]) : null;
+  };
   const repository: TurnJournalUnitOfWorkV1 = {
+    async findExecution(input, call) {
+      const execution = parseTurnJournalV1("selectedExecution", input);
+      return read("findExecution", execution, call, async (installation) => {
+        if (execution.attempt.installationRef !== installation.id) return denied;
+        const retained = await executionOperation(execution.attempt, "execution-intent");
+        if (
+          retained?.operationKind !== "execution-intent" ||
+          !sameJournalValue(retained.record.execution, execution)
+        )
+          return absent;
+        const started = await executionOperation(execution.attempt, "execution-start");
+        if (started === null) return { kind: "intent-only", intent: retained.record } as const;
+        if (
+          started.operationKind !== "execution-start" ||
+          !sameJournalValue(started.record.intent, retained.record)
+        )
+          return unavailable;
+        return { kind: "started", start: started.record } as const;
+      });
+    },
+    async findExecutionInterruption(input, call) {
+      const interruption = parseTurnJournalV1("executionInterruption", input);
+      return read("findExecutionInterruption", interruption, call, async (installation) => {
+        if (interruption.start.intent.execution.attempt.installationRef !== installation.id)
+          return denied;
+        const retained = await getOperation(
+          interruption.start.intent.execution.attempt,
+          "execution-interruption",
+          interruption.operationRef,
+        );
+        return retained?.operationKind === "execution-interruption" &&
+          sameJournalValue(retained.record, interruption)
+          ? ({ kind: "found", interruption: retained.record } as const)
+          : absent;
+      });
+    },
+    retainExecutionStart: (input, call) =>
+      mutate(call, async () => {
+        const auth = await authorize("retainExecutionStart", input, call);
+        if (auth.kind !== "authorized") return auth;
+        if (!ports.evidence.inspectExecutionStart) return unavailable;
+        const first = await ports.evidence.inspectExecutionStart(input, checkedCall(call));
+        active(call);
+        if (failure(first)) return first;
+        const start = parseTurnJournalV1("executionStart", first);
+        const attempt = start.intent.execution.attempt;
+        if (attempt.installationRef !== auth.installation.id || !(await agentLock(attempt)))
+          return denied;
+        const current = await ports.evidence.inspectExecutionStart(input, checkedCall(call));
+        active(call);
+        if (failure(current)) return current;
+        if (!sameJournalValue(start, parseTurnJournalV1("executionStart", current))) return denied;
+        const existing = await executionOperation(attempt, "execution-start");
+        if (existing)
+          return existing.operationKind === "execution-start" &&
+            sameJournalValue(existing.record, start)
+            ? ({ kind: "existing", record: existing.record } as const)
+            : conflict;
+        const intent = await executionOperation(attempt, "execution-intent");
+        const row = await getAttempt(attempt);
+        const record = row && parseAttemptRow(row);
+        if (
+          intent?.operationKind !== "execution-intent" ||
+          !sameJournalValue(intent.record, start.intent) ||
+          !record ||
+          "phase" in record ||
+          record.outcome.kind !== "consumed" ||
+          !record.consumption ||
+          !sameJournalValue(record.consumption.operation, start.intent.execution.consumption) ||
+          !(await reservationHeld(attempt))
+        )
+          return conflict;
+        if ((await executionOperation(attempt, "cancellation")) !== null) return denied;
+        // Native provenance, including protected clock/current purpose, is rechecked
+        // after every accepting lock/read and immediately before this short write.
+        const final = await ports.evidence.inspectExecutionStart(input, checkedCall(call));
+        active(call);
+        if (failure(final)) return final;
+        if (!sameJournalValue(start, parseTurnJournalV1("executionStart", final))) return denied;
+        await putOperation(attempt, "execution-start", start.operationRef, start, start);
+        return { kind: "recorded", record: start } as const;
+      }),
+    retainExecutionInterruption: (input, call) =>
+      mutate(call, async () => {
+        const auth = await authorize("retainExecutionInterruption", input, call);
+        if (auth.kind !== "authorized") return auth;
+        if (!ports.evidence.inspectExecutionInterruption) return unavailable;
+        const first = await ports.evidence.inspectExecutionInterruption(input, checkedCall(call));
+        active(call);
+        if (failure(first)) return first;
+        const interruption = parseTurnJournalV1("executionInterruption", first);
+        const attempt = interruption.start.intent.execution.attempt;
+        if (attempt.installationRef !== auth.installation.id || !(await agentLock(attempt)))
+          return denied;
+        const start = await executionOperation(attempt, "execution-start");
+        if (
+          start?.operationKind !== "execution-start" ||
+          !sameJournalValue(start.record, interruption.start)
+        )
+          return conflict;
+        const existing = await executionOperation(attempt, "execution-interruption");
+        const current = await ports.evidence.inspectExecutionInterruption(input, checkedCall(call));
+        active(call);
+        if (failure(current)) return current;
+        if (!sameJournalValue(interruption, parseTurnJournalV1("executionInterruption", current)))
+          return denied;
+        if (existing)
+          return existing.operationKind === "execution-interruption" &&
+            sameJournalValue(existing.record, interruption)
+            ? ({ kind: "existing", record: existing.record } as const)
+            : conflict;
+        if (!(await reservationHeld(attempt))) return denied;
+        const final = await ports.evidence.inspectExecutionInterruption(input, checkedCall(call));
+        active(call);
+        if (failure(final)) return final;
+        if (!sameJournalValue(interruption, parseTurnJournalV1("executionInterruption", final)))
+          return denied;
+        await putOperation(
+          attempt,
+          "execution-interruption",
+          interruption.operationRef,
+          interruption,
+          interruption,
+        );
+        return { kind: "recorded", record: interruption } as const;
+      }),
     async findAdmission(input, call) {
       const key = parseTurnJournalV1("lookup", input);
       return read("findAdmission", key, call, async () => {
@@ -1198,6 +1335,10 @@ export function createPostgresTurnJournal(
           active(call);
           if (failure(observed)) return observed;
           const operation = parseTurnJournalV1("consumption", observed.operation);
+          const executionIntent =
+            observed.executionIntent === undefined
+              ? undefined
+              : parseTurnJournalV1("executionIntent", observed.executionIntent);
           if (
             operation.attempt.installationRef !== auth.installation.id ||
             !(await agentLock(operation.attempt))
@@ -1206,16 +1347,26 @@ export function createPostgresTurnJournal(
           const row = await getAttempt(operation.attempt);
           const record = row && parseAttemptRow(row);
           if (!record || "phase" in record) return conflict;
-          if (record.consumption)
+          if (record.consumption) {
+            const retainedIntent = await executionOperation(operation.attempt, "execution-intent");
+            if (
+              !sameJournalValue(
+                retainedIntent?.operationKind === "execution-intent" ? retainedIntent.record : null,
+                executionIntent ?? null,
+              )
+            )
+              return conflict;
             return sameJournalValue(record.consumption.operation, operation)
               ? { kind: "already-consumed", operation: record.consumption.operation }
               : conflict;
+          }
           observed = await ports.evidence.inspectConsumption(input, checkedCall(call));
           active(call);
           if (failure(observed)) return observed;
           if (
             !sameJournalValue(observed.operation, operation) ||
-            !sameJournalValue(observed.binding, record.binding)
+            !sameJournalValue(observed.binding, record.binding) ||
+            !sameJournalValue(observed.executionIntent ?? null, executionIntent ?? null)
           )
             return denied;
           if (
@@ -1241,6 +1392,22 @@ export function createPostgresTurnJournal(
               consumedAt,
             },
           });
+          if (executionIntent !== undefined) {
+            if (
+              !sameJournalValue(executionIntent.execution.consumption, operation) ||
+              executionIntent.execution.dispatchOperationRef !== record.binding.dispatchOperationRef
+            )
+              return denied;
+            // Insert while the original attempt is still unconsumed. A deferred
+            // database guard requires this exact consumption in the same commit.
+            await putOperation(
+              operation.attempt,
+              "execution-intent",
+              executionIntent.operationRef,
+              executionIntent,
+              executionIntent,
+            );
+          }
           await updateAttempt(operation.attempt, next);
           active(call);
           return {
@@ -1254,6 +1421,7 @@ export function createPostgresTurnJournal(
                   Date.now() + TURN_JOURNAL_LIMITS_V1.startWindowMs,
                 ),
               ).toISOString(),
+              executionIntent,
             ),
           };
         }),

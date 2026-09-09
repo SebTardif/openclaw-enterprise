@@ -1,6 +1,7 @@
 import {
   parseTurnJournalV1,
   type ExactConsumptionOperationV1,
+  type JournalExecutionIntentV1,
   type PendingInitiationClaimV1,
 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { ScopeViolationError } from "../errors.ts";
@@ -10,6 +11,7 @@ interface ClaimState {
   readonly owner: TurnJournalTransactionGuard;
   readonly operation: ExactConsumptionOperationV1;
   readonly expiresAt: string;
+  readonly executionIntent?: JournalExecutionIntentV1;
   taken: boolean;
 }
 
@@ -74,14 +76,26 @@ export class TurnJournalTransactionGuard {
    * This opaque local identity carries no authority until the real owner confirms
    * its commit boundary. Readback and copied/serialized values cannot manufacture membership.
    */
-  createClaim(operation: ExactConsumptionOperationV1, expiresAt: string): PendingInitiationClaimV1 {
+  createClaim(
+    operation: ExactConsumptionOperationV1,
+    expiresAt: string,
+    executionIntent?: JournalExecutionIntentV1,
+  ): PendingInitiationClaimV1 {
     this.assertActive();
     this.assertCommittable();
     if (!this.executing || this.unit === undefined || !Number.isFinite(Date.parse(expiresAt)))
       throw new ScopeViolationError("The turn journal consumption claim is unavailable.");
     const exact = parseTurnJournalV1("consumption", operation);
     const claim = Object.freeze({ operation: exact }) as PendingInitiationClaimV1;
-    claims.set(claim, { owner: this, operation: exact, expiresAt, taken: false });
+    claims.set(claim, {
+      owner: this,
+      operation: exact,
+      expiresAt,
+      taken: false,
+      ...(executionIntent === undefined
+        ? {}
+        : { executionIntent: parseTurnJournalV1("executionIntent", executionIntent) }),
+    });
     return claim;
   }
 
@@ -123,9 +137,19 @@ export class TurnJournalTransactionGuard {
 export function takeCommittedTurnJournalClaim(
   unit: PlatformUnitOfWork,
   claim: PendingInitiationClaimV1,
-): Readonly<{ operation: ExactConsumptionOperationV1; expiresAt: string }> | undefined {
+):
+  | Readonly<{
+      operation: ExactConsumptionOperationV1;
+      expiresAt: string;
+      executionIntent?: JournalExecutionIntentV1;
+    }>
+  | undefined {
   const state = claims.get(claim);
   if (state === undefined || state.taken || !state.owner.ownsCommitted(unit)) return undefined;
   state.taken = true;
-  return Object.freeze({ operation: state.operation, expiresAt: state.expiresAt });
+  return Object.freeze({
+    operation: state.operation,
+    expiresAt: state.expiresAt,
+    ...(state.executionIntent === undefined ? {} : { executionIntent: state.executionIntent }),
+  });
 }

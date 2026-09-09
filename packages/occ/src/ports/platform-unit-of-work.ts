@@ -73,6 +73,8 @@ export function bindPlatformUnitOfWork(
     ...(repositories.turnJournal
       ? {
           turnJournal: bindRepository(repositories.turnJournal, lifetime, [
+            "findExecution",
+            "findExecutionInterruption",
             "findAdmission",
             "findAttempt",
             "findCompletion",
@@ -84,6 +86,8 @@ export function bindPlatformUnitOfWork(
             "findNonTurnIntake",
             "findIncomingLink",
             "findRejectedAdmission",
+            "retainExecutionStart",
+            "retainExecutionInterruption",
             "admit",
             "recordDispatchIntent",
             "consumeAttempt",

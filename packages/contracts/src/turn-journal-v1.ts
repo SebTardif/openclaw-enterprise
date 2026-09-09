@@ -202,6 +202,100 @@ export interface JournalAdmissionProvenanceV1<Native> {
   ): Promise<VerifiedAdmissionObservationV1 | JournalDeniedV1 | JournalUnavailableV1>;
 }
 
+/** Exact immutable correlation, never an initiating or running capability. */
+export type ExactSelectedExecutionV1 = Readonly<{
+  attempt: ExactAttemptV1;
+  dispatchOperationRef: string;
+  consumption: ExactConsumptionOperationV1;
+  executionRef: string;
+  recipientRef: string;
+}>;
+export type JournalExecutionIntentV1 = Readonly<{
+  execution: ExactSelectedExecutionV1;
+  operationRef: string;
+  operationDigest: string;
+  executionLimitRef: string;
+  executionLimitVersion: number;
+  maximumExecutionMs: number;
+  /** Original committed dispatch clock and ceiling, authenticated by its owner.
+   * Neither consumption time nor a later native start may replace this anchor. */
+  dispatchClock: Readonly<{
+    clockSourceRef: string;
+    clockEpochRef: string;
+    committedAtMs: number;
+    deadlineAtMs: number;
+  }>;
+}>;
+export type JournalExecutionStartV1 = Readonly<{
+  intent: JournalExecutionIntentV1;
+  operationRef: string;
+  operationDigest: string;
+  nativeExecutionRef: string;
+  nativeIncarnationRef: string;
+  nativeReservationRef: string;
+  nativeSessionRef: string;
+  nativeTurnRef: string;
+  acceptanceEvidenceRef: string;
+  clockSourceRef: string;
+  clockEpochRef: string;
+  startedAtMs: number;
+  deadlineAtMs: number;
+  /** Original dispatch ceiling mapped into THIS native epoch by its actual owner. */
+  dispatchDeadlineAtMs: number;
+  clockCorrespondenceEvidenceRef: string;
+}>;
+export type ExactExecutionInterruptionV1 = Readonly<{
+  start: JournalExecutionStartV1;
+  operationRef: string;
+  operationDigest: string;
+  responsibilityRef: string;
+  responsibilityVersion: number;
+}>;
+declare const executionStartProvenance: unique symbol;
+declare const executionInterruptionProvenance: unique symbol;
+export interface VerifiedExecutionStartV1 {
+  readonly [executionStartProvenance]: true;
+}
+export interface VerifiedExecutionInterruptionV1 {
+  readonly [executionInterruptionProvenance]: true;
+}
+export type SelectedExecutionStateV1 =
+  | Readonly<{ kind: "intent-only"; intent: JournalExecutionIntentV1 }>
+  | Readonly<{ kind: "started"; start: JournalExecutionStartV1 }>
+  | JournalAbsentV1
+  | JournalDeniedV1
+  | JournalUnavailableV1;
+export type ExecutionInterruptionStateV1 =
+  | Readonly<{ kind: "found"; interruption: ExactExecutionInterruptionV1 }>
+  | JournalAbsentV1
+  | JournalDeniedV1
+  | JournalUnavailableV1;
+export type ExecutionRetentionResultV1<T> =
+  | Readonly<{ kind: "recorded" | "existing"; record: T }>
+  | JournalConflictV1
+  | JournalDeniedV1
+  | JournalUnavailableV1;
+export interface TurnJournalReadV1 {
+  findExecution(
+    input: ExactSelectedExecutionV1,
+    call: AuthorityCallV1,
+  ): Promise<SelectedExecutionStateV1>;
+  findExecutionInterruption(
+    input: ExactExecutionInterruptionV1,
+    call: AuthorityCallV1,
+  ): Promise<ExecutionInterruptionStateV1>;
+}
+export interface TurnJournalUnitOfWorkV1 {
+  retainExecutionStart(
+    input: VerifiedExecutionStartV1,
+    call: AuthorityCallV1,
+  ): Promise<ExecutionRetentionResultV1<JournalExecutionStartV1>>;
+  retainExecutionInterruption(
+    input: VerifiedExecutionInterruptionV1,
+    call: AuthorityCallV1,
+  ): Promise<ExecutionRetentionResultV1<ExactExecutionInterruptionV1>>;
+}
+
 /** Immutable admission facts. This projection contains no dispatch authority,
  * dispatch operation or borrowed request/turn expiry. */
 export type JournalCommonAttemptBindingV1 = Readonly<{
@@ -766,6 +860,51 @@ export const ExactConsumptionOperationSchemaV1 = object({
   claimantRef: ref,
   requestDigest: digest,
 });
+export const ExactSelectedExecutionSchemaV1 = object({
+  attempt: ExactAttemptSchemaV1,
+  dispatchOperationRef: ref,
+  consumption: ExactConsumptionOperationSchemaV1,
+  executionRef: ref,
+  recipientRef: ref,
+});
+export const JournalExecutionIntentSchemaV1 = object({
+  execution: ExactSelectedExecutionSchemaV1,
+  operationRef: ref,
+  operationDigest: digest,
+  executionLimitRef: ref,
+  executionLimitVersion: version,
+  maximumExecutionMs: Type.Integer({ minimum: 1, maximum: TURN_JOURNAL_LIMITS_V1.maximumTurnMs }),
+  dispatchClock: object({
+    clockSourceRef: ref,
+    clockEpochRef: ref,
+    committedAtMs: sequence,
+    deadlineAtMs: sequence,
+  }),
+});
+export const JournalExecutionStartSchemaV1 = object({
+  intent: JournalExecutionIntentSchemaV1,
+  operationRef: ref,
+  operationDigest: digest,
+  nativeExecutionRef: ref,
+  nativeIncarnationRef: ref,
+  nativeReservationRef: ref,
+  nativeSessionRef: ref,
+  nativeTurnRef: ref,
+  acceptanceEvidenceRef: ref,
+  clockSourceRef: ref,
+  clockEpochRef: ref,
+  startedAtMs: sequence,
+  deadlineAtMs: sequence,
+  dispatchDeadlineAtMs: sequence,
+  clockCorrespondenceEvidenceRef: ref,
+});
+export const ExactExecutionInterruptionSchemaV1 = object({
+  start: JournalExecutionStartSchemaV1,
+  operationRef: ref,
+  operationDigest: digest,
+  responsibilityRef: ref,
+  responsibilityVersion: version,
+});
 export const AdmittedUndispatchedAttemptRecordSchemaV1 = object({
   phase: Type.Literal("admitted-undispatched"),
   binding: JournalCommonAttemptBindingSchemaV1,
@@ -887,6 +1026,10 @@ export const JournalReleaseObservationSchemaV1 = object({
 });
 
 export const TurnJournalSchemasV1 = Object.freeze({
+  selectedExecution: ExactSelectedExecutionSchemaV1,
+  executionIntent: JournalExecutionIntentSchemaV1,
+  executionStart: JournalExecutionStartSchemaV1,
+  executionInterruption: ExactExecutionInterruptionSchemaV1,
   lookup: ExactEventOrLogicalKeySchemaV1,
   head: ExpectedCompletionHeadSchemaV1,
   admissionIdentity: JournalAdmissionIdentitySchemaV1,
@@ -906,6 +1049,10 @@ export const TurnJournalSchemasV1 = Object.freeze({
   releaseObservation: JournalReleaseObservationSchemaV1,
 });
 export interface TurnJournalWireValuesV1 {
+  selectedExecution: ExactSelectedExecutionV1;
+  executionIntent: JournalExecutionIntentV1;
+  executionStart: JournalExecutionStartV1;
+  executionInterruption: ExactExecutionInterruptionV1;
   lookup: ExactEventOrLogicalKeyV1;
   head: ExpectedCompletionHeadV1;
   admissionIdentity: JournalAdmissionIdentityV1;
@@ -1029,6 +1176,34 @@ function checkIntrinsic(input: unknown): void {
         invalid();
     }
     checkIntrinsic(child);
+  }
+  if (v.executionRef !== undefined && v.consumption !== undefined && v.attempt !== undefined) {
+    if (!same(v.attempt, (v.consumption as ExactConsumptionOperationV1).attempt)) invalid();
+  }
+  if (v.dispatchClock !== undefined) {
+    const c = v.dispatchClock as JournalExecutionIntentV1["dispatchClock"];
+    if (
+      c.deadlineAtMs <= c.committedAtMs ||
+      c.deadlineAtMs - c.committedAtMs > TURN_JOURNAL_LIMITS_V1.maximumTurnMs
+    )
+      invalid();
+  }
+  if (v.dispatchDeadlineAtMs !== undefined) {
+    const start = v as unknown as JournalExecutionStartV1;
+    if (
+      start.deadlineAtMs <= start.startedAtMs ||
+      start.deadlineAtMs !==
+        Math.min(start.dispatchDeadlineAtMs, start.startedAtMs + start.intent.maximumExecutionMs) ||
+      !Number.isSafeInteger(start.startedAtMs + start.intent.maximumExecutionMs)
+    )
+      invalid();
+    if (
+      start.clockSourceRef === start.intent.dispatchClock.clockSourceRef &&
+      start.clockEpochRef === start.intent.dispatchClock.clockEpochRef &&
+      (start.dispatchDeadlineAtMs !== start.intent.dispatchClock.deadlineAtMs ||
+        start.startedAtMs < start.intent.dispatchClock.committedAtMs)
+    )
+      invalid();
   }
   if (v.locator !== undefined) {
     const locatorValue = v.locator as Record<string, unknown>;
@@ -1634,6 +1809,7 @@ export function journalCancellationBeforeDispatchMatchesV1(
  * The wrapper never exposes a permit and never retries a callback.
  */
 export interface JournalInitiationGuardV1 {
+  readonly executionIntent?: JournalExecutionIntentV1;
   readonly signal: AbortSignal;
   assertCurrent(): Promise<void>;
 }
@@ -1653,6 +1829,7 @@ export function createJournalInitiatorV1(
           attempt: ExactAttemptV1;
           signal: AbortSignal;
           validUntil: number;
+          executionIntent?: JournalExecutionIntentV1;
           assertCurrent(): Promise<void>;
         }>
       | undefined
@@ -1708,7 +1885,13 @@ export function createJournalInitiatorV1(
         assertWithinDeadline();
       };
       await assertCurrent();
-      await initiate(guard.attempt, { signal, assertCurrent });
+      await initiate(guard.attempt, {
+        signal,
+        assertCurrent,
+        ...(guard.executionIntent === undefined
+          ? {}
+          : { executionIntent: parseTurnJournalV1("executionIntent", guard.executionIntent) }),
+      });
       return { kind: "initiated" };
     } catch {
       return { kind: "execution-unknown" };
@@ -1865,6 +2048,18 @@ export function nonTurnReceiptMatchesV1(
  * provenance service implements no competing journal, checkpoint writer or verifier.
  */
 export interface JournalEvidenceProvenanceV1 {
+  /** Optional only for unselected adapters. Missing native provenance refuses the
+   * selected branch. Implementations inspect actual original transport custody,
+   * clock correspondence and current purpose again after accepting locks. */
+  inspectExecutionStart?(
+    handle: VerifiedExecutionStartV1,
+    call: AuthorityCallV1,
+  ): Promise<JournalExecutionStartV1 | JournalDeniedV1 | JournalUnavailableV1>;
+  inspectExecutionInterruption?(
+    handle: VerifiedExecutionInterruptionV1,
+    call: AuthorityCallV1,
+  ): Promise<ExactExecutionInterruptionV1 | JournalDeniedV1 | JournalUnavailableV1>;
+
   authorizeDispatch(
     attempt: ExactAttemptV1,
     call: AuthorityCallV1,
@@ -1881,7 +2076,11 @@ export interface JournalEvidenceProvenanceV1 {
     handle: VerifiedConsumptionV1,
     call: AuthorityCallV1,
   ): Promise<
-    | Readonly<{ operation: ExactConsumptionOperationV1; binding: JournalAttemptBindingV1 }>
+    | Readonly<{
+        operation: ExactConsumptionOperationV1;
+        binding: JournalAttemptBindingV1;
+        executionIntent?: JournalExecutionIntentV1;
+      }>
     | JournalDeniedV1
     | JournalUnavailableV1
   >;

@@ -11,6 +11,9 @@ import {
   parseTurnJournalResultV1,
   parseTurnJournalV1,
   type AdmissionRecordV1,
+  type JournalExecutionIntentV1,
+  type JournalExecutionStartV1,
+  type ExactExecutionInterruptionV1,
   type AttemptRecordV1,
   type CompletionRecordV1,
   type ExactCancellationOperationV1,
@@ -264,6 +267,21 @@ export function parseHeadRow(
 
 export type TurnJournalOperationRow =
   | Readonly<{
+      operationKind: "execution-intent";
+      request: JournalExecutionIntentV1;
+      record: JournalExecutionIntentV1;
+    }>
+  | Readonly<{
+      operationKind: "execution-start";
+      request: JournalExecutionStartV1;
+      record: JournalExecutionStartV1;
+    }>
+  | Readonly<{
+      operationKind: "execution-interruption";
+      request: ExactExecutionInterruptionV1;
+      record: ExactExecutionInterruptionV1;
+    }>
+  | Readonly<{
       operationKind: "checkpoint-allocation";
       request: ExactCheckpointAllocationV1;
       record: ExactCheckpointAllocationV1;
@@ -295,6 +313,39 @@ export type TurnJournalOperationRow =
 export function parseOperationRow(row: TurnJournalRow): TurnJournalOperationRow {
   return read(() => {
     switch (row.operation_kind) {
+      case "execution-intent": {
+        const request = parseTurnJournalV1("executionIntent", row.request);
+        const record = parseTurnJournalV1("executionIntent", row.record);
+        assertAttempt(row, request.execution.attempt);
+        if (
+          text(row, "operation_ref") !== request.operationRef ||
+          !sameJournalValue(request, record)
+        )
+          invalid();
+        return Object.freeze({ operationKind: "execution-intent", request, record });
+      }
+      case "execution-start": {
+        const request = parseTurnJournalV1("executionStart", row.request);
+        const record = parseTurnJournalV1("executionStart", row.record);
+        assertAttempt(row, request.intent.execution.attempt);
+        if (
+          text(row, "operation_ref") !== request.operationRef ||
+          !sameJournalValue(request, record)
+        )
+          invalid();
+        return Object.freeze({ operationKind: "execution-start", request, record });
+      }
+      case "execution-interruption": {
+        const request = parseTurnJournalV1("executionInterruption", row.request);
+        const record = parseTurnJournalV1("executionInterruption", row.record);
+        assertAttempt(row, request.start.intent.execution.attempt);
+        if (
+          text(row, "operation_ref") !== request.operationRef ||
+          !sameJournalValue(request, record)
+        )
+          invalid();
+        return Object.freeze({ operationKind: "execution-interruption", request, record });
+      }
       case "checkpoint-allocation": {
         const request = parseTurnJournalV1("checkpointAllocation", row.request);
         const record = parseTurnJournalV1("checkpointAllocation", row.record);

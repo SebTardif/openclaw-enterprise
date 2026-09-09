@@ -190,6 +190,10 @@ const updateStatus = (s, version, code = "resolved-completed") => ({
   operation: { kind: "update", providerMessageRef: s.providerMessageRef },
 });
 const journalNames = [
+  "findExecution",
+  "findExecutionInterruption",
+  "retainExecutionStart",
+  "retainExecutionInterruption",
   "findAdmission",
   "findAttempt",
   "findCompletion",
@@ -231,10 +235,35 @@ test("M01.2 configured state supplies all repository methods and read-only proje
     assert.deepEqual(Object.keys(unit.turnJournal).sort(), [...journalNames].sort());
   });
   await h.state.read(async (view) => {
-    assert.equal(Object.keys(view.turnJournal).length, 11);
+    assert.equal(Object.keys(view.turnJournal).length, 13);
     assert.equal(view.turnJournal.admit, undefined);
     assert.equal(view.turnJournal.consumeAttempt, undefined);
   });
+});
+
+test("selected execution is explicitly unavailable in the memory journal", async () => {
+  const h = await harness();
+  for (const name of ["findExecution", "findExecutionInterruption"]) {
+    assert.equal((await h.read((j, call) => j[name]({}, call))).kind, "unavailable");
+  }
+  for (const name of ["retainExecutionStart", "retainExecutionInterruption"]) {
+    assert.equal(committed(await h.write((j, call) => j[name]({}, call))).kind, "unavailable");
+  }
+  assert.equal(
+    committed(
+      await h.write((j, call) =>
+        j.consumeAttempt(
+          h.issue("consumption", {
+            operation: h.v.consumption,
+            binding: h.v.binding,
+            executionIntent: {},
+          }),
+          call,
+        ),
+      ),
+    ).kind,
+    "unavailable",
+  );
 });
 
 test("M01.3 configuration is complete, bounded and owned", async () => {
