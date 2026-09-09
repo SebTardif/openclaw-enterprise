@@ -78,3 +78,31 @@ continues to describe its own supported scope.
 
 The living reference will be `docs/reference/workspace-snapshots.md` and records
 actual source behavior, invocation, metadata limits and verification evidence.
+
+## Initial package API and fidelity profile
+
+`snapshots.CaptureProvider` supplies `Capture` and `Inspect` with the shared
+`Capture` observation. The Btrfs package additionally supplies `SnapshotPath`
+after immutable-state inspection, `Export` with snapshot/parent/export IDs, and
+`Fork` returning a distinct writable `Workspace` record. Native receive is a
+controlled qualification operation, not an arbitrary privileged-input service.
+The configured workspace and snapshot roots are on Btrfs; export staging can
+use another filesystem. Roots are pre-provisioned and held by the trusted host.
+
+`portable.Open(root, Limits)` constructs a local repository. Its methods are
+`Capture(ctx, stableSource, snapshots.Provenance)`, `Verify(ctx, snapshotID)`,
+`Diff(ctx, beforeID, afterID)`, and `Restore(ctx, snapshotID, newDestination)`.
+Capture/verify/restore return a versioned manifest; diff returns path changes.
+Limits bound file count, total logical bytes and metadata bytes. Negative limits
+are invalid; zero limits select documented finite defaults.
+
+The initial portable format uses fixed 1 MiB SHA-256 chunks and a deterministic
+flat tree object containing paths, file types, modes and content references.
+Metadata itself is content-addressed. This provides shared content and direct
+root restoration; content-defined chunking and shared directory subtrees remain
+format extensions. The basic profile preserves regular files, directories,
+symlinks and ordinary permission bits. Hard links, special file types and special
+mode bits are rejected. Ownership, timestamps, ACLs and xattrs are outside this
+profile; detected xattrs are rejected rather than silently stripped. The manifest
+names its metadata profile so this output cannot be mistaken for a full machine
+or fully faithful POSIX backup.
