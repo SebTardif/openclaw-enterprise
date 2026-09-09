@@ -13,6 +13,8 @@ import {
   buildHarnessPod,
   buildRegistration,
   buildManagementManifests,
+  normalizeObservedPod,
+  matchesObservedResource,
 } from "../fixtures/spire-first-observation-v1/profile.mjs";
 import {
   parseFrame,
@@ -133,17 +135,6 @@ export function successfulBatch(response) {
     "BATCH_STATUS_FAILED",
   );
   return response.results[0];
-}
-function subset(actual, expected) {
-  if (Array.isArray(expected))
-    return (
-      Array.isArray(actual) &&
-      actual.length === expected.length &&
-      expected.every((v, i) => subset(actual[i], v))
-    );
-  if (expected && typeof expected === "object")
-    return actual && Object.keys(expected).every((k) => subset(actual[k], expected[k]));
-  return actual === expected;
 }
 async function privateFile(filename, expected, filesystemOwnerUID, mode = 0o600) {
   need(path.isAbsolute(filename) && (await realpath(filename)) === filename, "FILE_NOT_CANONICAL");
@@ -909,7 +900,10 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
         );
       }
       validatePodSecurity(comparable, expected.spec);
-      need(subset(comparable, expected.spec), "MANAGEMENT_PROFILE_MISMATCH");
+      need(
+        matchesObservedResource({ ...pod, spec: comparable }, expected),
+        "MANAGEMENT_PROFILE_MISMATCH",
+      );
     }
     for (const [name, key, hash] of [
       [m.trustBundleConfigMap, "bundle.crt", m.trustBundleSHA256],
@@ -946,7 +940,7 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
         expected.metadata.name,
         expected.metadata.namespace,
       );
-      need(subset(actual, expected), "PREPARED_ACCESS_CONFIGURATION_MISMATCH");
+      need(matchesObservedResource(actual, expected), "PREPARED_ACCESS_CONFIGURATION_MISMATCH");
     }
     const expectedPSAT = [
       `cluster:${m.clusterID}`,
@@ -1037,16 +1031,17 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
         if (!ready(pod)) await pause(500, stop);
       } while (!ready(pod));
       const identity = podIdentity(pod, owned.name, p.artifacts.observerImage, owned.uid);
+      const expected = buildHarnessPod(p, owned.case);
+      const comparable = normalizeObservedPod(pod, expected);
       need(
         pod.spec.runtimeClassName === p.runtime.runtimeClassName &&
           pod.spec.automountServiceAccountToken === false &&
-          pod.spec.hostPID === false &&
-          pod.spec.hostNetwork === false &&
-          pod.spec.hostIPC === false &&
+          comparable.spec.hostPID === false &&
+          comparable.spec.hostNetwork === false &&
+          comparable.spec.hostIPC === false &&
           pod.spec.volumes?.length === 1,
         "HARNESS_ISOLATION_MISMATCH",
       );
-      const expected = buildHarnessPod(p, owned.case);
       need(
         pod.metadata.creationTimestamp === owned.createdAt &&
           Number.isSafeInteger(pod.spec.activeDeadlineSeconds) &&
@@ -1069,7 +1064,7 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
         ...observedLifetime,
       });
       validatePodSecurity(pod.spec, expected.spec);
-      need(subset(pod.spec, expected.spec), "HARNESS_PROFILE_MISMATCH");
+      need(matchesObservedResource(pod, expected), "HARNESS_PROFILE_MISMATCH");
       owned.containerId = identity.containerId;
       owned.serviceAccount = pod.spec.serviceAccountName;
       const targets = [

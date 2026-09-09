@@ -40,6 +40,8 @@ import {
   assertServerBootstrapMatches,
   validatePodSecurity,
   validateObservedLifetime,
+  normalizeObservedPod,
+  matchesObservedResource,
 } from "../fixtures/spire-first-observation-v1/profile.mjs";
 import {
   projectNodeObservation,
@@ -651,6 +653,170 @@ test("observer passes explicit Docker configuration to an owned local helper and
       `owned-argv-helper-settled pid=${recorded.pid} exitCode=1 processGroupAbsent=true`,
     );
   });
+});
+
+test("observed Pods admit only omitted false value booleans from the Kubernetes schema", () => {
+  const p = profileFixture();
+  const pods = [
+    ...buildManagementManifests(p).filter((object) => object.kind === "Pod"),
+    buildHarnessPod(p, "a"),
+    buildHarnessPod(p, "b"),
+  ];
+  for (const expected of pods) {
+    // core/v1 omitempty drops false value booleans; explicit pointer false stays.
+    const observed = structuredClone(expected);
+    for (const field of ["hostNetwork", "hostPID", "hostIPC"])
+      if (observed.spec[field] === false) delete observed.spec[field];
+    const original = structuredClone(observed);
+    assert.equal(matchesObservedResource(observed, expected), true);
+    assert.deepEqual(normalizeObservedPod(observed, expected).spec, expected.spec);
+    assert.deepEqual(observed, original);
+    for (const field of ["hostNetwork", "hostPID", "hostIPC"]) {
+      for (const value of [null, 0, "false", !expected.spec[field]]) {
+        const changed = structuredClone(observed);
+        changed.spec[field] = value;
+        assert.equal(matchesObservedResource(changed, expected), false, field);
+      }
+      if (expected.spec[field] === true) {
+        const changed = structuredClone(observed);
+        delete changed.spec[field];
+        assert.equal(
+          matchesObservedResource(changed, expected),
+          false,
+          "required true remains present",
+        );
+      }
+    }
+    for (const field of [
+      "shareProcessNamespace",
+      "enableServiceLinks",
+      "automountServiceAccountToken",
+    ]) {
+      const changed = structuredClone(observed);
+      delete changed.spec[field];
+      assert.equal(matchesObservedResource(changed, expected), false, field);
+    }
+    for (const field of ["privileged", "allowPrivilegeEscalation", "runAsNonRoot"]) {
+      const changed = structuredClone(observed);
+      delete changed.spec.containers[0].securityContext[field];
+      assert.equal(matchesObservedResource(changed, expected), false, field);
+    }
+  }
+});
+
+test("Pod normalization stays at the exact resource and schema fields", () => {
+  const pod = buildHarnessPod(profileFixture(), "a");
+  for (const field of ["hostUsers", "unknown"]) {
+    const expected = structuredClone(pod),
+      observed = structuredClone(pod);
+    expected.spec[field] = false;
+    assert.equal(matchesObservedResource(observed, expected), false);
+  }
+  for (const change of [
+    (object) => {
+      object.kind = "ConfigMap";
+    },
+    (object) => {
+      object.apiVersion = "other/v1";
+    },
+    (object) => {
+      object.spec = { nested: object.spec };
+    },
+  ]) {
+    const expected = structuredClone(pod),
+      observed = structuredClone(pod);
+    delete observed.spec.hostPID;
+    change(expected);
+    change(observed);
+    assert.equal(matchesObservedResource(observed, expected), false);
+  }
+  const observed = structuredClone(pod);
+  observed.spec = null;
+  assert.equal(matchesObservedResource(observed, pod), false);
+  assert.equal(
+    matchesObservedResource(
+      { kind: "ServiceAccount" },
+      {
+        kind: "ServiceAccount",
+        automountServiceAccountToken: false,
+      },
+    ),
+    false,
+  );
+});
+
+test("observed NetworkPolicies admit empty direction omission and retain exact isolation", () => {
+  const policies = buildManagementManifests(profileFixture()).filter(
+    (object) => object.kind === "NetworkPolicy",
+  );
+  for (const expected of policies) {
+    const observed = structuredClone(expected);
+    for (const field of ["ingress", "egress"])
+      if (observed.spec[field].length === 0) delete observed.spec[field];
+    const original = structuredClone(observed);
+    assert.equal(matchesObservedResource(observed, expected), true);
+    assert.deepEqual(observed, original);
+    for (const mutate of [
+      (spec) => {
+        spec.podSelector.matchLabels = { ...spec.podSelector.matchLabels, extra: "other" };
+      },
+      (spec) => {
+        spec.policyTypes.reverse();
+      },
+      (spec) => {
+        delete spec.policyTypes;
+      },
+      (spec) => {
+        spec.policyTypes = ["Ingress"];
+      },
+      (spec) => {
+        spec.egress = null;
+      },
+      (spec) => {
+        spec.ingress = [{}];
+      },
+      (spec) => {
+        spec.egress = [...(spec.egress ?? []), {}];
+      },
+      (spec) => {
+        spec.extra = false;
+      },
+    ]) {
+      const changed = structuredClone(observed);
+      mutate(changed.spec);
+      assert.equal(matchesObservedResource(changed, expected), false);
+    }
+    for (const field of ["ingress", "egress"]) {
+      if (expected.spec[field].length) {
+        const changed = structuredClone(observed);
+        delete changed.spec[field];
+        assert.equal(matchesObservedResource(changed, expected), false);
+        const extraPort = structuredClone(observed);
+        extraPort.spec[field][0].ports.push({ protocol: "TCP", port: 65535 });
+        assert.equal(matchesObservedResource(extraPort, expected), false);
+      }
+    }
+  }
+});
+
+test("observed resource comparison preserves generic authored fields and traversal bounds", () => {
+  assert.equal(
+    matchesObservedResource(
+      { metadata: { name: "x", uid: "generated" } },
+      {
+        metadata: { name: "x" },
+      },
+    ),
+    true,
+  );
+  for (const actual of [null, 0, "false", undefined])
+    assert.equal(matchesObservedResource({ data: actual }, { data: false }), false);
+  assert.equal(matchesObservedResource({ data: {} }, { data: { required: [] } }), false);
+  const wide = { data: Array(513).fill(0) };
+  assert.equal(matchesObservedResource(wide, wide), false);
+  let deep = 0;
+  for (let i = 0; i < 34; i++) deep = { data: deep };
+  assert.equal(matchesObservedResource(deep, deep), false);
 });
 
 test("profile rejects expired allocation, cross-identity collapse and runtime weakening", () => {

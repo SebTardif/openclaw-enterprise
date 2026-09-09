@@ -809,6 +809,95 @@ export function buildManagementManifests(profile) {
   return out;
 }
 
+const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// Kubernetes core/v1 represents these three fields as bool with omitempty.
+// Explicit false pointer booleans and all nested security fields stay strict.
+export function normalizeObservedPod(actual, expected) {
+  if (
+    actual?.apiVersion !== "v1" ||
+    actual?.kind !== "Pod" ||
+    expected?.apiVersion !== "v1" ||
+    expected?.kind !== "Pod" ||
+    !record(actual.spec) ||
+    !record(expected.spec)
+  )
+    return actual;
+  const spec = { ...actual.spec };
+  for (const field of ["hostNetwork", "hostPID", "hostIPC"])
+    if (expected.spec[field] === false && !Object.hasOwn(spec, field)) spec[field] = false;
+  return { ...actual, spec };
+}
+
+// Compare authored fields after only proven Kubernetes JSON equivalences.
+// NetworkPolicy's complete spec stays exact, including empty selectors and rules.
+export function matchesObservedResource(actual, expected) {
+  const policy =
+    expected?.apiVersion === "networking.k8s.io/v1" && expected?.kind === "NetworkPolicy";
+  actual = normalizeObservedPod(actual, expected);
+  if (policy) {
+    const left = expected.spec,
+      right = actual?.spec;
+    const directions = ["Ingress", "Egress"];
+    if (
+      !record(left) ||
+      !record(right) ||
+      !record(left.podSelector) ||
+      Object.keys(left).length !== 4 ||
+      !["podSelector", "policyTypes", "ingress", "egress"].every((key) =>
+        Object.hasOwn(left, key),
+      ) ||
+      !Array.isArray(left.policyTypes) ||
+      !Array.isArray(right.policyTypes) ||
+      left.policyTypes.length !== 2 ||
+      right.policyTypes.length !== 2 ||
+      !directions.every(
+        (value, index) => left.policyTypes[index] === value && right.policyTypes[index] === value,
+      ) ||
+      !Array.isArray(left.ingress) ||
+      !Array.isArray(left.egress)
+    )
+      return false;
+    const spec = { ...right };
+    for (const field of ["ingress", "egress"])
+      if (left[field].length === 0 && !Object.hasOwn(spec, field)) spec[field] = [];
+    actual = { ...actual, spec };
+  }
+  let visited = 0;
+  const compare = (observed, authored, depth, exact = false) => {
+    if (++visited > 4096 || depth > 32) return false;
+    if (Array.isArray(authored))
+      return (
+        Array.isArray(observed) &&
+        authored.length <= 512 &&
+        observed.length === authored.length &&
+        authored.every((value, index) => compare(observed[index], value, depth + 1, exact))
+      );
+    if (record(authored)) {
+      if (!record(observed)) return false;
+      const keys = Object.keys(authored),
+        actualKeys = Object.keys(observed);
+      return (
+        keys.length <= 512 &&
+        actualKeys.length <= 512 &&
+        (!exact || keys.length === actualKeys.length) &&
+        keys.every(
+          (key) =>
+            Object.hasOwn(observed, key) &&
+            compare(
+              observed[key],
+              authored[key],
+              depth + 1,
+              exact || (policy && depth === 0 && key === "spec"),
+            ),
+        )
+      );
+    }
+    return observed === authored;
+  };
+  return compare(actual, expected, 0);
+}
+
 // This rejects additional privilege surfaces; callers also compare the actual
 // Pod against all required fields in the expected manifest.
 export class PodSecurityError extends Error {
