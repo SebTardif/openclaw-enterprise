@@ -35,6 +35,7 @@ import { NamespaceReconciler } from "./worker/namespaces.ts";
 import { WorkerRevisionInputs, validRevisionObservation } from "./worker/revision-inputs.ts";
 import { RevisionReconciler } from "./worker/revisions.ts";
 import { WorkerRunner } from "./worker/runner.ts";
+import { RuntimeFaultWorker } from "./worker/runtime-fault.ts";
 
 export interface ControllerWorkerOptions {
   readonly pool: PostgresPool & PostgresQueryClient;
@@ -372,6 +373,16 @@ export class ControllerWorker {
       effects,
     });
     this.runner = new WorkerRunner({
+      runtimeFaults: new RuntimeFaultWorker({
+        queue: this.queue,
+        findFault: (operation) =>
+          this.state.read(async (view) => {
+            if (view.runtimeEffectAdmission === undefined)
+              throw new Error("The original runtime fault reader is unavailable.");
+            return view.runtimeEffectAdmission.findFaultRequest(operation);
+          }),
+        emit: this.emit,
+      }),
       queue: Object.freeze({
         recoverStale: this.queue.recoverStale.bind(this.queue),
         claim: this.queue.claim.bind(this.queue),

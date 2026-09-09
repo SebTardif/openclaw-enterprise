@@ -18,6 +18,7 @@ import type { RuntimeServiceTrustReadRepository } from "../runtime-authority/ser
 import type { PlatformAuditReadRepository } from "./repositories/audit.ts";
 import type { PlatformOperationReadRepository } from "./repositories/work.ts";
 import type { LifecycleAdmissionReadRepository } from "./repositories/lifecycle-admission.ts";
+import type { RuntimeEffectAdmissionReadRepository } from "./repositories/runtime-effect-admission.ts";
 import type { CredentialInventoryTransactionV1 } from "../credential-inventory-v1/ports.ts";
 
 export type CredentialInventorySafeReadV1 = Pick<
@@ -61,6 +62,7 @@ export function createCredentialInventoryReadProjectionV1(
 }
 
 export interface PlatformReadView {
+  readonly runtimeEffectAdmission?: RuntimeEffectAdmissionReadRepository;
   readonly lifecycleAdmissions: LifecycleAdmissionReadRepository;
   readonly workloadProfiles: WorkloadProfileReadRepository;
   readonly turnJournal?: TurnJournalReadV1;
@@ -87,6 +89,14 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    ...(repositories.runtimeEffectAdmission === undefined
+      ? {}
+      : {
+          runtimeEffectAdmission: bindRepository(repositories.runtimeEffectAdmission, lifetime, [
+            "findGate",
+            "findFaultRequest",
+          ]),
+        }),
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
       "findCommitted",
     ]),

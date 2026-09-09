@@ -125,6 +125,7 @@ import type {
 } from "../credential-inventory-v1/ports.ts";
 import type { CredentialStorageCallBoundsV1 } from "@openclaw-enterprise/contracts/credential-storage-v1";
 import { createPostgresRuntimePreparation } from "./postgres/runtime-preparation.ts";
+import { createPostgresRuntimeEffectAdmission } from "./postgres/runtime-effect-admission.ts";
 import { retainRuntimePreparationOriginV1 } from "./postgres/runtime-preparation-origin.ts";
 import { parseRuntimePreparationSessionOriginV1 } from "../runtime-preparation/origin.ts";
 import type {
@@ -6717,6 +6718,19 @@ export class PostgresPlatformState implements PlatformStateStore {
             },
             this.turnJournal,
           );
+    const runtimeEffectAdmission = createPostgresRuntimeEffectAdmission({
+      get scope() {
+        context.lifetime.assertActive();
+        if (!context.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
+      },
+      transaction: { assertActive: () => context.lifetime.assertActive() },
+      query: { query: (statement, parameters) => context.lifecycleQuery(statement, parameters) },
+      phase: context.lifecyclePhase,
+      requireInitialized: () => this.requireInitialized(context),
+      appendAudit: (event) => this.appendAudit(context, event, context.lifecycleQuery),
+    });
     const lifecycleAdmissions = createPostgresLifecycleAdmission({
       get scope() {
         context.lifetime.assertActive();
@@ -6735,6 +6749,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     });
     return {
       lifecycleAdmissions,
+      runtimeEffectAdmission,
       ...(turnJournal === undefined ? {} : { turnJournal }),
       workloadProfiles,
       runtimePreparation,

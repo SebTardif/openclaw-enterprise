@@ -11,6 +11,51 @@ submit a request, establish current service authority, complete a fence or autho
 a writable successor. The authenticated runtime authority service preserves its
 existing mutation and purpose denials until those accepting dependencies exist.
 
+## Canonical closed gate and fault retention
+
+The PostgreSQL store exposes the optional internal `runtimeEffectAdmission`
+repository. `retainClosedGate` resolves an exact original retained plan and its
+current intent, then initializes one permanently retained Agent gate with both
+ordinary and sealer admission closed. It does not admit previously retained
+children: its admitted cutoff remains zero. Opening either admission class,
+admitting a child, accepting provider fence completion and writable successor
+release remain unsupported.
+
+`retainFaultRequest` is an isolated, provisional storage operation. It retains the
+exact fault bytes and digest, complete expected guard, advancing fence epoch and
+gate version in the existing cleanup responsibility owner. Its intent reference
+remains the original intent; a same-generation fault creates no human lifecycle
+operation or new desired generation. The same transaction retains an independent
+source audit and an exact `ReconcileRuntimeFaultV1` work association. The outer
+service must authenticate the actual fault producer before exposing acceptance;
+the internal storage result is not `RuntimeEffectAdmissionV1` authority.
+
+Original disable/stop intent advancement closes this same gate in its transaction.
+An older runtime-intent writer cannot supersede a retained gate without the exact
+cleanup owner. Gate rows and original cleanup records cannot be deleted or reopened.
+Other source-loss producers, including account/session, IAM and profile withdrawal,
+still require their original accepting integrations before ordinary effects can
+be enabled.
+
+Fault work is a distinct version in the existing controller queue. Its claim and
+restart recovery require the original lifecycle worker role and an independently
+installed fault-work compatibility marker. Without that capability, the record
+remains queued. The worker verifies exact original fault readback and defers the
+same responsibility while the protected provider fence/stop implementation is
+unavailable. It cannot dispatch legacy preparation or repair, exhaust cleanup
+into a terminal state, or treat cancellation as termination.
+
+After an unknown COMMIT, a fresh `findFaultRequest` with the exact original
+operation and digest recovers the retained record. A later gate or lifecycle head
+does not rewrite historical closure. Conflicting bytes fail; neither recovery nor
+an exact replay submits a provider operation. The focused PostgreSQL test exercises
+these storage boundaries with `OCC_RUNTIME_GATE_DATABASE_URL` selecting a dedicated
+loopback database. Its actual worker case additionally requires a separately
+provisioned limited `OCC_RUNTIME_GATE_WORKER_DATABASE_URL` for that same database
+and the operator fixture URL in `OCC_MIGRATION_DATABASE_URL`. The fixture exercises
+claim, deferral, restart recovery and capability withdrawal; it performs no
+provider work. The work-codec test covers strict serialized input.
+
 ## Repository operations
 
 `retain(mutation, attribution)` runs inside the existing OCC transaction. Every

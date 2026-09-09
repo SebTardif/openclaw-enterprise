@@ -164,7 +164,10 @@ export class LifecycleAdmissionUnitPhase {
                   this.mode !== "channel-first-create"
                 )
                   return work();
-                if (name === "lifecycleAdmissions" && method === "applyProtective")
+                if (
+                  (name === "lifecycleAdmissions" && method === "applyProtective") ||
+                  (name === "runtimeEffectAdmission" && method === "retainFaultRequest")
+                )
                   return this.apply(work);
                 return this.other(work);
               },

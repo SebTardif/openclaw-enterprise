@@ -5,12 +5,14 @@ import {
   bigint,
   check,
   foreignKey,
+  index,
   jsonb,
   primaryKey,
   smallint,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   type AnyPgColumn,
   type PgSchema,
   type PgTableExtraConfigValue,
@@ -172,8 +174,25 @@ export function createLifecycleAdmissionTables(
       responsibilityVersion: bigint("responsibility_version", { mode: "number" })
         .$type<1>()
         .notNull(),
-      originKind: text("origin_kind").$type<"lifecycle-protective-v1">().notNull(),
+      originKind: text("origin_kind")
+        .$type<"lifecycle-protective-v1" | "runtime-fault-v1">()
+        .notNull(),
       originOperationRef: text("origin_operation_ref").notNull(),
+      faultRequest: jsonb("fault_request"),
+      faultCanonicalRequest: text("fault_canonical_request"),
+      faultClosedGuard: jsonb("fault_closed_guard"),
+      faultWork: jsonb("fault_work"),
+      faultAuditId: text("fault_audit_id").references(() => parents.auditEvents.id, {
+        onDelete: "restrict",
+        onUpdate: "restrict",
+      }),
+      faultWriterRef: text("fault_writer_ref"),
+      intentRef: text("intent_ref").generatedAlwaysAs(
+        sql`CASE WHEN origin_kind='lifecycle-protective-v1' THEN origin_operation_ref ELSE fault_request#>>'{guard,intentRef}' END`,
+      ),
+      lifecycleAdmissionRef: text("lifecycle_admission_ref").generatedAlwaysAs(
+        sql`CASE WHEN origin_kind='lifecycle-protective-v1' THEN origin_operation_ref ELSE NULL END`,
+      ),
       installationId: text("installation_id").notNull(),
       namespaceId: text("namespace_id").notNull(),
       agentId: text("agent_id").notNull(),
@@ -192,6 +211,12 @@ export function createLifecycleAdmissionTables(
         name: "runtime_cleanup_responsibilities_pk",
         columns: [table.responsibilityRef, table.responsibilityVersion],
       }),
+      uniqueIndex("runtime_fault_work_unique")
+        .on(sql`(${table.faultWork}->>'workId')`)
+        .where(sql`${table.originKind}='runtime-fault-v1'`),
+      index("runtime_fault_pending_owner")
+        .on(table.installationId, table.namespaceId, table.agentId, table.createdAt)
+        .where(sql`${table.originKind}='runtime-fault-v1'`),
       unique("runtime_cleanup_responsibilities_origin_unique").on(
         table.originKind,
         table.originOperationRef,
@@ -206,12 +231,7 @@ export function createLifecycleAdmissionTables(
       ),
       foreignKey({
         name: "runtime_cleanup_responsibilities_intent_owner",
-        columns: [
-          table.namespaceId,
-          table.agentId,
-          table.lifecycleGeneration,
-          table.originOperationRef,
-        ],
+        columns: [table.namespaceId, table.agentId, table.lifecycleGeneration, table.intentRef],
         foreignColumns: [
           parents.agentRuntimeIntents.namespaceId,
           parents.agentRuntimeIntents.agentId,
@@ -248,7 +268,7 @@ export function createLifecycleAdmissionTables(
       // The migration makes this fourth cyclic FK DEFERRABLE INITIALLY DEFERRED.
       foreignKey({
         name: "runtime_cleanup_responsibilities_admission_owner",
-        columns: [table.originOperationRef],
+        columns: [table.lifecycleAdmissionRef],
         foreignColumns: [agentLifecycleAdmissions.operationRef],
       })
         .onUpdate("restrict")
@@ -260,7 +280,16 @@ export function createLifecycleAdmissionTables(
       check("runtime_cleanup_responsibilities_version", sql`${table.responsibilityVersion} = 1`),
       check(
         "runtime_cleanup_responsibilities_origin",
-        sql`${table.originKind} = 'lifecycle-protective-v1' AND ${table.originOperationRef} ~ ${referencePattern}`,
+        sql`(${table.originOperationRef} ~ ${referencePattern} AND (
+          (${table.originKind}='lifecycle-protective-v1' AND ${table.faultRequest} IS NULL
+            AND ${table.faultCanonicalRequest} IS NULL AND ${table.faultClosedGuard} IS NULL AND ${table.faultWork} IS NULL
+            AND ${table.faultAuditId} IS NULL AND ${table.faultWriterRef} IS NULL)
+          OR (${table.originKind}='runtime-fault-v1' AND ${table.responsibilityVersion}=1 AND ${table.faultRequest} IS NOT NULL
+            AND ${table.faultCanonicalRequest} IS NOT NULL AND ${table.faultClosedGuard} IS NOT NULL AND ${table.faultWork} IS NOT NULL
+            AND ${table.faultAuditId} IS NOT NULL AND ${table.faultWriterRef} IS NOT NULL AND ${table.kind} IN ('protective-fence','retained-stop')
+            AND ${table.intentRef} IS NOT NULL AND ${table.predecessorRef}=${table.intentRef} AND ${table.predecessorGeneration}=${table.lifecycleGeneration}
+            AND octet_length(${table.faultRequest}::text)<=1048576 AND octet_length(${table.faultCanonicalRequest})<=1048576
+            AND octet_length(${table.faultWork}::text)<=4096))) IS TRUE`,
       ),
       check(
         "runtime_cleanup_responsibilities_generation",
@@ -399,6 +428,7 @@ export function createLifecycleAdmissionTables(
       workerVersion: smallint("worker_version").$type<1>(),
       maintenanceVersion: smallint("maintenance_version").$type<1>(),
       receivingVersion: smallint("receiving_version").$type<1>(),
+      runtimeFaultVersion: smallint("runtime_fault_version").$type<1>(),
     },
     (table): PgTableExtraConfigValue[] => [
       foreignKey({
@@ -409,6 +439,10 @@ export function createLifecycleAdmissionTables(
         .onUpdate("restrict")
         .onDelete("restrict"),
       check("lifecycle_capabilities_schema_version", sql`${table.schemaVersion} = 1`),
+      check(
+        "lifecycle_capabilities_runtime_fault_version_check",
+        sql`${table.runtimeFaultVersion} IS NULL OR ${table.runtimeFaultVersion}=1`,
+      ),
       check("lifecycle_capabilities_protocol", sql`${table.protocol} = 'lifecycle-control-v1'`),
       check("lifecycle_capabilities_stage", sql`${table.stage} IN ('legacy', 'drain', 'live')`),
       check(

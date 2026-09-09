@@ -73,6 +73,15 @@ An unconfirmed result is not proof that a transaction rolled back or cannot stil
 
 The installed queue still supports namespace reconciliation and revision-backed Agent reconciliation. Its work objects use `Date` timestamps, optional legacy association fields, a claim token and a lease; PostgreSQL nulls are represented by omitted optional fields. The installed parsers preserve these representations and reject incomplete pairs. They do not create a database row or issue a claim.
 
+The same PostgreSQL queue also retains a distinct `ReconcileRuntimeFaultV1`
+cleanup variant. Its exact original fault digest, intent, responsibility, gate
+version and fence epoch stay separate from a human lifecycle transition. Claiming
+it requires the original lifecycle worker capability and installed fault-work
+compatibility. The dispatcher retains pending responsibility while provider
+fencing is unavailable; it never sends that work to running preparation or
+declares physical stop from a queue result. See [canonical closed gate and fault
+retention](runtime-preparation.md#canonical-closed-gate-and-fault-retention).
+
 Installed deploy work has identity `agent_revision:<revisionId>:reconcile`. That revision-keyed identity cannot represent repeated material lifecycle commands on the same retained revision. The current child-work schema also requires a revision and its admission association. Nullable protective intent, resume and the new handler therefore cannot be silently translated into installed work. The pure correspondence helper reports unsupported transitions rather than constructing an enqueue operation. A real versioned queue codec, constraints, dispatcher and handler must be integrated together before any new capability can enqueue work.
 
 Historical association comparison and current head/claim preflight are separate operations. A historical match can survive head advancement and terminal work. A supplied current snapshot can reject a stale generation, owner or claim, but it supplies no authentic clock, service provenance, current policy or effect authority. Queue lease expiry does not prove cancellation, physical termination or writer exclusion.

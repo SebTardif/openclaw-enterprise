@@ -22,9 +22,11 @@ import type { RuntimeAuthorityRepository } from "../runtime-authority/repository
 import type { RuntimePreparationRepository } from "./repositories/runtime-preparation.ts";
 import type { RuntimeServiceTrustRepository } from "../runtime-authority/service-trust.ts";
 import type { LifecycleAdmissionRepository } from "./repositories/lifecycle-admission.ts";
+import type { RuntimeEffectAdmissionRepository } from "./repositories/runtime-effect-admission.ts";
 import type { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly runtimeEffectAdmission?: RuntimeEffectAdmissionRepository;
   readonly lifecycleAdmissions: LifecycleAdmissionRepository;
   readonly workloadProfiles: WorkloadProfileRepository;
   readonly turnJournal?: TurnJournalUnitOfWorkV1;
@@ -59,6 +61,16 @@ export function bindPlatformUnitOfWork(
   },
 ): PlatformUnitOfWork {
   const unit: PlatformUnitOfWork = Object.freeze({
+    ...(repositories.runtimeEffectAdmission === undefined
+      ? {}
+      : {
+          runtimeEffectAdmission: bindRepository(repositories.runtimeEffectAdmission, lifetime, [
+            "findGate",
+            "findFaultRequest",
+            "retainClosedGate",
+            "retainFaultRequest",
+          ]),
+        }),
     lifecycleAdmissions: bindRepository(repositories.lifecycleAdmissions, lifetime, [
       "findCommitted",
       "applyProtective",

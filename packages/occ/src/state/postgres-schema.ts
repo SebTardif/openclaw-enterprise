@@ -16,6 +16,7 @@ import { serviceAccounts } from "./schema/service-account.ts";
 export { occSchema, installation, namespaces, configurations, secrets, serviceAccounts };
 import { createWorkloadProfileTables } from "./postgres/workload-profile-schema.ts";
 import { createLifecycleAdmissionTables } from "./postgres/lifecycle-admission-schema.ts";
+import { createRuntimeEffectAdmissionTables } from "./postgres/runtime-effect-admission-schema.ts";
 import { createSecurityEventDeliveryTablesV1 } from "./postgres/security-event-delivery-schema-v1.ts";
 import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import { createGatewayStartupTablesV2 } from "./postgres/gateway-startup-schema.ts";
@@ -700,6 +701,12 @@ export const {
   workloadProfileAdmissionHistory,
   workloadProfileInvalidations,
 } = createWorkloadProfileAdmissionTablesV2(occSchema, { installation, namespaces });
+
+export const { runtimeEffectGates } = createRuntimeEffectAdmissionTables(occSchema, {
+  installation,
+  agents,
+  runtimePreparationOperations,
+});
 
 /** Inert preparation history; these records never confer admission authority. */
 export const { workloadProfileCapacity, workloadProfileOperations } = createWorkloadProfileTables(
