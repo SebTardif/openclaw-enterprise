@@ -161,6 +161,35 @@ test("the reviewed pnpm preparation policy preserves complete workspace checks",
   assert.equal(check(checkDevelopmentSetup(root), "dependencies").status, "incomplete");
 });
 
+test("pinned build approvals preserve workspace checks before and after package entries", (t) => {
+  const root = fixture(t);
+  const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+  const builds =
+    "allowBuilds:\n  esbuild@0.18.20: true\n  esbuild@0.25.12: true\n  esbuild@0.28.2: true\n  @fixture/build@1.0.0: false\n";
+  for (const content of [`${builds}\n${workspace}`, `${workspace}\n${builds}`]) {
+    put(root, "pnpm-workspace.yaml", `verifyDepsBeforeRun: error\n\n${content}`);
+    const report = checkDevelopmentSetup(root);
+    assert.equal(check(report, "lock-importers").status, "ok");
+    assert.equal(check(report, "packages/consumer:pino").status, "ok");
+    assert.equal(check(report, "packages/consumer:fixture-sibling").status, "ok");
+    assert.equal(check(report, "dependencies"), undefined);
+  }
+});
+
+test("unsupported build policy syntax cannot hide incomplete workspace metadata", (t) => {
+  const root = fixture(t);
+  const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+  for (const policy of [
+    "  esbuild@0.28.2: install",
+    "  esbuild@0.28.2:\n    enabled: true",
+    "  - packages/hidden",
+    "  esbuild@0.28.2: true\nunknownSetting: true",
+  ]) {
+    put(root, "pnpm-workspace.yaml", `allowBuilds:\n${policy}\n\n${workspace}`);
+    assert.equal(check(checkDevelopmentSetup(root), "dependencies").status, "incomplete");
+  }
+});
+
 test("SDK dependency links must retain the identities in the preparation receipt", (t) => {
   const root = fixture(t);
   const target = join(root, "external-dependency");

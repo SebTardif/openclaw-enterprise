@@ -888,7 +888,8 @@ create its Secret in the controller namespace. Keep key files outside Git:
 ```sh
 umask 077
 python3 -c 'import secrets; print(secrets.token_hex(32), end="")' > /secure/operator/gateway-api-key
-kubectl -n openclaw-system create secret generic occ-private-gateway-key \
+kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
+  -n openclaw-system create secret generic occ-private-gateway-key \
   --from-file=occ=/secure/operator/gateway-api-key
 ```
 
@@ -1101,7 +1102,8 @@ This does not revoke the key or remove protected bootstrap storage.
 Inventory tenant workloads before uninstalling the control plane:
 
 ```bash
-helm uninstall oce --namespace openclaw-system
+helm uninstall oce --namespace openclaw-system \
+  --kubeconfig "$KUBECONFIG_FILE" --kube-context "$CONTEXT"
 ```
 
 Helm does not own external PostgreSQL, operator-created Secrets, bootstrap PVCs,

@@ -45,19 +45,34 @@ function importers(text) {
 
 function workspacePaths(text) {
   const paths = [];
-  let packages = false;
+  let section;
   for (const line of text.split("\n")) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
     if (line === "verifyDepsBeforeRun: error") {
-      packages = false;
+      section = undefined;
       continue;
     }
     if (line === "packages:") {
-      packages = true;
+      section = "packages";
+      continue;
+    }
+    if (line === "allowBuilds:") {
+      section = "allowBuilds";
+      continue;
+    }
+    // Recognize the workspace's pinned boolean build policy without executing
+    // hooks or accepting arbitrary YAML outside the checked metadata subset.
+    if (section === "allowBuilds") {
+      if (
+        !/^  (?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*@\d+\.\d+\.\d+: (?:true|false)$/.test(
+          line,
+        )
+      )
+        throw new Error("Unsupported build policy layout");
       continue;
     }
     const match = /^  - (.+)$/.exec(line);
-    if (!packages || !match) throw new Error("Unsupported workspace layout");
+    if (section !== "packages" || !match) throw new Error("Unsupported workspace layout");
     const path = scalar(match[1]);
     if (path.startsWith("!")) continue;
     if (!/^(apps|packages)\/[a-zA-Z0-9_-]+$/.test(path))

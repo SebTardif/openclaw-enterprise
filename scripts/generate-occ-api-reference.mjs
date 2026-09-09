@@ -99,19 +99,20 @@ function schemaTable(schema, document) {
 }
 
 function operationReference(path, method, operation, document) {
+  const permissions = operation["x-openclaw-permissions"] ?? [];
   const sections = [
     `### \`${method.toUpperCase()} ${path}\``,
     operation.summary ?? "No summary.",
     `**Operation ID:** \`${operation.operationId ?? `${method}_${path}`}\``,
-    `**Permissions:** ${operation.description ?? "No IAM permission required."}`,
+    `**Permissions:** ${operation.description ?? (permissions.length ? "Requires the IAM permissions below." : "No IAM permission required.")}`,
   ];
 
-  if (operation["x-openclaw-permissions"]?.length) {
+  if (permissions.length) {
     sections.push(
       [
         "| Action | Resource | Scope |",
         "| --- | --- | --- |",
-        ...operation["x-openclaw-permissions"].map(({ action, resourceKind, scope, condition }) => {
+        ...permissions.map(({ action, resourceKind, scope, condition }) => {
           const qualifier =
             condition === "associated_service_account"
               ? " (when associated)"

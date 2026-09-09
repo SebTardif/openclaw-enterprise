@@ -2897,6 +2897,299 @@ Recover an exact operator service trust operation
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | — |
 
+## Workload profiles
+
+### `POST /workload-profile-operations`
+
+Prepare an exact immutable workload profile operation
+
+**Operation ID:** `prepareWorkloadProfile`
+
+**Permissions:** Requires the IAM permissions below.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+Schema: `object or object or object or object`.
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `202` | Accepted |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.action` | `"admit" or "replace" or "withdraw"` | Yes | — |
+| `data.kind` | `"acknowledged"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scope` | `object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+**`202` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.kind` | `"commit-unknown"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.recovery` | `"exact-readback-only"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /workload-profile-operations/{operationRef}`
+
+Read an original-actor workload profile operation with current read and administer authority
+
+**Operation ID:** `getWorkloadProfileOperation`
+
+**Permissions:** Requires the IAM permissions below.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `operationRef` | path | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.action` | `"admit" or "replace"` | Yes | — |
+| `data.kind` | `"inert-preparation"` | Yes | — |
+| `data.manifest` | `object` | Yes | — |
+| `data.manifest.canonicalUtf8` | `string` | Yes | min length: 1; max length: 65536 |
+| `data.manifest.format` | `"oce.workload-profile.canonical-json.v1"` | Yes | — |
+| `data.manifest.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.preparedAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.scope` | `object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `POST /workload-profile-operations/{operationRef}/accept`
+
+Accept the exact retained workload profile operation
+
+**Operation ID:** `acceptWorkloadProfile`
+
+**Permissions:** Requires the IAM permissions below.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `operationRef` | path | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `202` | Accepted |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.action` | `"admit" or "replace" or "withdraw"` | Yes | — |
+| `data.kind` | `"acknowledged"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scope` | `object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+**`202` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.kind` | `"commit-unknown"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.recovery` | `"exact-readback-only"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `GET /workload-profiles/{admissionRef}`
+
+Read a retained workload profile with current read and administer authority
+
+**Operation ID:** `getWorkloadProfile`
+
+**Permissions:** Requires the IAM permissions below.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `admissionRef` | path | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.manifest` | `object` | Yes | — |
+| `data.manifest.canonicalUtf8` | `string` | Yes | min length: 1; max length: 65536 |
+| `data.manifest.format` | `"oce.workload-profile.canonical-json.v1"` | Yes | — |
+| `data.manifest.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.scope` | `object or object` | Yes | — |
+| `data.selection` | `object` | Yes | — |
+| `data.selection.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.selection.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.selection.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `data.selection.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.status` | `"active" or "withdrawn"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+### `POST /workload-profiles/{admissionRef}/withdraw`
+
+Consume the admission-owned reserved terminal template
+
+**Operation ID:** `withdrawWorkloadProfile`
+
+**Permissions:** Requires the IAM permissions below.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+#### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `admissionRef` | path | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `expectedAdmission` | `object` | Yes | — |
+| `expectedAdmission.admissionRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `expectedAdmission.admissionVersion` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `expectedAdmission.manifestDigest` | `string` | Yes | min length: 71; max length: 71; pattern: `^sha256:[0-9a-f]{64}$` |
+| `expectedAdmission.manifestRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `schemaVersion` | `2` | Yes | — |
+
+#### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `202` | Accepted |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.action` | `"admit" or "replace" or "withdraw"` | Yes | — |
+| `data.kind` | `"acknowledged"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.scope` | `object or object` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+**`202` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.kind` | `"commit-unknown"` | Yes | — |
+| `data.operationRef` | `string` | Yes | min length: 36; max length: 36; pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.recovery` | `"exact-readback-only"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
 ## Shared schemas
 
 ### `SafeJsonValue`

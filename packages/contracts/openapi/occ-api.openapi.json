@@ -13275,6 +13275,1400 @@
           { "action": "administer", "resourceKind": "installation", "scope": "installation" }
         ]
       }
+    },
+    "/workload-profile-operations": {
+      "post": {
+        "operationId": "prepareWorkloadProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": { "const": "admit", "type": "string" },
+                          "component": { "const": "harness", "type": "string" },
+                          "expectedAdmission": { "type": "null" },
+                          "manifest": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "canonicalUtf8": {
+                                "maxLength": 65536,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "format": {
+                                "const": "oce.workload-profile.canonical-json.v1",
+                                "type": "string"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["format", "canonicalUtf8", "manifestDigest"],
+                            "type": "object"
+                          },
+                          "namespaceId": {
+                            "maxLength": 39,
+                            "minLength": 39,
+                            "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "operationRef": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "schemaVersion": { "const": 1, "type": "number" }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "operationRef",
+                          "namespaceId",
+                          "component",
+                          "manifest",
+                          "action",
+                          "expectedAdmission"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": { "const": "replace", "type": "string" },
+                          "component": { "const": "harness", "type": "string" },
+                          "expectedAdmission": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "admissionRef": {
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "admissionVersion": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              },
+                              "manifestRef": {
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "manifestRef",
+                              "manifestDigest",
+                              "admissionRef",
+                              "admissionVersion"
+                            ],
+                            "type": "object"
+                          },
+                          "manifest": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "canonicalUtf8": {
+                                "maxLength": 65536,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "format": {
+                                "const": "oce.workload-profile.canonical-json.v1",
+                                "type": "string"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["format", "canonicalUtf8", "manifestDigest"],
+                            "type": "object"
+                          },
+                          "namespaceId": {
+                            "maxLength": 39,
+                            "minLength": 39,
+                            "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "operationRef": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "schemaVersion": { "const": 1, "type": "number" }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "operationRef",
+                          "namespaceId",
+                          "component",
+                          "manifest",
+                          "action",
+                          "expectedAdmission"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": { "const": "admit", "type": "string" },
+                          "component": { "const": "gateway-harness-pair", "type": "string" },
+                          "expectedAdmission": { "type": "null" },
+                          "manifest": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "canonicalUtf8": {
+                                "maxLength": 65536,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "format": {
+                                "const": "oce.workload-profile.canonical-json.v1",
+                                "type": "string"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["format", "canonicalUtf8", "manifestDigest"],
+                            "type": "object"
+                          },
+                          "namespaceId": {
+                            "maxLength": 39,
+                            "minLength": 39,
+                            "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "operationRef": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "schemaVersion": { "const": 2, "type": "number" }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "operationRef",
+                          "namespaceId",
+                          "component",
+                          "manifest",
+                          "action",
+                          "expectedAdmission"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": { "const": "replace", "type": "string" },
+                          "component": { "const": "gateway-harness-pair", "type": "string" },
+                          "expectedAdmission": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "admissionRef": {
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              },
+                              "admissionVersion": {
+                                "maximum": 9007199254740991,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              },
+                              "manifestRef": {
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "manifestRef",
+                              "manifestDigest",
+                              "admissionRef",
+                              "admissionVersion"
+                            ],
+                            "type": "object"
+                          },
+                          "manifest": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "canonicalUtf8": {
+                                "maxLength": 65536,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "format": {
+                                "const": "oce.workload-profile.canonical-json.v1",
+                                "type": "string"
+                              },
+                              "manifestDigest": {
+                                "maxLength": 71,
+                                "minLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["format", "canonicalUtf8", "manifestDigest"],
+                            "type": "object"
+                          },
+                          "namespaceId": {
+                            "maxLength": 39,
+                            "minLength": 39,
+                            "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "operationRef": {
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "schemaVersion": { "const": 2, "type": "number" }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "operationRef",
+                          "namespaceId",
+                          "component",
+                          "manifest",
+                          "action",
+                          "expectedAdmission"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "anyOf": [
+                            { "const": "admit", "type": "string" },
+                            { "const": "replace", "type": "string" },
+                            { "const": "withdraw", "type": "string" }
+                          ]
+                        },
+                        "kind": { "const": "acknowledged", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "harness", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "gateway-harness-pair", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["kind", "operationRef", "action", "scope"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": { "const": "commit-unknown", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "recovery": { "const": "exact-readback-only", "type": "string" }
+                      },
+                      "required": ["kind", "operationRef", "recovery"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Prepare an exact immutable workload profile operation",
+        "tags": ["Workload profiles"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/workload-profile-operations/{operationRef}": {
+      "get": {
+        "operationId": "getWorkloadProfileOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operationRef",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "anyOf": [
+                            { "const": "admit", "type": "string" },
+                            { "const": "replace", "type": "string" }
+                          ]
+                        },
+                        "kind": { "const": "inert-preparation", "type": "string" },
+                        "manifest": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "canonicalUtf8": {
+                              "maxLength": 65536,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "format": {
+                              "const": "oce.workload-profile.canonical-json.v1",
+                              "type": "string"
+                            },
+                            "manifestDigest": {
+                              "maxLength": 71,
+                              "minLength": 71,
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": ["format", "canonicalUtf8", "manifestDigest"],
+                          "type": "object"
+                        },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "preparedAt": {
+                          "format": "date-time",
+                          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "harness", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "gateway-harness-pair", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "operationRef",
+                        "action",
+                        "scope",
+                        "manifest",
+                        "preparedAt"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Read an original-actor workload profile operation with current read and administer authority",
+        "tags": ["Workload profiles"],
+        "x-openclaw-permissions": [
+          { "action": "read", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/workload-profile-operations/{operationRef}/accept": {
+      "post": {
+        "operationId": "acceptWorkloadProfile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operationRef",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "anyOf": [
+                            { "const": "admit", "type": "string" },
+                            { "const": "replace", "type": "string" },
+                            { "const": "withdraw", "type": "string" }
+                          ]
+                        },
+                        "kind": { "const": "acknowledged", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "harness", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "gateway-harness-pair", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["kind", "operationRef", "action", "scope"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": { "const": "commit-unknown", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "recovery": { "const": "exact-readback-only", "type": "string" }
+                      },
+                      "required": ["kind", "operationRef", "recovery"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Accept the exact retained workload profile operation",
+        "tags": ["Workload profiles"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/workload-profiles/{admissionRef}": {
+      "get": {
+        "operationId": "getWorkloadProfile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admissionRef",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "manifest": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "canonicalUtf8": {
+                              "maxLength": 65536,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "format": {
+                              "const": "oce.workload-profile.canonical-json.v1",
+                              "type": "string"
+                            },
+                            "manifestDigest": {
+                              "maxLength": 71,
+                              "minLength": 71,
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": ["format", "canonicalUtf8", "manifestDigest"],
+                          "type": "object"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "harness", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "gateway-harness-pair", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "selection": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "admissionRef": {
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            },
+                            "admissionVersion": {
+                              "maximum": 9007199254740991,
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "manifestDigest": {
+                              "maxLength": 71,
+                              "minLength": 71,
+                              "pattern": "^sha256:[0-9a-f]{64}$",
+                              "type": "string"
+                            },
+                            "manifestRef": {
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "manifestRef",
+                            "manifestDigest",
+                            "admissionRef",
+                            "admissionVersion"
+                          ],
+                          "type": "object"
+                        },
+                        "status": {
+                          "anyOf": [
+                            { "const": "active", "type": "string" },
+                            { "const": "withdrawn", "type": "string" }
+                          ]
+                        }
+                      },
+                      "required": ["scope", "selection", "status", "manifest"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Read a retained workload profile with current read and administer authority",
+        "tags": ["Workload profiles"],
+        "x-openclaw-permissions": [
+          { "action": "read", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
+    "/workload-profiles/{admissionRef}/withdraw": {
+      "post": {
+        "operationId": "withdrawWorkloadProfile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admissionRef",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedAdmission": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "admissionRef": {
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "admissionVersion": {
+                        "maximum": 9007199254740991,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "manifestDigest": {
+                        "maxLength": 71,
+                        "minLength": 71,
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "manifestRef": {
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "manifestRef",
+                      "manifestDigest",
+                      "admissionRef",
+                      "admissionVersion"
+                    ],
+                    "type": "object"
+                  },
+                  "operationRef": {
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  },
+                  "schemaVersion": { "const": 2, "type": "number" }
+                },
+                "required": ["schemaVersion", "operationRef", "expectedAdmission"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "action": {
+                          "anyOf": [
+                            { "const": "admit", "type": "string" },
+                            { "const": "replace", "type": "string" },
+                            { "const": "withdraw", "type": "string" }
+                          ]
+                        },
+                        "kind": { "const": "acknowledged", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "harness", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "component": { "const": "gateway-harness-pair", "type": "string" },
+                                "installationId": {
+                                  "maxLength": 40,
+                                  "minLength": 40,
+                                  "pattern": "^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                },
+                                "namespaceId": {
+                                  "maxLength": 39,
+                                  "minLength": 39,
+                                  "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["installationId", "namespaceId", "component"],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["kind", "operationRef", "action", "scope"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": { "const": "commit-unknown", "type": "string" },
+                        "operationRef": {
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "recovery": { "const": "exact-readback-only", "type": "string" }
+                      },
+                      "required": ["kind", "operationRef", "recovery"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "413": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "415": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "summary": "Consume the admission-owned reserved terminal template",
+        "tags": ["Workload profiles"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
     }
   },
   "security": [{ "sessionCookie": [] }, { "serviceApiKey": [] }]
