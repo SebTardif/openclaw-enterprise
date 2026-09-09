@@ -12,6 +12,7 @@ import {
   ResourceConflictError,
   ScopeViolationError,
 } from "@openclaw-enterprise/occ";
+import { WorkloadProfilePrerequisiteErrorV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import { responseHeaders } from "./transport.ts";
 
 export interface ErrorDetail {
@@ -135,7 +136,10 @@ export function requestFailure(error: unknown): RequestFailure {
     );
   if (error instanceof NamespaceNotEmptyError)
     return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
-  if (error instanceof DependencyUnavailableError)
+  if (
+    error instanceof DependencyUnavailableError ||
+    error instanceof WorkloadProfilePrerequisiteErrorV2
+  )
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   if (error instanceof ResourceConflictError)
     return failure(409, "RESOURCE_CONFLICT", "The requested platform resource already exists.");

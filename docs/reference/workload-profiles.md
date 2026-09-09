@@ -102,6 +102,14 @@ Production now passes the actual PostgreSQL candidate context/records and insert
 
 The focused operator and request-custody suites cover the registered HTTP boundary, actual BetterAuth sign-in with memory storage refusal, exact purpose/command consumption, replay refusal and cancellation-held cleanup. Controlled session-reader cases do not prove PostgreSQL writer exclusion. A separate allocated PostgreSQL production request must verify successful inert preparation/readback, current-account revocation and unchanged record counts after failed acceptance before those behaviors are treated as runtime evidence. No successful full profile deployment is claimed by this source increment.
 
+## PostgreSQL development composition and verification boundary
+
+PostgreSQL development also connects the registered operator routes to the original service, authenticated request/account/session custody and selected IAM. It passes the captured candidate context/records and inserted-row storage to the candidate source, capability aggregator, selector and Use resolver. The same aggregator serves definition acceptance, Use acquisition and inserted-row revalidation. The independent immutable renderer-definition custodian, complete contributors and candidate qualifiers remain required; missing suppliers remain unavailable.
+
+The bounded PostgreSQL development check covers authenticated inert preparation, exact original-actor readback, current-session and request refusals, and genuine missing-contributor acceptance refusal. Failed acceptance must leave active admissions, retained history, capacity, successful acceptance audits and Compute effects unchanged. These observations must identify the exact receiving source, composition and database permissions.
+
+A temporary isolated-fixture grant to existing `occ_app` of `EXECUTE` on `occ.read_locked_workload_profile_session_v1(text,text,text,text,text,text)` establishes only that fixture permission. Retain inner-helper and direct-account-record denial, revoke the grant after all application work joins, and verify restoration of the original outer-function ACL. This component check does not establish production role enrollment, complete profile admission or physical/provider support. An accepted private result does not establish behavior at a different receiving revision, composition or permission setup.
+
 ## Selected native construction data
 
 The selected native definition decoder validates a bounded, closed construction

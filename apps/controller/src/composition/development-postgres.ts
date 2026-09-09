@@ -1,5 +1,6 @@
 import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
 import { startRuntimeAuthorityReadback } from "./runtime-authority-readback.ts";
+import { composeSelectedComputeRendererContribution } from "./driver-factories/compute.ts";
 import pg from "pg";
 import type { AuditEventFactory } from "@openclaw-enterprise/audit";
 import type {
@@ -19,8 +20,19 @@ import {
   type ControllerOptions,
   PostgresPlatformState,
 } from "@openclaw-enterprise/occ";
-import { createWorkloadProfilePurposeAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
-import { createWorkloadProfileUseResolverV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import {
+  createWorkloadProfilePurposeAccountParticipantV1,
+  createWorkloadProfileOperatorAccountParticipantV1,
+} from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import {
+  createWorkloadProfileUseResolverV2,
+  createWorkloadProfileCandidateBindingsSourceV2,
+  createWorkloadProfileCandidateSourceV2,
+  createWorkloadProfileCapabilityAggregatorV2,
+} from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import { createAdmittedWorkloadProfileSelectorV2 } from "@openclaw-enterprise/occ/workload-profiles/selection";
+import { createWorkloadProfileService } from "@openclaw-enterprise/occ/services/workload-profile/service";
+import type { WorkloadProfileServicePort } from "@openclaw-enterprise/occ/services/workload-profile/port";
 import { createPostgresControllerAuth } from "../auth/index.ts";
 import { createControllerWorkloadProfileSessionSecurityV1 } from "../auth/workload-profile-session-security.ts";
 import { createDockerDevelopmentComputeDriverFromEnv } from "../drivers/compute/docker/index.ts";
@@ -147,6 +159,7 @@ export async function composePostgresDevelopment(
     };
 
     const loggingLevel = config.logging?.level ?? drivers?.installation.logging.level;
+    let workloadProfileService: WorkloadProfileServicePort | undefined;
     const controller = new OpenClawController(persistedInstallation, {
       state,
       reservedChannelInstallationCreate: Object.freeze<
@@ -167,23 +180,55 @@ export async function composePostgresDevelopment(
             requests: workloadProfileRequests,
             reader: state.workloadProfileSessionSecurityV1(),
           });
-          const account = createWorkloadProfilePurposeAccountParticipantV1({
+          const accountSources = {
             owner: state.workloadProfileAccountOwnerV1(),
             requests: workloadProfileRequests.requests,
             security,
-          });
+          };
+          const account = createWorkloadProfilePurposeAccountParticipantV1(accountSources);
           const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
           const candidateContext = state.workloadProfileCandidateContextV2(
             context.selection,
             context.candidateNormalizer,
             context.candidateOperations,
           );
+          const renderer = composeSelectedComputeRendererContribution(
+            computeDriver,
+            context.selection,
+            state.workloadProfileSourceEnrollmentV2(context.selection),
+          );
+          // Only the original selected Compute factory can supply this renderer.
+          // TODO(CTL-02): install its immutable-definition custodian and genuine
+          // runtime, identity, credential and storage complete contributors.
+          const capabilities = createWorkloadProfileCapabilityAggregatorV2({
+            ...(renderer === undefined ? {} : { renderer }),
+          });
+          // TODO(CTL-02): compose the original native, credential, storage and role
+          // qualifiers. Captured records alone leave candidate bindings unavailable.
+          const bindings = createWorkloadProfileCandidateBindingsSourceV2(candidateContext.records);
+          const candidates = createWorkloadProfileCandidateSourceV2(
+            candidateContext.contexts,
+            bindings,
+          );
+          const selector = createAdmittedWorkloadProfileSelectorV2(
+            state.workloadProfileSelectionStorageV2(),
+            capabilities,
+          );
+          workloadProfileService = createWorkloadProfileService({
+            state,
+            selection: context.selection,
+            account: createWorkloadProfileOperatorAccountParticipantV1(accountSources),
+            definitions: capabilities,
+          });
           return {
             enrollment: profile.enrollment,
             candidates: candidateContext.candidates,
-            // TODO: Compose the candidate provider with genuine bindings, complete
-            // capability and inserted-row sources. Preparing Use stays unavailable.
-            use: createWorkloadProfileUseResolverV2(profile.activeReader),
+            use: createWorkloadProfileUseResolverV2(
+              profile.activeReader,
+              candidates,
+              capabilities,
+              selector,
+            ),
           };
         },
       },
@@ -257,7 +302,10 @@ export async function composePostgresDevelopment(
             configPath: config.runtimeAuthorityReadbackConfigPath,
             binaryPath,
           });
+    if (workloadProfileService === undefined)
+      throw new Error("The original workload profile composition was not constructed.");
     const app = createFastifyApp({
+      workloadProfileService,
       workloadProfileRequests,
       controller,
       ...(runtimeServiceTrust === undefined ? {} : { runtimeServiceTrust }),

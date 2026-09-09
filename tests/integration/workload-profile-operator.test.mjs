@@ -6,6 +6,8 @@ import { ErrorResponse } from "../../packages/contracts/src/api/common.ts";
 import { workloadProfileApiRoutes } from "../../packages/contracts/src/api/workload-profile/routes.ts";
 import { createWorkloadProfileService } from "../../packages/occ/src/services/workload-profile/service.ts";
 import { DependencyUnavailableError } from "../../packages/occ/src/errors.ts";
+import { createWorkloadProfileCapabilityAggregatorV2 } from "../../packages/occ/src/workload-profiles/admitted-use.ts";
+import { WorkloadProfileSelectionError } from "../../packages/occ/src/workload-profiles/selection.ts";
 import {
   createWorkloadProfileOperationHandlers,
   installWorkloadProfileJsonParser,
@@ -121,6 +123,63 @@ test("valid operator wire requests have no successful path through missing autho
     assert.equal(response.body.includes(prepare.operationRef), false);
   }
 });
+// Negative error-boundary injection only: the actual unqualified aggregator
+// produces the error, while this fixture supplies no positive request authority.
+for (const method of ["verifyDefinitionLocked", "acquire"])
+  test(`missing workload-profile contributors in ${method} return a redacted dependency response`, async (t) => {
+    const definitions = createWorkloadProfileCapabilityAggregatorV2();
+    const service = {
+      ...createWorkloadProfileService(),
+      accept: async () => definitions[method](),
+    };
+    const app = await appFixture(service);
+    t.after(() => app.close());
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/workload-profile-operations/${randomUUID()}/accept`,
+    });
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(response.json().error, {
+      code: "DEPENDENCY_UNAVAILABLE",
+      message: "A required platform dependency is unavailable.",
+    });
+    assert.equal(Object.hasOwn(response.json(), "data"), false);
+    assert.equal(response.body.includes("prerequisites"), false);
+    for (const name of ["renderer", "runtime", "identity", "credentials", "storage"])
+      assert.equal(response.body.includes(name), false);
+  });
+
+test("unrelated selection and generic failures retain the redacted internal-error response", async (t) => {
+  for (const error of [
+    new WorkloadProfileSelectionError("selection-mismatch"),
+    Object.assign(new Error("private-error-sentinel"), {
+      name: "WorkloadProfilePrerequisiteErrorV2",
+      code: "unavailable",
+      prerequisites: ["private-prerequisite-sentinel"],
+    }),
+  ]) {
+    const app = await appFixture({
+      ...createWorkloadProfileService(),
+      accept: async () => {
+        throw error;
+      },
+    });
+    t.after(() => app.close());
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/workload-profile-operations/${randomUUID()}/accept`,
+    });
+    assert.equal(response.statusCode, 500);
+    assert.deepEqual(response.json().error, {
+      code: "INTERNAL_ERROR",
+      message: "The platform request could not be completed.",
+    });
+    assert.equal(Object.hasOwn(response.json(), "data"), false);
+    assert.equal(response.body.includes("private-"), false);
+    assert.equal(response.body.includes("selection-mismatch"), false);
+  }
+});
+
 test("operator contract rejects supplied actor/session/Installation authority fields", async (t) => {
   const app = await appFixture();
   t.after(() => app.close());
