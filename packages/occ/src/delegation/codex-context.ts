@@ -1,7 +1,7 @@
 import { isMediationContextRef } from "./grant-contract.ts";
 
 export const CODEX_CONTEXT_LIMITS = Object.freeze({
-  bodyBytes: 1_048_576,
+  bodyBytes: 16_777_216,
   metadataBytes: 8_192,
   jsonDepth: 64,
   jsonValues: 20_000,

@@ -120,3 +120,33 @@ test("raw UTF-8, body/metadata size and nesting are bounded before use", () => {
   for (const inner of ["{} trailing", '{"x":"\\', "{", "[]"])
     assert.equal(parse(JSON.stringify(envelope(inner))).result, "rejected");
 });
+
+test("larger bodies retain duplicate-key, metadata and JSON complexity checks", () => {
+  // Crossing the former byte limit must still reach validation of fields after
+  // the large content, including escaped duplicate names and nested metadata.
+  const content = `"instructions":"${"x".repeat(1024 * 1024)}",`;
+  const tail = JSON.stringify(envelope()).slice(1);
+  assert.equal(parse(`{${content}${tail}`).result, "context");
+  assert.deepEqual(parse(`{${content}"model":"other",${tail}`), {
+    result: "rejected",
+    reason: "json",
+  });
+  assert.deepEqual(parse(`{${content}"\\u006dodel":"other",${tail}`), {
+    result: "rejected",
+    reason: "json",
+  });
+  const excessiveValues = Array(CODEX_CONTEXT_LIMITS.jsonValues).fill(0).join(",");
+  assert.deepEqual(parse(`{${content}"extra":[${excessiveValues}],${tail}`), {
+    result: "rejected",
+    reason: "json",
+  });
+  const oversizedMetadata = JSON.stringify(
+    envelope(
+      JSON.stringify({ ...metadata(), extra: "x".repeat(CODEX_CONTEXT_LIMITS.metadataBytes) }),
+    ),
+  ).slice(1);
+  assert.deepEqual(parse(`{${content}${oversizedMetadata}`), {
+    result: "rejected",
+    reason: "json",
+  });
+});

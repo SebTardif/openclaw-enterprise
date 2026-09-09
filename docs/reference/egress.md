@@ -65,8 +65,10 @@ The separately supplied canonical admission receiver must enforce the overall
 frame ceiling before allocation and the method's bound before effects. A length
 prefix alone does not identify the method. This repository supplies controlled
 admission receivers for tests, not that canonical service. The separate
-TypeScript Codex request parser still has a 1 MiB limit and is not wired into this
-Rust transport; end-to-end profile integration remains incomplete.
+TypeScript Codex context and model-request parsers also enforce the 16 MiB raw
+body ceiling. Their separate 8 KiB metadata, 64-level depth, and 20,000-value
+limits remain in force. They are not wired into this Rust transport; end-to-end
+profile integration remains incomplete.
 
 Capture, admission work, and forwarding transfer the original zeroizing body
 owner. Forwarding uses owner-backed `Bytes`; it does not create another complete
@@ -75,9 +77,10 @@ body buffer. The explicit body plus maximum admission frame accounts for at most
 bound: the full parsed JSON tree, parser scratch, allocation capacity, Hyper/TLS
 buffers, process overhead, and concurrent exchanges are additional. No new JSON
 shape restriction is inferred from the byte ceiling. The selected 256 MiB service
-budget, two active exchanges, and per-Agent/generation limits require separate
-enforcement and qualification; current service configuration permits up to eight
-exchanges and local packaging selects eight.
+budget and per-Agent/generation limits require separate enforcement and
+qualification. Local packaging selects two active exchanges per TLS process;
+the adapter accepts explicit configurations of up to eight. The process-local
+limit does not enforce an Agent-wide limit across multiple service instances.
 
 Three distinct process identities are required:
 
@@ -240,7 +243,7 @@ readiness, not a synthetic model turn. Only a real admitted workload bearer and
 canonical turn can authorize a provider request. Startup failure stops this
 Compose project and retains its generated state for inspection.
 
-This local profile explicitly sets `max_concurrent: 8` and a 128-process limit
+This local profile explicitly sets `max_concurrent: 2` and a 128-process limit
 for each adapter container. Those are configured bounds, not a verified capacity
 guarantee; container resource exhaustion and authority unavailability must still
 fail closed.

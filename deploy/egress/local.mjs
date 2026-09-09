@@ -266,7 +266,7 @@ export function createTlsConfiguration(config) {
     root_ca_path: "/etc/ssl/certs/ca-certificates.crt",
     incoming_certificate_path: "/run/oce-tls/certificate.pem",
     incoming_key_path: "/run/oce-tls/key.pem",
-    max_concurrent: 8,
+    max_concurrent: 2,
   };
 }
 

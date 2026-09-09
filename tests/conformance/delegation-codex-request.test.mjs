@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseCodexModelRequestV1 } from "../../packages/occ/src/delegation/codex-request.ts";
+import { parseCodexMediationContextV1 } from "../../packages/occ/src/delegation/codex-context.ts";
 
 const fn = () => ({
   type: "function",
@@ -44,6 +45,39 @@ const parse = (value) =>
     headers: [],
     body: Buffer.from(typeof value === "string" ? value : JSON.stringify(value)),
   });
+
+test("both parsers accept the exact 16 MiB wire body and reject one byte more", () => {
+  const limit = 16 * 1024 * 1024;
+  // Model inputs can contain Unicode and escaped quotes. The limit counts
+  // their UTF-8 wire representation, not characters or decoded string length.
+  for (const fragment of ["x", '雪\\"']) {
+    const prefix = JSON.stringify(body({ instructions: "" })).replace(
+      /"instructions":""}$/,
+      '"instructions":"',
+    );
+    const suffix = '"}';
+    const encoded = JSON.stringify(fragment).slice(1, -1);
+    const available = limit - Buffer.byteLength(prefix + suffix);
+    const count = Math.floor(available / Buffer.byteLength(encoded));
+    const content = encoded.repeat(count) + "x".repeat(available % Buffer.byteLength(encoded));
+    const exact = Buffer.from(prefix + content + suffix);
+    assert.equal(exact.byteLength, limit);
+    const input = { method: "POST", path: "/v1/responses", headers: [], body: exact };
+    assert.deepEqual(parseCodexMediationContextV1(input), {
+      result: "context",
+      mediationContextRef: "context-a",
+    });
+    assert.deepEqual(parseCodexModelRequestV1(input), {
+      result: "model-request",
+      mediationContextRef: "context-a",
+      modelId: "gpt-5.1",
+    });
+    // Trailing whitespace keeps JSON valid: only the raw byte ceiling rejects it.
+    const oversized = { ...input, body: Buffer.concat([exact, Buffer.from(" ")]) };
+    for (const parser of [parseCodexMediationContextV1, parseCodexModelRequestV1])
+      assert.deepEqual(parser(oversized), { result: "rejected", reason: "limits" });
+  }
+});
 
 test("selected text/local-tool request exposes only model and untrusted context", () => {
   const result = parse(body());
