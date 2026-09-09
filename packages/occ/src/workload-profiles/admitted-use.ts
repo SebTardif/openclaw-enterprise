@@ -94,6 +94,21 @@ export interface WorkloadProfileDefinitionRequestV2 {
   readonly selection: WorkloadProfileSelectionV1;
   readonly manifest: DerivedWorkloadProfileManifestV2;
 }
+/** Original Platform ownership only. Acquisition recognizes its private unit/IO
+ * association; retained fences remain valid after the short IO scope closes.
+ * This lease grants no artifact, runtime, material or provider capability. */
+export interface WorkloadProfileSourceEnrollmentV2 {
+  definition(
+    unit: WorkloadProfileDefinitionUnitV2,
+    io: WorkloadProfileOwnedOperationV2,
+  ): WorkloadProfileOwnedLeaseV2;
+  revision(
+    request: WorkloadProfileSelectionRequestV2,
+    unit: WorkloadProfileSelectionUnitV2,
+    io: WorkloadProfileOwnedOperationV2,
+  ): WorkloadProfileOwnedLeaseV2;
+}
+
 export interface WorkloadProfileDefinitionSourceV2 {
   verifyDefinitionLocked(
     request: WorkloadProfileDefinitionRequestV2,
@@ -509,10 +524,19 @@ export interface WorkloadProfileCapabilityContributorsV2 {
   readonly credentials: WorkloadProfileCompleteContributionV2;
   readonly storage: WorkloadProfileCompleteContributionV2;
 }
+/** Fixed diagnostic names only; no manifest content or credential bytes. */
+export class WorkloadProfilePrerequisiteErrorV2 extends WorkloadProfileSelectionError {
+  readonly prerequisites: readonly string[];
+  constructor(prerequisites: readonly string[]) {
+    super("unavailable");
+    this.prerequisites = Object.freeze([...prerequisites]);
+  }
+}
+
 /** Fixed original-owner aggregation. No caller capability-name registry or
  * partial renderer success grants the remaining native/material/store support. */
 export function createWorkloadProfileCapabilityAggregatorV2(
-  sources?: WorkloadProfileCapabilityContributorsV2,
+  sources?: Partial<WorkloadProfileCapabilityContributorsV2>,
 ): WorkloadProfileCompleteContributionV2 {
   const rendererDefinition = sources?.renderer?.verifyRendererDefinitionLocked?.bind(
     sources.renderer,
@@ -528,10 +552,20 @@ export function createWorkloadProfileCapabilityAggregatorV2(
         source?.acquire?.bind(source),
       )
     : [];
+  function missing(definition: boolean): never {
+    const methods = definition ? definitions : revisions;
+    const prerequisites = [
+      ...((definition ? rendererDefinition : rendererRevision) ? [] : ["renderer"]),
+      ...(["runtime", "identity", "credentials", "storage"] as const).filter(
+        (_name, index) => !methods[index],
+      ),
+    ];
+    throw new WorkloadProfilePrerequisiteErrorV2(prerequisites);
+  }
   const aggregator: WorkloadProfileCompleteContributionV2 = {
     async verifyDefinitionLocked(request, unit, io) {
       if (!rendererDefinition || definitions.length !== 4 || definitions.some((source) => !source))
-        unavailable();
+        missing(true);
       const held = heldWork(io, () => {
         if (
           unit.kind !== "profile-definition" ||
@@ -556,7 +590,7 @@ export function createWorkloadProfileCapabilityAggregatorV2(
     },
     async acquire(request, manifest, use, unit, io) {
       if (!rendererRevision || revisions.length !== 4 || revisions.some((source) => !source))
-        unavailable();
+        missing(false);
       const held = heldWork(io, () => {});
       try {
         held.acquiring();
@@ -846,7 +880,7 @@ export interface WorkloadProfileCandidateQualifiersV2 {
  * No default qualifier, new registry or provider-call authority is supplied. */
 export function createWorkloadProfileCandidateBindingsSourceV2(
   records: WorkloadProfileCandidateRecordsReaderV2,
-  qualifiers: WorkloadProfileCandidateQualifiersV2,
+  qualifiers?: WorkloadProfileCandidateQualifiersV2,
 ): WorkloadProfileCandidateBindingsSourceV2 {
   const read = records?.readLocked?.bind(records);
   const native = qualifiers?.native?.qualifyLocked?.bind(qualifiers.native);

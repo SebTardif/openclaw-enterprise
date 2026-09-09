@@ -1,5 +1,12 @@
-import type {
-  KubernetesRendererSource,
+import { DriverSelection } from "@openclaw-enterprise/occ/application/driver-selection";
+import type { WorkloadProfileSourceEnrollmentV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import {
+  createSelectedKubernetesRendererSource,
+  type KubernetesInstalledRendererDefinitionOwner,
+} from "../../drivers/compute/kubernetes/renderer-source.ts";
+import type { KubernetesRendererOwner } from "../../drivers/compute/kubernetes/renderer-owner.ts";
+import {
+  type KubernetesRendererSource,
   KubernetesWorkloadProfileCapability,
 } from "../../drivers/compute/kubernetes/workload-profile-capability.ts";
 import type { KubernetesRuntimeObservationAdmission } from "../../drivers/compute/kubernetes/runtime-observations.ts";
@@ -33,6 +40,15 @@ const selectedComputeContributions = new WeakMap<
   }
 >();
 
+const selectedRendererOwners = new WeakMap<ComputeDriver, KubernetesRendererOwner>();
+
+/** Only this factory's original Driver owns the captured installed constructors. */
+export function selectedComputeRendererOwner(
+  driver: ComputeDriver,
+): KubernetesRendererOwner | undefined {
+  return selectedRendererOwners.get(driver);
+}
+
 /** Exact object association from the original factory. External packages and
  * separately constructed lookalikes have no built-in renderer contribution. */
 export function selectedComputeWorkloadProfileCapability(
@@ -52,6 +68,21 @@ export function connectSelectedComputeRuntimeObservations(
     throw new Error("The selected Compute has no bundled gVisor runtime observer.");
   const close = selected.bindAdmission(admission);
   return Object.freeze({ effects: selected.observations, close });
+}
+
+/** Bind source receiving to this factory's actual constructor and selected
+ * Driver. External packages and copied instances do not enroll by shape. */
+export function composeSelectedComputeRendererContribution(
+  driver: ComputeDriver,
+  selection: DriverSelection,
+  units: WorkloadProfileSourceEnrollmentV2,
+  installed?: KubernetesInstalledRendererDefinitionOwner,
+): KubernetesWorkloadProfileCapability | undefined {
+  const owner = selectedRendererOwners.get(driver);
+  const contribution = selectedComputeContributions.get(driver)?.renderer;
+  if (!owner || !contribution) return undefined;
+  const source = createSelectedKubernetesRendererSource(driver, owner, selection, units, installed);
+  return KubernetesWorkloadProfileCapability.prototype.withSource.call(contribution, source);
 }
 
 export function selectComputeDriver(
@@ -120,5 +151,6 @@ export function createComputeDriver(
     }),
     bindAdmission: driver.bindRuntimeObservationAdmission.bind(driver),
   });
+  selectedRendererOwners.set(driver, driver.getRendererOwner());
   return driver;
 }

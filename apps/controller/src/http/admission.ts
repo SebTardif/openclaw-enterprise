@@ -121,12 +121,13 @@ export function createHttpAdmission(options: HttpAdmissionOptions) {
     )
       throw failure(401, "UNAUTHENTICATED", "A human controller session is required.");
     const params = request.params as Record<string, unknown>;
-    const paginatedChannelList = [
+    const paginatedList = [
       "listChannelInstallations",
       "listChannelHumanBindings",
       "listChannelAgentBindings",
+      "listAgentLifecycleOperations",
     ].includes(operation.operationId);
-    if (!paginatedChannelList && Object.keys(request.query as Record<string, unknown>).length > 0)
+    if (!paginatedList && Object.keys(request.query as Record<string, unknown>).length > 0)
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
     for (const [parameter, pattern] of Object.entries(RESOURCE_ID)) {
       if (

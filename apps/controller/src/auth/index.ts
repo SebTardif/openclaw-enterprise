@@ -269,7 +269,101 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
   readonly #installationId: string;
   readonly #issuer: string;
   readonly #verifiedSessions = new WeakMap<AdmittedCaller, Readonly<ControllerVerifiedSessionV1>>();
+  readonly #readExpiries = new WeakMap<
+    AdmittedCaller,
+    {
+      readonly assertUnexpired: () => void;
+      readonly remainingMs: () => number;
+    }
+  >();
   #workloadProfileCustody: ControllerWorkloadProfileRequestCustodyV1 | undefined;
+
+  /** Actual verifier-issued expiry only. This is neither an IAM decision nor a
+   * mutation lease. The lifecycle receiver keeps the original request ceiling. */
+  async verifyLifecycleReadV1(request: AdmissionRequest) {
+    const admitted = await this.verify(request);
+    const expiry = this.consumeLifecycleReadExpiryV1(admitted);
+    if (admitted.method === "session") {
+      const context = await this.#auth.$context;
+      const accounts = await context.adapter.findMany<{
+        id: string;
+        userId: string;
+        accountId: string;
+        providerId: string;
+        password?: string | null;
+      }>({
+        model: "account",
+        where: [
+          { field: "userId", value: admitted.externalIdentity.subject },
+          { field: "providerId", value: "credential" },
+        ],
+        limit: 2,
+      });
+      // Same auth-owned primary adapter and original local-credential relation.
+      // A retained session on a user returned to provisioning is insufficient.
+      // No credential bytes leave this verifier or enter an error/receipt.
+      if (
+        accounts.length !== 1 ||
+        !isNonEmptyString(accounts[0]?.id) ||
+        accounts[0]?.userId !== admitted.externalIdentity.subject ||
+        accounts[0]?.accountId !== admitted.externalIdentity.subject ||
+        accounts[0]?.providerId !== "credential" ||
+        !isNonEmptyString(accounts[0]?.password)
+      )
+        throw new AdmissionFailure(
+          401,
+          "UNAUTHENTICATED",
+          "The current local account is unavailable.",
+        );
+    }
+    expiry.assertUnexpired();
+    return Object.freeze({ admitted, ...expiry });
+  }
+
+  consumeLifecycleReadExpiryV1(admitted: AdmittedCaller) {
+    const expiry = this.#readExpiries.get(admitted);
+    this.#readExpiries.delete(admitted);
+    if (!expiry)
+      throw new AdmissionFailure(
+        401,
+        "UNAUTHENTICATED",
+        "Current authentication expiry is unavailable.",
+      );
+    expiry.assertUnexpired();
+    return expiry;
+  }
+
+  private retainReadExpiry(
+    admitted: AdmittedCaller,
+    value: unknown,
+    began: bigint,
+    observedAt: number,
+  ): void {
+    const expiry =
+      value instanceof Date ? value.getTime() : typeof value === "string" ? Date.parse(value) : NaN;
+    const now = Date.now();
+    if (!Number.isFinite(expiry) || expiry <= now) return;
+    // Both observations can only shorten the original duration. A wall clock
+    // rollback while the primary-store lookup waits never renews authentication.
+    const original = began + BigInt(Math.max(0, Math.floor(expiry - observedAt))) * 1_000_000n;
+    const current =
+      process.hrtime.bigint() + BigInt(Math.max(0, Math.floor(expiry - now))) * 1_000_000n;
+    const deadline = original < current ? original : current;
+    const assertUnexpired = () => {
+      if (process.hrtime.bigint() >= deadline || Date.now() >= expiry)
+        throw new AdmissionFailure(401, "UNAUTHENTICATED", "The current authentication expired.");
+    };
+    this.#readExpiries.set(
+      admitted,
+      Object.freeze({
+        assertUnexpired,
+        remainingMs: () => {
+          assertUnexpired();
+          return Math.max(0, Math.floor(Number(deadline - process.hrtime.bigint()) / 1_000_000));
+        },
+      }),
+    );
+  }
 
   createWorkloadProfileRequestCustodyV1(
     options: Readonly<{ maxRequestLifetimeMs: number }>,
@@ -295,6 +389,8 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
   }
 
   async verify(request: AdmissionRequest): Promise<AdmittedCaller> {
+    const began = process.hrtime.bigint();
+    const observedAt = Date.now();
     if (request.authorizationHeader !== undefined) {
       throw new AdmissionFailure(
         401,
@@ -317,7 +413,7 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
       const key = serviceKeyDetails(result.key, this.#installationId);
       if (!key)
         throw new AdmissionFailure(401, "UNAUTHENTICATED", "A valid service API key is required.");
-      return {
+      const admitted: AdmittedCaller = {
         externalIdentity: {
           issuer: `${this.#issuer}:service-key`,
           subject: key.servicePrincipalId,
@@ -329,6 +425,8 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
         decisionId: `adm_${randomUUID()}`,
         method: "api_key",
       };
+      this.retainReadExpiry(admitted, key.expiresAt, began, observedAt);
+      return admitted;
     }
 
     const session = await this.#auth.api.getSession({
@@ -389,6 +487,7 @@ export class ControllerAdmissionVerifier implements AdmissionVerifier {
         // No credential/source exception is exposed and no partial proof is kept.
       }
     }
+    this.retainReadExpiry(admitted, response.session.expiresAt, began, observedAt);
     return admitted;
   }
 }

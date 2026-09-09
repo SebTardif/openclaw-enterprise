@@ -1,3 +1,10 @@
+import { DriverSelection } from "../../packages/occ/src/application/driver-selection.ts";
+import { createSelectedKubernetesRendererSource } from "../../apps/controller/src/drivers/compute/kubernetes/renderer-source.ts";
+import {
+  selectedComputeRendererOwner,
+  composeSelectedComputeRendererContribution,
+} from "../../apps/controller/src/composition/driver-factories/compute.ts";
+import { createWorkloadProfileCapabilityAggregatorV2 } from "../../packages/occ/src/workload-profiles/admitted-use.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
@@ -650,4 +657,273 @@ test("reentrant original cleanup shares one published release promise", async ()
   await first;
   assert.equal(reentered, first);
   assert.equal(count(f, "release"), 1);
+});
+
+// The real factory, selected constructor and new receiving adapter run here.
+// Unit/immutable-definition peers are deliberately controlled original-owner
+// interfaces; these cases do not manufacture an enrolled production definition.
+function sourceFixture() {
+  const v = values();
+  const driver = createComputeDriver(
+    { id: "source-compute", implementation: "occ/kubernetes-gvisor", configuration: v.options },
+    { id: "source-configuration", capability: "configuration", implementation: "controlled" },
+  );
+  const selection = new DriverSelection();
+  selection.registerDriver(driver);
+  selection.selectDriver("compute", driver.id);
+  const owner = selectedComputeRendererOwner(driver);
+  const selectedDefinition = owner.definition();
+  const unit = Object.freeze({ original: true });
+  let acquiring = true,
+    current = true,
+    change = (record) => record;
+  const events = [];
+  const io = {
+    assertActive() {
+      if (!acquiring) throw new Error("IO closed");
+    },
+    poison(error) {
+      events.push(["poison", error]);
+    },
+  };
+  const enrollment = (actualUnit, actualIO) => {
+    assert.equal(actualUnit, unit);
+    assert.equal(actualIO, io);
+    io.assertActive();
+    events.push("enroll");
+    return {
+      assertCurrent() {
+        if (!current) throw new Error("owner expired");
+      },
+      async release() {
+        events.push("unit-release");
+      },
+    };
+  };
+  const units = {
+    definition: enrollment,
+    revision(_request, actualUnit, actualIO) {
+      return enrollment(actualUnit, actualIO);
+    },
+  };
+  const baseRecord = () => ({
+    definition: selectedDefinition,
+    projection: {
+      artifactSet: v.manifest.artifactSet,
+      launchConfiguration: v.manifest.launchConfiguration,
+    },
+    accounting: v.mapping,
+    assertCurrent() {
+      if (!current) throw new Error("owner expired");
+    },
+    async release() {
+      events.push("definition-release");
+    },
+  });
+  const installed = {
+    async acquireDefinition() {
+      events.push("definition");
+      return change(baseRecord());
+    },
+    async acquireRevision() {
+      events.push("revision");
+      return change(baseRecord());
+    },
+  };
+  const request = {
+    scope: {
+      installationId: v.request.installationId,
+      namespaceId: v.request.namespaceId,
+      component: "gateway-harness-pair",
+    },
+    selection: v.request.selection,
+    manifest: v.derived,
+  };
+  const source = createSelectedKubernetesRendererSource(driver, owner, selection, units, installed);
+  return {
+    v,
+    driver,
+    selection,
+    owner,
+    unit,
+    io,
+    units,
+    installed,
+    selectedDefinition,
+    request,
+    source,
+    events,
+    mutate(next) {
+      change = next;
+    },
+    closeIO() {
+      acquiring = false;
+    },
+    expire() {
+      current = false;
+    },
+  };
+}
+
+test("selected renderer source retains original construction and source past acquiring IO", async () => {
+  const f = sourceFixture();
+  const lease = await f.source.acquireDefinition(
+    f.driver,
+    f.selectedDefinition,
+    f.request,
+    f.unit,
+    f.io,
+  );
+  assert.deepEqual(lease.accounting, f.v.mapping);
+  f.closeIO();
+  assert.equal(lease.assertCurrent(), undefined);
+  f.expire();
+  assert.throws(() => lease.assertCurrent(), /owner expired/);
+  await lease.release();
+  await lease.release();
+  assert.deepEqual(f.events, ["enroll", "definition", "definition-release", "unit-release"]);
+  assert.throws(() => lease.assertCurrent(), { code: "unavailable" });
+});
+
+test("renderer source refuses copied units and drivers before immutable source effects", async () => {
+  const f = sourceFixture();
+  await assert.rejects(
+    f.source.acquireDefinition(f.driver, f.selectedDefinition, f.request, { ...f.unit }, f.io),
+  );
+  assert.deepEqual(f.events, []);
+  await assert.rejects(
+    f.source.acquireDefinition({ ...f.driver }, f.selectedDefinition, f.request, f.unit, f.io),
+    { code: "unavailable" },
+  );
+  assert.deepEqual(f.events, ["enroll", "unit-release"]);
+  assert.equal(
+    composeSelectedComputeRendererContribution({ ...f.driver }, f.selection, f.units),
+    undefined,
+  );
+});
+
+test("renderer source refuses changed immutable projection and still releases original source", async () => {
+  for (const field of ["reference", "implementation", "constructor"]) {
+    const f = sourceFixture();
+    f.mutate((record) => {
+      const projection = structuredClone(record.projection);
+      if (field === "reference") projection.artifactSet.harness.reference += "-changed";
+      if (field === "implementation")
+        projection.launchConfiguration.runtime.implementation.version++;
+      return {
+        ...record,
+        projection,
+        ...(field === "constructor"
+          ? {
+              definition: {
+                ...record.definition,
+                admittedTemplate() {
+                  assert.fail("replacement invoked");
+                },
+              },
+            }
+          : {}),
+      };
+    });
+    await assert.rejects(
+      f.source.acquireDefinition(f.driver, f.selectedDefinition, f.request, f.unit, f.io),
+      { code: "unsupported-capability" },
+    );
+    assert.equal(f.events.filter((e) => e === "definition-release").length, 1);
+    assert.equal(f.events.filter((e) => e === "unit-release").length, 1);
+  }
+});
+
+test("renderer source revision compares the complete actual constructor output", async () => {
+  for (const altered of [false, true]) {
+    const f = sourceFixture();
+    const held = f.owner.acquire(f.selection);
+    const input = (role) => ({
+      name: `source-${role}`,
+      namespace: f.v.namespace,
+      ownership: f.v.agentOwnership,
+      serviceAccountName: `source-${role}-sa`,
+      environment: {},
+      loggingLevel: "info",
+      resourcePlan: f.v.plan[role],
+    });
+    const gateway = input("gateway"),
+      harness = input("harness");
+    const template = held.gatewayTemplate(gateway, "selected-runsc");
+    const pod = template.spec.template.spec;
+    const stores = f.v.plan.gateway.values.envelope.gateway.value.storage.value;
+    const plan = {
+      target: {
+        clusterRef: "controlled",
+        namespace: { name: gateway.namespace, uid: "original-ns", resourceVersion: "1" },
+        deploymentName: gateway.name,
+      },
+      argv: ["/app/gateway"],
+      runtimeClassName: "selected-runsc",
+      environment: [],
+      volumes: pod.volumes,
+      mounts: pod.containers[0].volumeMounts,
+      resources: f.v.plan.gateway,
+      storage: {
+        runtimeHome: {
+          accountingId: stores.find((s) => s.kind === "runtime-home").accountingId,
+          volumeName: "runtime-state",
+        },
+        temporary: {
+          accountingId: stores.find((s) => s.kind === "temporary").accountingId,
+          volumeName: "runtime-temporary",
+        },
+      },
+    };
+    const inputs = { gateway: [gateway, plan], harness };
+    const outputs = structuredClone({
+      gateway: held.gatewayDeployment(gateway, plan),
+      harness: held.harnessTemplate(harness),
+    });
+    held.release();
+    if (altered)
+      outputs.harness.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true;
+    f.mutate((record) => ({ ...record, inputs, outputs }));
+    const call = f.source.acquireRevision(
+      f.driver,
+      f.selectedDefinition,
+      f.v.request,
+      f.v.manifest,
+      f.v.use,
+      f.unit,
+      f.io,
+    );
+    if (altered) await assert.rejects(call, { code: "unsupported-capability" });
+    else {
+      const lease = await call;
+      lease.assertCurrent();
+      await lease.release();
+    }
+    assert.equal(f.events.filter((e) => e === "definition-release").length, 1);
+    assert.equal(f.events.filter((e) => e === "unit-release").length, 1);
+  }
+});
+
+test("production-shaped renderer enrollment names missing originals without accepting the manifest", async () => {
+  const f = sourceFixture();
+  const renderer = composeSelectedComputeRendererContribution(f.driver, f.selection, f.units);
+  await assert.rejects(
+    renderer.verifyRendererDefinitionLocked(f.request, f.unit, f.io),
+    (error) =>
+      error.code === "unavailable" &&
+      isDeepStrictEqual(error.prerequisites, ["renderer.immutable-definition-owner"]),
+  );
+  const before = [...f.events];
+  const aggregator = createWorkloadProfileCapabilityAggregatorV2({ renderer });
+  for (const call of [
+    () => aggregator.verifyDefinitionLocked(f.request, f.unit, f.io),
+    () => aggregator.acquire(f.v.request, f.v.manifest, f.v.use, f.unit, f.io),
+  ])
+    await assert.rejects(
+      call,
+      (error) =>
+        error.code === "unavailable" &&
+        isDeepStrictEqual(error.prerequisites, ["runtime", "identity", "credentials", "storage"]),
+    );
+  assert.deepEqual(f.events, before, "missing complete owners prevent partial work");
 });

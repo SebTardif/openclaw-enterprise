@@ -9,7 +9,7 @@ import type { FastifyRequest } from "fastify";
 import type { IAMDriver } from "@openclaw-enterprise/contracts/drivers/iam";
 import type { AuthenticatedRequestHandleSourceV1 } from "@openclaw-enterprise/contracts/account-authority-v1";
 import type {
-  WorkloadProfilePurposeRequestV1,
+  WorkloadProfileRequestV1,
   WorkloadProfileRequestCustodySourceV1,
   WorkloadProfileRequestLeaseV1,
 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
@@ -57,9 +57,10 @@ export interface ControllerWorkloadProfileRequestCustodyV1 {
   beginRequest(request: FastifyRequest): void;
   captureAdmission(request: FastifyRequest, admitted: AdmittedCaller): void;
   closeRequest(request: FastifyRequest): void;
+  signalForRequest(request: FastifyRequest): AbortSignal;
   withWorkloadProfileInvocation<T>(
     actualRequest: FastifyRequest,
-    exactPurposeAndBinding: WorkloadProfilePurposeRequestV1,
+    exactPurposeAndBinding: WorkloadProfileRequestV1,
     work: () => Promise<T>,
   ): Promise<T>;
   readonly invocations: AuthenticatedRequestHandleSourceV1;
@@ -117,6 +118,7 @@ const allowedPurposes = new Set([
   "workload-profile-deployment",
   "workload-profile-draft-selection",
   "workload-profile-deployment-recovery",
+  "workload-profile-operator",
 ]);
 
 /** Created once by the original auth verifier before controller construction.
@@ -165,7 +167,7 @@ export function createControllerWorkloadProfileRequestCustodyV1(
     readonly authorityRecord: { driver: IAMDriver; id: string };
     readonly deadline: bigint;
     readonly recipient: object;
-    readonly purpose: WorkloadProfilePurposeRequestV1;
+    readonly purpose: WorkloadProfileRequestV1;
     readonly principal: Principal;
     readonly handle: AuthenticatedRequestHandleV1;
     readonly expiresAt: string;
@@ -376,9 +378,15 @@ export function createControllerWorkloadProfileRequestCustodyV1(
       record.session = session;
     },
     closeRequest,
+    signalForRequest(request: FastifyRequest) {
+      const record = records.get(request);
+      if (!record) throw unavailable();
+      assertRequest(record);
+      return record.signal.signal;
+    },
     async withWorkloadProfileInvocation<T>(
       request: FastifyRequest,
-      input: WorkloadProfilePurposeRequestV1,
+      input: WorkloadProfileRequestV1,
       work: () => Promise<T>,
     ): Promise<T> {
       const purpose = immutableCopy(input);
@@ -391,8 +399,8 @@ export function createControllerWorkloadProfileRequestCustodyV1(
         !receiver ||
         ambient.getStore() ||
         !allowedPurposes.has(purpose.purpose) ||
-        !Array.isArray(purpose.binding) ||
-        purpose.binding.length !== 2 ||
+        (purpose.purpose !== "workload-profile-operator" &&
+          (!Array.isArray(purpose.binding) || purpose.binding.length !== 2)) ||
         record.purposes.has(purpose.purpose) ||
         typeof work !== "function"
       )
@@ -405,15 +413,23 @@ export function createControllerWorkloadProfileRequestCustodyV1(
         !context ||
         !authority ||
         !recipient ||
-        context.actorId !== purpose.binding[0] ||
+        (purpose.purpose !== "workload-profile-operator" && context.actorId !== purpose.binding[0]) ||
         context.issuer !== record.session.issuer ||
         context.subject !== record.session.accountId ||
         context.admissionDecisionId !== record.admitted.decisionId ||
         context.operation.operationId !== record.session.routeId
       )
         throw unavailable();
-      const expectedOperation =
-        purpose.purpose === "workload-profile-draft-selection" ? "updateAgent" : "deployAgent";
+      const operatorOperations = {
+        prepare: "prepareWorkloadProfile",
+        accept: "acceptWorkloadProfile",
+        withdraw: "withdrawWorkloadProfile",
+        readOperation: "getWorkloadProfileOperation",
+        readProfile: "getWorkloadProfile",
+      } as const;
+      const expectedOperation = purpose.purpose === "workload-profile-operator"
+        ? operatorOperations[purpose.binding.method]
+        : purpose.purpose === "workload-profile-draft-selection" ? "updateAgent" : "deployAgent";
       if (context.operation.operationId !== expectedOperation) throw unavailable();
       record.purposes.add(purpose.purpose);
       const handle = Object.freeze({}) as AuthenticatedRequestHandleV1;

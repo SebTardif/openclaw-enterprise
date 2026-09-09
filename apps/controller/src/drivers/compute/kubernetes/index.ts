@@ -32,6 +32,7 @@ import * as KubernetesIdentity from "./resources/identity.ts";
 import * as KubernetesNetwork from "./resources/network.ts";
 import * as KubernetesGateway from "./resources/gateway.ts";
 import * as KubernetesStorage from "./resources/storage.ts";
+import { KubernetesRendererOwner } from "./renderer-owner.ts";
 import * as KubernetesChannelPolicy from "./resources/channel-policy.ts";
 import * as KubernetesSecretProjection from "./resources/secret-projection.ts";
 import {
@@ -374,6 +375,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly agentGatewaySelected: boolean;
   private readonly workloadRenderer: FixedWorkloadRenderer;
   private readonly workloadProfileCapability: KubernetesWorkloadProfileCapability;
+  private readonly rendererOwner: KubernetesRendererOwner;
   private readonly resourcePolicy: KubernetesResourcePolicy;
   private apiClients: Promise<KubernetesApiClients> | undefined;
   private patchOptions:
@@ -589,6 +591,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
       },
       { gateway: this.options.images.gateway, harness: this.options.images.agent },
     );
+    const rendererOptions = this.options;
+    const renderer = this.workloadRenderer;
+    this.rendererOwner = new KubernetesRendererOwner(this, renderer, () => {
+      if (this.options !== rendererOptions || this.workloadRenderer !== renderer)
+        throw new ConfigurationFailure("The original workload renderer is no longer selected.");
+    });
     this.workloadProfileCapability = new KubernetesWorkloadProfileCapability(
       this,
       this.workloadRenderer,
@@ -714,6 +722,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
    * Driver is the factory-selected object before authentic source enrollment. */
   getWorkloadProfileCapability(): KubernetesWorkloadProfileCapability {
     return this.workloadProfileCapability;
+  }
+
+  /** Original installed constructors, held separately from complete Runtime fit. */
+  getRendererOwner(): KubernetesRendererOwner {
+    return this.rendererOwner;
   }
 
   /** Pure construction for the original protected launch owner. It uses this

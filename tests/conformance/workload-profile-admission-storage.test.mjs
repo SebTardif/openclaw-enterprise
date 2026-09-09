@@ -356,7 +356,7 @@ test("PostgreSQL terminal mismatch fails before any borrowed mutation", async ()
   assert.equal(calls.length, 0);
 });
 
-function guardFixture() {
+function guardFixture(configure = () => {}) {
   const f = workloadProfileAdmissionFixture(),
     controller = new AbortController(),
     trace = [];
@@ -398,6 +398,7 @@ function guardFixture() {
     findAudit: async () => undefined,
     appendAudit: async () => {},
   };
+  configure(owner, f);
   const guard = createGuardedWorkloadProfileUnit(owner);
   const target = [
     {
@@ -771,6 +772,11 @@ function centralProtocol(options = {}) {
           async resolveLocked(_command, _original, unit, io) {
             actualUnit = unit;
             actualIO = io;
+            const rendererLease = options.rendererEnrollment?.(unit, io, {
+              state,
+              selection,
+              request,
+            });
             const held = await state.workloadProfileSelectionStorageV2().enroll(request, unit, io);
             try {
               await held.lockNamespace();
@@ -781,10 +787,15 @@ function centralProtocol(options = {}) {
               return {
                 assertCurrent() {
                   held.assertCurrent();
+                  rendererLease?.assertCurrent();
                   events.push("gateway-storage-current");
                 },
                 async release() {
-                  await held.release();
+                  try {
+                    await held.release();
+                  } finally {
+                    await rendererLease?.release();
+                  }
                   events.push("gateway-storage-release");
                 },
                 selected: {
@@ -798,7 +809,11 @@ function centralProtocol(options = {}) {
                 },
               };
             } catch (error) {
-              await held.release();
+              try {
+                await held.release();
+              } finally {
+                await rendererLease?.release();
+              }
               throw error;
             }
           },
@@ -1160,4 +1175,123 @@ test("canonical admission tables retain original parent objects and history/outb
     head.columns.some((column) => /configuration|digest_h/.test(column.name)),
     false,
   );
+});
+
+test("original definition source enrollment rejects copies and retains a nonrecursive terminal fence", async () => {
+  const f = guardFixture((owner, fixture) => {
+    owner.iam.authorize = async () => ({
+      allowed: true,
+      driverId: "controlled",
+      evidence: {
+        channelAdministration: {
+          schemaVersion: 1,
+          installationId: fixture.installationId,
+          mappings: [{}],
+        },
+      },
+    });
+    owner.profiles.accept = async (_input, _attribution, qualify) => {
+      await qualify({
+        scope: {
+          installationId: fixture.installationId,
+          namespaceId: fixture.namespaceId,
+          component: "gateway-harness-pair",
+        },
+        selection: fixture.head.selection,
+        manifest: {},
+      });
+      return { action: "admit", history: fixture.history };
+    };
+  });
+  let definition, io, original;
+  await f.guard.unit.accept(f.request.operationRef, f.actor, {
+    async verifyDefinitionLocked(_request, unit, operation) {
+      definition = unit;
+      io = operation;
+      assert.throws(
+        () => f.guard.bindDefinitionSource({ ...unit }, operation),
+        ScopeViolationError,
+      );
+      assert.throws(
+        () => f.guard.bindDefinitionSource(unit, { ...operation }),
+        ScopeViolationError,
+      );
+      original = f.guard.bindDefinitionSource(unit, operation);
+      return {
+        assertCurrent: original.assertCurrent,
+        async release() {
+          f.trace.push("source-release");
+        },
+      };
+    },
+  });
+  await f.guard.finish();
+  f.closeOutward();
+  assert.equal(original.assertCurrent(), undefined);
+  f.guard.assertCurrent();
+  assert.throws(() => f.guard.bindDefinitionSource(definition, io), ScopeViolationError);
+  f.closeOuter();
+  assert.throws(() => original.assertCurrent(), /outer closed/);
+  await f.guard.release();
+  assert.equal(f.trace.filter((event) => event === "source-release").length, 1);
+});
+
+test("actual Platform renderer enrollment refuses fabricated units without opening PostgreSQL", () => {
+  const state = new PostgresPlatformState({
+    connect() {
+      assert.fail("no connection for forged unit");
+    },
+  });
+  const selection = new DriverSelection();
+  const source = state.workloadProfileSourceEnrollmentV2(selection);
+  const io = {
+    assertActive() {
+      assert.fail("forged operation cannot assert ownership");
+    },
+    poison() {
+      assert.fail("forged operation cannot poison an owner");
+    },
+  };
+  assert.throws(() => source.definition({ account: {} }, io), ScopeViolationError);
+  const fixture = workloadProfileAdmissionFixture();
+  const request = {
+    schemaVersion: 2,
+    installationId: fixture.installationId,
+    namespaceId: fixture.namespaceId,
+    agentId: "agent",
+    revisionId: "revision",
+    configurationRef: "configuration",
+    configurationVersion: 1,
+    selection: fixture.head.selection,
+  };
+  assert.throws(() => source.revision(request, { kind: "deployment" }, io), ScopeViolationError);
+});
+
+test("original Gateway renderer enrollment retains the exact enclosing DriverSelection", async () => {
+  let entered = 0;
+  const f = centralProtocol({
+    gateway: true,
+    rendererEnrollment(unit, io, { state, selection, request }) {
+      entered++;
+      const other = new DriverSelection();
+      const iam = selection.selectedDriver("iam");
+      other.registerDriver(iam);
+      other.selectDriver("iam", iam.id);
+      assert.equal(other.selectedDriver("iam"), selection.selectedDriver("iam"));
+      assert.throws(
+        () => state.workloadProfileSourceEnrollmentV2(other).revision(request, unit, io),
+        ScopeViolationError,
+      );
+      const original = state
+        .workloadProfileSourceEnrollmentV2(selection)
+        .revision(request, unit, io);
+      assert.equal(original.assertCurrent(), undefined);
+      return original;
+    },
+  });
+  const result = await f.runGateway();
+  assert.equal(entered, 1);
+  assert.equal(result.kind, "accepted");
+  assert.ok(f.events.includes("gateway-storage-current"));
+  assert.ok(f.events.includes("gateway-storage-release"));
 });

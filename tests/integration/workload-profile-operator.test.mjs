@@ -32,6 +32,7 @@ async function appFixture(service = createWorkloadProfileService()) {
     service,
     invocation: async () => Object.freeze({ forged: "no real request custody" }),
     signal: () => new AbortController().signal,
+    withInvocation: (_request, _binding, work) => work(),
   });
   await app.register(async (routes) => {
     installWorkloadProfileJsonParser(routes);
@@ -107,7 +108,7 @@ test("valid operator wire requests have no successful path through missing autho
     {
       method: "POST",
       url: `/api/workload-profiles/${admissionRef}/withdraw`,
-      payload: { schemaVersion: 1, operationRef: randomUUID(), expectedAdmission },
+      payload: { schemaVersion: 2, operationRef: randomUUID(), expectedAdmission },
     },
     { method: "GET", url: `/api/workload-profile-operations/${prepare.operationRef}` },
     { method: "GET", url: `/api/workload-profiles/${admissionRef}` },
@@ -205,4 +206,99 @@ test("read response rejects internal account and grant fields instead of exposin
   });
   assert.equal(response.statusCode, 500);
   assert.equal(response.body.includes("private-grant-sentinel"), false);
+});
+
+// Real BetterAuth sign-in and Native IAM lookup through the production HTTP
+// registration. Memory storage intentionally supplies no accepting account unit.
+test("registered operator routes require real human admission and refuse missing account storage", { timeout: 30000 }, async (t) => {
+  const { createFastifyApp } = await import("../../apps/controller/src/index.ts");
+  const { NativeIAMDriver } = await import("../../packages/iam/src/index.ts");
+  const { InMemoryPlatformState, OpenClawController } = await import("../../packages/occ/src/index.ts");
+  const { InMemoryAuditSink } = await import("../../packages/audit/src/index.ts");
+  const { createTestAuthPrincipal, signInToControllerApp, authenticatedHeaders } =
+    await import("../helpers/auth-session.mjs");
+  const credentials = await createTestAuthPrincipal();
+  const { installationId, seed, auth } = credentials;
+  const iam = new NativeIAMDriver({ async loadNativeIAMState() { return {
+    identities: [seed.principal], roles: seed.roles, bindings: seed.bindings,
+    groups: [], memberships: [], restrictions: [],
+  }; } }, { id: "operator-route-iam" });
+  const auditSink = new InMemoryAuditSink();
+  const controller = new OpenClawController({ id: installationId, name: "Operator route fixture",
+    createdAt: new Date().toISOString() }, { state: new InMemoryPlatformState({ auditSink }) });
+  controller.registerDriver(iam);
+  controller.selectDriver("iam", iam.id);
+  const custody = auth.admissionVerifier.createWorkloadProfileRequestCustodyV1({ maxRequestLifetimeMs: 30000 });
+  const app = createFastifyApp({ controller, iamDriver: iam, auditSink, auth,
+    workloadProfileRequests: custody, publicOrigin: "http://127.0.0.1",
+    development: { enabled: true, installationId },
+    resolveHarness: () => { throw new Error("No harness requested by operator routes"); },
+  });
+  t.after(() => app.close());
+  const session = await signInToControllerApp(app, credentials);
+  const prepare = inertProfileRequest();
+  const admissionRef = randomUUID();
+  const operations = [
+    { method: "POST", url: "/workload-profile-operations", payload: prepare },
+    { method: "POST", url: `/workload-profile-operations/${prepare.operationRef}/accept` },
+    { method: "GET", url: `/workload-profile-operations/${prepare.operationRef}` },
+    { method: "GET", url: `/workload-profiles/${admissionRef}` },
+    { method: "POST", url: `/workload-profiles/${admissionRef}/withdraw`, payload: {
+      schemaVersion: 2, operationRef: randomUUID(), expectedAdmission: {
+        admissionRef, admissionVersion: 1, manifestRef: randomUUID(), manifestDigest: prepare.manifest.manifestDigest,
+      },
+    } },
+  ];
+  for (const operation of operations) {
+    const unauthenticated = await app.inject({ ...operation, headers: { host: "127.0.0.1" } });
+    assert.equal(unauthenticated.statusCode, 401);
+    const response = await app.inject({ ...operation,
+      headers: { ...authenticatedHeaders(session), host: "127.0.0.1" } });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "DEPENDENCY_UNAVAILABLE");
+    assert.equal(Object.hasOwn(response.json(), "data"), false);
+  }
+  const noOrigin = await app.inject({ ...operations[1], headers: { cookie: session.cookie, host: "127.0.0.1" } });
+  assert.equal(noOrigin.statusCode, 403);
+});
+
+test("registered handler schema accepts the closed V2 envelope without supplying admission authority", async (t) => {
+  const { workloadProfilePairManifestFixture } = await import("../fixtures/workload-profile-admission-v2.mjs");
+  const { deriveWorkloadProfileManifestV2 } = await import("../../packages/occ/src/workload-profiles/projections.ts");
+  const derived = deriveWorkloadProfileManifestV2(new TextEncoder().encode(JSON.stringify(workloadProfilePairManifestFixture())));
+  const input = { schemaVersion: 2, component: "gateway-harness-pair", action: "admit",
+    namespaceId: `ns_${randomUUID()}`, operationRef: randomUUID(), expectedAdmission: null,
+    manifest: { format: "oce.workload-profile.canonical-json.v1", canonicalUtf8: new TextDecoder().decode(derived.canonicalBytes),
+      manifestDigest: derived.digests.manifestDigest },
+  };
+  const app = await appFixture();
+  t.after(() => app.close());
+  const response = await app.inject({ method: "POST", url: "/api/workload-profile-operations", payload: input });
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().error.code, "DEPENDENCY_UNAVAILABLE");
+  const duplicate = await app.inject({ method: "POST", url: "/api/workload-profile-operations",
+    headers: { "content-type": "application/json" },
+    payload: JSON.stringify(input).replace('"schemaVersion":2', '"schemaVersion":2,"schemaVersion":2'),
+  });
+  assert.equal(duplicate.statusCode, 400);
+});
+
+test("V1 withdrawal is rejected before invocation or service admission", async (t) => {
+  let calls = 0;
+  const app = await appFixture({ ...createWorkloadProfileService(), withdraw: async () => {
+    calls += 1;
+    assert.fail("unsupported V1 withdrawal reached the service");
+  } });
+  t.after(() => app.close());
+  const admissionRef = randomUUID();
+  const input = { schemaVersion: 1, operationRef: randomUUID(), expectedAdmission: {
+    admissionRef, admissionVersion: 1, manifestRef: randomUUID(),
+    manifestDigest: inertProfileRequest().manifest.manifestDigest,
+  } };
+  const response = await app.inject({ method: "POST", url: `/api/workload-profiles/${admissionRef}/withdraw`, payload: input });
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().error.code, "INVALID_REQUEST");
+  assert.equal(calls, 0);
+  const { workloadProfileOperatorBinding } = await import("../../packages/occ/src/services/workload-profile/service.ts");
+  assert.throws(() => workloadProfileOperatorBinding.withdraw(admissionRef, input));
 });

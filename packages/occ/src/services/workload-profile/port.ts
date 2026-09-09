@@ -11,7 +11,6 @@ import type {
   WorkloadProfilePrepareV1,
   WorkloadProfilePrepareV2,
   WorkloadProfileWithdrawV2,
-  WorkloadProfileWithdrawV1,
 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type {
   WorkloadProfileAcknowledgement,
@@ -38,7 +37,7 @@ export interface WorkloadProfileServicePort {
   withdraw(
     invocation: AuthenticatedRequestHandleV1,
     admissionRef: string,
-    input: WorkloadProfileWithdrawV1 | WorkloadProfileWithdrawV2,
+    input: WorkloadProfileWithdrawV2,
     signal: AbortSignal,
   ): Promise<ProfileMutationResponse>;
   readOperation(
@@ -57,7 +56,7 @@ export interface WorkloadProfileServicePort {
  * account authority owner. The interface alone grants no authority. An adapter
  * must consume the exact original request once, lock/read real session/account
  * security state in this unit and retain currentness through terminal cleanup.
- * No implementation is installed and no controller route supplies this input. */
+ * Production supplies the original controller request and PostgreSQL owner. */
 export interface WorkloadProfileAccountParticipant {
   consume(
     invocation: AuthenticatedRequestHandleV1,

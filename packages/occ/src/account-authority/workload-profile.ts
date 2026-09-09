@@ -5,6 +5,7 @@ import { DependencyUnavailableError } from "../errors.ts";
 import type {
   WorkloadProfileAccountUnit,
   WorkloadProfileAccountLease,
+  WorkloadProfileAccountParticipant,
 } from "../services/workload-profile/port.ts";
 import type { WorkloadProfileMutationAccountParticipantV2 } from "../workload-profiles/admitted-use.ts";
 import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
@@ -66,13 +67,21 @@ export type WorkloadProfilePurposeRequestV1 = Parameters<
   WorkloadProfilePurposeAccountParticipantV1["consume"]
 >[1];
 
+export type WorkloadProfileOperatorRequestV1 = Parameters<
+  WorkloadProfileAccountParticipant["consume"]
+>[1];
+export type WorkloadProfileRequestV1 = WorkloadProfilePurposeRequestV1 | Readonly<{
+  purpose: "workload-profile-operator";
+  binding: WorkloadProfileOperatorRequestV1;
+}>;
+
 export interface WorkloadProfileRequestCustodySourceV1 {
   /** Authenticate exact original handle, purpose, immutable command and recipient;
    * reject foreign/replayed handles in the ORIGINAL registry, without fallback.
    * Register acquired cleanup before any subsequent getter/await can fail. */
   consume(
     invocation: AuthenticatedRequestHandleV1,
-    request: WorkloadProfilePurposeRequestV1,
+    request: WorkloadProfileRequestV1,
     unit: WorkloadProfileAccountUnit,
     retainCleanup: (release: () => void) => void,
   ): Promise<WorkloadProfileRequestLeaseV1 | undefined>;
@@ -108,6 +117,22 @@ const purposes: ReadonlySet<string> = new Set([
   "workload-profile-draft-selection",
   "workload-profile-deployment-recovery",
 ]);
+function validOperatorRequest(request: WorkloadProfileOperatorRequestV1): boolean {
+  if (!request || typeof request.canonicalInput !== "string" ||
+      request.canonicalInput.length === 0 || new TextEncoder().encode(request.canonicalInput).length > 65_536)
+    return false;
+  const keys = Object.keys(request).sort().join(",");
+  switch (request.method) {
+    case "prepare": case "accept": case "readOperation":
+      return keys === "canonicalInput,method,operationRef" && reference(request.operationRef);
+    case "withdraw":
+      return keys === "admissionRef,canonicalInput,method,operationRef" &&
+        reference(request.operationRef) && reference(request.admissionRef);
+    case "readProfile":
+      return keys === "admissionRef,canonicalInput,method" && reference(request.admissionRef);
+    default: return false;
+  }
+}
 function timestamp(value: string): number {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) throw unavailable();
@@ -119,20 +144,37 @@ function timestamp(value: string): number {
  * every purpose unavailable, including recovery. The original request source
  * verifies the complete immutable command and recipient, not merely its actor.
  * Recovery binds its fresh read owner and never acquires an active profile. */
+interface WorkloadProfileAccountSourcesV1 {
+  readonly owner?: WorkloadProfileAccountOwnerSourceV1;
+  readonly requests?: WorkloadProfileRequestCustodySourceV1;
+  readonly security?: WorkloadProfileSessionSecuritySourceV1;
+}
 export function createWorkloadProfilePurposeAccountParticipantV1(
-  options: {
-    readonly owner?: WorkloadProfileAccountOwnerSourceV1;
-    readonly requests?: WorkloadProfileRequestCustodySourceV1;
-    readonly security?: WorkloadProfileSessionSecuritySourceV1;
-  } = {},
+  options: WorkloadProfileAccountSourcesV1 = {},
 ): WorkloadProfilePurposeAccountParticipantV1 {
+  return createWorkloadProfileAccountParticipantV1(options);
+}
+
+/** Operator commands consume the same original request registry and accepting
+ * transaction/session owner; no caller principal or separate policy grant. */
+export function createWorkloadProfileOperatorAccountParticipantV1(
+  options: WorkloadProfileAccountSourcesV1 = {},
+): WorkloadProfileAccountParticipant {
+  const participant = createWorkloadProfileAccountParticipantV1(options);
+  return Object.freeze<WorkloadProfileAccountParticipant>({
+    consume(invocation, binding, unit) {
+      return participant.consume(invocation, { purpose: "workload-profile-operator", binding }, unit);
+    },
+  });
+}
+function createWorkloadProfileAccountParticipantV1(options: WorkloadProfileAccountSourcesV1) {
   const ownerSource = options.owner;
   const requests = options.requests;
   const security = options.security;
   return Object.freeze({
     async consume(
       invocation: AuthenticatedRequestHandleV1,
-      input: WorkloadProfilePurposeRequestV1,
+      input: WorkloadProfileRequestV1,
       unit: WorkloadProfileAccountUnit,
     ): Promise<WorkloadProfileAccountLease> {
       const releases: Array<() => void> = [];
@@ -199,13 +241,15 @@ export function createWorkloadProfilePurposeAccountParticipantV1(
         if (
           !request ||
           Object.keys(request).length !== 2 ||
-          !purposes.has(request.purpose) ||
-          !Array.isArray(request.binding) ||
-          request.binding.length !== 2 ||
-          !reference(request.binding[0]) ||
-          !request.binding[1] ||
-          !reference(request.binding[1].namespaceId) ||
-          !reference(request.binding[1].agentId)
+          (request.purpose === "workload-profile-operator"
+            ? !validOperatorRequest(request.binding)
+            : !purposes.has(request.purpose) ||
+              !Array.isArray(request.binding) ||
+              request.binding.length !== 2 ||
+              !reference(request.binding[0]) ||
+              !request.binding[1] ||
+              !reference(request.binding[1].namespaceId) ||
+              !reference(request.binding[1].agentId))
         )
           throw unavailable();
         owner = ownerSource.bind(unit, cleanup);
@@ -280,7 +324,8 @@ export function createWorkloadProfilePurposeAccountParticipantV1(
         if (
           !Object.values(facts).every(reference) ||
           facts.installationId !== installationId ||
-          facts.principalId !== request.binding[0]
+          (request.purpose !== "workload-profile-operator" &&
+            facts.principalId !== request.binding[0])
         )
           throw unavailable();
         expires = timestamp(facts.expiresAt);

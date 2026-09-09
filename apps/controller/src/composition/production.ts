@@ -1,3 +1,4 @@
+import { composeSelectedComputeRendererContribution } from "./driver-factories/compute.ts";
 import pg from "pg";
 import type { AuditEvent, ComputeDriver } from "@openclaw-enterprise/contracts";
 import {
@@ -11,11 +12,15 @@ import {
   PostgresPlatformState,
   RuntimeServiceTrustService,
 } from "@openclaw-enterprise/occ";
-import { createWorkloadProfilePurposeAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
-import { createWorkloadProfileUseResolverV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import { createWorkloadProfilePurposeAccountParticipantV1, createWorkloadProfileOperatorAccountParticipantV1 } from "@openclaw-enterprise/occ/account-authority/workload-profile";
+import { createWorkloadProfileUseResolverV2, createWorkloadProfileCandidateBindingsSourceV2, createWorkloadProfileCandidateSourceV2, createWorkloadProfileCapabilityAggregatorV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import { createAdmittedWorkloadProfileSelectorV2 } from "@openclaw-enterprise/occ/workload-profiles/selection";
+import { createWorkloadProfileService } from "@openclaw-enterprise/occ/services/workload-profile/service";
+import type { WorkloadProfileServicePort } from "@openclaw-enterprise/occ/services/workload-profile/port";
 import { createPostgresControllerAuth } from "../auth/index.ts";
 import { createControllerWorkloadProfileSessionSecurityV1 } from "../auth/workload-profile-session-security.ts";
 import { createFastifyApp } from "../index.ts";
+import { createControllerLifecycleStatusV1 } from "../lifecycle/read-integration-v1.ts";
 import type {
   InstallationRuntimeDrivers,
   ServiceAccountDriverFactory,
@@ -146,6 +151,7 @@ export async function composeProduction(config: ProductionConfig) {
     }
     if (preflight !== undefined) await preflight.call(computeDriver);
 
+    let workloadProfileService: WorkloadProfileServicePort | undefined;
     const controller = new OpenClawController(persistedInstallation, {
       state,
       reservedChannelInstallationCreate: Object.freeze<
@@ -166,23 +172,43 @@ export async function composeProduction(config: ProductionConfig) {
             requests: workloadProfileRequests,
             reader: state.workloadProfileSessionSecurityV1(),
           });
-          const account = createWorkloadProfilePurposeAccountParticipantV1({
+          const accountSources = {
             owner: state.workloadProfileAccountOwnerV1(),
             requests: workloadProfileRequests.requests,
             security,
-          });
+          };
+          const account = createWorkloadProfilePurposeAccountParticipantV1(accountSources);
           const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
           const candidateContext = state.workloadProfileCandidateContextV2(
             context.selection,
             context.candidateNormalizer,
             context.candidateOperations,
           );
+          const renderer = composeSelectedComputeRendererContribution(
+            computeDriver,
+            context.selection,
+            state.workloadProfileSourceEnrollmentV2(context.selection),
+          );
+          // The genuine renderer/Platform association is now installed. Its
+          // independent immutable-definition custodian remains required. Native,
+          // identity, credential and storage complete owners are still absent;
+          // the one aggregator names these prerequisites and refuses admission.
+          const capabilities = createWorkloadProfileCapabilityAggregatorV2({
+            ...(renderer === undefined ? {} : { renderer }),
+          });
+          const bindings = createWorkloadProfileCandidateBindingsSourceV2(candidateContext.records);
+          const candidates = createWorkloadProfileCandidateSourceV2(candidateContext.contexts, bindings);
+          const selector = createAdmittedWorkloadProfileSelectorV2(
+            state.workloadProfileSelectionStorageV2(), capabilities);
+          workloadProfileService = createWorkloadProfileService({
+            state, selection: context.selection,
+            account: createWorkloadProfileOperatorAccountParticipantV1(accountSources),
+            definitions: capabilities,
+          });
           return {
             enrollment: profile.enrollment,
             candidates: candidateContext.candidates,
-            // TODO: Compose the candidate provider with genuine bindings, complete
-            // capability and inserted-row sources. Preparing Use stays unavailable.
-            use: createWorkloadProfileUseResolverV2(profile.activeReader),
+            use: createWorkloadProfileUseResolverV2(profile.activeReader, candidates, capabilities, selector),
           };
         },
       },
@@ -229,7 +255,15 @@ export async function composeProduction(config: ProductionConfig) {
       validateProfile: (profile, signal) =>
         validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
     });
+    if (workloadProfileService === undefined)
+      throw new Error("The original workload profile composition was not constructed.");
     const app = createFastifyApp({
+      lifecycleStatus: createControllerLifecycleStatusV1({
+        installationId: persistedInstallation.id,
+        state,
+        verifier: auth.admissionVerifier,
+      }),
+      workloadProfileService,
       workloadProfileRequests,
       runtimeServiceTrust,
       controller,

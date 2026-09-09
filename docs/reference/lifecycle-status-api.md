@@ -14,13 +14,30 @@ An actor ID, request header, earlier admission result or TypeScript interface is
 not a replacement for that private call or authorization. Installation identity
 comes from controller/store custody, never the caller.
 
-The default composition does not supply the production account/currentness
-bridge, observation reader, bounded operation repository or capability publisher.
-When the required call or source is absent, the handlers return
-`503 DEPENDENCY_UNAVAILABLE`; they do not manufacture a status or capability.
-Supplying these interfaces alone does not establish their authority. Full
-production controller and protected-registration execution remains a separate
-verification requirement from isolated handler checks.
+Production composition supplies the private request bridge and a bounded
+PostgreSQL reader. The original protected Fastify registration mints a one-use
+handle for the exact route, Agent and page. It retains the original request's
+30-second ceiling and verified session/key expiry, closes on client disconnect
+or response completion, and rechecks the actual BetterAuth account/session or
+service key and selected native IAM policy before and after the data read.
+Authentication uses the primary store with cookie caching and refresh disabled;
+a human account must retain its actual local credential relation. Explicit
+service-key failure never falls back to a cookie.
+
+The data read uses one read-only transaction, capped at three seconds and bounded
+by the same request signal. It reads retained deploy/protective associations,
+the current intent, the selected revision and the protected compatibility record.
+The existing auth and IAM interfaces have no cancellation argument: those calls
+are joined, and an expired or closed request suppresses disclosure after they
+return. The read bridge does not claim to cancel those underlying queries.
+
+Runtime observation publication and capability publication remain separate
+producers. Without a qualified runtime observation, status and operation reads
+retain `NOT_OBSERVED` and unknown outcome conditions; queue success supplies no
+serving or stop proof. An absent capability record returns
+`503 DEPENDENCY_UNAVAILABLE`. The reader neither creates a legacy record nor
+advances compatibility. Full production startup and runtime qualification remain
+separate from the focused PostgreSQL/Fastify read checks.
 
 ## Requests and envelopes
 

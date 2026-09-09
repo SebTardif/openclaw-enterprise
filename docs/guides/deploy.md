@@ -789,9 +789,11 @@ scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/revisions/$REVIS
 ```
 
 Each read needs its own current permission; the revision document additionally
-requires AgentRevision read. The default lifecycle source/currentness bridge is
-unavailable, so retain that outcome rather than guessing a revision from the
-receipt, history or a newer `activeRevisionId`. Public disable, stop and resume
+requires AgentRevision read. Production binds the original authenticated request
+to the bounded retained-state reader; missing or revoked dependencies still
+return an unavailable or closed denial. Preserve that outcome rather than
+guessing a revision from the receipt, history or a newer `activeRevisionId`.
+Runtime observations and capability publication remain separate. Public disable, stop and resume
 commands and an approved unreachable-runtime teardown remain unimplemented.
 
 If `configuration.json` includes OCC `secretBindings`, the caller and Agent

@@ -76,6 +76,10 @@ export function createGuardedWorkloadProfileUnit(owner: GuardOwner) {
   const accountQueries = new WorkloadProfileTransactionGuard();
   const assertions: Array<() => void> = [];
   const definitionIO = new AsyncLocalStorage<{ active: boolean; pending: Set<Promise<unknown>> }>();
+  const definitions = new WeakMap<
+    WorkloadProfileDefinitionUnitV2,
+    WorkloadProfileOwnedOperationV2
+  >();
   const retained = new WeakSet<object>();
   const cleanup: Array<() => Promise<void>> = [];
   let releasePromise: Promise<void> | undefined;
@@ -328,9 +332,14 @@ export function createGuardedWorkloadProfileUnit(owner: GuardOwner) {
         signal: owner.signal,
         retain,
       });
-      const lease = await source.verifyDefinitionLocked(request, definition, io);
-      if (!retained.has(lease)) retain(lease);
-      return undefined;
+      definitions.set(definition, io);
+      try {
+        const lease = await source.verifyDefinitionLocked(request, definition, io);
+        if (!retained.has(lease)) retain(lease);
+        return undefined;
+      } finally {
+        definitions.delete(definition);
+      }
     });
   const unit: GuardedWorkloadProfileUnit = Object.freeze<GuardedWorkloadProfileUnit>({
     account: Object.freeze({
@@ -502,6 +511,26 @@ export function createGuardedWorkloadProfileUnit(owner: GuardOwner) {
   });
   return Object.freeze({
     unit,
+    bindDefinitionSource(
+      definition: WorkloadProfileDefinitionUnitV2,
+      io: WorkloadProfileOwnedOperationV2,
+    ) {
+      if (definitions.get(definition) !== io || !definitionIO.getStore()?.active)
+        throw new ScopeViolationError("The original profile definition unit is unavailable.");
+      io.assertActive();
+      // Do not call assertCurrent here: it traverses the leases retained by this
+      // very owner and would recursively call the returned source fence.
+      return Object.freeze({
+        assertCurrent(): undefined {
+          owner.assertOwnerActive();
+          owner.assertSelection();
+          if (owner.signal.aborted)
+            throw new DependencyUnavailableError("The profile definition owner expired.");
+          if (failed) throw failureValue;
+          return undefined;
+        },
+      });
+    },
     bindAccountOwner(terminalCleanup: () => void) {
       unit.account.retainSecurityCleanup(terminalCleanup);
       return Object.freeze({

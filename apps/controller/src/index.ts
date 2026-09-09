@@ -27,6 +27,10 @@ import {
   type DocumentedFastifySchema,
 } from "./http/operation-registry.ts";
 import { registerProtectedOperations, registerBootstrapOperation } from "./http/register.ts";
+import { workloadProfileApiRoutes } from "@openclaw-enterprise/contracts/api/workload-profile/routes";
+import { createWorkloadProfileOperationHandlers, installWorkloadProfileJsonParser } from "./routes/workload-profile.ts";
+import type { WorkloadProfileServicePort } from "@openclaw-enterprise/occ/services/workload-profile/port";
+import { createWorkloadProfileService } from "@openclaw-enterprise/occ/services/workload-profile/service";
 import { createConfigurationOperationHandlers } from "./routes/configuration.ts";
 import { createAgentOperationHandlers } from "./routes/agent.ts";
 import {
@@ -121,6 +125,7 @@ export interface ControllerAppOptions {
   /** The same auth-owned instance created before the supplied controller.
    * Its stable invocation source must already be in that controller's options. */
   readonly workloadProfileRequests?: ControllerWorkloadProfileRequestCustodyV1;
+  readonly workloadProfileService?: WorkloadProfileServicePort;
   /** Optional qualified private-call and current lifecycle read producers.
    * Absent producers leave the read endpoints unavailable. */
   readonly lifecycleStatus?: LifecycleStatusHttpDependenciesV1;
@@ -213,6 +218,14 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   const identityAuthorities = new WeakMap<FastifyRequest, { driver: IAMDriver; id: string }>();
   const workloadProfileRequests = options.workloadProfileRequests;
   workloadProfileRequests?.attachReceiver({
+    admissions,
+    contexts,
+    identityAuthorities,
+    resolveRecipient: () => controller,
+    selectedIAMDriver,
+  });
+  const lifecycleRequests = options.lifecycleStatus?.requests;
+  lifecycleRequests?.attachReceiver({
     admissions,
     contexts,
     identityAuthorities,
@@ -610,6 +623,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
   app.addHook("onRequest", async (request, reply) => {
     requestStartedAt.set(request, process.hrtime.bigint());
+    lifecycleRequests?.beginRequest(request);
+    if (lifecycleRequests !== undefined)
+      reply.raw.once("close", () => lifecycleRequests.closeRequest(request));
     // ServerResponse close also covers a client disconnect after its request
     // body completed. Request-body completion itself does not close custody.
     if (workloadProfileRequests !== undefined)
@@ -622,6 +638,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
   app.addHook("onResponse", async (request, reply) => {
     workloadProfileRequests?.closeRequest(request);
+    lifecycleRequests?.closeRequest(request);
     const startedAt = requestStartedAt.get(request);
     const durationMs =
       startedAt === undefined ? undefined : Number(process.hrtime.bigint() - startedAt) / 1_000_000;
@@ -1556,6 +1573,57 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
 
   void app.register(async (routes) => {
     routes.addSchema(ErrorResponse);
+    installWorkloadProfileJsonParser(routes);
+    const handlers = createWorkloadProfileOperationHandlers({
+      service: options.workloadProfileService ?? createWorkloadProfileService(),
+      invocation: async () => {
+        if (!workloadProfileRequests) throw dependencyUnavailable();
+        return workloadProfileRequests.invocations.forCurrentInvocation();
+      },
+      signal: (request) => {
+        if (!workloadProfileRequests) throw dependencyUnavailable();
+        return workloadProfileRequests.signalForRequest(request);
+      },
+      withInvocation: (request, binding, work) => {
+        if (!workloadProfileRequests) throw dependencyUnavailable();
+        return workloadProfileRequests.withWorkloadProfileInvocation(request,
+          { purpose: "workload-profile-operator", binding }, work);
+      },
+    });
+    for (const descriptor of workloadProfileApiRoutes) {
+      // This separate closed operator catalog uses the same original identity and
+      // admission infrastructure as the runtime-trust operator catalog.
+      const operation = descriptor as unknown as OccApiRoute;
+      routes.route({
+        method: descriptor.method,
+        url: descriptor.path,
+        bodyLimit: 65_536,
+        schema: { ...descriptor.schema, operationId: descriptor.operationId,
+          summary: descriptor.summary, tags: [...descriptor.tags],
+          security: [{ sessionCookie: [] }],
+          "x-openclaw-permissions": requiredPermissions(operation),
+        } as DocumentedFastifySchema,
+        onRequest: async (request) => admit(request, operation, "ordinary"),
+        preValidation: async (request) => {
+          if (!Object.hasOwn(descriptor.schema, "body") &&
+            (request.body !== undefined || Number(request.headers["content-length"] ?? 0) > 0 ||
+              request.headers["transfer-encoding"] !== undefined))
+            throw failure(400, "INVALID_REQUEST", "This operation has no request body.");
+        },
+        preHandler: async (request) => {
+          await resolveIdentity(request, operation);
+          if (admissions.get(request)?.method !== "session") {
+            await denial(operation, request, "authorization_denial", contexts.get(request));
+            throw failure(403, "FORBIDDEN", "A current human session is required.");
+          }
+        },
+        handler: handlers[descriptor.operationId],
+      });
+    }
+  });
+
+  void app.register(async (routes) => {
+    routes.addSchema(ErrorResponse);
     routes.addSchema(SecretResponse);
     const configurationHandlers = createConfigurationOperationHandlers({
       resolveConfigurationService: () => {
@@ -1774,8 +1842,8 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         return receipt;
       },
     });
-    // TODO: Supply the qualified current-account request bridge and authorized
-    // lifecycle repository/observation reader when those producers are available.
+    // Production attaches the original request bridge and bounded retained-state
+    // reader; runtime observations and capability publication remain independent.
     const lifecycleStatusService = createLifecycleStatusServiceV1({
       resolveInstallationId: () => controller?.installation.id,
       resolveSource: () => options.lifecycleStatus?.source,

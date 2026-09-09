@@ -5,6 +5,8 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./application/driver-selection": "./src/application/driver-selection.ts",
+    "./services/workload-profile/service": "./src/services/workload-profile/service.ts",
     ".": "./src/index.ts",
     "./account-authority/workload-profile": "./src/account-authority/workload-profile.ts",
     "./auth-persistence/schema-auth-boundary-v1": "./src/auth-persistence/schema-auth-boundary-v1.ts",

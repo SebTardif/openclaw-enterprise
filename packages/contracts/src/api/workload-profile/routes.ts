@@ -2,7 +2,8 @@ import { Type } from "typebox";
 import { EmptyQuery } from "../common.ts";
 import {
   WorkloadProfilePrepareSchemaV1,
-  WorkloadProfileWithdrawSchemaV1,
+  WorkloadProfilePrepareSchemaV2,
+  WorkloadProfileWithdrawSchemaV2,
 } from "../../workload-profile-v1.ts";
 import {
   WorkloadProfileOperationParams,
@@ -32,8 +33,7 @@ const mutation = {
   tags: ["Workload profiles"],
 } as const;
 const read = { ...mutation, iamAction: "read" } as const;
-/** Contract definitions only; protected HTTP registration remains unavailable until
- * the actual guarded human and profile service composition are implemented. */
+/** Closed operator contracts, registered with original human request custody. */
 export const workloadProfileApiRoutes = [
   {
     ...mutation,
@@ -44,7 +44,7 @@ export const workloadProfileApiRoutes = [
     summary: "Prepare an exact immutable workload profile operation",
     schema: {
       querystring: EmptyQuery,
-      body: WorkloadProfilePrepareSchemaV1,
+      body: Type.Union([WorkloadProfilePrepareSchemaV1, WorkloadProfilePrepareSchemaV2]),
       response: {
         200: WorkloadProfileAcknowledgementResponse,
         202: WorkloadProfileUnknownOutcomeResponse,
@@ -106,7 +106,7 @@ export const workloadProfileApiRoutes = [
     schema: {
       querystring: EmptyQuery,
       params: WorkloadProfileAdmissionParams,
-      body: WorkloadProfileWithdrawSchemaV1,
+      body: WorkloadProfileWithdrawSchemaV2,
       response: {
         200: WorkloadProfileAcknowledgementResponse,
         202: WorkloadProfileUnknownOutcomeResponse,

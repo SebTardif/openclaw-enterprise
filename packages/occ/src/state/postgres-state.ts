@@ -28,6 +28,7 @@ import {
   type WorkloadProfileSelectionStorageV2,
 } from "../workload-profiles/selection.ts";
 import type {
+  WorkloadProfileSourceEnrollmentV2,
   WorkloadProfileMutationEnrollmentV2,
   WorkloadProfileMutationAccountParticipantV2,
   WorkloadProfileDeploymentUnitV2,
@@ -101,6 +102,12 @@ import { createPostgresRevisionCredentialReaderV1 } from "./postgres/credential-
 import type { RuntimeCredentialSelectionResolverV2 } from "../workload-profiles/credential-record.ts";
 import { LifecycleAdmissionUnitPhase } from "../lifecycle/protective-admission-unit.ts";
 import { createPostgresLifecycleAdmission } from "./postgres/lifecycle-admission.ts";
+import { readPostgresLifecycleStatusV1 } from "./postgres/lifecycle-status.ts";
+import type {
+  LifecycleStatusReadMethodV1,
+  LifecycleStatusReadRequestV1,
+  LifecycleStatusReadValueV1,
+} from "../lifecycle/status-projector-v1.ts";
 import { bindNativeIAMTransaction } from "@openclaw-enterprise/iam";
 import { DriverSelection } from "../application/driver-selection.ts";
 import { createGuardedWorkloadProfileUnit } from "./postgres/workload-profile-guard.ts";
@@ -1080,6 +1087,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
+  readonly #gatewaySourceSelections = new WeakMap<object, DriverSelection>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
   readonly #profileAmbient = new AsyncLocalStorage<{
     context: TransactionContext;
@@ -1089,6 +1097,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     WorkloadProfileAccountUnit,
     ReturnType<typeof createGuardedWorkloadProfileUnit>
   >();
+  readonly #profileSourceSelections = new WeakMap<WorkloadProfileAccountUnit, DriverSelection>();
   readonly #profileSelectedUnits = new WeakMap<object, ProfileSelectedEnrollmentV2>();
   readonly #freshReservations = new WeakMap<object, FreshInstallationRecordV1>();
   readonly #freshExecution = new AsyncLocalStorage<FreshBootstrapExecutionV1>();
@@ -2154,6 +2163,37 @@ export class PostgresPlatformState implements PlatformStateStore {
     );
   }
 
+  /** Data only: the HTTP owner separately authenticates and authorizes every
+   * exact Agent read before acquisition and immediately before disclosure. */
+  async readLifecycleStatusV1<K extends LifecycleStatusReadMethodV1>(
+    installationId: string,
+    method: K,
+    request: LifecycleStatusReadRequestV1<K>,
+    options: PlatformReadOptions,
+  ): Promise<LifecycleStatusReadValueV1<K> | undefined> {
+    return this.execute(
+      true,
+      async (state, context) =>
+        readPostgresLifecycleStatusV1(
+          {
+            installationId,
+            state: createPlatformReadView(state, context.lifetime),
+            query: async (statement, parameters) => {
+              context.lifetime.assertActive();
+              context.assertOwnerActive();
+              const result = await context.client.query(statement, parameters);
+              context.lifetime.assertActive();
+              context.assertOwnerActive();
+              return result;
+            },
+          },
+          method,
+          request,
+        ),
+      options,
+    );
+  }
+
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
     const fresh = this.#freshExecution.getStore();
     if (fresh === undefined) return this.execute(false, async (state) => work(state));
@@ -2631,6 +2671,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           });
           context.protectedProfile = guarded;
           this.#profileAccounts.set(guarded.unit.account, guarded);
+          this.#profileSourceSelections.set(guarded.unit.account, selection);
           return work(guarded.unit);
         },
         options,
@@ -2640,6 +2681,92 @@ export class PostgresPlatformState implements PlatformStateStore {
       // execute has joined query cleanup and settled COMMIT/rollback before release.
       selected.release();
     }
+  }
+
+  /** Exact original Platform unit membership for partial capability owners.
+   * No SQL, IAM decision, immutable definition or new admission is produced. */
+  workloadProfileSourceEnrollmentV2(selection: DriverSelection): WorkloadProfileSourceEnrollmentV2 {
+    const wrap = (check: () => void) => {
+      let released = false;
+      let failed = false;
+      let failure: unknown;
+      const assertCurrent = (): undefined => {
+        if (released) throw new ScopeViolationError("The profile source lease is closed.");
+        if (failed) throw failure;
+        try {
+          check();
+        } catch (error) {
+          failed = true;
+          failure = error;
+          throw error;
+        }
+        return undefined;
+      };
+      assertCurrent();
+      return Object.freeze({
+        assertCurrent,
+        async release() {
+          released = true;
+        },
+      });
+    };
+    return Object.freeze<WorkloadProfileSourceEnrollmentV2>({
+      definition: (unit, io) => {
+        const guarded = this.#profileAccounts.get(unit.account);
+        if (!guarded || this.#profileSourceSelections.get(unit.account) !== selection)
+          throw new ScopeViolationError(
+            "The original profile definition selection is unavailable.",
+          );
+        const original = guarded.bindDefinitionSource(unit, io);
+        return wrap(() => original.assertCurrent());
+      },
+      revision: (input, unit, io) => {
+        const request = decodeWorkloadProfileSelectionRequestV2(input);
+        const deployment = this.#profileSelectedUnits.get(unit);
+        const gateway = this.#gatewayExecution.getStore();
+        const context = deployment?.context ?? gateway?.context;
+        const refuse = () =>
+          new ScopeViolationError("The original renderer source unit is unavailable.");
+        if (!deployment && (gateway?.version !== 2 || gateway.selectionIO !== io)) throw refuse();
+        io.assertActive();
+        return wrap(() => {
+          if (!context) throw refuse();
+          context.assertOwnerActive();
+          if (deployment) {
+            if (
+              !deployment.active ||
+              deployment.io !== io ||
+              deployment.selection !== selection ||
+              this.#profileContexts.get(deployment.profileToken) !== context ||
+              !("kind" in unit) ||
+              unit.kind !== "deployment" ||
+              unit.signal.aborted ||
+              unit.installationId !== request.installationId ||
+              unit.namespaceId !== request.namespaceId ||
+              unit.agentId !== request.agentId
+            )
+              throw refuse();
+          } else {
+            if (
+              gateway?.version !== 2 ||
+              !gateway.active ||
+              gateway.unit !== unit ||
+              this.#gatewayContexts.get(gateway.token) !== gateway ||
+              context.gateway !== gateway.execution ||
+              gateway.policyState !== "locked" ||
+              gateway.installationId !== request.installationId ||
+              gateway.unit.subject.namespaceRef !== request.namespaceId ||
+              gateway.unit.subject.agentRef !== request.agentId ||
+              gateway.bounds.signal.aborted ||
+              this.#gatewaySourceSelections.get(gateway.unit) !== selection ||
+              selection.selectedDriver("iam") !== gateway.selected.registration?.driver
+            )
+              throw refuse();
+            gateway.selected.assertCurrent();
+          }
+        });
+      },
+    });
   }
 
   /** This source recognizes only account objects created by this exact active
@@ -3425,6 +3552,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         context.protectedProfile = guarded;
         context.profileMutation = true;
         this.#profileAccounts.set(guarded.unit.account, guarded);
+        this.#profileSourceSelections.set(guarded.unit.account, selection);
         guarded.unit.account.retainSecurityCleanup(() => selected.release());
         cleanupOwned = true;
         const timer = setTimeout(context.abortProfile, 3000);
@@ -4487,6 +4615,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               active: true,
             };
             record = enrolled;
+            this.#gatewaySourceSelections.set(unit, selection);
             this.#gatewayContexts.set(token, enrolled);
             // The original Runtime callback owns the sole phase.runCommand.
             return this.#gatewayExecution.run(enrolled, () => request.args[2](unit));

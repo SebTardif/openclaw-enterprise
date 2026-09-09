@@ -16,6 +16,17 @@ API and worker, then proves authenticated `/installation` access with the
 retrieved bootstrap service key. This flow ends at control-plane access; tenant
 Agent deployment and model-backed TUI proof are later flows.
 
+The API composition also attaches the lifecycle read bridge to its original
+protected request maps. After fresh BetterAuth and exact selected-IAM checks it
+reads current intent, selected revision and retained operations in a bounded
+PostgreSQL read-only transaction, then rechecks authorization before disclosure.
+Request close, verified authentication expiry and the original request deadline
+suppress late results. These reads do not start a recovery writer or runtime
+observer. An absent compatibility publication remains unavailable, and retained
+queue completion does not establish serving or physical stop. See the
+[lifecycle status reference](../reference/lifecycle-status-api.md) for all four
+routes and their remaining observation limits.
+
 For the operator commands, use the [deployment guide](../guides/deploy.md). The
 chart owns migration/bootstrap ordering and controller readiness. It does not
 provision cloud infrastructure, publish images, create TLS, retrieve keys, or

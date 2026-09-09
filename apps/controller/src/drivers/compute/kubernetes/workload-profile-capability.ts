@@ -83,10 +83,10 @@ function unsupported(): never {
  * and release once in reverse order. This never creates whole capability or
  * later provider-call authority. The original aggregator retains the returned
  * handle through its own last transaction fence and terminal cleanup. */
-async function acquireRendererLease(
+export async function acquireRendererLease<Source extends InstalledKubernetesRendererLease>(
   io: GatewayStartupAcceptedOperationV1,
-  acquire: () => Promise<InstalledKubernetesRendererLease>,
-  qualify: (lease: InstalledKubernetesRendererLease) => void,
+  acquire: () => Promise<Source>,
+  qualify: (lease: Source) => void,
 ): Promise<GatewayStartupOwnerLeaseV1> {
   const checks: (() => undefined)[] = [];
   const releases: (() => Promise<void>)[] = [];
@@ -261,6 +261,7 @@ function snapshotDefinitionRequest(
  * method, so it cannot stand in for Runtime's complete capability source. */
 export class KubernetesWorkloadProfileCapability implements WorkloadProfileRendererContributionV2 {
   readonly #selected: ComputeDriver;
+  readonly #renderer: FixedWorkloadRenderer;
   readonly #definition: SelectedKubernetesRendererDefinition;
   readonly #acquireRevision: KubernetesRendererSource["acquireRevision"] | undefined;
   readonly #acquireDefinition: KubernetesRendererSource["acquireDefinition"] | undefined;
@@ -270,6 +271,7 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
     source?: KubernetesRendererSource,
   ) {
     this.#selected = selected;
+    this.#renderer = renderer;
     this.#definition = Object.freeze({
       workload: renderer.definition(),
       admittedTemplate: fixedAdmittedGatewayTemplate,
@@ -279,6 +281,12 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
     this.#acquireRevision = source?.acquireRevision?.bind(source);
     this.#acquireDefinition = source?.acquireDefinition?.bind(source);
     Object.freeze(this);
+  }
+
+  /** Composition reuses the original captured constructor, never an equivalent
+   * public definition object or a replacement renderer supplied by its caller. */
+  withSource(source: KubernetesRendererSource): KubernetesWorkloadProfileCapability {
+    return new KubernetesWorkloadProfileCapability(this.#selected, this.#renderer, source);
   }
 
   async verifyRendererDefinitionLocked(

@@ -8,10 +8,13 @@ automatically repeat a deployment POST.
 The [lifecycle status API](../reference/lifecycle-status-api.md) provides four GET
 contracts and their server adapters. Successful reads require the deployment to
 supply the original private authenticated call and an authorized lifecycle source.
-The default composition has no production source or account/currentness bridge
-for these reads and returns `503 DEPENDENCY_UNAVAILABLE` when either is missing.
-The steps below apply when those dependencies are actually available; an
-unavailable read must remain unavailable.
+Production connects the original request bridge and bounded PostgreSQL history
+reader. Every page and exact operation still requires current authentication and
+exact Agent-read permission, rechecked after the data read. Runtime evidence can
+remain `NOT_OBSERVED` with unknown conditions even when the retained operation is
+readable. Capability remains unavailable until its actual protected record is
+published; the reader does not create that record. An unavailable read must
+remain unavailable.
 
 ## Start with the existing deployment contract
 

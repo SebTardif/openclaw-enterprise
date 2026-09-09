@@ -24,23 +24,49 @@ import type {
 export interface WorkloadProfileServiceOptions {
   readonly state: WorkloadProfileTransactionStore;
   readonly selection: DriverSelection;
-  /** Trusted original account-owner composition only; currently no implementation. */
+  /** Trusted original account-owner composition only. */
   readonly account: WorkloadProfileAccountParticipant;
   readonly definitions?: WorkloadProfileDefinitionSourceV2;
 }
 const encoder = new TextEncoder();
 
+/** Shared exact binding for the original HTTP request owner and account consumer.
+ * These are canonical command values, never account authority. */
+export const workloadProfileOperatorBinding = Object.freeze({
+  prepare(input: Parameters<WorkloadProfileServicePort["prepare"]>[1]) {
+    const normalized = normalizeAnyProfilePreparation(input);
+    return Object.freeze({ method: "prepare" as const,
+      operationRef: normalized.request.operationRef, canonicalInput: normalized.canonicalClientIntent });
+  },
+  reference(method: "accept" | "readOperation", operationRef: string) {
+    profileUuid(operationRef);
+    return Object.freeze({ method, operationRef, canonicalInput: JSON.stringify({ operationRef }) });
+  },
+  readProfile(admissionRef: string) {
+    profileUuid(admissionRef);
+    return Object.freeze({ method: "readProfile" as const, admissionRef,
+      canonicalInput: JSON.stringify({ admissionRef }) });
+  },
+  withdraw(admissionRef: string, input: Parameters<WorkloadProfileServicePort["withdraw"]>[2]) {
+    profileUuid(admissionRef);
+    const decoded = decodeWorkloadProfileWithdrawV2(input);
+    if (decoded.kind !== "valid" || decoded.value.expectedAdmission.admissionRef !== admissionRef)
+      throw new ScopeViolationError("The profile withdrawal is unavailable.");
+    return Object.freeze({ method: "withdraw" as const, admissionRef,
+      operationRef: decoded.value.operationRef, canonicalInput: new TextDecoder().decode(
+        canonicalizeWorkloadProfileJson(decoded.value, "operator-envelope")) });
+  },
+});
+
 /** Storage and registered IAM class never stand in for actual account authority.
- * No controller composition installs the mandatory participant yet. */
+ * Production installs the original request and same-transaction participant. */
 export function createWorkloadProfileService(
   options?: WorkloadProfileServiceOptions,
 ): WorkloadProfileServicePort {
   const unavailable = async (): Promise<never> => {
     throw new DependencyUnavailableError("Workload profile authority is unavailable.");
   };
-  // TODO: the original account authority must implement actual one-use request
-  // custody and same-unit session/security participation before routes can enable
-  // these methods. Memory auth has no shared transaction and remains unsupported.
+  // Memory auth has no shared transaction and remains unsupported.
   if (options === undefined || options.account === undefined)
     return Object.freeze({
       prepare: unavailable,
@@ -116,11 +142,7 @@ export function createWorkloadProfileService(
       (normalized.request.schemaVersion === 2
         ? deriveWorkloadProfileManifestV2
         : deriveWorkloadProfileManifest)(encoder.encode(normalized.request.manifest.canonicalUtf8));
-      const request = Object.freeze({
-        method: "prepare" as const,
-        operationRef: normalized.request.operationRef,
-        canonicalInput: normalized.canonicalClientIntent,
-      });
+      const request = workloadProfileOperatorBinding.prepare(input);
       try {
         const record = await execute(invocation, request, signal, (unit, lease) =>
           unit.prepare(normalized.request, lease),
@@ -143,11 +165,7 @@ export function createWorkloadProfileService(
     },
     readOperation: async (invocation, operationRef, signal) => {
       profileUuid(operationRef);
-      const request = Object.freeze({
-        method: "readOperation" as const,
-        operationRef,
-        canonicalInput: JSON.stringify({ operationRef }),
-      });
+      const request = workloadProfileOperatorBinding.reference("readOperation", operationRef);
       const record = await execute(invocation, request, signal, (unit, lease) =>
         unit.readOperation(operationRef, lease),
       );
@@ -168,11 +186,7 @@ export function createWorkloadProfileService(
     },
     accept: async (invocation, operationRef, signal) => {
       profileUuid(operationRef);
-      const request = Object.freeze({
-        method: "accept" as const,
-        operationRef,
-        canonicalInput: JSON.stringify({ operationRef }),
-      });
+      const request = workloadProfileOperatorBinding.reference("accept", operationRef);
       try {
         const accepted = await execute(invocation, request, signal, (unit, lease) =>
           unit.accept(operationRef, lease, options.definitions),
@@ -198,15 +212,7 @@ export function createWorkloadProfileService(
       const decoded = decodeWorkloadProfileWithdrawV2(input);
       if (decoded.kind !== "valid" || decoded.value.expectedAdmission.admissionRef !== admissionRef)
         throw new ScopeViolationError("The profile withdrawal is unavailable.");
-      const canonicalInput = new TextDecoder().decode(
-        canonicalizeWorkloadProfileJson(decoded.value, "operator-envelope"),
-      );
-      const request = Object.freeze({
-        method: "withdraw" as const,
-        admissionRef,
-        operationRef: decoded.value.operationRef,
-        canonicalInput,
-      });
+      const request = workloadProfileOperatorBinding.withdraw(admissionRef, decoded.value);
       try {
         const history = await execute(invocation, request, signal, (unit, lease) =>
           unit.withdraw(admissionRef, decoded.value, lease),
@@ -229,11 +235,7 @@ export function createWorkloadProfileService(
     },
     readProfile: async (invocation, admissionRef, signal) => {
       profileUuid(admissionRef);
-      const request = Object.freeze({
-        method: "readProfile" as const,
-        admissionRef,
-        canonicalInput: JSON.stringify({ admissionRef }),
-      });
+      const request = workloadProfileOperatorBinding.readProfile(admissionRef);
       const head = await execute(invocation, request, signal, (unit, lease) =>
         unit.readProfile(admissionRef, lease),
       );

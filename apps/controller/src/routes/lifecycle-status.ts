@@ -3,6 +3,7 @@ import { Check } from "typebox/value";
 import { lifecycleApiRoutes } from "@openclaw-enterprise/contracts/api/agent/lifecycle-routes";
 import type { LifecycleStatusReadPortV1 } from "@openclaw-enterprise/occ/lifecycle/handler-ports-v1";
 import type { LifecycleReadCallV1 } from "@openclaw-enterprise/occ/lifecycle/ports-v1";
+import type { LifecycleStatusRequestCustodyV1 } from "../lifecycle/read-integration-v1.ts";
 import {
   parseLifecycleStatusReadRequestV1,
   projectLifecycleStatusReadV1,
@@ -18,6 +19,8 @@ export interface LifecycleStatusHttpDependenciesV1 {
    * verified request custody. Header/body/actor identifiers are not handles.
    * The original signal must cover request cancellation and bounded cleanup. */
   readonly resolveReadCall: (request: FastifyRequest) => Promise<LifecycleReadCallV1 | undefined>;
+  /** Production request owner attaches only to the original protected app maps. */
+  readonly requests?: LifecycleStatusRequestCustodyV1;
 }
 
 export interface LifecycleStatusOperationHandlerOptionsV1 {
