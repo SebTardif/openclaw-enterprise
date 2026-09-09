@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
+import { deployLiveAgentRevision } from "../helpers/live-lifecycle-deploy.mjs";
 import {
   createKubernetesClient,
   createKubernetesInstallationConfiguration,
@@ -802,13 +803,19 @@ test(
       let finalPod;
       let finalRevision;
       for (const round of [1, 2]) {
-        // Each bodyless deployment freezes a new immutable revision of the same Agent.
-        const revision = await api(
-          "POST",
-          `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
-          undefined,
-          202,
-        );
+        // TODO: Install genuine V2 profile/account suppliers and save this Agent's
+        // admitted profile through the real API. Missing setup fails this live case.
+        // A new retained command observes each round's current saved draft/head;
+        // the revision comes from its separately authorized operation read.
+        const deployment = await deployLiveAgentRevision({
+          request: async (method, path, body) => {
+            const response = await externalRequest(method, path, body);
+            return { status: response.status, ...response.body };
+          },
+          namespaceId: namespace.id,
+          agentId: agent.id,
+        });
+        const revision = deployment.revision.data;
         const configMap = `gateway-${agentHash}-rev-${hash(revision.id)}`;
         await waitFor(
           `Agent active revision ${round}`,
