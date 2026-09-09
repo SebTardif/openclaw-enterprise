@@ -8,10 +8,12 @@ import {
   type ExactSelectedExecutionV1,
   TURN_JOURNAL_LIMITS_V1,
   type JournalExecutionIntentV1,
+  type JournalDeadlineControlV1,
+  type VerifiedDeadlineControlV1,
   type PendingInitiationClaimV1,
 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 import { sameJournalValue } from "./rows.ts";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { hrtime } from "node:process";
 import type { AuthorityCallV1 } from "@openclaw-enterprise/contracts/runtime-authority-v1";
 import { DependencyUnavailableError } from "../errors.ts";
@@ -266,6 +268,7 @@ interface InitiationClock {
   readonly call: AuthorityCallV1;
   active: boolean;
   admitted: boolean;
+  transferred: boolean;
 }
 const initiations = new WeakMap<JournalInitiationGuardV1, InitiationClock>();
 
@@ -304,6 +307,7 @@ export function bindCommittedTurnJournalClock(
     execution: guard.executionIntent.execution,
     active: true,
     admitted: false,
+    transferred: false,
   };
   initiations.set(guard, state);
   return () => {
@@ -369,4 +373,152 @@ export async function sampleDispatchClock(
     dispatchClock: Object.freeze({ ...state.clock }),
     sampledAtMs,
   });
+}
+
+/** Retained local lifetime, independent of the consumed initiation guard. It
+ * carries no continuing grant and never establishes termination or release. */
+export interface RetainedDispatchDeadline {
+  readonly control: JournalDeadlineControlV1;
+  readonly evidence: VerifiedDeadlineControlV1;
+  readonly signal: AbortSignal;
+  assertBeforeEffect(): void;
+  requestStop(): Promise<void>;
+}
+
+/** Transfer only the actual, already admitted original known-COMMIT claim. The
+ * caller is the selected controller binding the actual pre-admitted stop owner;
+ * clocks, readback and new guards cannot create membership. No new epoch/sample
+ * can replace the original bound. Stop bypasses every continuing-work queue. */
+export function transferDispatchDeadline(
+  guard: JournalInitiationGuardV1,
+  call: AuthorityCallV1,
+  target: Readonly<{ nativeIncarnationRef: string; nativeConstructionRef: string }>,
+  stop: (control: JournalDeadlineControlV1) => Promise<void>,
+): RetainedDispatchDeadline {
+  const state = initiations.get(guard);
+  if (
+    !state?.active ||
+    !state.admitted ||
+    state.transferred ||
+    guard.signal.aborted ||
+    call.signal.aborted ||
+    call.context !== state.call.context ||
+    call.requestRef !== state.call.requestRef ||
+    call.recipientRef !== state.call.recipientRef ||
+    call.deadline !== state.call.deadline ||
+    !guard.executionIntent ||
+    !sameJournalValue(guard.executionIntent.dispatchClock, state.clock)
+  )
+    throw unavailable();
+  const operationRef = `deadline-control:${randomUUID()}`;
+  const responsibilityRef = `execution-cleanup:${randomUUID()}`;
+  const payload = {
+    kind: "host-deadline-v1" as const,
+    intent: guard.executionIntent,
+    operationRef,
+    nativeIncarnationRef: target.nativeIncarnationRef,
+    nativeConstructionRef: target.nativeConstructionRef,
+    responsibilityRef,
+    responsibilityVersion: 1,
+    deadlineAtMs: state.clock.anchorAtMs + guard.executionIntent.maximumExecutionMs,
+  };
+  const control = parseTurnJournalV1("deadlineControl", {
+    ...payload,
+    operationDigest: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+  });
+  state.transferred = true;
+  const cancellation = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopping: Promise<void> | undefined;
+  const requestStop = (): Promise<void> => {
+    if (stopping) return stopping;
+    // Publish the latch before invoking user/native code, including synchronous
+    // reentry. Rejection/ACK remains unknown; this owner never frees a reservation.
+    let complete!: () => void;
+    let fail!: (reason: unknown) => void;
+    stopping = new Promise<void>((resolve, reject) => {
+      complete = resolve;
+      fail = reject;
+    });
+    void stopping.catch(() => {});
+    if (timer !== undefined) clearTimeout(timer);
+    cancellation.abort();
+    try {
+      Promise.resolve(stop(control)).then(complete, fail);
+    } catch (error) {
+      fail(error);
+    }
+    return stopping;
+  };
+  const assertBeforeEffect = (): void => {
+    if (cancellation.signal.aborted) throw unavailable();
+    try {
+      const now = elapsed(true);
+      if (now < state.clock.anchorAtMs || now >= control.deadlineAtMs) throw unavailable();
+    } catch (error) {
+      void requestStop();
+      throw error;
+    }
+  };
+  const wake = (): void => {
+    try {
+      assertBeforeEffect();
+      const remaining = control.deadlineAtMs - elapsed(true);
+      if (remaining <= 0) {
+        void requestStop();
+        return;
+      }
+      // A delayed or early wake cannot renew the original deadline. Process
+      // lifetime is owned by the host; exit is unknown, never successful stop.
+      timer = setTimeout(wake, remaining);
+      timer.unref();
+    } catch {
+      void requestStop();
+    }
+  };
+  const evidence = Object.freeze({}) as VerifiedDeadlineControlV1;
+  const owner = Object.freeze({
+    control,
+    evidence,
+    signal: cancellation.signal,
+    assertBeforeEffect,
+    requestStop,
+  });
+  deadlineControls.set(evidence, { guard, state, owner });
+  wake();
+  return owner;
+}
+
+const deadlineControls = new WeakMap<
+  VerifiedDeadlineControlV1,
+  {
+    guard: JournalInitiationGuardV1;
+    state: InitiationClock;
+    owner: RetainedDispatchDeadline;
+  }
+>();
+/** Original admission's own mandatory self-cleanup, not a new human cancellation
+ * grant or an external positive inspector. New retention stays inside the real
+ * initiation lifetime; its already retained stop duty outlives that lifetime. */
+export async function inspectOriginalDeadlineControl(
+  handle: VerifiedDeadlineControlV1,
+  call: AuthorityCallV1,
+): Promise<JournalDeadlineControlV1 | Readonly<{ kind: "unavailable" }>> {
+  const bound = deadlineControls.get(handle);
+  if (
+    !bound ||
+    !bound.state.active ||
+    bound.guard.signal.aborted ||
+    call.signal.aborted ||
+    call.context !== bound.state.call.context ||
+    call.requestRef !== bound.state.call.requestRef ||
+    call.recipientRef !== bound.state.call.recipientRef ||
+    call.deadline !== bound.state.call.deadline
+  )
+    return { kind: "unavailable" };
+  await bound.guard.assertCurrent();
+  if (!bound.state.active || bound.guard.signal.aborted || call.signal.aborted)
+    return { kind: "unavailable" };
+  bound.owner.assertBeforeEffect();
+  return bound.owner.control;
 }

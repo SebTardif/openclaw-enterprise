@@ -4,6 +4,7 @@ import {
   type ExactExecutionInterruptionV1,
   type ExactSelectedExecutionV1,
   type JournalExecutionStartV1,
+  type JournalDeadlineControlV1,
   type JournalInitiationGuardV1,
   type VerifiedConsumptionV1,
   type VerifiedExecutionInterruptionV1,
@@ -13,29 +14,50 @@ import type { ExactAttemptV1 } from "@openclaw-enterprise/contracts/completed-co
 import type { AuthorityCallV1 } from "@openclaw-enterprise/contracts/runtime-authority-v1";
 import { DependencyUnavailableError } from "../errors.ts";
 import { sameJournalValue } from "./rows.ts";
-import { sampleDispatchClock, takeDispatchClockForExecution } from "./dispatcher-clock.ts";
+import {
+  sampleDispatchClock,
+  takeDispatchClockForExecution,
+  transferDispatchDeadline,
+  type RetainedDispatchDeadline,
+} from "./dispatcher-clock.ts";
 import { TurnJournalStore } from "./store.ts";
 
 /** An observation returned by the actual native owner. That owner must retain
- * its original connection, irrevocably ready Session/task/drain and protected
- * clock independently of this JS object's lifetime. start is data, not authority.
+ * its original connection, irrevocably ready Session/task/drain and exact host
+ * deadline association independently of this JS object's lifetime. start is data,
+ * not authority.
  */
 export interface NativeReadyExecution {
   readonly start: JournalExecutionStartV1;
   readonly evidence: VerifiedExecutionStartV1;
 }
 
+/** Supplied only by the actual pending native construction's cancellation owner.
+ * The original committed admission grants its exact mandatory cleanup during
+ * transfer; this target projection cannot create admission or stop authority. */
+export interface NativeDeadlineStopOwner {
+  readonly target: Readonly<{ nativeIncarnationRef: string; nativeConstructionRef: string }>;
+  /** Direct retained stop lane: no continuing grant, serial tail or new database
+   * write at expiry. ACK is not proof that construction/child/drain joins ended. */
+  interrupt(control: JournalDeadlineControlV1): Promise<void>;
+}
 /** Implemented at the original authenticated native connection. No default
  * implementation exists. The actual owner verifies original membership on each
  * call; serialized receipts, connection IDs and evidence references cannot pass.
  */
 export interface NativeSelectedExecutionOwner {
-  /** Consume only this original callback. Recheck guard before ready commitment
-   * and after waits. Retain the entire task/drain and transfer ongoing control
-   * before returning; keep all effects gated until confirmRetainedStart succeeds.
-   * No pending executable queue, automatic retry or second accept is permitted.
+  /** Consume only this original callback. Reserve the actual pending construction
+   * and await retainDeadline before polling any effectful constructor. Recheck
+   * guard before ready commitment and after waits. Retain the entire task/drain
+   * and transfer ongoing control before returning; the model/tool gate stays
+   * closed until confirmRetainedStart succeeds. No automatic retry or second
+   * executable acceptance is permitted.
    */
-  accept(guard: JournalInitiationGuardV1, call: AuthorityCallV1): Promise<NativeReadyExecution>;
+  accept(
+    guard: JournalInitiationGuardV1,
+    call: AuthorityCallV1,
+    retainDeadline: (pending: NativeDeadlineStopOwner) => Promise<JournalDeadlineControlV1>,
+  ): Promise<NativeReadyExecution>;
   /** Independent whole-execution authority, not the expired consumed predicate.
    * Recheck current original human/common/Agent grants, purpose/recipient,
    * assignment/incarnation, original clock and deadline after every native wait.
@@ -69,6 +91,7 @@ export interface NativeSelectedExecutionOwner {
   ): Promise<void>;
 }
 interface OwnedExecution {
+  readonly deadline: RetainedDispatchDeadline;
   readonly native: NativeReadyExecution;
   readonly start: JournalExecutionStartV1;
   tail: Promise<void>;
@@ -86,6 +109,9 @@ const key = (execution: ExactSelectedExecutionV1) =>
  */
 export class SelectedExecutionController {
   private readonly executions = new Map<string, OwnedExecution>();
+  // Includes unknown pre-ready construction. ACK/rejection and deadline expiry
+  // never discard the original cleanup owner or reclaim its admission slot.
+  private readonly deadlines = new Map<string, RetainedDispatchDeadline>();
   private admittedOwners = 0;
   private readonly journal: TurnJournalStore;
   private readonly native: NativeSelectedExecutionOwner;
@@ -148,15 +174,66 @@ export class SelectedExecutionController {
     // Without complete closure there is no slot reclamation.
     this.admittedOwners++;
     // Only the original committed clock owner may reach native admission.
-    // The native owner still samples its own authenticated challenge and must
-    // qualify clock correspondence before opening any execution gate.
+    // Native keeps its actual construction gated while the original host binds
+    // the independently admitted stop duty and retains its conditional control.
     await sampleDispatchClock(guard, call.requestRef);
-    const receipt = await this.native.accept(guard, call);
+    let deadline: RetainedDispatchDeadline | undefined;
+    let pendingSeen = false;
+    let controlRetained = false;
+    const receipt = await this.native.accept(guard, call, async (pending) => {
+      if (pendingSeen) throw unavailable();
+      pendingSeen = true;
+      // Capture the actual original pending owner before the first await. The
+      // bridge authenticates this target; original claim membership authenticates
+      // admission, not a native target copied into this interface.
+      const target = Object.freeze({
+        nativeIncarnationRef: pending.target.nativeIncarnationRef,
+        nativeConstructionRef: pending.target.nativeConstructionRef,
+      });
+      const interrupt = pending.interrupt.bind(pending);
+      Object.freeze(pending.target);
+      Object.freeze(pending);
+      await guard.assertCurrent();
+      deadline = transferDispatchDeadline(guard, call, target, interrupt);
+      const control = deadline.control;
+      const locator = key(control.intent.execution);
+      if (this.deadlines.has(locator)) throw unavailable();
+      this.deadlines.set(locator, deadline);
+      // Retain cleanup before waiting on PostgreSQL. Expiry can interrupt a
+      // blocked retention independently; unknown COMMIT cannot open construction.
+      deadline.assertBeforeEffect();
+      const retained = await this.journal.transact(
+        control.operationRef,
+        (j) => j.retainDeadlineControl(deadline!.evidence, call),
+        call,
+      );
+      if (
+        retained.kind !== "committed" ||
+        !["recorded", "existing"].includes(retained.value.kind) ||
+        !("record" in retained.value) ||
+        !sameJournalValue(retained.value.record, control)
+      )
+        throw unavailable();
+      await guard.assertCurrent();
+      deadline.assertBeforeEffect();
+      controlRetained = true;
+      return control;
+    });
     const start = parseTurnJournalV1("executionStart", receipt.start);
-    if (!sameJournalValue(start.intent, guard.executionIntent)) throw unavailable();
+    if (
+      !deadline ||
+      !controlRetained ||
+      !("kind" in start) ||
+      start.kind !== "host-controlled-v1" ||
+      !sameJournalValue(start.intent, guard.executionIntent) ||
+      !sameJournalValue(start.deadlineControl, deadline.control)
+    )
+      throw unavailable();
+    deadline.assertBeforeEffect();
     const locator = key(start.intent.execution);
     if (this.executions.has(locator)) throw unavailable();
     const owned: OwnedExecution = {
+      deadline,
       native: receipt,
       start,
       tail: Promise.resolve(),
@@ -170,6 +247,7 @@ export class SelectedExecutionController {
     await this.serial(owned, async () => {
       await guard.assertCurrent();
       await this.native.assertCurrent(receipt, "continue", call);
+      owned.deadline.assertBeforeEffect();
       await guard.assertCurrent();
       const retained = await this.journal.transact(
         start.operationRef,
@@ -194,7 +272,9 @@ export class SelectedExecutionController {
     const execution = parseTurnJournalV1("selectedExecution", input);
     const owned = this.owned(execution);
     await this.serial(owned, async () => {
+      owned.deadline.assertBeforeEffect();
       await this.native.assertCurrent(owned.native, "continue", call);
+      owned.deadline.assertBeforeEffect();
       const state = await this.journal.read((j) => j.findExecution(execution, call), call);
       if (state.kind !== "started" || !sameJournalValue(state.start, owned.start))
         throw unavailable();
@@ -258,7 +338,9 @@ export class SelectedExecutionController {
   }
   private async confirm(owned: OwnedExecution, call: AuthorityCallV1): Promise<void> {
     if (owned.confirmationAttempted || owned.interruption !== undefined) throw unavailable();
+    owned.deadline.assertBeforeEffect();
     await this.native.assertCurrent(owned.native, "continue", call);
+    owned.deadline.assertBeforeEffect();
     owned.confirmationAttempted = true;
     await this.native.confirmRetainedStart(owned.native, owned.start, call);
   }

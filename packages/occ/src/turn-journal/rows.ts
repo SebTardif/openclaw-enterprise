@@ -13,6 +13,7 @@ import {
   type AdmissionRecordV1,
   type JournalExecutionIntentV1,
   type JournalExecutionStartV1,
+  type JournalDeadlineControlV1,
   type ExactExecutionInterruptionV1,
   type AttemptRecordV1,
   type CompletionRecordV1,
@@ -267,6 +268,11 @@ export function parseHeadRow(
 
 export type TurnJournalOperationRow =
   | Readonly<{
+      operationKind: "deadline-control";
+      request: JournalDeadlineControlV1;
+      record: JournalDeadlineControlV1;
+    }>
+  | Readonly<{
       operationKind: "execution-intent";
       request: JournalExecutionIntentV1;
       record: JournalExecutionIntentV1;
@@ -323,6 +329,17 @@ export function parseOperationRow(row: TurnJournalRow): TurnJournalOperationRow 
         )
           invalid();
         return Object.freeze({ operationKind: "execution-intent", request, record });
+      }
+      case "deadline-control": {
+        const request = parseTurnJournalV1("deadlineControl", row.request);
+        const record = parseTurnJournalV1("deadlineControl", row.record);
+        assertAttempt(row, request.intent.execution.attempt);
+        if (
+          text(row, "operation_ref") !== request.operationRef ||
+          !sameJournalValue(request, record)
+        )
+          invalid();
+        return Object.freeze({ operationKind: "deadline-control", request, record });
       }
       case "execution-start": {
         const request = parseTurnJournalV1("executionStart", row.request);

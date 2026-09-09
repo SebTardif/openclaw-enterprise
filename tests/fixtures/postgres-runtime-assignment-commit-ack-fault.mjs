@@ -13,10 +13,12 @@ export async function runtimeCommitAckProxy(databaseUrl) {
   let observed = false;
   const sockets = new Set();
   const server = net.createServer((client) => {
+    client.setNoDelay(true);
     const upstream = net.connect({
       host: upstreamHost,
       port: upstreamPort,
     });
+    upstream.setNoDelay(true);
     sockets.add(client);
     sockets.add(upstream);
     let frontend = Buffer.alloc(0);

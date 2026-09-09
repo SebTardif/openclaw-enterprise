@@ -336,6 +336,7 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
           | "execution-intent"
           | "execution-start"
           | "execution-interruption"
+          | "deadline-control"
         >()
         .notNull(),
       operationRef: text("operation_ref").notNull(),
@@ -350,7 +351,7 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
       attemptOwner("turn_journal_operations_attempt", table),
       check(
         "turn_journal_operations_kind",
-        sql`${table.operationKind} IN ('checkpoint-allocation','completion','outcome','cancellation','release','execution-intent','execution-start','execution-interruption')`,
+        sql`${table.operationKind} IN ('checkpoint-allocation','completion','outcome','cancellation','release','execution-intent','execution-start','execution-interruption','deadline-control')`,
       ),
       boundedObject("turn_journal_operations_request", table.request),
       boundedObject("turn_journal_operations_record", table.record),
@@ -362,11 +363,18 @@ export function createTurnJournalTables(schema: PgSchema, parents: TurnJournalSc
       uniqueIndex("turn_journal_execution_once")
         .on(...attemptColumns(table), table.operationKind)
         .where(
-          sql`${table.operationKind} IN ('execution-intent','execution-start','execution-interruption')`,
+          sql`${table.operationKind} IN ('execution-intent','execution-start','execution-interruption','deadline-control')`,
         ),
       uniqueIndex("turn_journal_execution_lookup")
         .on(table.installationId, sql`(${table.request}#>>'{execution,executionRef}')`)
         .where(sql`${table.operationKind} = 'execution-intent'`),
+      uniqueIndex("turn_journal_native_construction")
+        .on(
+          table.installationId,
+          sql`(${table.request}->>'nativeIncarnationRef')`,
+          sql`(${table.request}->>'nativeConstructionRef')`,
+        )
+        .where(sql`${table.operationKind} = 'deadline-control'`),
       uniqueIndex("turn_journal_native_execution")
         .on(
           table.installationId,

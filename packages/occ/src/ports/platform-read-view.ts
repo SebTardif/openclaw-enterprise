@@ -97,6 +97,7 @@ export function createPlatformReadView(
     ...(repositories.turnJournal
       ? {
           turnJournal: bindRepository(repositories.turnJournal, lifetime, [
+            "findDeadlineControl",
             "findExecution",
             "findExecutionInterruption",
             "findAdmission",

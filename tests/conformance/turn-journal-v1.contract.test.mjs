@@ -1399,3 +1399,101 @@ test("dispatch clocks distinguish the pre-commit anchor from historical commit l
     100,
   );
 });
+
+test("host deadline control includes startup and rejects renewal or a historical clock", () => {
+  const intent = {
+    execution: {
+      attempt: v.attempt,
+      dispatchOperationRef: v.attemptRecord.binding.dispatchOperationRef,
+      consumption: v.attemptRecord.consumption.operation,
+      executionRef: "host-execution",
+      recipientRef: "native",
+    },
+    operationRef: "intent",
+    operationDigest: "a".repeat(64),
+    executionLimitRef: "limit",
+    executionLimitVersion: 1,
+    maximumExecutionMs: 1000,
+    dispatchClock: {
+      kind: "pre-commit-monotonic-v1",
+      clockSourceRef: "host",
+      clockEpochRef: "epoch",
+      anchorAtMs: 100,
+      deadlineAtMs: 900100,
+    },
+  };
+  const control = {
+    kind: "host-deadline-v1",
+    intent,
+    operationRef: "cleanup",
+    operationDigest: "b".repeat(64),
+    nativeIncarnationRef: "native-one",
+    nativeConstructionRef: "construction-one",
+    responsibilityRef: "original-self-cleanup",
+    responsibilityVersion: 1,
+    deadlineAtMs: 1100,
+  };
+  assert.equal(parseTurnJournalV1("deadlineControl", control).deadlineAtMs, 1100);
+  for (const change of [
+    { deadlineAtMs: 1101 },
+    { deadlineAtMs: 900100 },
+    { armed: true },
+    {
+      intent: {
+        ...intent,
+        dispatchClock: {
+          clockSourceRef: "host",
+          clockEpochRef: "epoch",
+          committedAtMs: 100,
+          deadlineAtMs: 900100,
+        },
+      },
+    },
+    { intent: { ...intent, maximumExecutionMs: 900001 } },
+  ])
+    assert.throws(() => parseTurnJournalV1("deadlineControl", { ...control, ...change }));
+  const start = {
+    kind: "host-controlled-v1",
+    intent,
+    operationRef: "start",
+    operationDigest: "c".repeat(64),
+    nativeExecutionRef: "execution",
+    nativeIncarnationRef: "native-one",
+    nativeReservationRef: "reservation",
+    nativeSessionRef: "session",
+    nativeTurnRef: "turn",
+    acceptanceEvidenceRef: "ready",
+    deadlineControl: control,
+  };
+  assert.equal(
+    parseTurnJournalJsonV1("executionStart", JSON.stringify(start)).kind,
+    "host-controlled-v1",
+  );
+  const observed = {
+    ...start,
+    nativeReadyObservation: {
+      clockSourceRef: "guest",
+      clockEpochRef: "guest-epoch",
+      observedAtMs: 42,
+    },
+  };
+  assert.equal(
+    parseTurnJournalV1("executionStart", observed).nativeReadyObservation.observedAtMs,
+    42,
+  );
+  for (const change of [
+    { nativeIncarnationRef: "other" },
+    { clockCorrespondenceEvidenceRef: "invented" },
+    { startedAtMs: 200 },
+    { deadlineAtMs: 1100 },
+    { intent: { ...intent, executionLimitVersion: 2 } },
+    {
+      nativeReadyObservation: {
+        clockSourceRef: "guest",
+        clockEpochRef: "guest-epoch",
+        observedAtMs: Number.MAX_SAFE_INTEGER + 1,
+      },
+    },
+  ])
+    assert.throws(() => parseTurnJournalV1("executionStart", { ...start, ...change }));
+});
