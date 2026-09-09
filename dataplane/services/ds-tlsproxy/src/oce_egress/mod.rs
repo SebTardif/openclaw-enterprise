@@ -30,7 +30,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-const REQUEST_LIMIT: usize = 1024 * 1024;
+const REQUEST_LIMIT: usize = 16 * 1024 * 1024;
 const CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const FIXED_HOST: &str = "api.openai.com";
 

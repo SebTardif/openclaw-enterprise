@@ -1394,17 +1394,65 @@ struct Crd43WireExchange {
     response: Value,
     received: Instant,
     before_write: Instant,
+    request_prefix: [u8; 4],
+    request_payload_bytes: usize,
+    request_payload_sha256: String,
+}
+struct Crd43RpcLimits {
+    request_bytes: usize,
+    requests: usize,
+    handler_ended: Option<Arc<AtomicBool>>,
+}
+#[derive(Default)]
+struct Crd43RpcProgress {
+    frames_complete: AtomicUsize,
+    parsed: AtomicUsize,
+    replies_written: AtomicUsize,
+}
+struct Crd43RpcWitness {
+    progress: Arc<Crd43RpcProgress>,
+    connections: Arc<AtomicUsize>,
+    idle_after_handler: Arc<AtomicBool>,
 }
 fn crd43_deadline_rpc(
     workers: &mut Crd43DeadlineWorkers,
     path: PathBuf,
     records: Arc<Mutex<Vec<Crd43WireExchange>>>,
-    mut respond: impl FnMut(&Value) -> Value + Send + 'static,
+    respond: impl FnMut(&Value) -> Value + Send + 'static,
 ) {
+    crd43_deadline_rpc_with_limits(
+        workers,
+        path,
+        records,
+        Crd43RpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 4,
+            handler_ended: None,
+        },
+        respond,
+    );
+}
+fn crd43_deadline_rpc_with_limits(
+    workers: &mut Crd43DeadlineWorkers,
+    path: PathBuf,
+    records: Arc<Mutex<Vec<Crd43WireExchange>>>,
+    limits: Crd43RpcLimits,
+    mut respond: impl FnMut(&Value) -> Value + Send + 'static,
+) -> Crd43RpcWitness {
+    assert!(limits.request_bytes > 0 && limits.request_bytes <= 33_619_968);
+    assert!(limits.requests > 0 && limits.requests <= 16);
     let listener = UnixListener::bind(path).unwrap();
     listener.set_nonblocking(true).unwrap();
     let stop = workers.stop.clone();
     let deadline = workers.deadline;
+    let witness = Crd43RpcWitness {
+        progress: Arc::new(Crd43RpcProgress::default()),
+        connections: Arc::new(AtomicUsize::new(0)),
+        idle_after_handler: Arc::new(AtomicBool::new(false)),
+    };
+    let progress = witness.progress.clone();
+    let connections = witness.connections.clone();
+    let idle_after_handler = witness.idle_after_handler.clone();
     workers.spawn(move || {
         let mut count = 0;
         while !stop.load(Ordering::Acquire) {
@@ -1413,8 +1461,16 @@ fn crd43_deadline_rpc(
             if Instant::now() >= deadline {
                 return Err("fixture RPC absolute deadline reached");
             }
+            let ended_before_accept = limits
+                .handler_ended
+                .as_ref()
+                .is_some_and(|ended| ended.load(Ordering::Acquire));
             let mut socket = match listener.accept() {
                 Ok((socket, _)) => socket,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock && ended_before_accept => {
+                    idle_after_handler.store(true, Ordering::Release);
+                    return Ok(());
+                }
                 Err(error) if crd43_retry(&error) => {
                     thread::sleep(Duration::from_millis(1));
                     continue;
@@ -1422,7 +1478,8 @@ fn crd43_deadline_rpc(
                 Err(_) => return Err("fixture RPC accept failed"),
             };
             count += 1;
-            if count > 4 {
+            connections.fetch_add(1, Ordering::Release);
+            if count > limits.requests {
                 return Err("fixture RPC request count exceeded");
             }
             socket
@@ -1432,13 +1489,15 @@ fn crd43_deadline_rpc(
             let mut header = [0; 4];
             crd43_read_exact(&mut socket, &mut header, &stop, io_deadline)?;
             let length = u32::from_be_bytes(header) as usize;
-            if length == 0 || length > 16 * 1024 {
+            if length == 0 || length > limits.request_bytes {
                 return Err("fixture RPC frame bound exceeded");
             }
             let mut payload = vec![0; length];
             crd43_read_exact(&mut socket, &mut payload, &stop, io_deadline)?;
             let received = Instant::now();
+            progress.frames_complete.fetch_add(1, Ordering::Release);
             let request = json::parse(&payload).map_err(|_| "fixture RPC JSON failed")?;
+            progress.parsed.fetch_add(1, Ordering::Release);
             let response = respond(&request);
             let bytes = serde_json::to_vec(&response).map_err(|_| "fixture reply JSON failed")?;
             if bytes.len() > 16 * 1024 {
@@ -1452,6 +1511,7 @@ fn crd43_deadline_rpc(
                 io_deadline,
             )?;
             crd43_write_all(&mut socket, &bytes, &stop, io_deadline)?;
+            progress.replies_written.fetch_add(1, Ordering::Release);
             records
                 .lock()
                 .map_err(|_| "fixture RPC record poisoned")?
@@ -1460,10 +1520,14 @@ fn crd43_deadline_rpc(
                     response,
                     received,
                     before_write,
+                    request_prefix: header,
+                    request_payload_bytes: length,
+                    request_payload_sha256: crd43_body_digest(&payload),
                 });
         }
         Ok(())
     });
+    witness
 }
 struct Crd43StalledPeer {
     accepted: Instant,
@@ -1841,4 +1905,803 @@ fn crd43_upstream_tls_stall_ends_at_selected_connect_deadline() {
     eprintln!("crd43_tls_deadline dns_ttl_ms={dns_ttl} rpc_start_bracket_ms={} hello_ms={} close_ms={} handler_ms={} attempts={} admissions=1 resolves=1 binds=0 dispatches=0 completion_not_dispatched=1 workers_settled=true",
         (resolve.received-admit.before_write).as_millis(), (peer.hello-sent_before).as_millis(),
         (peer.closed-sent_before).as_millis(), (handler_finished-sent_before).as_millis(), peer.attempts);
+}
+
+fn crd43_body_digest(bytes: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+fn crd43_client_config(incoming: &Certificates) -> Arc<ClientConfig> {
+    let mut roots = RootCertStore::empty();
+    for certificate in CertificateDer::pem_slice_iter(incoming.root_pem.as_bytes()) {
+        roots.add(certificate.unwrap()).unwrap();
+    }
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Arc::new(config)
+}
+fn crd43_start_handler(
+    workers: &mut Crd43DeadlineWorkers,
+    service: Service,
+    ended: Arc<AtomicBool>,
+    result: Arc<Mutex<Option<(Result<(), Refusal>, Instant)>>>,
+) -> TcpStream {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client =
+        TcpStream::connect_timeout(&listener.local_addr().unwrap(), Duration::from_millis(500))
+            .unwrap();
+    let socket = loop {
+        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        match listener.accept() {
+            Ok((socket, _)) => break socket,
+            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(_) => panic!("fixture downstream accept failed"),
+        }
+    };
+    workers.downstream = Some(socket.try_clone().unwrap());
+    client.set_nonblocking(true).unwrap();
+    client.set_nodelay(true).unwrap();
+    workers.spawn(move || {
+        let outcome = service.handle(socket);
+        *result
+            .lock()
+            .map_err(|_| "fixture handler record poisoned")? = Some((outcome, Instant::now()));
+        ended.store(true, Ordering::Release);
+        Ok(())
+    });
+    client
+}
+fn crd43_tcp_idle_after_handler(
+    listener: &TcpListener,
+    stop: &AtomicBool,
+    ended: &AtomicBool,
+    deadline: Instant,
+    connections: &AtomicUsize,
+) -> Result<(), &'static str> {
+    loop {
+        crd43_checkpoint(stop, deadline)?;
+        let ended_before_accept = ended.load(Ordering::Acquire);
+        match listener.accept() {
+            Ok((socket, _)) => {
+                connections.fetch_add(1, Ordering::Release);
+                drop(socket);
+                return Err("unexpected provider connection in final backlog");
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock && ended_before_accept => {
+                return Ok(())
+            }
+            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(_) => return Err("fixture provider backlog check failed"),
+        }
+    }
+}
+fn crd43_flush(
+    writer: &mut impl Write,
+    stop: &AtomicBool,
+    deadline: Instant,
+) -> Result<(), &'static str> {
+    loop {
+        crd43_checkpoint(stop, deadline)?;
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(_) => return Err("fixture TLS flush failed"),
+        }
+    }
+}
+struct Crd43BodyPeer {
+    bytes: usize,
+    digest: String,
+    exact: bool,
+    terminal_and_http_end_written: bool,
+}
+fn crd43_body_provider(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    expected: Arc<[u8]>,
+    stop: &AtomicBool,
+    ended: &AtomicBool,
+    deadline: Instant,
+    connections: &AtomicUsize,
+) -> Result<Crd43BodyPeer, &'static str> {
+    let socket = loop {
+        crd43_checkpoint(stop, deadline)?;
+        match listener.accept() {
+            Ok((socket, _)) => break socket,
+            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(_) => return Err("fixture provider accept failed"),
+        }
+    };
+    connections.fetch_add(1, Ordering::Release);
+    socket
+        .set_nonblocking(true)
+        .map_err(|_| "fixture provider setup failed")?;
+    socket
+        .set_nodelay(true)
+        .map_err(|_| "fixture provider setup failed")?;
+    let mut tls = StreamOwned::new(
+        ServerConnection::new(config).map_err(|_| "fixture provider TLS setup failed")?,
+        socket,
+    );
+    // Read only bounded headers before trusting the actual wire Content-Length.
+    let mut headers = Vec::new();
+    while !headers.ends_with(b"\r\n\r\n") {
+        if headers.len() >= 16 * 1024 {
+            return Err("fixture provider header bound exceeded");
+        }
+        let mut byte = [0; 1];
+        crd43_read_exact(&mut tls, &mut byte, stop, deadline)?;
+        headers.push(byte[0]);
+    }
+    if tls.conn.server_name() != Some(FIXED_HOST)
+        || tls.conn.alpn_protocol() != Some(b"http/1.1".as_slice())
+    {
+        return Err("fixture provider TLS identity or ALPN mismatch");
+    }
+    let headers =
+        std::str::from_utf8(&headers).map_err(|_| "fixture provider header encoding failed")?;
+    let mut length = None;
+    let mut authorization = 0;
+    let mut host = 0;
+    if !headers.starts_with("POST /v1/responses HTTP/1.1\r\n") {
+        return Err("fixture provider request line mismatch");
+    }
+    for line in headers
+        .split("\r\n")
+        .skip(1)
+        .filter(|line| !line.is_empty())
+    {
+        let (name, value) = line
+            .split_once(':')
+            .ok_or("fixture provider header malformed")?;
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() {
+                return Err("fixture provider duplicate length");
+            }
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| "fixture provider length malformed")?,
+            );
+        }
+        if name.eq_ignore_ascii_case("authorization") {
+            if value != "Bearer provider-secret-canary" {
+                return Err("fixture provider credential mismatch");
+            }
+            authorization += 1;
+        }
+        if name.eq_ignore_ascii_case("host") {
+            if value != FIXED_HOST {
+                return Err("fixture provider host mismatch");
+            }
+            host += 1;
+        }
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            || name.eq_ignore_ascii_case("x-codex-turn-metadata")
+        {
+            return Err("fixture provider forbidden header");
+        }
+    }
+    if length != Some(16_777_216) || authorization != 1 || host != 1 {
+        return Err("fixture provider header policy mismatch");
+    }
+    let mut captured = vec![0; length.unwrap()];
+    crd43_read_exact(&mut tls, &mut captured, stop, deadline)?;
+    let mut observed = Crd43BodyPeer {
+        bytes: captured.len(),
+        digest: crd43_body_digest(&captured),
+        exact: captured.as_slice() == expected.as_ref(),
+        terminal_and_http_end_written: false,
+    };
+    drop(captured);
+    crd43_write_all(&mut tls, b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", stop, deadline)?;
+    let terminal = crd43_terminal(NormalStream::Completed);
+    crd43_write_all(
+        &mut tls,
+        format!("{:x}\r\n", terminal.len()).as_bytes(),
+        stop,
+        deadline,
+    )?;
+    crd43_write_all(&mut tls, terminal.as_bytes(), stop, deadline)?;
+    crd43_write_all(&mut tls, b"\r\n0\r\n\r\n", stop, deadline)?;
+    crd43_flush(&mut tls, stop, deadline)?;
+    observed.terminal_and_http_end_written = true;
+    tls.conn.send_close_notify();
+    crd43_flush(&mut tls, stop, deadline)?;
+    drop(tls);
+    crd43_tcp_idle_after_handler(&listener, stop, ended, deadline, connections)?;
+    Ok(observed)
+}
+// All diagnostic states and values are fixture-owned metadata. In particular,
+// an unobserved handler is not reported as success or inferred cancellation.
+fn crd43_large_diagnostic(
+    phase: &'static str,
+    started: Instant,
+    workers: &Crd43DeadlineWorkers,
+    handler: &Mutex<Option<(Result<(), Refusal>, Instant)>>,
+    authority: &Crd43RpcWitness,
+    dns: &Crd43RpcWitness,
+    attempts: &AtomicUsize,
+    peer: &Mutex<Option<Crd43BodyPeer>>,
+) {
+    let (handler_state, handler_outcome, handler_elapsed_ms) = match handler.lock() {
+        Ok(record) => match *record {
+            Some((outcome, finished)) => (
+                "finished",
+                Some(outcome),
+                Some(finished.saturating_duration_since(started).as_millis()),
+            ),
+            None => ("unobserved", None, None),
+        },
+        Err(_) => ("lock_poisoned", None, None),
+    };
+    let peer_present = peer.lock().ok().map(|record| record.is_some());
+    eprintln!("crd43_large_fixture phase={phase} handler_state={handler_state} handler_outcome={handler_outcome:?} handler_elapsed_ms={handler_elapsed_ms:?} provider_attempts={} provider_record_present={peer_present:?} stop_requested={} deadline_elapsed={} elapsed_ms={} remaining_worker_handles={}",
+        attempts.load(Ordering::Acquire), workers.stop.load(Ordering::Acquire), Instant::now() >= workers.deadline,
+        started.elapsed().as_millis(), workers.workers.len());
+    for (service, witness) in [("authority", authority), ("dns", dns)] {
+        eprintln!("crd43_large_rpc phase={phase} service={service} accepts={} frames_complete={} parsed={} replies_written={} idle_after_handler={}",
+            witness.connections.load(Ordering::Acquire), witness.progress.frames_complete.load(Ordering::Acquire),
+            witness.progress.parsed.load(Ordering::Acquire), witness.progress.replies_written.load(Ordering::Acquire),
+            witness.idle_after_handler.load(Ordering::Acquire));
+    }
+}
+fn crd43_authority_record_diagnostic(
+    started: Instant,
+    records: &Mutex<Vec<Crd43WireExchange>>,
+) -> bool {
+    // A worker may still own the record lock after unsuccessful settlement.
+    // Do not add a wait or reduce missing records to zero observed effects.
+    let records = match records.try_lock() {
+        Ok(records) => records,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            eprintln!("crd43_authority_records state=lock_busy");
+            return false;
+        }
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            eprintln!("crd43_authority_records state=lock_poisoned");
+            return false;
+        }
+    };
+    if records.len() > 16 {
+        eprintln!("crd43_authority_records state=record_bound_exceeded");
+        return false;
+    }
+    eprintln!(
+        "crd43_authority_records state=observed records={}",
+        records.len()
+    );
+    let mut valid_times = true;
+    for (index, record) in records.iter().enumerate() {
+        let method = match record.request.get("method").and_then(Value::as_str) {
+            Some("admit") => "admit",
+            Some("inspect") => "inspect",
+            Some("dispatch") => "dispatch",
+            Some("check") => "check",
+            Some("complete") => "complete",
+            _ => "other",
+        };
+        let received_us = record
+            .received
+            .checked_duration_since(started)
+            .map(|time| time.as_micros());
+        let before_reply_us = record
+            .before_write
+            .checked_duration_since(started)
+            .map(|time| time.as_micros());
+        let receiver_processing_us = record
+            .before_write
+            .checked_duration_since(record.received)
+            .map(|time| time.as_micros());
+        valid_times &=
+            received_us.is_some() && before_reply_us.is_some() && receiver_processing_us.is_some();
+        // These timestamps precede reply writes. A retained record does not
+        // establish that the caller received its reply before its own deadline.
+        eprintln!("crd43_authority_record index={index} method={method} frame_payload_bytes={} received_us={received_us:?} before_reply_us={before_reply_us:?} receiver_processing_us={receiver_processing_us:?}", record.request_payload_bytes);
+    }
+    valid_times
+}
+
+fn crd43_large_client(
+    socket: TcpStream,
+    config: Arc<ClientConfig>,
+    body: Arc<[u8]>,
+) -> (hyper::StatusCode, Vec<u8>) {
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Bytes;
+    use hyper_util::rt::TokioIo;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            let socket = tokio::net::TcpStream::from_std(socket).unwrap();
+            let tls = tokio_rustls::TlsConnector::from(config)
+                .connect("localhost".try_into().unwrap(), socket)
+                .await
+                .unwrap();
+            let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+                .await
+                .unwrap();
+            let driver = tokio::spawn(connection);
+            let request = hyper::Request::builder()
+                .method("POST")
+                .uri("/v1/responses")
+                .header("host", "localhost:8443")
+                .header("authorization", "Bearer workload-only-canary")
+                .header("content-type", "application/json")
+                .header("content-length", body.len())
+                .body(Full::new(Bytes::from_owner(body)))
+                .unwrap();
+            let mut response = sender.send_request(request).await.unwrap();
+            drop(sender);
+            let status = response.status();
+            let mut output = Vec::new();
+            loop {
+                let frame = match response.body_mut().frame().await {
+                    Some(frame) => frame.expect("fixture downstream HTTP framing failed"),
+                    // None observes EOS; is_end_stream is only a hint and may stay false.
+                    None => break,
+                };
+                let data = frame
+                    .into_data()
+                    .unwrap_or_else(|_| panic!("fixture unexpected downstream trailers"));
+                assert!(
+                    output.len() + data.len() <= 4096,
+                    "fixture downstream response bound exceeded"
+                );
+                output.extend_from_slice(&data);
+            }
+            drop(response);
+            assert!(
+                driver.await.unwrap().is_ok(),
+                "fixture downstream connection did not settle cleanly"
+            );
+            (status, output)
+        })
+        .await
+        .expect("fixture downstream absolute deadline reached")
+    })
+}
+
+#[test]
+fn crd43_exact_16_mib_request_preserves_tls_admission_and_completed_flow() {
+    // The large field is ordinary ASCII instructions, not whitespace padding.
+    // Scripted control peers qualify this adapter's real transport path only.
+    let mut template = json::parse(body().as_bytes()).unwrap();
+    template["instructions"] = json!("");
+    let empty = template.to_string();
+    let fill = 16_777_216usize.checked_sub(empty.len()).unwrap();
+    let exact: Arc<[u8]> = empty
+        .replacen(
+            "\"instructions\":\"\"",
+            &format!("\"instructions\":\"{}\"", "a".repeat(fill)),
+            1,
+        )
+        .into_bytes()
+        .into();
+    assert_eq!(exact.len(), 16_777_216);
+    let digest = crd43_body_digest(&exact);
+    let dir = Dir::new();
+    let mut workers = Crd43DeadlineWorkers::new();
+    let ended = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(Mutex::new(Vec::new()));
+    let dns = Arc::new(Mutex::new(Vec::new()));
+    let mut reservation = String::new();
+    let mut admitted_digest = String::new();
+    let mut before = 0;
+    let mut expires = 0;
+    let authority_witness = crd43_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("authority"),
+        authority.clone(),
+        Crd43RpcLimits {
+            request_bytes: 33_619_968,
+            requests: 16,
+            handler_ended: Some(ended.clone()),
+        },
+        move |request| {
+            let method = request["method"].as_str().unwrap_or("");
+            if method == "complete" {
+                return json!({"version":1,"ok":true});
+            }
+            if method == "admit" {
+                reservation = request["reservation_ref"].as_str().unwrap().to_owned();
+                admitted_digest = request["request_sha256"].as_str().unwrap().to_owned();
+                before = now() + 5000;
+                expires = before + 55_000;
+            }
+            let state = if matches!(method, "dispatch" | "check") {
+                "dispatched"
+            } else {
+                "accepted"
+            };
+            let n = now();
+            json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1","authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,"operation_id":"operation-a","reservation_ref":reservation,"request_sha256":admitted_digest,"assignment_id":ASSIGNMENT,"generation":1,"policy_version":1,"provider_binding_ref":"provider-test","credential_binding":descriptor(),"operation_state":state,"dispatch_before_ms":before,"operation_expires_at_ms":expires,"server_time_ms":n,"valid_until_ms":(n+4000).min(if state=="accepted"{before}else{expires})})
+        },
+    );
+    let dns_witness = crd43_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("dns"),
+        dns.clone(),
+        Crd43RpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 16,
+            handler_ended: Some(ended.clone()),
+        },
+        |request| {
+            let mut response = request.clone();
+            response.as_object_mut().unwrap().remove("method");
+            response["ok"] = json!(true);
+            let n = now();
+            response["server_time_ms"] = json!(n);
+            response["valid_until_ms"] = json!(n + 4000);
+            response["ip"] = json!("127.0.0.1");
+            response["admission_id"] = json!("d".repeat(64));
+            if request.get("connection_ref").is_some() {
+                response["flow_ref"] = json!("f".repeat(64));
+            }
+            response
+        },
+    );
+    let provider = TcpListener::bind("127.0.0.1:0").unwrap();
+    provider.set_nonblocking(true).unwrap();
+    let incoming = certificates("localhost");
+    let certs = certificates(FIXED_HOST);
+    let service = service_with_ingress(
+        &dir,
+        &certs,
+        provider.local_addr().unwrap().port(),
+        Some(&incoming),
+    );
+    let peer = Arc::new(Mutex::new(None));
+    let peer_output = peer.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let expected = exact.clone();
+    let stop = workers.stop.clone();
+    let peer_ended = ended.clone();
+    let deadline = workers.deadline;
+    workers.spawn(move || {
+        let observed = crd43_body_provider(
+            provider,
+            certs.server,
+            expected,
+            &stop,
+            &peer_ended,
+            deadline,
+            &counted,
+        )?;
+        *peer_output
+            .lock()
+            .map_err(|_| "fixture provider record poisoned")? = Some(observed);
+        Ok(())
+    });
+    let handler = Arc::new(Mutex::new(None));
+    let client = crd43_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let client_started = Instant::now();
+    let client_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crd43_large_client(client, crd43_client_config(&incoming), exact.clone())
+    }));
+    let (client_state, client_status, response_bytes) = match &client_result {
+        Ok((status, response)) => ("returned", Some(status.as_u16()), Some(response.len())),
+        Err(_) => ("panicked", None, None),
+    };
+    let client_succeeded = client_status == Some(200);
+    let peers_ready = || {
+        peer.lock().map(|record| record.is_some()).unwrap_or(false)
+            && authority_witness.idle_after_handler.load(Ordering::Acquire)
+            && dns_witness.idle_after_handler.load(Ordering::Acquire)
+    };
+    // A refused or panicking client need not produce a provider record.
+    // Observe only the handler on that path, within the original fixture clock.
+    while Instant::now() < workers.deadline && !workers.stop.load(Ordering::Acquire) {
+        let observed = if client_succeeded {
+            peers_ready()
+        } else {
+            ended.load(Ordering::Acquire)
+        };
+        if observed {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    let peers_ready_before_settle = peers_ready();
+    eprintln!("crd43_large_client state={client_state} status={client_status:?} response_bytes={response_bytes:?} elapsed_ms={}", client_started.elapsed().as_millis());
+    crd43_large_diagnostic(
+        "before_settle",
+        client_started,
+        &workers,
+        &handler,
+        &authority_witness,
+        &dns_witness,
+        &attempts,
+        &peer,
+    );
+    let settled = workers.settle();
+    crd43_large_diagnostic(
+        "after_settle",
+        client_started,
+        &workers,
+        &handler,
+        &authority_witness,
+        &dns_witness,
+        &attempts,
+        &peer,
+    );
+    // This Result contains only fixture-owned static failure labels, never I/O
+    // errors, bodies, control messages, or a caught panic's arbitrary payload.
+    eprintln!("crd43_large_settle result={settled:?}");
+    let authority_records_observed = crd43_authority_record_diagnostic(client_started, &authority);
+    let (status, response) = match client_result {
+        Ok(response) => response,
+        Err(panic) => std::panic::resume_unwind(panic),
+    };
+    assert_eq!(status, hyper::StatusCode::OK);
+    settled.unwrap();
+    assert!(
+        authority_records_observed,
+        "fixture authority records unavailable or invalid"
+    );
+    assert!(
+        peers_ready_before_settle,
+        "fixture peer or final backlog observation missing before cleanup"
+    );
+    assert!(
+        handler.lock().unwrap().take().unwrap().0.is_ok(),
+        "fixture mediator handler failed"
+    );
+    let peer = peer.lock().unwrap().take().unwrap();
+    assert_eq!(peer.bytes, exact.len());
+    assert!(
+        peer.digest == digest && peer.exact,
+        "provider body or digest changed"
+    );
+    assert!(peer.terminal_and_http_end_written);
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    assert!(
+        response == crd43_terminal(NormalStream::Completed).as_bytes(),
+        "downstream terminal body changed"
+    );
+    let authority = authority.lock().unwrap();
+    let dns = dns.lock().unwrap();
+    assert_eq!(
+        authority_witness.connections.load(Ordering::Acquire),
+        authority.len()
+    );
+    assert_eq!(dns_witness.connections.load(Ordering::Acquire), dns.len());
+    let admits: Vec<_> = authority
+        .iter()
+        .filter(|x| x.request["method"] == "admit")
+        .collect();
+    assert_eq!(admits.len(), 1);
+    let admit = admits[0];
+    let reservation = admit.request["reservation_ref"].as_str().unwrap();
+    assert!(
+        reservation.len() == 64
+            && reservation
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    assert_eq!(admit.request.as_object().unwrap().len(), 10);
+    assert!(
+        admit.request["version"] == 1 && admit.request["provider_binding_ref"] == "provider-test"
+    );
+    assert_eq!(
+        u32::from_be_bytes(admit.request_prefix) as usize,
+        admit.request_payload_bytes
+    );
+    assert!(admit.request_payload_bytes > 16_777_216 && admit.request_payload_bytes <= 33_619_968);
+    assert_eq!(admit.request_payload_sha256.len(), 64);
+    assert!(
+        admit.request["request_body"]
+            .as_str()
+            .is_some_and(|b| b.as_bytes() == exact.as_ref()),
+        "admission body changed"
+    );
+    assert!(
+        admit.request["request_sha256"] == digest
+            && admit.request["workload_credential"] == "workload-only-canary",
+        "admission identity changed"
+    );
+    assert!(
+        admit.request["mediation_context"] == "turn-a"
+            && admit.request["recipient"] == recipient()
+            && admit.request["operation"] == "responses.create"
+    );
+    assert_eq!(
+        authority
+            .iter()
+            .filter(|x| x.request["method"] == "dispatch")
+            .count(),
+        1
+    );
+    assert_eq!(
+        authority
+            .iter()
+            .filter(|x| x.request["method"] == "inspect")
+            .count(),
+        1
+    );
+    let completed: Vec<_> = authority
+        .iter()
+        .filter(|x| x.request["method"] == "complete")
+        .collect();
+    assert_eq!(completed.len(), 1);
+    assert!(
+        completed[0].request
+            == json!({"version":1,"method":"complete","operation_id":"operation-a","request_sha256":digest,"outcome":"completed"}),
+        "original completion tuple changed"
+    );
+    for exchange in authority
+        .iter()
+        .filter(|x| x.request["method"] != "admit" && x.request["method"] != "complete")
+    {
+        assert!(matches!(
+            exchange.request["method"].as_str(),
+            Some("inspect" | "dispatch" | "check")
+        ));
+        assert!(
+            exchange.request["operation_id"] == "operation-a"
+                && exchange.request["reservation_ref"] == admit.request["reservation_ref"]
+                && exchange.request["request_sha256"] == digest,
+            "authority ownership tuple changed"
+        );
+    }
+    for method in ["resolve", "bind", "release"] {
+        assert_eq!(
+            dns.iter().filter(|x| x.request["method"] == method).count(),
+            1
+        );
+    }
+    assert!(dns.iter().any(|x| x.request["method"] == "check"));
+    let binding = Binding::parse(&admit.response).unwrap();
+    let resolved = dns
+        .iter()
+        .find(|x| x.request["method"] == "resolve")
+        .unwrap();
+    assert!(
+        resolved.request == dns_request("resolve", &binding, &digest, None),
+        "original resolve tuple changed"
+    );
+    let bound = dns.iter().find(|x| x.request["method"] == "bind").unwrap();
+    let connection = bound.request["connection_ref"].as_str().unwrap();
+    assert!(connection.len() == 64 && connection.bytes().all(|b| b.is_ascii_hexdigit()));
+    for exchange in dns.iter().filter(|x| x.request["method"] != "resolve") {
+        assert!(matches!(
+            exchange.request["method"].as_str(),
+            Some("bind" | "check" | "release")
+        ));
+        let mut expected = resolved.request.clone();
+        expected["method"] = exchange.request["method"].clone();
+        expected["ip"] = json!("127.0.0.1");
+        expected["admission_id"] = json!("d".repeat(64));
+        expected["connection_ref"] = json!(connection);
+        if exchange.request["method"] != "bind" {
+            expected["flow_ref"] = json!("f".repeat(64));
+        }
+        assert!(
+            exchange.request == expected,
+            "original DNS flow tuple changed"
+        );
+    }
+    eprintln!("crd43_request_ceiling body_bytes={} body_sha256={} admission_payload_bytes={} admission_payload_sha256={} admissions=1 dispatches=1 provider_attempts=1 completed=1 workers_settled=true", exact.len(), digest, admit.request_payload_bytes, admit.request_payload_sha256);
+}
+
+#[test]
+fn crd43_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
+    let dir = Dir::new();
+    let mut workers = Crd43DeadlineWorkers::new();
+    let ended = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(Mutex::new(Vec::new()));
+    let dns = Arc::new(Mutex::new(Vec::new()));
+    let authority_witness = crd43_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("authority"),
+        authority.clone(),
+        Crd43RpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 1,
+            handler_ended: Some(ended.clone()),
+        },
+        |_| json!({"version":1,"ok":false}),
+    );
+    let dns_witness = crd43_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("dns"),
+        dns.clone(),
+        Crd43RpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 1,
+            handler_ended: Some(ended.clone()),
+        },
+        |_| json!({"version":1,"ok":false}),
+    );
+    let provider = TcpListener::bind("127.0.0.1:0").unwrap();
+    provider.set_nonblocking(true).unwrap();
+    let incoming = certificates("localhost");
+    let service = service_with_ingress(
+        &dir,
+        &certificates(FIXED_HOST),
+        provider.local_addr().unwrap().port(),
+        Some(&incoming),
+    );
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let provider_idle = Arc::new(AtomicBool::new(false));
+    let idle = provider_idle.clone();
+    let stop = workers.stop.clone();
+    let peer_ended = ended.clone();
+    let deadline = workers.deadline;
+    workers.spawn(move || {
+        crd43_tcp_idle_after_handler(&provider, &stop, &peer_ended, deadline, &counted)?;
+        idle.store(true, Ordering::Release);
+        Ok(())
+    });
+    let handler = Arc::new(Mutex::new(None));
+    let socket = crd43_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let connection = rustls::ClientConnection::new(
+        crd43_client_config(&incoming),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
+    let mut client = StreamOwned::new(connection, socket);
+    let start = Instant::now();
+    // Send valid framing through real incoming TLS, but withhold every body byte
+    // and leave the client write side open. A body-acquisition timeout is a failure.
+    crd43_write_all(&mut client, b"POST /v1/responses HTTP/1.1\r\nHost: localhost:8443\r\nAuthorization: Bearer workload-only-canary\r\nContent-Type: application/json\r\nContent-Length: 16777217\r\n\r\n", &workers.stop, workers.deadline).unwrap();
+    crd43_flush(&mut client, &workers.stop, workers.deadline).unwrap();
+    let mut response = Vec::new();
+    loop {
+        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        let mut bytes = [0; 512];
+        match client.read(&mut bytes) {
+            Ok(0) => break,
+            Ok(n) => {
+                assert!(response.len() + n <= 4096);
+                response.extend_from_slice(&bytes[..n]);
+            }
+            Err(error) if crd43_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(_) => panic!("fixture refusal response read failed"),
+        }
+    }
+    while !ended.load(Ordering::Acquire)
+        || !provider_idle.load(Ordering::Acquire)
+        || !authority_witness.idle_after_handler.load(Ordering::Acquire)
+        || !dns_witness.idle_after_handler.load(Ordering::Acquire)
+    {
+        crd43_checkpoint(&workers.stop, workers.deadline).unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let (outcome, finished) = handler.lock().unwrap().take().unwrap();
+    assert_eq!(outcome, Err(Refusal::Bounds));
+    assert!(
+        finished.duration_since(start) < Duration::from_secs(2),
+        "declared bound did not refuse promptly before acquisition deadline"
+    );
+    assert_eq!(authority_witness.connections.load(Ordering::Acquire), 0);
+    assert_eq!(dns_witness.connections.load(Ordering::Acquire), 0);
+    assert_eq!(attempts.load(Ordering::Acquire), 0);
+    assert!(
+        authority.lock().unwrap().is_empty() && dns.lock().unwrap().is_empty(),
+        "over-limit declaration caused privileged effects"
+    );
+    let response = std::str::from_utf8(&response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("HTTP/1.1 403 "));
+    assert!(headers
+        .to_ascii_lowercase()
+        .contains("\r\nconnection: close"));
+    assert!(body == "{\"error\":\"egress_denied\"}\n");
+    workers.settle().unwrap();
+    eprintln!("crd43_request_ceiling declared_bytes=16777217 refusal=Bounds elapsed_ms={} authority_accepts=0 dns_accepts=0 provider_accepts=0 completion=0 workers_settled=true", finished.duration_since(start).as_millis());
 }

@@ -12,7 +12,50 @@ pub(super) struct Request {
     pub digest: String,
 }
 
-pub(super) fn validate_parts(parts: &Parts, authority: &str) -> Result<(), Refusal> {
+/// One declared-length allocation, retained under zeroizing ownership on every
+/// partial-body and validation error. The input cap is distinct from JSON's DOM.
+pub(super) struct Capture {
+    bytes: Zeroizing<Vec<u8>>,
+    declared: usize,
+}
+
+impl Capture {
+    pub fn new(declared: usize) -> Result<Self, Refusal> {
+        if declared == 0 || declared > REQUEST_LIMIT {
+            return Err(Refusal::Bounds);
+        }
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(declared)
+            .map_err(|_| Refusal::Bounds)?;
+        Ok(Self { bytes, declared })
+    }
+
+    pub fn extend(&mut self, data: &[u8]) -> Result<(), Refusal> {
+        let length = self
+            .bytes
+            .len()
+            .checked_add(data.len())
+            .filter(|length| *length <= self.declared && *length <= REQUEST_LIMIT)
+            .ok_or(Refusal::Bounds)?;
+        // Reservation already covers every accepted byte; extension cannot
+        // trigger geometric growth or allocate beyond the declared body.
+        if length > self.bytes.capacity() {
+            return Err(Refusal::Bounds);
+        }
+        self.bytes.extend_from_slice(data);
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<Zeroizing<Vec<u8>>, Refusal> {
+        if self.bytes.len() != self.declared {
+            return Err(Refusal::Malformed);
+        }
+        Ok(self.bytes)
+    }
+}
+
+pub(super) fn validate_parts(parts: &Parts, authority: &str) -> Result<usize, Refusal> {
     if parts.method != Method::POST
         || parts.version != Version::HTTP_11
         || parts.uri.scheme().is_some()
@@ -59,7 +102,7 @@ pub(super) fn validate_parts(parts: &Parts, authority: &str) -> Result<(), Refus
             return Err(Refusal::Unsupported);
         }
     }
-    content_length(parts)?;
+    let declared = content_length(parts)?;
     let auth = parts
         .headers
         .get("authorization")
@@ -69,7 +112,7 @@ pub(super) fn validate_parts(parts: &Parts, authority: &str) -> Result<(), Refus
     if auth.is_empty() || auth.len() > 8192 || !auth.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
         return Err(Refusal::Denied);
     }
-    Ok(())
+    Ok(declared)
 }
 fn content_length(parts: &Parts) -> Result<usize, Refusal> {
     let value = parts
@@ -107,11 +150,12 @@ fn metadata_context(value: &str) -> Result<String, Refusal> {
 
 pub(super) fn parse_request(
     parts: &Parts,
-    bytes: Vec<u8>,
+    bytes: impl Into<Zeroizing<Vec<u8>>>,
     authority: &str,
 ) -> Result<Request, Refusal> {
-    validate_parts(parts, authority)?;
-    if content_length(parts)? != bytes.len() {
+    let mut bytes = bytes.into();
+    let declared = validate_parts(parts, authority)?;
+    if declared != bytes.len() {
         return Err(Refusal::Malformed);
     }
     let auth = parts
@@ -120,7 +164,15 @@ pub(super) fn parse_request(
         .and_then(|v| v.to_str().ok())
         .and_then(|a| a.strip_prefix("Bearer "))
         .ok_or(Refusal::Denied)?;
-    let body = Zeroizing::new(String::from_utf8(bytes).map_err(|_| Refusal::Malformed)?);
+    let body = match String::from_utf8(std::mem::take(&mut *bytes)) {
+        Ok(body) => Zeroizing::new(body),
+        Err(error) => {
+            // FromUtf8Error owns the original vector. Keep those bytes under
+            // the same erasure policy instead of discarding the error's owner.
+            let _invalid = Zeroizing::new(error.into_bytes());
+            return Err(Refusal::Malformed);
+        }
+    };
     let parsed = json::parse(body.as_bytes())?;
     json::bounded_str(&parsed, "model", 128)?;
     operation_profile(&parsed)?;
@@ -138,6 +190,9 @@ pub(super) fn parse_request(
             return Err(Refusal::Denied);
         }
     }
+    // The parsed tree is no longer needed. Do not retain it through hashing,
+    // admission encoding or forwarding of the immutable original body.
+    drop(parsed);
     let digest = digest(&SHA256, body.as_bytes())
         .as_ref()
         .iter()
@@ -280,4 +335,78 @@ fn local_tools(value: &serde_json::Value, depth: usize) -> Result<(), Refusal> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parts(length: usize) -> Parts {
+        ::http::Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header("host", "localhost:8443")
+            .header("content-type", "application/json")
+            .header("content-length", length)
+            .header("authorization", "Bearer controlled-workload")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0
+    }
+
+    #[test]
+    fn capture_enforces_declared_length_without_growth() {
+        let mut capture = Capture::new(3).unwrap();
+        let pointer = capture.bytes.as_ptr();
+        let capacity = capture.bytes.capacity();
+        capture.extend(b"ab").unwrap();
+        assert_eq!(capture.extend(b"cd"), Err(Refusal::Bounds));
+        assert_eq!(capture.bytes.len(), 2);
+        capture.extend(b"c").unwrap();
+        let body = capture.finish().unwrap();
+        assert_eq!(body.as_slice(), b"abc");
+        assert_eq!(body.as_ptr(), pointer);
+        assert_eq!(body.capacity(), capacity);
+        assert!(matches!(Capture::new(0), Err(Refusal::Bounds)));
+        assert!(matches!(
+            Capture::new(REQUEST_LIMIT + 1),
+            Err(Refusal::Bounds)
+        ));
+        assert!(matches!(
+            Capture::new(2).unwrap().finish(),
+            Err(Refusal::Malformed)
+        ));
+    }
+
+    #[test]
+    fn captured_owner_moves_through_validation_without_copy() {
+        let original = serde_json::json!({
+            "model":"gpt-5.1", "input":[], "store":false, "stream":true,
+            "tool_choice":"none", "parallel_tool_calls":false,
+            "client_metadata":{"x-codex-turn-metadata":
+                "{\"openclaw_mediation_context\":\"controlled-context\"}"}
+        })
+        .to_string();
+        let mut capture = Capture::new(original.len()).unwrap();
+        capture.extend(original.as_bytes()).unwrap();
+        let bytes = capture.finish().unwrap();
+        let pointer = bytes.as_ptr();
+        let request = parse_request(&parts(bytes.len()), bytes, "localhost:8443").unwrap();
+        assert_eq!(request.body.as_ptr(), pointer);
+        assert!(request.body.as_bytes() == original.as_bytes());
+        assert_eq!(request.context, "controlled-context");
+    }
+
+    #[test]
+    fn invalid_utf8_and_declared_mismatch_are_refused() {
+        assert!(matches!(
+            parse_request(&parts(1), vec![0xffu8], "localhost:8443"),
+            Err(Refusal::Malformed)
+        ));
+        assert!(matches!(
+            parse_request(&parts(2), vec![b'a'], "localhost:8443"),
+            Err(Refusal::Malformed)
+        ));
+    }
 }

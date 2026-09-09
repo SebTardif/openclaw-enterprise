@@ -59,12 +59,26 @@ sequenceDiagram
     T->>A: Record supported terminal evidence or unknown outcome
 ```
 
-The TLS adapter captures and bounds the first request through Hyper HTTP/1. It
-checks the fixed route, parsed security headers, JSON framing, and selected
-client-tool categories. Canonical authority must apply the complete typed request
-profile to those same immutable bytes. The adapter hashes them and generates one
-reservation reference before admission. It does not generate another reservation
-or retry the provider when a result is ambiguous.
+The TLS adapter captures the first request through Hyper HTTP/1 with a 16 MiB
+body ceiling. It rejects an excessive declared length before reading the body and
+reserves the declared length once. Each received chunk is checked against that
+declaration and the ceiling. It checks the fixed route, parsed security headers,
+JSON framing, and selected client-tool categories. The parsed tree is dropped
+after field validation; hashing and forwarding retain the original bytes.
+Synchronous validation must finish within the same five-second acquisition
+window before its socket guard is removed or authority work begins.
+
+Canonical authority must apply the complete typed request profile to those same
+immutable bytes. The adapter generates one reservation and moves the captured
+owner into its joined admission worker. A typed borrowed envelope is measured
+and serialized into one frame, capped at 32 MiB + 64 KiB of payload plus its
+four-byte prefix. Encoding must finish within the original one-second RPC
+deadline before the Unix connection opens. Ordinary RPC and DNS bounds remain
+smaller; see [request and admission bounds](../reference/egress.md#request-and-admission-bounds)
+for receiver compatibility and memory limits. The worker records a known
+admission before returning ownership, including when the downstream future has
+been cancelled. The adapter does not generate another reservation or retry the
+provider when a result is ambiguous.
 
 DNS uses the DS resolver and address policy, then installs a short pending endpoint
 lease. TLS connects directly to that numeric address and authenticates the fixed
@@ -73,8 +87,9 @@ reading the selected provider credential. No second resolver, redirect, pooled
 connection, or reconnect participates in this sequence.
 
 A separate acknowledged dispatch transition is required before HTTP application
-bytes can reach the provider. Hyper drives the authenticated connection and
-response framing. An independent monitor owns shutdown handles for both sockets
+bytes can reach the provider. Owner-backed `Bytes` transfers the captured body
+into Hyper without another full forwarding copy. Hyper drives the authenticated
+connection and response framing. An independent monitor owns shutdown handles for both sockets
 and renews only the same operation and flow. Each renewal remains capped by the
 original monotonic operation deadline.
 

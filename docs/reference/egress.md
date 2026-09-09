@@ -36,6 +36,49 @@ existing Codex ChatGPT workload-identity credential do not configure this adapte
 and are not a supported product path. Do not substitute a ChatGPT session or WIF
 credential, change the recipient, or infer support from those probes.
 
+### Request and admission bounds
+
+The Rust TLS adapter accepts a declared request body of at most **16 MiB
+(16,777,216 bytes)**. It rejects a larger `Content-Length` before reading the body
+or contacting authority, DNS, or the provider. Capture reserves the declared
+length fallibly once and checks accumulated bytes against both that length and
+the ceiling. UTF-8, duplicate-aware JSON, local operation checks, and the digest
+use the original bytes. Validation must finish within the original five-second
+acquisition deadline before any reservation or authority request begins.
+
+Authority admission embeds the original body as a JSON string in a fixed
+ten-field envelope. Its payload cap is **32 MiB + 64 KiB (33,619,968 bytes)**;
+the four-byte length prefix is outside that cap. Validated raw JSON may nearly
+double when escaped into this string. The other currently bounded fields require
+at most 17,028 additional bytes. Admission counts the actual typed envelope with
+an empty body, then adds the exact escaped-content byte count of the original
+UTF-8 body. Serde emits the original envelope into one bounded, fallibly allocated
+frame before opening the Unix connection. Counting and emission consume the same
+original one-second RPC deadline; checks before, between, and after them gate
+connection but do not preempt synchronous CPU work. Overflow or expiration
+refuses before connection.
+Ordinary TLS-adapter RPC requests retain their 2 MiB cap and replies retain
+64 KiB. The DNS service's
+separate 64 KiB protocol is unchanged.
+
+The separately supplied canonical admission receiver must enforce the overall
+frame ceiling before allocation and the method's bound before effects. A length
+prefix alone does not identify the method. This repository supplies controlled
+admission receivers for tests, not that canonical service. The separate
+TypeScript Codex request parser still has a 1 MiB limit and is not wired into this
+Rust transport; end-to-end profile integration remains incomplete.
+
+Capture, admission work, and forwarding transfer the original zeroizing body
+owner. Forwarding uses owner-backed `Bytes`; it does not create another complete
+body buffer. The explicit body plus maximum admission frame accounts for at most
+50,397,188 logical bytes per exchange. This is copy accounting, not a hard memory
+bound: the full parsed JSON tree, parser scratch, allocation capacity, Hyper/TLS
+buffers, process overhead, and concurrent exchanges are additional. No new JSON
+shape restriction is inferred from the byte ceiling. The selected 256 MiB service
+budget, two active exchanges, and per-Agent/generation limits require separate
+enforcement and qualification; current service configuration permits up to eight
+exchanges and local packaging selects eight.
+
 Three distinct process identities are required:
 
 | Process                 | Linux UID | Authority and mounts                                                                                                                                      |

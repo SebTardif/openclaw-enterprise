@@ -1,9 +1,8 @@
 // Modified for OpenClaw Enterprise.
 //! A single HTTP/1 exchange on each leg; Hyper owns parsing and wire framing.
 use super::{
-    check_authority, check_dns, dns_request, http, json, read_key, recipient, rpc,
-    validate_dns_echo, Admission, Binding, Monitor, Refusal, Service, SocketDeadline, FIXED_HOST,
-    REQUEST_LIMIT,
+    check_authority, check_dns, dns_request, http, json, read_key, rpc, validate_dns_echo,
+    Admission, Binding, Monitor, Refusal, Service, SocketDeadline, FIXED_HOST,
 };
 use crate::reoriginate::validate_origin_chain_witness;
 use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
@@ -211,21 +210,23 @@ async fn exchange(
     let (parts, mut body) = request.into_parts();
     // Reject Expect and unsupported framing before polling Incoming: polling
     // an expected request body can cause Hyper to send an interim 100 response.
-    http::validate_parts(&parts, &service.config.listener_authority)?;
+    let declared = http::validate_parts(&parts, &service.config.listener_authority)?;
     let bytes = until(request_deadline, async {
-        let mut bytes = Zeroizing::new(Vec::new());
+        let mut capture = http::Capture::new(declared)?;
         while let Some(frame) = body.frame().await {
             let frame = frame.map_err(|_| Refusal::Malformed)?;
             let data = frame.into_data().map_err(|_| Refusal::Unsupported)?;
-            if data.len() > REQUEST_LIMIT.saturating_sub(bytes.len()) {
-                return Err(Refusal::Bounds);
-            }
-            bytes.extend_from_slice(&data);
+            capture.extend(&data)?;
         }
-        Ok::<_, Refusal>(bytes.to_vec())
+        capture.finish()
     })
     .await??;
-    let request = http::parse_request(&parts, bytes, &service.config.listener_authority)?;
+    let request = parse_acquired_request(
+        &parts,
+        bytes,
+        &service.config.listener_authority,
+        request_deadline,
+    )?;
     drop(
         state
             .lock()
@@ -235,18 +236,21 @@ async fn exchange(
     );
 
     let reservation_ref = nonce()?;
-    let admit = json!({"version":1,"method":"admit","reservation_ref":reservation_ref,
-            "provider_binding_ref":service.config.provider_binding_ref,
-            "workload_credential":request.workload_credential.as_str(),
-            "mediation_context":request.context,"request_body":request.body.as_str(),
-            "request_sha256":request.digest,"recipient":recipient(),
-            "operation":"responses.create"});
     let authority = service.authority.clone();
     let admitted_state = state.clone();
     let provider_binding = service.config.provider_binding_ref.clone();
-    let digest = request.digest.clone();
-    let (value, started) = effectful(&state, move || {
-        let (value, started) = authority.call(&admit)?;
+    let (request, value, started) = effectful(&state, move || {
+        // The joined worker owns the captured body. Borrow only while encoding
+        // the fixed admission envelope; cancellation drops the returned owner
+        // after recording any known admission, without a second body snapshot.
+        let (value, started) = authority.admit(&rpc::AdmissionRequest {
+            reservation_ref: &reservation_ref,
+            provider_binding_ref: &provider_binding,
+            workload_credential: &request.workload_credential,
+            mediation_context: &request.context,
+            request_body: &request.body,
+            request_sha256: &request.digest,
+        })?;
         if json::bounded_str(&value, "reservation_ref", 64)? != reservation_ref
             || json::bounded_str(&value, "provider_binding_ref", 128)? != provider_binding
         {
@@ -259,9 +263,9 @@ async fn exchange(
             .map_err(|_| Refusal::Denied)?
             .completion = Some(Completion {
             operation_id: json::bounded_str(&value, "operation_id", 128)?.to_owned(),
-            digest,
+            digest: request.digest.clone(),
         });
-        Ok((value, started))
+        Ok((request, value, started))
     })
     .await?;
     let binding = Binding::parse(&value)?;
@@ -368,7 +372,7 @@ async fn exchange(
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ACCEPT, "text/event-stream")
         .header(header::CONNECTION, "close")
-        .body(Full::new(Bytes::copy_from_slice(request.body.as_bytes())))
+        .body(Full::new(Bytes::from_owner(RequestBodyOwner(request.body))))
         .map_err(|_| Refusal::Configuration)?;
     drop(key);
     let (mut sender, connection) = hyper::client::conn::http1::Builder::new()
@@ -441,6 +445,32 @@ async fn exchange(
             .boxed_unsync(),
         )
         .map_err(|_| Refusal::Configuration)
+}
+
+/// Bytes retains this zeroizing owner until its last forwarding clone drops.
+/// Conversion to BytesMut or Vec would introduce another full body copy.
+struct RequestBodyOwner(Zeroizing<String>);
+
+impl AsRef<[u8]> for RequestBodyOwner {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+fn parse_acquired_request(
+    parts: &::http::request::Parts,
+    bytes: Zeroizing<Vec<u8>>,
+    authority: &str,
+    deadline: Instant,
+) -> Result<http::Request, Refusal> {
+    let request = http::parse_request(parts, bytes, authority)?;
+    // Synchronous JSON validation is not preempted by the body-read timeout or
+    // socket watchdog. It must finish within the original acquisition window
+    // before the guard is removed or any reservation/authority work can begin.
+    if Instant::now() >= deadline {
+        return Err(Refusal::Timeout);
+    }
+    Ok(request)
 }
 
 struct Origin {
@@ -722,4 +752,140 @@ async fn until<F: Future>(deadline: Instant, future: F) -> Result<F::Output, Ref
     tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), future)
         .await
         .map_err(|_| Refusal::Timeout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn parsed_request_cannot_restart_expired_acquisition() {
+        let bytes = serde_json::json!({
+            "model":"gpt-5.1", "input":[], "store":false, "stream":true,
+            "tool_choice":"none", "parallel_tool_calls":false,
+            "client_metadata":{"x-codex-turn-metadata":
+                "{\"openclaw_mediation_context\":\"controlled-context\"}"}
+        })
+        .to_string()
+        .into_bytes();
+        let parts = Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header("host", "localhost:8443")
+            .header("content-type", "application/json")
+            .header("content-length", bytes.len())
+            .header("authorization", "Bearer controlled-workload")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        // This is the actual post-validation boundary used before guard drop,
+        // nonce creation and authority work, with already expired acquisition.
+        assert!(matches!(
+            parse_acquired_request(
+                &parts,
+                Zeroizing::new(bytes),
+                "localhost:8443",
+                Instant::now() - Duration::from_millis(1),
+            ),
+            Err(Refusal::Timeout)
+        ));
+    }
+
+    #[test]
+    fn forwarding_bytes_share_the_captured_owner() {
+        struct ObservedOwner {
+            body: RequestBodyOwner,
+            drops: Arc<AtomicUsize>,
+        }
+        impl AsRef<[u8]> for ObservedOwner {
+            fn as_ref(&self) -> &[u8] {
+                self.body.as_ref()
+            }
+        }
+        impl Drop for ObservedOwner {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let body = Zeroizing::new(String::from("controlled captured body"));
+        let pointer = body.as_ptr();
+        let drops = Arc::new(AtomicUsize::new(0));
+        let bytes = Bytes::from_owner(ObservedOwner {
+            body: RequestBodyOwner(body),
+            drops: drops.clone(),
+        });
+        assert_eq!(bytes.as_ptr(), pointer);
+        let retained = bytes.clone();
+        drop(bytes);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        assert_eq!(retained.as_ptr(), pointer);
+        assert_eq!(retained.as_ref(), b"controlled captured body");
+        // The last Bytes owns the zeroizing wrapper. This establishes retained
+        // ownership and no body copy, not erasure of TLS/parser allocations.
+        drop(retained);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cancelled_effectful_receiver_drops_returned_owner_after_worker_record() {
+        struct ReturnedOwner(Arc<AtomicUsize>);
+        impl Drop for ReturnedOwner {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let state = Arc::new(Mutex::new(ExchangeState::default()));
+            let worker_state = state.clone();
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let owner = ReturnedOwner(dropped.clone());
+            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::sync_channel::<()>(1);
+            let mut action = Box::pin(effectful(&state, move || {
+                let _ = ready_tx.send(());
+                release_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .map_err(|_| Refusal::Timeout)?;
+                // Controlled worker state exercises the actual joined-worker
+                // cancellation seam; it is not an authority decision fixture.
+                worker_state.lock().map_err(|_| Refusal::Denied)?.completion = Some(Completion {
+                    operation_id: "controlled-record".into(),
+                    digest: "controlled-digest".into(),
+                });
+                Ok(owner)
+            }));
+            std::future::poll_fn(|cx| {
+                assert!(action.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::timeout(Duration::from_secs(1), ready_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(action);
+            release_tx.send(()).unwrap();
+            let jobs = std::mem::take(&mut state.lock().unwrap().effectful_jobs);
+            assert_eq!(jobs.len(), 1);
+            for job in jobs {
+                tokio::time::timeout(Duration::from_secs(1), job)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+            assert_eq!(dropped.load(Ordering::SeqCst), 1);
+            let state = state.lock().unwrap();
+            let completion = state.completion.as_ref().unwrap();
+            assert_eq!(completion.operation_id, "controlled-record");
+            assert!(!state.dispatch_attempted);
+        });
+    }
 }
