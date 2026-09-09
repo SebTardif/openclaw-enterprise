@@ -66,7 +66,7 @@ function sortedSelectors(selectors) {
     .map((s) => {
       need(
         typeof s?.type === "string" &&
-          /^[a-z_]+$/.test(s.type) &&
+          (/^[a-z_]+$/.test(s.type) || s.type === "k8s" || s.type === "k8s_psat") &&
           typeof s.value === "string" &&
           /^[A-Za-z0-9_./:-]{1,512}$/.test(s.value),
         "SELECTORS_INVALID",
