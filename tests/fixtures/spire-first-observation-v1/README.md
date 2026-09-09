@@ -52,6 +52,24 @@ against the completed profile without extending the deadline. Preparation
 still verifies the actual Server identity and immutable bytes; placeholder
 addresses or hashes do not substitute for those observations.
 
+Observed Kubernetes resources are compared with the authored manifests after
+two explicit JSON serialization equivalences. For `v1/Pod`, omitted
+`hostNetwork`, `hostPID` and `hostIPC` match only explicitly authored `false`:
+these are value booleans with `omitempty` in the Kubernetes API. Required
+`true` remains required, including the management Agent's host PID setting.
+Pointer booleans such as `shareProcessNamespace`, `enableServiceLinks` and
+`automountServiceAccountToken` retain explicit false values and must remain
+present. Nested container security settings receive no omission normalization.
+
+For `networking.k8s.io/v1/NetworkPolicy`, an omitted ingress or egress list
+matches only the corresponding explicitly empty authored list, with exact
+explicit `policyTypes: [Ingress, Egress]`. The entire policy spec remains exact,
+including its selector, nonempty rules and ports. The comparison rejects added
+rules, changed selectors, null values and missing nonempty lists. These rules
+apply to actual management, prepared-access and workload checks; they do not
+change manifest builders, declared bootstrap continuity, Pod security checks
+or the required live evidence.
+
 The management profile selects a host-PID Agent outside the workloads, UID/GID
 0 with all capabilities dropped, a read-only root, and bounded writable data.
 It separates the projected PSAT token from the kubelet-audience token. Agent
