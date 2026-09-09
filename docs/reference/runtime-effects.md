@@ -182,6 +182,10 @@ retract denial. This port grants no create, resume, purge or initiating-human po
 
 ## Observations and conservative writer handoff
 
+The [node execution observer](node-execution-observer.md) implements a bounded
+physical source and concrete native client. Its privileged installation, current
+protected enrollment and full profile correspondence remain separate prerequisites.
+
 `observe` accepts either an exact bound instance or an admitted preallocated
 candidate. The candidate branch binds the original create effect/responsibility
 and nonmutating preparation, or a satisfied writer barrier when startup can write.
