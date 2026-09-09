@@ -1,0 +1,30 @@
+name: Diagnose Provider HTTP
+
+on:
+  push:
+    branches:
+      - dev/kevinlin/diagnose-provider-http
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.16.0"
+
+jobs:
+  probe:
+    name: Unauthenticated ChatGPT management API probe
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Probe unauthenticated provider endpoint
+        env:
+          OCC_PROBE_WORKSPACE_ID: ${{ vars.OCC_TEST_CHATGPT_WORKSPACE_ID }}
+        run: node scripts/ci/diagnose-provider-http.mjs
