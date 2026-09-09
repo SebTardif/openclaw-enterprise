@@ -81,9 +81,10 @@ export interface DelegationRepository extends DelegationReadRepository {
 }
 
 /**
- * TODO(delegated authority persistence): the canonical schema owner must supply a real
- * repository sharing this platform transaction before executable issuance is wired.
- * A separate in-memory map beside PlatformStateStore.transact does not satisfy this port.
+ * PostgreSQL supplies this host through PostgresPlatformState.delegationTransactionHost().
+ * Callback results are provisional until the original outer COMMIT is acknowledged.
+ * Genuine authority and attributable audit must participate before executable issuance;
+ * storage does not supply workload/turn authentication or an Agent-wide policy ceiling.
  */
 export interface DelegationTransactionHost {
   transact<T>(

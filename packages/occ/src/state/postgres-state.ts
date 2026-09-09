@@ -1,3 +1,5 @@
+import { createPostgresDelegationRepository } from "../delegation/postgres.ts";
+import type { DelegationRepository, DelegationTransactionHost } from "../delegation/repository.ts";
 import type {
   PreparedReservedChannelInstallationV1,
   ReservedChannelInstallationCurrentnessV1,
@@ -1048,6 +1050,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   private readonly turnJournal: PostgresTurnJournalOptions | undefined;
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformReadView, TransactionContext>();
+  private readonly delegationRepositories = new WeakMap<PlatformUnitOfWork, DelegationRepository>();
   readonly #profileContexts = new WeakMap<object, TransactionContext>();
   readonly #channelCreationFailures = new WeakMap<
     object,
@@ -4425,6 +4428,59 @@ export class PostgresPlatformState implements PlatformStateStore {
         new ScopeViolationError("Credential inventory requires an isolated owner transaction."),
       );
     return context.lifetime.run(() => context.client.query(statement, parameters));
+  }
+
+  /** Borrows this exact platform unit; neither storage nor parsed inputs authenticate authority. */
+  delegationInTransaction(unit: PlatformUnitOfWork): DelegationRepository {
+    const context = this.contexts.get(unit);
+    if (context === undefined)
+      throw new DependencyUnavailableError("The platform transaction is unavailable.");
+    context.lifetime.assertActive();
+    if (
+      context.readOnly ||
+      context.protectedProfile ||
+      context.gateway ||
+      context.credential ||
+      context.turn ||
+      context.fresh
+    )
+      throw new ScopeViolationError(
+        "Delegation storage requires an ordinary platform write transaction.",
+      );
+    const existing = this.delegationRepositories.get(unit);
+    if (existing) return existing;
+    const repository = createPostgresDelegationRepository({
+      get scope() {
+        context.lifetime.assertActive();
+        if (!context.installation)
+          throw new ScopeViolationError("The server-owned Installation has not been initialized.");
+        return { installationId: context.installation.id };
+      },
+      transaction: context.lifetime,
+      query: { query: (statement, parameters) => context.client.query(statement, parameters) },
+    });
+    const bound = bindRepository(repository, context.lifetime, [
+      "findByContext",
+      "findOperation",
+      "insertRoot",
+      "retireRoot",
+      "acceptOperation",
+      "dispatchOperation",
+      "finishOperation",
+    ]);
+    this.delegationRepositories.set(unit, bound);
+    return bound;
+  }
+
+  /** Results are provisional inside the callback; only the original outer COMMIT acknowledges them. */
+  delegationTransactionHost(): DelegationTransactionHost {
+    return Object.freeze({
+      transact: <T>(work: (unit: PlatformUnitOfWork, grants: DelegationRepository) => Promise<T>) =>
+        this.transact(async (unit) => {
+          await unit.installations.getInstallation();
+          return work(unit, this.delegationInTransaction(unit));
+        }),
+    });
   }
 
   providerAccountLinksInTransaction(unit: PlatformReadView): ProviderAccountLinks {
