@@ -94,6 +94,7 @@ export function createSelectedKubernetesRendererSource(
     let construction: Construction | undefined;
     let resolved: WorkloadProfileOwnedLeaseV2 | undefined;
     let accounting: InstalledKubernetesRendererLease["accounting"] | undefined;
+    let harnessOperands: InstalledKubernetesRendererLease["harnessOperands"];
     try {
       if (selected !== driver || !corresponding(definition, original)) unavailable();
       enrollment.assertCurrent();
@@ -134,6 +135,10 @@ export function createSelectedKubernetesRendererSource(
           };
           if (!isDeepStrictEqual(immutableCopy(actual), outputs))
             throw new WorkloadProfileSelectionError("unsupported-capability");
+          // Custody belongs to the original source and dispatcher. Preserve the
+          // exact operand object; cloning its launch would lose that membership.
+          // Absence stays unavailable to the prepared verifier, never an empty launch.
+          harnessOperands = prepared.harnessOperands;
         }
         accounting = mapping;
       });
@@ -174,7 +179,12 @@ export function createSelectedKubernetesRendererSource(
         });
         return closing;
       };
-      const result = Object.freeze({ accounting, assertCurrent, release });
+      const result = Object.freeze({
+        accounting,
+        ...(harnessOperands === undefined ? {} : { harnessOperands }),
+        assertCurrent,
+        release,
+      });
       io.assertActive();
       result.assertCurrent();
       return result;

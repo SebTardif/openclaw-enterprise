@@ -261,7 +261,6 @@ function snapshotDefinitionRequest(
  * method, so it cannot stand in for Runtime's complete capability source. */
 export class KubernetesWorkloadProfileCapability implements WorkloadProfileRendererContributionV2 {
   readonly #selected: ComputeDriver;
-  readonly #renderer: FixedWorkloadRenderer;
   readonly #definition: SelectedKubernetesRendererDefinition;
   readonly #acquireRevision: KubernetesRendererSource["acquireRevision"] | undefined;
   readonly #acquireDefinition: KubernetesRendererSource["acquireDefinition"] | undefined;
@@ -271,7 +270,6 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
     source?: KubernetesRendererSource,
   ) {
     this.#selected = selected;
-    this.#renderer = renderer;
     this.#definition = Object.freeze({
       workload: renderer.definition(),
       admittedTemplate: fixedAdmittedGatewayTemplate,
@@ -281,12 +279,6 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
     this.#acquireRevision = source?.acquireRevision?.bind(source);
     this.#acquireDefinition = source?.acquireDefinition?.bind(source);
     Object.freeze(this);
-  }
-
-  /** Composition reuses the original captured constructor, never an equivalent
-   * public definition object or a replacement renderer supplied by its caller. */
-  withSource(source: KubernetesRendererSource): KubernetesWorkloadProfileCapability {
-    return new KubernetesWorkloadProfileCapability(this.#selected, this.#renderer, source);
   }
 
   async verifyRendererDefinitionLocked(

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isDeepStrictEqual } from "node:util";
 import { KubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
+import { ComputeLifecycleDispatcher } from "../../apps/controller/src/drivers/compute/lifecycle-hooks.ts";
 import {
   createComputeDriver,
   selectedComputeWorkloadProfileCapability,
@@ -835,7 +836,11 @@ test("renderer source refuses changed immutable projection and still releases or
 });
 
 test("renderer source revision compares the complete actual constructor output", async () => {
-  for (const altered of [false, true]) {
+  for (const [altered, withOperands] of [
+    [false, false],
+    [false, true],
+    [true, true],
+  ]) {
     const f = sourceFixture();
     const held = f.owner.acquire(f.selection);
     const input = (role) => ({
@@ -883,25 +888,114 @@ test("renderer source revision compares the complete actual constructor output",
     held.release();
     if (altered)
       outputs.harness.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true;
-    f.mutate((record) => ({ ...record, inputs, outputs }));
-    const call = f.source.acquireRevision(
-      f.driver,
-      f.selectedDefinition,
-      f.v.request,
-      f.v.manifest,
-      f.v.use,
-      f.unit,
-      f.io,
+    // An actual dispatcher return has private membership that a cloned launch
+    // loses. The controlled custodian retains that original operand lifetime.
+    const dispatcher = new ComputeLifecycleDispatcher([]);
+    const revision = { id: "source-revision", namespaceId: f.v.namespace, agentId: "source-agent" };
+    const launch = await dispatcher.beforeWorkloadStart(revision);
+    const launchLease = dispatcher.acquireLaunchOperands(revision, launch);
+    const harnessOperands = Object.freeze({ launch, imageSetDigest: digest("a") });
+    f.mutate((record) => ({
+      ...record,
+      inputs,
+      outputs,
+      ...(withOperands ? { harnessOperands } : {}),
+      assertCurrent() {
+        record.assertCurrent();
+        launchLease.assertCurrent();
+      },
+      async release() {
+        await launchLease.release();
+        await record.release();
+      },
+    }));
+    const original = f.driver.getWorkloadProfileCapability();
+    assert.equal(
+      composeSelectedComputeRendererContribution(f.driver, f.selection, f.units, f.installed),
+      original,
+    );
+    let receivedOperands;
+    // Exercise the actual prepared verifier's renderer acquisition on the
+    // preexisting Driver capability, rather than acquiring a second source.
+    const call = original.verifyPreparedHarnessLocked(
+      [f.v.request, f.v.manifest, f.v.use, f.unit, f.io],
+      (source) => {
+        receivedOperands = source.harnessOperands;
+      },
     );
     if (altered) await assert.rejects(call, { code: "unsupported-capability" });
     else {
       const lease = await call;
       lease.assertCurrent();
+      if (withOperands) {
+        assert.equal(receivedOperands, harnessOperands);
+        const consumer = dispatcher.acquireLaunchOperands(revision, receivedOperands.launch);
+        consumer.assertCurrent();
+        assert.throws(() => dispatcher.acquireLaunchOperands(revision, structuredClone(launch)));
+        await consumer.release();
+      } else assert.equal(receivedOperands, undefined, "missing operands are not synthesized");
+      await dispatcher.beforeWorkloadStop(revision);
+      assert.throws(() => lease.assertCurrent(), "source retains original launch invalidation");
       await lease.release();
     }
     assert.equal(f.events.filter((e) => e === "definition-release").length, 1);
     assert.equal(f.events.filter((e) => e === "unit-release").length, 1);
   }
+});
+
+test("factory composition binds admission and prepared checks to the same original capability once", async () => {
+  const missing = sourceFixture();
+  await assert.rejects(
+    missing.driver
+      .getWorkloadProfileCapability()
+      .verifyRendererDefinitionLocked(missing.request, missing.unit, missing.io),
+    { code: "unavailable" },
+  );
+  // A refused acquisition poisons its original operation. Successful composition
+  // uses a separate invocation rather than reviving the controlled denied IO.
+  const f = sourceFixture();
+  const original = f.driver.getWorkloadProfileCapability();
+  const renderer = composeSelectedComputeRendererContribution(
+    f.driver,
+    f.selection,
+    f.units,
+    f.installed,
+  );
+  assert.equal(renderer, original);
+  assert.equal(selectedComputeWorkloadProfileCapability(f.driver), original);
+  assert.equal(renderer.withSource, undefined, "there is no replacement-capability path");
+  // This is the capability retained by Compute's prepared verifier, acquired
+  // before composition. Its real definition check now reaches the original owner.
+  const lease = await original.verifyRendererDefinitionLocked(f.request, f.unit, f.io);
+  lease.assertCurrent();
+  assert.throws(
+    () => composeSelectedComputeRendererContribution(f.driver, f.selection, f.units, f.installed),
+    { code: "unavailable" },
+  );
+  lease.assertCurrent();
+  await lease.release();
+  assert.equal(f.events.filter((event) => event === "definition").length, 1);
+  assert.equal(f.events.filter((event) => event === "definition-release").length, 1);
+});
+
+test("factory composition cannot replace a constructor-installed original source", async () => {
+  const f = fixture();
+  assert.throws(
+    () =>
+      composeSelectedComputeRendererContribution(f.driver, new DriverSelection(), {
+        definition() {
+          assert.fail("replacement source enrolled");
+        },
+        revision() {
+          assert.fail("replacement source enrolled");
+        },
+      }),
+    { code: "unavailable" },
+  );
+  const lease = await f.acquire();
+  lease.assertCurrent();
+  await lease.release();
+  assert.equal(count(f, "enroll"), 1);
 });
 
 test("production-shaped renderer enrollment names missing originals without accepting the manifest", async () => {

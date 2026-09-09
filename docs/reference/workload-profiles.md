@@ -121,6 +121,15 @@ The focused suite checks fixed composition, detached inputs, correspondence, ret
 
 Production now passes the actual PostgreSQL candidate context/records and inserted-row storage to the existing candidate and Use adapters. The same selected capability aggregator is used for definition acceptance, Use acquisition and inserted-row revalidation. Its missing original contributors and candidate qualifiers remain explicit unavailable dependencies. This composition does not grant renderer-only support, reinterpret metadata as native authority, or permit an unqualified deployment.
 
+The selected Compute factory binds its renderer source once to the original
+Driver-owned capability. Admission composition and prepared Harness verification
+use that same instance; a second composition or replacement of a constructor-bound
+source fails. The independent custodian's revision lease preserves its original
+Harness launch operands through source currentness and cleanup. Missing operands
+remain unavailable, and copied launch values do not acquire dispatcher custody.
+These connections do not install the missing immutable-definition custodian or
+complete contributors, select a native launcher, or authorize provider submission.
+
 The focused operator and request-custody suites cover the registered HTTP boundary, actual BetterAuth sign-in with memory storage refusal, exact purpose/command consumption, replay refusal and cancellation-held cleanup. Controlled session-reader cases do not prove PostgreSQL writer exclusion. A separate allocated PostgreSQL production request must verify successful inert preparation/readback, current-account revocation and unchanged record counts after failed acceptance before those behaviors are treated as runtime evidence. No successful full profile deployment is claimed by this source increment.
 
 ## PostgreSQL development composition and verification boundary

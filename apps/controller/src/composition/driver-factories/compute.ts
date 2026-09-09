@@ -1,4 +1,5 @@
 import { DriverSelection } from "@openclaw-enterprise/occ/application/driver-selection";
+import { WorkloadProfileSelectionError } from "@openclaw-enterprise/occ/workload-profiles/selection";
 import type { WorkloadProfileSourceEnrollmentV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import {
   createSelectedKubernetesRendererSource,
@@ -35,6 +36,7 @@ const selectedComputeContributions = new WeakMap<
   ComputeDriver,
   {
     readonly renderer: KubernetesWorkloadProfileCapability;
+    readonly bindRendererSource: (source: KubernetesRendererSource) => void;
     readonly observations: Pick<RuntimeEffectsV1, "discover" | "observe">;
     readonly bindAdmission: (admission: KubernetesRuntimeObservationAdmission) => () => void;
   }
@@ -79,10 +81,11 @@ export function composeSelectedComputeRendererContribution(
   installed?: KubernetesInstalledRendererDefinitionOwner,
 ): KubernetesWorkloadProfileCapability | undefined {
   const owner = selectedRendererOwners.get(driver);
-  const contribution = selectedComputeContributions.get(driver)?.renderer;
+  const contribution = selectedComputeContributions.get(driver);
   if (!owner || !contribution) return undefined;
   const source = createSelectedKubernetesRendererSource(driver, owner, selection, units, installed);
-  return KubernetesWorkloadProfileCapability.prototype.withSource.call(contribution, source);
+  contribution.bindRendererSource(source);
+  return contribution.renderer;
 }
 
 export function selectComputeDriver(
@@ -133,6 +136,28 @@ export function createComputeDriver(
       currentComputeAbortSignal,
     ) as ComputeDriver;
   }
+  // The original capability captures this receiver at construction. Only this
+  // factory retains its one-time binder; composition cannot replace a Driver's
+  // capability or rebind its trusted source after admission has begun.
+  let rendererSource: KubernetesRendererSource | undefined;
+  const bindRendererSource = (source: KubernetesRendererSource): void => {
+    if (rendererSource !== undefined) throw new WorkloadProfileSelectionError("unavailable");
+    const acquireDefinition = source.acquireDefinition.bind(source);
+    const acquireRevision = source.acquireRevision.bind(source);
+    rendererSource = Object.freeze({ acquireDefinition, acquireRevision });
+  };
+  if (workloadProfileRendererSource !== undefined)
+    bindRendererSource(workloadProfileRendererSource);
+  const sourceReceiver: KubernetesRendererSource = Object.freeze({
+    acquireDefinition(...args: Parameters<KubernetesRendererSource["acquireDefinition"]>) {
+      if (!rendererSource) throw new WorkloadProfileSelectionError("unavailable");
+      return rendererSource.acquireDefinition(...args);
+    },
+    acquireRevision(...args: Parameters<KubernetesRendererSource["acquireRevision"]>) {
+      if (!rendererSource) throw new WorkloadProfileSelectionError("unavailable");
+      return rendererSource.acquireRevision(...args);
+    },
+  });
   const driver = new KubernetesComputeDriver(
     selection.configuration as unknown as KubernetesComputeDriverOptions,
     {
@@ -140,11 +165,12 @@ export function createComputeDriver(
       implementation: selection.implementation,
       lifecycleDrivers: [configurationDriver],
       ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
-      ...(workloadProfileRendererSource === undefined ? {} : { workloadProfileRendererSource }),
+      workloadProfileRendererSource: sourceReceiver,
     },
   );
   selectedComputeContributions.set(driver, {
     renderer: driver.getWorkloadProfileCapability(),
+    bindRendererSource,
     observations: Object.freeze({
       discover: driver.discover.bind(driver),
       observe: driver.observe.bind(driver),
