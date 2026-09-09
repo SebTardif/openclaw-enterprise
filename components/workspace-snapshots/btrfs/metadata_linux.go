@@ -104,11 +104,12 @@ func (b *Backend) inspectSubvolume(ctx context.Context, path string) (subvolume,
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	if info.TreeID <= 5 || info.Generation == 0 || info.UUID == [16]byte{} || info.Flags & ^uint64(1) != 0 {
+	if info.TreeID <= 5 || info.Generation == 0 || info.CTransID == 0 || info.UUID == [16]byte{} || info.Flags & ^uint64(1) != 0 {
 		return out, fmt.Errorf("invalid or unsupported Btrfs subvolume identity")
 	}
 	out.UUID = uuidString(info.UUID[:])
 	out.Generation = info.Generation
+	out.CTransID = info.CTransID
 	out.SendTransID = info.STransID
 	out.ReadOnly = info.Flags&1 != 0
 	if info.ParentUUID != [16]byte{} {

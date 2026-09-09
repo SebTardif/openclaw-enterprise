@@ -27,7 +27,7 @@ starting with a letter or digit. A workspace must already exist as
   `SnapshotRoot/<snapshotID>/{capture.json,<snapshotID>}`. The inner path is the
   actual read-only subvolume. An operation stages both state and receipt before
   publishing their parent directory.
-- `Inspect(ctx, snapshotID)` checks the native UUID, origin UUID, generation,
+- `Inspect(ctx, snapshotID)` checks the native UUID, origin UUID, content transaction,
   read-only flag and supported filesystem scope against the stored receipt.
 - `SnapshotPath(ctx, snapshotID)` returns that inspected immutable subvolume for
   a portable exporter. The operator must retain it while consumers read it.
@@ -56,9 +56,15 @@ cleanup failed: the final object may exist. Do not treat that error as absence o
 an acknowledgment of durability. Inspect and synchronize the exact stored object,
 then reconcile its receipt before retrying or advertising it as durable.
 
+Capture receipts pin the native CTRANSID in addition to UUID, origin and read-only
+state. Generic tree Generation is observational: creating a writable clone can
+advance it without changing the source contents. CTRANSID does not prove that the
+read-only flag was never toggled, so protected host custody remains required.
+
 The export receipt records SHA-256 and byte length plus the actual first stream
 command's UUID and CTRANSID. The incremental parent pair is distinct from the
-capture's origin UUID and local generation. Keep every required parent stream or
+capture's origin UUID and local generation. Both stream transaction IDs are
+checked against the selected capture receipts. Keep every required parent stream or
 received immutable parent available until its dependents are retired. Native
 receive is test-only in this slice; there is no arbitrary privileged stream
 admission API. A digest and a receipt supplied by an untrusted party do not

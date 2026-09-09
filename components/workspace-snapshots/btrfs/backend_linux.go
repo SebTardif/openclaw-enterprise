@@ -29,14 +29,15 @@ type Backend struct {
 var _ snapshots.CaptureProvider = (*Backend)(nil)
 
 type snapshotReceipt struct {
-	Version int               `json:"version"`
-	Capture snapshots.Capture `json:"capture"`
+	Version  int               `json:"version"`
+	Capture  snapshots.Capture `json:"capture"`
+	CTransID uint64            `json:"ctransid"`
 }
 
 type subvolume struct {
-	UUID, ParentUUID, ReceivedUUID string
-	Generation, SendTransID        uint64
-	ReadOnly                       bool
+	UUID, ParentUUID, ReceivedUUID    string
+	Generation, CTransID, SendTransID uint64
+	ReadOnly                          bool
 }
 
 func New(config Config) (*Backend, error) {
@@ -321,7 +322,7 @@ func (b *Backend) Capture(ctx context.Context, workspaceID, snapshotID string) (
 		return result, err
 	}
 	result = snapshots.Capture{Backend: "btrfs", WorkspaceID: workspaceID, SnapshotID: snapshotID, NativeID: observed.UUID, NativeParentID: observed.ParentUUID, Generation: observed.Generation, ReadOnly: true}
-	if err = writeJSON(filepath.Join(stage, "capture.json"), snapshotReceipt{Version: 1, Capture: result}); err != nil {
+	if err = writeJSON(filepath.Join(stage, "capture.json"), snapshotReceipt{Version: 1, Capture: result, CTransID: observed.CTransID}); err != nil {
 		return result, err
 	}
 	if err = publishDirectory(ctx, stage, final); err != nil {
@@ -340,34 +341,42 @@ func (b *Backend) Inspect(ctx context.Context, snapshotID string) (snapshots.Cap
 	return b.inspect(ctx, snapshotID)
 }
 
-func (b *Backend) inspect(ctx context.Context, snapshotID string) (snapshots.Capture, error) {
+func (b *Backend) inspectReceipt(ctx context.Context, snapshotID string) (snapshotReceipt, error) {
 	var receipt snapshotReceipt
 	if !validID(snapshotID) {
-		return receipt.Capture, fmt.Errorf("invalid snapshot ID")
+		return receipt, fmt.Errorf("invalid snapshot ID")
 	}
 	dir := filepath.Join(b.config.SnapshotRoot, snapshotID)
 	if _, err := privateDirectory(dir); err != nil {
-		return receipt.Capture, err
+		return receipt, err
 	}
 	if err := readJSON(filepath.Join(dir, "capture.json"), &receipt); err != nil {
-		return receipt.Capture, err
+		return receipt, err
 	}
 	c := receipt.Capture
-	if receipt.Version != 1 || c.Backend != "btrfs" || c.SnapshotID != snapshotID || !validID(c.WorkspaceID) || !c.ReadOnly || c.ReceivedID != "" {
-		return c, fmt.Errorf("invalid capture receipt")
+	if receipt.Version != 1 || receipt.CTransID == 0 || c.Backend != "btrfs" || c.SnapshotID != snapshotID || !validID(c.WorkspaceID) || !c.ReadOnly || c.ReceivedID != "" {
+		return receipt, fmt.Errorf("invalid capture receipt")
 	}
 	native := filepath.Join(dir, snapshotID)
 	observed, err := b.inspectSubvolume(ctx, native)
 	if err != nil {
-		return c, err
+		return receipt, err
 	}
-	if !observed.ReadOnly || observed.UUID != c.NativeID || observed.ParentUUID != c.NativeParentID || observed.Generation != c.Generation || observed.ReceivedUUID != "" {
-		return c, fmt.Errorf("stored capture identity changed")
+	if !observed.ReadOnly || observed.UUID != c.NativeID || observed.ParentUUID != c.NativeParentID || observed.CTransID != receipt.CTransID || observed.ReceivedUUID != "" {
+		return receipt, fmt.Errorf("stored capture identity changed")
 	}
 	if err := b.verifyScope(ctx, native); err != nil {
-		return c, err
+		return receipt, err
 	}
-	return c, nil
+	// Generic tree Generation may advance when this immutable source is forked.
+	// The separately pinned CTRANSID changes with logical content updates.
+	receipt.Capture.Generation = observed.Generation
+	return receipt, nil
+}
+
+func (b *Backend) inspect(ctx context.Context, snapshotID string) (snapshots.Capture, error) {
+	receipt, err := b.inspectReceipt(ctx, snapshotID)
+	return receipt.Capture, err
 }
 
 // SnapshotPath returns an inspected immutable source for the portable exporter.
@@ -389,13 +398,16 @@ func (b *Backend) Export(ctx context.Context, snapshotID, parentSnapshotID, expo
 		return result, err
 	}
 	defer unlock()
-	capture, err := b.inspect(ctx, snapshotID)
+	selected, err := b.inspectReceipt(ctx, snapshotID)
 	if err != nil {
 		return result, err
 	}
+	capture := selected.Capture
 	var parent snapshots.Capture
+	var parentReceipt snapshotReceipt
 	if parentSnapshotID != "" {
-		parent, err = b.inspect(ctx, parentSnapshotID)
+		parentReceipt, err = b.inspectReceipt(ctx, parentSnapshotID)
+		parent = parentReceipt.Capture
 		if err != nil {
 			return result, err
 		}
@@ -444,7 +456,7 @@ func (b *Backend) Export(ctx context.Context, snapshotID, parentSnapshotID, expo
 	if err != nil {
 		return result, err
 	}
-	if identity.Path != snapshotID || identity.UUID != capture.NativeID || identity.ParentUUID != parent.NativeID || (parentSnapshotID == "" && identity.ParentCTransID != 0) {
+	if identity.CTransID != selected.CTransID || identity.ParentCTransID != parentReceipt.CTransID || identity.Path != snapshotID || identity.UUID != capture.NativeID || identity.ParentUUID != parent.NativeID || (parentSnapshotID == "" && identity.ParentCTransID != 0) {
 		return result, fmt.Errorf("export stream identity differs from selected captures")
 	}
 	if _, err = b.inspect(ctx, snapshotID); err != nil {

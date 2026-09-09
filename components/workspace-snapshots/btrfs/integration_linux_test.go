@@ -189,6 +189,21 @@ func TestBtrfsRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(treeState(t, pathB), after) {
 		t.Fatal("fork changed immutable source")
 	}
+	// Forking may advance the readonly source's bookkeeping Generation. Its
+	// UUID/CTRANSID still identifies the same content and must remain usable.
+	if _, err := b.Fork(ctx, "snapB", "fork-two"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Inspect(ctx, "snapB"); err != nil {
+		t.Fatal(err)
+	}
+	exportedAfterFork, err := b.Export(ctx, "snapB", "snapA", "after-fork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exportedAfterFork.SnapshotCTransID != delta.SnapshotCTransID || exportedAfterFork.ParentCTransID != delta.ParentCTransID {
+		t.Fatal("fork changed the native content transaction identity")
+	}
 	// A writable clone on the receive filesystem also preserves both received
 	// parents. This native qualification step is not a public restore operation.
 	receivedFork := filepath.Join(receive, "fork")
@@ -236,6 +251,22 @@ func TestBtrfsRoundTrip(t *testing.T) {
 	native("subvolume", "snapshot", workspace, stubWorkspace)
 	if _, err := b.Capture(ctx, "stub-work", "stub-rejected"); err == nil {
 		t.Fatal("captured nested snapshot stub")
+	}
+	// Deliberately violate custody of an owned test snapshot, then reseal it.
+	// The synchronized capture's pinned content transaction must reject mutation.
+	if _, err := b.Capture(ctx, "fork", "tampered"); err != nil {
+		t.Fatal(err)
+	}
+	tamperedPath, err := b.SnapshotPath(ctx, "tampered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native("property", "set", "-t", "s", tamperedPath, "ro", "false")
+	write(filepath.Join(tamperedPath, "note"), []byte("unexpected snapshot mutation"), 0600)
+	native("property", "set", "-t", "s", tamperedPath, "ro", "true")
+	native("filesystem", "sync", config.SnapshotRoot)
+	if _, err := b.Inspect(ctx, "tampered"); err == nil {
+		t.Fatal("accepted modified and resealed capture")
 	}
 	// Truncation of our own stream must fail native receipt without publication.
 	truncatedDir := filepath.Join(receive, "truncated")
