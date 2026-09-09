@@ -267,6 +267,7 @@ export function createTlsConfiguration(config) {
     incoming_certificate_path: "/run/oce-tls/certificate.pem",
     incoming_key_path: "/run/oce-tls/key.pem",
     max_concurrent: 2,
+    response_idle_timeout_ms: 300_000,
   };
 }
 

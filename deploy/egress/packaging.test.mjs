@@ -91,6 +91,7 @@ test("actual Compose generation keeps custody and firewall authority in distinct
   assert.deepEqual(tlsConfig.credential_binding, config.credentialBinding);
   assert.notEqual(tlsConfig.credential_binding, config.credentialBinding);
   assert.equal(tlsConfig.max_concurrent, 2);
+  assert.equal(tlsConfig.response_idle_timeout_ms, 300_000);
   assert.equal(dns.pids_limit, 128);
   assert.equal(tls.pids_limit, 128);
   const literalPath = createCompose(

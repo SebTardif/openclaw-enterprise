@@ -82,6 +82,38 @@ qualification. Local packaging selects two active exchanges per TLS process;
 the adapter accepts explicit configurations of up to eight. The process-local
 limit does not enforce an Agent-wide limit across multiple service instances.
 
+### Response deadlines and provider errors
+
+The administrator must set `response_idle_timeout_ms` explicitly to an integer
+from **100 through 300,000 milliseconds**. There is no omitted-field default.
+The local packaging selects **300,000 milliseconds (five minutes)**. This is a
+new finite progress-idle limit; suitability for live provider reasoning pauses
+remains unqualified.
+
+The idle interval starts at the original dispatch attempt, before the provider
+HTTP send. Validated response headers and each nonempty, validated data frame
+accepted for forwarding restart it. Empty frames, polling, TLS activity, invalid
+SSE and authority or DNS renewals do not. Backpressure that prevents response
+forwarding counts as idle. The clock therefore bounds first-response waiting and
+forwarding progress; it does not distinguish a silent provider from a stalled
+downstream reader.
+
+Each dispatched exchange owns one additional resettable idle watchdog, joined
+at cleanup. It shuts down both exact sockets independently of response polling
+and the authority renewal worker. Socket closure does not mean that an already
+running bounded authority RPC has settled; cleanup still joins that work. The
+idle clock never extends an authority lease, DNS lease or the immutable original
+operation deadline, and an elapsed idle interval cannot be revived by late data.
+
+For provider HTTP **4xx or 5xx**, the adapter preserves the error status and
+returns only `{"error":"provider_error"}` plus a newline, with fixed JSON and
+connection headers. It forwards no arbitrary provider error body or headers,
+which may echo injected credentials. It does not follow or forward redirects;
+other unsupported status behavior is unchanged. These errors retain the
+original **unknown** dispatched outcome, because the selected successful SSE
+terminal was not observed. This is a bounded provider-error policy, not a
+redaction guarantee for successful model output or arbitrary user content.
+
 Three distinct process identities are required:
 
 | Process                 | Linux UID | Authority and mounts                                                                                                                                      |
@@ -243,7 +275,8 @@ readiness, not a synthetic model turn. Only a real admitted workload bearer and
 canonical turn can authorize a provider request. Startup failure stops this
 Compose project and retains its generated state for inspection.
 
-This local profile explicitly sets `max_concurrent: 2` and a 128-process limit
+This local profile explicitly sets `max_concurrent: 2` and
+`response_idle_timeout_ms: 300000` for the TLS adapter, and a 128-process limit
 for each adapter container. Those are configured bounds, not a verified capacity
 guarantee; container resource exhaustion and authority unavailability must still
 fail closed.

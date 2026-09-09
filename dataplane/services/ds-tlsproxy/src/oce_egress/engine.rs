@@ -2,7 +2,7 @@
 //! A single HTTP/1 exchange on each leg; Hyper owns parsing and wire framing.
 use super::{
     check_authority, check_dns, dns_request, http, json, read_key, rpc, validate_dns_echo,
-    Admission, Binding, Monitor, Refusal, Service, SocketDeadline, FIXED_HOST,
+    Admission, Binding, IdleDeadline, Monitor, Refusal, Service, SocketDeadline, FIXED_HOST,
 };
 use crate::reoriginate::validate_origin_chain_witness;
 use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
@@ -44,6 +44,7 @@ struct ExchangeState {
     request_guard: Option<SocketDeadline>,
     unmonitored_flow: Option<Value>,
     monitor: Option<Arc<Monitor>>,
+    idle: Option<Arc<IdleDeadline>>,
     driver: Option<tokio::task::JoinHandle<Result<(), hyper::Error>>>,
     effectful_jobs: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -139,7 +140,7 @@ where
         }
     }
 
-    let (completion, attempted, eof, failure, monitor, driver, guard, unmonitored_flow) = {
+    let (completion, attempted, eof, failure, monitor, idle, driver, guard, unmonitored_flow) = {
         let mut state = state.lock().map_err(|_| Refusal::Denied)?;
         (
             state.completion.take(),
@@ -147,6 +148,7 @@ where
             state.upstream_eof,
             state.failure,
             state.monitor.take(),
+            state.idle.take(),
             state.driver.take(),
             state.request_guard.take(),
             state.unmonitored_flow.take(),
@@ -154,7 +156,8 @@ where
     };
     let authorized = monitor
         .as_ref()
-        .is_none_or(|monitor| monitor.current().is_ok());
+        .is_none_or(|monitor| monitor.current().is_ok())
+        && idle.as_ref().is_none_or(|idle| idle.current().is_ok());
     let provider_ended = state.lock().map_err(|_| Refusal::Denied)?.provider_ended;
     let completed = connection.is_ok() && failure.is_none() && eof && provider_ended && authorized;
     if let Some(driver) = driver {
@@ -164,6 +167,7 @@ where
     // Monitor destruction shuts the exact upstream socket, releases the bound
     // DNS flow, and joins its bounded blocking RPC worker before completion.
     blocking(move || {
+        drop(idle);
         drop(monitor);
         drop(guard);
         Ok(())
@@ -382,6 +386,17 @@ async fn exchange(
         .await
         .map_err(|_| Refusal::Io)?;
 
+    // Install the independent watchdog before the dispatch RPC can block. It
+    // remains owned by ExchangeState if downstream cancellation drops this future.
+    let dispatched_at = Instant::now();
+    let idle = Arc::new(IdleDeadline::start(
+        Duration::from_millis(service.config.response_idle_timeout_ms),
+        dispatched_at,
+        origin.control.try_clone().map_err(|_| Refusal::Io)?,
+        downstream.try_clone().map_err(|_| Refusal::Io)?,
+    )?);
+    state.lock().map_err(|_| Refusal::Denied)?.idle = Some(idle.clone());
+    idle.current()?;
     // The authority RPC may durably dispatch and then lose its response. From
     // this point every incomplete outcome is unknown, even before TLS writes.
     state
@@ -391,7 +406,9 @@ async fn exchange(
     let authority = service.authority.clone();
     let dispatch_binding = binding.clone();
     let digest = request.digest.clone();
+    let dispatch_idle = idle.clone();
     let authority_lease = effectful(&state, move || {
+        dispatch_idle.current()?;
         check_authority(&authority, "dispatch", &dispatch_binding, &digest, deadline)
     })
     .await?;
@@ -407,21 +424,37 @@ async fn exchange(
         origin.control,
         downstream.try_clone().map_err(|_| Refusal::Io)?,
     )?);
-    monitor.current()?;
     {
         let mut state = state.lock().map_err(|_| Refusal::Denied)?;
+        // Transfer the exact flow owner before any fallible currentness check;
+        // an already elapsed idle clock must not release the same flow twice.
         state.monitor = Some(monitor.clone());
         state.unmonitored_flow = None;
-        state.driver = Some(tokio::spawn(connection));
     }
+    monitor.current()?;
+    idle.current()?;
+    state.lock().map_err(|_| Refusal::Denied)?.driver = Some(tokio::spawn(connection));
     let response = sender
         .send_request(outbound)
         .await
         .map_err(|_| Refusal::Io)?;
     drop(sender);
     monitor.current()?;
+    idle.current()?;
     let (parts, body) = response.into_parts();
+    // Provider errors may echo injected credentials in either headers or body.
+    // Preserve a valid error status, but release none of that arbitrary data.
+    // Dropping Incoming cancels the body; original dispatched outcome remains
+    // unknown because no selected successful provider terminal was observed.
+    if parts.version == Version::HTTP_11
+        && (parts.status.is_client_error() || parts.status.is_server_error())
+    {
+        idle.activity()?;
+        drop(body);
+        return Ok(provider_error_response(parts.status));
+    }
     let content_type = response_headers(parts.status, parts.version, &parts.headers)?;
+    idle.activity()?;
     // Only the selected successful SSE transport can attest an ended Responses
     // lifecycle. JSON errors or terminal-looking bytes in another media type
     // remain unknown even when their HTTP framing completes cleanly.
@@ -439,6 +472,7 @@ async fn exchange(
                 observer,
                 state,
                 monitor,
+                idle,
                 total: 0,
                 done: false,
             }
@@ -593,6 +627,7 @@ struct ForwardBody {
     observer: Option<super::sse::Observer>,
     state: SharedState,
     monitor: Arc<Monitor>,
+    idle: Arc<IdleDeadline>,
     total: u64,
     done: bool,
 }
@@ -608,7 +643,7 @@ impl Body for ForwardBody {
         if self.done {
             return Poll::Ready(None);
         }
-        if let Err(error) = self.monitor.current() {
+        if let Err(error) = self.monitor.current().and_then(|_| self.idle.current()) {
             self.done = true;
             fail(&self.state, error);
             return Poll::Ready(Some(Err(error)));
@@ -629,6 +664,16 @@ impl Body for ForwardBody {
                         fail(&self.state, Refusal::Bounds);
                         Poll::Ready(Some(Err(Refusal::Bounds)))
                     } else {
+                        // Only nonempty validated bytes accepted for forwarding
+                        // count as progress. Readiness, empty frames, invalid SSE
+                        // and authority renewals never extend the idle clock.
+                        if !data.is_empty() {
+                            if let Err(error) = self.idle.activity() {
+                                self.done = true;
+                                fail(&self.state, error);
+                                return Poll::Ready(Some(Err(error)));
+                            }
+                        }
                         self.total += data.len() as u64;
                         Poll::Ready(Some(Ok(Frame::data(data))))
                     }
@@ -685,6 +730,23 @@ fn fail(state: &SharedState, error: Refusal) {
     if let Ok(mut state) = state.lock() {
         state.failure.get_or_insert(error);
     }
+}
+
+fn provider_error_response(status: StatusCode) -> Response<ResponseBody> {
+    let mut response = Response::new(
+        Full::new(Bytes::from_static(b"{\"error\":\"provider_error\"}\n"))
+            .map_err(|never| match never {})
+            .boxed_unsync(),
+    );
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    response
 }
 
 fn refusal_response() -> Response<ResponseBody> {

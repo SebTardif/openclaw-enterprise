@@ -170,6 +170,7 @@ fn service_with_ingress(
         incoming_key_path,
         development_loopback_http: incoming.is_none(),
         max_concurrent: 2,
+        response_idle_timeout_ms: 300_000,
     })
     .unwrap();
     service.origin_port = port;
@@ -251,6 +252,15 @@ enum Scenario {
     RevokedStream,
     MissingTerminal,
     JsonTerminalBait,
+    MissingProviderKey,
+    ProviderError(u16),
+}
+#[derive(Default)]
+struct CancellationTimes {
+    issued: Mutex<Option<Instant>>,
+    peer_closed: Mutex<Option<Instant>>,
+    handler_returned: Mutex<Option<Instant>>,
+    workers_settled: Mutex<Option<Instant>>,
 }
 struct Observed {
     upstream: Vec<u8>,
@@ -262,6 +272,9 @@ struct Observed {
     dispatches: usize,
     releases: usize,
     handler_error: Option<String>,
+    handler_debug: String,
+    completion_requests: Vec<Value>,
+    cancellation: Arc<CancellationTimes>,
     provider_observed_close: bool,
     paused_progress: Option<(usize, usize)>,
     bound_flow: Option<Value>,
@@ -300,6 +313,11 @@ fn transport_with_controls(
         listener.local_addr().unwrap().port(),
         incoming.as_ref(),
     );
+    if matches!(scenario, Scenario::MissingProviderKey) {
+        fs::remove_file(&service.config.provider_key_path).unwrap();
+    }
+    let cancellation = Arc::new(CancellationTimes::default());
+    let peer_times = cancellation.clone();
     let upstream_done = Arc::new(AtomicBool::new(false));
     let stop = upstream_done.clone();
     let server = certs.server.clone();
@@ -368,7 +386,23 @@ fn transport_with_controls(
                             &first_received,
                             &producer_progress,
                             &provider_closed,
+                            &peer_times,
                         );
+                        break;
+                    }
+                    if let Scenario::ProviderError(status) = scenario {
+                        let bait = format!("{{\"error\":\"{}\"}}", proxy_credential_bait());
+                        let response = format!("HTTP/1.1 {status} Provider Error\r\nContent-Type: application/json\r\nX-Provider-Diagnostic: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bait}", proxy_credential_bait(), bait.len());
+                        tls.write_all(response.as_bytes()).unwrap();
+                        tls.flush().unwrap();
+                        // No fixture close can manufacture adapter cancellation.
+                        let mut byte = [0; 1];
+                        let closed = match tls.read(&mut byte) {
+                            Ok(0) => true,
+                            Err(error) => proxy_closed_error(&error),
+                            _ => false,
+                        };
+                        provider_closed.store(closed, Ordering::Release);
                         break;
                     }
                     let response=match scenario{Scenario::JsonTerminalBait=>b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n: alive\n\n\r\n".as_slice(),Scenario::Redirect=>b"HTTP/1.1 302 Found\r\nLocation: https://attacker.example\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n".as_slice(),Scenario::TruncatedResponse=>b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 100\r\n\r\ndata:x".as_slice(),_=>b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n: alive\n\n\r\n".as_slice()};
@@ -399,7 +433,7 @@ fn transport_with_controls(
                 }
             }
         }
-        if normal.is_some() {
+        if normal.is_some() || matches!(scenario, Scenario::ProviderError(_)) {
             // Keep observing this listener until the exchange has ended so a
             // second connect cannot hide in its backlog after the first stream.
             loop {
@@ -427,6 +461,8 @@ fn transport_with_controls(
         received
     });
     let receipts = Arc::new(Mutex::new(Vec::new()));
+    let completion_requests = Arc::new(Mutex::new(Vec::new()));
+    let captured_completions = completion_requests.clone();
     let admissions = Arc::new(AtomicUsize::new(0));
     let observed = receipts.clone();
     let counted = admissions.clone();
@@ -448,6 +484,7 @@ fn transport_with_controls(
             dispatched.fetch_add(1, Ordering::Relaxed);
         }
         if method == "complete" {
+            captured_completions.lock().unwrap().push(request.clone());
             observed
                 .lock()
                 .unwrap()
@@ -523,6 +560,7 @@ fn transport_with_controls(
     });
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let handler_times = cancellation.clone();
     let worker = thread::spawn(move || {
         let (s, _) = listener.accept().unwrap();
         if matches!(normal, Some(NormalStream::PausedReader)) {
@@ -532,7 +570,9 @@ fn transport_with_controls(
                 .set_send_buffer_size(4096)
                 .unwrap();
         }
-        service.handle(s)
+        let result = service.handle(s);
+        *handler_times.handler_returned.lock().unwrap() = Some(Instant::now());
+        result
     });
     let start = Instant::now();
     let (bytes, paused_progress) = if let Some(normal) = normal {
@@ -543,6 +583,7 @@ fn transport_with_controls(
             normal,
             first_seen,
             progress,
+            cancellation.clone(),
         )
     } else {
         let client = TcpStream::connect(addr).unwrap();
@@ -578,7 +619,9 @@ fn transport_with_controls(
         let _ = client.read_to_end(&mut bytes);
         (bytes, None)
     };
-    let handler_error = worker.join().unwrap().err().map(|error| error.to_string());
+    let result = worker.join().unwrap();
+    let handler_debug = format!("{result:?}");
+    let handler_error = result.err().map(|error| error.to_string());
     upstream_done.store(true, Ordering::Release);
     let received = receiver.join().unwrap();
     let observed = Observed {
@@ -591,6 +634,9 @@ fn transport_with_controls(
         dispatches: dispatches.load(Ordering::Relaxed),
         releases: releases.load(Ordering::Relaxed),
         handler_error,
+        handler_debug,
+        completion_requests: completion_requests.lock().unwrap().clone(),
+        cancellation: cancellation.clone(),
         provider_observed_close: provider_observed_close.load(Ordering::Acquire),
         paused_progress,
         bound_flow: bound_flow.lock().unwrap().clone(),
@@ -598,6 +644,7 @@ fn transport_with_controls(
     };
     drop(authority);
     drop(dns);
+    *cancellation.workers_settled.lock().unwrap() = Some(Instant::now());
     observed
 }
 #[test]
@@ -901,6 +948,7 @@ fn normal_provider_stream(
     first_received: &std::sync::mpsc::Receiver<()>,
     progress: &StreamProgress,
     observed_close: &AtomicBool,
+    times: &CancellationTimes,
 ) {
     tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").unwrap();
     // Split actual upstream HTTP data across UTF-8, SSE and CRLF boundaries.
@@ -925,6 +973,9 @@ fn normal_provider_stream(
             _ => false,
         };
         observed_close.store(closed, Ordering::Release);
+        if closed {
+            *times.peer_closed.lock().unwrap() = Some(Instant::now());
+        }
         return;
     }
     if matches!(normal, NormalStream::PausedReader) {
@@ -963,6 +1014,7 @@ fn normal_client(
     normal: NormalStream,
     first_seen: std::sync::mpsc::SyncSender<()>,
     progress: Arc<StreamProgress>,
+    cancellation: Arc<CancellationTimes>,
 ) -> (Vec<u8>, Option<(usize, usize)>) {
     use http_body_util::{BodyExt, Full};
     use hyper::body::Bytes;
@@ -1083,6 +1135,9 @@ fn normal_client(
             if matches!(normal, NormalStream::TerminalWithoutHttpEnd) {
                 assert!(terminal_seen && body_error);
             }
+            if matches!(normal, NormalStream::ClientClose) {
+                *cancellation.issued.lock().unwrap() = Some(Instant::now());
+            }
             drop(response);
             if clean {
                 assert!(!body_error);
@@ -1136,6 +1191,39 @@ fn proxy_client_close_preserves_unknown_and_one_upstream_attempt() {
     proxy_assert_one_owned_flow(&observed);
     assert!(observed.provider_observed_close);
     assert!(observed.elapsed < Duration::from_secs(3));
+    let issued = observed.cancellation.issued.lock().unwrap().unwrap();
+    let peer = observed.cancellation.peer_closed.lock().unwrap().unwrap();
+    let handler = observed
+        .cancellation
+        .handler_returned
+        .lock()
+        .unwrap()
+        .unwrap();
+    let settled = observed
+        .cancellation
+        .workers_settled
+        .lock()
+        .unwrap()
+        .unwrap();
+    for timestamp in [peer, handler, settled] {
+        assert!(timestamp >= issued);
+        assert!(timestamp.duration_since(issued) < Duration::from_secs(3));
+    }
+    assert!(settled >= handler && settled >= peer);
+    eprintln!("proxy_cancellation cancel_to_peer_us={} cancel_to_handler_us={} cancel_to_workers_us={} clock_resolution_ns={} workers_settled=true",
+        peer.duration_since(issued).as_micros(), handler.duration_since(issued).as_micros(),
+        settled.duration_since(issued).as_micros(), proxy_clock_resolution().as_nanos());
+    proxy_scan_observed("cancellation", &observed);
+    let timing = json!({"case":"cancellation","clock":"monotonic Instant; issued is origin",
+        "issuedNs":"0","peerClosedNs":peer.duration_since(issued).as_nanos().to_string(),
+        "handlerReturnedNs":handler.duration_since(issued).as_nanos().to_string(),
+        "workersSettledNs":settled.duration_since(issued).as_nanos().to_string(),
+        "clockResolutionNs":proxy_clock_resolution().as_nanos().to_string()});
+    proxy_scan_sink(
+        "cancellation",
+        "timing",
+        &serde_json::to_vec(&timing).unwrap(),
+    );
     for sink in [
         &observed.response,
         observed.handler_error.as_deref().unwrap_or(""),
@@ -2704,4 +2792,1204 @@ fn proxy_declared_16_mib_plus_one_is_bounds_before_body_or_effects() {
     assert!(body == "{\"error\":\"egress_denied\"}\n");
     workers.settle().unwrap();
     eprintln!("proxy_request_ceiling declared_bytes=16777217 refusal=Bounds elapsed_ms={} authority_accepts=0 dns_accepts=0 provider_accepts=0 completion=0 workers_settled=true", finished.duration_since(start).as_millis());
+}
+
+// Finite adapter diagnostics: authority admission and the selected provider
+// Authorization header are intentional credential sinks and are never scanned
+// as forbidden outputs. No provider or authority credentials are installed.
+const PROXY_CANARIES: [&str; 2] = ["provider-secret-canary", "workload-only-canary"];
+fn proxy_hex(bytes: &[u8], upper: bool) -> String {
+    bytes
+        .iter()
+        .map(|b| {
+            if upper {
+                format!("{b:02X}")
+            } else {
+                format!("{b:02x}")
+            }
+        })
+        .collect()
+}
+fn proxy_credential_bait() -> String {
+    PROXY_CANARIES
+        .iter()
+        .flat_map(|canary| {
+            [
+                canary.to_string(),
+                proxy_hex(canary.as_bytes(), false),
+                proxy_hex(canary.as_bytes(), true),
+            ]
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+fn proxy_closed_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof
+    )
+}
+fn proxy_clock_resolution() -> Duration {
+    let start = Instant::now();
+    loop {
+        let elapsed = start.elapsed();
+        if !elapsed.is_zero() {
+            return elapsed;
+        }
+    }
+}
+fn proxy_scan_sink(case: &str, sink: &str, bytes: &[u8]) {
+    for canary in PROXY_CANARIES {
+        for needle in [
+            canary.to_string(),
+            proxy_hex(canary.as_bytes(), false),
+            proxy_hex(canary.as_bytes(), true),
+        ] {
+            assert!(
+                !bytes
+                    .windows(needle.len())
+                    .any(|part| part == needle.as_bytes()),
+                "credential canary in case={case} sink={sink}"
+            );
+        }
+    }
+    let digest = proxy_body_digest(bytes);
+    let retained = if let Some(directory) = std::env::var_os("OCE_EGRESS_TEST_CAPTURE_DIR") {
+        let directory = PathBuf::from(directory);
+        assert!(
+            directory.is_absolute() && directory.is_dir(),
+            "capture directory must already be allocated"
+        );
+        let name = format!("{case}-{sink}");
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(format!("{name}.bin")))
+            .unwrap();
+        output.write_all(bytes).unwrap();
+        let metadata = json!({"case":case,"sink":sink,"bytes":bytes.len(),"sha256":digest,"rawMatches":0,"lowerHexMatches":0,"upperHexMatches":0});
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(format!("{name}.json")))
+            .unwrap();
+        output
+            .write_all(serde_json::to_string_pretty(&metadata).unwrap().as_bytes())
+            .unwrap();
+        true
+    } else {
+        false
+    };
+    eprintln!("proxy_sink case={case} sink={sink} bytes={} sha256={digest} raw_matches=0 lower_hex_matches=0 upper_hex_matches=0 retained={retained}", bytes.len());
+}
+fn proxy_scan_observed(case: &str, observed: &Observed) {
+    if case == "cancellation" {
+        proxy_scan_sink(case, "downstream-body", observed.response.as_bytes());
+        proxy_absent_sink(
+            case,
+            "downstream-headers",
+            "normal client retained body frames only",
+        );
+    } else {
+        proxy_scan_sink(case, "downstream", observed.response.as_bytes());
+    }
+    if let Some(error) = &observed.handler_error {
+        proxy_scan_sink(case, "handler-display", error.as_bytes());
+    } else {
+        proxy_absent_sink(case, "handler-display", "handler returned success");
+    }
+    proxy_scan_sink(case, "handler-debug", observed.handler_debug.as_bytes());
+    if observed.completion_requests.is_empty() {
+        proxy_absent_sink(case, "completion", "no admitted operation");
+    } else {
+        proxy_scan_sink(
+            case,
+            "completion",
+            &serde_json::to_vec(&observed.completion_requests).unwrap(),
+        );
+    }
+    if let Some(release) = &observed.released_flow {
+        proxy_scan_sink(case, "release", &serde_json::to_vec(release).unwrap());
+    } else {
+        proxy_absent_sink(case, "release", "no bound flow");
+    }
+}
+fn proxy_absent_sink(case: &str, sink: &str, reason: &str) {
+    if let Some(directory) = std::env::var_os("OCE_EGRESS_TEST_CAPTURE_DIR") {
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.join(format!("{case}-{sink}.json")))
+            .unwrap();
+        output.write_all(serde_json::to_string_pretty(&json!({"case":case,"sink":sink,"disposition":"not-applicable","reason":reason})).unwrap().as_bytes()).unwrap();
+    }
+    eprintln!("proxy_sink case={case} sink={sink} disposition=not-applicable reason={reason}");
+}
+#[test]
+fn proxy_response_idle_configuration_is_explicit_and_bounded() {
+    let dir = Dir::new();
+    let service = service_with_ingress(&dir, &certificates(FIXED_HOST), 443, None);
+    let c = &service.config;
+    let value = json!({"listen":c.listen,"listener_authority":c.listener_authority,"authority_socket":c.authority_socket,
+        "dns_socket":c.dns_socket,"provider_key_path":c.provider_key_path,"provider_binding_ref":c.provider_binding_ref,
+        "credential_binding":c.credential_binding,"root_ca_path":c.root_ca_path,"incoming_certificate_path":c.incoming_certificate_path,
+        "incoming_key_path":c.incoming_key_path,"development_loopback_http":c.development_loopback_http,"max_concurrent":c.max_concurrent,
+        "response_idle_timeout_ms":c.response_idle_timeout_ms});
+    let mut missing = value.clone();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("response_idle_timeout_ms");
+    assert!(serde_json::from_value::<Config>(missing).is_err());
+    for milliseconds in [0, 99, 100, 300_000, 300_001] {
+        let mut candidate = value.clone();
+        candidate["response_idle_timeout_ms"] = json!(milliseconds);
+        let parsed: Config = serde_json::from_value(candidate).unwrap();
+        assert_eq!(
+            Service::new(parsed).is_ok(),
+            (100..=300_000).contains(&milliseconds)
+        );
+    }
+    for invalid in [json!(-1), json!(1.5), json!("1000"), json!(null)] {
+        let mut candidate = value.clone();
+        candidate["response_idle_timeout_ms"] = invalid;
+        assert!(serde_json::from_value::<Config>(candidate).is_err());
+    }
+}
+#[test]
+fn proxy_finite_error_sink_matrix_is_credential_free() {
+    for (case, scenario, raw) in [
+        ("success", Scenario::Allowed, wire(&body())),
+        (
+            "malformed",
+            Scenario::Allowed,
+            wire(&body()).replacen(
+                "Authorization:",
+                "Authorization: Bearer forged\r\nAuthorization:",
+                1,
+            ),
+        ),
+        ("denial", Scenario::DeniedDispatch, wire(&body())),
+        (
+            "key-file-failure",
+            Scenario::MissingProviderKey,
+            wire(&body()),
+        ),
+        ("provider-400", Scenario::ProviderError(400), wire(&body())),
+        ("provider-500", Scenario::ProviderError(500), wire(&body())),
+    ] {
+        let case_started = Instant::now();
+        let observed = transport_with_ingress(scenario, raw, false, true);
+        assert!(
+            case_started.elapsed() < Duration::from_secs(10),
+            "finite matrix case did not settle within its bound"
+        );
+        proxy_scan_observed(case, &observed);
+        match scenario {
+            Scenario::ProviderError(status) => {
+                let (headers, body) = observed.response.split_once("\r\n\r\n").unwrap();
+                assert!(headers.starts_with(&format!("HTTP/1.1 {status} ")));
+                assert!(!headers
+                    .to_ascii_lowercase()
+                    .contains("x-provider-diagnostic"));
+                assert_eq!(body, "{\"error\":\"provider_error\"}\n");
+                assert_eq!(observed.receipts, vec!["unknown"]);
+                assert_eq!(observed.attempts, 1);
+                assert_eq!(observed.dispatches, 1);
+                assert!(observed.provider_observed_close);
+            }
+            Scenario::MissingProviderKey => {
+                assert!(observed.upstream.is_empty());
+                assert_eq!(observed.dispatches, 0);
+                assert_eq!(observed.receipts, vec!["not_dispatched"]);
+                assert_eq!(observed.handler_error.as_deref(), Some("Configuration"));
+            }
+            Scenario::DeniedDispatch => {
+                assert!(observed.upstream.is_empty());
+                assert_eq!(observed.receipts, vec!["unknown"]);
+            }
+            _ if case == "malformed" => {
+                assert_eq!(observed.admissions, 0);
+                assert_eq!(observed.attempts, 0);
+                assert!(observed.receipts.is_empty());
+            }
+            _ => assert_eq!(observed.receipts, vec!["completed"]),
+        }
+    }
+    eprintln!("proxy_sink_matrix cases=6 sinks_per_case=5 protected_backend=not_present authorized_provider_header=permitted authority_admission=permitted");
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProxyIndependentDeadline {
+    Idle,
+    Operation,
+}
+#[derive(Default)]
+struct ProxyProgressPeer {
+    writes: Vec<(Instant, Instant)>,
+    closed: Option<Instant>,
+    backlog_checked: Option<Instant>,
+}
+fn proxy_deadline_chunk(
+    stream: &mut impl Write,
+    bytes: &[u8],
+    stop: &AtomicBool,
+    deadline: Instant,
+) -> Result<(), &'static str> {
+    proxy_write_all(
+        stream,
+        format!("{:x}\r\n", bytes.len()).as_bytes(),
+        stop,
+        deadline,
+    )?;
+    proxy_write_all(stream, bytes, stop, deadline)?;
+    proxy_write_all(stream, b"\r\n", stop, deadline)?;
+    proxy_flush(stream, stop, deadline)
+}
+fn proxy_independent_stream_deadline(kind: ProxyIndependentDeadline) {
+    let case = if kind == ProxyIndependentDeadline::Idle {
+        "independent-idle"
+    } else {
+        "immutable-operation"
+    };
+    let dir = Dir::new();
+    let mut workers = ProxyDeadlineWorkers::new();
+    let ended = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(Mutex::new(Vec::new()));
+    let dns = Arc::new(Mutex::new(Vec::new()));
+    let mut binding_reply = Value::Null;
+    let authority_witness = proxy_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("authority"),
+        authority.clone(),
+        ProxyRpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 16,
+            handler_ended: Some(ended.clone()),
+        },
+        move |request| {
+            let method = request["method"].as_str().unwrap();
+            if method == "complete" {
+                return json!({"version":1,"ok":true});
+            }
+            if method == "admit" {
+                let n = now();
+                let before = n + if kind == ProxyIndependentDeadline::Operation {
+                    1000
+                } else {
+                    5000
+                };
+                let expires = n + if kind == ProxyIndependentDeadline::Operation {
+                    1500
+                } else {
+                    60_000
+                };
+                binding_reply = json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1",
+                    "authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,
+                    "operation_id":"operation-a","reservation_ref":request["reservation_ref"],
+                    "request_sha256":request["request_sha256"],"assignment_id":ASSIGNMENT,
+                    "generation":1,"policy_version":1,"provider_binding_ref":"provider-test",
+                    "credential_binding":descriptor(),"operation_state":"accepted",
+                    "dispatch_before_ms":before,"operation_expires_at_ms":expires,
+                    "server_time_ms":n,"valid_until_ms":(n+4000).min(before)});
+            }
+            let mut reply = binding_reply.clone();
+            let dispatched = matches!(method, "dispatch" | "check");
+            reply["operation_state"] = json!(if dispatched { "dispatched" } else { "accepted" });
+            // Deliberately repeated, coarse authority clock snapshot in the
+            // operation case. The binding never changes. Each actual RPC's
+            // client-start anchor makes the effective renewed monotonic lease
+            // extend beyond the original operation cap. This is a component
+            // test of stale-clock resistance, not a canonical authority clock.
+            let n = if kind == ProxyIndependentDeadline::Operation {
+                binding_reply["server_time_ms"].as_u64().unwrap()
+            } else {
+                now()
+            };
+            let limit = reply[if dispatched {
+                "operation_expires_at_ms"
+            } else {
+                "dispatch_before_ms"
+            }]
+            .as_u64()
+            .unwrap();
+            reply["server_time_ms"] = json!(n);
+            reply["valid_until_ms"] = json!((n + 4000).min(limit));
+            reply
+        },
+    );
+    let dns_witness = proxy_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("dns"),
+        dns.clone(),
+        ProxyRpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 16,
+            handler_ended: Some(ended.clone()),
+        },
+        |request| {
+            let mut reply = request.clone();
+            reply.as_object_mut().unwrap().remove("method");
+            let n = now();
+            reply["ok"] = json!(true);
+            reply["server_time_ms"] = json!(n);
+            reply["valid_until_ms"] = json!(n + 4000);
+            reply["ip"] = json!("127.0.0.1");
+            reply["admission_id"] = json!("d".repeat(64));
+            if request.get("connection_ref").is_some() {
+                reply["flow_ref"] = json!("f".repeat(64));
+            }
+            reply
+        },
+    );
+    let provider = TcpListener::bind("127.0.0.1:0").unwrap();
+    provider.set_nonblocking(true).unwrap();
+    let certs = certificates(FIXED_HOST);
+    let incoming = certificates("localhost");
+    let mut service = service_with_ingress(
+        &dir,
+        &certs,
+        provider.local_addr().unwrap().port(),
+        Some(&incoming),
+    );
+    service.config.response_idle_timeout_ms = if kind == ProxyIndependentDeadline::Idle {
+        1000
+    } else {
+        5000
+    };
+    let peer = Arc::new(Mutex::new(ProxyProgressPeer::default()));
+    let output = peer.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let stop = workers.stop.clone();
+    let deadline = workers.deadline;
+    let peer_ended = ended.clone();
+    workers.spawn(move || {
+        let socket = loop {
+            proxy_checkpoint(&stop, deadline)?;
+            match provider.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("progress provider accept failed"),
+            }
+        };
+        counted.fetch_add(1, Ordering::Release);
+        socket.set_nonblocking(true).map_err(|_| "progress provider nonblocking failed")?;
+        let connection = ServerConnection::new(certs.server).map_err(|_| "progress TLS setup failed")?;
+        let mut stream = StreamOwned::new(connection, socket);
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            if request.len() >= 16 * 1024 { return Err("progress request header bound exceeded"); }
+            let mut byte = [0];
+            proxy_read_exact(&mut stream, &mut byte, &stop, deadline)?;
+            request.push(byte[0]);
+        }
+        let headers = std::str::from_utf8(&request).map_err(|_| "progress request header UTF8 failed")?;
+        let length: usize = headers.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(str::trim).map(str::to_owned))
+            .ok_or("progress request content length missing")?.parse().map_err(|_| "progress request content length failed")?;
+        if length > 16 * 1024 { return Err("progress request body bound exceeded"); }
+        proxy_read_exact(&mut stream, &mut vec![0; length], &stop, deadline)?;
+        proxy_write_all(&mut stream, b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", &stop, deadline)?;
+        let first = Instant::now();
+        proxy_deadline_chunk(&mut stream, PROXY_INITIAL.as_bytes(), &stop, deadline)?;
+        output.lock().unwrap().writes.push((first, Instant::now()));
+        let mut next = Instant::now() + Duration::from_millis(400);
+        let mut sequence = 2;
+        loop {
+            proxy_checkpoint(&stop, deadline)?;
+            let mut byte = [0];
+            match stream.read(&mut byte) {
+                Ok(0) => { output.lock().unwrap().closed = Some(Instant::now()); break; }
+                Ok(_) => return Err("unexpected provider request bytes after body"),
+                Err(error) if proxy_retry(&error) => {}
+                Err(error) if proxy_closed_error(&error) => { output.lock().unwrap().closed = Some(Instant::now()); break; }
+                Err(_) => return Err("progress provider close observation failed"),
+            }
+            if Instant::now() >= next && (kind == ProxyIndependentDeadline::Operation || sequence == 2) {
+                let frame = format!("data: {{\"type\":\"response.output_text.delta\",\"sequence_number\":{sequence},\"item_id\":\"msg_proxy\",\"output_index\":0,\"content_index\":0,\"delta\":\"progress-{sequence}\"}}\n\n");
+                let before = Instant::now();
+                proxy_deadline_chunk(&mut stream, frame.as_bytes(), &stop, deadline)?;
+                output.lock().unwrap().writes.push((before, Instant::now()));
+                sequence += 1;
+                next = Instant::now() + Duration::from_millis(200);
+            }
+            // The operation fixture keeps producing and renewing until actual
+            // engine closure; it does not self-close at the expected cap.
+            thread::sleep(Duration::from_millis(1));
+        }
+        proxy_tcp_idle_after_handler(&provider, &stop, &peer_ended, deadline, &counted)?;
+        output.lock().unwrap().backlog_checked = Some(Instant::now());
+        Ok(())
+    });
+    let handler = Arc::new(Mutex::new(None));
+    let socket = proxy_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let connection = rustls::ClientConnection::new(
+        proxy_client_config(&incoming),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
+    let mut client = StreamOwned::new(connection, socket);
+    let sent = Instant::now();
+    proxy_write_all(
+        &mut client,
+        wire(&body()).as_bytes(),
+        &workers.stop,
+        workers.deadline,
+    )
+    .unwrap();
+    proxy_flush(&mut client, &workers.stop, workers.deadline).unwrap();
+    let mut response = Vec::new();
+    let mut progress_seen = None;
+    let mut last_data_seen = None;
+    let response_ended = loop {
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
+        let mut bytes = [0; 4096];
+        match client.read(&mut bytes) {
+            Ok(0) => break Instant::now(),
+            Ok(n) => {
+                assert!(response.len() + n <= 64 * 1024);
+                response.extend_from_slice(&bytes[..n]);
+                last_data_seen = Some(Instant::now());
+                if progress_seen.is_none()
+                    && response
+                        .windows(b"progress-2".len())
+                        .any(|part| part == b"progress-2")
+                {
+                    progress_seen = Some(Instant::now());
+                }
+            }
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_closed_error(&error) => break Instant::now(),
+            Err(_) => panic!("progress downstream response read failed"),
+        }
+    };
+    while !ended.load(Ordering::Acquire)
+        || peer.lock().unwrap().backlog_checked.is_none()
+        || !authority_witness.idle_after_handler.load(Ordering::Acquire)
+        || !dns_witness.idle_after_handler.load(Ordering::Acquire)
+    {
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let (outcome, finished) = handler.lock().unwrap().take().unwrap();
+    let peer = peer.lock().unwrap();
+    let closed = peer.closed.unwrap();
+    let authority = authority.lock().unwrap();
+    let dns = dns.lock().unwrap();
+    assert!(outcome.is_err(), "stream unexpectedly completed");
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    assert!(response.starts_with(b"HTTP/1.1 200 "));
+    assert!(
+        progress_seen.is_some(),
+        "second validated data phase did not reach client"
+    );
+    let admits: Vec<_> = authority
+        .iter()
+        .filter(|row| row.request["method"] == "admit")
+        .collect();
+    let dispatches: Vec<_> = authority
+        .iter()
+        .filter(|row| row.request["method"] == "dispatch")
+        .collect();
+    let checks: Vec<_> = authority
+        .iter()
+        .filter(|row| row.request["method"] == "check")
+        .collect();
+    let completes: Vec<_> = authority
+        .iter()
+        .filter(|row| row.request["method"] == "complete")
+        .collect();
+    assert_eq!((admits.len(), dispatches.len(), completes.len()), (1, 1, 1));
+    assert!(checks.len() >= 2, "actual lease renewals missing");
+    let admit = admits[0];
+    let original = Binding::parse(&admit.response).unwrap();
+    assert_eq!(completes[0].request["operation_id"], original.operation_id);
+    assert_eq!(
+        completes[0].request["request_sha256"],
+        original.request_sha256
+    );
+    assert_eq!(completes[0].request["outcome"], "unknown");
+    let binds: Vec<_> = dns
+        .iter()
+        .filter(|row| row.request["method"] == "bind")
+        .collect();
+    let releases: Vec<_> = dns
+        .iter()
+        .filter(|row| row.request["method"] == "release")
+        .collect();
+    assert_eq!((binds.len(), releases.len()), (1, 1));
+    let dns_checks: Vec<_> = dns
+        .iter()
+        .filter(|row| row.request["method"] == "check")
+        .collect();
+    assert!(dns_checks.len() >= 2, "actual DNS lease renewals missing");
+    for check in &dns_checks {
+        assert_eq!(
+            check.response["valid_until_ms"].as_u64().unwrap()
+                - check.response["server_time_ms"].as_u64().unwrap(),
+            4000
+        );
+        assert_eq!(check.response["flow_ref"], "f".repeat(64));
+    }
+    let mut expected_release = binds[0].request.clone();
+    expected_release["method"] = json!("release");
+    expected_release["flow_ref"] = json!("f".repeat(64));
+    assert!(
+        releases[0].request == expected_release,
+        "release identity changed"
+    );
+    if kind == ProxyIndependentDeadline::Idle {
+        assert_eq!(peer.writes.len(), 2);
+        let second_write = peer.writes[1].0;
+        let last_received = last_data_seen.unwrap();
+        assert!(last_received - second_write < Duration::from_millis(150));
+        let lower = second_write + Duration::from_millis(975);
+        let upper = last_received + Duration::from_millis(1350);
+        assert!(
+            upper < sent + Duration::from_millis(4000),
+            "lease clocks do not isolate idle"
+        );
+        assert!(
+            original.operation_expires_at_ms - admit.response["server_time_ms"].as_u64().unwrap()
+                == 60_000
+        );
+        for observed in [closed, response_ended, finished] {
+            assert!(
+                observed >= lower && observed <= upper,
+                "idle closure outside activity deadline bracket"
+            );
+        }
+        assert!(
+            closed > peer.writes[0].1 + Duration::from_millis(1100),
+            "second phase did not reset idle deadline"
+        );
+    } else {
+        let latest_cap = admit.received + Duration::from_millis(1500);
+        let earliest_cap = sent + Duration::from_millis(1500);
+        assert!(admit.received - sent < Duration::from_millis(150));
+        assert!(
+            peer.writes.len() >= 5,
+            "sustained valid provider progress missing"
+        );
+        assert!(
+            closed - last_data_seen.unwrap() < Duration::from_millis(400),
+            "stream became idle before operation cap"
+        );
+        let mut extended = false;
+        for check in &checks {
+            let parsed = Binding::parse(&check.response).unwrap();
+            assert!(parsed == original, "renewal binding changed");
+            assert_eq!(
+                check.response["server_time_ms"],
+                admit.response["server_time_ms"]
+            );
+            let ttl = check.response["valid_until_ms"].as_u64().unwrap()
+                - check.response["server_time_ms"].as_u64().unwrap();
+            assert_eq!(ttl, 1500);
+            // The real RPC start precedes request receipt, but follows the
+            // previous wire reply. This is a conservative observed lower bound.
+            let preceding = authority
+                .iter()
+                .filter(|row| row.before_write < check.received)
+                .map(|row| row.before_write)
+                .max()
+                .unwrap();
+            if preceding + Duration::from_millis(ttl) > latest_cap + Duration::from_millis(250) {
+                let effective = rpc::lease(&check.response, preceding).unwrap();
+                assert!(effective.deadline > latest_cap + Duration::from_millis(250));
+                extended = true;
+            }
+        }
+        assert!(
+            extended,
+            "no observed renewal extends beyond the original operation cap"
+        );
+        for observed in [closed, response_ended, finished] {
+            assert!(
+                observed >= earliest_cap - Duration::from_millis(25)
+                    && observed <= latest_cap + Duration::from_millis(350),
+                "immutable operation cap not enforced during renewed progress"
+            );
+        }
+    }
+    proxy_scan_sink(case, "downstream", &response);
+    proxy_scan_sink(
+        case,
+        "handler-display",
+        outcome.unwrap_err().to_string().as_bytes(),
+    );
+    proxy_scan_sink(case, "handler-debug", format!("{outcome:?}").as_bytes());
+    proxy_scan_sink(
+        case,
+        "completion",
+        &serde_json::to_vec(&completes[0].request).unwrap(),
+    );
+    proxy_scan_sink(
+        case,
+        "release",
+        &serde_json::to_vec(&releases[0].request).unwrap(),
+    );
+    let trace: Vec<_> = authority.iter().filter(|row| row.request["method"] != "admit").map(|row| json!({"method":row.request["method"],"receivedNs":row.received.duration_since(sent).as_nanos().to_string(),"replyWriteNs":row.before_write.duration_since(sent).as_nanos().to_string(),"response":row.response})).collect();
+    proxy_scan_sink(
+        case,
+        "authority-renewal-wire",
+        &serde_json::to_vec(&trace).unwrap(),
+    );
+    let timings = json!({"case":case,"clockResolutionNs":proxy_clock_resolution().as_nanos().to_string(),"peerClosedNs":closed.duration_since(sent).as_nanos().to_string(),"handlerReturnedNs":finished.duration_since(sent).as_nanos().to_string(),"responseEndedNs":response_ended.duration_since(sent).as_nanos().to_string(),"writes":peer.writes.iter().map(|(before,after)| json!({"beforeNs":before.duration_since(sent).as_nanos().to_string(),"afterNs":after.duration_since(sent).as_nanos().to_string()})).collect::<Vec<_>>()});
+    proxy_scan_sink(case, "timing", &serde_json::to_vec(&timings).unwrap());
+    eprintln!("proxy_independent_deadline case={case} close_ms={} handler_ms={} provider_phases={} renewals={} attempts=1 outcome=unknown stale_clock_component={} workers_observed_before_cleanup=true", closed.duration_since(sent).as_millis(), finished.duration_since(sent).as_millis(), peer.writes.len(), checks.len(), kind == ProxyIndependentDeadline::Operation);
+    drop(authority);
+    drop(dns);
+    drop(peer);
+    workers.settle().unwrap();
+}
+#[test]
+fn proxy_response_idle_deadline_resets_only_on_validated_progress() {
+    proxy_independent_stream_deadline(ProxyIndependentDeadline::Idle);
+}
+#[test]
+fn proxy_original_operation_cap_survives_renewed_leases_and_progress() {
+    proxy_independent_stream_deadline(ProxyIndependentDeadline::Operation);
+}
+
+// Inspect only connections to this fixture's exclusively owned loopback port.
+// The real adapter connector is unmodified: kernel SYN-SENT is the stage witness.
+fn proxy_pending_loopback_connects(port: u16, filler_port: u16) -> Vec<u16> {
+    let table = fs::read_to_string("/proc/net/tcp")
+        .expect("real TCP-connect fixture requires Linux proc TCP observations");
+    let remote = format!("0100007F:{port:04X}");
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_ascii_whitespace().collect();
+            if fields.len() < 4 || fields[2] != remote || fields[3] != "02" {
+                return None;
+            }
+            let (address, port) = fields[1].split_once(':')?;
+            let port = u16::from_str_radix(port, 16).ok()?;
+            (address == "0100007F" && port != filler_port).then_some(port)
+        })
+        .collect()
+}
+
+#[test]
+fn proxy_pending_tcp_connect_ends_at_selected_deadline() {
+    const DNS_TTL_MS: u64 = 1500;
+    let dir = Dir::new();
+    let mut workers = ProxyDeadlineWorkers::new();
+    let authority = Arc::new(Mutex::new(Vec::new()));
+    let dns = Arc::new(Mutex::new(Vec::new()));
+    proxy_deadline_rpc(
+        &mut workers,
+        dir.0.join("authority"),
+        authority.clone(),
+        |request| {
+            if request["method"] == "complete" {
+                return json!({"version":1,"ok":true});
+            }
+            if request["method"] != "admit" {
+                return json!({"version":1,"ok":false});
+            }
+            let n = now();
+            json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1",
+            "authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,
+            "operation_id":"operation-a","reservation_ref":request["reservation_ref"],
+            "request_sha256":request["request_sha256"],"assignment_id":ASSIGNMENT,
+            "generation":1,"policy_version":1,"provider_binding_ref":"provider-test",
+            "credential_binding":descriptor(),"operation_state":"accepted",
+            "dispatch_before_ms":n+5000,"operation_expires_at_ms":n+60_000,
+            "server_time_ms":n,"valid_until_ms":n+4000})
+        },
+    );
+    proxy_deadline_rpc(&mut workers, dir.0.join("dns"), dns.clone(), |request| {
+        if request["method"] != "resolve" {
+            return json!({"version":1,"ok":false});
+        }
+        let n = now();
+        let mut response = request.clone();
+        response.as_object_mut().unwrap().remove("method");
+        response["ok"] = json!(true);
+        response["server_time_ms"] = json!(n);
+        response["valid_until_ms"] = json!(n + DNS_TTL_MS);
+        response["ip"] = json!("127.0.0.1");
+        response["admission_id"] = json!("d".repeat(64));
+        response
+    });
+    // Linux's zero backlog admits one completed connection. Keep that one
+    // unaccepted and alive, so the next real connect remains in SYN-SENT. No
+    // firewall, external target, namespace mutation or fake connect future.
+    let listener = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .unwrap();
+    listener
+        .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
+        .unwrap();
+    listener.listen(0).unwrap();
+    let listener: TcpListener = listener.into();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let filler = TcpStream::connect_timeout(&address, Duration::from_millis(500))
+        .expect("fixture filler must establish before testing real pending connect");
+    let filler_port = filler.local_addr().unwrap().port();
+    assert!(proxy_pending_loopback_connects(address.port(), filler_port).is_empty());
+    let incoming = certificates("localhost");
+    let service = service_with_ingress(
+        &dir,
+        &certificates(FIXED_HOST),
+        address.port(),
+        Some(&incoming),
+    );
+    let ended = Arc::new(AtomicBool::new(false));
+    let handler = Arc::new(Mutex::new(None));
+    let socket = proxy_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let connection = rustls::ClientConnection::new(
+        proxy_client_config(&incoming),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
+    let mut client = StreamOwned::new(connection, socket);
+    let exact_body = body();
+    let digest = proxy_body_digest(exact_body.as_bytes());
+    let sent_before = Instant::now();
+    proxy_write_all(
+        &mut client,
+        wire(&exact_body).as_bytes(),
+        &workers.stop,
+        workers.deadline,
+    )
+    .unwrap();
+    proxy_flush(&mut client, &workers.stop, workers.deadline).unwrap();
+    let mut syn_seen = None;
+    let mut retired = None;
+    let mut tuple = None;
+    let mut response = Vec::new();
+    let mut response_ended = None;
+    while !ended.load(Ordering::Acquire) || response_ended.is_none() || retired.is_none() {
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
+        let pending = proxy_pending_loopback_connects(address.port(), filler_port);
+        assert!(
+            pending.len() <= 1,
+            "unexpected second pending adapter connection"
+        );
+        if let Some(port) = pending.first() {
+            assert!(
+                retired.is_none(),
+                "adapter reconnected after pending socket retired"
+            );
+            assert!(
+                tuple.is_none_or(|original| original == *port),
+                "adapter changed its original connect tuple"
+            );
+            tuple = Some(*port);
+            syn_seen.get_or_insert_with(Instant::now);
+        } else if syn_seen.is_some() {
+            retired.get_or_insert_with(Instant::now);
+        }
+        if response_ended.is_none() {
+            let mut bytes = [0; 512];
+            match client.read(&mut bytes) {
+                Ok(0) => {
+                    response_ended = Some(Instant::now());
+                }
+                Ok(n) => {
+                    assert!(response.len() + n <= 4096);
+                    response.extend_from_slice(&bytes[..n]);
+                }
+                Err(error) if proxy_retry(&error) => {}
+                Err(error) if proxy_closed_error(&error) => {
+                    response_ended = Some(Instant::now());
+                }
+                Err(_) => panic!("fixture downstream response failed"),
+            }
+        }
+        // Unsupported queue behavior fails explicitly; it never becomes a TLS
+        // stall substitution or an omitted case reported as a pass.
+        assert!(
+            syn_seen.is_some() || sent_before.elapsed() < Duration::from_millis(750),
+            "kernel did not expose the adapter's real pending TCP connect"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    let syn_seen = syn_seen.unwrap();
+    let retired = retired.unwrap();
+    let response_ended = response_ended.unwrap();
+    let (outcome, handler_ended) = handler.lock().unwrap().take().unwrap();
+    // BEFORE settlement, only the unchanged fixture filler may be accepted.
+    // No adapter TCP handshake completed, so no TLS/application byte was sent.
+    let (mut accepted, peer) = listener
+        .accept()
+        .expect("fixture filler vanished before observation");
+    assert_eq!(peer.port(), filler_port);
+    accepted.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(accepted.read(&mut [0; 1]), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
+    );
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock),
+        "unexpected completed adapter connection in fixture backlog"
+    );
+    assert!(proxy_pending_loopback_connects(address.port(), filler_port).is_empty());
+    let observed_before_cleanup = Instant::now();
+    workers.settle().unwrap();
+    let settled = Instant::now();
+    assert!(workers.workers.is_empty());
+    drop((accepted, filler, listener));
+    assert_eq!(outcome, Err(Refusal::Timeout));
+    let authority = authority.lock().unwrap();
+    let dns = dns.lock().unwrap();
+    assert_eq!(authority.len(), 2);
+    assert_eq!(dns.len(), 1);
+    let admit = &authority[0];
+    let complete = &authority[1];
+    let resolve = &dns[0];
+    assert_eq!(admit.request["method"], "admit");
+    assert_eq!(resolve.request["method"], "resolve");
+    assert!(
+        complete.request
+            == json!({"version":1,"method":"complete","operation_id":"operation-a","request_sha256":digest,"outcome":"not_dispatched"})
+    );
+    let binding = Binding::parse(&admit.response).unwrap();
+    assert!(resolve.request == dns_request("resolve", &binding, &digest, None));
+    assert!(resolve.received >= admit.before_write);
+    assert!(resolve.received - admit.before_write < Duration::from_millis(150));
+    assert!(resolve.before_write <= syn_seen);
+    let lower = admit.before_write + Duration::from_millis(DNS_TTL_MS) - Duration::from_millis(25);
+    let upper = resolve.received + Duration::from_millis(DNS_TTL_MS + 500);
+    assert!(syn_seen + Duration::from_millis(750) < lower);
+    // The fixed three-second TCP cap and all other clocks are later than this
+    // complete observation bracket. The selected DNS deadline alone must win.
+    for other in [
+        sent_before + Duration::from_secs(3),
+        sent_before + Duration::from_secs(4),
+        sent_before + Duration::from_secs(5),
+        workers.deadline,
+    ] {
+        assert!(upper < other);
+    }
+    for observed in [retired, response_ended, handler_ended] {
+        assert!(
+            observed >= lower && observed <= upper,
+            "pending TCP retirement outside selected deadline bracket"
+        );
+    }
+    assert!(observed_before_cleanup >= retired && observed_before_cleanup >= handler_ended);
+    let response_text = std::str::from_utf8(&response).unwrap();
+    assert!(response_text.starts_with("HTTP/1.1 403 "));
+    assert!(response_text.ends_with("{\"error\":\"egress_denied\"}\n"));
+    proxy_scan_sink("tcp-connect", "downstream", &response);
+    proxy_scan_sink(
+        "tcp-connect",
+        "handler-display",
+        outcome.unwrap_err().to_string().as_bytes(),
+    );
+    proxy_scan_sink(
+        "tcp-connect",
+        "handler-debug",
+        format!("{outcome:?}").as_bytes(),
+    );
+    proxy_scan_sink(
+        "tcp-connect",
+        "completion",
+        &serde_json::to_vec(&complete.request).unwrap(),
+    );
+    proxy_absent_sink(
+        "tcp-connect",
+        "release",
+        "no bound flow; connect remained pending",
+    );
+    eprintln!("proxy_tcp_deadline dns_ttl_ms={DNS_TTL_MS} syn_sent_ms={} pending_retired_ms={} handler_ms={} settled_ms={} observed_tcp_tuples=1 adapter_tcp_established=0 tls_bytes=0 application_bytes=0 admissions=1 resolves=1 binds=0 dispatches=0 completion_not_dispatched=1 workers_settled=true",
+        syn_seen.duration_since(sent_before).as_millis(), retired.duration_since(sent_before).as_millis(), handler_ended.duration_since(sent_before).as_millis(), settled.duration_since(sent_before).as_millis());
+}
+
+#[test]
+fn proxy_response_idle_closes_sockets_while_dispatch_rpc_is_pending() {
+    let dir = Dir::new();
+    let mut workers = ProxyDeadlineWorkers::new();
+    let ended = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(Mutex::new(Vec::new()));
+    let dns = Arc::new(Mutex::new(Vec::new()));
+    let dispatch_times = Arc::new(Mutex::new(None));
+    let times = dispatch_times.clone();
+    let mut binding_reply = Value::Null;
+    let authority_witness = proxy_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("authority"),
+        authority.clone(),
+        ProxyRpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 8,
+            handler_ended: Some(ended.clone()),
+        },
+        move |request| {
+            let method = request["method"].as_str().unwrap();
+            if method == "complete" {
+                return json!({"version":1,"ok":true});
+            }
+            if method == "admit" {
+                let n = now();
+                binding_reply = json!({"version":1,"ok":true,"authority_profile":"oce-delegated-model-v1",
+                    "authority_instance_ref":INSTANCE,"authority_evidence_ref":EVIDENCE,
+                    "operation_id":"operation-a","reservation_ref":request["reservation_ref"],
+                    "request_sha256":request["request_sha256"],"assignment_id":ASSIGNMENT,
+                    "generation":1,"policy_version":1,"provider_binding_ref":"provider-test",
+                    "credential_binding":descriptor(),"operation_state":"accepted",
+                    "dispatch_before_ms":n+5000,"operation_expires_at_ms":n+60_000,
+                    "server_time_ms":n,"valid_until_ms":n+4000});
+            }
+            if method == "dispatch" {
+                let received = Instant::now();
+                // A real framed RPC holds its reply while the socket watchdog
+                // must fire. No synthetic cancellation or provider response.
+                thread::sleep(Duration::from_millis(400));
+                *times.lock().unwrap() = Some((received, Instant::now()));
+            }
+            let mut reply = binding_reply.clone();
+            reply["operation_state"] = json!(if matches!(method, "dispatch" | "check") {
+                "dispatched"
+            } else {
+                "accepted"
+            });
+            let n = now();
+            reply["server_time_ms"] = json!(n);
+            reply["valid_until_ms"] =
+                json!((n + 4000).min(reply["dispatch_before_ms"].as_u64().unwrap()));
+            reply
+        },
+    );
+    let dns_witness = proxy_deadline_rpc_with_limits(
+        &mut workers,
+        dir.0.join("dns"),
+        dns.clone(),
+        ProxyRpcLimits {
+            request_bytes: 16 * 1024,
+            requests: 8,
+            handler_ended: Some(ended.clone()),
+        },
+        |request| {
+            let mut reply = request.clone();
+            reply.as_object_mut().unwrap().remove("method");
+            let n = now();
+            reply["ok"] = json!(true);
+            reply["server_time_ms"] = json!(n);
+            reply["valid_until_ms"] = json!(n + 4000);
+            reply["ip"] = json!("127.0.0.1");
+            reply["admission_id"] = json!("d".repeat(64));
+            if request.get("connection_ref").is_some() {
+                reply["flow_ref"] = json!("f".repeat(64));
+            }
+            reply
+        },
+    );
+    let provider = TcpListener::bind("127.0.0.1:0").unwrap();
+    provider.set_nonblocking(true).unwrap();
+    let certs = certificates(FIXED_HOST);
+    let incoming = certificates("localhost");
+    let mut service = service_with_ingress(
+        &dir,
+        &certs,
+        provider.local_addr().unwrap().port(),
+        Some(&incoming),
+    );
+    service.config.response_idle_timeout_ms = 100;
+    let peer_closed = Arc::new(Mutex::new(None));
+    let peer_record = peer_closed.clone();
+    let peer_idle = Arc::new(AtomicBool::new(false));
+    let idle_record = peer_idle.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let stop = workers.stop.clone();
+    let deadline = workers.deadline;
+    let handler_done = ended.clone();
+    workers.spawn(move || {
+        let socket = loop {
+            proxy_checkpoint(&stop, deadline)?;
+            match provider.accept() {
+                Ok((socket, _)) => {
+                    counted.fetch_add(1, Ordering::Release);
+                    break socket;
+                }
+                Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
+                Err(_) => return Err("fixture provider accept failed"),
+            }
+        };
+        socket
+            .set_nonblocking(true)
+            .map_err(|_| "fixture provider mode failed")?;
+        let mut tls = StreamOwned::new(
+            ServerConnection::new(certs.server).map_err(|_| "fixture TLS setup failed")?,
+            socket,
+        );
+        loop {
+            proxy_checkpoint(&stop, deadline)?;
+            match tls.read(&mut [0; 1]) {
+                Ok(0) => break,
+                Ok(_) => return Err("provider HTTP bytes arrived before original dispatch reply"),
+                Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
+                Err(error) if proxy_closed_error(&error) => break,
+                Err(_) => return Err("fixture provider read failed"),
+            }
+        }
+        if tls.conn.is_handshaking() {
+            return Err("provider TLS did not establish before dispatch");
+        }
+        *peer_record
+            .lock()
+            .map_err(|_| "fixture peer record poisoned")? = Some(Instant::now());
+        proxy_tcp_idle_after_handler(&provider, &stop, &handler_done, deadline, &counted)?;
+        idle_record.store(true, Ordering::Release);
+        Ok(())
+    });
+    let handler = Arc::new(Mutex::new(None));
+    let socket = proxy_start_handler(&mut workers, service, ended.clone(), handler.clone());
+    let connection = rustls::ClientConnection::new(
+        proxy_client_config(&incoming),
+        "localhost".try_into().unwrap(),
+    )
+    .unwrap();
+    let mut client = StreamOwned::new(connection, socket);
+    let start = Instant::now();
+    proxy_write_all(
+        &mut client,
+        wire(&body()).as_bytes(),
+        &workers.stop,
+        workers.deadline,
+    )
+    .unwrap();
+    proxy_flush(&mut client, &workers.stop, workers.deadline).unwrap();
+    let mut response = Vec::new();
+    let downstream_closed = loop {
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
+        let mut bytes = [0; 512];
+        match client.read(&mut bytes) {
+            Ok(0) => break Instant::now(),
+            Ok(n) => {
+                assert!(response.len() + n <= 4096);
+                response.extend_from_slice(&bytes[..n]);
+            }
+            Err(error) if proxy_retry(&error) => thread::sleep(Duration::from_millis(1)),
+            Err(error) if proxy_closed_error(&error) => break Instant::now(),
+            Err(_) => panic!("fixture downstream read failed"),
+        }
+    };
+    while !peer_idle.load(Ordering::Acquire)
+        || !ended.load(Ordering::Acquire)
+        || peer_closed.lock().unwrap().is_none()
+        || !authority_witness.idle_after_handler.load(Ordering::Acquire)
+        || !dns_witness.idle_after_handler.load(Ordering::Acquire)
+    {
+        proxy_checkpoint(&workers.stop, workers.deadline).unwrap();
+        thread::sleep(Duration::from_millis(1));
+    }
+    let peer_closed = peer_closed.lock().unwrap().unwrap();
+    let (received, reply_ready) = dispatch_times.lock().unwrap().unwrap();
+    let (outcome, handler_returned) = handler.lock().unwrap().take().unwrap();
+    let before_cleanup = Instant::now();
+    workers.settle().unwrap();
+    let settled = Instant::now();
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+    assert!(outcome.is_err());
+    assert!(
+        response.is_empty(),
+        "held dispatch must not release HTTP response bytes"
+    );
+    // These close witnesses precede both the actual held reply and teardown.
+    // Starting a backdated timer only after the RPC returns must fail this case.
+    for closed in [peer_closed, downstream_closed] {
+        assert!(closed >= received + Duration::from_millis(50));
+        assert!(closed <= received + Duration::from_millis(300));
+        assert!(closed < reply_ready && closed < before_cleanup);
+    }
+    assert!(handler_returned >= reply_ready);
+    assert!(settled >= handler_returned && settled.duration_since(start) < Duration::from_secs(2));
+    let authority = authority.lock().unwrap();
+    let dns = dns.lock().unwrap();
+    for method in ["admit", "inspect", "dispatch", "complete"] {
+        assert_eq!(
+            authority
+                .iter()
+                .filter(|record| record.request["method"] == method)
+                .count(),
+            1
+        );
+    }
+    assert!(!authority
+        .iter()
+        .any(|record| record.request["method"] == "check"));
+    let completion = &authority
+        .iter()
+        .find(|record| record.request["method"] == "complete")
+        .unwrap()
+        .request;
+    assert!(
+        completion
+            == &json!({"version":1,"method":"complete","operation_id":"operation-a","request_sha256":proxy_body_digest(body().as_bytes()),"outcome":"unknown"})
+    );
+    for method in ["resolve", "bind", "check", "release"] {
+        assert_eq!(
+            dns.iter()
+                .filter(|record| record.request["method"] == method)
+                .count(),
+            1
+        );
+    }
+    let release = &dns
+        .iter()
+        .find(|record| record.request["method"] == "release")
+        .unwrap()
+        .request;
+    let mut expected_release = dns
+        .iter()
+        .find(|record| record.request["method"] == "bind")
+        .unwrap()
+        .request
+        .clone();
+    expected_release["method"] = json!("release");
+    expected_release["flow_ref"] = json!("f".repeat(64));
+    assert!(
+        release == &expected_release,
+        "held-dispatch release tuple changed"
+    );
+    let timing = json!({"case":"held-dispatch","clock":"monotonic Instant; dispatch receive is origin",
+        "dispatchReceivedNs":"0","replyReadyNs":reply_ready.duration_since(received).as_nanos().to_string(),
+        "peerClosedNs":peer_closed.duration_since(received).as_nanos().to_string(),
+        "downstreamClosedNs":downstream_closed.duration_since(received).as_nanos().to_string(),
+        "handlerReturnedNs":handler_returned.duration_since(received).as_nanos().to_string(),
+        "workersSettledNs":settled.duration_since(received).as_nanos().to_string()});
+    proxy_scan_sink(
+        "held-dispatch",
+        "timing",
+        &serde_json::to_vec(&timing).unwrap(),
+    );
+    proxy_scan_sink("held-dispatch", "downstream", &response);
+    proxy_scan_sink(
+        "held-dispatch",
+        "handler-display",
+        outcome.unwrap_err().to_string().as_bytes(),
+    );
+    proxy_scan_sink(
+        "held-dispatch",
+        "handler-debug",
+        format!("{outcome:?}").as_bytes(),
+    );
+    proxy_scan_sink(
+        "held-dispatch",
+        "completion",
+        &serde_json::to_vec(completion).unwrap(),
+    );
+    proxy_scan_sink(
+        "held-dispatch",
+        "release",
+        &serde_json::to_vec(release).unwrap(),
+    );
+    eprintln!("proxy_held_dispatch idle_ms=100 dispatch_hold_ms={} dispatch_to_peer_us={} dispatch_to_downstream_us={} dispatch_to_handler_us={} dispatch_to_settled_us={} attempts=1 provider_http_bytes=0 completion_unknown=1 workers_settled=true",
+        reply_ready.duration_since(received).as_millis(), peer_closed.duration_since(received).as_micros(), downstream_closed.duration_since(received).as_micros(), handler_returned.duration_since(received).as_micros(), settled.duration_since(received).as_micros());
 }

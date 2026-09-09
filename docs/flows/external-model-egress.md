@@ -93,6 +93,22 @@ connection and response framing. An independent monitor owns shutdown handles fo
 and renews only the same operation and flow. Each renewal remains capped by the
 original monotonic operation deadline.
 
+A separate response-idle watchdog starts from the original dispatch attempt and
+closes both sockets without waiting for a renewal RPC or another body poll. Only
+validated response headers or nonempty, validated data accepted for forwarding
+restart its interval. Empty frames, invalid data, polls and renewals do not;
+downstream backpressure counts as lack of progress. Required administrator
+configuration permits 100–300,000 milliseconds, with the local profile explicitly
+selecting five minutes. None of these progress updates extends the original
+operation ceiling or current authority. The exchange joins both watchdogs and
+its other owned work during cleanup.
+
+Provider HTTP 4xx/5xx responses retain their status but receive a fixed
+credential-free JSON error body and fixed headers. The adapter discards the
+provider's arbitrary error headers and body, preserves redirect refusal, and
+keeps the original dispatched receipt unknown. Successful model output is not
+subject to a general credential-value redactor.
+
 ## Completion and revocation
 
 An HTTP stream ending is insufficient to release uncertain remote work. The
