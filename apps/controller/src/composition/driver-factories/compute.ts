@@ -2,12 +2,14 @@ import type {
   KubernetesRendererSource,
   KubernetesWorkloadProfileCapability,
 } from "../../drivers/compute/kubernetes/workload-profile-capability.ts";
+import type { KubernetesRuntimeObservationAdmission } from "../../drivers/compute/kubernetes/runtime-observations.ts";
 
 import { asRecord } from "@openclaw-enterprise/utils";
 import type {
   ComputeDriver,
   ConfigurationDriver,
   SandboxDriver,
+  RuntimeEffectsV1,
 } from "@openclaw-enterprise/contracts";
 import {
   KubernetesComputeDriver,
@@ -22,9 +24,13 @@ import {
   type SelectedDriverConfiguration,
 } from "../startup-config/schema.ts";
 
-const selectedRendererContributions = new WeakMap<
+const selectedComputeContributions = new WeakMap<
   ComputeDriver,
-  KubernetesWorkloadProfileCapability
+  {
+    readonly renderer: KubernetesWorkloadProfileCapability;
+    readonly observations: Pick<RuntimeEffectsV1, "discover" | "observe">;
+    readonly bindAdmission: (admission: KubernetesRuntimeObservationAdmission) => () => void;
+  }
 >();
 
 /** Exact object association from the original factory. External packages and
@@ -32,7 +38,20 @@ const selectedRendererContributions = new WeakMap<
 export function selectedComputeWorkloadProfileCapability(
   driver: ComputeDriver,
 ): KubernetesWorkloadProfileCapability | undefined {
-  return selectedRendererContributions.get(driver);
+  return selectedComputeContributions.get(driver)?.renderer;
+}
+
+/** Reuses the exact observer created by this factory. A second Driver or an
+ * external package cannot acquire the bundled native observation listener. */
+export function connectSelectedComputeRuntimeObservations(
+  driver: ComputeDriver,
+  admission: KubernetesRuntimeObservationAdmission,
+) {
+  const selected = selectedComputeContributions.get(driver);
+  if (!selected || driver.implementation !== GVISOR_IMPLEMENTATION)
+    throw new Error("The selected Compute has no bundled gVisor runtime observer.");
+  const close = selected.bindAdmission(admission);
+  return Object.freeze({ effects: selected.observations, close });
 }
 
 export function selectComputeDriver(
@@ -93,6 +112,13 @@ export function createComputeDriver(
       ...(workloadProfileRendererSource === undefined ? {} : { workloadProfileRendererSource }),
     },
   );
-  selectedRendererContributions.set(driver, driver.getWorkloadProfileCapability());
+  selectedComputeContributions.set(driver, {
+    renderer: driver.getWorkloadProfileCapability(),
+    observations: Object.freeze({
+      discover: driver.discover.bind(driver),
+      observe: driver.observe.bind(driver),
+    }),
+    bindAdmission: driver.bindRuntimeObservationAdmission.bind(driver),
+  });
   return driver;
 }

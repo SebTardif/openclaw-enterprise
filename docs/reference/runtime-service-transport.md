@@ -5,12 +5,14 @@ TLS listener. An independent service authenticates with its own X.509-SVID. The
 controller reads the current protected service registry and checks its exact
 Agent scope and admitted operation policy. The readback profile permits only
 `readOperation`. A separately admitted initial-bind profile also permits the
-existing `bind` request for an initial dedicated gVisor Harness binding.
+existing `bind` request for an initial dedicated gVisor Harness binding. A third
+profile permits exact `discover` and preallocated-candidate `observe` reads for
+the admitted Agent’s gVisor Harness through the selected Kubernetes Compute.
 
 The bind service currently returns `rejected-before-effect` with
 `lookup-unavailable` when authoritative preparation, approved workload-profile
 and protected Compute inputs are unavailable. Authenticating a bind caller does
-not satisfy these predicates or write a runtime binding. Neither profile permits
+not satisfy these predicates or write a runtime binding. None of these profiles permits
 deploy, evidence submission, retirement, restore, runtime selection or workload
 execution.
 
@@ -21,6 +23,39 @@ child, its original standard-input/output pipes, and its lifetime. The child
 owns the Workload API source, exact mutual TLS connection, original request
 bytes and response stream. Peer diagnostics received from another process or
 through an HTTP header cannot enter this accepting path.
+
+## Observation reads
+
+The observation listener borrows the observer belonging to the actual bundled
+gVisor Compute selected by the installation factory. It cannot attach to an
+external Driver, a separately constructed lookalike, or an observer already owned
+by another listener. Closing the listener aborts its captured admission lifetime
+before releasing the slot; a later listener cannot use an earlier context.
+
+The closed observation envelope contains `schemaVersion: 1`, `method`, `deadline`,
+`requestRef`, and `operation`. `method` is `discover` or `observe`; `operation` is
+the corresponding complete IFC runtime-effects input. The separate `requestRef`
+is a bounded reference, since these input types do not themselves carry one.
+The native bridge retains every original byte and the controller checks the exact
+parsed request, Agent, recipient, deadline and current admitted service around
+fresh challenges of the same TLS connection. The other operation profiles retain
+their existing four-field envelope.
+
+Authenticated reads still require independently protected create correlation,
+execution, profile and retained observation records. Those production producers
+remain uncomposed, so the selected observer returns `incomplete` with
+`authority-unavailable` before Kubernetes access when they are missing. A local
+collector result or a matching manifest cannot supply these records. These reads
+create neither a binding nor target workload identity, serving eligibility or
+physical termination evidence. See [runtime effects](runtime-effects.md).
+
+Run `node --test tests/integration/runtime-authority-authenticated-observation.test.mjs`
+for the generated-SVID, real TLS/stdio accepting-path tests. Setting
+`OCC_RUNTIME_OBSERVATION_DATABASE_URL` to a disposable migrated database with the
+limited application role additionally exercises protected registry admission and
+withdrawal through PostgreSQL. These tests prove transport/registry/consumer
+composition and missing-producer denial; they do not qualify live Kubernetes,
+SPIRE enrollment, runsc execution or positive runtime observations.
 
 ## Admission and startup
 
@@ -34,17 +69,20 @@ Agent target. Admission uses the current selected IAM driver and persists the
 registry change with its audit record. See [runtime authority](runtime-authority.md)
 for the management API and registry lifecycle.
 
-Both profiles use `lifecycle-authority` for one exact Agent. The operation policy
+All three profiles use `lifecycle-authority` for one exact Agent. The operation policy
 constrains this role independently; the role name alone grants no method.
 
-| Operation policy          | Protected source transport profile          | Methods                                                                                                                                                      |
-| ------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `read-operation-only-v1`  | `owned-child-stdio-readback-v1`             | Exact original-service `readOperation`.                                                                                                                      |
-| `initial-harness-bind-v1` | `owned-child-stdio-initial-harness-bind-v1` | Initial Harness `bind` for `occ/kubernetes-gvisor` with `expectedBindingVersion: null`, and independently authorized exact original-service `readOperation`. |
+| Operation policy              | Protected source transport profile          | Methods                                                                                                                                                      |
+| ----------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `read-operation-only-v1`      | `owned-child-stdio-readback-v1`             | Exact original-service `readOperation`.                                                                                                                      |
+| `initial-harness-bind-v1`     | `owned-child-stdio-initial-harness-bind-v1` | Initial Harness `bind` for `occ/kubernetes-gvisor` with `expectedBindingVersion: null`, and independently authorized exact original-service `readOperation`. |
+| `runtime-observation-read-v1` | `owned-child-stdio-runtime-observation-v1`  | Harness `discover` and preallocated-candidate `observe` only. No historical readback or binding.                                                             |
 
 The administrator must explicitly select `operationPolicy: "initial-harness-bind-v1"`
 when admitting a service against the corresponding protected source. Omitting
-the field selects the readback profile and cannot admit an initial-bind source.
+the field selects the readback profile and cannot admit an initial-bind or
+observation source. Observation admission explicitly selects
+`operationPolicy: "runtime-observation-read-v1"` with its corresponding source.
 The native parser rejects mixed policy/transport pairs. Ordinary listener
 configuration cannot upgrade an admitted service's operation privilege.
 

@@ -69,6 +69,16 @@ type Request struct {
 	Operation     json.RawMessage `json:"operation"`
 }
 
+// Observation operands carry no authority request reference. Their separate
+// closed envelope binds it to the original TLS request without widening Request.
+type observationRequest struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	Method        string          `json:"method"`
+	Deadline      string          `json:"deadline"`
+	Operation     json.RawMessage `json:"operation"`
+	RequestRef    string          `json:"requestRef"`
+}
+
 type Inspection struct {
 	Valid                 bool   `json:"valid"`
 	OwnSPIFFEID           string `json:"ownSPIFFEId"`
@@ -360,7 +370,16 @@ func (b *bridge) serve(raw net.Conn) {
 		return
 	}
 	var request Request
-	if decodeStrict(requestRaw, &request) != nil || request.SchemaVersion != 1 || !b.operationAllowed(request) {
+	if b.profile.OperationPolicy == runtimeObservationPolicy {
+		var observation observationRequest
+		if decodeStrict(requestRaw, &observation) != nil || !refPattern.MatchString(observation.RequestRef) {
+			return
+		}
+		request = Request{SchemaVersion: observation.SchemaVersion, Method: observation.Method, Deadline: observation.Deadline, Operation: observation.Operation}
+	} else if decodeStrict(requestRaw, &request) != nil {
+		return
+	}
+	if request.SchemaVersion != 1 || !b.operationAllowed(request) {
 		return
 	}
 	requested, err := parseTime(request.Deadline)
@@ -447,6 +466,27 @@ func (b *bridge) serve(raw net.Conn) {
 // original payload before any context is constructed; these discriminators do
 // not replace that parser or the service's current registry/policy checks.
 func (b *bridge) operationAllowed(request Request) bool {
+	if b.profile.OperationPolicy == runtimeObservationPolicy {
+		if request.Method != "discover" && request.Method != "observe" {
+			return false
+		}
+		var operation, effect, target map[string]json.RawMessage
+		if json.Unmarshal(request.Operation, &operation) != nil || operation == nil {
+			return false
+		}
+		if request.Method == "discover" {
+			if json.Unmarshal(operation["effect"], &effect) != nil || effect == nil {
+				return false
+			}
+		} else {
+			if !bytes.Equal(bytes.TrimSpace(operation["kind"]), []byte(`"preallocated-candidate"`)) {
+				return false
+			}
+			effect = operation
+		}
+		return json.Unmarshal(effect["target"], &target) == nil &&
+			bytes.Equal(bytes.TrimSpace(target["component"]), []byte(`"harness"`))
+	}
 	if request.Method == "readOperation" {
 		return b.profile.OperationPolicy == "read-operation-only-v1" || b.profile.OperationPolicy == "initial-harness-bind-v1"
 	}

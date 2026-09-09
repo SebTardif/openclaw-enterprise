@@ -251,6 +251,7 @@ export async function composePostgresDevelopment(
         ? undefined
         : await startRuntimeAuthorityReadback({
             state,
+            computeDriver,
             installationId,
             trust: runtimeServiceTrust,
             configPath: config.runtimeAuthorityReadbackConfigPath,

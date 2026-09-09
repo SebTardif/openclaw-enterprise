@@ -10575,7 +10575,12 @@
                         "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                         "type": "string"
                       },
-                      "operationPolicy": { "const": "initial-harness-bind-v1", "type": "string" },
+                      "operationPolicy": {
+                        "anyOf": [
+                          { "const": "initial-harness-bind-v1", "type": "string" },
+                          { "const": "runtime-observation-read-v1", "type": "string" }
+                        ]
+                      },
                       "operationRef": {
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                         "type": "string"
@@ -10857,6 +10862,118 @@
                                             },
                                             "transportProfileRef": {
                                               "const": "owned-child-stdio-initial-harness-bind-v1",
+                                              "type": "string"
+                                            },
+                                            "trustBundleSha256": {
+                                              "pattern": "^sha256:[0-9a-f]{64}$",
+                                              "type": "string"
+                                            },
+                                            "trustDomain": {
+                                              "maxLength": 128,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9._-]+$",
+                                              "type": "string"
+                                            },
+                                            "trustRootsRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "verifierProfileRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "workloadApiSocketPath": {
+                                              "maxLength": 103,
+                                              "minLength": 2,
+                                              "pattern": "^/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "schemaVersion",
+                                            "sourceRef",
+                                            "workloadApiSocketPath",
+                                            "ownSPIFFEId",
+                                            "recipientRef",
+                                            "recipientSPIFFEId",
+                                            "trustDomain",
+                                            "trustRootsRef",
+                                            "trustBundleSha256",
+                                            "verifierProfileRef",
+                                            "nativeExecutableSha256",
+                                            "transportProfileRef",
+                                            "limits"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "limits": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "handshakeTimeoutMs": {
+                                                  "const": 3000,
+                                                  "type": "integer"
+                                                },
+                                                "maxConnectionAgeMs": {
+                                                  "const": 30000,
+                                                  "type": "integer"
+                                                },
+                                                "maxConnections": { "const": 1, "type": "integer" },
+                                                "recheckIntervalMs": {
+                                                  "const": 1000,
+                                                  "type": "integer"
+                                                },
+                                                "requestTimeoutMs": {
+                                                  "const": 3000,
+                                                  "type": "integer"
+                                                }
+                                              },
+                                              "required": [
+                                                "handshakeTimeoutMs",
+                                                "recheckIntervalMs",
+                                                "maxConnectionAgeMs",
+                                                "maxConnections",
+                                                "requestTimeoutMs"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "nativeExecutableSha256": {
+                                              "pattern": "^sha256:[0-9a-f]{64}$",
+                                              "type": "string"
+                                            },
+                                            "ownSPIFFEId": {
+                                              "maxLength": 200,
+                                              "minLength": 10,
+                                              "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            },
+                                            "recipientRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "recipientSPIFFEId": {
+                                              "maxLength": 200,
+                                              "minLength": 10,
+                                              "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            },
+                                            "schemaVersion": { "const": 1, "type": "integer" },
+                                            "sourceRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "transportProfileRef": {
+                                              "const": "owned-child-stdio-runtime-observation-v1",
                                               "type": "string"
                                             },
                                             "trustBundleSha256": {
@@ -11364,6 +11481,135 @@
                                             },
                                             "transportProfileRef": {
                                               "const": "owned-child-stdio-initial-harness-bind-v1",
+                                              "type": "string"
+                                            },
+                                            "trustBundleSha256": {
+                                              "pattern": "^sha256:[0-9a-f]{64}$",
+                                              "type": "string"
+                                            },
+                                            "trustDomain": {
+                                              "maxLength": 128,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9._-]+$",
+                                              "type": "string"
+                                            },
+                                            "trustRootsRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "verifierProfileRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "workloadApiSocketPath": {
+                                              "maxLength": 103,
+                                              "minLength": 2,
+                                              "pattern": "^/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "schemaVersion",
+                                            "sourceRef",
+                                            "workloadApiSocketPath",
+                                            "ownSPIFFEId",
+                                            "recipientRef",
+                                            "recipientSPIFFEId",
+                                            "trustDomain",
+                                            "trustRootsRef",
+                                            "trustBundleSha256",
+                                            "verifierProfileRef",
+                                            "nativeExecutableSha256",
+                                            "transportProfileRef",
+                                            "limits",
+                                            "operationPolicy",
+                                            "sourceConfigurationDigest",
+                                            "peerSPIFFEId"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "limits": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "handshakeTimeoutMs": {
+                                                  "const": 3000,
+                                                  "type": "integer"
+                                                },
+                                                "maxConnectionAgeMs": {
+                                                  "const": 30000,
+                                                  "type": "integer"
+                                                },
+                                                "maxConnections": { "const": 1, "type": "integer" },
+                                                "recheckIntervalMs": {
+                                                  "const": 1000,
+                                                  "type": "integer"
+                                                },
+                                                "requestTimeoutMs": {
+                                                  "const": 3000,
+                                                  "type": "integer"
+                                                }
+                                              },
+                                              "required": [
+                                                "handshakeTimeoutMs",
+                                                "recheckIntervalMs",
+                                                "maxConnectionAgeMs",
+                                                "maxConnections",
+                                                "requestTimeoutMs"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "nativeExecutableSha256": {
+                                              "pattern": "^sha256:[0-9a-f]{64}$",
+                                              "type": "string"
+                                            },
+                                            "operationPolicy": {
+                                              "const": "runtime-observation-read-v1",
+                                              "type": "string"
+                                            },
+                                            "ownSPIFFEId": {
+                                              "maxLength": 200,
+                                              "minLength": 10,
+                                              "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            },
+                                            "peerSPIFFEId": {
+                                              "maxLength": 200,
+                                              "minLength": 10,
+                                              "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            },
+                                            "recipientRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "recipientSPIFFEId": {
+                                              "maxLength": 200,
+                                              "minLength": 10,
+                                              "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                              "type": "string"
+                                            },
+                                            "schemaVersion": { "const": 1, "type": "integer" },
+                                            "sourceConfigurationDigest": {
+                                              "pattern": "^sha256:[0-9a-f]{64}$",
+                                              "type": "string"
+                                            },
+                                            "sourceRef": {
+                                              "maxLength": 200,
+                                              "minLength": 1,
+                                              "pattern": "^[A-Za-z0-9._:/-]+$",
+                                              "type": "string"
+                                            },
+                                            "transportProfileRef": {
+                                              "const": "owned-child-stdio-runtime-observation-v1",
                                               "type": "string"
                                             },
                                             "trustBundleSha256": {
@@ -12014,6 +12260,106 @@
                                     "limits"
                                   ],
                                   "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "limits": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "handshakeTimeoutMs": { "const": 3000, "type": "integer" },
+                                        "maxConnectionAgeMs": { "const": 30000, "type": "integer" },
+                                        "maxConnections": { "const": 1, "type": "integer" },
+                                        "recheckIntervalMs": { "const": 1000, "type": "integer" },
+                                        "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                      },
+                                      "required": [
+                                        "handshakeTimeoutMs",
+                                        "recheckIntervalMs",
+                                        "maxConnectionAgeMs",
+                                        "maxConnections",
+                                        "requestTimeoutMs"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "nativeExecutableSha256": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "ownSPIFFEId": {
+                                      "maxLength": 200,
+                                      "minLength": 10,
+                                      "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    },
+                                    "recipientRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "recipientSPIFFEId": {
+                                      "maxLength": 200,
+                                      "minLength": 10,
+                                      "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "sourceRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "transportProfileRef": {
+                                      "const": "owned-child-stdio-runtime-observation-v1",
+                                      "type": "string"
+                                    },
+                                    "trustBundleSha256": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "trustDomain": {
+                                      "maxLength": 128,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9._-]+$",
+                                      "type": "string"
+                                    },
+                                    "trustRootsRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "verifierProfileRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "workloadApiSocketPath": {
+                                      "maxLength": 103,
+                                      "minLength": 2,
+                                      "pattern": "^/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "sourceRef",
+                                    "workloadApiSocketPath",
+                                    "ownSPIFFEId",
+                                    "recipientRef",
+                                    "recipientSPIFFEId",
+                                    "trustDomain",
+                                    "trustRootsRef",
+                                    "trustBundleSha256",
+                                    "verifierProfileRef",
+                                    "nativeExecutableSha256",
+                                    "transportProfileRef",
+                                    "limits"
+                                  ],
+                                  "type": "object"
                                 }
                               ]
                             },
@@ -12447,6 +12793,123 @@
                                     },
                                     "transportProfileRef": {
                                       "const": "owned-child-stdio-initial-harness-bind-v1",
+                                      "type": "string"
+                                    },
+                                    "trustBundleSha256": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "trustDomain": {
+                                      "maxLength": 128,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9._-]+$",
+                                      "type": "string"
+                                    },
+                                    "trustRootsRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "verifierProfileRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "workloadApiSocketPath": {
+                                      "maxLength": 103,
+                                      "minLength": 2,
+                                      "pattern": "^/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "schemaVersion",
+                                    "sourceRef",
+                                    "workloadApiSocketPath",
+                                    "ownSPIFFEId",
+                                    "recipientRef",
+                                    "recipientSPIFFEId",
+                                    "trustDomain",
+                                    "trustRootsRef",
+                                    "trustBundleSha256",
+                                    "verifierProfileRef",
+                                    "nativeExecutableSha256",
+                                    "transportProfileRef",
+                                    "limits",
+                                    "operationPolicy",
+                                    "sourceConfigurationDigest",
+                                    "peerSPIFFEId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "limits": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "handshakeTimeoutMs": { "const": 3000, "type": "integer" },
+                                        "maxConnectionAgeMs": { "const": 30000, "type": "integer" },
+                                        "maxConnections": { "const": 1, "type": "integer" },
+                                        "recheckIntervalMs": { "const": 1000, "type": "integer" },
+                                        "requestTimeoutMs": { "const": 3000, "type": "integer" }
+                                      },
+                                      "required": [
+                                        "handshakeTimeoutMs",
+                                        "recheckIntervalMs",
+                                        "maxConnectionAgeMs",
+                                        "maxConnections",
+                                        "requestTimeoutMs"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "nativeExecutableSha256": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "operationPolicy": {
+                                      "const": "runtime-observation-read-v1",
+                                      "type": "string"
+                                    },
+                                    "ownSPIFFEId": {
+                                      "maxLength": 200,
+                                      "minLength": 10,
+                                      "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    },
+                                    "peerSPIFFEId": {
+                                      "maxLength": 200,
+                                      "minLength": 10,
+                                      "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    },
+                                    "recipientRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "recipientSPIFFEId": {
+                                      "maxLength": 200,
+                                      "minLength": 10,
+                                      "pattern": "^spiffe://[a-z0-9._-]+/[A-Za-z0-9._/-]+$",
+                                      "type": "string"
+                                    },
+                                    "schemaVersion": { "const": 1, "type": "integer" },
+                                    "sourceConfigurationDigest": {
+                                      "pattern": "^sha256:[0-9a-f]{64}$",
+                                      "type": "string"
+                                    },
+                                    "sourceRef": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$",
+                                      "type": "string"
+                                    },
+                                    "transportProfileRef": {
+                                      "const": "owned-child-stdio-runtime-observation-v1",
                                       "type": "string"
                                     },
                                     "trustBundleSha256": {

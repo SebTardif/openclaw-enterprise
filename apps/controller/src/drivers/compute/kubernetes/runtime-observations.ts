@@ -187,6 +187,15 @@ export interface KubernetesRuntimeObservationDependencies {
   >;
 }
 
+/** Borrowed only from the owned native listener. This authorizes the original
+ * caller exchange; the separately authenticated producer records remain required. */
+export interface KubernetesRuntimeObservationAdmission {
+  readonly clock: KubernetesObservationClock;
+  readonly signal: AbortSignal;
+  readonly contextFactory: ContextInspector;
+  readonly readAuthorization: KubernetesRuntimeObservationDependencies["readAuthorization"];
+}
+
 interface ProviderReads {
   clients(): Promise<{
     readonly core: Pick<CoreV1Api, "readNamespace" | "listNamespacedPod">;
@@ -371,6 +380,7 @@ export class KubernetesRuntimeObservations implements Pick<
   private readonly provider: ProviderReads;
   private readonly dependencies: KubernetesRuntimeObservationDependencies | undefined;
   private readonly isolationProfile: "gvisor-systrap" | undefined;
+  private nativeAdmission: KubernetesRuntimeObservationAdmission | undefined;
 
   constructor(
     provider: ProviderReads,
@@ -382,12 +392,30 @@ export class KubernetesRuntimeObservations implements Pick<
     this.isolationProfile = isolationProfile;
   }
 
+  /** One listener owns this slot until disposal. A replacement cannot revive its
+   * earlier exchanges: disposal aborts their captured lifetime before releasing it. */
+  bindNativeAdmission(admission: KubernetesRuntimeObservationAdmission): () => void {
+    if (this.nativeAdmission || admission.signal.aborted)
+      throw new Error("Runtime observation admission is already selected or unavailable.");
+    const lifetime = new AbortController();
+    const selected = Object.freeze({
+      ...admission,
+      signal: AbortSignal.any([admission.signal, lifetime.signal]),
+    });
+    this.nativeAdmission = selected;
+    return () => {
+      lifetime.abort();
+      if (this.nativeAdmission === selected) this.nativeAdmission = undefined;
+    };
+  }
+
   private async bounded<T>(
     call: RuntimeReadCallV1,
     ceiling: number,
     work: (boundedCall: RuntimeReadCallV1) => Promise<T>,
   ): Promise<T> {
-    const clock = this.dependencies?.clock;
+    const admission = this.nativeAdmission;
+    const clock = admission?.clock ?? this.dependencies?.clock;
     requireValue(clock, "authority-unavailable");
     requireValue(
       call &&
@@ -413,7 +441,11 @@ export class KubernetesRuntimeObservations implements Pick<
     const started = clock.monotonicMilliseconds();
     requireValue(Number.isFinite(started), "source-time-invalid");
     const cancellation = new AbortController();
-    const signal = AbortSignal.any([call.signal, cancellation.signal]);
+    const callerSignal = AbortSignal.any([
+      call.signal,
+      ...(admission === undefined ? [] : [admission.signal]),
+    ]);
+    const signal = AbortSignal.any([callerSignal, cancellation.signal]);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let aborted: (() => void) | undefined;
     try {
@@ -427,7 +459,7 @@ export class KubernetesRuntimeObservations implements Pick<
             cancellation.abort();
             reject(new ObservationUnavailable("cancelled", "unknown"));
           };
-          call.signal.addEventListener("abort", aborted, { once: true });
+          callerSignal.addEventListener("abort", aborted, { once: true });
           timer = setTimeout(() => {
             cancellation.abort();
             reject(new ObservationUnavailable("deadline-exceeded", "unknown"));
@@ -440,13 +472,14 @@ export class KubernetesRuntimeObservations implements Pick<
           elapsed >= 0 &&
           elapsed < milliseconds &&
           clock.now().getTime() < deadline &&
-          !signal.aborted,
+          !signal.aborted &&
+          this.nativeAdmission === admission,
         "deadline-exceeded",
       );
       return result;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
-      if (aborted) call.signal.removeEventListener("abort", aborted);
+      if (aborted) callerSignal.removeEventListener("abort", aborted);
       cancellation.abort();
     }
   }
@@ -469,7 +502,7 @@ export class KubernetesRuntimeObservations implements Pick<
         snapshot.peerEvidenceRef.length > 0,
       "authority-unavailable",
     );
-    const now = this.dependencies!.clock.now().getTime();
+    const now = (this.nativeAdmission?.clock ?? this.dependencies!.clock).now().getTime();
     requireValue(
       !call.signal.aborted &&
         now < Date.parse(call.deadline) &&
@@ -487,7 +520,7 @@ export class KubernetesRuntimeObservations implements Pick<
     call: RuntimeReadCallV1,
     original?: KubernetesObservationAuthorization,
   ): Promise<KubernetesObservationAuthorization> {
-    const dependencies = this.dependencies;
+    const dependencies = this.nativeAdmission ?? this.dependencies;
     requireValue(dependencies, "authority-unavailable");
     return this.bounded(call, 3000, async (currentCall) => {
       const service = this.serviceSnapshot(
@@ -779,6 +812,7 @@ export class KubernetesRuntimeObservations implements Pick<
     try {
       return await this.bounded(call, 10_000, async (call) => {
         const authorization = await this.authorize("discover", input, call);
+        requireValue(this.dependencies, "authority-unavailable");
         const correlation = await this.correlation(input, call);
         const before = await this.root(correlation.record, call);
         await correlation.recheck();
@@ -815,6 +849,7 @@ export class KubernetesRuntimeObservations implements Pick<
     try {
       return await this.bounded(call, 10_000, async (call) => {
         const authorization = await this.authorize("observe", input, call);
+        requireValue(this.dependencies, "authority-unavailable");
         requireValue(input.kind === "preallocated-candidate", "capability-unsupported");
         requireValue(
           input.target.component !== "harness" || this.isolationProfile === "gvisor-systrap",
