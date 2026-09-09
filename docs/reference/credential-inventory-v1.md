@@ -7,12 +7,14 @@ exact original operations, persists affected snapshots, and claims and records
 revocation outcomes. It creates no issuer or alternative turn authority.
 
 **Production backend composition is unprovided.** This slice supplies a
-query-only PostgreSQL repository and a five-table schema factory. It still needs
-the existing transaction owner, actual accepting-authority owner, immutable
-protected token/revocation custody, and mandatory audit writer. Installing the
-schema and qualifying the protected backend remain separate owner work. The
-selected metadata-only Secret driver does not supply these capabilities.
-Credential delivery is disabled and no provider callback is implemented.
+query-only PostgreSQL repository, its five-table schema and database migration.
+Production use still needs participant composition with the existing transaction
+owner, actual accepting-authority owner, immutable protected token/revocation
+custody, and mandatory audit writer. The selected metadata-only Secret driver
+does not supply these capabilities. Credential delivery remains disabled.
+The separate [GitHub App provider component](github-app-provider.md) implements
+bounded provider protocol handling; it is not connected to this inventory's
+production authority or custody owners and does not enable native delivery.
 
 ## Public composition
 
@@ -64,9 +66,15 @@ existing OCC schema and Installation/Agent table columns, and returns
 `credentialInventoryRecords`, `credentialInventoryOperations`,
 `credentialInventoryMintClaims`, `credentialInventoryRevocationClaims` and
 `credentialInventorySnapshots`. The declarations define scoped keys, immutable
-claim uniqueness, record references, version bounds and document checks. They do
-not install a migration, database role, access policy or encrypted material store.
-These internal leaves are not additional OCC package subpath exports.
+claim uniqueness, record references, version bounds and document checks. The
+database migration installs these same five tables. It preserves immutable
+issuance identity and one-step record version updates, rejects history mutation,
+and gives the existing application role only the column updates needed for
+record CAS and ordered row locks. Lock privileges on immutable tables do not
+permit rewriting them. No deletion or truncation privilege is granted.
+The migration creates no credential issuer, database role, authority access
+policy or encrypted material store. These internal leaves are not additional
+OCC package subpath exports.
 
 ## Transaction and operation identity
 
@@ -179,6 +187,7 @@ With compatible workspace dependencies already available:
 ```sh
 node --test tests/conformance/credential-inventory-v1.test.mjs
 node --test tests/conformance/credential-inventory-postgres.test.mjs
+node --test tests/integration/postgres-credential-inventory.test.mjs
 node node_modules/typescript/bin/tsc -p tests/fixtures/credential-inventory-v1/tsconfig.json
 ```
 
@@ -198,10 +207,32 @@ actual installed SDK and Drizzle declarations with strict checking and
 `skipLibCheck: true`; they do not validate every dependency declaration or prove
 that a database accepts the schema.
 
+The PostgreSQL integration suite requires
+`OCC_CREDENTIAL_INVENTORY_TEST_DATABASE_URL` to select an empty, migrated,
+disposable loopback database named `openclaw_inventory_*`, using the limited
+`occ_app` role. It has no general database fallback and never resets existing
+state. It executes the actual inventory repository through the existing
+`PostgresPlatformState` transaction and borrowed query method, with the real
+inventory execution phase. The phase's test scheduling inputs confer no
+credential authority, and the suite supplies no accepting-owner, audit or
+custody producer callbacks.
+
+Storage cases cover fresh-pool recovery of exact original records and operations,
+one durable mint claim under competing transactions, CAS and scope rejection,
+rollback after a caught post-write decoding error, retained snapshots and
+revocation-claim metadata, database uniqueness and foreign keys, document
+bounds, and immutable-table privileges. The transport fault proxy consumes an
+actual PostgreSQL COMMIT acknowledgment before closing the connection. The
+original transaction owner reports unknown commit; an independent connection
+reads the unchanged original operation, claim and inventory version. Readback
+creates no original receipt, new provider attempt or permission to replay.
+
 Memory serialization and JSON reconstruction are algorithm tests. They do not
 prove PostgreSQL transactions, process restart, multi-process exclusion, access
 control, encryption, external custody, mandatory audit persistence, runtime
 isolation, provider behavior, delivery or production resource bounds. Those
 qualifications require actual selected owners and separately authorized backend
 tests. A passing synthetic case manufactures no current authority or production
-capability.
+capability. The real PostgreSQL cases establish metadata persistence and the
+observed transaction behavior only; they do not establish authentic authority,
+audit acceptance, protected token custody, provider effects or native delivery.
