@@ -9,6 +9,7 @@ import type {
 import type { WorkloadProfileMutationAccountParticipantV2 } from "../workload-profiles/admitted-use.ts";
 import type { DeployAgentCommandInput } from "../services/deployment/port.ts";
 import type { UpdateAgentInput } from "../services/agent/port.ts";
+import { parseRuntimePreparationSessionOriginV1 } from "../runtime-preparation/origin.ts";
 
 export type DeploymentBinding = readonly [principalId: string, DeployAgentCommandInput];
 export type DraftBinding = readonly [principalId: string, UpdateAgentInput];
@@ -94,6 +95,7 @@ export interface WorkloadProfileSessionSecurityLeaseV1 {
   readonly accountRef: string;
   readonly sessionRef: string;
   readonly expiresAt: string;
+  readonly preparationSessionOrigin?: import("../runtime-preparation/origin.ts").RuntimePreparationSessionOriginV1;
   assertCurrent(): void;
 }
 
@@ -320,12 +322,27 @@ export function createWorkloadProfilePurposeAccountParticipantV1(
           subject: identity.subject,
         });
         expires = Math.min(expires, timestamp(locked.expiresAt));
+        const originInput = locked.preparationSessionOrigin;
+        const preparationSessionOrigin =
+          originInput === undefined
+            ? undefined
+            : parseRuntimePreparationSessionOriginV1(originInput);
+        if (
+          preparationSessionOrigin !== undefined &&
+          (preparationSessionOrigin.installationId !== installationId ||
+            preparationSessionOrigin.accountId !== facts.accountRef ||
+            preparationSessionOrigin.sessionId !== facts.sessionRef ||
+            preparationSessionOrigin.issuer !== principal.issuer ||
+            preparationSessionOrigin.subject !== principal.subject)
+        )
+          throw unavailable();
         acquiring();
         return Object.freeze({
           principal,
           accountRef: facts.accountRef,
           requestId: facts.requestId,
           admissionDecisionId: facts.admissionDecisionId,
+          ...(preparationSessionOrigin === undefined ? {} : { preparationSessionOrigin }),
           assertCurrent() {
             try {
               current();

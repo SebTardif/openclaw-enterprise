@@ -73,6 +73,74 @@ a fence-completion receipt or an instruction to retry an effect.
 
 ## Transactions and verification
 
+### Asynchronous admission origin and current worker use
+
+The original guarded deployment transaction can retain the authenticated
+account/session association alongside its newly inserted revision, intent,
+audit and work. The record contains a session identifier and credential digest,
+not a bearer credential. This internal historical correlation keeps the BetterAuth account/session subject separate from the original NativeIAM
+principal ID. Migration 0046 checks their actual IAM association and corrects
+the workload-profile JSON validation expression. It does not replace the
+original session or backfill older admissions. Exact replay preserves its
+original association. PostgreSQL also requires the admission and origin to be inserted in the same transaction.
+
+`withRuntimePreparationWorkerCurrentUseV1` resolves that original association
+from the actual claimed work and reacquires the current account/session and
+selected NativeIAM policy on a fresh transaction. It checks the original
+revision's Configuration and ServiceAccount permissions, active profile and
+retained Use, exact preparation version/guard/child bytes, current running
+intent and unexpired work claim. Closing the original HTTP request does not
+require the worker to impersonate a new request. Session revocation, account
+incarnation/version change, policy denial, supersession and missing origins
+remain refusals. The returned observation expires with its transaction.
+
+This reader supplies necessary preparation data. Its exact submission readback
+returns retained API identity or uncertainty without SDK work. Migration 0043
+retains immutable submission responsibility and response identity; these rows
+do not grant permission to send an effect. A response retains its finite reported
+observation time without comparing clocks between the SDK host and database; that
+time does not establish causal ordering or timed-effect authority. Current canonical gate admission,
+fault/withdrawal fencing and an original worker invocation that survives SQL
+terminals remain required. The selected Compute has no prepared submission
+accepting method until that owner exists. Neither a queue token nor a persisted
+session locator is execution authority.
+
+Origin INSERT remains owner-only after migration. Operators must bind that
+permission to the same explicitly selected controller role already authorized
+to execute `occ.read_locked_workload_profile_session_v1`, and preserve the
+original account/session-before-IAM lock order. Do not grant origin INSERT to
+`occ_app`. Existing rows remain readable for scoped recovery; no historical
+origin backfill is supported.
+
+### Conditional Deployment wire boundary
+
+The Kubernetes prepared Deployment codec supports an inert `POST` with replicas
+zero and a materialization JSON Patch that tests UID, resourceVersion and all
+three protected annotations before replacing the spec:
+
+- `openclaw.dev/runtime-assignment-ref`
+- `openclaw.dev/runtime-create-effect-ref`
+- `openclaw.dev/runtime-fence-epoch`
+
+The codec verifies the separately retained wire digest/length and requires its
+bytes to match the actual selected SDK serializer. Materialization cannot edit
+ownership annotations, omit tests or rebase a predicate. Its result uses the
+API-returned namespace, name, UID and resourceVersion. Ordinary server-side apply
+remains a separate operation and does not become conditional effect admission.
+
+`tests/conformance/kubernetes-prepared-deployment.test.mjs` exercises the actual
+SDK against a controlled loopback HTTP server, including exact wire bytes and
+response mismatch/refusal. It does not establish Kubernetes enforcement,
+authenticated producer evidence or live runtime readiness.
+
+The full-spec comparator uses the selected fixed Harness constructor, also used
+by ordinary reconciliation. Its launcher operands must be the actual completed
+return retained by the original lifecycle dispatcher. Copies, aborted launches,
+replacement and cleanup cannot provide that custody. Comparison includes every
+Pod field, including executable helpers, readiness, mounts and resource limits.
+The installed renderer source must independently qualify its complete runtime
+and actual image projection; absent inputs remain unavailable.
+
 The memory adapter uses the existing working snapshot and transaction lifetime.
 The PostgreSQL adapter borrows the owner's transaction and uses immutable rows,
 exact allocation ownership, unique operation/child/proposal identities, local
@@ -89,6 +157,15 @@ path. It checks actual transactions, limited-role constraints, independent-clien
 races, cancellation and protocol-level lost COMMIT acknowledgment. Its separate
 fresh-process mode verifies the retained receipt after an actual database restart.
 See the [testing guide](../testing.md) for environment custody and supported tools.
+
+The separate `tests/integration/runtime-preparation-invocations-postgres.test.mjs`
+suite exercises the original worker current-use owner after real HTTP sign-in has
+closed. It requires the selected controller role and isolated migrator/application
+URLs. Its fixture grants and restores the narrow session-reader and origin-insert
+permissions. It checks current NativeIAM policy, the genuine queue claim, terminal
+lease refusal, revocation and exact readback without Compute. Its controlled
+profile and stored provider responses establish storage correspondence, not
+installed capabilities or provider execution.
 
 The binding-candidate round trip consumes the actual original helper, stores its
 canonical proposal and locator, and reads those same bytes after restart.

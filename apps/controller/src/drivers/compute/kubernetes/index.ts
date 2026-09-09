@@ -1,3 +1,7 @@
+import type { RuntimePreparationCurrentUseLeaseV1 } from "@openclaw-enterprise/occ/runtime-preparation/current-use";
+import type { WorkloadProfileOwnedOperationV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
+import { deriveWorkloadProfileManifestV2 } from "@openclaw-enterprise/occ/workload-profiles/projections";
+import { comparePreparedHarnessDeployment } from "./prepared-deployment-comparison.ts";
 import {
   KubernetesWorkloadProfileCapability,
   type KubernetesRendererSource,
@@ -34,6 +38,7 @@ import {
   type FixedWorkloadInput,
 } from "./resources/fixed-workload-renderer.ts";
 import {
+  normalizeKubernetesResourcePlan,
   assertKubernetesResourcePolicyAvailable,
   projectKubernetesResourceDiagnostics,
   type KubernetesResourcePolicy,
@@ -719,6 +724,72 @@ export class KubernetesComputeDriver implements ComputeDriver {
     );
   }
 
+  /** Partial current renderer proof. SDK accepting authority must separately
+   * retain the original worker/fault/withdrawal lifetime. */
+  async verifyPreparedDeployment(
+    input: RuntimePreparationCurrentUseLeaseV1,
+    io: WorkloadProfileOwnedOperationV2,
+  ) {
+    input.assertCurrent();
+    const revision = input.revision;
+    const request = input.child.request;
+    if (
+      request.kind !== "create" ||
+      revision.compute.id !== this.id ||
+      revision.compute.implementation !== this.implementation ||
+      revision.harness.mode !== "dedicated" ||
+      revision.sandboxDriverId !== undefined ||
+      this.options.isolationProfile !== "gvisor-systrap"
+    )
+      throw new ConfigurationFailure("The prepared Harness renderer is unavailable.");
+    const derived = deriveWorkloadProfileManifestV2(
+      new TextEncoder().encode(input.profile.canonicalManifest),
+    );
+    const admitted = request.admittedRuntime;
+    if (
+      admitted.provider !== derived.content.target.provider ||
+      admitted.runtimeProfileRef !== input.profile.use.profileRefs.runtime.ref ||
+      admitted.configurationDigest !== input.profile.use.admittedConfigurationDigest ||
+      admitted.runtimeProfileDigest !== derived.digests.runtimeProfileDigest ||
+      admitted.containmentProfileDigest !== derived.digests.containmentDigest ||
+      admitted.mountPolicyDigest !== derived.digests.mountPolicyDigest ||
+      admitted.resourceEnvelopeDigest !== derived.digests.resourceEnvelopeDigest
+    )
+      throw new ConfigurationFailure("The prepared Harness profile correspondence differs.");
+    const { name: namespace } = await this.resolveNamespace(revision.namespaceId);
+    input.assertCurrent();
+    return this.workloadProfileCapability.verifyPreparedHarnessLocked(
+      [input.request.selection, derived.content, input.profile.use, input.unit, io],
+      (source) => {
+        const operands = source.harnessOperands;
+        if (!operands || operands.imageSetDigest !== admitted.imageSetDigest)
+          throw new ConfigurationFailure(
+            "The actual Harness launch/image operands are unavailable.",
+          );
+        const launch = this.lifecycle.acquireLaunchOperands(revision, operands.launch);
+        input.retain(launch);
+        const plan = normalizeKubernetesResourcePlan(
+          derived.content.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting.envelope,
+          source.accounting,
+        );
+        const actual = this.workloadRenderer.harnessRevision(
+          revision,
+          namespace,
+          launch.environment,
+          this.gatewayConfiguration(revision).loggingLevel,
+          plan.harness,
+        );
+        if (
+          actual.spec?.template.spec?.runtimeClassName !==
+          derived.content.launchConfiguration.harness.runtimeClass
+        )
+          throw new ConfigurationFailure("The actual Harness RuntimeClass differs.");
+        comparePreparedHarnessDeployment(actual, input.child, input.providerWireUtf8);
+        input.assertCurrent();
+      },
+    );
+  }
+
   async preflight(): Promise<void> {
     await this.verifyIsolationProfile();
     const clients = await this.clients();
@@ -1256,19 +1327,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       const launch = await this.lifecycle.beforeWorkloadStart(revision);
       launchPrepared = true;
-      const agentDeployment = this.deployment(
-        revisionName,
-        revisionOwnership,
+      const agentDeployment = this.workloadRenderer.harnessRevision(
+        revision,
         namespace,
-        this.options.images.agent,
-        agentName,
-        "agent",
         launch.environment,
         configuration.loggingLevel,
-        undefined,
-        false,
-        undefined,
-        revision.serviceAccount,
       );
       if (sandboxDriver?.provisionHarness !== undefined) {
         const requirements = this.harnessRequirementsFromDeployment(agentDeployment);

@@ -158,6 +158,11 @@ export function createControllerWorkloadProfileSessionSecurityV1(
         principal: source.principal,
         accountRef: source.accountId,
         sessionRef: source.sessionId,
+        preparationSessionOrigin: Object.freeze({
+          ...lookup,
+          accountIncarnation: captured.incarnation,
+          accountVersion: captured.accountVersion,
+        }),
         expiresAt: new Date(expires).toISOString(),
         assertCurrent: current,
       });
