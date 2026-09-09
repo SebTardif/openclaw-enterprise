@@ -42,7 +42,7 @@ provenance nor authority, and invalid or backward readings within a transaction
 fail closed. The unchanged Store still owns its separate initiation clock.
 
 The memory journal owns fresh opaque state inside the platform snapshot. It
-implements all eleven read and twelve mutation methods, including rejected and
+implements the original eleven read and twelve mutation methods, including rejected and
 non-turn owner carriers. Composite indexes retain the complete scoped tuples,
 original event and logical ownership, and incoming conflict links. One Agent
 reservation covers its conversations; there is no executable queue. Existing
@@ -306,3 +306,69 @@ do not certify PostgreSQL concurrency or restart behavior, application roles,
 provider authentication, gateway SQLite durability, native quiet restoration,
 workspace persistence, multi-replica exclusion or the full absence of mutators.
 Those remain integration requirements for the corresponding actual owners.
+
+## Selected native execution retention
+
+The PostgreSQL journal retains `execution-intent`, `execution-start` and
+`execution-interruption` in the original `turn_journal_operations` table. These
+records extend the existing full dispatch and consumption; they do not change the
+common admission record or create another journal. Each original attempt has at
+most one of each selected record. The installation-wide execution lookup and the
+native incarnation/execution association are unique.
+
+The actual consumption evidence owner may supply a closed execution intent. It
+binds the full original attempt, dispatch operation and consumption claimant to
+an independently allocated execution reference, exact native recipient and
+immutable limit selection. The intent is inserted while that original attempt
+is still unconsumed; a deferred database guard requires the exact consumption in
+the same outer commit. Rollback removes both. A historical consumed attempt cannot
+acquire an intent later. Only the original transaction's newly committed, single-use
+claim carries this intent to `JournalInitiationGuardV1.executionIntent`. Readback,
+a duplicate consumption and an uncertain consumption commit cannot initiate.
+
+A native start records the entire immutable intent, actual native incarnation,
+execution/reservation/session/turn association, ready-commit evidence, protected
+clock source/epoch and start/deadline. The original dispatch clock and its ceiling
+remain in the intent. The selected maximum is 900,000 milliseconds; the effective
+native deadline is the earlier of the authenticated original dispatch ceiling
+mapped into the native epoch and the native ready time plus the selected duration.
+The codec rejects invalid arithmetic, overflow and renewal in the same epoch.
+Cross-clock correspondence is an evidence locator whose actual owner must be
+verified; JSON alone proves no clock mapping or currentness. Missing or uncertain
+clock/incarnation correspondence keeps the native execution gated or unknown.
+
+`retainExecutionStart` requires the selected native evidence inspector before and
+after accepting locks and again before insertion. Missing inspection refuses the
+write. One immutable exact start is retained; a changed native identity, original
+intent or deadline conflicts. A selected running outcome must match that retained
+native session and turn. `findExecution` returns intent-only or the exact retained
+start, with no permission to create another native execution. Lost retention
+acknowledgment therefore preserves the original reference, ready time and deadline.
+
+`SelectedExecutionController` connects the original store callback to a mandatory
+native owner. That owner must retain the authenticated connection, complete ready
+Session/task/drain, genuine protected clock and a separate ongoing control owner
+before returning. Effects remain gated until definite retention of the exact start.
+The controller keeps its original local owner on uncertain acknowledgments and
+serializes control operations. Exact readback can resolve only that retained owner;
+a copied record or a restarted controller cannot create it. An uncertain native
+gate or interrupt submission is not automatically submitted again. The selected
+capacity bounds retained local owners; uncertain owners are never evicted to admit
+more work.
+
+An interruption retains its full original start and immutable stop-responsibility
+reference/version before native submission. Its current stop authority is checked
+separately from continuing execution, so deadline expiry or revoked execution
+authority cannot by itself prevent an independently authorized stop. Interruption,
+cancellation, native acknowledgment and `TurnAborted` are distinct from proof that
+all possible mutators have stopped. The existing no-mutator verification and exact
+reservation release remain required. Unknown outcomes continue holding ownership.
+
+The process-local memory journal explicitly refuses selected execution operations
+and selected consumption. Existing unselected behavior remains available. Actual
+PostgreSQL storage tests exercise original claim transfer, rollback/orphan refusal,
+immutable start and clock bounds, revocation across a real Agent lock, lost COMMIT
+acknowledgments and interruption without reservation release. Controlled external
+evidence in those tests does not establish a production human grant, native
+connection, protected clock, model request or shell execution. Those producers
+must be installed by the actual authenticated transport composition.

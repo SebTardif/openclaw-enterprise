@@ -944,6 +944,18 @@ export function createMemoryTurnJournal(
     );
   };
   const repository: TurnJournalUnitOfWorkV1 = {
+    async findExecution() {
+      return unavailable;
+    },
+    async findExecutionInterruption() {
+      return unavailable;
+    },
+    async retainExecutionStart() {
+      return unavailable;
+    },
+    async retainExecutionInterruption() {
+      return unavailable;
+    },
     async findAdmission(input, call) {
       const key = parseTurnJournalV1("lookup", input);
       return read("findAdmission", key, call, async () => {
@@ -1728,6 +1740,7 @@ export function createMemoryTurnJournal(
           let observed = await owned(ports.evidence.inspectConsumption(input, checkedCall(call)));
           active(call);
           if (failure(observed)) return observed;
+          if (observed.executionIntent !== undefined) return unavailable;
           const operation = parseTurnJournalV1("consumption", observed.operation);
           if (
             operation.attempt.installationRef !== auth.installation.id ||
@@ -1744,6 +1757,7 @@ export function createMemoryTurnJournal(
           observed = await owned(ports.evidence.inspectConsumption(input, checkedCall(call)));
           active(call);
           if (failure(observed)) return observed;
+          if (observed.executionIntent !== undefined) return unavailable;
           if (
             !sameJournalValue(observed.operation, operation) ||
             !sameJournalValue(observed.binding, record.binding)

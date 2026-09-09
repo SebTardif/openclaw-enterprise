@@ -882,3 +882,9 @@ export class OpenClawController {
     return now.toISOString();
   }
 }
+
+export {
+  SelectedExecutionController,
+  type NativeSelectedExecutionOwner,
+  type NativeReadyExecution,
+} from "./turn-journal/selected-execution.ts";
