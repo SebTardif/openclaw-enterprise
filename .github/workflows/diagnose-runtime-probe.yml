@@ -7,7 +7,11 @@ permissions:
   contents: read
 jobs:
   diagnose:
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [blacksmith-8vcpu-ubuntu-2404, clawsweeper-heavy]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -27,6 +31,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: runtime-probe-evidence
+          name: runtime-probe-evidence-${{ matrix.runner }}
           path: ${{ runner.temp }}/probe-evidence
           retention-days: 3

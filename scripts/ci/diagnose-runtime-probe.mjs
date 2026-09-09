@@ -126,10 +126,12 @@ try {
   ).stdout.trim();
   const archive = join(directory, "runtime.tar");
   await command("docker", ["image", "save", "--platform", platform, "--output", archive, tag]);
-  await command("k3d", ["image", "import", archive, "-c", name]);
+  const imported = await command("k3d", ["image", "import", archive, "-c", name]);
+  await writeFile(join(evidence, "import.txt"), imported.stdout + imported.stderr);
   await rm(archive);
   const listing = (await command("docker", ["exec", node, "ctr", "-n", "k8s.io", "images", "list"]))
     .stdout;
+  await writeFile(join(evidence, "images-before-alias.txt"), listing);
   const digest = listing
     .split("\n")
     .find((line) => line.split(/\s+/)[0] === tag)
