@@ -18,6 +18,12 @@ import type {
   GatewayStartupServiceSourceV1,
 } from "./startup-service-source.ts";
 
+import type { GatewayMaterialDeliveryRequestV2 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v2";
+import type {
+  GatewayStartupServiceHandleV2,
+  GatewayStartupServiceSourceV2,
+} from "./startup-agent-service-source.ts";
+
 type Cleanup = GatewayStartupCloseV1["cleanup"];
 type Use = GatewayMaterialDeliveryRequestV1["use"];
 export const gatewayMaterialOperationProfile = "installation-channel-material-v1";
@@ -40,10 +46,10 @@ export interface GatewayMaterialRuntimeParentV1 {
  * original trusted native producer may install this implementation. This port
  * does not spawn a child, authenticate a peer, or qualify a production adapter.
  */
-export interface GatewayMaterialNativeClientConnectionV1 {
+export interface GatewayMaterialNativeClientConnection<Request> {
   readonly profile: typeof gatewayMaterialOperationProfile;
   readonly transport: typeof gatewayMaterialTransportProfile;
-  readonly request: GatewayMaterialDeliveryRequestV1;
+  readonly request: Request;
   readonly signal: AbortSignal;
   assertCurrent(): undefined;
   remainingMs(): number;
@@ -59,19 +65,48 @@ export interface GatewayMaterialNativeClientConnectionV1 {
   /** Initiate cancellation and join the exact owned child/connection and borrowed frame. */
   close(): Promise<Cleanup>;
 }
-export interface GatewayMaterialNativeClientProducerV1 {
+export interface GatewayMaterialNativeClientProducer<Handle, Request> {
   /** Verify original private child/connection and parent membership on every check. */
-  assertOriginal(connection: GatewayMaterialNativeClientConnectionV1): undefined;
+  assertOriginal(connection: GatewayMaterialNativeClientConnection<Request>): undefined;
   /**
    * Fixed installation/process/recipient and profile, subordinate to the SAME
    * original startup parent. The supplied request is nonsecret metadata only.
    * The real producer independently verifies that original parent and current use.
    */
   open(
-    parent: GatewayStartupServiceHandleV1,
-    request: GatewayMaterialDeliveryRequestV1,
+    parent: Handle,
+    request: Request,
     bounds: GatewayStartupCommandBoundsV1,
-  ): Promise<GatewayMaterialNativeClientConnectionV1>;
+  ): Promise<GatewayMaterialNativeClientConnection<Request>>;
+}
+
+export type GatewayMaterialNativeClientConnectionV1 =
+  GatewayMaterialNativeClientConnection<GatewayMaterialDeliveryRequestV1>;
+export type GatewayMaterialNativeClientConnectionV2 =
+  GatewayMaterialNativeClientConnection<GatewayMaterialDeliveryRequestV2>;
+export type GatewayMaterialNativeClientProducerV1 = GatewayMaterialNativeClientProducer<
+  GatewayStartupServiceHandleV1,
+  GatewayMaterialDeliveryRequestV1
+>;
+export type GatewayMaterialNativeClientProducerV2 = GatewayMaterialNativeClientProducer<
+  GatewayStartupServiceHandleV2,
+  GatewayMaterialDeliveryRequestV2
+>;
+
+/** Internal transport operand, never an enrollment or registration producer. */
+export interface GatewayMaterialStartupSource<Handle, Request> {
+  signal(handle: Handle): AbortSignal;
+  assertCurrent(handle: Handle): undefined;
+  recheckCurrent(handle: Handle): Promise<void>;
+  readClaim(handle: Handle): Promise<"current" | "denied" | "unavailable" | "unknown">;
+  remainingSourceMs(handle: Handle): number;
+  materialRequest(handle: Handle, use: Use): Request;
+  withMaterialCall<T>(
+    handle: Handle,
+    use: Use,
+    work: (request: Request, signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
+  close(): Promise<Cleanup>;
 }
 
 const unavailable = () => new Error("Gateway material source unavailable");
@@ -89,11 +124,14 @@ function merge(a: Cleanup, b: Cleanup): Cleanup {
  * startup command. The actual native/Runtime/current registration producers are
  * required; no credential, identity or replay authority is constructed here.
  */
-export function createGatewayStartupMaterialServiceSourceV1(
-  source: GatewayStartupServiceSourceV1,
-  parent: GatewayStartupServiceHandleV1,
+function createMaterialServiceSource<
+  Handle,
+  Request extends GatewayMaterialDeliveryRequestV1 | GatewayMaterialDeliveryRequestV2,
+>(
+  source: GatewayMaterialStartupSource<Handle, Request>,
+  parent: Handle,
   runtime: GatewayMaterialRuntimeParentV1 | undefined,
-  native: GatewayMaterialNativeClientProducerV1 | undefined,
+  native: GatewayMaterialNativeClientProducer<Handle, Request> | undefined,
 ) {
   const sourceSignal = source.signal.bind(source);
   const assertSource = source.assertCurrent.bind(source);
@@ -189,7 +227,7 @@ export function createGatewayStartupMaterialServiceSourceV1(
     let knownRefusal: GatewayMaterialDeliveryOutcomeV1 | undefined;
     try {
       task = reserve(parent, use, async (request, signal) => {
-        let connection: GatewayMaterialNativeClientConnectionV1 | undefined;
+        let connection: GatewayMaterialNativeClientConnection<Request> | undefined;
         let acquisitionReturned = false;
         let closeConnection: (() => Promise<Cleanup>) | undefined;
         let released: Promise<Cleanup> | undefined;
@@ -403,4 +441,23 @@ export function createGatewayStartupMaterialServiceSourceV1(
       return closing;
     },
   });
+}
+
+export function createGatewayStartupMaterialServiceSourceV1(
+  source: GatewayStartupServiceSourceV1,
+  parent: GatewayStartupServiceHandleV1,
+  runtime: GatewayMaterialRuntimeParentV1 | undefined,
+  native: GatewayMaterialNativeClientProducerV1 | undefined,
+) {
+  return createMaterialServiceSource(source, parent, runtime, native);
+}
+/** The original Agent Source/parent and consumer parent stay distinct from the
+ * historical Installation source. Wire payload/profile remains unchanged. */
+export function createGatewayStartupMaterialServiceSourceV2(
+  source: GatewayStartupServiceSourceV2,
+  parent: GatewayStartupServiceHandleV2,
+  runtime: GatewayMaterialRuntimeParentV1 | undefined,
+  native: GatewayMaterialNativeClientProducerV2 | undefined,
+) {
+  return createMaterialServiceSource(source, parent, runtime, native);
 }

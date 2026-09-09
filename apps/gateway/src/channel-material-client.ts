@@ -10,8 +10,15 @@ import type {
   GatewayMaterialDeliveryHeaderV1,
   GatewayMaterialDeliveryRequestV1,
 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
-import { parseGatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/occ/gateway-startup-v1/material-delivery";
-import type { GatewayInstallationServiceAssociationV1 } from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
+import {
+  parseGatewayMaterialDeliveryRequestV1,
+  parseGatewayMaterialDeliveryRequestV2,
+} from "@openclaw-enterprise/occ/gateway-startup-v1/material-delivery";
+import {
+  parseGatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV1,
+} from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
 import type { GatewayStartupCommandBoundsV1 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
 import {
   createMaterialFrameV1,
@@ -22,13 +29,16 @@ import {
   type MaterialFrameV1,
 } from "@openclaw-enterprise/utils/native-material-wire";
 import type {
-  GatewayMaterialNativeClientConnectionV1,
+  GatewayMaterialNativeClientConnection,
+  GatewayMaterialNativeClientProducer,
   GatewayMaterialNativeClientProducerV1,
+  GatewayMaterialNativeClientProducerV2,
+  GatewayMaterialStartupSource,
 } from "./startup-material-service-source.ts";
-import type {
-  GatewayStartupServiceHandleV1,
-  GatewayStartupServiceSourceV1,
-} from "./startup-service-source.ts";
+import type { GatewayStartupServiceSourceV1 } from "./startup-service-source.ts";
+
+import type { GatewayMaterialDeliveryRequestV2 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v2";
+import type { GatewayStartupServiceSourceV2 } from "./startup-agent-service-source.ts";
 
 const unavailable = () => new Error("Gateway native material client unavailable");
 const policy = "installation-channel-material-v1";
@@ -142,10 +152,17 @@ async function verifyExecutable(path: string, expected: string, signal: AbortSig
 /** One active child, no queue or retry. The Source passed at construction owns
  * the only parent-handle membership check; a serialized record cannot enroll a
  * handle. A connection is recognized only by this factory's private WeakMap. */
-export function createGatewayChannelMaterialClientV1(
-  source: GatewayStartupServiceSourceV1,
-  options: GatewayChannelMaterialClientOptionsV1,
-): GatewayMaterialNativeClientProducerV1 {
+function createChannelMaterialClient<
+  Handle,
+  Request extends GatewayMaterialDeliveryRequestV1 | GatewayMaterialDeliveryRequestV2,
+>(
+  source: GatewayMaterialStartupSource<Handle, Request>,
+  options: Omit<GatewayChannelMaterialClientOptionsV1, "association"> & {
+    readonly association:
+      GatewayInstallationServiceAssociationV1 | GatewayInstallationServiceAssociationV2;
+  },
+  parseRequest: (input: unknown) => Request,
+): GatewayMaterialNativeClientProducer<Handle, Request> {
   const profile = copy(options.profile),
     association = copy(options.association);
   const { binaryPath, address, configurationVersion } = options;
@@ -185,19 +202,15 @@ export function createGatewayChannelMaterialClientV1(
     throw unavailable();
   const executableDigest = profile.nativeExecutableSha256,
     profileDigest = digest(profile);
-  const originals = new WeakMap<GatewayMaterialNativeClientConnectionV1, () => undefined>();
+  const originals = new WeakMap<GatewayMaterialNativeClientConnection<Request>, () => undefined>();
   let occupied = false;
   return Object.freeze({
-    assertOriginal(connection: GatewayMaterialNativeClientConnectionV1): undefined {
+    assertOriginal(connection: GatewayMaterialNativeClientConnection<Request>): undefined {
       const current = originals.get(connection);
       if (!current) throw unavailable();
       return current();
     },
-    async open(
-      parent: GatewayStartupServiceHandleV1,
-      input: GatewayMaterialDeliveryRequestV1,
-      suppliedBounds: GatewayStartupCommandBoundsV1,
-    ) {
+    async open(parent: Handle, input: Request, suppliedBounds: GatewayStartupCommandBoundsV1) {
       if (occupied) throw unavailable();
       occupied = true; // Reserve before any await; a losing open never joins a queue.
       const abort = new AbortController(),
@@ -214,7 +227,7 @@ export function createGatewayChannelMaterialClientV1(
       let expiresAt = 0,
         monotonicEnd = 0;
       let frame: MaterialFrameV1 | undefined, hello: Record<string, unknown> | undefined;
-      let request: GatewayMaterialDeliveryRequestV1, bounds: GatewayStartupCommandBoundsV1;
+      let request: Request, bounds: GatewayStartupCommandBoundsV1;
       let parentSignal: AbortSignal;
       const trackFence = (value: unknown) => {
         const promise = Promise.resolve(value);
@@ -243,6 +256,14 @@ export function createGatewayChannelMaterialClientV1(
         )
           throw unavailable();
         assertParent();
+        if (
+          abort.signal.aborted ||
+          !signal ||
+          signal.aborted ||
+          Date.now() >= expiresAt ||
+          performance.now() >= monotonicEnd
+        )
+          throw unavailable();
         return undefined;
       };
       const stopChild = () => {
@@ -324,7 +345,7 @@ export function createGatewayChannelMaterialClientV1(
         return event;
       };
       init = (async () => {
-        request = copy(parseGatewayMaterialDeliveryRequestV1(input));
+        request = copy(parseRequest(input));
         bounds = Object.freeze({
           requestRef: suppliedBounds.requestRef,
           deadline: suppliedBounds.deadline,
@@ -448,7 +469,7 @@ export function createGatewayChannelMaterialClientV1(
       })();
       try {
         await init;
-        const connection: GatewayMaterialNativeClientConnectionV1 = Object.freeze({
+        const connection: GatewayMaterialNativeClientConnection<Request> = Object.freeze({
           profile: policy,
           transport,
           request: request!,
@@ -459,7 +480,9 @@ export function createGatewayChannelMaterialClientV1(
             return Math.max(0, Math.min(expiresAt - Date.now(), monotonicEnd - performance.now()));
           },
           close,
-          withPayload(work: Parameters<GatewayMaterialNativeClientConnectionV1["withPayload"]>[0]) {
+          withPayload(
+            work: Parameters<GatewayMaterialNativeClientConnection<Request>["withPayload"]>[0],
+          ) {
             if (used || abort.signal.aborted || typeof work !== "function")
               return Promise.reject(unavailable());
             used = true;
@@ -528,7 +551,9 @@ export function createGatewayChannelMaterialClientV1(
               await send(kinds.completed, { ...event, message: {} });
               // ACK is local pipe-write settlement only. Leave the pipe OPEN:
               // IDN checks currentness after this return, then calls close().
-              return Object.freeze({ kind: outcome });
+              const result = Object.freeze({ kind: outcome });
+              current();
+              return result;
             };
             const running = run();
             operation = running;
@@ -549,4 +574,28 @@ export function createGatewayChannelMaterialClientV1(
       }
     },
   });
+}
+
+export function createGatewayChannelMaterialClientV1(
+  source: GatewayStartupServiceSourceV1,
+  options: GatewayChannelMaterialClientOptionsV1,
+): GatewayMaterialNativeClientProducerV1 {
+  return createChannelMaterialClient(source, options, parseGatewayMaterialDeliveryRequestV1);
+}
+export type GatewayChannelMaterialClientOptionsV2 = Readonly<
+  Omit<GatewayChannelMaterialClientOptionsV1, "association"> & {
+    association: GatewayInstallationServiceAssociationV2;
+  }
+>;
+/** Fixed Agent grammar over the same original material child/TLS/frame owner. */
+export function createGatewayChannelMaterialClientV2(
+  source: GatewayStartupServiceSourceV2,
+  options: GatewayChannelMaterialClientOptionsV2,
+): GatewayMaterialNativeClientProducerV2 {
+  const association = parseGatewayInstallationServiceAssociationV2(options.association);
+  return createChannelMaterialClient(
+    source,
+    { ...options, association },
+    parseGatewayMaterialDeliveryRequestV2,
+  );
 }

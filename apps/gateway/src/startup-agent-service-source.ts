@@ -1,92 +1,37 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import {
   canonicalGatewayStartupValueV1,
-  gatewayStartupCommandDigestV1,
-  parseGatewayStartupBindingV1,
-  parseGatewayStartupCommandV1,
+  gatewayStartupCommandDigestV2,
+  parseGatewayStartupBindingV2,
+  parseGatewayStartupCommandV2,
+  parseGatewayStartupEventV2,
+  type GatewayStartupCommandV2,
+  type GatewayStartupCurrentV2,
+  type GatewayStartupRecipientBindingV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
-import type { GatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
+import type { GatewayMaterialDeliveryRequestV2 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v2";
 import type {
-  GatewayStartupBindingV1,
   GatewayStartupBindingV2,
   GatewayStartupCloseV1,
 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 import type {
-  GatewayStartupCommandBoundsV1,
-  GatewayStartupCommandV1,
-  GatewayStartupCommandV2,
-  GatewayStartupCurrentV1,
-  GatewayStartupRecipientBindingV1,
-  GatewayStartupOwnerSuccessV1,
-  GatewayStartupOwnerSuccessV2,
-  GatewayStartupOwnerFailureV1,
-  GatewayStartupOwnerFailureV2,
-} from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
+  GatewayStartupNativeConnectionV2,
+  GatewayStartupNativeProducerV2,
+  GatewayStartupServiceCommandV2,
+} from "./startup-service-source.ts";
 
-export const gatewayStartupOperationProfile = "installation-gateway-startup-v1";
-export const gatewayStartupTransportProfile = "owned-child-stdio-installation-gateway-startup-v1";
-
-type Consume = Extract<GatewayStartupCommandV1, { kind: "consume-startup" }>;
-type ReadCurrent = Extract<GatewayStartupCommandV1, { kind: "read-current" }>;
-type ReadOperation = Extract<GatewayStartupCommandV1, { kind: "read-operation" }>;
-export type GatewayStartupServiceCommandV1 = Consume | ReadCurrent | ReadOperation;
+type Consume = Extract<GatewayStartupCommandV2, { kind: "consume-startup" }>;
+type ReadCurrent = Extract<GatewayStartupCommandV2, { kind: "read-current" }>;
 type Cleanup = GatewayStartupCloseV1["cleanup"];
 
-/**
- * Consumer requirements for the original native producer. Only trusted composition
- * installs that producer. Implementing this interface with a callback does not
- * authenticate a process, create a service invocation, or implement a native bridge.
- */
-export interface GatewayStartupNativeConnectionV1 {
-  readonly binding: GatewayStartupBindingV1;
-  readonly consumeCommand: Consume;
-  readonly signal: AbortSignal;
-  readonly expiresAtMs: number;
-  assertCurrent(): undefined;
-  recheckCurrent(): Promise<void>;
-  execute(
-    command: GatewayStartupServiceCommandV1,
-    bounds: GatewayStartupCommandBoundsV1,
-  ): Promise<GatewayStartupOwnerSuccessV1 | GatewayStartupOwnerFailureV1>;
-  close(): Promise<Cleanup>;
-}
-export interface GatewayStartupNativeProducerV1 {
-  /** Must verify original private native child/connection ownership on every call. */
-  assertOriginal(connection: GatewayStartupNativeConnectionV1): undefined;
-  /** Fixed identity, endpoint and profile; no caller-selected native configuration. */
-  open(signal: AbortSignal): Promise<GatewayStartupNativeConnectionV1>;
-}
-
-/** Same original TLS/stdio transport, with a distinct exact Agent command domain. */
-export type GatewayStartupServiceCommandV2 = Extract<
-  GatewayStartupCommandV2,
-  { kind: "consume-startup" | "read-current" | "read-operation" }
->;
-export interface GatewayStartupNativeConnectionV2 {
-  readonly binding: GatewayStartupBindingV2;
-  readonly consumeCommand: Extract<GatewayStartupServiceCommandV2, { kind: "consume-startup" }>;
-  readonly signal: AbortSignal;
-  readonly expiresAtMs: number;
-  assertCurrent(): undefined;
-  recheckCurrent(): Promise<void>;
-  execute(
-    command: GatewayStartupServiceCommandV2,
-    bounds: GatewayStartupCommandBoundsV1,
-  ): Promise<GatewayStartupOwnerSuccessV2 | GatewayStartupOwnerFailureV2>;
-  close(): Promise<Cleanup>;
-}
-export interface GatewayStartupNativeProducerV2 {
-  assertOriginal(connection: GatewayStartupNativeConnectionV2): undefined;
-  open(signal: AbortSignal): Promise<GatewayStartupNativeConnectionV2>;
-}
-
 declare const sourceBrand: unique symbol;
-export interface GatewayStartupServiceHandleV1 {
+export interface GatewayStartupServiceHandleV2 {
   readonly [sourceBrand]: true;
 }
-export type GatewayStartupServiceConsumeV1 =
-  | Readonly<{ kind: "confirmed"; binding: GatewayStartupBindingV1 }>
+export type GatewayStartupServiceConsumeV2 =
+  | Readonly<{ kind: "confirmed"; binding: GatewayStartupBindingV2 }>
   | Readonly<{ kind: "denied" | "unavailable" | "unknown" }>;
 
 const unavailable = () => new Error("Gateway startup service unavailable");
@@ -143,15 +88,15 @@ function copy<T>(value: T): T {
 }
 
 type State = {
-  readonly connection: GatewayStartupNativeConnectionV1;
-  readonly binding: GatewayStartupBindingV1;
+  readonly connection: GatewayStartupNativeConnectionV2;
+  readonly binding: GatewayStartupBindingV2;
   readonly command: Consume;
   readonly abort: AbortController;
   readonly pending: Set<Promise<unknown>>;
   readonly expiresAtMs: number;
   readonly assertNative: () => undefined;
   readonly recheckNative: () => Promise<void>;
-  readonly executeNative: GatewayStartupNativeConnectionV1["execute"];
+  readonly executeNative: GatewayStartupNativeConnectionV2["execute"];
   readonly releaseNative: () => Promise<Cleanup>;
   readonly onAbort: () => void;
   timer: ReturnType<typeof setTimeout>;
@@ -159,7 +104,7 @@ type State = {
   busy: boolean;
   materialBusy: boolean;
   startupMaterialAttempted: boolean;
-  current?: GatewayStartupCurrentV1;
+  current?: GatewayStartupCurrentV2;
   closeTask?: Promise<Cleanup>;
 };
 
@@ -167,16 +112,16 @@ type State = {
  * One fixed native Source acquisition and one claim per constructed source.
  * No production native producer is installed by this module.
  */
-export function createGatewayStartupServiceSourceV1(
-  producer: GatewayStartupNativeProducerV1 | undefined,
+export function createGatewayStartupServiceSourceV2(
+  producer: GatewayStartupNativeProducerV2 | undefined,
 ) {
   const assertOriginal = producer?.assertOriginal.bind(producer);
   const openOriginal = producer?.open.bind(producer);
-  const handles = new WeakMap<GatewayStartupServiceHandleV1, State>();
+  const handles = new WeakMap<GatewayStartupServiceHandleV2, State>();
   const active = new Set<State>();
   const acquisitionAbort = new AbortController();
   let opened = false;
-  let acquisition: Promise<GatewayStartupServiceHandleV1 | undefined> | undefined;
+  let acquisition: Promise<GatewayStartupServiceHandleV2 | undefined> | undefined;
   let closing: Promise<Cleanup> | undefined;
   let acquisitionFailure: Cleanup = "finished";
 
@@ -219,7 +164,7 @@ export function createGatewayStartupServiceSourceV1(
       throw unavailable();
     }
   };
-  const get = (handle: GatewayStartupServiceHandleV1): State => {
+  const get = (handle: GatewayStartupServiceHandleV2): State => {
     const s = handles.get(handle);
     if (!s) throw unavailable();
     assert(s);
@@ -234,12 +179,13 @@ export function createGatewayStartupServiceSourceV1(
     );
     return task;
   };
-  const exchange = async (s: State, command: GatewayStartupServiceCommandV1) => {
+  const exchange = async (s: State, command: GatewayStartupServiceCommandV2) => {
     assert(s);
     if (s.busy) throw unavailable();
     s.busy = true;
     const callAbort = new AbortController();
     const deadlineMs = Math.min(Date.now() + 3000, s.expiresAtMs);
+    const monotonicDeadline = performance.now() + deadlineMs - Date.now();
     const signal = AbortSignal.any([s.abort.signal, callAbort.signal]);
     const timer = setTimeout(
       () => {
@@ -255,44 +201,63 @@ export function createGatewayStartupServiceSourceV1(
         signal,
       });
       const response = await track(s, () => s.executeNative(command, bounds));
+      const result = copy(response);
       assert(s);
-      if (signal.aborted || Date.now() >= deadlineMs) throw unavailable();
-      return copy(response);
+      if (signal.aborted || Date.now() >= deadlineMs || performance.now() >= monotonicDeadline)
+        throw unavailable();
+      return result;
     } finally {
       clearTimeout(timer);
       s.busy = false;
     }
   };
-  const recordMatches = (s: State, record: GatewayStartupCurrentV1): boolean =>
-    isDeepStrictEqual(record.acceptance.binding, s.binding) &&
-    record.head.state === "consumed" &&
-    isDeepStrictEqual(record.head.startup, s.binding.startup) &&
-    record.head.processGeneration === s.binding.startup.processGeneration &&
-    record.claim?.kind === "consume-startup" &&
-    isDeepStrictEqual(record.claim.startup, s.binding.startup) &&
-    record.claim.createEffectRef === s.binding.createEffectRef &&
-    isDeepStrictEqual(record.claim.recipient, s.command.recipient) &&
-    record.claim.canonicalCommand === canonicalGatewayStartupValueV1(s.command) &&
-    record.claim.command.operationDigest === gatewayStartupCommandDigestV1(s.command) &&
-    record.claim.command.operationRef === s.command.operationRef &&
-    record.claim.command.installationId === s.binding.startup.installationId &&
-    isDeepStrictEqual(record.claim.command.startup, s.binding.startup) &&
-    record.claim.beforeHeadVersion === s.command.expectedHead.version &&
-    record.claim.beforeRecordVersion === s.command.expectedHead.recordVersion &&
-    record.claim.afterHeadVersion === s.command.expectedHead.version + 1 &&
-    record.claim.afterRecordVersion === s.command.expectedHead.recordVersion + 1 &&
-    record.head.version === record.claim.afterHeadVersion &&
-    record.head.recordVersion === record.claim.afterRecordVersion;
+  const recordMatches = (s: State, record: GatewayStartupCurrentV2): boolean => {
+    if (record.claim === null || record.submission === null) return false;
+    // The original owner requires a retained submit before consume. Validate
+    // both exact events; a matching digest alone cannot replace their chain.
+    const claim = parseGatewayStartupEventV2(record.claim);
+    const submission = parseGatewayStartupEventV2(record.submission);
+    return (
+      isDeepStrictEqual(record.acceptance.binding, s.binding) &&
+      record.head.state === "consumed" &&
+      isDeepStrictEqual(record.head.subject, s.binding.startup.subject) &&
+      isDeepStrictEqual(record.head.startup, s.binding.startup) &&
+      record.head.processGeneration === s.binding.startup.processGeneration &&
+      record.head.latestOperationRef === claim.command.operationRef &&
+      claim.kind === "consume-startup" &&
+      isDeepStrictEqual(claim.startup, s.binding.startup) &&
+      claim.createEffectRef === s.binding.createEffectRef &&
+      isDeepStrictEqual(claim.recipient, s.command.recipient) &&
+      claim.canonicalCommand === canonicalGatewayStartupValueV1(s.command) &&
+      claim.command.operationDigest === gatewayStartupCommandDigestV2(s.command) &&
+      claim.command.operationRef === s.command.operationRef &&
+      isDeepStrictEqual(claim.command.subject, s.binding.startup.subject) &&
+      isDeepStrictEqual(claim.command.startup, s.binding.startup) &&
+      claim.beforeHeadVersion === s.command.expectedHead.version &&
+      claim.beforeRecordVersion === s.command.expectedHead.recordVersion &&
+      claim.afterHeadVersion === s.command.expectedHead.version + 1 &&
+      claim.afterRecordVersion === s.command.expectedHead.recordVersion + 1 &&
+      record.head.version === claim.afterHeadVersion &&
+      record.head.recordVersion === claim.afterRecordVersion &&
+      submission.kind === "submit-create" &&
+      isDeepStrictEqual(submission.submissionInput?.binding, s.binding) &&
+      isDeepStrictEqual(submission.startup, s.binding.startup) &&
+      submission.createEffectRef === s.binding.createEffectRef &&
+      claim.previousOperationRef === submission.command.operationRef &&
+      claim.beforeHeadVersion === submission.afterHeadVersion &&
+      claim.beforeRecordVersion === submission.afterRecordVersion
+    );
+  };
 
   const api = {
-    open(): Promise<GatewayStartupServiceHandleV1 | undefined> {
+    open(): Promise<GatewayStartupServiceHandleV2 | undefined> {
       if (opened || acquisitionAbort.signal.aborted || !openOriginal || !assertOriginal) {
         return Promise.resolve(undefined);
       }
       opened = true;
       // Keep the original acquisition even if a caller drops its returned promise.
       acquisition = Promise.resolve().then(async () => {
-        let connection: GatewayStartupNativeConnectionV1 | undefined;
+        let connection: GatewayStartupNativeConnectionV2 | undefined;
         let state: State | undefined;
         let owned = false;
         const pending = new Set<Promise<unknown>>();
@@ -302,16 +267,17 @@ export function createGatewayStartupServiceSourceV1(
           connection = await openOriginal(acquisitionAbort.signal);
           fence(() => assertOriginal(connection!), pending);
           owned = true;
-          const binding = parseGatewayStartupBindingV1(connection.binding);
-          const command = parseGatewayStartupCommandV1(connection.consumeCommand);
+          const binding = parseGatewayStartupBindingV2(connection.binding);
+          const command = parseGatewayStartupCommandV2(connection.consumeCommand);
           if (command.kind !== "consume-startup") throw unavailable();
           if (
             !(connection.signal instanceof AbortSignal) ||
             !Number.isSafeInteger(connection.expiresAtMs) ||
             connection.expiresAtMs <= Date.now() ||
             connection.expiresAtMs > Date.now() + 30000 ||
-            command.schemaVersion !== 1 ||
+            command.schemaVersion !== 2 ||
             command.kind !== "consume-startup" ||
+            !isDeepStrictEqual(command.subject, binding.startup.subject) ||
             !isDeepStrictEqual(command.startup, binding.startup) ||
             !isDeepStrictEqual(command.expectedHead.startup, binding.startup)
           )
@@ -355,7 +321,7 @@ export function createGatewayStartupServiceSourceV1(
           assert(s);
           await track(s, s.recheckNative);
           assert(s);
-          const handle = Object.freeze({}) as GatewayStartupServiceHandleV1;
+          const handle = Object.freeze({}) as GatewayStartupServiceHandleV2;
           handles.set(handle, s);
           return handle;
         } catch {
@@ -378,20 +344,20 @@ export function createGatewayStartupServiceSourceV1(
       });
       return acquisition;
     },
-    binding(handle: GatewayStartupServiceHandleV1): GatewayStartupBindingV1 {
+    binding(handle: GatewayStartupServiceHandleV2): GatewayStartupBindingV2 {
       return get(handle).binding;
     },
-    recipient(handle: GatewayStartupServiceHandleV1): GatewayStartupRecipientBindingV1 {
+    recipient(handle: GatewayStartupServiceHandleV2): GatewayStartupRecipientBindingV1 {
       return get(handle).command.recipient;
     },
-    signal(handle: GatewayStartupServiceHandleV1): AbortSignal {
+    signal(handle: GatewayStartupServiceHandleV2): AbortSignal {
       return get(handle).abort.signal;
     },
-    assertCurrent(handle: GatewayStartupServiceHandleV1): undefined {
+    assertCurrent(handle: GatewayStartupServiceHandleV2): undefined {
       return assert(get(handle));
     },
     /** Original absolute Source remainder. Reading it never renews the connection. */
-    remainingSourceMs(handle: GatewayStartupServiceHandleV1): number {
+    remainingSourceMs(handle: GatewayStartupServiceHandleV2): number {
       const s = get(handle);
       return Math.max(0, s.expiresAtMs - Date.now());
     },
@@ -401,9 +367,9 @@ export function createGatewayStartupServiceSourceV1(
      * Material calls use their separate authenticated connection and purpose.
      */
     materialRequest(
-      handle: GatewayStartupServiceHandleV1,
-      use: GatewayMaterialDeliveryRequestV1["use"],
-    ): GatewayMaterialDeliveryRequestV1 {
+      handle: GatewayStartupServiceHandleV2,
+      use: GatewayMaterialDeliveryRequestV2["use"],
+    ): GatewayMaterialDeliveryRequestV2 {
       const s = get(handle);
       if (
         !s.used ||
@@ -413,8 +379,8 @@ export function createGatewayStartupServiceSourceV1(
         (use !== "startup-slack-pair" && use !== "teams-invocation-token")
       )
         throw unavailable();
-      const request: GatewayMaterialDeliveryRequestV1 = {
-        schemaVersion: 1,
+      const request: GatewayMaterialDeliveryRequestV2 = {
+        schemaVersion: 2,
         purpose: "read-selected-channel-material",
         use,
         startup: s.binding.startup,
@@ -426,8 +392,9 @@ export function createGatewayStartupServiceSourceV1(
         },
         recipient: s.command.recipient.recipient,
       };
+      const captured = copy(request);
       assert(s);
-      return copy(request);
+      return captured;
     },
     /**
      * Reserve before yielding and join original material work in Source shutdown.
@@ -435,9 +402,9 @@ export function createGatewayStartupServiceSourceV1(
      * current process and selected use. It is not a durable cross-process replay store.
      */
     withMaterialCall<T>(
-      handle: GatewayStartupServiceHandleV1,
-      use: GatewayMaterialDeliveryRequestV1["use"],
-      work: (request: GatewayMaterialDeliveryRequestV1, signal: AbortSignal) => Promise<T>,
+      handle: GatewayStartupServiceHandleV2,
+      use: GatewayMaterialDeliveryRequestV2["use"],
+      work: (request: GatewayMaterialDeliveryRequestV2, signal: AbortSignal) => Promise<T>,
     ): Promise<T> {
       const s = get(handle);
       const request = api.materialRequest(handle, use);
@@ -448,13 +415,15 @@ export function createGatewayStartupServiceSourceV1(
       return track(s, async () => {
         try {
           assert(s);
-          return await work(request, s.abort.signal);
+          const result = await work(request, s.abort.signal);
+          assert(s);
+          return result;
         } finally {
           s.materialBusy = false;
         }
       });
     },
-    async recheckCurrent(handle: GatewayStartupServiceHandleV1): Promise<void> {
+    async recheckCurrent(handle: GatewayStartupServiceHandleV2): Promise<void> {
       const s = get(handle);
       try {
         await track(s, s.recheckNative);
@@ -464,7 +433,7 @@ export function createGatewayStartupServiceSourceV1(
         throw unavailable();
       }
     },
-    async consume(handle: GatewayStartupServiceHandleV1): Promise<GatewayStartupServiceConsumeV1> {
+    async consume(handle: GatewayStartupServiceHandleV2): Promise<GatewayStartupServiceConsumeV2> {
       let s: State;
       try {
         s = get(handle);
@@ -496,7 +465,7 @@ export function createGatewayStartupServiceSourceV1(
       }
     },
     async readClaim(
-      handle: GatewayStartupServiceHandleV1,
+      handle: GatewayStartupServiceHandleV2,
     ): Promise<"current" | "denied" | "unavailable" | "unknown"> {
       let s: State;
       try {
@@ -507,7 +476,8 @@ export function createGatewayStartupServiceSourceV1(
       if (!s.used || !s.current) return "denied";
       try {
         const command: ReadCurrent = Object.freeze({
-          schemaVersion: 1,
+          schemaVersion: 2,
+          subject: s.binding.startup.subject,
           kind: "read-current",
           startup: s.binding.startup,
           expectedRecordVersion: s.current.head.recordVersion,
@@ -526,6 +496,7 @@ export function createGatewayStartupServiceSourceV1(
           void closeState(s);
           return "denied";
         }
+        assert(s);
         return "current";
       } catch {
         void closeState(s);
@@ -554,4 +525,4 @@ export function createGatewayStartupServiceSourceV1(
   return Object.freeze(api);
 }
 
-export type GatewayStartupServiceSourceV1 = ReturnType<typeof createGatewayStartupServiceSourceV1>;
+export type GatewayStartupServiceSourceV2 = ReturnType<typeof createGatewayStartupServiceSourceV2>;

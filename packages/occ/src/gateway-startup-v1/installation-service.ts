@@ -1,6 +1,7 @@
 import {
   canonicalGatewayStartupValueV1,
   parseGatewayStartupCommandV1,
+  parseGatewayStartupCommandV2,
   type GatewayStartupAcceptedOperationV1,
   type GatewayStartupAuthorityLeaseV1,
   type GatewayStartupCommandBoundsV1,
@@ -12,6 +13,7 @@ import {
 } from "./owner.ts";
 import type {
   GatewayStartupOperationLocatorV1,
+  GatewayStartupOperationLocatorV2,
   GatewayStartupRecordRefV1,
 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 
@@ -33,6 +35,12 @@ export type GatewayInstallationServiceAssociationV1 = Readonly<{
   sourceConfiguration: GatewayStartupRecordRefV1;
   endpoints: GatewayInstallationServiceEndpointsV1;
 }>;
+/** Agent-scoped expectations; no V1 locator projection or registration grant. */
+export type GatewayInstallationServiceAssociationV2 = Readonly<
+  Omit<GatewayInstallationServiceAssociationV1, "startup"> & {
+    startup: GatewayStartupOperationLocatorV2;
+  }
+>;
 export interface GatewayInstallationNativeLeaseV1 {
   readonly profile: "installation-gateway-startup-v1";
   readonly transport: "owned-child-stdio-installation-gateway-startup-v1";
@@ -105,7 +113,45 @@ function record(value: unknown): void {
   if (!Number.isSafeInteger(value.recordVersion) || (value.recordVersion as number) < 1)
     throw unavailable();
 }
-function parseAssociation(value: unknown): GatewayInstallationServiceAssociationV1 {
+/** Closed expectation grammar only; this decoder creates no native invocation. */
+export function parseGatewayInstallationServiceAssociationV1(
+  value: unknown,
+): GatewayInstallationServiceAssociationV1 {
+  const copy = parseAssociation(value);
+  // This projection validates data only and is never admitted or submitted.
+  parseGatewayStartupCommandV1({
+    schemaVersion: 1,
+    kind: "read-current",
+    startup: copy.startup,
+    expectedRecordVersion: 1,
+    recipient: copy.recipient,
+  });
+  return freeze(copy) as GatewayInstallationServiceAssociationV1;
+}
+/** Full V2 subject and locator are preserved. Parsing never authenticates them. */
+export function parseGatewayInstallationServiceAssociationV2(
+  value: unknown,
+): GatewayInstallationServiceAssociationV2 {
+  const copy = parseAssociation(value);
+  exact(copy.startup, [
+    "schemaVersion",
+    "subject",
+    "processRef",
+    "processGeneration",
+    "operationRef",
+    "operationDigest",
+  ]);
+  parseGatewayStartupCommandV2({
+    schemaVersion: 2,
+    subject: copy.startup.subject,
+    kind: "read-current",
+    startup: copy.startup,
+    expectedRecordVersion: 1,
+    recipient: copy.recipient,
+  });
+  return freeze(copy) as GatewayInstallationServiceAssociationV2;
+}
+function parseAssociation(value: unknown): Record<string, unknown> {
   const copy: unknown = JSON.parse(canonical(value));
   exact(copy, [
     "startup",
@@ -115,15 +161,6 @@ function parseAssociation(value: unknown): GatewayInstallationServiceAssociation
     "sourceConfiguration",
     "endpoints",
   ]);
-  // Reuse the original closed locator/recipient grammar. This validation-only
-  // projection is never submitted, enrolled, or treated as an original command.
-  parseGatewayStartupCommandV1({
-    schemaVersion: 1,
-    kind: "read-current",
-    startup: copy.startup,
-    expectedRecordVersion: 1,
-    recipient: copy.recipient,
-  });
   ref(copy.createEffectRef);
   record(copy.registration);
   record(copy.sourceConfiguration);
@@ -134,7 +171,7 @@ function parseAssociation(value: unknown): GatewayInstallationServiceAssociation
     ref(endpoint.spiffeId);
   }
   ref(copy.endpoints.transportRecipientRef);
-  return freeze(copy) as GatewayInstallationServiceAssociationV1;
+  return copy;
 }
 type State = {
   command: GatewayInstallationServiceCommandV1;
@@ -309,7 +346,7 @@ export function createGatewayInstallationServiceAuthorityV1(options: {
       try {
         lease = await inspect(proof, c, bounds);
         if (!lease) return undefined;
-        const association = parseAssociation(lease.association);
+        const association = parseGatewayInstallationServiceAssociationV1(lease.association);
         if (
           lease.profile !== "installation-gateway-startup-v1" ||
           lease.transport !== "owned-child-stdio-installation-gateway-startup-v1" ||

@@ -3,10 +3,16 @@
   "compilerOptions": {
     "composite": false,
     "declaration": false,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "openclaw/plugin-sdk/gateway-host": [
+        "../../../apps/gateway/node_modules/openclaw/dist/plugin-sdk/gateway-host.d.ts"
+      ]
+    }
   },
   "include": [
     "consumer.ts",
+    "agent-local.ts",
     "../../../packages/occ/src/gateway-startup-v1/owner.ts",
     "../../../packages/occ/src/gateway-startup-v1/installation-service.ts",
     "../../../packages/occ/src/gateway-startup-v1/postgres.ts",

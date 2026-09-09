@@ -6,20 +6,30 @@ import type {
   GatewayMaterialDeliveryOutcomeV1,
   GatewayMaterialDisclosurePermitV1,
 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
+import type { GatewayMaterialDeliveryRequestV2 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v2";
+import { decodeWorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import {
   canonicalGatewayStartupValueV1,
+  parseGatewayStartupBindingV2,
+  parseGatewayStartupCommandV2,
+  parseGatewayStartupEventV2,
+  type GatewayStartupCurrentV2,
   parseGatewayStartupBindingV1,
   parseGatewayStartupCommandV1,
   parseGatewayStartupEventV1,
   type GatewayStartupCommandBoundsV1,
   type GatewayStartupCurrentV1,
 } from "./owner.ts";
-import type { GatewayInstallationServiceAssociationV1 } from "./installation-service.ts";
+import {
+  parseGatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV1,
+  type GatewayInstallationServiceAssociationV2,
+} from "./installation-service.ts";
 
-export interface GatewayMaterialNativeLeaseV1 {
+export interface GatewayMaterialNativeLease<Association> {
   readonly profile: "installation-channel-material-v1";
   readonly transport: "owned-child-stdio-installation-channel-material-v1";
-  readonly association: GatewayInstallationServiceAssociationV1;
+  readonly association: Association;
   readonly signal: AbortSignal;
   assertCurrent(): undefined;
   remainingMs(): number;
@@ -31,16 +41,16 @@ export interface GatewayMaterialNativeLeaseV1 {
   ): Promise<void>;
   close(): Promise<void>;
 }
-export interface GatewayMaterialNativeSourceV1 {
+export interface GatewayMaterialNativeSource<Request, Association> {
   inspect(
     proof: object,
-    request: GatewayMaterialDeliveryRequestV1,
+    request: Request,
     bounds: GatewayStartupCommandBoundsV1,
-  ): Promise<GatewayMaterialNativeLeaseV1 | undefined>;
+  ): Promise<GatewayMaterialNativeLease<Association> | undefined>;
 }
-export interface GatewayMaterialReadScopeV1<TSelected> {
+export interface GatewayMaterialReadScope<TSelected, Current> {
   /** Original protected current owner supplies this record and holds its applicable locks/leases. */
-  readonly current: GatewayStartupCurrentV1;
+  readonly current: Current;
   readonly selected: TSelected;
   readonly signal: AbortSignal;
   assertCurrent(): undefined;
@@ -49,7 +59,7 @@ export interface GatewayMaterialReadScopeV1<TSelected> {
   /** Completes required original metadata-only audit/transaction disposition before disclosure. */
   confirmDisclosure(): Promise<void>;
 }
-export interface GatewayMaterialDeliveryCurrentOwnerV1<TSelected> {
+export interface GatewayMaterialDeliveryCurrentOwner<TSelected, Request, Association, Current> {
   /**
    * Fixed trusted composition. Before entering work, the original accepting owner must
    * admit the exact initial Slack attempt or distinct qualified Teams invocation;
@@ -58,11 +68,11 @@ export interface GatewayMaterialDeliveryCurrentOwnerV1<TSelected> {
    * Its signal/current lease inherits original call, startup and Source invalidation.
    */
   withCurrent(
-    request: GatewayMaterialDeliveryRequestV1,
-    native: GatewayMaterialNativeLeaseV1,
+    request: Request,
+    native: GatewayMaterialNativeLease<Association>,
     bounds: GatewayStartupCommandBoundsV1,
     work: (
-      scope: GatewayMaterialReadScopeV1<TSelected>,
+      scope: GatewayMaterialReadScope<TSelected, Current>,
     ) => Promise<GatewayMaterialDeliveryOutcomeV1>,
   ): Promise<GatewayMaterialDeliveryOutcomeV1>;
 }
@@ -84,13 +94,49 @@ export interface GatewayMaterialBundleLeaseV1 {
   ): Promise<void>;
   release(): Promise<void>;
 }
-export interface GatewayMaterialSelectedSourceV1<TSelected> {
+export interface GatewayMaterialSelectedSource<TSelected, Current> {
   /** The SAME original held scope supplies current authority, selection and remaining lifetime. */
   readSelected(
-    scope: GatewayMaterialReadScopeV1<TSelected>,
+    scope: GatewayMaterialReadScope<TSelected, Current>,
     use: GatewayMaterialDeliveryRequestV1["use"],
   ): Promise<GatewayMaterialBundleLeaseV1>;
 }
+/** Distinct fixed protocol types share only payload and local disclosure custody. */
+export type GatewayMaterialNativeLeaseV1 =
+  GatewayMaterialNativeLease<GatewayInstallationServiceAssociationV1>;
+export type GatewayMaterialNativeLeaseV2 =
+  GatewayMaterialNativeLease<GatewayInstallationServiceAssociationV2>;
+export type GatewayMaterialNativeSourceV1 = GatewayMaterialNativeSource<
+  GatewayMaterialDeliveryRequestV1,
+  GatewayInstallationServiceAssociationV1
+>;
+export type GatewayMaterialNativeSourceV2 = GatewayMaterialNativeSource<
+  GatewayMaterialDeliveryRequestV2,
+  GatewayInstallationServiceAssociationV2
+>;
+export type GatewayMaterialReadScopeV1<T> = GatewayMaterialReadScope<T, GatewayStartupCurrentV1>;
+export type GatewayMaterialReadScopeV2<T> = GatewayMaterialReadScope<T, GatewayStartupCurrentV2>;
+export type GatewayMaterialDeliveryCurrentOwnerV1<T> = GatewayMaterialDeliveryCurrentOwner<
+  T,
+  GatewayMaterialDeliveryRequestV1,
+  GatewayInstallationServiceAssociationV1,
+  GatewayStartupCurrentV1
+>;
+export type GatewayMaterialDeliveryCurrentOwnerV2<T> = GatewayMaterialDeliveryCurrentOwner<
+  T,
+  GatewayMaterialDeliveryRequestV2,
+  GatewayInstallationServiceAssociationV2,
+  GatewayStartupCurrentV2
+>;
+export type GatewayMaterialSelectedSourceV1<T> = GatewayMaterialSelectedSource<
+  T,
+  GatewayStartupCurrentV1
+>;
+export type GatewayMaterialSelectedSourceV2<T> = GatewayMaterialSelectedSource<
+  T,
+  GatewayStartupCurrentV2
+>;
+
 const canonical = canonicalGatewayStartupValueV1;
 const resizableBuffer = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "resizable")?.get;
 const unavailable = () => new Error("Gateway material delivery unavailable");
@@ -119,7 +165,7 @@ function ref(value: unknown): asserts value is string {
 function version(value: unknown): asserts value is number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw unavailable();
 }
-function record(value: unknown): void {
+function record(value: unknown): asserts value is { recordRef: string; recordVersion: number } {
   exact(value, ["recordRef", "recordVersion"]);
   ref(value.recordRef);
   version(value.recordVersion);
@@ -298,8 +344,202 @@ function correlate(
     throw unavailable();
 }
 
-type Disclosure = {
-  native: GatewayMaterialNativeLeaseV1;
+/** Closed Agent request grammar only; no native proof, current account or
+ * original disclosure attempt is issued by parsing these expectations. */
+export function parseGatewayMaterialDeliveryRequestV2(
+  input: unknown,
+): GatewayMaterialDeliveryRequestV2 {
+  const text = canonical(input);
+  if (Buffer.byteLength(text, "utf8") > 2048) throw unavailable();
+  const value: unknown = JSON.parse(text);
+  exact(value, [
+    "schemaVersion",
+    "purpose",
+    "use",
+    "startup",
+    "selection",
+    "consumedClaim",
+    "recipient",
+  ]);
+  if (
+    value.schemaVersion !== 2 ||
+    value.purpose !== "read-selected-channel-material" ||
+    (value.use !== "startup-slack-pair" && value.use !== "teams-invocation-token")
+  )
+    throw unavailable();
+  const selection = decodeWorkloadProfileSelectionV1(value.selection);
+  if (selection.kind !== "valid") throw unavailable();
+  record(value.recipient);
+  exact(value.consumedClaim, ["operationRef", "operationDigest", "afterRecordVersion"]);
+  ref(value.consumedClaim.operationRef);
+  version(value.consumedClaim.afterRecordVersion);
+  if (
+    typeof value.consumedClaim.operationDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(value.consumedClaim.operationDigest)
+  )
+    throw unavailable();
+  exact(value.startup, [
+    "schemaVersion",
+    "subject",
+    "processRef",
+    "processGeneration",
+    "operationRef",
+    "operationDigest",
+  ]);
+  // This validates the existing full locator grammar; it is never submitted.
+  const parsed = parseGatewayStartupCommandV2({
+    schemaVersion: 2,
+    kind: "read-operation",
+    subject: value.startup.subject,
+    operation: {
+      schemaVersion: 2,
+      subject: value.startup.subject,
+      operationRef: value.consumedClaim.operationRef,
+      operationDigest: value.consumedClaim.operationDigest,
+      startup: value.startup,
+    },
+  });
+  if (parsed.kind !== "read-operation" || parsed.operation.startup === null) throw unavailable();
+  const request: GatewayMaterialDeliveryRequestV2 = {
+    schemaVersion: 2,
+    purpose: value.purpose,
+    use: value.use,
+    startup: parsed.operation.startup,
+    selection: selection.value,
+    consumedClaim: {
+      operationRef: value.consumedClaim.operationRef,
+      operationDigest: value.consumedClaim.operationDigest,
+      afterRecordVersion: value.consumedClaim.afterRecordVersion,
+    },
+    recipient: value.recipient,
+  };
+  return freeze(request);
+}
+function associationV2(
+  input: unknown,
+  request: GatewayMaterialDeliveryRequestV2,
+): GatewayInstallationServiceAssociationV2 {
+  const value = parseGatewayInstallationServiceAssociationV2(input);
+  if (
+    !equal(value.startup, request.startup) ||
+    !equal(value.recipient.recipient, request.recipient)
+  )
+    throw unavailable();
+  return value;
+}
+function correlateV2(
+  currentValue: GatewayStartupCurrentV2,
+  request: GatewayMaterialDeliveryRequestV2,
+  native: GatewayInstallationServiceAssociationV2,
+): void {
+  const current: unknown = JSON.parse(canonical(currentValue));
+  exact(current, ["head", "acceptance", "submission", "claim"]);
+  exact(current.head, [
+    "subject",
+    "version",
+    "processGeneration",
+    "latestOperationRef",
+    "startup",
+    "recordVersion",
+    "state",
+  ]);
+  exact(current.acceptance, ["binding", "predecessor", "auditEventId"]);
+  const binding = parseGatewayStartupBindingV2(current.acceptance.binding);
+  ref(current.acceptance.auditEventId);
+  const predecessor = current.acceptance.predecessor;
+  if (!predecessor || typeof predecessor !== "object" || Array.isArray(predecessor))
+    throw unavailable();
+  const kind = Object.getOwnPropertyDescriptor(predecessor, "kind")?.value;
+  exact(predecessor, [
+    "kind",
+    "disposition",
+    "previousStartup",
+    "processOwner",
+    "settlement",
+    ...(kind === "retired-installation" ? ["historicalWithdrawal"] : []),
+  ]);
+  for (const key of ["disposition", "processOwner", "settlement"]) record(predecessor[key]);
+  if (kind === "complete-initial") {
+    if (predecessor.previousStartup !== null || binding.startup.processGeneration !== 1)
+      throw unavailable();
+  } else if (kind === "retired-agent") {
+    exact(predecessor.previousStartup, [
+      "schemaVersion",
+      "subject",
+      "processRef",
+      "processGeneration",
+      "operationRef",
+      "operationDigest",
+    ]);
+    const prior = predecessor.previousStartup;
+    const command = parseGatewayStartupCommandV2({
+      schemaVersion: 2,
+      subject: prior.subject,
+      kind: "read-operation",
+      operation: {
+        schemaVersion: 2,
+        subject: prior.subject,
+        operationRef: prior.operationRef,
+        operationDigest: prior.operationDigest,
+        startup: prior,
+      },
+    });
+    if (
+      command.kind !== "read-operation" ||
+      command.operation.startup === null ||
+      !equal(command.operation.subject, binding.startup.subject) ||
+      command.operation.startup.processGeneration !== binding.startup.processGeneration - 1
+    )
+      throw unavailable();
+  } else if (kind === "retired-installation") {
+    const withdrawal = parseGatewayStartupCommandV1({
+      schemaVersion: 1,
+      kind: "read-operation",
+      operation: predecessor.historicalWithdrawal,
+    });
+    if (
+      withdrawal.kind !== "read-operation" ||
+      withdrawal.operation.startup === null ||
+      withdrawal.operation.installationId !== binding.startup.subject.installationId ||
+      !equal(withdrawal.operation.startup, predecessor.previousStartup) ||
+      binding.startup.processGeneration !== 1
+    )
+      throw unavailable();
+  } else throw unavailable();
+  const claim = parseGatewayStartupEventV2(current.claim);
+  const submission = parseGatewayStartupEventV2(current.submission);
+  if (
+    current.head.state !== "consumed" ||
+    claim.kind !== "consume-startup" ||
+    submission.kind !== "submit-create" ||
+    !equal(binding.startup, request.startup) ||
+    !equal(binding.selection, request.selection) ||
+    binding.createEffectRef !== native.createEffectRef ||
+    !equal(current.head.subject, request.startup.subject) ||
+    !equal(current.head.startup, request.startup) ||
+    current.head.processGeneration !== request.startup.processGeneration ||
+    current.head.version !== claim.afterHeadVersion ||
+    current.head.recordVersion !== claim.afterRecordVersion ||
+    current.head.latestOperationRef !== claim.command.operationRef ||
+    claim.command.operationRef !== request.consumedClaim.operationRef ||
+    claim.command.operationDigest !== request.consumedClaim.operationDigest ||
+    claim.afterRecordVersion !== request.consumedClaim.afterRecordVersion ||
+    !equal(claim.startup, request.startup) ||
+    !equal(claim.recipient, native.recipient) ||
+    claim.createEffectRef !== binding.createEffectRef ||
+    submission.createEffectRef !== binding.createEffectRef ||
+    !equal(submission.startup, request.startup) ||
+    !equal(submission.submissionInput?.binding, binding) ||
+    submission.previousOperationRef !== binding.startup.operationRef ||
+    claim.previousOperationRef !== submission.command.operationRef ||
+    claim.beforeHeadVersion !== submission.afterHeadVersion ||
+    claim.beforeRecordVersion !== submission.afterRecordVersion
+  )
+    throw unavailable();
+}
+
+type Disclosure<Association> = {
+  native: GatewayMaterialNativeLease<Association>;
   header: GatewayMaterialDeliveryHeaderV1;
   payload: GatewayMaterialEncodedPayloadV1;
   confirm: () => Promise<void>;
@@ -317,15 +557,27 @@ type Disclosure = {
  * Internal fixed composition. Missing original participants have no accepting fallback.
  * TODO(material delivery): bind the original central current reader, native profile and CRD source.
  */
-export function createGatewayMaterialDeliveryV1<TSelected>(options: {
-  native?: GatewayMaterialNativeSourceV1;
-  current?: GatewayMaterialDeliveryCurrentOwnerV1<TSelected>;
-  source?: GatewayMaterialSelectedSourceV1<TSelected>;
-}) {
+function createMaterialDelivery<
+  TSelected,
+  Request extends GatewayMaterialDeliveryRequestV1 | GatewayMaterialDeliveryRequestV2,
+  Association,
+  Current,
+>(
+  options: {
+    native?: GatewayMaterialNativeSource<Request, Association>;
+    current?: GatewayMaterialDeliveryCurrentOwner<TSelected, Request, Association, Current>;
+    source?: GatewayMaterialSelectedSource<TSelected, Current>;
+  },
+  guards: {
+    parse(input: unknown): Request;
+    association(value: unknown, request: Request): Association;
+    correlate(current: Current, request: Request, association: Association): void;
+  },
+) {
   const inspect = options.native?.inspect.bind(options.native);
   const withCurrent = options.current?.withCurrent.bind(options.current);
   const readSelected = options.source?.readSelected.bind(options.source);
-  const permits = new WeakMap<GatewayMaterialDisclosurePermitV1, Disclosure>();
+  const permits = new WeakMap<GatewayMaterialDisclosurePermitV1, Disclosure<Association>>();
   const proofs = new WeakSet<object>();
   let closing = false;
   let active: { abort: () => void; settled: Promise<void> } | undefined;
@@ -333,10 +585,10 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
 
   function lookupDisclosure(
     permit: GatewayMaterialDisclosurePermitV1,
-    native: GatewayMaterialNativeLeaseV1,
+    native: GatewayMaterialNativeLease<Association>,
     header: GatewayMaterialDeliveryHeaderV1,
     payload: GatewayMaterialEncodedPayloadV1,
-  ): Disclosure {
+  ): Disclosure<Association> {
     const entry = permits.get(permit);
     if (
       !entry ||
@@ -359,7 +611,7 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
   }
   function confirmDisclosure(
     permit: GatewayMaterialDisclosurePermitV1,
-    native: GatewayMaterialNativeLeaseV1,
+    native: GatewayMaterialNativeLease<Association>,
     header: GatewayMaterialDeliveryHeaderV1,
     payload: GatewayMaterialEncodedPayloadV1,
   ): Promise<void> {
@@ -385,7 +637,7 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
   }
   function consumeDisclosure(
     permit: GatewayMaterialDisclosurePermitV1,
-    native: GatewayMaterialNativeLeaseV1,
+    native: GatewayMaterialNativeLease<Association>,
     header: GatewayMaterialDeliveryHeaderV1,
     payload: GatewayMaterialEncodedPayloadV1,
   ): undefined {
@@ -403,11 +655,11 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
     proof: object,
     suppliedBounds: GatewayStartupCommandBoundsV1,
   ): Promise<GatewayMaterialDeliveryOutcomeV1> {
-    let request: GatewayMaterialDeliveryRequestV1;
+    let request: Request;
     let bounds: GatewayStartupCommandBoundsV1;
     let end: number;
     try {
-      request = parseGatewayMaterialDeliveryRequestV1(input);
+      request = guards.parse(input);
       ref(suppliedBounds.requestRef);
       const deadline = suppliedBounds.deadline;
       if (
@@ -549,7 +801,7 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
           native.transport !== "owned-child-stdio-installation-channel-material-v1"
         )
           throw unavailable();
-        const associated = association(native.association, request);
+        const associated = guards.association(native.association, request);
         watch(native.signal);
         checks.push(() => {
           sync(nativeAssert);
@@ -561,9 +813,9 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
         let callbackOpen = true;
         let workTask: Promise<GatewayMaterialDeliveryOutcomeV1> | undefined;
         let workSettled = false;
-        const work = async (scope: GatewayMaterialReadScopeV1<TSelected>) => {
+        const work = async (scope: GatewayMaterialReadScope<TSelected, Current>) => {
           let releaseBundle: (() => Promise<void>) | undefined;
-          let permitState: Disclosure | undefined;
+          let permitState: Disclosure<Association> | undefined;
           try {
             check();
             const scopeAssert = scope.assertCurrent.bind(scope);
@@ -575,7 +827,7 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
               sync(scopeAssert);
               remaining(scopeRemaining);
             });
-            correlate(scope.current, request, associated);
+            guards.correlate(scope.current, request, associated);
             check();
             if ((await recheck()) !== undefined) throw unavailable();
             check();
@@ -774,4 +1026,28 @@ export function createGatewayMaterialDeliveryV1<TSelected>(options: {
     return closeTask;
   }
   return Object.freeze({ execute, confirmDisclosure, consumeDisclosure, close });
+}
+
+export function createGatewayMaterialDeliveryV1<TSelected>(options: {
+  native?: GatewayMaterialNativeSourceV1;
+  current?: GatewayMaterialDeliveryCurrentOwnerV1<TSelected>;
+  source?: GatewayMaterialSelectedSourceV1<TSelected>;
+}) {
+  return createMaterialDelivery(options, {
+    parse: parseGatewayMaterialDeliveryRequestV1,
+    association,
+    correlate,
+  });
+}
+
+export function createGatewayMaterialDeliveryV2<TSelected>(options: {
+  native?: GatewayMaterialNativeSourceV2;
+  current?: GatewayMaterialDeliveryCurrentOwnerV2<TSelected>;
+  source?: GatewayMaterialSelectedSourceV2<TSelected>;
+}) {
+  return createMaterialDelivery(options, {
+    parse: parseGatewayMaterialDeliveryRequestV2,
+    association: associationV2,
+    correlate: correlateV2,
+  });
 }

@@ -1,13 +1,24 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import type { GatewayMaterialDeliveryRequestV1 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
+import type {
+  GatewayMaterialDeliveryRequestV1,
+  GatewayMaterialDeliveryHeaderV1,
+  GatewayMaterialDisclosurePermitV1,
+} from "@openclaw-enterprise/contracts/gateway-material-delivery-v1";
+import type { GatewayMaterialDeliveryRequestV2 } from "@openclaw-enterprise/contracts/gateway-material-delivery-v2";
 import {
   parseGatewayMaterialDeliveryRequestV1,
+  parseGatewayMaterialDeliveryRequestV2,
   type createGatewayMaterialDeliveryV1,
-  type GatewayMaterialNativeSourceV1,
-  type GatewayMaterialNativeLeaseV1,
+  type GatewayMaterialNativeSource,
+  type GatewayMaterialNativeLease,
+  type GatewayMaterialEncodedPayloadV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/material-delivery";
-import type { GatewayInstallationServiceAssociationV1 } from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
+import {
+  parseGatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV1,
+} from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
 import {
   canonicalGatewayStartupValueV1,
   type GatewayStartupCommandBoundsV1,
@@ -55,14 +66,11 @@ export interface ChannelMaterialNativeProfileV1 extends Omit<
 
 /** Consumed only by the original same-unit selected registration/current owner.
  * Expected configuration is never relabeled as the actual native mapping. */
-export interface ChannelMaterialRegistrationNativeV1 {
-  originalFor(
-    request: GatewayMaterialDeliveryRequestV1,
-    bounds: GatewayStartupCommandBoundsV1,
-  ): object | undefined;
+export interface ChannelMaterialRegistrationNative<Request> {
+  originalFor(request: Request, bounds: GatewayStartupCommandBoundsV1): object | undefined;
   inspectOriginal(
     original: object,
-    request: GatewayMaterialDeliveryRequestV1,
+    request: Request,
     bounds: GatewayStartupCommandBoundsV1,
   ):
     | Readonly<{
@@ -83,12 +91,29 @@ export interface ChannelMaterialRegistrationNativeV1 {
       }>
     | undefined;
 }
-export interface ChannelMaterialNativeServiceOptionsV1 {
+type MaterialDelivery<Association> = Omit<
+  ReturnType<typeof createGatewayMaterialDeliveryV1>,
+  "confirmDisclosure" | "consumeDisclosure"
+> & {
+  confirmDisclosure(
+    permit: GatewayMaterialDisclosurePermitV1,
+    native: GatewayMaterialNativeLease<Association>,
+    header: GatewayMaterialDeliveryHeaderV1,
+    payload: GatewayMaterialEncodedPayloadV1,
+  ): Promise<void>;
+  consumeDisclosure(
+    permit: GatewayMaterialDisclosurePermitV1,
+    native: GatewayMaterialNativeLease<Association>,
+    header: GatewayMaterialDeliveryHeaderV1,
+    payload: GatewayMaterialEncodedPayloadV1,
+  ): undefined;
+};
+interface ChannelMaterialNativeServiceOptions<Request, Association> {
   readonly binaryPath: string;
   readonly listenAddress: string;
   readonly configurationVersion: number;
   readonly profile: ChannelMaterialNativeProfileV1;
-  readonly association: GatewayInstallationServiceAssociationV1;
+  readonly association: Association;
   /** Original protected owner supplies the subordinate startup deadline/signal.
    * A fresh connection cannot extend either or repair an expired consumed claim. */
   readonly deadline: string;
@@ -96,10 +121,22 @@ export interface ChannelMaterialNativeServiceOptionsV1 {
   /** One immutable trusted composition. The actual current owner and CRD source
    * remain required; missing providers have no accepting fallback. */
   readonly compose: (
-    native: GatewayMaterialNativeSourceV1,
-    registrationNative: ChannelMaterialRegistrationNativeV1,
-  ) => ReturnType<typeof createGatewayMaterialDeliveryV1>;
+    native: GatewayMaterialNativeSource<Request, Association>,
+    registrationNative: ChannelMaterialRegistrationNative<Request>,
+  ) => MaterialDelivery<Association>;
 }
+export type ChannelMaterialRegistrationNativeV1 =
+  ChannelMaterialRegistrationNative<GatewayMaterialDeliveryRequestV1>;
+export type ChannelMaterialRegistrationNativeV2 =
+  ChannelMaterialRegistrationNative<GatewayMaterialDeliveryRequestV2>;
+export type ChannelMaterialNativeServiceOptionsV1 = ChannelMaterialNativeServiceOptions<
+  GatewayMaterialDeliveryRequestV1,
+  GatewayInstallationServiceAssociationV1
+>;
+export type ChannelMaterialNativeServiceOptionsV2 = ChannelMaterialNativeServiceOptions<
+  GatewayMaterialDeliveryRequestV2,
+  GatewayInstallationServiceAssociationV2
+>;
 const text = materialMetadataTextV1;
 const frozenCopy = <T>(input: T): T => {
   const value: T = JSON.parse(text(input));
@@ -133,9 +170,9 @@ type Envelope = Record<string, unknown> & {
   requestDigest: string;
   deadline: string;
 };
-interface Exchange {
+interface Exchange<Request> {
   event: Envelope;
-  request: GatewayMaterialDeliveryRequestV1;
+  request: Request;
   requestText: string;
   bounds: GatewayStartupCommandBoundsV1;
   proof: object;
@@ -147,8 +184,13 @@ interface Exchange {
 
 /** Owns a separate one-call child/connection. Only the original pipe creates a
  * local proof. No decoded peer record, caller DTO or public handle can do so. */
-export function createChannelMaterialNativeServiceV1(
-  options: ChannelMaterialNativeServiceOptionsV1,
+function createChannelMaterialNativeService<
+  Request extends GatewayMaterialDeliveryRequestV1 | GatewayMaterialDeliveryRequestV2,
+  Association extends
+    GatewayInstallationServiceAssociationV1 | GatewayInstallationServiceAssociationV2,
+>(
+  options: ChannelMaterialNativeServiceOptions<Request, Association>,
+  parseRequest: (input: unknown) => Request,
 ) {
   const profile = frozenCopy(options.profile),
     association = frozenCopy(options.association);
@@ -184,7 +226,7 @@ export function createChannelMaterialNativeServiceV1(
   const profileDigest = digest(profile),
     incarnation = id();
   const abort = new AbortController(),
-    proofs = new WeakMap<object, Exchange>();
+    proofs = new WeakMap<object, Exchange<Request>>();
   let child: ReturnType<typeof spawn> | undefined, exited: Promise<void> | undefined;
   let startupWork:
     | Promise<Readonly<{ listenAddress: string; signal: AbortSignal; close: () => Promise<void> }>>
@@ -195,7 +237,7 @@ export function createChannelMaterialNativeServiceV1(
     closing: Promise<void> | undefined;
   let started = false,
     stopped = false,
-    active: Exchange | undefined;
+    active: Exchange<Request> | undefined;
   let inspectionText = "",
     nativeExpiry = 0,
     monotonicEnd = Infinity;
@@ -212,7 +254,7 @@ export function createChannelMaterialNativeServiceV1(
     expire();
     void close().catch(() => {});
   };
-  const valid = (exchange: Exchange, bounds = exchange.bounds) =>
+  const valid = (exchange: Exchange<Request>, bounds = exchange.bounds) =>
     !stopped &&
     active === exchange &&
     !abort.signal.aborted &&
@@ -223,7 +265,7 @@ export function createChannelMaterialNativeServiceV1(
     bounds.requestRef === exchange.bounds.requestRef &&
     Date.now() < Math.min(Date.parse(deadline), Date.parse(bounds.deadline), nativeExpiry) &&
     performance.now() < monotonicEnd;
-  const assert = (exchange: Exchange): undefined => {
+  const assert = (exchange: Exchange<Request>): undefined => {
     if (!valid(exchange) || exchange.released || performance.now() - exchange.inspectedAt >= 1000)
       throw nativeUnavailable();
     return undefined;
@@ -243,7 +285,7 @@ export function createChannelMaterialNativeServiceV1(
       throw nativeUnavailable();
     return value as Envelope;
   };
-  const same = (value: Envelope, exchange: Exchange) =>
+  const same = (value: Envelope, exchange: Exchange<Request>) =>
     value.connectionId === exchange.event.connectionId &&
     value.exchangeId === exchange.event.exchangeId &&
     value.requestDigest === exchange.event.requestDigest &&
@@ -278,7 +320,7 @@ export function createChannelMaterialNativeServiceV1(
     if (!child?.stdin || stopped) throw nativeUnavailable();
     await writeMaterialFrameV1(child.stdin, createMaterialFrameV1(kind, metadata), abort.signal);
   };
-  const inspect = async (exchange: Exchange) => {
+  const inspect = async (exchange: Exchange<Request>) => {
     if (!valid(exchange) || !child?.stdout) throw nativeUnavailable();
     const challenge = id();
     await send(kinds.inspect, { ...exchange.event, challenge, message: {} });
@@ -298,23 +340,17 @@ export function createChannelMaterialNativeServiceV1(
       frame.release();
     }
   };
-  const corresponds = (
-    proof: object,
-    request: GatewayMaterialDeliveryRequestV1,
-    bounds: GatewayStartupCommandBoundsV1,
-  ) => {
+  const corresponds = (proof: object, request: Request, bounds: GatewayStartupCommandBoundsV1) => {
     const exchange = proofs.get(proof);
     if (!exchange || !valid(exchange, bounds)) return undefined;
     try {
-      return text(parseGatewayMaterialDeliveryRequestV1(request)) === exchange.requestText
-        ? exchange
-        : undefined;
+      return text(parseRequest(request)) === exchange.requestText ? exchange : undefined;
     } catch {
       return undefined;
     }
   };
-  let service!: ReturnType<typeof createGatewayMaterialDeliveryV1>;
-  const native = Object.freeze<GatewayMaterialNativeSourceV1>({
+  let service!: MaterialDelivery<Association>;
+  const native = Object.freeze<GatewayMaterialNativeSource<Request, Association>>({
     async inspect(proof, request, bounds) {
       const exchange = corresponds(proof, request, bounds);
       if (!exchange || exchange.acquired) return undefined;
@@ -322,7 +358,7 @@ export function createChannelMaterialNativeServiceV1(
       try {
         await inspect(exchange);
         assert(exchange);
-        const lease = Object.freeze<GatewayMaterialNativeLeaseV1>({
+        const lease = Object.freeze<GatewayMaterialNativeLease<Association>>({
           profile: "installation-channel-material-v1",
           transport: "owned-child-stdio-installation-channel-material-v1",
           association,
@@ -396,7 +432,7 @@ export function createChannelMaterialNativeServiceV1(
       }
     },
   });
-  const registrationNative = Object.freeze<ChannelMaterialRegistrationNativeV1>({
+  const registrationNative = Object.freeze<ChannelMaterialRegistrationNative<Request>>({
     originalFor(request, bounds) {
       if (
         !active ||
@@ -579,11 +615,11 @@ export function createChannelMaterialNativeServiceV1(
               connected.release();
             }
             const frame = await readMaterialFrameV1(owned.stdout, abort.signal);
-            let event: Envelope, request: GatewayMaterialDeliveryRequestV1, requestRef: string;
+            let event: Envelope, request: Request, requestRef: string;
             try {
               event = parseEnvelope(frame);
               const body = closedNativeObject(event.message, ["requestRef", "request"]);
-              request = parseGatewayMaterialDeliveryRequestV1(body.request);
+              request = parseRequest(body.request);
               requestRef = body.requestRef as string;
               if (
                 frame.kind !== kinds.request ||
@@ -605,7 +641,7 @@ export function createChannelMaterialNativeServiceV1(
               deadline: event.deadline,
               signal: abort.signal,
             });
-            const exchange: Exchange = {
+            const exchange: Exchange<Request> = {
               event,
               request,
               requestText: text(request),
@@ -674,4 +710,21 @@ export function createChannelMaterialNativeServiceV1(
       return startupWork;
     },
   });
+}
+
+export function createChannelMaterialNativeServiceV1(
+  options: ChannelMaterialNativeServiceOptionsV1,
+) {
+  return createChannelMaterialNativeService(options, parseGatewayMaterialDeliveryRequestV1);
+}
+/** Fixed V2 request grammar and full association; actual pipe/TLS custody,
+ * native rechecks, same-call proof and permit consumption are unchanged. */
+export function createChannelMaterialNativeServiceV2(
+  options: ChannelMaterialNativeServiceOptionsV2,
+) {
+  const association = parseGatewayInstallationServiceAssociationV2(options.association);
+  return createChannelMaterialNativeService(
+    { ...options, association },
+    parseGatewayMaterialDeliveryRequestV2,
+  );
 }
