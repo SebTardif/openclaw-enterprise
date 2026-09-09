@@ -944,6 +944,12 @@ export function createMemoryTurnJournal(
     );
   };
   const repository: TurnJournalUnitOfWorkV1 = {
+    async findDeadlineControl() {
+      return unavailable;
+    },
+    async retainDeadlineControl() {
+      return unavailable;
+    },
     async findExecution() {
       return unavailable;
     },

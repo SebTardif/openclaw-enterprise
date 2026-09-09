@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
 import { bindCommittedTurnJournalClock } from "../../packages/occ/src/turn-journal/transaction-guard.ts";
-import { sampleDispatchClock } from "../../packages/occ/src/turn-journal/dispatcher-clock.ts";
+import {
+  sampleDispatchClock,
+  takeDispatchClockForExecution,
+  transferDispatchDeadline,
+} from "../../packages/occ/src/turn-journal/dispatcher-clock.ts";
 import { SelectedExecutionController } from "../../packages/occ/src/turn-journal/selected-execution.ts";
 import { parseTurnJournalV1 } from "../../packages/contracts/src/turn-journal-v1.ts";
 import {
@@ -69,22 +73,29 @@ async function fixture(pool, existing) {
       deadlineAtMs: 900100,
     },
   };
+  const control = {
+    kind: "host-deadline-v1",
+    intent,
+    operationRef: ref("deadline"),
+    operationDigest: digest(),
+    nativeIncarnationRef: ref("incarnation"),
+    nativeConstructionRef: ref("construction"),
+    responsibilityRef: ref("cleanup"),
+    responsibilityVersion: 1,
+    deadlineAtMs: 900100,
+  };
   const start = {
+    kind: "host-controlled-v1",
     intent,
     operationRef: ref("start"),
     operationDigest: digest(),
     nativeExecutionRef: ref("native-execution"),
-    nativeIncarnationRef: ref("incarnation"),
+    nativeIncarnationRef: control.nativeIncarnationRef,
     nativeReservationRef: ref("native-reservation"),
     nativeSessionRef: ref("session"),
     nativeTurnRef: ref("turn"),
     acceptanceEvidenceRef: ref("acceptance"),
-    clockSourceRef: intent.dispatchClock.clockSourceRef,
-    clockEpochRef: intent.dispatchClock.clockEpochRef,
-    startedAtMs: 1100,
-    deadlineAtMs: 900100,
-    dispatchDeadlineAtMs: 900100,
-    clockCorrespondenceEvidenceRef: ref("clock-correspondence"),
+    deadlineControl: control,
   };
   const interruption = {
     start,
@@ -102,13 +113,7 @@ async function fixture(pool, existing) {
   const dispatch = () => h.issue("dispatch", v.binding);
   const bindIntent = (retained) => {
     Object.assign(intent, retained);
-    Object.assign(start, {
-      clockSourceRef: retained.dispatchClock.clockSourceRef,
-      clockEpochRef: retained.dispatchClock.clockEpochRef,
-      startedAtMs: retained.dispatchClock.anchorAtMs + 1,
-      deadlineAtMs: retained.dispatchClock.deadlineAtMs,
-      dispatchDeadlineAtMs: retained.dispatchClock.deadlineAtMs,
-    });
+    control.deadlineAtMs = retained.dispatchClock.anchorAtMs + retained.maximumExecutionMs;
   };
   const consumeIn = async (j) => {
     const dispatched = await j.recordDispatchIntent(dispatch(), h.call);
@@ -136,6 +141,32 @@ async function fixture(pool, existing) {
     dispatch,
     bindIntent,
     consumeIn,
+    control,
+    // SQL-only storage fixtures deliberately bypass provenance. Production
+    // control evidence is tested separately through the real original claim.
+    seedControl: () => sqlInsert(pool, v.attempt, "deadline-control", control),
+    async arm(guard, retainDeadline, stop = async () => {}) {
+      bindIntent(guard.executionIntent);
+      const pending = {
+        target: {
+          nativeIncarnationRef: start.nativeIncarnationRef,
+          nativeConstructionRef: control.nativeConstructionRef,
+        },
+        interrupt: stop,
+      };
+      const retention = retainDeadline(pending);
+      assert.equal(Object.isFrozen(pending), true);
+      assert.equal(Object.isFrozen(pending.target), true);
+      assert.throws(() => {
+        pending.target.nativeConstructionRef = ref("replaced");
+      }, TypeError);
+      assert.throws(() => {
+        pending.interrupt = async () => assert.fail("replaced stop owner");
+      }, TypeError);
+      const issued = await retention;
+      Object.assign(control, issued);
+      start.deadlineControl = control;
+    },
   };
 }
 const columns =
@@ -386,6 +417,7 @@ test(
         async () => {
           const f = await fixture(pool);
           committed(await f.h.write((j) => f.consumeIn(j)));
+          await f.seedControl();
           const handle = f.h.issue("consumption", f.start);
           const result = committed(
             await f.h.write((j) =>
@@ -435,11 +467,10 @@ test(
         async () => {
           const f = await fixture(pool);
           committed(await f.h.write((j) => f.consumeIn(j)));
+          await f.seedControl();
           for (const change of [
-            {
-              startedAtMs: f.intent.dispatchClock.anchorAtMs - 1,
-              deadlineAtMs: f.start.deadlineAtMs - 1,
-            },
+            { deadlineControl: { ...f.control, deadlineAtMs: f.control.deadlineAtMs + 1 } },
+            { deadlineControl: { ...f.control, nativeConstructionRef: ref("foreign") } },
             { deadlineAtMs: 901100 },
             { dispatchDeadlineAtMs: 901100, deadlineAtMs: 901100 },
             { annotation: "not-closed" },
@@ -474,9 +505,13 @@ test(
       await t.test("one native turn cannot acquire a second canonical execution", async () => {
         const f = await fixture(pool);
         committed(await f.h.write((j) => f.consumeIn(j)));
+        await f.seedControl();
         committed(await f.retain());
         const other = await fixture(pool, f);
         committed(await other.h.write((j) => other.consumeIn(j)));
+        other.control.nativeIncarnationRef = f.start.nativeIncarnationRef;
+        other.start.nativeIncarnationRef = f.start.nativeIncarnationRef;
+        await other.seedControl();
         const alias = {
           ...other.start,
           nativeIncarnationRef: f.start.nativeIncarnationRef,
@@ -507,6 +542,7 @@ test(
         async () => {
           const f = await fixture(pool);
           committed(await f.h.write((j) => f.consumeIn(j)));
+          await f.seedControl();
           const locker = await pool.connect();
           await locker.query("BEGIN");
           await locker.query("SELECT id FROM occ.agents WHERE id=$1 FOR UPDATE", [
@@ -589,6 +625,7 @@ test(
         async () => {
           const f = await fixture(pool);
           committed(await f.h.write((j) => f.consumeIn(j)));
+          await f.seedControl();
           const proxy = await runtimeCommitAckProxy(databaseUrl);
           const faultPool = new pg.Pool({
             connectionString: proxy.url,
@@ -628,6 +665,7 @@ test(
         async () => {
           const f = await fixture(pool);
           committed(await f.h.write((j) => f.consumeIn(j)));
+          await f.seedControl();
           committed(await f.retain());
           const handle = f.h.issue("consumption", f.interruption);
           assert.equal(
@@ -644,7 +682,7 @@ test(
           });
           const changed = {
             ...f.interruption,
-            start: { ...f.start, nativeIncarnationRef: ref("restarted") },
+            start: { ...f.start, nativeTurnRef: ref("other-turn") },
           };
           assert.equal(
             committed(
@@ -704,10 +742,10 @@ test(
           // External native-owner fixture: the assertions observe the real canonical
           // journal and original callback, not a simulated SQL or COMMIT decision.
           const native = {
-            async accept(guard) {
+            async accept(guard, _call, retainDeadline) {
               accepts++;
               await guard.assertCurrent();
-              f.bindIntent(guard.executionIntent);
+              await f.arm(guard, retainDeadline);
               receipt.evidence = f.h.issue("consumption", f.start);
               const otherController = new SelectedExecutionController(h.store, native, 10);
               await assert.rejects(otherController.acceptInitiation(f.v.attempt, guard, h.call));
@@ -814,9 +852,9 @@ test(
           let accepts = 0,
             submits = 0;
           const native = {
-            async accept(guard) {
+            async accept(guard, _call, retainDeadline) {
               await guard.assertCurrent();
-              f.bindIntent(guard.executionIntent);
+              await f.arm(guard, retainDeadline);
               receipt.evidence = f.h.issue("consumption", f.start);
               accepts++;
               return receipt;
@@ -896,7 +934,10 @@ test(
           };
           const controller = new SelectedExecutionController(f.h.store, native, 1);
           const first = controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call);
-          await started;
+          await Promise.race([
+            started,
+            first.then((result) => assert.fail(`Native owner was not entered: ${result.kind}`)),
+          ]);
           assert.equal(
             (await controller.dispatchAndConsume(second.dispatch(), second.consume(), f.p.call()))
               .kind,
@@ -905,6 +946,191 @@ test(
           release();
           assert.equal((await first).kind, "execution-unknown");
           assert.equal(accepts, 1);
+        },
+      );
+      await t.test(
+        "original cleanup transfer survives callback closure and rejects copied evidence",
+        async () => {
+          const f = await fixture(pool);
+          f.intent.maximumExecutionMs = 1500;
+          let originalGuard,
+            stopped = 0,
+            gates = 0,
+            exactControl;
+          const native = {
+            async accept(guard, _call, retainDeadline) {
+              originalGuard = guard;
+              await f.arm(guard, retainDeadline, async (control) => {
+                stopped++;
+                exactControl = control;
+              });
+              return { start: f.start, evidence: f.h.issue("consumption", f.start) };
+            },
+            async assertCurrent() {},
+            async confirmRetainedStart() {
+              gates++;
+            },
+          };
+          const controller = new SelectedExecutionController(f.h.store, native, 1);
+          assert.equal(
+            (await controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call)).kind,
+            "initiated",
+          );
+          assert.equal(gates, 1);
+          await assert.rejects(sampleDispatchClock(originalGuard, ref("closed")));
+          assert.throws(() =>
+            transferDispatchDeadline(
+              originalGuard,
+              f.h.call,
+              {
+                nativeIncarnationRef: f.start.nativeIncarnationRef,
+                nativeConstructionRef: ref("late"),
+              },
+              async () => {},
+            ),
+          );
+          assert.equal(
+            committed(await f.h.write((j) => j.retainDeadlineControl({}, f.h.call))).kind,
+            "unavailable",
+          );
+          same(
+            (await f.h.read((j) => j.findDeadlineControl(f.execution, f.h.call))).control,
+            f.control,
+          );
+          // Revoking continuing authority cannot revoke the cleanup already
+          // admitted for this exact construction.
+          f.p.setAllowed(false);
+          await new Promise((resolve) => setTimeout(resolve, 1550));
+          assert.equal(stopped, 1);
+          same(exactControl, f.control);
+          await assert.rejects(controller.resolveStart(f.execution, f.p.call()));
+          assert.equal(stopped, 1);
+          const reservations = await pool.query(
+            "SELECT count(*)::int n FROM occ.turn_journal_reservations WHERE attempt_ref=$1",
+            [f.v.attempt.attemptRef],
+          );
+          assert.equal(reservations.rows[0].n, 1);
+        },
+      );
+      await t.test("deadline stop bypasses blocked pre-start PostgreSQL retention", async () => {
+        const f = await fixture(pool);
+        f.intent.maximumExecutionMs = 1200;
+        let stopped = 0,
+          constructors = 0,
+          notified;
+        const stopReceived = new Promise((resolve) => {
+          notified = resolve;
+        });
+        const locker = await pool.connect();
+        let locked = false;
+        const native = {
+          async accept(guard, _call, retainDeadline) {
+            await locker.query("BEGIN");
+            locked = true;
+            await locker.query("SELECT id FROM occ.agents WHERE id=$1 FOR UPDATE", [
+              f.v.attempt.agentRef,
+            ]);
+            await f.arm(guard, retainDeadline, async () => {
+              stopped++;
+              notified();
+            });
+            constructors++;
+            throw new Error("Construction must stay gated");
+          },
+        };
+        const controller = new SelectedExecutionController(f.h.store, native, 1);
+        const running = controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call);
+        try {
+          await Promise.race([
+            stopReceived,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Stop waited behind PostgreSQL")), 4000),
+            ),
+          ]);
+          assert.equal(stopped, 1);
+          assert.equal(constructors, 0);
+        } finally {
+          if (locked) await locker.query("ROLLBACK");
+          locker.release();
+        }
+        assert.equal((await running).kind, "execution-unknown");
+        assert.equal(constructors, 0);
+        assert.equal(stopped, 1);
+        assert.equal(
+          (await f.h.read((j) => j.findExecution(f.execution, f.h.call))).kind,
+          "intent-only",
+        );
+        assert.equal(
+          (await f.h.read((j) => j.findDeadlineControl(f.execution, f.h.call))).kind,
+          "absent",
+        );
+      });
+      await t.test(
+        "unknown conditional-control COMMIT never starts construction or mints a replay",
+        async () => {
+          const f = await fixture(pool);
+          f.intent.maximumExecutionMs = 2500;
+          const proxy = await runtimeCommitAckProxy(databaseUrl);
+          const faultPool = new pg.Pool({
+            connectionString: proxy.url,
+            max: 2,
+            connectionTimeoutMillis: 250,
+          });
+          faultPool.on("error", () => {});
+          let constructors = 0,
+            stops = 0;
+          try {
+            const bind = f.p.options.bind;
+            f.p.options.bind = (context) => {
+              const ports = bind(context);
+              const query = context.query.query.bind(context.query);
+              context.query.query = async (statement, parameters) => {
+                const result = await query(statement, parameters);
+                // Arm after the actual INSERT: currentness-read COMMITs must
+                // not consume the conditional-control acknowledgment fault.
+                if (
+                  statement.startsWith("INSERT INTO occ.turn_journal_operations") &&
+                  parameters?.[7] === "deadline-control"
+                )
+                  proxy.arm();
+                return result;
+              };
+              return ports;
+            };
+            const h = journalHarness(faultPool, { provenance: f.p });
+            const native = {
+              async accept(guard, _call, retainDeadline) {
+                await f.arm(guard, retainDeadline, async () => {
+                  stops++;
+                  throw new Error("Unknown native stop ACK");
+                });
+                constructors++;
+                throw new Error("Unknown control cannot start construction");
+              },
+            };
+            const controller = new SelectedExecutionController(h.store, native, 1);
+            assert.equal(
+              (await controller.dispatchAndConsume(f.dispatch(), f.consume(), h.call)).kind,
+              "execution-unknown",
+            );
+            assert.equal(proxy.observedCommit, true);
+            assert.equal(constructors, 0);
+            assert.equal(
+              (await f.h.read((j) => j.findDeadlineControl(f.execution, f.h.call))).kind,
+              "found",
+            );
+            await new Promise((resolve) => setTimeout(resolve, 2550));
+            assert.equal(stops, 1);
+            assert.equal(
+              (await controller.dispatchAndConsume(f.dispatch(), f.consume(), f.p.call())).kind,
+              "unavailable",
+            );
+            assert.equal(stops, 1);
+            assert.equal(constructors, 0);
+          } finally {
+            await faultPool.end();
+            await proxy.close();
+          }
         },
       );
       await t.test("cancelled selected consumption retains no intent or native start", async () => {

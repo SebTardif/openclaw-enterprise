@@ -239,7 +239,7 @@ export type JournalExecutionIntentV1 = JournalExecutionSelectionV1 &
      * physical COMMIT timestamp. Native readiness never renews the ceiling. */
     dispatchClock: PreCommitDispatchClockV1 | HistoricalDispatchClockV1;
   }>;
-export type JournalExecutionStartV1 = Readonly<{
+export type MappedExecutionStartV1 = Readonly<{
   intent: JournalExecutionIntentV1;
   operationRef: string;
   operationDigest: string;
@@ -257,6 +257,48 @@ export type JournalExecutionStartV1 = Readonly<{
   dispatchDeadlineAtMs: number;
   clockCorrespondenceEvidenceRef: string;
 }>;
+/** Pre-admitted conditional deadline stop, including construction before readiness.
+ * This immutable value is correlation only; actual retained stop custody is required. */
+export type JournalDeadlineControlV1 = Readonly<{
+  kind: "host-deadline-v1";
+  intent: JournalExecutionIntentV1;
+  operationRef: string;
+  operationDigest: string;
+  nativeIncarnationRef: string;
+  nativeConstructionRef: string;
+  responsibilityRef: string;
+  responsibilityVersion: number;
+  deadlineAtMs: number;
+}>;
+export type HostControlledExecutionStartV1 = Readonly<{
+  kind: "host-controlled-v1";
+  intent: JournalExecutionIntentV1;
+  operationRef: string;
+  operationDigest: string;
+  nativeExecutionRef: string;
+  nativeIncarnationRef: string;
+  nativeReservationRef: string;
+  nativeSessionRef: string;
+  nativeTurnRef: string;
+  acceptanceEvidenceRef: string;
+  deadlineControl: JournalDeadlineControlV1;
+  /** Optional native-process observation only, never an enforcement clock mapping. */
+  nativeReadyObservation?: Readonly<{
+    clockSourceRef: string;
+    clockEpochRef: string;
+    observedAtMs: number;
+  }>;
+}>;
+export type JournalExecutionStartV1 = MappedExecutionStartV1 | HostControlledExecutionStartV1;
+declare const deadlineControlProvenance: unique symbol;
+export interface VerifiedDeadlineControlV1 {
+  readonly [deadlineControlProvenance]: true;
+}
+export type DeadlineControlStateV1 =
+  | Readonly<{ kind: "found"; control: JournalDeadlineControlV1 }>
+  | JournalAbsentV1
+  | JournalDeniedV1
+  | JournalUnavailableV1;
 export type ExactExecutionInterruptionV1 = Readonly<{
   start: JournalExecutionStartV1;
   operationRef: string;
@@ -289,6 +331,10 @@ export type ExecutionRetentionResultV1<T> =
   | JournalDeniedV1
   | JournalUnavailableV1;
 export interface TurnJournalReadV1 {
+  findDeadlineControl(
+    input: ExactSelectedExecutionV1,
+    call: AuthorityCallV1,
+  ): Promise<DeadlineControlStateV1>;
   findExecution(
     input: ExactSelectedExecutionV1,
     call: AuthorityCallV1,
@@ -299,6 +345,10 @@ export interface TurnJournalReadV1 {
   ): Promise<ExecutionInterruptionStateV1>;
 }
 export interface TurnJournalUnitOfWorkV1 {
+  retainDeadlineControl(
+    input: VerifiedDeadlineControlV1,
+    call: AuthorityCallV1,
+  ): Promise<ExecutionRetentionResultV1<JournalDeadlineControlV1>>;
   retainExecutionStart(
     input: VerifiedExecutionStartV1,
     call: AuthorityCallV1,
@@ -914,7 +964,7 @@ export const JournalExecutionIntentSchemaV1 = object({
     }),
   ]),
 });
-export const JournalExecutionStartSchemaV1 = object({
+export const MappedExecutionStartSchemaV1 = object({
   intent: JournalExecutionIntentSchemaV1,
   operationRef: ref,
   operationDigest: digest,
@@ -931,6 +981,41 @@ export const JournalExecutionStartSchemaV1 = object({
   dispatchDeadlineAtMs: sequence,
   clockCorrespondenceEvidenceRef: ref,
 });
+export const JournalDeadlineControlSchemaV1 = object({
+  kind: Type.Literal("host-deadline-v1"),
+  intent: JournalExecutionIntentSchemaV1,
+  operationRef: ref,
+  operationDigest: digest,
+  nativeIncarnationRef: ref,
+  nativeConstructionRef: ref,
+  responsibilityRef: ref,
+  responsibilityVersion: version,
+  deadlineAtMs: sequence,
+});
+export const HostControlledExecutionStartSchemaV1 = object({
+  kind: Type.Literal("host-controlled-v1"),
+  intent: JournalExecutionIntentSchemaV1,
+  operationRef: ref,
+  operationDigest: digest,
+  nativeExecutionRef: ref,
+  nativeIncarnationRef: ref,
+  nativeReservationRef: ref,
+  nativeSessionRef: ref,
+  nativeTurnRef: ref,
+  acceptanceEvidenceRef: ref,
+  deadlineControl: JournalDeadlineControlSchemaV1,
+  nativeReadyObservation: Type.Optional(
+    object({
+      clockSourceRef: ref,
+      clockEpochRef: ref,
+      observedAtMs: sequence,
+    }),
+  ),
+});
+export const JournalExecutionStartSchemaV1 = Type.Union([
+  MappedExecutionStartSchemaV1,
+  HostControlledExecutionStartSchemaV1,
+]);
 export const ExactExecutionInterruptionSchemaV1 = object({
   start: JournalExecutionStartSchemaV1,
   operationRef: ref,
@@ -1062,6 +1147,7 @@ export const TurnJournalSchemasV1 = Object.freeze({
   selectedExecution: ExactSelectedExecutionSchemaV1,
   executionSelection: JournalExecutionSelectionSchemaV1,
   executionIntent: JournalExecutionIntentSchemaV1,
+  deadlineControl: JournalDeadlineControlSchemaV1,
   executionStart: JournalExecutionStartSchemaV1,
   executionInterruption: ExactExecutionInterruptionSchemaV1,
   lookup: ExactEventOrLogicalKeySchemaV1,
@@ -1086,6 +1172,7 @@ export interface TurnJournalWireValuesV1 {
   selectedExecution: ExactSelectedExecutionV1;
   executionSelection: JournalExecutionSelectionV1;
   executionIntent: JournalExecutionIntentV1;
+  deadlineControl: JournalDeadlineControlV1;
   executionStart: JournalExecutionStartV1;
   executionInterruption: ExactExecutionInterruptionV1;
   lookup: ExactEventOrLogicalKeyV1;
@@ -1225,8 +1312,28 @@ function checkIntrinsic(input: unknown): void {
     )
       invalid();
   }
+  if (v.kind === "host-deadline-v1") {
+    const control = v as unknown as JournalDeadlineControlV1;
+    const clock = control.intent.dispatchClock;
+    if (
+      !("kind" in clock) ||
+      clock.kind !== "pre-commit-monotonic-v1" ||
+      !Number.isSafeInteger(clock.anchorAtMs + control.intent.maximumExecutionMs) ||
+      control.deadlineAtMs !== clock.anchorAtMs + control.intent.maximumExecutionMs ||
+      control.deadlineAtMs > clock.deadlineAtMs
+    )
+      invalid();
+  }
+  if (v.kind === "host-controlled-v1") {
+    const start = v as unknown as HostControlledExecutionStartV1;
+    if (
+      !same(start.intent, start.deadlineControl.intent) ||
+      start.nativeIncarnationRef !== start.deadlineControl.nativeIncarnationRef
+    )
+      invalid();
+  }
   if (v.dispatchDeadlineAtMs !== undefined) {
-    const start = v as unknown as JournalExecutionStartV1;
+    const start = v as unknown as MappedExecutionStartV1;
     if (
       start.deadlineAtMs <= start.startedAtMs ||
       start.deadlineAtMs !==
@@ -2090,7 +2197,7 @@ export function nonTurnReceiptMatchesV1(
 export interface JournalEvidenceProvenanceV1 {
   /** Optional only for unselected adapters. Missing native provenance refuses the
    * selected branch. Implementations inspect actual original transport custody,
-   * clock correspondence and current purpose again after accepting locks. */
+   * retained deadline control and current purpose again after accepting locks. */
   inspectExecutionStart?(
     handle: VerifiedExecutionStartV1,
     call: AuthorityCallV1,

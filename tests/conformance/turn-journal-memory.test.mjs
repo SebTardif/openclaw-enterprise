@@ -190,6 +190,8 @@ const updateStatus = (s, version, code = "resolved-completed") => ({
   operation: { kind: "update", providerMessageRef: s.providerMessageRef },
 });
 const journalNames = [
+  "findDeadlineControl",
+  "retainDeadlineControl",
   "findExecution",
   "findExecutionInterruption",
   "retainExecutionStart",
@@ -235,7 +237,7 @@ test("M01.2 configured state supplies all repository methods and read-only proje
     assert.deepEqual(Object.keys(unit.turnJournal).sort(), [...journalNames].sort());
   });
   await h.state.read(async (view) => {
-    assert.equal(Object.keys(view.turnJournal).length, 13);
+    assert.equal(Object.keys(view.turnJournal).length, 14);
     assert.equal(view.turnJournal.admit, undefined);
     assert.equal(view.turnJournal.consumeAttempt, undefined);
   });
@@ -243,10 +245,14 @@ test("M01.2 configured state supplies all repository methods and read-only proje
 
 test("selected execution is explicitly unavailable in the memory journal", async () => {
   const h = await harness();
-  for (const name of ["findExecution", "findExecutionInterruption"]) {
+  for (const name of ["findDeadlineControl", "findExecution", "findExecutionInterruption"]) {
     assert.equal((await h.read((j, call) => j[name]({}, call))).kind, "unavailable");
   }
-  for (const name of ["retainExecutionStart", "retainExecutionInterruption"]) {
+  for (const name of [
+    "retainDeadlineControl",
+    "retainExecutionStart",
+    "retainExecutionInterruption",
+  ]) {
     assert.equal(committed(await h.write((j, call) => j[name]({}, call))).kind, "unavailable");
   }
   assert.equal(

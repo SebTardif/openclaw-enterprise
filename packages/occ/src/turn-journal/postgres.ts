@@ -1,3 +1,4 @@
+import { inspectOriginalDeadlineControl } from "./transaction-guard.ts";
 import { randomUUID, createHash } from "node:crypto";
 import type { Installation } from "@openclaw-enterprise/contracts/resources/installation";
 import type { AuthorityCallV1 } from "@openclaw-enterprise/contracts/runtime-authority-v1";
@@ -223,7 +224,11 @@ export function createPostgresTurnJournal(
     if (authorized.kind !== "authorized") return authorized;
     const value = await work(authorized.installation);
     active(call);
-    if (method === "findExecution" || method === "findExecutionInterruption") {
+    if (
+      method === "findExecution" ||
+      method === "findExecutionInterruption" ||
+      method === "findDeadlineControl"
+    ) {
       const current = await authorize(method, input, call);
       if (current.kind !== "authorized") return current;
     }
@@ -454,6 +459,65 @@ export function createPostgresTurnJournal(
     return rows[0] ? parseOperationRow(rows[0]) : null;
   };
   const repository: TurnJournalUnitOfWorkV1 = {
+    async findDeadlineControl(input, call) {
+      const execution = parseTurnJournalV1("selectedExecution", input);
+      return read("findDeadlineControl", execution, call, async (installation) => {
+        if (execution.attempt.installationRef !== installation.id) return denied;
+        const retained = await executionOperation(execution.attempt, "deadline-control");
+        return retained?.operationKind === "deadline-control" &&
+          sameJournalValue(retained.record.intent.execution, execution)
+          ? ({ kind: "found", control: retained.record } as const)
+          : absent;
+      });
+    },
+    retainDeadlineControl: (input, call) =>
+      mutate(call, async () => {
+        const auth = await authorize("retainDeadlineControl", input, call);
+        if (auth.kind !== "authorized") return auth;
+        const inspect = async () => {
+          const value = await inspectOriginalDeadlineControl(input, checkedCall(call));
+          active(call);
+          return failure(value) ? value : parseTurnJournalV1("deadlineControl", value);
+        };
+        const control = await inspect();
+        if (failure(control)) return control;
+        const attempt = control.intent.execution.attempt;
+        if (attempt.installationRef !== auth.installation.id || !(await agentLock(attempt)))
+          return denied;
+        const current = await inspect();
+        if (failure(current)) return current;
+        if (!sameJournalValue(current, control)) return denied;
+        const existing = await executionOperation(attempt, "deadline-control");
+        if (existing)
+          return existing.operationKind === "deadline-control" &&
+            sameJournalValue(existing.record, control)
+            ? ({ kind: "existing", record: existing.record } as const)
+            : conflict;
+        const intent = await executionOperation(attempt, "execution-intent");
+        const row = await getAttempt(attempt);
+        const record = row && parseAttemptRow(row);
+        if (
+          intent?.operationKind !== "execution-intent" ||
+          !sameJournalValue(intent.record, control.intent) ||
+          !record ||
+          "phase" in record ||
+          record.outcome.kind !== "consumed" ||
+          !record.consumption ||
+          !sameJournalValue(record.consumption.operation, control.intent.execution.consumption) ||
+          !(await reservationHeld(attempt))
+        )
+          return conflict;
+        if (
+          (await executionOperation(attempt, "cancellation")) !== null ||
+          (await executionOperation(attempt, "execution-start")) !== null
+        )
+          return denied;
+        const final = await inspect();
+        if (failure(final)) return final;
+        if (!sameJournalValue(final, control)) return denied;
+        await putOperation(attempt, "deadline-control", control.operationRef, control, control);
+        return { kind: "recorded", record: control } as const;
+      }),
     async findExecution(input, call) {
       const execution = parseTurnJournalV1("selectedExecution", input);
       return read("findExecution", execution, call, async (installation) => {
@@ -517,6 +581,13 @@ export function createPostgresTurnJournal(
           start.intent.dispatchClock.kind !== "pre-commit-monotonic-v1"
         )
           return unavailable;
+        if (!("kind" in start) || start.kind !== "host-controlled-v1") return unavailable;
+        const control = await executionOperation(attempt, "deadline-control");
+        if (
+          control?.operationKind !== "deadline-control" ||
+          !sameJournalValue(control.record, start.deadlineControl)
+        )
+          return conflict;
         const intent = await executionOperation(attempt, "execution-intent");
         const row = await getAttempt(attempt);
         const record = row && parseAttemptRow(row);

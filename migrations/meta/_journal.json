@@ -337,6 +337,13 @@
       "when": 1788864165468,
       "tag": "0047_runtime_effect_admission",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788864165469,
+      "tag": "0048_execution_deadline_control",
+      "breakpoints": true
     }
   ]
 }
