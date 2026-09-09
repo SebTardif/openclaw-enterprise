@@ -53,6 +53,26 @@ func TestProfileValidationIsPureAndPreservesExactInput(t *testing.T) {
 	}
 }
 
+func TestObservationProfileCannotBorrowOtherOperationPolicies(t *testing.T) {
+	profile := profileValue()
+	profile.OperationPolicy = "runtime-observation-read-v1"
+	profile.TransportProfileRef = "owned-child-stdio-runtime-observation-v1"
+	parsed, err := servicebridge.ValidateProfile(jsonBytes(t, profile))
+	if err != nil || parsed != profile {
+		t.Fatal("exact observation profile was not preserved")
+	}
+	for _, policy := range []string{"read-operation-only-v1", "initial-harness-bind-v1", "installation-gateway-startup-v1"} {
+		changed := profile
+		changed.OperationPolicy = policy
+		if _, err := servicebridge.ValidateProfile(jsonBytes(t, changed)); err == nil {
+			t.Fatalf("observation transport accepted policy %s", policy)
+		}
+	}
+	if _, err := servicebridge.ValidateGatewayStartupClientProfile(jsonBytes(t, profile)); err == nil {
+		t.Fatal("observation profile became a gateway startup client")
+	}
+}
+
 func TestGatewayStartupProfileHasFixedClientAndServerSides(t *testing.T) {
 	server := profileValue()
 	server.OperationPolicy = "installation-gateway-startup-v1"

@@ -288,6 +288,13 @@
       "when": 1788864165461,
       "tag": "0040_delegation",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1788864165462,
+      "tag": "0041_runtime_service_observation_profile",
+      "breakpoints": true
     }
   ]
 }

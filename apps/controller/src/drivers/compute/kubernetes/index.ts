@@ -15,6 +15,7 @@ import { KubernetesRouting } from "./routing.ts";
 import { KubernetesCleanup } from "./cleanup.ts";
 import {
   KubernetesRuntimeObservations,
+  type KubernetesRuntimeObservationAdmission,
   type KubernetesRuntimeObservationDependencies,
 } from "./runtime-observations.ts";
 import {
@@ -673,6 +674,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new Error("Compute lifecycle owners cannot change after lifecycle operations begin.");
     }
     this.lifecycle = new ComputeLifecycleDispatcher(drivers);
+  }
+
+  bindRuntimeObservationAdmission(admission: KubernetesRuntimeObservationAdmission): () => void {
+    return this.runtimeObservations.bindNativeAdmission(admission);
   }
 
   discover(input: ExactCreateEffectV1, call: RuntimeReadCallV1): Promise<DiscoveryResultV1> {

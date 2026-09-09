@@ -255,6 +255,7 @@ export async function composeProduction(config: ProductionConfig) {
     if (config.runtimeAuthorityReadbackConfigPath !== undefined) {
       runtimeReadback = await startRuntimeAuthorityReadback({
         state,
+        computeDriver,
         installationId: persistedInstallation.id,
         trust: runtimeServiceTrust,
         configPath: config.runtimeAuthorityReadbackConfigPath,

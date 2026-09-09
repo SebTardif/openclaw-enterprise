@@ -16,7 +16,8 @@ export const RUNTIME_SERVICE_NATIVE_LIMITS = Object.freeze({
 } as const);
 
 /** Protected deployment input. This technical configuration grants no service identity. */
-export type RuntimeServiceOperationPolicy = "read-operation-only-v1" | "initial-harness-bind-v1";
+export type RuntimeServiceOperationPolicy =
+  "read-operation-only-v1" | "initial-harness-bind-v1" | "runtime-observation-read-v1";
 export interface RuntimeAuthoritySource {
   readonly schemaVersion: 1;
   readonly sourceRef: string;
@@ -30,7 +31,9 @@ export interface RuntimeAuthoritySource {
   readonly verifierProfileRef: string;
   readonly nativeExecutableSha256: string;
   readonly transportProfileRef:
-    "owned-child-stdio-readback-v1" | "owned-child-stdio-initial-harness-bind-v1";
+    | "owned-child-stdio-readback-v1"
+    | "owned-child-stdio-initial-harness-bind-v1"
+    | "owned-child-stdio-runtime-observation-v1";
   readonly limits: typeof RUNTIME_SERVICE_NATIVE_LIMITS;
 }
 export type RuntimeServiceNativeProfile = RuntimeAuthoritySource & {
@@ -44,6 +47,10 @@ export type RuntimeServiceNativeProfile = RuntimeAuthoritySource & {
     | {
         readonly transportProfileRef: "owned-child-stdio-initial-harness-bind-v1";
         readonly operationPolicy: "initial-harness-bind-v1";
+      }
+    | {
+        readonly transportProfileRef: "owned-child-stdio-runtime-observation-v1";
+        readonly operationPolicy: "runtime-observation-read-v1";
       }
   );
 
@@ -65,7 +72,7 @@ export type RuntimeServiceTrustRequest = RuntimeServiceTrustRequestBase &
         readonly agentId: string;
         readonly peerSPIFFEId: string;
         /** Absent only for the original closed readback admission. */
-        readonly operationPolicy?: "initial-harness-bind-v1";
+        readonly operationPolicy?: "initial-harness-bind-v1" | "runtime-observation-read-v1";
       }
     | { readonly kind: "service-withdraw"; readonly serviceIdentityRef: string }
   );
@@ -201,8 +208,16 @@ const bindSourceProperties = {
   ...sourceProperties,
   transportProfileRef: literal("owned-child-stdio-initial-harness-bind-v1"),
 };
+const observationSourceProperties = {
+  ...sourceProperties,
+  transportProfileRef: literal("owned-child-stdio-runtime-observation-v1"),
+};
 export const RuntimeAuthoritySourceSchema: JsonSchema = {
-  anyOf: [object(sourceProperties), object(bindSourceProperties)],
+  anyOf: [
+    object(sourceProperties),
+    object(bindSourceProperties),
+    object(observationSourceProperties),
+  ],
 };
 export const RuntimeServiceNativeProfileSchema: JsonSchema = {
   anyOf: [
@@ -215,6 +230,12 @@ export const RuntimeServiceNativeProfileSchema: JsonSchema = {
     object({
       ...bindSourceProperties,
       operationPolicy: literal("initial-harness-bind-v1"),
+      sourceConfigurationDigest: digest,
+      peerSPIFFEId: spiffe,
+    }),
+    object({
+      ...observationSourceProperties,
+      operationPolicy: literal("runtime-observation-read-v1"),
       sourceConfigurationDigest: digest,
       peerSPIFFEId: spiffe,
     }),
@@ -247,7 +268,9 @@ export const RuntimeServiceTrustRequestSchema: JsonSchema = {
       namespaceId: id("ns"),
       agentId: id("agt"),
       peerSPIFFEId: spiffe,
-      operationPolicy: literal("initial-harness-bind-v1"),
+      operationPolicy: {
+        anyOf: [literal("initial-harness-bind-v1"), literal("runtime-observation-read-v1")],
+      },
     }),
   ],
 };

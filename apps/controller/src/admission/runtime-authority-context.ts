@@ -5,6 +5,11 @@ import {
   parseRuntimeAuthorityJsonV1,
   parseRuntimeAuthorityV1,
   parseRuntimeMutationResultV1,
+  parseRuntimeEffectsV1,
+  parseRuntimeEffectsResponseV1,
+  type ComputeDriver,
+  type ExactCreateEffectV1,
+  type RuntimeObservationInputV1,
   type RuntimeAuthorityCallBoundsV1,
   type RuntimeAuthorityContextFactoryV1,
   type RuntimeAuthorityTrustedContextV1,
@@ -35,6 +40,7 @@ import {
   nativeUnavailable,
   writeNativeFrame,
 } from "./runtime-authority-wire.ts";
+import { connectSelectedComputeRuntimeObservations } from "../composition/driver-factories/compute.ts";
 
 const id = () => randomBytes(16).toString("hex");
 const idPattern = /^[0-9a-f]{32}$/;
@@ -82,7 +88,32 @@ interface Exchange {
 
 type NativeOperation =
   | { readonly method: "readOperation"; readonly operation: ExactAuthorityOperationV1 }
-  | { readonly method: "bind"; readonly operation: BindRuntimeV1 };
+  | { readonly method: "bind"; readonly operation: BindRuntimeV1 }
+  | {
+      readonly method: "discover";
+      readonly operation: ExactCreateEffectV1;
+      readonly requestRef: string;
+    }
+  | {
+      readonly method: "observe";
+      readonly operation: RuntimeObservationInputV1;
+      readonly requestRef: string;
+    };
+
+// Matches the existing observation consumer's canonical input digest, retaining
+// array order. The closed IFC parser runs first; a digest adds no authentication.
+const observationDigest = (input: ExactCreateEffectV1 | RuntimeObservationInputV1) =>
+  nativeDigest(
+    Buffer.from(
+      JSON.stringify(input, (_key, value) =>
+        value === null || Array.isArray(value) || typeof value !== "object"
+          ? value
+          : Object.fromEntries(
+              Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            ),
+      ),
+    ),
+  );
 
 export interface NativeRuntimeReadbackOptions {
   readonly binaryPath: string;
@@ -92,6 +123,7 @@ export interface NativeRuntimeReadbackOptions {
   readonly installationId: string;
   readonly state: PlatformStateStore;
   readonly trust: RuntimeServiceTrustService;
+  readonly computeDriver?: ComputeDriver;
 }
 
 /** Actual accepting path. No callback or exported method accepts diagnostics,
@@ -114,6 +146,11 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
     throw nativeUnavailable();
   const configuration = initial.admission.configuration;
   const profile = initial.admission.profile;
+  if (
+    profile.operationPolicy === "runtime-observation-read-v1" &&
+    options.computeDriver === undefined
+  )
+    throw nativeUnavailable();
   const incarnation = id();
   const initialBinding = canonicalRuntimeServiceTrust(initial);
   const profileBytes = Buffer.from(canonicalRuntimeServiceTrust(profile));
@@ -134,6 +171,7 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
     stopped = false;
   let stopFrames = () => {};
   let closing: Promise<void> | undefined;
+  let observations: ReturnType<typeof connectSelectedComputeRuntimeObservations> | undefined;
   let writes: Promise<void> = Promise.resolve();
   let queued = 0;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -180,6 +218,7 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
     if (closing) return closing;
     stopped = true;
     lifetime.abort();
+    observations?.close();
     clearTimeout(pollTimer);
     readyReject();
     if (active) stopExchange(active);
@@ -405,6 +444,60 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
       },
     },
   });
+  if (profile.operationPolicy === "runtime-observation-read-v1") {
+    try {
+      observations = connectSelectedComputeRuntimeObservations(options.computeDriver!, {
+        clock: { now: () => new Date(), monotonicMilliseconds: () => performance.now() },
+        signal: lifetime.signal,
+        contextFactory: factory,
+        async readAuthorization(method, input, call) {
+          const exchange = contexts.get(call.context);
+          if (!exchange || !bounds(exchange, call) || exchange.request?.method !== method)
+            return undefined;
+          const request = exchange.request;
+          if (request.method !== "discover" && request.method !== "observe") return undefined;
+          try {
+            const parsed =
+              method === "discover"
+                ? parseRuntimeEffectsV1("exactCreate", input)
+                : parseRuntimeEffectsV1("observationInput", input);
+            const target = "effect" in parsed ? parsed.effect.target : parsed.target;
+            const scope = configuration.allowedScope;
+            const inputDigest = observationDigest(parsed);
+            if (
+              scope.kind !== "agent" ||
+              target.component !== "harness" ||
+              target.installationId !== configuration.installationId ||
+              target.installationId !== scope.installationId ||
+              target.namespaceId !== scope.namespaceId ||
+              target.agentId !== scope.agentId ||
+              inputDigest !== observationDigest(request.operation)
+            )
+              return undefined;
+            const verified = await factory.inspect(call.context, call);
+            if (!verified || !bounds(exchange, call)) return undefined;
+            return Object.freeze({
+              configuration,
+              method,
+              inputDigest,
+              requestRef: call.requestRef,
+              recipientRef: call.recipientRef,
+              transportBinding: verified.transportBinding,
+            });
+          } catch {
+            return undefined;
+          }
+        },
+      });
+    } catch {
+      // No startup frames have been sent. Join the actual child even if the
+      // selected observer already belongs to another listener.
+      stopped = true;
+      lifetime.abort();
+      await closeNativeChild(child, exited);
+      throw nativeUnavailable();
+    }
+  }
   const handle = async (exchange: Exchange, request: NativeOperation) => {
     const call = {
       requestRef: exchange.requestRef,
@@ -416,16 +509,33 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
       const context = await factory.authenticate(exchange.transport, configuration, call);
       // The parsed original request is retained on this exchange. Neither a
       // second public message nor a callback can choose a different service call.
-      const result =
-        request.method === "bind"
-          ? await authority.bind(request.operation, { ...call, context })
-          : await authority.readOperation(request.operation, { ...call, context });
+      const invoke = async () => {
+        if (request.method === "bind")
+          return parseRuntimeMutationResultV1(
+            "bind",
+            await authority.bind(request.operation, { ...call, context }),
+          );
+        if (request.method === "readOperation")
+          return parseRuntimeAuthorityV1(
+            "operationState",
+            await authority.readOperation(request.operation, { ...call, context }),
+          );
+        if (!observations) throw nativeUnavailable();
+        if (request.method === "discover")
+          return parseRuntimeEffectsResponseV1(
+            "discover",
+            request.operation,
+            await observations.effects.discover(request.operation, { ...call, context }),
+          );
+        return parseRuntimeEffectsResponseV1(
+          "observe",
+          request.operation,
+          await observations.effects.observe(request.operation, { ...call, context }),
+        );
+      };
+      const safe = await invoke();
       if (!bounds(exchange, call)) return;
       await inspectNative(exchange, call);
-      const safe =
-        request.method === "bind"
-          ? parseRuntimeMutationResultV1("bind", result)
-          : parseRuntimeAuthorityV1("operationState", result);
       if (!bounds(exchange, call)) return;
       await command(
         "result",
@@ -520,6 +630,7 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
             "method",
             "deadline",
             "operation",
+            ...(profile.operationPolicy === "runtime-observation-read-v1" ? ["requestRef"] : []),
           ]);
           const requestedDeadline = nativeTimestamp(request.deadline);
           if (
@@ -527,7 +638,29 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
             Date.parse(event.deadline) > Date.parse(requestedDeadline)
           )
             throw nativeUnavailable();
-          if (request.method === "readOperation") {
+          if (
+            (request.method === "discover" || request.method === "observe") &&
+            profile.operationPolicy === "runtime-observation-read-v1"
+          ) {
+            if (
+              typeof request.requestRef !== "string" ||
+              !/^[A-Za-z0-9._:/-]{1,200}$/.test(request.requestRef)
+            )
+              throw nativeUnavailable();
+            if (request.method === "discover") {
+              const input = parseRuntimeEffectsV1("exactCreate", request.operation);
+              if (input.effect.target.component !== "harness") throw nativeUnavailable();
+              operation = { method: "discover", operation: input, requestRef: request.requestRef };
+            } else {
+              const input = parseRuntimeEffectsV1("observationInput", request.operation);
+              if (input.kind !== "preallocated-candidate" || input.target.component !== "harness")
+                throw nativeUnavailable();
+              operation = { method: "observe", operation: input, requestRef: request.requestRef };
+            }
+          } else if (
+            request.method === "readOperation" &&
+            profile.operationPolicy !== "runtime-observation-read-v1"
+          ) {
             operation = {
               method: "readOperation",
               operation: parseRuntimeAuthorityJsonV1(
@@ -560,7 +693,12 @@ export async function startNativeRuntimeReadback(options: NativeRuntimeReadbackO
           abort,
           transport: Object.freeze({}),
           binding: Object.freeze({}) as RuntimeAuthorityTransportBindingV1,
-          requestRef: operation?.operation.requestRef ?? "",
+          requestRef:
+            operation === undefined
+              ? ""
+              : "requestRef" in operation
+                ? operation.requestRef
+                : operation.operation.requestRef,
           request: operation,
           started: performance.now(),
           remaining,

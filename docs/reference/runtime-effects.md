@@ -16,9 +16,12 @@ preallocated-candidate `observe` read methods. Its internal collaborator checks
 retained create correlation and the exact Deployment/ReplicaSet/Pod UID chain
 through the existing Kubernetes client. Positive results require independently
 authenticated current admission, execution, profile and original observation
-records supplied through trusted constructor dependencies. Default startup does
-not supply those integrations, so these reads remain unavailable in production.
-No Installation JSON setting enables them. A complete candidate observation has
+records supplied through trusted constructor dependencies. A separately admitted
+[native observation listener](runtime-service-transport.md#observation-reads) can
+supply authentic exact-call admission to the existing selected gVisor observer.
+Default startup still lacks the independent original producer records, so reads
+remain nonpositive before Kubernetes access until those producers are composed.
+No Installation JSON setting supplies those records. A complete candidate observation has
 only `observation-only` eligibility and can have absent target identity evidence;
 it does not require Pod Ready or authorize binding, routing or execution.
 

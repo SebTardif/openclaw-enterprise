@@ -250,7 +250,11 @@ async function availableLoopbackAddress() {
   return address;
 }
 
-async function startAdmittedReadback(t, executables, { state, trust, installationId, admission }) {
+async function startAdmittedReadback(
+  t,
+  executables,
+  { state, trust, installationId, admission, computeDriver },
+) {
   const listenAddress = await availableLoopbackAddress();
   const configPath = join(executables.directory, `selected-${randomUUID()}.json`);
   await writeFile(
@@ -272,6 +276,7 @@ async function startAdmittedReadback(t, executables, { state, trust, installatio
     installationId,
     configPath,
     binaryPath: executables.binaryPath,
+    ...(computeDriver === undefined ? {} : { computeDriver }),
   });
   assert.equal(readback.address, listenAddress);
   t.after(() => readback.close());
@@ -371,23 +376,20 @@ async function waitHistoryRead(value, table = "runtime_authority_operations") {
 }
 
 async function assertJoinedHistory(value, pids, table = "runtime_authority_operations") {
+  // Polling can start another owned read after the initial PID snapshot. Join
+  // both sets within the same bound, including server-side disconnect visibility.
   await until(
     async () =>
-      (await value.pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::int[])", [pids]))
-        .rowCount === 0,
+      (
+        await value.pool.query(
+          "SELECT 1 FROM pg_stat_activity WHERE pid=ANY($1::int[]) OR (application_name=$2 AND wait_event_type='Lock' AND query LIKE $3)",
+          [pids, value.applicationName, `%${table}%`],
+        )
+      ).rowCount === 0,
     "cancelled actual PostgreSQL history backend remained after native close",
     1500,
   );
   assert.equal(value.pool.waitingCount, 0);
-  assert.equal(
-    (
-      await value.pool.query(
-        "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE $2",
-        [value.applicationName, `%${table}%`],
-      )
-    ).rowCount,
-    0,
-  );
 }
 
 // Test-only process fault injection. Linux ownership and exact disposable

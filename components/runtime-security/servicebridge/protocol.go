@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	MaxFrameBytes           = 131072
-	MaxRequestBytes         = 65536
-	gatewayStartupPolicy    = "installation-gateway-startup-v1"
-	gatewayStartupTransport = "owned-child-stdio-installation-gateway-startup-v1"
+	MaxFrameBytes               = 131072
+	MaxRequestBytes             = 65536
+	gatewayStartupPolicy        = "installation-gateway-startup-v1"
+	gatewayStartupTransport     = "owned-child-stdio-installation-gateway-startup-v1"
+	runtimeObservationPolicy    = "runtime-observation-read-v1"
+	runtimeObservationTransport = "owned-child-stdio-runtime-observation-v1"
 )
 
 var (
@@ -82,12 +84,13 @@ func validateProfile(raw []byte, client bool) (Profile, error) {
 	peer, peerErr := spiffeid.FromString(p.PeerSPIFFEID)
 	readback := p.OperationPolicy == "read-operation-only-v1" && p.TransportProfileRef == "owned-child-stdio-readback-v1"
 	initialBind := p.OperationPolicy == "initial-harness-bind-v1" && p.TransportProfileRef == "owned-child-stdio-initial-harness-bind-v1"
+	observation := p.OperationPolicy == runtimeObservationPolicy && p.TransportProfileRef == runtimeObservationTransport
 	gatewayStartup := p.OperationPolicy == gatewayStartupPolicy && p.TransportProfileRef == gatewayStartupTransport
 	recipient := p.OwnSPIFFEID
 	if client {
 		recipient = p.PeerSPIFFEID
 	}
-	if p.SchemaVersion != 1 || (!readback && !initialBind && !gatewayStartup) || (client && !gatewayStartup) ||
+	if p.SchemaVersion != 1 || (!readback && !initialBind && !gatewayStartup && !observation) || (client && !gatewayStartup) ||
 		ownErr != nil || peerErr != nil || own.Path() == "" || peer.Path() == "" ||
 		own.String() != p.OwnSPIFFEID || peer.String() != p.PeerSPIFFEID ||
 		own.TrustDomain() != peer.TrustDomain() || own.TrustDomain().String() != p.TrustDomain ||

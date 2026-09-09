@@ -3,6 +3,7 @@ import { open } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute, normalize } from "node:path";
 import type { PlatformStateStore, RuntimeServiceTrustService } from "@openclaw-enterprise/occ";
+import type { ComputeDriver } from "@openclaw-enterprise/contracts";
 import { startNativeRuntimeReadback } from "../admission/runtime-authority-context.ts";
 import {
   closedNativeObject,
@@ -19,6 +20,7 @@ export interface RuntimeAuthorityReadbackStartup {
   readonly trust: RuntimeServiceTrustService;
   readonly configPath: string;
   readonly binaryPath: string;
+  readonly computeDriver?: ComputeDriver;
 }
 
 export async function startRuntimeAuthorityReadback(options: RuntimeAuthorityReadbackStartup) {
@@ -83,5 +85,6 @@ export async function startRuntimeAuthorityReadback(options: RuntimeAuthorityRea
     listenAddress: config.listenAddress,
     recipientRef: config.recipientRef,
     serviceIdentityRef: config.serviceIdentityRef,
+    ...(options.computeDriver === undefined ? {} : { computeDriver: options.computeDriver }),
   });
 }

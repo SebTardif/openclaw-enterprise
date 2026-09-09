@@ -58,6 +58,34 @@ test("initial bind profile selection is explicit and cannot cross the legacy sou
     assert.throws(() => parseRuntimeServiceTrustRequest({ ...original, operationPolicy: policy }));
 });
 
+test("runtime observation admission uses its own exact source and operation pair", async () => {
+  const source = await technicalSource({
+    transportProfileRef: "owned-child-stdio-runtime-observation-v1",
+  });
+  const profile = {
+    ...source,
+    operationPolicy: "runtime-observation-read-v1",
+    peerSPIFFEId: "spiffe://example.test/observer",
+    sourceConfigurationDigest: runtimeServiceTrustDigest(source),
+  };
+  assert.equal(
+    parseRuntimeServiceNativeProfile(profile).operationPolicy,
+    "runtime-observation-read-v1",
+  );
+  for (const operationPolicy of ["read-operation-only-v1", "initial-harness-bind-v1", "unknown"])
+    assert.throws(() => parseRuntimeServiceNativeProfile({ ...profile, operationPolicy }));
+  const f = {
+    source,
+    owner: { namespace: { id: `ns_${randomUUID()}` }, agent: { id: `agt_${randomUUID()}` } },
+  };
+  assert.equal(
+    parseRuntimeServiceTrustRequest(
+      serviceRequest(f, { operationPolicy: "runtime-observation-read-v1" }),
+    ).operationPolicy,
+    "runtime-observation-read-v1",
+  );
+});
+
 test("real source admission cannot implicitly admit an initial bind service", async (t) => {
   const f = await createRuntimeServiceTrustFixture({
     sourceOverrides: {
