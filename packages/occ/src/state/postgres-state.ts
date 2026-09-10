@@ -5754,7 +5754,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                   this.appendAudit(
                     context,
                     {
-                      id: randomUUID(),
+                      id: `aud_${randomUUID()}`,
                       occurredAt: new Date().toISOString(),
                       installationId: scope.installationId,
                       namespaceId: scope.namespaceId,

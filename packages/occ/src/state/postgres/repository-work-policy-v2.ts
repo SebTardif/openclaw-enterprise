@@ -691,7 +691,7 @@ export function createPostgresRepositoryWorkPolicyBindingV2(
                     }
                     if (outcome === "staged")
                       await backend.appendAudit({
-                        id: randomUUID(),
+                        id: `aud_${randomUUID()}`,
                         occurredAt: new Date().toISOString(),
                         installationId: policy.scope.installationId,
                         namespaceId: policy.scope.namespaceId,
