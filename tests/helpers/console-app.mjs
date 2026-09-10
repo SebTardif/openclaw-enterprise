@@ -102,6 +102,7 @@ export async function createConsoleAppFixture(t, options = {}) {
     { id: "console-native-iam" },
   );
   const providers = options.providers ?? providerFixtures;
+  const pluginCatalogs = options.pluginCatalogs;
   const providerSummaries = Object.hasOwn(options, "providerSummaries")
     ? options.providerSummaries
     : providerSummariesFromDefinitions(providers);
@@ -124,6 +125,7 @@ export async function createConsoleAppFixture(t, options = {}) {
         state: platformState,
         recordOperations: false,
         providers,
+        ...(pluginCatalogs === undefined ? {} : { pluginCatalogs }),
       });
       if (providers.length > 0) {
         const unexpectedProviderCall = async () =>
@@ -145,6 +147,7 @@ export async function createConsoleAppFixture(t, options = {}) {
     },
   };
   if (providerSummaries !== undefined) appOptions.providerSummaries = providerSummaries;
+  if (pluginCatalogs !== undefined) appOptions.pluginCatalogs = pluginCatalogs;
   const app = createFastifyApp(appOptions);
   await app.listen({ host: "127.0.0.1", port });
   const cleanupBeforeAppClose = [];

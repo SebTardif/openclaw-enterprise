@@ -35,6 +35,7 @@ import {
   type OccApiRoute,
   type OpenClawConfigurationDocument,
   type PermissionAction,
+  type PluginInventory,
   type ProviderSummary,
   type ResourceKind,
   type ResourceRef,
@@ -51,6 +52,7 @@ import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
   DependencyUnavailableError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -94,6 +96,7 @@ export interface ControllerAppOptions {
   readonly resolveHarness: HarnessResolver;
   readonly auditSink: AuditSink;
   readonly providerSummaries?: readonly ProviderSummary[];
+  readonly pluginCatalogs?: readonly PluginInventory[];
   readonly development: DevelopmentAdmission;
   readonly maxBodyBytes?: number;
   readonly auth: ControllerAuth;
@@ -136,7 +139,11 @@ interface RequiredPermission {
   readonly action: PermissionAction;
   readonly resourceKind: ResourceKind;
   readonly scope: "requested" | "installation" | "namespace" | "each_returned" | "request_body";
-  readonly condition?: "associated_service_account" | "existing_namespace" | "bound_secret";
+  readonly condition?:
+    | "associated_service_account"
+    | "existing_namespace"
+    | "bound_secret"
+    | "selected_plugins";
 }
 
 interface DocumentedFastifySchema extends FastifySchema {
@@ -362,6 +369,16 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
         scope: "requested",
         condition: "bound_secret",
       },
+      ...(operation.operationId === "createAgent"
+        ? [
+            {
+              action: "administer" as const,
+              resourceKind: "installation" as const,
+              scope: "requested" as const,
+              condition: "selected_plugins" as const,
+            },
+          ]
+        : []),
     ];
   }
 
@@ -425,6 +442,8 @@ function permissionDescription(
           return `Requires ${action} permission on each ${name} bound by the resulting Configuration.`;
         return `Requires ${action} permission on each bound ${name} when Secret bindings are present or selected.`;
       }
+      if (condition === "selected_plugins")
+        return `Requires ${action} permission on the ${name} when selected plugins are present.`;
       switch (scope) {
         case "installation":
           return `Requires ${action} permission for ${name} resources in the Installation.`;
@@ -461,6 +480,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     configurationId: agent.configurationId,
     providerId: agent.providerId,
     executionMode: agent.executionMode,
+    plugins: agent.selectedPlugins,
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
     createdAt: agent.createdAt,
@@ -492,6 +512,7 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
     ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
     ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
+    selectedPlugins: revision.selectedPlugins,
     createdAt: revision.createdAt,
   };
 }
@@ -563,6 +584,8 @@ function requestFailure(error: unknown): RequestFailure {
     );
   if (error instanceof NamespaceNotEmptyError)
     return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
+  if (error instanceof InvalidRequestError)
+    return failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
   if (error instanceof DependencyUnavailableError)
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   if (error instanceof ResourceConflictError)
@@ -1070,7 +1093,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     )
       throw failure(401, "UNAUTHENTICATED", "A human controller session is required.");
     const params = request.params as Record<string, unknown>;
-    if (Object.keys(request.query as Record<string, unknown>).length > 0)
+    if (
+      operation.operationId !== "listPlugins" &&
+      Object.keys(request.query as Record<string, unknown>).length > 0
+    )
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
     for (const [parameter, pattern] of Object.entries(RESOURCE_ID)) {
       if (
@@ -1323,6 +1349,20 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         data: providers.map((provider) => ({ id: provider.id, type: provider.type })),
         meta: { requestId: request.id },
       });
+      return;
+    }
+
+    if (operation.operationId === "listPlugins") {
+      await requireInstallationAdmin(request, operation, context);
+      const driverId = (request.query as { readonly driverId?: string }).driverId;
+      if (!driverId)
+        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
+      const catalogs = options.pluginCatalogs;
+      if (catalogs === undefined) throw dependencyUnavailable();
+      const catalog = catalogs.find((candidate) => candidate.driverId === driverId);
+      if (catalog === undefined)
+        throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+      reply.send({ data: catalog, meta: { requestId: request.id } });
       return;
     }
 
@@ -1657,6 +1697,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...(body?.serviceAccountId === undefined
             ? {}
             : { serviceAccountId: body.serviceAccountId as string }),
+          ...(body?.plugins === undefined
+            ? {}
+            : { plugins: body.plugins as Agent["selectedPlugins"] }),
         });
         await unit.audit.append(
           event(

@@ -20,6 +20,8 @@ import type {
 import {
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
+  type AgentPluginSnapshot,
+  type PluginIdentity,
 } from "@openclaw-enterprise/contracts";
 import { immutableCopy } from "@openclaw-enterprise/utils";
 import {
@@ -144,6 +146,91 @@ function jsonObject(value: unknown): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function jsonArray(value: unknown): unknown[] {
+  const parsed = typeof value === "string" ? (JSON.parse(value) as unknown) : value;
+  if (!Array.isArray(parsed))
+    throw new DependencyUnavailableError("Persisted platform state contains invalid JSON.");
+  return parsed;
+}
+
+function validPluginText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 512 &&
+    /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.test(value)
+  );
+}
+
+function selectedPluginsFromRow(row: PostgresRow): readonly PluginIdentity[] {
+  const parsed = jsonArray(row.selected_plugins);
+  if (parsed.length > 32)
+    throw new DependencyUnavailableError("Persisted Agent plugin selection is invalid.");
+  const seen = new Set<string>();
+  return Object.freeze(
+    parsed.map((entry): PluginIdentity => {
+      if (
+        entry === null ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        Object.keys(entry).length !== 2 ||
+        !("driverId" in entry) ||
+        !("pluginId" in entry) ||
+        !validPluginText(entry.driverId) ||
+        !validPluginText(entry.pluginId)
+      ) {
+        throw new DependencyUnavailableError("Persisted Agent plugin selection is invalid.");
+      }
+      const key = `${entry.driverId}\u0000${entry.pluginId}`;
+      if (seen.has(key))
+        throw new DependencyUnavailableError("Persisted Agent plugin selection is invalid.");
+      seen.add(key);
+      return immutableCopy({ driverId: entry.driverId, pluginId: entry.pluginId });
+    }),
+  );
+}
+
+function selectedPluginSnapshotsFromRow(row: PostgresRow): readonly AgentPluginSnapshot[] {
+  const parsed = jsonArray(row.selected_plugins);
+  const seen = new Set<string>();
+  return Object.freeze(
+    parsed.map((entry): AgentPluginSnapshot => {
+      if (
+        entry === null ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        Object.keys(entry).length !== 6 ||
+        !("driverId" in entry) ||
+        !("pluginId" in entry) ||
+        !("remoteMarketplaceName" in entry) ||
+        !("remotePluginId" in entry) ||
+        !("version" in entry) ||
+        !("catalogCodexVersion" in entry) ||
+        typeof entry.driverId !== "string" ||
+        typeof entry.pluginId !== "string" ||
+        typeof entry.remoteMarketplaceName !== "string" ||
+        typeof entry.remotePluginId !== "string" ||
+        (entry.version !== null && typeof entry.version !== "string") ||
+        typeof entry.catalogCodexVersion !== "string"
+      ) {
+        throw new DependencyUnavailableError("Persisted AgentRevision plugin snapshot is invalid.");
+      }
+      const key = `${entry.driverId}\u0000${entry.pluginId}`;
+      if (seen.has(key))
+        throw new DependencyUnavailableError("Persisted AgentRevision plugin snapshot is invalid.");
+      seen.add(key);
+      return immutableCopy({
+        driverId: entry.driverId,
+        pluginId: entry.pluginId,
+        remoteMarketplaceName: entry.remoteMarketplaceName,
+        remotePluginId: entry.remotePluginId,
+        version: entry.version,
+        catalogCodexVersion: entry.catalogCodexVersion,
+      });
+    }),
+  );
+}
+
 function installationFromRow(row: PostgresRow): Readonly<Installation> {
   return immutableCopy({
     id: text(row, "id"),
@@ -182,6 +269,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    selectedPlugins: selectedPluginsFromRow(row),
     servicePrincipalId: text(row, "service_principal_id"),
     ...(serviceAccountId === undefined ? {} : { serviceAccountId }),
     ...(activeRevisionId === undefined ? {} : { activeRevisionId }),
@@ -271,6 +359,7 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
       : { secretDriverId: admitted.secret_driver_id }),
     ...(secretBindings === undefined ? {} : { secretBindings }),
     ...(admitted.service_account === undefined ? {} : { serviceAccount: admitted.service_account }),
+    selectedPlugins: selectedPluginSnapshotsFromRow(row),
     servicePrincipalId: text(row, "service_principal_id"),
     createdAt: timestamp(row, "admitted_at"),
   });
@@ -1365,7 +1454,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                     a.provider_id, a.service_principal_id, a.service_account_id,
-                    a.active_revision_id, a.created_at
+                    a.selected_plugins, a.active_revision_id, a.created_at
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
              WHERE a.namespace_id = $1 AND a.id = $2${lock ? " FOR UPDATE OF a" : ""}`,
@@ -1385,7 +1474,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                       a.provider_id, a.service_principal_id, a.service_account_id,
-                      a.active_revision_id, a.created_at
+                      a.selected_plugins, a.active_revision_id, a.created_at
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
                WHERE a.namespace_id = $1 ORDER BY a.created_at, a.id`,
@@ -1413,8 +1502,9 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             selected_plugins, service_principal_id, service_account_id, active_revision_id,
+             created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)`,
           [
             agent.id,
             agent.namespaceId,
@@ -1422,6 +1512,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             agent.configurationId,
             agent.providerId,
             agent.executionMode,
+            JSON.stringify(agent.selectedPlugins ?? []),
             agent.servicePrincipalId,
             agent.serviceAccountId ?? null,
             agent.activeRevisionId ?? null,
@@ -1459,7 +1550,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at`,
+                          a.selected_plugins, a.active_revision_id, a.created_at`,
               [
                 namespaceId,
                 agentId,
@@ -1491,7 +1582,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at`,
+                          a.selected_plugins, a.active_revision_id, a.created_at`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
           ).rows,
@@ -1506,7 +1597,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           (
             await client.query(
               `SELECT r.id, r.namespace_id, r.agent_id, r.revision_number, r.provider_id,
-                      r.admitted_spec,
+                      r.admitted_spec, r.selected_plugins,
                       r.admitted_at, a.service_principal_id
                FROM occ.agent_revisions AS r
                JOIN occ.agents AS a ON a.namespace_id = r.namespace_id AND a.id = r.agent_id
@@ -1523,7 +1614,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           (
             await client.query(
               `SELECT r.id, r.namespace_id, r.agent_id, r.revision_number, r.provider_id,
-                      r.admitted_spec,
+                      r.admitted_spec, r.selected_plugins,
                       r.admitted_at, a.service_principal_id
                FROM occ.agent_revisions AS r
                JOIN occ.agents AS a ON a.namespace_id = r.namespace_id AND a.id = r.agent_id
@@ -1552,8 +1643,9 @@ export class PostgresPlatformState implements PlatformStateStore {
         await validateSecretBindingsAvailable(revision.namespaceId, secretBindings);
         await client.query(
           `INSERT INTO occ.agent_revisions
-           (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec, admitted_at)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+           (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec,
+            selected_plugins, admitted_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)`,
           [
             revision.id,
             revision.namespaceId,
@@ -1578,12 +1670,18 @@ export class PostgresPlatformState implements PlatformStateStore {
                 ? {}
                 : { service_account: revision.serviceAccount }),
             }),
+            JSON.stringify(revision.selectedPlugins ?? []),
             revision.createdAt,
           ],
         );
-        const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
+        const {
+          secretBindings: _providedSecretBindings,
+          selectedPlugins: providedSelectedPlugins,
+          ...withoutSecretBindings
+        } = revision;
         return immutableCopy({
           ...withoutSecretBindings,
+          selectedPlugins: providedSelectedPlugins ?? [],
           ...(secretBindings === undefined ? {} : { secretBindings }),
         });
       },

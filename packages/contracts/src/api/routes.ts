@@ -11,6 +11,7 @@ import {
   CreateServiceAccountBody,
   CreateServiceAccountCredentialBody,
   EmptyQuery,
+  ListPluginsQuery,
   NamedResourceBody,
   NamespaceParams,
   RevisionParams,
@@ -33,6 +34,7 @@ import {
   InstallationResponse,
   NamespaceListResponse,
   NamespaceResponse,
+  PluginListResponse,
   ProviderListResponse,
   ServiceAccountListResponse,
   ServiceAccountResponse,
@@ -119,6 +121,21 @@ export const occApiRoutes = [
     schema: {
       querystring: EmptyQuery,
       response: { 200: ProviderListResponse, ...readErrors },
+    },
+  },
+  {
+    operationId: "listPlugins",
+    method: "GET",
+    path: "/plugins",
+    action: "openclaw.plugins.list",
+    iamAction: "administer",
+    resourceKind: "installation",
+    authorizationTarget: "installation",
+    summary: "List one reviewed plugin catalog by Driver ID",
+    tags: ["Plugins"],
+    schema: {
+      querystring: ListPluginsQuery,
+      response: { 200: PluginListResponse, ...readErrors },
     },
   },
   {
