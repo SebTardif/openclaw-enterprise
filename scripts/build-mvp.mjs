@@ -29,6 +29,8 @@ const nativeMembers = [
   "ds-nft",
   "ds-dnsgate",
   "ds-tlsproxy",
+  "oce-native-egress",
+  "oce-network-fence",
 ];
 const nativeProducts = [
   { package: "ds-dnsgate", binary: "oce-dnsgate" },
@@ -203,9 +205,7 @@ async function checkNative() {
       .sort()
       .join(",") !== [...nativeMembers].sort().join(",")
   ) {
-    throw new Error(
-      "The dataplane Cargo workspace must contain exactly the eight selected packages.",
-    );
+    throw new Error("The dataplane Cargo workspace must contain exactly the selected packages.");
   }
   const nativeDirectory = await realpath(nativeRoot);
   if ((await realpath(metadata.workspace_root)) !== nativeDirectory)
@@ -213,7 +213,9 @@ async function checkNative() {
   const memberDirectories = nativeMembers.map((name) =>
     join(
       nativeDirectory,
-      name === "ds-dnsgate" || name === "ds-tlsproxy" ? "services" : "crates",
+      ["ds-dnsgate", "ds-tlsproxy", "oce-native-egress", "oce-network-fence"].includes(name)
+        ? "services"
+        : "crates",
       name,
     ),
   );

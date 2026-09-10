@@ -548,6 +548,40 @@ uses dedicated Codex execution. Sharing a Kubernetes namespace never grants
 another Agent access to gateway credentials, Channel credentials, workload
 identity, provider configuration, or runtime traffic.
 
+## Persistent Agents and execution limits
+
+An Agent may exist indefinitely as a stable service identity and configuration.
+Its resource lifetime is distinct from a revision, running Pod, Harness instance,
+conversation, logical work and native execution attempt. Persistence does not
+promise that any particular process never fails or automatically resumes.
+
+The execution duration cap is configurable and defaults to **uncapped**. An
+uncapped attempt continues until completion, explicit stop, withdrawal of required
+authority or an independently configured resource/spend limit. A finite configured
+cap applies to the original attempt's elapsed time from dispatch, including
+startup and waiting. Admission records the effective policy immutably; draft
+edits, activity, model/tool rounds and credential renewal do not alter it.
+
+Every enforcement lease remains finite and bound to current authority for exact
+work and execution. Applicable configured work/ancestor deadlines and stop bounds
+still constrain renewal. Uncapped execution does not authorize broader scope,
+offline writes, terminal-work revival or replay of uncertain effects. Numerical
+authority and outage profiles require separate selection and qualification.
+
+Authorized users need Agent inventory, current-work status, exact task stopping,
+durable Agent stop and explicit Start. Incoming messages, stale dispatch and
+controller restart must not undo stopped intent. Accepted stop, blocked new work,
+authority withdrawal, physical termination and credential cleanup are separate
+facts; report unknown termination and retain writer ownership when proof is
+missing. Replacement must exclude predecessor writers before new serving or
+shared-state mutation.
+
+The [execution-policy implementation plan](../specs/24-configurable-execution-limits.md)
+defines the correction and qualification scope. Current selected-execution V1
+still has a fifteen-minute ceiling; current stop/status components do not yet
+implement this complete product contract. Active-session migration/replay and
+durable replacement coordination are separate later capabilities.
+
 ## Agent deployment
 
 An `Agent` is the stable, user-configured platform resource. Its explicit
@@ -600,20 +634,26 @@ Deploying an Agent follows one path.
     the candidate Agent workload can execute Agent turns.
 11. OCC configures a nonserving route through the exact Agent-owned gateway for
     the candidate workload.
-12. OCC records the ready candidate as the sole active revision and enables its
-    exact Agent-owned route. Only that active revision can receive traffic or
-    execute Agent turns.
-13. Once the new route is active, OCC retires the previous revision. If
-    activation or routing fails, it does not irreversibly delete the previous
-    workload before recovery.
+12. Before replacement serving or shared-state writes, OCC blocks predecessor
+    admission, disables its route, and establishes predecessor writer exclusion,
+    including resolution of uncertain creates. An active-pointer change or
+    cancellation acknowledgement alone is insufficient. OCC then records the
+    ready candidate as the sole active revision and enables its exact Agent-owned
+    route. Only that active revision can receive traffic or execute Agent turns.
+13. Once the new route is active, OCC retires remaining predecessor infrastructure.
+    Retained artifacts support diagnosis and independently authorized recovery;
+    they do not permit automatic process revival or replay of uncertain work.
 
 The active AgentRevision is the immutable record of the Agent's deployed
 version. OCC serializes activation for each Agent and uses its single active
 revision as the source of truth for Agent workload authorization and gateway
 routing. A candidate app-server can start idle, but a candidate or retired
 revision cannot receive traffic or execute Agent turns.
-Failures before activation leave the previously active revision and Agent
-workload unchanged. Failures after activation require fail-closed rollback.
+Failures before cutover leave the previously active revision and Agent workload
+unchanged. Once predecessor stopping begins, failures retain writer exclusion
+and require independently authorized recovery. This is the target contract;
+the current worker's readiness/activation/retirement sequence does not yet
+establish the complete predecessor termination and writer-exclusion evidence.
 
 ## ComputeDriver
 
@@ -817,10 +857,13 @@ gateway, workload, resource, inference request, or messaging side effect.
 If candidate provisioning, containment enforcement, or nonserving route
 preparation fails, the candidate remains inactive and the previous active
 revision, Agent workload, and route remain unchanged. Once cutover begins,
-OCC disables the previous route before activating its replacement. A failure
-during or after cutover retains the previous workload but leaves routing
-disabled until the new route succeeds or the previous revision and route can be
-independently verified and restored.
+OCC disables the previous route and establishes predecessor writer exclusion
+before activating its replacement or admitting shared-state writes. A failure
+during or after cutover retains diagnostic artifacts and leaves routing disabled
+until an independently authorized serving revision is verified. Retaining a
+previous workload record is not permission to revive its process, restore its
+authority, or replay uncertain effects. Unknown termination or unresolved creates
+continue to block conflicting replacement work.
 
 OCC never substitutes another Namespace, identity, `IAMDriver`,
 `SecretBroker`, `SecretDriver`, gateway, provider, or runtime implementation.

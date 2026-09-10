@@ -20,6 +20,13 @@ Configuration reference, and identity. It does not start a workload, deploy a
 model, or create a revision until an authorized caller explicitly requests
 deployment.
 
+Agent persistence does not impose a lifetime on each task. The selected
+[target execution policy](../design.md#persistent-agents-and-execution-limits)
+uses a configurable duration cap with an uncapped default. Its configuration and
+complete task/Agent stop controls are not current public API settings; the
+[implementation plan](../../specs/24-configurable-execution-limits.md) distinguishes
+that target from the existing finite selected-execution component.
+
 ## Supported operations
 
 Agent operations are scoped beneath `/namespaces/:namespaceId/agents`. Creation

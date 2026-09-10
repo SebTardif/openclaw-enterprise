@@ -12,6 +12,8 @@ members = [
   "crates/ds-nft",
   "services/ds-dnsgate",
   "services/ds-tlsproxy",
+  "services/oce-native-egress",
+  "services/oce-network-fence",
 ]
 
 [workspace.package]

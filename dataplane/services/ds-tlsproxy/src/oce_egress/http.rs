@@ -137,7 +137,7 @@ fn metadata_context(value: &str) -> Result<String, Refusal> {
     if value.len() > 8192 {
         return Err(Refusal::Bounds);
     }
-    let v = json::parse(value.as_bytes())?;
+    let v = json::parse_request(value.as_bytes())?;
     let s = json::bounded_str(&v, "openclaw_mediation_context", 128)?;
     if !s
         .bytes()
@@ -173,7 +173,7 @@ pub(super) fn parse_request(
             return Err(Refusal::Malformed);
         }
     };
-    let parsed = json::parse(body.as_bytes())?;
+    let parsed = json::parse_request(body.as_bytes())?;
     json::bounded_str(&parsed, "model", 128)?;
     operation_profile(&parsed)?;
     if parsed.get("stream").and_then(serde_json::Value::as_bool) != Some(true) {
@@ -408,5 +408,88 @@ mod tests {
             parse_request(&parts(2), vec![b'a'], "localhost:8443"),
             Err(Refusal::Malformed)
         ));
+    }
+
+    #[test]
+    fn request_dom_budgets_apply_before_operation_profile_validation() {
+        // These small wire bodies previously expanded before profile rejection.
+        // Exercise the real HTTP parser rather than only its JSON helper.
+        for body in [
+            format!("[{}0]", "0,".repeat(20_000)),
+            format!(
+                "{{{}}}",
+                (0..20_000)
+                    .map(|index| format!("\"k{index}\":0"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            format!("{}0{}", "[".repeat(65), "]".repeat(65)),
+        ] {
+            assert!(matches!(
+                parse_request(&parts(body.len()), body.into_bytes(), "localhost:8443"),
+                Err(Refusal::Bounds)
+            ));
+        }
+    }
+
+    #[test]
+    fn request_budget_preserves_exact_16_mib_instruction_strings() {
+        let prefix = concat!(
+            "{\"model\":\"gpt-5.1\",\"input\":[],\"store\":false,\"stream\":true,",
+            "\"tool_choice\":\"none\",\"parallel_tool_calls\":false,",
+            "\"client_metadata\":{\"x-codex-turn-metadata\":",
+            "\"{\\\"openclaw_mediation_context\\\":\\\"controlled-context\\\"}\"},",
+            "\"instructions\":\""
+        );
+        let suffix = "\"}";
+        // Escapes also exercise serde_json's scratch buffer for decoded strings.
+        for fragment in ["a", "\\n"] {
+            let mut body = String::with_capacity(REQUEST_LIMIT);
+            body.push_str(prefix);
+            let padding = REQUEST_LIMIT - prefix.len() - suffix.len();
+            body.extend(std::iter::repeat_n(fragment, padding / fragment.len()));
+            body.extend(std::iter::repeat_n('a', padding % fragment.len()));
+            body.push_str(suffix);
+            let pointer = body.as_ptr();
+            let request =
+                parse_request(&parts(body.len()), body.into_bytes(), "localhost:8443").unwrap();
+            assert_eq!(request.body.len(), REQUEST_LIMIT);
+            assert_eq!(request.body.as_ptr(), pointer);
+            assert_eq!(request.context, "controlled-context");
+        }
+    }
+
+    #[test]
+    fn metadata_body_and_header_use_independent_depth_budgets() {
+        let ordinary = r#"{"openclaw_mediation_context":"controlled-context"}"#;
+        for depth in [64, 65] {
+            let nested = format!(
+                "{{\"openclaw_mediation_context\":\"controlled-context\",\"padding\":{}0{}}}",
+                "[".repeat(depth - 1),
+                "]".repeat(depth - 1)
+            );
+            for in_header in [false, true] {
+                let body = serde_json::json!({
+                    "model":"gpt-5.1", "input":[], "store":false, "stream":true,
+                    "tool_choice":"none", "parallel_tool_calls":false,
+                    "client_metadata":{"x-codex-turn-metadata":
+                        if in_header { ordinary } else { &nested }}
+                })
+                .to_string();
+                let mut head = parts(body.len());
+                if in_header {
+                    head.headers
+                        .insert("x-codex-turn-metadata", nested.parse().unwrap());
+                }
+                // Metadata is JSON encoded inside a body string or header, so
+                // each decoded document must start a fresh root-depth budget.
+                let result = parse_request(&head, body.into_bytes(), "localhost:8443");
+                if depth == 64 {
+                    assert_eq!(result.unwrap().context, "controlled-context");
+                } else {
+                    assert!(matches!(result, Err(Refusal::Bounds)));
+                }
+            }
+        }
     }
 }

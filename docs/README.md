@@ -30,6 +30,35 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [`integration/dev` overview](integration-dev-overview.md): branch scope, system diagrams, and team review priorities.
 - [Platform design](design.md): platform architecture and resource model.
 - [Current architecture](ARCHITECTURE.md): API, worker, storage, and Agent execution.
+- [Configurable execution limits and persistent Agent controls](../specs/24-configurable-execution-limits.md):
+  selected uncapped default, finite authority, status/stop requirements and the
+  remaining coordinated implementation and runtime qualification.
+
+## Draft RFCs
+
+Start with the [illustrated RFC series overview](https://github.com/openclaw/rfcs/blob/docs/github-app-credentials/rfcs/0027/runtime-access-overview.md)
+and [accepted RFC 0027](https://github.com/openclaw/rfcs/blob/main/rfcs/0027-openclaw-enterprise.md).
+The following proposals extend that baseline; they remain drafts, not descriptions
+of implemented or qualified behavior on this branch.
+
+- [RFC 0034: Credentials and GitHub access](https://github.com/openclaw/rfcs/blob/docs/github-app-credentials/rfcs/0034-github-app-credentials.md)
+  ([PR 68](https://github.com/openclaw/rfcs/pull/68)): broker-managed credentials,
+  trusted mediation, bounded renewal, and recoverable cleanup.
+- [RFC 0035: Identity and enforcement](https://github.com/openclaw/rfcs/blob/docs/workload-identity-rfc/rfcs/0035-workload-identity-and-runtime-authority.md)
+  ([PR 69](https://github.com/openclaw/rfcs/pull/69)): execution identity, protected
+  origin, bounded enforcement leases, and qualified outage reads.
+- [RFC 0036: Service-owned work](https://github.com/openclaw/rfcs/blob/docs/turn-bound-delegation-rfc/rfcs/0036-turn-bound-delegated-authority.md)
+  ([PR 70](https://github.com/openclaw/rfcs/pull/70)): logical work across turns and
+  runtime replacements, attached children, isolation, and cancellation.
+- [RFC 0037: Runtime lifecycle](https://github.com/openclaw/rfcs/blob/docs/agent-runtime-lifecycle-rfc/rfcs/0037-persistent-agent-runtime-lifecycle.md)
+  ([PR 71](https://github.com/openclaw/rfcs/pull/71)): safe stop, completed-state
+  recovery, writer exclusion, and finite completed-result delivery.
+
+Each main RFC links to its detailed specifications and diagrams. Read its PR branch,
+not only the RFC repository's `main`. For implementation questions, compare the
+proposal with this branch's source, [current references](reference/README.md), and
+[verification requirements](testing.md). Cite the inspected branch or commit;
+proposal acceptance, implemented behavior, and runtime qualification are separate.
 
 ## Reference
 
@@ -111,6 +140,8 @@ OpenClaw Enterprise is the open platform for managing agents.
   credential-service packaging, local preflight, and outstanding runtime requirements.
 - [External model egress flow](flows/external-model-egress.md): exact request,
   connection, dispatch, and cancellation ownership in the adapter components.
+- [Native GitHub HTTPS transport](reference/native-github-egress.md): finite Git/gh
+  transport and DNS validation, controlled client tests, and missing production admission.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Runtime identity ports](reference/runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.

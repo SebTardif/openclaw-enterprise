@@ -363,6 +363,12 @@ native readiness and transport delays never restart the interval. No native cloc
 mapping is required or fabricated. Optional `nativeReadyObservation` is genuine
 native-process timing evidence only, with no cross-clock arithmetic or authority.
 
+This V1 ceiling is current component behavior, not the target Agent lifetime
+policy. The [configurable execution-limit successor](../../specs/24-configurable-execution-limits.md)
+selects an uncapped default and explicit finite caps. It requires coordinated
+configuration, clock/control, persistence, credential and native changes;
+renewing a current V1 authority call or provider token cannot remove its deadline.
+
 The original known-committed, single-taken claim admits its own mandatory cleanup
 for the one actual pending native construction and its owned Session/children.
 During the original bounded callback, the controller transfers that responsibility

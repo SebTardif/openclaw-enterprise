@@ -42,9 +42,14 @@ The Rust TLS adapter accepts a declared request body of at most **16 MiB
 (16,777,216 bytes)**. It rejects a larger `Content-Length` before reading the body
 or contacting authority, DNS, or the provider. Capture reserves the declared
 length fallibly once and checks accumulated bytes against both that length and
-the ceiling. UTF-8, duplicate-aware JSON, local operation checks, and the digest
-use the original bytes. Validation must finish within the original five-second
-acquisition deadline before any reservation or authority request begins.
+the ceiling. Request JSON also has a **20,000-value** and **64-level depth**
+limit, checked during parsing before each value is materialized. The root is
+depth zero and counts as one value; object keys do not count as values. Each
+decoded metadata document receives its own structural budget. Large string
+content remains supported up to the raw body ceiling. UTF-8, duplicate-aware
+JSON, local operation checks, and the digest use the original bytes. Validation
+must finish within the original five-second acquisition deadline before any
+reservation or authority request begins.
 
 Authority admission embeds the original body as a JSON string in a fixed
 ten-field envelope. Its payload cap is **32 MiB + 64 KiB (33,619,968 bytes)**;
@@ -67,18 +72,21 @@ prefix alone does not identify the method. This repository supplies controlled
 admission receivers for tests, not that canonical service. The separate
 TypeScript Codex context and model-request parsers also enforce the 16 MiB raw
 body ceiling. Their separate 8 KiB metadata, 64-level depth, and 20,000-value
-limits remain in force. They are not wired into this Rust transport; end-to-end
-profile integration remains incomplete.
+limits remain in force; the native request parser now applies the same depth
+and value-count semantics before constructing the JSON tree. The TypeScript
+parsers are not wired into this Rust transport; end-to-end profile integration
+remains incomplete.
 
 Capture, admission work, and forwarding transfer the original zeroizing body
 owner. Forwarding uses owner-backed `Bytes`; it does not create another complete
 body buffer. The explicit body plus maximum admission frame accounts for at most
 50,397,188 logical bytes per exchange. This is copy accounting, not a hard memory
 bound: the full parsed JSON tree, parser scratch, allocation capacity, Hyper/TLS
-buffers, process overhead, and concurrent exchanges are additional. No new JSON
-shape restriction is inferred from the byte ceiling. The selected 256 MiB service
-budget and per-Agent/generation limits require separate enforcement and
-qualification. Local packaging selects two active exchanges per TLS process;
+buffers, process overhead, and concurrent exchanges are additional. The explicit
+structural budgets prevent an accepted-size document from constructing millions
+of small values before admission. The selected 256 MiB service budget and
+per-Agent/generation limits still require separate enforcement and qualification.
+Local packaging selects two active exchanges per TLS process;
 the adapter accepts explicit configurations of up to eight. The process-local
 limit does not enforce an Agent-wide limit across multiple service instances.
 
@@ -163,7 +171,7 @@ entrypoints so loader failures stop the build.
 
 The native build must produce exactly
 `.build/mvp/native/oce-dnsgate` and `.build/mvp/native/oce-egress`, using the selected
-eight-member Rust workspace and the repository's pinned Rust toolchain. The image
+Rust workspace and the repository's pinned Rust toolchain. The image
 does not include the stock DS executables, mint, host/tap tooling, or a fallback
 binary. The recipe copies the source license, attribution, source manifest, and
 Cargo/Rust library notices into `/usr/share/doc/oce-egress/`. OS package notices

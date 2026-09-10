@@ -1,5 +1,10 @@
 # Implementation specifications
 
+[Configurable execution limits and persistent Agent controls](24-configurable-execution-limits.md)
+records the selected uncapped default, finite authority requirements and the
+coordinated implementation/qualification plan. Current selected-execution and
+lifecycle components retain their documented limits until that work is complete.
+
 This directory records individual proposals, implementation plans, milestones,
 and delivery decisions. The documents describe work at a point in time. Their
 existing filenames and historical content remain intact in [`.archive/`](.archive/).
@@ -53,7 +58,7 @@ does not complete any implementation or release gate.
 
 | Implementation record                                                            | Recorded status                                                                                                                                                                            | Current reference                                                                                                                                         |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Workspace snapshots](workspace-snapshots.md) | Implemented; local portable and native Btrfs qualification passed 2026-09-09 | [Workspace snapshots](../docs/reference/workspace-snapshots.md) |
+| [Workspace snapshots](workspace-snapshots.md)                                    | Implemented; local portable and native Btrfs qualification passed 2026-09-09                                                                                                               | [Workspace snapshots](../docs/reference/workspace-snapshots.md)                                                                                           |
 | [Common OpenTelemetry logging](20-common-otel-logging.md)                        | Implemented; Docker, Kubernetes and Helm logging proof passed; OpenShell live proof unavailable                                                                                            | [Settings](../docs/reference/settings.md), [Harness execution](../docs/reference/harness-execution.md)                                                    |
 | [Provider and related Drivers](17-provider-driver-abstraction.md)                | Implemented and locally verified in PR #8; live Provider proof pending                                                                                                                     | [Providers](../docs/reference/providers.md), [Agents](../docs/reference/agents.md), [ServiceAccount Driver](../docs/reference/drivers/service-account.md) |
 | [Development end-to-end guide](15-development-end-to-end-guide.md)               | Completed                                                                                                                                                                                  | [Development TUI guide](../docs/guides/deploy.md#development-end-to-end-tui); verified in `c208e48`                                                       |
