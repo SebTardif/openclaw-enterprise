@@ -33,7 +33,7 @@ Options:
   --codex-home <path>             Isolated CODEX_HOME used by the app-server.
   --codex-version <version>       Required Codex version. Defaults to ${DEFAULT_CODEX_VERSION}.
   --allow-marketplace <name>      Remote marketplace approved for publication. Repeatable.
-  --allow-empty-reviewed          Permit an intentionally empty reviewed catalog.
+  --allow-empty-reviewed          Permit an expected reviewed marketplace to contain no entries.
 `;
 }
 
@@ -113,10 +113,8 @@ export function normalizePluginListResponse(raw, options) {
   const allowMarketplaces = new Set(
     options.allowMarketplaces.map((name) => safeString(name, "allowMarketplace")),
   );
-  if (allowMarketplaces.size === 0 && options.allowEmptyReviewed !== true) {
-    throw new Error(
-      "At least one --allow-marketplace is required unless --allow-empty-reviewed is set.",
-    );
+  if (allowMarketplaces.size === 0) {
+    throw new Error("At least one --allow-marketplace is required.");
   }
   const result = extractPluginListResult(raw);
   const errors = result.marketplaceLoadErrors ?? [];
@@ -153,7 +151,7 @@ export function normalizePluginListResponse(raw, options) {
     }
   }
   for (const name of allowMarketplaces) {
-    if (!seenAllowedMarketplaces.has(name) && options.allowEmptyReviewed !== true) {
+    if (!seenAllowedMarketplaces.has(name)) {
       throw new Error(`Expected marketplace ${name} was not returned by plugin/list.`);
     }
   }
