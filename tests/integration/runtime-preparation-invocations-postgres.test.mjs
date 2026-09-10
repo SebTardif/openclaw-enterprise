@@ -62,16 +62,22 @@ test(
       assert.equal(role.current_user, "occ_app");
       for (const key of ["rolsuper", "rolcreatedb", "rolcreaterole", "rolbypassrls"])
         assert.equal(role[key], false);
-      const bytes = await readFile(
-        new URL("../../migrations/0043_runtime_preparation_invocations.sql", import.meta.url),
-      );
-      const hash = createHash("sha256").update(bytes).digest("hex");
-      assert.equal(
-        (await catalog.query("SELECT hash FROM drizzle.__drizzle_migrations WHERE hash=$1", [hash]))
-          .rowCount,
-        1,
-        "The exact checked-in migration must have been applied through the official runner.",
-      );
+      for (const migration of [
+        "0043_runtime_preparation_invocations.sql",
+        "0055_runtime_preparation_response_clock.sql",
+      ]) {
+        const bytes = await readFile(new URL(`../../migrations/${migration}`, import.meta.url));
+        const hash = createHash("sha256").update(bytes).digest("hex");
+        assert.equal(
+          (
+            await catalog.query("SELECT hash FROM drizzle.__drizzle_migrations WHERE hash=$1", [
+              hash,
+            ])
+          ).rowCount,
+          1,
+          `The exact ${migration} must have been applied through the official runner.`,
+        );
+      }
       for (const table of tables) {
         const {
           rows: [permissions],
@@ -238,7 +244,7 @@ test(
 
     await t.test(
       "real session, Native IAM and original worker own exact invocation readback",
-      async () => {
+      async (sessionTest) => {
         const selectedUrl = process.env.OCC_WORKLOAD_PROFILE_RECEIVING_DATABASE_URL;
         assert.ok(selectedUrl, "The explicitly enrolled selected-controller role URL is required.");
         const selectedAddress = new URL(selectedUrl);
@@ -292,6 +298,230 @@ test(
               "Current use must not require new mutation privileges on immutable history.",
             );
           }
+          await sessionTest.test(
+            "the canonical response owner retains an earlier reported clock through real PostgreSQL",
+            async () => {
+              const clockFixture = await seedRuntimePreparationInvocation(selected);
+              const clockClaim = await clockFixture.claimOriginalWork();
+              fixtureClaims.push([clockFixture, clockClaim]);
+              const request = clockFixture.currentUseRequest;
+              const bounds = () => ({ signal: new AbortController().signal, timeoutMs: 3000 });
+              let committed;
+              let retainResponse;
+              let invocations = 0;
+              const capabilityLeases = [];
+              const observationLeases = [];
+              const originals = new WeakMap();
+              const serviceContext = Object.freeze({ storageFixture: "original response owner" });
+              // Session, IAM, current use, marker and response transactions are
+              // real. These two external peers supply controlled capability and
+              // original-response custody, not installed or native SDK authority.
+              const capabilities = {
+                async acquire(selection, _manifest, admittedUse, unit, io) {
+                  assert.deepEqual(selection, request.selection);
+                  assert.deepEqual(admittedUse, clockFixture.revision.workloadProfileUse);
+                  assert.equal(unit.kind, "deployment");
+                  assert.equal(unit.agentId, request.selection.agentId);
+                  io.assertActive();
+                  const record = { released: false };
+                  capabilityLeases.push(record);
+                  return {
+                    assertCurrent() {
+                      assert.equal(record.released, false);
+                      assert.equal(unit.signal.aborted, false);
+                    },
+                    async release() {
+                      record.released = true;
+                    },
+                  };
+                },
+              };
+              const responseSource = {
+                async acquire(context, actualCommitted, response, call) {
+                  const registered = originals.get(response);
+                  assert.ok(
+                    registered,
+                    "Only the controlled original response instance is recognized.",
+                  );
+                  assert.equal(actualCommitted, registered.committed);
+                  assert.equal(call, registered.call);
+                  assert.equal(call.context, serviceContext);
+                  assert.equal(context.installationId, request.selection.installationId);
+                  context.assertActive();
+                  const record = { response, prepared: false, released: false };
+                  observationLeases.push(record);
+                  const lease = {
+                    assertCurrent() {
+                      assert.equal(record.released, false);
+                      context.assertActive();
+                    },
+                    async prepareCommit() {
+                      context.assertActive();
+                      record.prepared = true;
+                    },
+                    async release() {
+                      record.released = true;
+                    },
+                  };
+                  context.retain(lease);
+                  return lease;
+                },
+              };
+              const owner = clockFixture.state.runtimePreparationSubmissionOwnerV1(
+                clockFixture.drivers,
+                {
+                  async invoke(value, retain) {
+                    invocations += 1;
+                    committed = value;
+                    retainResponse = retain;
+                  },
+                },
+                responseSource,
+                capabilities,
+              );
+              assert.deepEqual(await owner.submit(clockClaim, request, bounds()), {
+                status: "unknown",
+                effectRef: request.effectRef,
+              });
+              assert.equal(invocations, 1);
+              assert.ok(committed);
+              assert.equal(typeof retainResponse, "function");
+              assert.equal(capabilityLeases.length, 1);
+              assert.equal(capabilityLeases[0].released, true);
+              const markerBefore = (
+                await selected.query(
+                  `SELECT submission_ref,submitted_at,request_digest,provider_wire_digest
+                   FROM occ.runtime_preparation_submissions WHERE effect_ref=$1`,
+                  [request.effectRef],
+                )
+              ).rows;
+              assert.equal(markerBefore.length, 1);
+              assert.equal(markerBefore[0].submission_ref, committed.submissionRef);
+              assert.equal(markerBefore[0].submitted_at.toISOString(), committed.submittedAt);
+              assert.equal(markerBefore[0].request_digest, committed.child.effect.requestDigest);
+              assert.equal(
+                markerBefore[0].provider_wire_digest,
+                committed.child.providerWire.bytesDigest,
+              );
+              assert.equal(committed.child.predicate.kind, "expected-object");
+              const receivedAt = new Date(Date.parse(committed.submittedAt) - 60_000).toISOString();
+              function originalResponse(overrides = {}) {
+                const response = Object.freeze({
+                  namespace: "storage-clock-fixture-namespace",
+                  name: committed.child.providerTarget.name,
+                  uid: committed.child.predicate.uid,
+                  resourceVersion: "opaque.clock.response/000001",
+                  receivedAt,
+                  ...overrides,
+                });
+                const call = Object.freeze({
+                  context: serviceContext,
+                  requestRef: `storage-clock-response/${randomUUID()}`,
+                  recipientRef: "recipient/occ",
+                  signal: new AbortController().signal,
+                  deadline: new Date(Date.now() + 3000).toISOString(),
+                });
+                originals.set(response, { committed, call });
+                return { response, call };
+              }
+              const responseRows = () =>
+                selected.query(
+                  "SELECT * FROM occ.runtime_preparation_submission_responses WHERE effect_ref=$1",
+                  [request.effectRef],
+                );
+              // Each malformed or foreign response is recognized by the same
+              // controlled custody peer first; the actual owner must still
+              // reject its timestamp or exact Deployment correspondence.
+              for (const invalid of [
+                { receivedAt: "not-an-instant" },
+                { receivedAt: receivedAt.replace("Z", "+00:00") },
+                { name: `foreign-${randomUUID()}` },
+                { uid: `foreign-${randomUUID()}` },
+              ]) {
+                const candidate = originalResponse(invalid);
+                const before = observationLeases.length;
+                assert.equal(
+                  (await retainResponse(candidate.response, candidate.call)).status,
+                  "unavailable",
+                );
+                assert.equal(observationLeases.length, before + 1);
+                assert.equal(observationLeases.at(-1).released, true);
+                assert.equal((await responseRows()).rowCount, 0);
+              }
+              const candidate = originalResponse();
+              const recognized = observationLeases.length;
+              assert.equal(
+                (await retainResponse(structuredClone(candidate.response), candidate.call)).status,
+                "unavailable",
+              );
+              assert.equal(observationLeases.length, recognized);
+              assert.equal((await responseRows()).rowCount, 0);
+              const expected = {
+                status: "retained",
+                effectRef: request.effectRef,
+                response: candidate.response,
+              };
+              assert.deepEqual(await retainResponse(candidate.response, candidate.call), expected);
+              assert.equal(observationLeases.at(-1).response, candidate.response);
+              assert.equal(observationLeases.at(-1).prepared, true);
+              assert.equal(observationLeases.at(-1).released, true);
+              const stored = (
+                await selected.query(
+                  `SELECT s.submission_ref,s.submitted_at,r.received_at,
+                     r.received_at<s.submitted_at AS reported_before_submission,
+                     r.namespace_name,r.deployment_name,r.deployment_uid,r.resource_version
+                   FROM occ.runtime_preparation_submissions s
+                   JOIN occ.runtime_preparation_submission_responses r USING(effect_ref)
+                   WHERE s.effect_ref=$1`,
+                  [request.effectRef],
+                )
+              ).rows;
+              assert.equal(stored.length, 1);
+              assert.equal(stored[0].submission_ref, committed.submissionRef);
+              assert.equal(stored[0].submitted_at.toISOString(), committed.submittedAt);
+              assert.equal(stored[0].received_at.toISOString(), receivedAt);
+              assert.equal(stored[0].reported_before_submission, true);
+              assert.equal(stored[0].namespace_name, candidate.response.namespace);
+              assert.equal(stored[0].deployment_name, candidate.response.name);
+              assert.equal(stored[0].deployment_uid, candidate.response.uid);
+              assert.equal(stored[0].resource_version, candidate.response.resourceVersion);
+              assert.deepEqual(await owner.submit(clockClaim, request, bounds()), expected);
+              assert.equal(
+                invocations,
+                1,
+                "Retained readback must not re-enter the provider participant.",
+              );
+              assert.deepEqual(
+                await clockFixture.state.readRuntimePreparationSubmissionV1(
+                  clockFixture.drivers,
+                  clockClaim,
+                  request,
+                  bounds(),
+                ),
+                expected,
+              );
+              assert.equal(
+                (await owner.submit(clockClaim, { ...request, effectRef: randomUUID() }, bounds()))
+                  .status,
+                "unavailable",
+              );
+              assert.equal(invocations, 1);
+              assert.equal((await responseRows()).rowCount, 1);
+              assert.deepEqual(
+                (
+                  await selected.query(
+                    `SELECT submission_ref,submitted_at,request_digest,provider_wire_digest
+                   FROM occ.runtime_preparation_submissions WHERE effect_ref=$1`,
+                    [request.effectRef],
+                  )
+                ).rows,
+                markerBefore,
+              );
+              assert.ok(capabilityLeases.every((lease) => lease.released));
+              assert.ok(observationLeases.every((lease) => lease.released));
+            },
+          );
+
           const fixture = await seedRuntimePreparationInvocation(selected);
           originalClaim = await fixture.claimOriginalWork();
           fixtureClaims.push([fixture, originalClaim]);

@@ -1,6 +1,7 @@
 import type { PostgresWorkQueue, PlatformReadView } from "@openclaw-enterprise/occ";
 import type { RuntimeAuthorityScopeV1 } from "@openclaw-enterprise/contracts";
 import { isDeepStrictEqual } from "node:util";
+import type { RuntimeCleanupWorker } from "./cleanup.ts";
 
 interface Options {
   queue: Pick<
@@ -12,6 +13,7 @@ interface Options {
     invalidationRef: string,
   ): ReturnType<NonNullable<PlatformReadView["runtimeEffectAdmission"]>["findProfileClosure"]>;
   emit(event: Readonly<Record<string, unknown>>): void;
+  readonly cleanup?: Pick<RuntimeCleanupWorker, "run">;
 }
 
 /** The original worker recognizes profile cleanup separately from running work.
@@ -41,11 +43,28 @@ export class RuntimeProfileWorker {
       );
       if (retained === undefined || !isDeepStrictEqual(retained.work, work))
         throw new Error("The original runtime profile work association is unavailable.");
-      // TODO(runtime profile execution): connect authenticated exact responsibility
-      // readback and the selected provider sealer before accepting stop effects.
-      // A queue claim or an earlier profile record cannot supply the missing authority.
-      this.options.emit({ event: "worker.runtime-profile", code: "PROVIDER_FENCE_UNAVAILABLE" });
+      // Only the original installed cleanup owner can supply the independently
+      // authenticated call and retained effect. A saved closure is not authority.
+      const observation = await this.options.cleanup?.run({
+        kind: "profile",
+        claimed,
+        retained,
+        signal,
+      });
+      this.options.emit({
+        event: "worker.runtime-profile",
+        code:
+          observation === undefined
+            ? "PROVIDER_FENCE_UNAVAILABLE"
+            : observation.kind === "observed"
+              ? "CLEANUP_EFFECT_OBSERVED"
+              : observation.kind === "unresolved"
+                ? "CLEANUP_OUTCOME_UNKNOWN"
+                : "CLEANUP_EFFECT_BLOCKED",
+      });
     } finally {
+      // Individual effect/readback is not complete physical child/task/drain
+      // settlement or the missing original guarded responsibility finalizer.
       await this.options.queue.deferRuntimeProfile(claimed.claim);
     }
     return true;

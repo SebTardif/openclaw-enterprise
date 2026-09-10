@@ -1,3 +1,13 @@
+import {
+  createPostgresPreparationSubmissionOwnerV1,
+  PostgresPreparationResponseExecutionV1,
+  type PostgresRuntimeTransactionParticipantV1,
+} from "./postgres/runtime-preparation-submission-owner.ts";
+import type {
+  RuntimePreparationResponseObservationSourceV1,
+  RuntimePreparationSubmissionOwnerV1,
+  RuntimePreparationSubmissionParticipantV1,
+} from "../runtime-preparation/submission-owner.ts";
 import { PostgresInitialBindingExecutionV1 } from "./postgres/runtime-initial-binding.ts";
 import type {
   RuntimeInitialBindingOwnerV1,
@@ -1110,6 +1120,8 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #gatewaySourceSelections = new WeakMap<object, DriverSelection>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
   readonly #initialBindingExecution = new AsyncLocalStorage<PostgresInitialBindingExecutionV1>();
+  readonly #preparationResponseExecution =
+    new AsyncLocalStorage<PostgresPreparationResponseExecutionV1>();
   readonly #profileAmbient = new AsyncLocalStorage<{
     context: TransactionContext;
     platform: PlatformUnitOfWork;
@@ -1157,12 +1169,14 @@ export class PostgresPlatformState implements PlatformStateStore {
           );
         if (
           this.#outerExecution.getStore() !== undefined ||
-          this.#initialBindingExecution.getStore() !== undefined
+          this.#initialBindingExecution.getStore() !== undefined ||
+          this.#preparationResponseExecution.getStore() !== undefined
         ) {
           const error = new ScopeViolationError(
             "Initial binding requires its original outer transaction.",
           );
           this.#initialBindingExecution.getStore()?.poison(error);
+          this.#preparationResponseExecution.getStore()?.poison(error);
           throw error;
         }
         const request = parseRuntimeAuthorityV1("bind", immutableCopy(input));
@@ -1208,6 +1222,83 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
     return Object.freeze(owner);
+  }
+
+  /** Construct once with the original current-use, native invocation and fresh
+   * service-observation suppliers. A marker is inert until the separate live
+   * RuntimeEffects participant accepts it after this owner's definite COMMIT. */
+  runtimePreparationSubmissionOwnerV1(
+    selection: DriverSelection,
+    participant: RuntimePreparationSubmissionParticipantV1,
+    responseSource: RuntimePreparationResponseObservationSourceV1,
+    capabilities: WorkloadProfileCapabilitySourceV2,
+  ): RuntimePreparationSubmissionOwnerV1 {
+    const invoke = participant?.invoke;
+    const acquireResponse = responseSource?.acquire;
+    const acquireCapabilities = capabilities?.acquire;
+    const currentUse = this.withRuntimePreparationWorkerCurrentUseV1;
+    if (
+      typeof invoke !== "function" ||
+      typeof acquireResponse !== "function" ||
+      typeof acquireCapabilities !== "function" ||
+      typeof currentUse !== "function"
+    )
+      throw new DependencyUnavailableError(
+        "The original preparation submission sources are unavailable.",
+      );
+    const originalCurrentUse = currentUse.bind(this);
+    const originalParticipant: RuntimePreparationSubmissionParticipantV1 = Object.freeze({
+      invoke: invoke.bind(participant),
+    });
+    const originalResponse: RuntimePreparationResponseObservationSourceV1 = Object.freeze({
+      acquire: acquireResponse.bind(responseSource),
+    });
+    const completeCapabilities: WorkloadProfileCapabilitySourceV2 = Object.freeze({
+      acquire: acquireCapabilities.bind(capabilities),
+    });
+    return createPostgresPreparationSubmissionOwnerV1(
+      {
+        currentUse: (claim, request, bounds, work) =>
+          originalCurrentUse(selection, claim, request, bounds, work, completeCapabilities),
+        isCommitUnknown: (error) => error instanceof PostgresCommitOutcomeUnknownError,
+        response: (execution) => {
+          if (
+            this.#outerExecution.getStore() !== undefined ||
+            this.#initialBindingExecution.getStore() !== undefined ||
+            this.#preparationResponseExecution.getStore() !== undefined
+          ) {
+            const error = new ScopeViolationError(
+              "Response observation requires its original outer transaction.",
+            );
+            this.#initialBindingExecution.getStore()?.poison(error);
+            this.#preparationResponseExecution.getStore()?.poison(error);
+            throw error;
+          }
+          return this.#preparationResponseExecution.run(execution, () =>
+            this.execute(
+              false,
+              async (_unit, context) => {
+                const installation = await this.requireInitialized(context);
+                return execution.invoke(
+                  { query: (statement, parameters) => context.client.query(statement, parameters) },
+                  installation.id,
+                  context.assertOwnerActive,
+                );
+              },
+              { signal: execution.call.signal, timeoutMs: execution.timeoutMs },
+              true,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              execution,
+            ),
+          );
+        },
+      },
+      originalParticipant,
+      originalResponse,
+    );
   }
 
   /** Diagnostic correlation for this state's exact failed command only. The
@@ -3182,6 +3273,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                 profile,
                 revision,
                 unit,
+                preparation,
                 child: child.child,
                 providerWireUtf8: child.providerWireUtf8,
                 retain,
@@ -5252,24 +5344,29 @@ export class PostgresPlatformState implements PlatformStateStore {
     gateway?: GatewayStartupExecution,
     turn?: TurnCommandExecutionV1,
     fresh?: FreshBootstrapExecutionV1,
-    initialBinding?: PostgresInitialBindingExecutionV1,
+    runtimeParticipant?: PostgresRuntimeTransactionParticipantV1,
   ): Promise<T> {
     const ambientBinding = this.#initialBindingExecution.getStore();
+    const ambientResponse = this.#preparationResponseExecution.getStore();
     if (
-      (ambientBinding !== undefined && ambientBinding !== initialBinding) ||
-      (initialBinding !== undefined &&
+      (ambientBinding !== undefined && ambientBinding !== runtimeParticipant) ||
+      (ambientResponse !== undefined && ambientResponse !== runtimeParticipant) ||
+      (ambientBinding !== undefined && ambientResponse !== undefined) ||
+      (runtimeParticipant !== undefined &&
         (readOnly ||
           !profileReadCommitted ||
           credential !== undefined ||
           gateway !== undefined ||
           turn !== undefined ||
           fresh !== undefined ||
-          this.#outerExecution.getStore() !== undefined))
+          this.#outerExecution.getStore() !== undefined ||
+          (runtimeParticipant !== ambientBinding && runtimeParticipant !== ambientResponse)))
     ) {
       const error = new ScopeViolationError(
-        "Initial binding cannot mix or nest transaction owners.",
+        "Runtime participation cannot mix or nest transaction owners.",
       );
       ambientBinding?.poison(error);
+      ambientResponse?.poison(error);
       throw error;
     }
     const ambientFresh = this.#freshExecution.getStore();
@@ -5374,7 +5471,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
     const abort = () => {
       profileAbort.abort();
-      initialBinding?.poison(abortFailure());
+      runtimeParticipant?.poison(abortFailure());
       credential?.phase.poison(abortFailure());
       gateway?.phase?.poison(abortFailure());
       turn?.phase?.poison(options?.signal.reason ?? abortFailure());
@@ -5411,7 +5508,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
-      initialBinding?.poison(
+      runtimeParticipant?.poison(
         new DependencyUnavailableError("The binding transaction transport failed."),
       );
       if (context?.channelFirstCreate) {
@@ -5666,7 +5763,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               "Fresh bootstrap requires its Namespace, work and attributable audit.",
             );
         }
-        if (initialBinding !== undefined) await initialBinding.prepareCommit();
+        if (runtimeParticipant !== undefined) await runtimeParticipant.prepareCommit();
         if (turn !== undefined) await turn.phase!.prepareCommit();
         if (gateway !== undefined) {
           gateway.phase!.closeAdmissions();
@@ -5721,7 +5818,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         // No awaited work may intervene between this marker and the raw COMMIT.
         gateway?.phase?.markCommitDispatched();
         turn?.phase?.markCommitDispatched();
-        initialBinding?.assertCommitReady();
+        runtimeParticipant?.assertCommitReady();
         if (fresh?.failed) throw fresh.failure;
       } catch (error) {
         if (fresh !== undefined) this.captureFreshFailure(fresh, error, "completion-check");
@@ -5768,12 +5865,12 @@ export class PostgresPlatformState implements PlatformStateStore {
       return result;
     } catch (error) {
       primaryFailure = true;
-      if (initialBinding !== undefined) {
-        initialBinding.poison(error);
-        initialBinding.closeAdmissions();
-        await initialBinding.drain();
+      if (runtimeParticipant !== undefined) {
+        runtimeParticipant.poison(error);
+        runtimeParticipant.closeAdmissions();
+        await runtimeParticipant.drain();
         if (running !== undefined) await Promise.allSettled([running]);
-        await initialBinding.drain();
+        await runtimeParticipant.drain();
       }
       // An outer callback failure and accepted command failures share the same
       // first-error latch; a later catch/rethrow cannot replace its original cause.
@@ -5882,7 +5979,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         fresh.active = false;
         fresh.establishedNoCommit = establishedNoCommit;
       }
-      cleanup(() => initialBinding?.closeAdmissions());
+      cleanup(() => runtimeParticipant?.closeAdmissions());
       cleanup(() => turn?.phase?.closeAdmissions());
       cleanup(() => turn?.close());
       cleanup(() => gateway?.phase?.closeAdmissions());
@@ -5947,9 +6044,9 @@ export class PostgresPlatformState implements PlatformStateStore {
           }
         }
       }
-      if (initialBinding !== undefined) {
+      if (runtimeParticipant !== undefined) {
         try {
-          await initialBinding.finishTerminal();
+          await runtimeParticipant.finishTerminal();
         } catch (error) {
           if (!cleanupFailed) {
             cleanupFailed = true;

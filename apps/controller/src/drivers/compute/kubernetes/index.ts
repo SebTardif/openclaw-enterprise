@@ -3,6 +3,10 @@ import type { WorkloadProfileOwnedOperationV2 } from "@openclaw-enterprise/occ/w
 import { deriveWorkloadProfileManifestV2 } from "@openclaw-enterprise/occ/workload-profiles/projections";
 import { comparePreparedHarnessDeployment } from "./prepared-deployment-comparison.ts";
 import {
+  KubernetesPreparedSubmission,
+  type KubernetesPreparedSubmissionOptions,
+} from "./prepared-submission.ts";
+import {
   KubernetesWorkloadProfileCapability,
   type KubernetesRendererSource,
 } from "./workload-profile-capability.ts";
@@ -740,6 +744,35 @@ export class KubernetesComputeDriver implements ComputeDriver {
       input,
       runtimeClassName,
     );
+  }
+
+  /** Original selected provider construction. Composition must independently
+   * supply the accepting Runtime/State owner; no default issuer is installed.
+   * This adapter does not replace legacy apply or grant readiness/serving. */
+  createRuntimePreparationSubmission(
+    options: Pick<
+      KubernetesPreparedSubmissionOptions,
+      "state" | "selection" | "capabilities" | "originals" | "responseSource"
+    >,
+  ): KubernetesPreparedSubmission {
+    if (options.selection.selectedDriver("compute") !== this)
+      throw new ConfigurationFailure("The original Compute selection is unavailable.");
+    const verify = this.verifyPreparedDeployment.bind(this);
+    return new KubernetesPreparedSubmission({
+      ...options,
+      driver: this,
+      verify,
+      clients: () => this.clients(),
+      namespace: async (namespaceId) => (await this.resolveNamespace(namespaceId)).name,
+      request: (operation, call) => {
+        const remaining = Date.parse(call.deadline) - Date.now();
+        if (!Number.isFinite(remaining) || remaining <= 0 || call.signal.aborted)
+          throw new ConfigurationFailure("The original provider call is no longer current.");
+        const deadline = AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining));
+        const signal = AbortSignal.any([call.signal, deadline]);
+        return withComputeAbortSignal(signal, () => this.request(operation, { mutating: true }));
+      },
+    });
   }
 
   /** Partial current renderer proof. SDK accepting authority must separately

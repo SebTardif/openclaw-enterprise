@@ -1,4 +1,5 @@
 import type { RuntimeGateGuardV1, RuntimePreparedChildV1 } from "@openclaw-enterprise/contracts";
+import type { RetainedRuntimePreparation } from "./types.ts";
 import type {
   WorkloadProfileDeploymentUnitV2,
   WorkloadProfileOwnedLeaseV2,
@@ -28,6 +29,8 @@ export interface RuntimePreparationCurrentUseLeaseV1 extends WorkloadProfileOwne
   readonly profile: WorkloadProfileAdmissionRecordV2;
   readonly revision: Readonly<import("@openclaw-enterprise/contracts").AgentRevision>;
   readonly unit: WorkloadProfileDeploymentUnitV2;
+  /** Complete original projection; copying it supplies no post-COMMIT authority. */
+  readonly preparation: RetainedRuntimePreparation;
   readonly child: RuntimePreparedChildV1;
   readonly providerWireUtf8: string;
 }

@@ -17,6 +17,21 @@ import {
 import type { PlatformReadOptions } from "@openclaw-enterprise/occ/ports/transaction";
 import { validRevisionObservation, type WorkerRevisionInputs } from "./revision-inputs.ts";
 import type { RevisionDispatchResult } from "./runner.ts";
+import type { RuntimePreparationCurrentUseRequestV1 } from "@openclaw-enterprise/occ/runtime-preparation/current-use";
+import type { RuntimePreparationSubmissionOwnerV1 } from "@openclaw-enterprise/occ/runtime-preparation/submission-owner";
+
+/** Original retained locator reader only. WorkClaim has no preparationRef or
+ * historical selection. This must return the exact original CurrentUseRequest,
+ * never latest/open preparation discovery. State independently authenticates it.
+ * The canonical submission owner is the selected Compute bridge, outside guard.
+ * Neither this lookup nor its result issues an AuthorityCall or effect permit. */
+export interface RuntimePreparationWorkerSourceV1 {
+  currentUse(
+    execution: WorkerClaimContext,
+    revision: Readonly<AgentRevision>,
+  ): Promise<RuntimePreparationCurrentUseRequestV1 | undefined>;
+  readonly submission: RuntimePreparationSubmissionOwnerV1;
+}
 
 export interface RevisionReconcilerView {
   readonly namespaces: Pick<PlatformReadView["namespaces"], "findNamespace">;
@@ -51,9 +66,12 @@ export interface RevisionReconcilerOptions {
   readonly cleanup: Pick<WorkerRevisionCleanup, "stage" | "reconcileActive">;
   readonly finalization: Pick<
     WorkerFinalization,
-    "finalizeRevision" | "completeActivatedRevision" | "finalizeActiveRevision"
+    "finalizeRevision" | "deferRevision" | "completeActivatedRevision" | "finalizeActiveRevision"
   >;
   readonly effects: Pick<LeasedEffects, "runRevision" | "renewRevision">;
+  readonly runtimePreparation?: {
+    readonly source: RuntimePreparationWorkerSourceV1;
+  };
 }
 
 /** Revalidates admitted revision work before invoking the selected leased effects. */
@@ -67,6 +85,7 @@ export class RevisionReconciler {
   async reconcile(execution: WorkerClaimContext): Promise<void> {
     const { claim } = execution;
     let result: RevisionDispatchResult;
+    let selectedPreparation = false;
     try {
       if (
         claim.agentId === undefined ||
@@ -205,6 +224,16 @@ export class RevisionReconciler {
         await this.options.finalization.finalizeRevision(execution, provider);
         return;
       }
+      if (revision.workloadProfileUse !== undefined) {
+        // A selected V2 revision cannot fall through to historical bind/apply,
+        // activation or cleanup merely because its original owner is missing.
+        selectedPreparation = true;
+        const prepared = await this.prepareSelectedRevision(execution, revision, currentness);
+        // Original queue defer keeps this pending without convergence/retry
+        // terminalization. A failed defer must not fall back to legacy retry.
+        await this.options.finalization.deferRevision(execution, prepared.code);
+        return;
+      }
       if (this.options.compute.bindAgent !== undefined) {
         await this.options.effects.runRevision(execution, currentness, async () => {
           await this.options.compute.bindAgent!({ namespace, agent });
@@ -282,6 +311,7 @@ export class RevisionReconciler {
       );
     } catch (error) {
       if (
+        selectedPreparation ||
         error instanceof WorkClaimLostError ||
         error instanceof WorkerRevisionCurrentnessLostError
       )
@@ -289,6 +319,57 @@ export class RevisionReconciler {
       result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
     }
     await this.options.finalization.finalizeRevision(execution, result);
+  }
+
+  private async prepareSelectedRevision(
+    execution: WorkerClaimContext,
+    revision: Readonly<AgentRevision>,
+    currentness: WorkerRevisionCurrentness,
+  ): Promise<RevisionDispatchResult> {
+    const selected = this.options.runtimePreparation;
+    if (!selected) return { outcome: "pending", code: "RUNTIME_PREPARATION_UNAVAILABLE" };
+    try {
+      await currentness.assertCurrent();
+      const request = await selected.source.currentUse(execution, revision);
+      await currentness.assertCurrent();
+      if (request === undefined)
+        return { outcome: "pending", code: "RUNTIME_PREPARATION_UNAVAILABLE" };
+      if (
+        request.selection.installationId !== this.options.installation()?.id ||
+        request.selection.namespaceId !== revision.namespaceId ||
+        request.selection.agentId !== revision.agentId ||
+        request.selection.revisionId !== revision.id
+      )
+        return { outcome: "pending", code: "RUNTIME_PREPARATION_UNRESOLVED" };
+      // The canonical owner commits a new marker before its one participant
+      // reacquires the original worker/effect context. Never surround this call
+      // with an older guard or turn its retained response into an effect result.
+      const result = await selected.source.submission.submit(execution.claim, request, {
+        signal: execution.signal,
+        timeoutMs: 3_000,
+      });
+      await currentness.assertCurrent();
+      if (result.effectRef !== request.effectRef)
+        return { outcome: "pending", code: "RUNTIME_PREPARATION_UNRESOLVED" };
+      return {
+        outcome: "pending",
+        code:
+          result.status === "retained"
+            ? "RUNTIME_PREPARATION_RESPONSE_RETAINED"
+            : result.status === "unavailable"
+              ? "RUNTIME_PREPARATION_UNAVAILABLE"
+              : "RUNTIME_PREPARATION_UNRESOLVED",
+      };
+    } catch (error) {
+      if (
+        error instanceof WorkClaimLostError ||
+        error instanceof WorkerRevisionCurrentnessLostError
+      )
+        throw error;
+      // Ordinary failure defers through the original queue owner,
+      // not the legacy convergence or retry-budget terminalization path.
+      return { outcome: "pending", code: "RUNTIME_PREPARATION_UNRESOLVED" };
+    }
   }
 
   private async observeRevision(

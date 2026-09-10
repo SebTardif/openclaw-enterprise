@@ -84,6 +84,21 @@ export class WorkerFinalization {
     this.options = options;
   }
 
+  /** Retain incomplete selected preparation without applying legacy convergence
+   * or attempt-exhaustion terminalization. The original queue checks the live
+   * claim token/lease and owns its backoff and attempt accounting. This is only
+   * scheduling: it grants no effect authority or runtime completion evidence.
+   */
+  async deferRevision(execution: WorkerClaimContext, code: string): Promise<void> {
+    const { claim, signal } = execution;
+    if (signal.aborted) throw new WorkClaimLostError();
+    await this.options.transact(async (_unit, queue) => {
+      if (signal.aborted) throw new WorkClaimLostError();
+      await queue.defer(claim, { code });
+      if (signal.aborted) throw new WorkClaimLostError();
+    });
+  }
+
   /** Same original transaction and parent order as supported intent writers.
    * Queue renewal follows parent locks; no database lock spans a Compute wait.
    */

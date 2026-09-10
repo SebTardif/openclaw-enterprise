@@ -204,16 +204,58 @@ require the worker to impersonate a new request. Session revocation, account
 incarnation/version change, policy denial, supersession and missing origins
 remain refusals. The returned observation expires with its transaction.
 
-This reader supplies necessary preparation data. Its exact submission readback
-returns retained API identity or uncertainty without SDK work. Migration 0043
-retains immutable submission responsibility and response identity; these rows
-do not grant permission to send an effect. A response retains its finite reported
-observation time without comparing clocks between the SDK host and database; that
-time does not establish causal ordering or timed-effect authority. Current canonical gate admission,
-fault/withdrawal fencing and an original worker invocation that survives SQL
-terminals remain required. The selected Compute has no prepared submission
-accepting method until that owner exists. Neither a queue token nor a persisted
-session locator is execution authority.
+This reader supplies the complete retained preparation and exact child wire data
+to the original submission owner. Its submission readback returns retained API
+identity or uncertainty without SDK work. Migration 0043 retains immutable
+submission responsibility and response identity; these rows do not grant
+permission to send an effect. A response retains its finite reported observation
+time without comparing clocks between the SDK host and database; that time does
+not establish causal ordering or timed-effect authority. Neither a queue token
+nor a persisted session locator is execution authority.
+
+### Submission and independent response retention
+
+`PostgresPlatformState.runtimePreparationSubmissionOwnerV1` captures the selected
+current-use reader, capabilities, original invocation participant and independent
+response source once. It retains the exact submission marker in its original
+transaction. Only a newly acknowledged marker, after that transaction settles,
+can invoke the participant. A repeated marker, a rejected marker or an unknown
+COMMIT cannot invoke it again. Response retention uses a separate original
+transaction and observation lease, so it can finish after the old claim or
+current-use transaction has closed. Nested or outlived participation poisons the
+original owner; pending operations and transferred cleanup are joined.
+
+The selected Kubernetes Driver has a `KubernetesPreparedSubmission` bridge. Its
+provider adapter captures the original clients and exact immutable request. The
+bridge requires an original execution lease, the original lifecycle effect guard,
+and a separately acquired response-observation call. The original effect owner
+alone may enter the provider adapter. It rechecks currentness around asynchronous
+work, refuses late callbacks after invocation closure, and joins entered provider
+and response-retention work before releasing its leases.
+
+These constructors are implemented interfaces, not installed positive suppliers.
+The original current gate, protected provider-entry authority, observation
+recognition and corresponding application composition remain required. Missing
+suppliers refuse before State submission; a controlled test participant does not
+satisfy the production construction requirement.
+
+The revision worker selects retained preparation explicitly. Once selected, its
+result stays on the original queue's deferral path, including exhausted or aged
+work. A failed deferral cannot fall back to legacy preparation, retry exhaustion
+or provider replay. The profile/fault cleanup consumer similarly requires the
+original retained cleanup association and independently authorized cleanup or
+readback call. Claim loss may retain an entered effect's result for that owner;
+it does not authorize a successor operation or turn an unknown result into
+completed cleanup.
+
+Run the submission contract and owner conformance files with `node --test
+tests/conformance/runtime-preparation-submission-contract.test.mjs
+tests/conformance/runtime-preparation-submission-owner.test.mjs`. The owner suite
+exercises the actual State transaction finalizer with controlled transport and
+authority ports. Worker and provider regressions exercise their real consumers
+with controlled peers. These checks do not establish PostgreSQL durability,
+live Kubernetes effects or complete internal producer composition. The dedicated
+PostgreSQL suites below retain their separate environment requirements.
 
 Origin INSERT remains owner-only after migration. Operators must bind that
 permission to the same explicitly selected controller role already authorized
