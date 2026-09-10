@@ -22,6 +22,7 @@ import {
   Timestamp,
   WorkspaceFileName,
 } from "./common.ts";
+import { PluginInventoryEntrySchema, PluginInventorySchema } from "../plugins.ts";
 
 export const InstallationSchema = Type.Object(
   { id: InstallationId, name: Name, createdAt: Timestamp },
@@ -164,6 +165,11 @@ export const ProviderListResponse = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginListResponse = Type.Object(
+  { data: PluginInventorySchema, meta: Meta },
+  { additionalProperties: false },
+);
+
 export const AgentRevisionSchema = Type.Object(
   {
     id: RevisionId,
@@ -253,6 +259,8 @@ export type ConfigurationWire = Type.Static<typeof ConfigurationSchema>;
 export type SecretWire = Type.Static<typeof SecretSchema>;
 export type ServiceAccountWire = Type.Static<typeof ServiceAccountSchema>;
 export type ProviderSummaryWire = Type.Static<typeof ProviderSummarySchema>;
+export type PluginInventoryEntryWire = Type.Static<typeof PluginInventoryEntrySchema>;
+export type PluginInventoryWire = Type.Static<typeof PluginInventorySchema>;
 export type AgentWire = Type.Static<typeof AgentSchema>;
 export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
@@ -269,6 +277,7 @@ export type AgentResponse = Type.Static<typeof AgentResponse>;
 export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCredentialResponse>;
 export type AgentListResponse = Type.Static<typeof AgentListResponse>;
 export type ProviderListResponse = Type.Static<typeof ProviderListResponse>;
+export type PluginListResponse = Type.Static<typeof PluginListResponse>;
 export type AgentRevisionResponse = Type.Static<typeof AgentRevisionResponse>;
 export type AgentRevisionListResponse = Type.Static<typeof AgentRevisionListResponse>;
 export type WorkspaceFileResponse = Type.Static<typeof WorkspaceFileResponse>;

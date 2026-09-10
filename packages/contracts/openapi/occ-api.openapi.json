@@ -6035,6 +6035,173 @@
         ]
       }
     },
+    "/plugins": {
+      "get": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "listPlugins",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "driverId",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "driverId": { "const": "codex", "type": "string" },
+                        "inventory": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "codexVersion": {
+                              "maxLength": 512,
+                              "minLength": 1,
+                              "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                              "type": "string"
+                            },
+                            "generatedAt": { "format": "date-time", "type": "string" },
+                            "schemaVersion": { "const": 1, "type": "number" },
+                            "sourceMethod": { "const": "plugin/list", "type": "string" }
+                          },
+                          "required": [
+                            "schemaVersion",
+                            "generatedAt",
+                            "codexVersion",
+                            "sourceMethod"
+                          ],
+                          "type": "object"
+                        },
+                        "plugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginName": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remoteMarketplaceName": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remotePluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 512,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                    "type": "string"
+                                  },
+                                  { "type": "null" }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "remoteMarketplaceName",
+                              "remotePluginId",
+                              "pluginName",
+                              "version"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": ["driverId", "inventory", "plugins"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-1" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "List one reviewed plugin catalog by Driver ID",
+        "tags": ["Plugins"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
     "/providers": {
       "get": {
         "description": "Requires administer permission on the requested Installation.",

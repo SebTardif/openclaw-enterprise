@@ -22,6 +22,7 @@ import type {
   LoggingLevel,
   OpenClawConfigurationDocument,
   PermissionAction,
+  PluginInventory,
   ProviderDefinition,
   ProviderRef,
   ResourceKind,
@@ -43,6 +44,7 @@ import {
   admitLoggingConfiguration,
   normalizeLoggingLevel,
   normalizeSecretBindings,
+  validatePluginInventory,
 } from "@openclaw-enterprise/contracts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
@@ -144,6 +146,7 @@ export interface ControllerOptions {
   readonly state?: PlatformStateStore;
   readonly recordOperations?: boolean;
   readonly providers?: readonly ProviderDefinition[];
+  readonly pluginCatalogs?: readonly PluginInventory[];
   readonly loggingLevel?: LoggingLevel;
 }
 
@@ -519,6 +522,32 @@ function validExecutionMode(value: unknown): value is HarnessExecutionMode {
   return value === "embedded" || value === "dedicated";
 }
 
+function validPluginText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 512 &&
+    /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.test(value)
+  );
+}
+
+function pluginCatalogMap(
+  catalogs: readonly PluginInventory[] | undefined,
+): ReadonlyMap<string, Readonly<PluginInventory>> | undefined {
+  if (catalogs === undefined) return undefined;
+  const mapped = new Map<string, Readonly<PluginInventory>>();
+  for (const catalog of catalogs) {
+    if (!validPluginText(catalog.driverId) || mapped.has(catalog.driverId))
+      throw new ScopeViolationError("Plugin catalog driver IDs must be unique valid identifiers.");
+    const validated = validatePluginInventory(catalog, {
+      driverId: catalog.driverId,
+      allowEmpty: true,
+    });
+    mapped.set(validated.driverId, validated);
+  }
+  return mapped;
+}
+
 export class OpenClawController {
   readonly installation: Readonly<Installation>;
 
@@ -534,6 +563,7 @@ export class OpenClawController {
   private readonly providers: readonly ProviderDefinition[];
   private readonly loggingLevel: LoggingLevel;
   private readonly providerMap: ReadonlyMap<string, ProviderDefinition>;
+  private readonly pluginCatalogs: ReadonlyMap<string, Readonly<PluginInventory>> | undefined;
 
   constructor(installation: Installation, options: ControllerOptions = {}) {
     if (!isNonEmptyString(installation.id) || !validName(installation.name))
@@ -556,6 +586,7 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+    this.pluginCatalogs = pluginCatalogMap(options.pluginCatalogs);
   }
 
   registerDriver(driver: Driver): Driver {
@@ -616,6 +647,13 @@ export class OpenClawController {
 
   async validateProviderConfiguration(): Promise<void> {
     validateSelectedProviderDrivers(this.providers, this.selections.get("service_account")?.driver);
+  }
+
+  pluginCatalog(driverId: string): Readonly<PluginInventory> | undefined {
+    if (this.pluginCatalogs === undefined)
+      throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+    const catalog = this.pluginCatalogs.get(driverId);
+    return catalog === undefined ? undefined : immutableCopy(catalog);
   }
 
   async getInstallation(principalId: string): Promise<Readonly<Installation>> {

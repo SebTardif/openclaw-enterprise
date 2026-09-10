@@ -1070,7 +1070,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     )
       throw failure(401, "UNAUTHENTICATED", "A human controller session is required.");
     const params = request.params as Record<string, unknown>;
-    if (Object.keys(request.query as Record<string, unknown>).length > 0)
+    if (
+      operation.operationId !== "listPlugins" &&
+      Object.keys(request.query as Record<string, unknown>).length > 0
+    )
       throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
     for (const [parameter, pattern] of Object.entries(RESOURCE_ID)) {
       if (
@@ -1323,6 +1326,18 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         data: providers.map((provider) => ({ id: provider.id, type: provider.type })),
         meta: { requestId: request.id },
       });
+      return;
+    }
+
+    if (operation.operationId === "listPlugins") {
+      await requireInstallationAdmin(request, operation, context);
+      const driverId = (request.query as { readonly driverId?: string }).driverId;
+      if (!driverId)
+        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
+      const catalog = controller.pluginCatalog(driverId);
+      if (catalog === undefined)
+        throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+      reply.send({ data: catalog, meta: { requestId: request.id } });
       return;
     }
 

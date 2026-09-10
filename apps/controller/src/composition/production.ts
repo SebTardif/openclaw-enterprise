@@ -7,6 +7,7 @@ import {
 } from "@openclaw-enterprise/iam";
 import { OpenClawController, PostgresPlatformState } from "@openclaw-enterprise/occ";
 import { createPostgresControllerAuth } from "../auth/index.ts";
+import { loadCodexPluginInventory } from "../drivers/plugins/codex/index.ts";
 import { createFastifyApp } from "../index.ts";
 import type {
   InstallationRuntimeDrivers,
@@ -113,12 +114,17 @@ export async function composeProduction(config: ProductionConfig) {
       throw new Error("The bundled Kubernetes Compute Driver requires production preflight.");
     }
     if (preflight !== undefined) await preflight.call(computeDriver);
+    const codexPluginCatalog = await loadCodexPluginInventory();
+    const pluginCatalogs = codexPluginCatalog.available
+      ? [codexPluginCatalog.inventory]
+      : undefined;
 
     const controller = new OpenClawController(persistedInstallation, {
       state,
       recordOperations: true,
       providers: installation.provider,
       loggingLevel: config.drivers.installation.logging.level,
+      ...(pluginCatalogs === undefined ? {} : { pluginCatalogs }),
     });
     controller.registerDriver(iamDriver);
     if (controller.selectDriver("iam", driverId) !== iamDriver)

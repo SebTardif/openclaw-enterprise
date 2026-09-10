@@ -5,9 +5,8 @@ Sign in, select a Namespace, inspect accessible Agents, Providers, and
 Namespaces, create Agents with editable Configuration JSON and Slack/Teams settings,
 edit channel drafts, provision initial runtime credentials, deploy saved drafts, and read or replace supported live workspace files. Rollback,
 live runtime health, and Agent deletion are unavailable in the console.
-The [operator workflow](../flows/operator-workflow.md) connects the supported
-management API commands and runtime checks, including current lifecycle and
-retention limits. Browser chat is not exposed by this console.
+The [deployment guide](../guides/deploy.md) provides deployment commands and
+runtime verification procedures. Browser chat is not exposed by this console.
 
 ## Start and sign in
 
@@ -160,7 +159,7 @@ explicitly show **Serving status unavailable**, including when a revision is
 selected. There is no observation time, generation, serving revision, failed
 activation, or shutdown outcome in the current Agent API response. The console
 does not infer these from selection or admission. Follow the
-[operator checks](../flows/operator-workflow.md#inspect-selection-and-runtime)
+[deployment verification](../guides/deploy.md#verify-production-workloads)
 for the installed runtime.
 
 The Channels tab edits Slack and Microsoft Teams settings on the saved

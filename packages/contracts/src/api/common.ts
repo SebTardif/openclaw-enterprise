@@ -25,6 +25,11 @@ export const ProviderId = Type.String({
   maxLength: 200,
   pattern: /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.source,
 });
+export const PluginCatalogDriverId = Type.String({
+  minLength: 1,
+  maxLength: 200,
+  pattern: /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.source,
+});
 
 export const Timestamp = Type.String({
   format: "date-time",
@@ -53,6 +58,11 @@ export const CreateNamespaceBody = Type.Object(
 );
 
 export const EmptyQuery = Type.Object({}, { additionalProperties: false });
+
+export const ListPluginsQuery = Type.Object(
+  { driverId: PluginCatalogDriverId },
+  { additionalProperties: false },
+);
 
 export const NamespaceParams = Type.Object(
   { namespaceId: NamespaceId },

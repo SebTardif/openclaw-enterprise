@@ -28,6 +28,42 @@ Sandbox packages in trusted YAML in either mode.
 | `sandbox`         | [SandboxDriver](sandbox.md)                | Optional; bundled OpenShell or installed package, and currently requires bundled Kubernetes Compute. |
 | `service_account` | [ServiceAccountDriver](service-account.md) | Optional bundled ChatGPT Provider member; no installed-package selector.                             |
 
+## Codex plugin catalog adapter
+
+The Codex plugin catalog adapter is a bundled controller reader for the
+reviewed `plugin/list` inventory artifact. It is not an Installation Driver
+capability, package selector, tenant upload surface, or Agent runtime. The
+supported adapter ID is `codex`.
+
+The artifact lives beside the adapter under
+`apps/controller/src/drivers/plugins/codex/inventory.json` when a release has a
+reviewed catalog. Generate it with
+`scripts/generate-codex-plugin-inventory.mjs` against the pinned Codex
+app-server version, currently `0.153.4`, using an approved local app-server
+session. The generator calls the app-server `plugin/list` method with
+`forceRefetch: true`, includes only reviewed `openai-curated-remote` entries,
+projects only `id`, `remoteMarketplaceName`, `remotePluginId`, display
+`pluginName`, and `version`, and writes the artifact atomically after
+validation. Keep raw capture evidence and generation credentials outside the
+repository. Local-path marketplaces such as bundled, primary-runtime, and
+internal-testing entries are excluded. Every artifact `id` is `<PluginSummary.id>#<remotePluginId>` so the
+selection key stays stable if Codex later adds or removes another entry with the
+same `PluginSummary.id`. The artifact preserves the remote locator fields
+unchanged.
+
+Catalog entries are release-valid identities only. They do not prove that a
+target Agent account can see, install, authenticate to, or run the plugin. A
+missing, malformed, or version-mismatched artifact is unavailable to catalog
+reads. A bundled `plugins: []` artifact is valid only after the generator has
+observed the expected marketplace and release review has accepted an
+intentionally empty collection; an absent raw capture or missing marketplace
+must not be represented as a successful empty catalog.
+
+OCC retains one validated, immutable catalog snapshot for `/plugins`. Changing
+caller-owned startup options after construction cannot change that view. Missing
+or malformed catalog state returns sanitized `DEPENDENCY_UNAVAILABLE` responses
+without preventing ordinary controller startup.
+
 Installed packages run unsandboxed with control-plane authority and
 access to controller credentials, database state, and Kubernetes identity.
 OCC asks selected IAM to authorize operations, but malicious IAM can disregard

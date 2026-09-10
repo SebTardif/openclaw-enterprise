@@ -171,8 +171,8 @@ retains existing bindings. The preflight reads do not prevent a later concurrent
 An interrupted or unavailable PATCH reply keeps the result unknown and blocks
 another channel write until Refresh. Draft channel disablement changes only
 Configuration values; it does not stop a running Agent. The
-[operator workflow](operator-workflow.md) records the executable management
-commands and the lifecycle procedures still unavailable in this API.
+[deployment guide](../guides/deploy.md) records executable deployment and
+verification commands.
 
 ### 5. Provision initial runtime credentials
 
