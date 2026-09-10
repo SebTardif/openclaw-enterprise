@@ -30,12 +30,14 @@ controller.
   Kubernetes fails the Codex Pod when the configured profile is missing.
 
 The worker manages PersistentVolumeClaims and, when private gateway routing is
-enabled, HTTPRoutes through tenant-local RoleBindings. Only the controller API
-receives narrowly scoped Secret permissions for provider-issued credentials.
-The API does not need gateway Pod reads, exec, route writes, or certificate
-management for workspace-file access. Do not grant wildcard permissions,
-cluster-wide access to tenant resources, workload access to controller
-credentials, or permission to create or escalate RoleBindings.
+enabled, HTTPRoutes through tenant-local RoleBindings. It also needs tenant
+`pods/exec` `create` only for selected native plugin preparation in the exact
+owned dedicated Codex candidate Pod. Only the controller API receives narrowly
+scoped Secret permissions for provider-issued credentials. The API does not
+need gateway Pod reads, exec, route writes, or certificate management for
+workspace-file access. Do not grant wildcard permissions, cluster-wide access
+to tenant resources, workload access to controller credentials, or permission
+to create or escalate RoleBindings.
 
 If OpenShell sandboxing is enabled, the Compute Driver's Kubernetes access is
 also used directly by the optional `SandboxDriver.ensureNamespace` hook to
@@ -67,6 +69,36 @@ Cancellation of the observation cannot yield a successful readiness result.
 This checks Kubernetes workload readiness and label uniqueness; it does not
 attest a provider Sandbox ID or Pod UID, authenticate the guest, or fence a
 runtime generation.
+
+Selected native Codex plugins are supported only by the bundled Kubernetes
+dedicated Codex runtime. Docker, embedded OpenClaw, OpenShell-provisioned
+Harnesses, and Kubernetes drivers without `runtime` reject a nonempty
+`AgentRevision.selectedPlugins` snapshot before creating or adopting workload
+resources. Each selected snapshot uses the shared catalog identity
+`driverId`/`pluginId` plus Codex marketplace fields; the runtime sends Codex
+JSON-RPC `plugin/read` and `plugin/install` with `pluginName` set to the
+snapshot's `remotePluginId`.
+
+The worker prepares plugins while the candidate revision is private, after the
+exact Agent Pod is Ready and before gateway route publication. It invokes the
+candidate's local app-server over Kubernetes `pods/exec` into the owned
+`agent` container and uses the existing in-Pod `APP_SERVER_PORT` and
+`APP_SERVER_TOKEN`. Application-level install failures and catalog-disabled or
+unavailable plugins are recoverable only after the worker persists
+`reportPluginInstallFailure({ driverId, pluginId })`. The driver then deletes
+the exact candidate Pod by UID so the rebuilt Pod starts from a fresh private
+Codex home and excludes the persisted failed identity. Transport errors,
+timeouts, cancellation, lost failure reporting, malformed responses, ambiguous
+installed-plugin state, credential policy errors, and proof failures are fatal.
+
+After all nonfailed selections are installed, the worker proves the exact
+candidate state through production Codex APIs: `plugin/installed`,
+`skills/list` with `forceReload: true`, `hooks/list`, and
+`mcpServerStatus/list`. The proof fails closed if a failed plugin remains
+installed or visible through skills, hooks, or MCP server status, or if Codex
+reports an installed plugin outside the admitted selected set. The driver never
+performs account-wide uninstall, user-workspace mutation, or serving-runtime
+mutation to recover from a failed native plugin.
 
 Shared Kubernetes clusters are not currently supported.
 

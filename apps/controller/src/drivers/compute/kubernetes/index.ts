@@ -7,10 +7,12 @@ import {
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { isAbsolute } from "node:path";
+import { Writable } from "node:stream";
 import type {
   AppsV1Api,
   CoreV1Api,
   DiscoveryV1Api,
+  Exec,
   KubernetesObject,
   KubernetesObjectApi,
   NetworkingV1Api,
@@ -43,12 +45,20 @@ import type {
   SandboxWorkspaceMount,
   SecretEnvironmentProjection,
   LoggingLevel,
+  AgentPluginSnapshot,
+  PluginIdentity,
 } from "@openclaw-enterprise/contracts";
 import { admittedLoggingLevel, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { DependencyUnavailableError, ResourceConflictError } from "@openclaw-enterprise/occ";
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
+import {
+  failedNativePluginKeys,
+  nativePluginIdentityKey,
+  selectedNativePlugins,
+  type NativePluginComputeContext,
+} from "../native-plugins.ts";
 import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
@@ -115,6 +125,7 @@ interface KubernetesApiClients {
   readonly discovery: DiscoveryV1Api;
   readonly networking: NetworkingV1Api;
   readonly objects: KubernetesObjectApi;
+  readonly exec: Exec;
 }
 
 export interface KubernetesComputeDriverOptions {
@@ -197,6 +208,23 @@ interface GatewayConfigurationSnapshot {
 class OwnershipFailure extends Error {}
 class ConfigurationFailure extends Error {}
 
+interface NativeJsonRpcSuccess {
+  readonly ok: true;
+  readonly result: unknown;
+}
+
+interface NativeJsonRpcApplicationError {
+  readonly ok: false;
+  readonly applicationError: unknown;
+}
+
+type NativeJsonRpcResult = NativeJsonRpcSuccess | NativeJsonRpcApplicationError;
+
+interface ReadyAgentPod {
+  readonly name: string;
+  readonly uid?: string;
+}
+
 type RuntimeCredentialGroup = "transport" | "model" | "slack";
 
 interface RuntimeCredentialSecretSpec {
@@ -245,6 +273,37 @@ const MAX_RUNTIME_CREDENTIAL_BYTES = 65_536;
 const RUNTIME_STATE_VOLUME_SIZE = "1Gi";
 const GATEWAY_PRIVATE_STATE_VOLUME = "openclaw-gateway-state";
 const GATEWAY_PRIVATE_STATE_SIZE = "10Gi";
+const NATIVE_PLUGIN_PREPARE_TIMEOUT_MS = 60_000;
+const NATIVE_PLUGIN_REBUILD_POLL_MS = 1_000;
+const NATIVE_JSON_RPC_SCRIPT = String.raw`
+const request = JSON.parse(process.argv[1]);
+const token = process.env.APP_SERVER_TOKEN;
+const port = process.env.APP_SERVER_PORT;
+if (!token || !port) throw new Error("Codex app-server environment is unavailable.");
+const ws = new WebSocket("ws://127.0.0.1:" + port, {
+  headers: { Authorization: "Bearer " + token },
+});
+const timeout = setTimeout(() => {
+  console.log(JSON.stringify({ ok: false, transportError: "timeout" }));
+  try { ws.close(); } finally { process.exit(2); }
+}, 10000);
+ws.addEventListener("open", () => {
+  ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: request.method, params: request.params }));
+});
+ws.addEventListener("message", (event) => {
+  clearTimeout(timeout);
+  const payload = JSON.parse(String(event.data));
+  console.log(JSON.stringify(payload.error === undefined
+    ? { ok: true, result: payload.result }
+    : { ok: false, applicationError: payload.error }));
+  ws.close();
+});
+ws.addEventListener("error", () => {
+  clearTimeout(timeout);
+  console.log(JSON.stringify({ ok: false, transportError: "websocket" }));
+  process.exit(2);
+});
+`;
 const GATEWAY_PRIVATE_STATE_CATEGORIES = Object.freeze([
   ["state", "/home/node/.openclaw/state"],
   ["agent", "/home/node/.openclaw/agents/main/agent"],
@@ -318,6 +377,42 @@ function required(value: unknown, description: string): string {
     throw new ConfigurationFailure(`${description} must be explicitly configured.`);
   }
   return value;
+}
+
+function captureWritable(): { readonly stream: Writable; readonly read: () => string } {
+  const chunks: Buffer[] = [];
+  return {
+    stream: new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        callback();
+      },
+    }),
+    read: () => Buffer.concat(chunks).toString("utf8"),
+  };
+}
+
+function parseNativeJsonRpcResult(stdout: string, stderr: string): NativeJsonRpcResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`Native Codex plugin command returned malformed output: ${stderr.trim()}`);
+  }
+  const record = asRecord(parsed);
+  if (record?.ok === true) return { ok: true, result: record.result };
+  if (record?.ok === false && Object.hasOwn(record, "applicationError")) {
+    return { ok: false, applicationError: record.applicationError };
+  }
+  throw new Error("Native Codex plugin command did not return a supported result.");
+}
+
+function resultData(result: NativeJsonRpcSuccess): unknown {
+  return asRecord(result.result)?.data ?? result.result;
+}
+
+function serializedContains(value: unknown, needle: string): boolean {
+  return (JSON.stringify(value) ?? "").includes(needle);
 }
 
 function failure(error: unknown): "retryable" | "permanent" {
@@ -1203,6 +1298,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     if (sandboxDriver !== undefined && embedded) {
       throw new ConfigurationFailure("SandboxDriver support is limited to dedicated Harnesses.");
     }
+    const selectedPlugins = this.validateNativePluginSupport(revision, context, sandboxDriver);
     if (revision.serviceAccount?.credential.kind === "access_token") {
       if (embedded || this.options.runtime === undefined) {
         throw new ConfigurationFailure(
@@ -1482,7 +1578,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
         await this.lifecycle.beforeWorkloadStop(revision, { cleanup: true });
         return result;
       }
-      return { ...result, ready: this.deploymentReady(deployment) };
+      if (!this.deploymentReady(deployment)) return result;
+      await this.prepareNativePlugins(revision, context, namespace, selectedPlugins);
+      return { ...result, ready: true };
     } catch (error) {
       const failures = [error];
       if (launchPrepared) {
@@ -1588,6 +1686,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     const revisionName = `${agentName}-rev-${sha256Hex(revision.id, 12)}`;
     const sandboxDriver = this.sandboxDriverForRevision(revision);
+    const selectedPlugins = this.validateNativePluginSupport(revision, context, sandboxDriver);
     const configuration = this.gatewayConfiguration(revision);
     const agentDeployment = this.deployment(
       revisionName,
@@ -1617,6 +1716,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         throw new Error("The exact AgentRevision workload is not ready.");
       }
     }
+    await this.prepareNativePlugins(revision, context, namespace, selectedPlugins);
     await this.reconcileChannelNetworkPolicy(revision, channels, namespace);
     await this.reconcile(
       this.sharedWorkspaceClaim(revision.agentId, gatewayOwnership, namespace),
@@ -2430,7 +2530,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async createClients(): Promise<KubernetesApiClients> {
-    const { sdk, clientConfiguration } = await createKubernetesClientConfiguration(
+    const { sdk, clientConfiguration, kubeConfig } = await createKubernetesClientConfiguration(
       this.options.authentication,
       (message) => new ConfigurationFailure(message),
     );
@@ -2441,6 +2541,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       discovery: new sdk.DiscoveryV1Api(clientConfiguration),
       networking: new sdk.NetworkingV1Api(clientConfiguration),
       objects: new sdk.KubernetesObjectApi(clientConfiguration),
+      exec: new sdk.Exec(kubeConfig),
     };
   }
 
@@ -2529,6 +2630,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespace: string,
     labels: Readonly<Record<string, string>>,
   ): Promise<boolean> {
+    return (await this.readyAgentPod(revision, namespace, labels)) !== undefined;
+  }
+
+  private async readyAgentPod(
+    revision: AgentRevision,
+    namespace: string,
+    labels: Readonly<Record<string, string>>,
+  ): Promise<ReadyAgentPod | undefined> {
     const clients = await this.clients();
     const pods = asRecord(
       await this.request(() =>
@@ -2564,6 +2673,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     let candidates = 0;
     let candidateReady = false;
+    let readyPod: ReadyAgentPod | undefined;
     // Validate the whole observation before trusting uniqueness, including entries after a Ready Pod.
     for (const item of pods.items) {
       const pod = asRecord(item);
@@ -2628,8 +2738,294 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       candidates += 1;
       candidateReady = ready;
+      if (ready) {
+        readyPod = {
+          name: metadata.name,
+          ...(isNonEmptyString(metadata.uid) ? { uid: metadata.uid } : {}),
+        };
+      }
     }
-    return candidates === 1 && candidateReady;
+    return candidates === 1 && candidateReady ? readyPod : undefined;
+  }
+
+  private validateNativePluginSupport(
+    revision: AgentRevision,
+    context: ComputeRevisionContext | undefined,
+    sandboxDriver: SandboxDriver | undefined,
+  ): readonly AgentPluginSnapshot[] {
+    const selected = selectedNativePlugins(revision);
+    if (selected.length === 0) return selected;
+    failedNativePluginKeys(context);
+    if (
+      revision.harness.id !== "codex" ||
+      revision.harness.mode !== "dedicated" ||
+      this.options.runtime === undefined ||
+      sandboxDriver !== undefined
+    ) {
+      throw new ConfigurationFailure(
+        "Selected native plugins require the bundled Kubernetes dedicated Codex runtime.",
+      );
+    }
+    if (
+      typeof (context as NativePluginComputeContext | undefined)?.reportPluginInstallFailure !==
+      "function"
+    ) {
+      throw new ConfigurationFailure(
+        "Selected native plugins require worker-owned plugin failure reporting.",
+      );
+    }
+    return selected;
+  }
+
+  private async executeNativeJsonRpc(
+    namespace: string,
+    pod: ReadyAgentPod,
+    method: string,
+    params: unknown,
+  ): Promise<NativeJsonRpcResult> {
+    const clients = await this.clients();
+    const stdout = captureWritable();
+    const stderr = captureWritable();
+    let statusCallback: (status: unknown) => void = () => {};
+    const status = new Promise<unknown>((resolve) => {
+      statusCallback = resolve;
+    });
+    const socket = await clients.exec.exec(
+      namespace,
+      pod.name,
+      "agent",
+      ["node", "-e", NATIVE_JSON_RPC_SCRIPT, JSON.stringify({ method, params })],
+      stdout.stream,
+      stderr.stream,
+      null,
+      false,
+      statusCallback,
+    );
+    const ownerSignal = currentComputeAbortSignal();
+    const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = ownerSignal === undefined ? deadline : AbortSignal.any([ownerSignal, deadline]);
+    try {
+      const completed = await new Promise<unknown>((resolve, reject) => {
+        const abort = () => {
+          try {
+            socket.close();
+          } finally {
+            reject(signal.reason);
+          }
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        status.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+      });
+      const record = asRecord(completed);
+      if (record?.status !== "Success") {
+        throw new Error(`Native Codex plugin command failed: ${stderr.read().trim()}`);
+      }
+      return parseNativeJsonRpcResult(stdout.read(), stderr.read());
+    } catch (error) {
+      if (ownerSignal?.aborted) throw ownerSignal.reason;
+      if (deadline.aborted) throw new Error("Native Codex plugin command timed out.");
+      throw error;
+    }
+  }
+
+  private async waitForNativeCandidatePod(
+    revision: AgentRevision,
+    namespace: string,
+  ): Promise<ReadyAgentPod> {
+    const startedAt = Date.now();
+    for (;;) {
+      currentComputeAbortSignal()?.throwIfAborted();
+      const pod = await this.readyAgentPod(revision, namespace, {});
+      if (pod !== undefined) return pod;
+      if (Date.now() - startedAt > NATIVE_PLUGIN_PREPARE_TIMEOUT_MS) {
+        throw new Error("Timed out waiting for rebuilt native Codex candidate Pod.");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, NATIVE_PLUGIN_REBUILD_POLL_MS));
+    }
+  }
+
+  private async rebuildNativeCandidatePod(
+    namespace: string,
+    pod: ReadyAgentPod,
+  ): Promise<void> {
+    const uid = required(pod.uid, "Native Codex candidate Pod UID");
+    const clients = await this.clients();
+    await this.request(
+      () =>
+        clients.core.deleteNamespacedPod({
+          name: pod.name,
+          namespace,
+          body: { preconditions: { uid } },
+        }),
+      { mutating: true },
+    );
+  }
+
+  private async reportNativePluginInstallFailure(
+    context: ComputeRevisionContext | undefined,
+    identity: PluginIdentity,
+  ): Promise<void> {
+    const report = (context as NativePluginComputeContext | undefined)?.reportPluginInstallFailure;
+    if (typeof report !== "function") {
+      throw new ConfigurationFailure("Native plugin failure reporting is unavailable.");
+    }
+    await report({ driverId: identity.driverId, pluginId: identity.pluginId });
+  }
+
+  private async prepareNativePlugins(
+    revision: AgentRevision,
+    context: ComputeRevisionContext | undefined,
+    namespace: string,
+    selected: readonly AgentPluginSnapshot[],
+  ): Promise<void> {
+    if (selected.length === 0) return;
+    const selectedByKey = new Map(
+      selected.map((plugin) => [nativePluginIdentityKey(plugin), plugin]),
+    );
+    const failed = new Set(failedNativePluginKeys(context));
+    for (let attempt = 0; attempt <= selected.length; attempt += 1) {
+      const pod = await this.waitForNativeCandidatePod(revision, namespace);
+      let rebuilt = false;
+      for (const plugin of selected) {
+        const key = nativePluginIdentityKey(plugin);
+        if (failed.has(key)) continue;
+        const read = await this.executeNativeJsonRpc(namespace, pod, "plugin/read", {
+          remoteMarketplaceName: plugin.remoteMarketplaceName,
+          pluginName: plugin.remotePluginId,
+        });
+        if (!read.ok) {
+          throw new Error("Native Codex plugin/read failed during plugin preparation.");
+        }
+        if (this.nativePluginUnavailable(resultData(read), plugin)) {
+          await this.reportNativePluginInstallFailure(context, plugin);
+          failed.add(key);
+          await this.rebuildNativeCandidatePod(namespace, pod);
+          rebuilt = true;
+          break;
+        }
+        const install = await this.executeNativeJsonRpc(namespace, pod, "plugin/install", {
+          remoteMarketplaceName: plugin.remoteMarketplaceName,
+          installAttemptId: `${revision.id}:${plugin.driverId}:${plugin.pluginId}`,
+          pluginName: plugin.remotePluginId,
+        });
+        if (!install.ok) {
+          await this.reportNativePluginInstallFailure(context, plugin);
+          failed.add(key);
+          await this.rebuildNativeCandidatePod(namespace, pod);
+          rebuilt = true;
+          break;
+        }
+      }
+      if (rebuilt) continue;
+      await this.proveNativePlugins(namespace, pod, selectedByKey, failed);
+      return;
+    }
+    throw new Error("Native Codex plugin preparation exceeded the selected plugin bound.");
+  }
+
+  private nativePluginUnavailable(value: unknown, selected: AgentPluginSnapshot): boolean {
+    const plugin = asRecord(asRecord(value)?.plugin);
+    const summary = asRecord(plugin?.summary);
+    if (
+      plugin === undefined ||
+      summary === undefined ||
+      plugin.marketplaceName !== selected.remoteMarketplaceName ||
+      !isNonEmptyString(summary.remotePluginId) ||
+      summary.remotePluginId !== selected.remotePluginId
+    ) {
+      throw new Error("Native Codex plugin/read returned malformed plugin metadata.");
+    }
+    return (
+      summary.availability === "DISABLED_BY_ADMIN" || summary.installPolicy === "NOT_AVAILABLE"
+    );
+  }
+
+  private async proveNativePlugins(
+    namespace: string,
+    pod: ReadyAgentPod,
+    selectedByKey: ReadonlyMap<string, AgentPluginSnapshot>,
+    failed: ReadonlySet<string>,
+  ): Promise<void> {
+    const installed = await this.executeNativeJsonRpc(namespace, pod, "plugin/installed", {});
+    if (!installed.ok) throw new Error("Native Codex plugin/installed proof failed.");
+    this.proveInstalledPlugins(resultData(installed), selectedByKey, failed);
+
+    for (const [method, params] of [
+      ["skills/list", { cwds: [], forceReload: true }],
+      ["hooks/list", { cwds: [] }],
+      ["mcpServerStatus/list", {}],
+    ] as const) {
+      const proof = await this.executeNativeJsonRpc(namespace, pod, method, params);
+      if (!proof.ok) throw new Error(`Native Codex ${method} proof failed.`);
+      this.proveNoFailedPluginReference(resultData(proof), selectedByKey, failed, method);
+    }
+  }
+
+  private proveInstalledPlugins(
+    value: unknown,
+    selectedByKey: ReadonlyMap<string, AgentPluginSnapshot>,
+    failed: ReadonlySet<string>,
+  ): void {
+    const marketplaces = asRecord(value)?.marketplaces;
+    if (!Array.isArray(marketplaces)) {
+      throw new Error("Native Codex plugin/installed returned malformed marketplaces.");
+    }
+    const selected = [...selectedByKey.values()];
+    const installedKeys = new Set<string>();
+    for (const marketplaceValue of marketplaces) {
+      const marketplace = asRecord(marketplaceValue);
+      if (marketplace === undefined || !Array.isArray(marketplace.plugins)) {
+        throw new Error("Native Codex plugin/installed returned malformed marketplace entries.");
+      }
+      for (const pluginValue of marketplace.plugins) {
+        const plugin = asRecord(pluginValue);
+        if (plugin === undefined) {
+          throw new Error("Native Codex plugin/installed returned malformed plugin entries.");
+        }
+        const installed = plugin.installed === true || plugin.enabled === true;
+        if (!installed) continue;
+        const matched = selected.find(
+          (candidate) =>
+            plugin.id === candidate.pluginId || plugin.remotePluginId === candidate.remotePluginId,
+        );
+        if (matched === undefined) {
+          throw new Error("Native Codex reported an installed plugin outside the admitted set.");
+        }
+        const key = nativePluginIdentityKey(matched);
+        if (failed.has(key)) {
+          throw new Error("Native Codex restored a failed plugin into the rebuilt candidate.");
+        }
+        installedKeys.add(key);
+      }
+    }
+    for (const [key] of selectedByKey) {
+      if (!failed.has(key) && !installedKeys.has(key)) {
+        throw new Error("Native Codex plugin/installed omitted an admitted plugin.");
+      }
+    }
+  }
+
+  private proveNoFailedPluginReference(
+    value: unknown,
+    selectedByKey: ReadonlyMap<string, AgentPluginSnapshot>,
+    failed: ReadonlySet<string>,
+    method: string,
+  ): void {
+    if (value === undefined || value === null) {
+      throw new Error(`Native Codex ${method} returned malformed proof data.`);
+    }
+    for (const key of failed) {
+      const plugin = selectedByKey.get(key);
+      if (plugin === undefined) {
+        throw new Error("Native plugin proof references an unadmitted failed plugin.");
+      }
+      if (
+        serializedContains(value, plugin.pluginId) ||
+        serializedContains(value, plugin.remotePluginId)
+      ) {
+        throw new Error(`Native Codex ${method} still exposes a failed plugin.`);
+      }
+    }
   }
 
   private harnessRequirementsFromDeployment(

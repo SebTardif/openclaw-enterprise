@@ -288,6 +288,10 @@ test(
     assert.ok(!bindings.has(tenant.metadata.name));
     assert.ok(!bindings.has(tenantApiRole.metadata.name));
     assert.ok(tenant.rules.some(({ resources }) => resources.includes("configmaps")));
+    assert.deepEqual(
+      tenant.rules.filter(({ resources }) => resources.includes("pods/exec")),
+      [{ apiGroups: [""], resources: ["pods/exec"], verbs: ["create"] }],
+    );
     assert.deepEqual(tenantApiRole.rules, [
       {
         apiGroups: [""],

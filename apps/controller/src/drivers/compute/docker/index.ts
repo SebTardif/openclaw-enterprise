@@ -18,6 +18,7 @@ import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
 } from "../kubernetes/runtime-entrypoints.ts";
+import { selectedNativePlugins } from "../native-plugins.ts";
 
 export interface DockerComputeDriverOptions {
   readonly images: {
@@ -316,6 +317,11 @@ export class DockerComputeDriver implements ComputeDriver {
       revision.configurationGeneration < 1
     ) {
       throw new ConfigurationFailure("AgentRevision Configuration ownership is invalid.");
+    }
+    if (selectedNativePlugins(revision).length > 0) {
+      throw new ConfigurationFailure(
+        "Selected native plugins require the Kubernetes dedicated Codex runtime.",
+      );
     }
 
     const network = this.networkName(revision.namespaceId);

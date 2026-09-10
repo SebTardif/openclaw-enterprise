@@ -95,6 +95,27 @@ cleanup path. `activateRevision` repeats this check before changing routing.
 See the [Kubernetes readiness contract](../reference/drivers/kubernetes-compute.md)
 for candidate rules and the limits of this observation.
 
+For the bundled Kubernetes dedicated Codex runtime, the same private candidate
+window also prepares selected native plugins. The deployment worker projects
+previously failed plugin identities into Compute and supplies an awaited
+`reportPluginInstallFailure({ driverId, pluginId })` callback. Compute installs
+each nonfailed selected plugin through the candidate Pod's local Codex
+app-server using bounded Kubernetes `pods/exec`; `pluginName` carries the
+catalog's `remotePluginId`. A per-plugin application rejection, disabled
+plugin, or unavailable plugin becomes recoverable only after the worker persists
+the failure identity. Compute then deletes the exact candidate Pod by UID so
+the rebuilt candidate receives a fresh private Codex home without that plugin.
+Transport failures, timeout, cancellation, malformed proof data, failed
+failure reporting, credential policy errors, and crash/claim-loss conditions
+remain fatal.
+
+Before activation can publish the gateway path, Compute proves the candidate's
+effective state with Codex `plugin/installed`, `skills/list` forced reload,
+`hooks/list`, and `mcpServerStatus/list`. The proof must show only admitted
+installed plugins and must not expose any failed plugin through skills, hooks,
+or MCP server status. Other Compute paths reject selected native plugins before
+workload side effects.
+
 ### 3. Publish safely and complete activation once
 
 `apps/controller/src/worker.ts:ControllerWorker`
