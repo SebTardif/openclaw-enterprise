@@ -4,6 +4,25 @@ import test from "node:test";
 import { createConsoleAppFixture, providerFixtures } from "../helpers/console-app.mjs";
 import { cookieHeaderFromSetCookie, setCookieHeaders } from "../helpers/auth-session.mjs";
 
+const pluginCatalog = Object.freeze({
+  driverId: "codex",
+  inventory: Object.freeze({
+    schemaVersion: 1,
+    generatedAt: "2026-09-09T23:00:00.000Z",
+    codexVersion: "0.152.1",
+    sourceMethod: "plugin/list",
+  }),
+  plugins: Object.freeze([
+    Object.freeze({
+      id: "calendar@openai",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "calendar",
+      pluginName: "Calendar",
+      version: null,
+    }),
+  ]),
+});
+
 function noSecretProviderFields(provider) {
   assert.deepEqual(Object.keys(provider).sort(), ["id", "type"]);
   assert.equal(typeof provider.id, "string");
@@ -38,8 +57,47 @@ test("console Provider API returns only safe Installation-admin summaries", asyn
   assert.equal(unavailable.body.error.code, "DEPENDENCY_UNAVAILABLE");
 });
 
+test("console plugin catalog API requires a Driver ID and Installation admin access", async (t) => {
+  const fixture = await createConsoleAppFixture(t, { pluginCatalogs: [pluginCatalog] });
+  await fixture.bootstrap();
+
+  const catalog = await fixture.request("GET", "/plugins?driverId=codex");
+  assert.equal(catalog.status, 200);
+  assert.deepEqual(catalog.data, pluginCatalog);
+  assert.doesNotMatch(JSON.stringify(catalog.body), /credential|account|workspace|path/i);
+
+  for (const path of ["/plugins", "/plugins?driverId=", "/plugins?driverId=codex&extra=1"]) {
+    const rejected = await fixture.request("GET", path);
+    assert.equal(rejected.status, 400, path);
+    assert.equal(rejected.body.error.code, "INVALID_REQUEST");
+  }
+
+  const unsupported = await fixture.request("GET", "/plugins?driverId=not-codex");
+  assert.equal(unsupported.status, 404);
+  assert.equal(unsupported.body.error.code, "NOT_FOUND");
+
+  const emptyFixture = await createConsoleAppFixture(t, {
+    pluginCatalogs: [
+      {
+        ...pluginCatalog,
+        plugins: [],
+      },
+    ],
+  });
+  await emptyFixture.bootstrap("Console empty plugin Installation");
+  const empty = await emptyFixture.request("GET", "/plugins?driverId=codex");
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.data.plugins, []);
+
+  const unavailableFixture = await createConsoleAppFixture(t);
+  await unavailableFixture.bootstrap("Console unavailable plugin Installation");
+  const unavailable = await unavailableFixture.request("GET", "/plugins?driverId=codex");
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.body.error.code, "DEPENDENCY_UNAVAILABLE");
+});
+
 test("console collection APIs keep exact Namespace and Agent IAM boundaries", async (t) => {
-  const fixture = await createConsoleAppFixture(t);
+  const fixture = await createConsoleAppFixture(t, { pluginCatalogs: [pluginCatalog] });
   await fixture.bootstrap();
   const alpha = await fixture.createNamespace("Alpha");
   const beta = await fixture.createNamespace("Beta");
@@ -94,6 +152,12 @@ test("console collection APIs keep exact Namespace and Agent IAM boundaries", as
   const providerDenied = await fixture.request("GET", "/providers", { session: limitedSession });
   assert.equal(providerDenied.status, 403);
   assert.equal(providerDenied.body.error.code, "FORBIDDEN");
+
+  const pluginDenied = await fixture.request("GET", "/plugins?driverId=codex", {
+    session: limitedSession,
+  });
+  assert.equal(pluginDenied.status, 403);
+  assert.equal(pluginDenied.body.error.code, "FORBIDDEN");
 
   fixture.policy.bindings.splice(
     fixture.policy.bindings.findIndex((binding) => binding.id === "binding-console-alpha-reader"),

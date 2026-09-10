@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
+  AgentPluginSnapshot,
   AgentRevision,
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -22,6 +23,8 @@ import type {
   LoggingLevel,
   OpenClawConfigurationDocument,
   PermissionAction,
+  PluginIdentity,
+  PluginInventory,
   ProviderDefinition,
   ProviderRef,
   ResourceKind,
@@ -49,6 +52,7 @@ import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   DriverSelectionError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -74,6 +78,7 @@ export {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   DriverSelectionError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -144,6 +149,7 @@ export interface ControllerOptions {
   readonly state?: PlatformStateStore;
   readonly recordOperations?: boolean;
   readonly providers?: readonly ProviderDefinition[];
+  readonly pluginCatalogs?: readonly PluginInventory[];
   readonly loggingLevel?: LoggingLevel;
 }
 
@@ -159,6 +165,7 @@ export interface CreateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string;
   readonly executionMode?: HarnessExecutionMode;
+  readonly plugins?: readonly PluginIdentity[];
 }
 
 export interface UpdateAgentInput {
@@ -327,6 +334,7 @@ function frozenRevision(revision: AgentRevision): Readonly<AgentRevision> {
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    selectedPlugins: immutableCopy(revision.selectedPlugins),
   });
 }
 
@@ -519,6 +527,90 @@ function validExecutionMode(value: unknown): value is HarnessExecutionMode {
   return value === "embedded" || value === "dedicated";
 }
 
+function validPluginText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 512 &&
+    /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.test(value)
+  );
+}
+
+function normalizePluginSelection(value: unknown): readonly PluginIdentity[] {
+  if (!Array.isArray(value) || value.length > 32)
+    throw new InvalidRequestError("Agent plugin selection must contain at most 32 identities.");
+  const seen = new Set<string>();
+  return Object.freeze(
+    value.map((entry) => {
+      if (
+        entry === null ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        Object.keys(entry).length !== 2 ||
+        !("driverId" in entry) ||
+        !("pluginId" in entry) ||
+        !validPluginText(entry.driverId) ||
+        !validPluginText(entry.pluginId)
+      ) {
+        throw new InvalidRequestError(
+          "Agent plugin selection entries must be exact plugin identities.",
+        );
+      }
+      const identity = Object.freeze({ driverId: entry.driverId, pluginId: entry.pluginId });
+      const key = `${identity.driverId}\u0000${identity.pluginId}`;
+      if (seen.has(key))
+        throw new InvalidRequestError("Agent plugin selection entries must be unique.");
+      seen.add(key);
+      return identity;
+    }),
+  );
+}
+
+function pluginSelection(value: unknown): readonly PluginIdentity[] {
+  return normalizePluginSelection(value ?? []);
+}
+
+function pluginCatalogMap(
+  catalogs: readonly PluginInventory[] | undefined,
+): ReadonlyMap<string, Readonly<PluginInventory>> | undefined {
+  if (catalogs === undefined) return undefined;
+  const mapped = new Map<string, Readonly<PluginInventory>>();
+  for (const catalog of catalogs) {
+    if (!validPluginText(catalog.driverId) || mapped.has(catalog.driverId))
+      throw new ScopeViolationError("Plugin catalog driver IDs must be unique valid identifiers.");
+    mapped.set(catalog.driverId, immutableCopy(catalog));
+  }
+  return mapped;
+}
+
+function resolvePluginSnapshots(
+  catalogs: ReadonlyMap<string, Readonly<PluginInventory>> | undefined,
+  identities: readonly PluginIdentity[],
+): readonly AgentPluginSnapshot[] {
+  if (identities.length === 0) return Object.freeze([]);
+  if (catalogs === undefined) throw new DependencyUnavailableError();
+  return Object.freeze(
+    identities.map((identity) => {
+      const catalog = catalogs.get(identity.driverId);
+      const entry = catalog?.plugins.find((plugin) => plugin.id === identity.pluginId);
+      if (catalog === undefined || entry === undefined)
+        throw new InvalidRequestError("The selected Agent plugin is not in the catalog.");
+      return Object.freeze({
+        driverId: identity.driverId,
+        pluginId: entry.id,
+        remoteMarketplaceName: entry.remoteMarketplaceName,
+        remotePluginId: entry.remotePluginId,
+        version: entry.version,
+        catalogCodexVersion: catalog.inventory.codexVersion,
+      });
+    }),
+  );
+}
+
+function pluginCapableCompute(compute: ComputeDriver): boolean {
+  return compute.implementation === "occ/kubernetes" || compute.implementation === "kubernetes-local";
+}
+
 export class OpenClawController {
   readonly installation: Readonly<Installation>;
 
@@ -534,6 +626,7 @@ export class OpenClawController {
   private readonly providers: readonly ProviderDefinition[];
   private readonly loggingLevel: LoggingLevel;
   private readonly providerMap: ReadonlyMap<string, ProviderDefinition>;
+  private readonly pluginCatalogs: ReadonlyMap<string, Readonly<PluginInventory>> | undefined;
 
   constructor(installation: Installation, options: ControllerOptions = {}) {
     if (!isNonEmptyString(installation.id) || !validName(installation.name))
@@ -556,6 +649,7 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+    this.pluginCatalogs = pluginCatalogMap(options.pluginCatalogs);
   }
 
   registerDriver(driver: Driver): Driver {
@@ -1392,6 +1486,7 @@ export class OpenClawController {
     if (!validExecutionMode(executionMode))
       throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
     const providerId = this.providerId(input.providerId);
+    const selectedPlugins = pluginSelection(input.plugins);
     return this.mutate(async (state) => {
       const namespace = await this.lockNamespace(state, input.namespaceId);
       if (namespace.status !== "provisioning" && namespace.status !== "ready")
@@ -1402,6 +1497,29 @@ export class OpenClawController {
         namespaceId: namespace.id,
       };
       await this.authorize(principalId, "create", target);
+      if (selectedPlugins.length > 0) {
+        await this.authorize(principalId, "administer", {
+          kind: "installation",
+          id: this.installation.id,
+        });
+        let compute: ComputeDriver;
+        try {
+          compute = this.selectedDriver("compute");
+        } catch {
+          throw new DependencyUnavailableError("The selected compute Driver is unavailable.");
+        }
+        if (executionMode !== "dedicated" || !pluginCapableCompute(compute))
+          throw new InvalidRequestError(
+            "Selected plugins require dedicated Codex on bundled Kubernetes Compute.",
+          );
+        try {
+          resolvePluginSnapshots(this.pluginCatalogs, selectedPlugins);
+        } catch (error) {
+          if (error instanceof DependencyUnavailableError)
+            throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+          throw error;
+        }
+      }
       await this.authorize(principalId, "read", {
         kind: "configuration",
         id: input.configurationId,
@@ -1441,6 +1559,7 @@ export class OpenClawController {
           ? {}
           : { serviceAccountId: input.serviceAccountId }),
         executionMode,
+        selectedPlugins,
         servicePrincipalId: `service-agent-${agentId}`,
         createdAt: this.timestamp(),
       });
@@ -1691,6 +1810,24 @@ export class OpenClawController {
           "ServiceAccount access-token credentials require the dedicated Codex Harness.",
         );
       }
+      let selectedPlugins;
+      try {
+        selectedPlugins = resolvePluginSnapshots(this.pluginCatalogs, lockedAgent.selectedPlugins);
+      } catch (error) {
+        if (error instanceof DependencyUnavailableError)
+          throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+        throw error;
+      }
+      if (selectedPlugins.length > 0) {
+        if (
+          lockedAgent.executionMode !== "dedicated" ||
+          approvedHarness.id !== "codex" ||
+          !pluginCapableCompute(compute)
+        )
+          throw new InvalidRequestError(
+            "Selected plugins require dedicated Codex on bundled Kubernetes Compute.",
+          );
+      }
       const previous = await state.revisions.listRevisions(namespace.id, lockedAgent.id);
       const revision = await state.revisions.createRevision(
         frozenRevision({
@@ -1714,6 +1851,7 @@ export class OpenClawController {
             ? {}
             : { secretDriverId: secretDriver.id, secretBindings }),
           ...(serviceAccount === undefined ? {} : { serviceAccount }),
+          selectedPlugins,
           servicePrincipalId: lockedAgent.servicePrincipalId,
           createdAt: this.timestamp(),
         }),

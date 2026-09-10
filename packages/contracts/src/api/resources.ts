@@ -12,6 +12,8 @@ import {
   Meta,
   Name,
   NamespaceId,
+  PluginCatalogDriverId,
+  PluginId,
   ProviderId,
   RevisionId,
   SecretBindings,
@@ -53,6 +55,13 @@ export const AgentSchema = Type.Object(
     providerId: Type.Union([ProviderId, Type.Null()]),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
+    plugins: Type.Array(
+      Type.Object(
+        { driverId: PluginCatalogDriverId, pluginId: PluginId },
+        { additionalProperties: false },
+      ),
+      { maxItems: 32 },
+    ),
     activeRevisionId: Type.Optional(RevisionId),
     createdAt: Timestamp,
   },
@@ -103,6 +112,51 @@ export const ServiceAccountSchema = Type.Object(
 
 export const ProviderSummarySchema = Type.Object(
   { id: ProviderId, type: Type.Literal("chatgpt") },
+  { additionalProperties: false },
+);
+
+export const PluginIdentitySchema = Type.Object(
+  { driverId: PluginCatalogDriverId, pluginId: PluginId },
+  { additionalProperties: false },
+);
+
+export const PluginInventoryEntrySchema = Type.Object(
+  {
+    id: PluginId,
+    remoteMarketplaceName: Type.String({ minLength: 1, maxLength: 512 }),
+    remotePluginId: Type.String({ minLength: 1, maxLength: 512 }),
+    pluginName: Type.String({ minLength: 1, maxLength: 512 }),
+    version: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const PluginInventorySchema = Type.Object(
+  {
+    driverId: PluginCatalogDriverId,
+    inventory: Type.Object(
+      {
+        schemaVersion: Type.Literal(1),
+        generatedAt: Timestamp,
+        codexVersion: Type.String({ minLength: 1, maxLength: 512 }),
+        sourceMethod: Type.Literal("plugin/list"),
+      },
+      { additionalProperties: false },
+    ),
+    plugins: Type.Array(PluginInventoryEntrySchema),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentPluginSnapshotSchema = Type.Object(
+  {
+    driverId: PluginCatalogDriverId,
+    pluginId: PluginId,
+    remoteMarketplaceName: Type.String({ minLength: 1, maxLength: 512 }),
+    remotePluginId: Type.String({ minLength: 1, maxLength: 512 }),
+    version: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+    catalogCodexVersion: Type.String({ minLength: 1, maxLength: 512 }),
+  },
   { additionalProperties: false },
 );
 
@@ -164,6 +218,11 @@ export const ProviderListResponse = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginListResponse = Type.Object(
+  { data: PluginInventorySchema, meta: Meta },
+  { additionalProperties: false },
+);
+
 export const AgentRevisionSchema = Type.Object(
   {
     id: RevisionId,
@@ -204,6 +263,7 @@ export const AgentRevisionSchema = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    selectedPlugins: Type.Array(AgentPluginSnapshotSchema, { maxItems: 32 }),
     createdAt: Timestamp,
   },
   { additionalProperties: false },
@@ -253,6 +313,10 @@ export type ConfigurationWire = Type.Static<typeof ConfigurationSchema>;
 export type SecretWire = Type.Static<typeof SecretSchema>;
 export type ServiceAccountWire = Type.Static<typeof ServiceAccountSchema>;
 export type ProviderSummaryWire = Type.Static<typeof ProviderSummarySchema>;
+export type PluginIdentityWire = Type.Static<typeof PluginIdentitySchema>;
+export type PluginInventoryEntryWire = Type.Static<typeof PluginInventoryEntrySchema>;
+export type PluginInventoryWire = Type.Static<typeof PluginInventorySchema>;
+export type AgentPluginSnapshotWire = Type.Static<typeof AgentPluginSnapshotSchema>;
 export type AgentWire = Type.Static<typeof AgentSchema>;
 export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
@@ -269,6 +333,7 @@ export type AgentResponse = Type.Static<typeof AgentResponse>;
 export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCredentialResponse>;
 export type AgentListResponse = Type.Static<typeof AgentListResponse>;
 export type ProviderListResponse = Type.Static<typeof ProviderListResponse>;
+export type PluginListResponse = Type.Static<typeof PluginListResponse>;
 export type AgentRevisionResponse = Type.Static<typeof AgentRevisionResponse>;
 export type AgentRevisionListResponse = Type.Static<typeof AgentRevisionListResponse>;
 export type WorkspaceFileResponse = Type.Static<typeof WorkspaceFileResponse>;

@@ -212,6 +212,67 @@ function validCredential(credential: unknown): credential is ServiceAccountCrede
   );
 }
 
+function validPluginText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 512 &&
+    /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.test(value)
+  );
+}
+
+function validPluginIdentities(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 32) return false;
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      Object.keys(entry).length !== 2 ||
+      !("driverId" in entry) ||
+      !("pluginId" in entry) ||
+      !validPluginText(entry.driverId) ||
+      !validPluginText(entry.pluginId)
+    )
+      return false;
+    const key = `${entry.driverId}\u0000${entry.pluginId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
+function validSelectedPluginSnapshots(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 32) return false;
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      Object.keys(entry).length !== 6 ||
+      !("driverId" in entry) ||
+      !("pluginId" in entry) ||
+      !("remoteMarketplaceName" in entry) ||
+      !("remotePluginId" in entry) ||
+      !("version" in entry) ||
+      !("catalogCodexVersion" in entry) ||
+      typeof entry.driverId !== "string" ||
+      typeof entry.pluginId !== "string" ||
+      typeof entry.remoteMarketplaceName !== "string" ||
+      typeof entry.remotePluginId !== "string" ||
+      (entry.version !== null && typeof entry.version !== "string") ||
+      typeof entry.catalogCodexVersion !== "string"
+    )
+      return false;
+    const key = `${entry.driverId}\u0000${entry.pluginId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
 function assertAdmittedAgentRevision(revision: AgentRevision): void {
   if (
     (revision.providerId !== null &&
@@ -253,7 +314,8 @@ function assertAdmittedAgentRevision(revision: AgentRevision): void {
         !serviceAccountIdentifier.test(revision.serviceAccount.id) ||
         !validCredential(revision.serviceAccount.credential) ||
         (revision.serviceAccount.credential.kind !== "api_key" &&
-          revision.serviceAccount.credential.kind !== "access_token")))
+          revision.serviceAccount.credential.kind !== "access_token"))) ||
+    !validSelectedPluginSnapshots(revision.selectedPlugins ?? [])
   ) {
     throw new ScopeViolationError(
       "An AgentRevision requires valid Configuration metadata, a native document, and pinned Harness and Compute descriptors.",
@@ -878,6 +940,9 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       assertInitialized(snapshot);
       if (agent.executionMode !== "embedded" && agent.executionMode !== "dedicated")
         throw new ScopeViolationError("The Agent execution mode is invalid.");
+      const selectedPlugins = agent.selectedPlugins ?? [];
+      if (!validPluginIdentities(selectedPlugins))
+        throw new ScopeViolationError("The Agent plugin selection is invalid.");
       if (
         agent.providerId !== null &&
         (typeof agent.providerId !== "string" || !providerIdentifier.test(agent.providerId))
@@ -918,7 +983,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
         throw new ResourceConflictError(
           "An Agent service principal already belongs to another Agent.",
         );
-      const saved = immutableCopy(agent);
+      const saved = immutableCopy({ ...agent, selectedPlugins });
       snapshot.agents.set(key, saved);
       return immutableCopy(saved);
     },
@@ -1018,9 +1083,14 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       const previous = snapshot.revisions.get(key) ?? [];
       if (previous.some((existing) => existing.id === revision.id))
         throw new ResourceConflictError("The server generated an existing AgentRevision identity.");
-      const { secretBindings: _providedSecretBindings, ...withoutSecretBindings } = revision;
+      const {
+        secretBindings: _providedSecretBindings,
+        selectedPlugins: providedSelectedPlugins,
+        ...withoutSecretBindings
+      } = revision;
       const saved = immutableCopy({
         ...withoutSecretBindings,
+        selectedPlugins: providedSelectedPlugins ?? [],
         ...(secretBindings === undefined ? {} : { secretBindings }),
       });
       snapshot.revisions.set(key, Object.freeze([...previous, saved]));

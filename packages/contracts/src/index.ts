@@ -1,4 +1,5 @@
 import { immutableCopy } from "@openclaw-enterprise/utils";
+import type { AgentPluginSnapshot, PluginIdentity } from "./plugins.ts";
 
 export {
   LOGGING_LEVELS,
@@ -7,6 +8,25 @@ export {
   normalizeLoggingLevel,
   type LoggingLevel,
 } from "./logging.ts";
+export {
+  AgentPluginSnapshotSchema,
+  CODEX_PLUGIN_CATALOG_DRIVER_ID,
+  CODEX_PLUGIN_CATALOG_SOURCE_METHOD,
+  PLUGIN_INVENTORY_SCHEMA_VERSION,
+  PluginIdentitySchema,
+  PluginInstallationErrorSchema,
+  PluginInventoryEntrySchema,
+  PluginInventorySchema,
+  SUPPORTED_PLUGIN_CATALOG_DRIVER_IDS,
+  PluginInventoryValidationError,
+  validatePluginInventory,
+  type AgentPluginSnapshot,
+  type PluginIdentity,
+  type PluginInstallationError,
+  type PluginInventory,
+  type PluginInventoryEntry,
+  type SupportedPluginCatalogDriverId,
+} from "./plugins.ts";
 
 export const DRIVER_CAPABILITIES = Object.freeze([
   "iam",
@@ -215,6 +235,7 @@ export interface Agent extends Scope {
   readonly providerId: ProviderRef;
   readonly serviceAccountId?: string;
   readonly executionMode: HarnessExecutionMode;
+  readonly selectedPlugins: readonly PluginIdentity[];
   readonly servicePrincipalId: string;
   readonly activeRevisionId?: string;
   readonly createdAt: string;
@@ -248,6 +269,7 @@ export interface AgentRevision extends Scope {
   readonly secretDriverId?: string;
   readonly secretBindings?: SecretBindings;
   readonly serviceAccount?: ServiceAccountRevision;
+  readonly selectedPlugins: readonly AgentPluginSnapshot[];
   readonly servicePrincipalId: string;
   readonly createdAt: string;
 }
@@ -264,6 +286,7 @@ export function freezeAgentRevision(revision: AgentRevision): Readonly<AgentRevi
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    selectedPlugins: immutableCopy(revision.selectedPlugins),
   });
 }
 

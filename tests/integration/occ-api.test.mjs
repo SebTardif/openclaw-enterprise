@@ -31,6 +31,31 @@ const developmentPassword = "openclaw-development-password";
 const uuidV4 = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const identifier = (prefix) => new RegExp(`^${prefix}_${uuidV4}$`);
 const missingRevisionId = "rev_3dd29693-ce8b-4b4c-97c4-14b4c68c6e9c";
+const pluginCatalog = Object.freeze({
+  driverId: "codex",
+  inventory: Object.freeze({
+    schemaVersion: 1,
+    generatedAt: "2026-09-09T23:00:00.000Z",
+    codexVersion: "0.152.1",
+    sourceMethod: "plugin/list",
+  }),
+  plugins: Object.freeze([
+    Object.freeze({
+      id: "calendar@openai",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "calendar",
+      pluginName: "Calendar",
+      version: null,
+    }),
+    Object.freeze({
+      id: "drive@openai",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "drive",
+      pluginName: "Drive",
+      version: "1.2.3",
+    }),
+  ]),
+});
 
 async function availableLoopbackPort() {
   const server = createServer();
@@ -299,7 +324,7 @@ async function createInjectedFixture(options = {}) {
     options.iamDriver ??
     new NativeIAMDriver({ loadNativeIAMState: async () => state }, { id: "iam-integration" });
   const computeCalls = { ensureNamespace: [], deleteNamespace: [] };
-  const computeDriver = {
+  const computeDriver = options.computeDriver ?? {
     id: "compute-integration",
     capability: "compute",
     implementation: "deterministic-test",
@@ -354,6 +379,9 @@ async function createInjectedFixture(options = {}) {
                 state: new InMemoryPlatformState({ auditSink }),
                 recordOperations: false,
                 ...(options.providers === undefined ? {} : { providers: options.providers }),
+                ...(options.pluginCatalogs === undefined
+                  ? {}
+                  : { pluginCatalogs: options.pluginCatalogs }),
               });
               if (options.providers?.length) {
                 // Association alone must never provision an upstream account or credential.
@@ -380,6 +408,7 @@ async function createInjectedFixture(options = {}) {
       configurationDriver,
       resolveHarness: resolveApprovedDevelopmentHarness,
       auditSink,
+      ...(options.pluginCatalogs === undefined ? {} : { pluginCatalogs: options.pluginCatalogs }),
       development: {
         enabled: true,
         installationId,
@@ -486,6 +515,17 @@ async function createInjectedConfiguration(fixture, namespaceId, values = {}) {
   return result.data;
 }
 
+function dedicatedCodexValues() {
+  return {
+    agents: {
+      defaults: {
+        model: "codex/gpt-4.1",
+        models: { "codex/gpt-4.1": { agentRuntime: { id: "codex" } } },
+      },
+    },
+  };
+}
+
 test("OCC Fastify serves singleton, Namespace, Configuration, and Agent resource routes", async () => {
   const controller = await configuredController();
   const installation = await bootstrap(controller);
@@ -572,6 +612,154 @@ test("OCC Fastify serves singleton, Namespace, Configuration, and Agent resource
 
   const unchanged = await controller.request("GET", "/installation");
   assert.deepEqual(unchanged.data, installation);
+});
+
+test("Agent plugin selection is authorized, persisted, and snapshotted at deploy admission", async () => {
+  const mutableCatalog = {
+    ...pluginCatalog,
+    inventory: { ...pluginCatalog.inventory },
+    plugins: pluginCatalog.plugins.map((plugin) => ({ ...plugin })),
+  };
+  const computeDriver = {
+    id: "compute-kubernetes-local",
+    capability: "compute",
+    implementation: "kubernetes-local",
+    async ensureNamespace(namespace) {
+      return { namespaceId: namespace.id, namespaceReady: true };
+    },
+    async deleteNamespace(namespace) {
+      return { namespaceId: namespace.id, namespaceDeleted: true };
+    },
+    async prepareRevision(revision) {
+      return {
+        namespaceId: revision.namespaceId,
+        agentId: revision.agentId,
+        revisionId: revision.id,
+        ready: true,
+      };
+    },
+    async retireRevision() {},
+  };
+  const fixture = await createInjectedFixture({
+    computeDriver,
+    pluginCatalogs: [mutableCatalog],
+  });
+  const controller = {
+    request: (method, path, options) => injectedRequest(fixture.app, method, path, options),
+  };
+  await bootstrap(controller);
+  const namespace = await createNamespace(controller, "plugin-tenant");
+  const configuration = await createConfiguration(controller, namespace.id, dedicatedCodexValues());
+  const collection = `/namespaces/${namespace.id}/agents`;
+
+  const { principal: creator, session: creatorSession } =
+    await fixture.createAuthPrincipal("plugin-agent-creator");
+  fixture.state.identities.push(creator);
+  fixture.state.roles.push({
+    id: "role-plugin-agent-creator",
+    namespaceId: namespace.id,
+    permissions: [
+      { action: "create", resourceKind: "agent" },
+      { action: "read", resourceKind: "configuration" },
+    ],
+  });
+  fixture.state.bindings.push({
+    id: "binding-plugin-agent-creator",
+    namespaceId: namespace.id,
+    subjectKind: "identity",
+    subjectId: creator.id,
+    roleId: "role-plugin-agent-creator",
+  });
+  const denied = await controller.request("POST", collection, {
+    session: creatorSession,
+    body: {
+      name: "denied-plugin-agent",
+      configurationId: configuration.id,
+      executionMode: "dedicated",
+      plugins: [{ driverId: "codex", pluginId: "calendar@openai" }],
+    },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.body.error.code, "FORBIDDEN");
+
+  const duplicate = await controller.request("POST", collection, {
+    body: {
+      name: "duplicate-plugin-agent",
+      configurationId: configuration.id,
+      executionMode: "dedicated",
+      plugins: [
+        { driverId: "codex", pluginId: "calendar@openai" },
+        { driverId: "codex", pluginId: "calendar@openai" },
+      ],
+    },
+  });
+  assert.equal(duplicate.status, 400);
+  assert.equal(duplicate.body.error.code, "INVALID_REQUEST");
+
+  const unsupportedMode = await controller.request("POST", collection, {
+    body: {
+      name: "embedded-plugin-agent",
+      configurationId: configuration.id,
+      plugins: [{ driverId: "codex", pluginId: "calendar@openai" }],
+    },
+  });
+  assert.equal(unsupportedMode.status, 400);
+  assert.equal(unsupportedMode.body.error.code, "INVALID_REQUEST");
+
+  const created = await controller.request("POST", collection, {
+    body: {
+      name: "plugin-agent",
+      configurationId: configuration.id,
+      executionMode: "dedicated",
+      plugins: [
+        { driverId: "codex", pluginId: "calendar@openai" },
+        { driverId: "codex", pluginId: "drive@openai" },
+      ],
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.deepEqual(created.data.plugins, [
+    { driverId: "codex", pluginId: "calendar@openai" },
+    { driverId: "codex", pluginId: "drive@openai" },
+  ]);
+
+  const read = await controller.request("GET", `${collection}/${created.data.id}`);
+  assert.equal(read.status, 200);
+  assert.deepEqual(read.data.plugins, created.data.plugins);
+
+  await fixture.controller.handleNamespaceLifecycle(fixture.principal.id, namespace.id, "ready");
+  const deployed = await controller.request("POST", `${collection}/${created.data.id}/deploy`);
+  assert.equal(deployed.status, 202, JSON.stringify(deployed.body));
+  assert.equal(deployed.data.harness.id, "codex");
+  assert.deepEqual(deployed.data.selectedPlugins, [
+    {
+      driverId: "codex",
+      pluginId: "calendar@openai",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "calendar",
+      version: null,
+      catalogCodexVersion: "0.152.1",
+    },
+    {
+      driverId: "codex",
+      pluginId: "drive@openai",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "drive",
+      version: "1.2.3",
+      catalogCodexVersion: "0.152.1",
+    },
+  ]);
+
+  mutableCatalog.plugins[0] = {
+    ...mutableCatalog.plugins[0],
+    remotePluginId: "mutated-after-admission",
+  };
+  const historical = await controller.request(
+    "GET",
+    `${collection}/${created.data.id}/revisions/${deployed.data.id}`,
+  );
+  assert.equal(historical.status, 200);
+  assert.deepEqual(historical.data.selectedPlugins, deployed.data.selectedPlugins);
 });
 
 test("Agent Provider API preserves nullable drafts and immutable revision associations", async () => {
@@ -1693,6 +1881,7 @@ test("two Namespaces become independently ready and deletion tombstones only its
     "namespaceId",
     "providerId",
     "revision",
+    "selectedPlugins",
   ]);
   assert.equal(readyDeployment.data.configurationId, firstConfiguration.id);
   assert.equal(readyDeployment.data.configurationKind, "agent");

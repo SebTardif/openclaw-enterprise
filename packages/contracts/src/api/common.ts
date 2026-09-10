@@ -25,6 +25,16 @@ export const ProviderId = Type.String({
   maxLength: 200,
   pattern: /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.source,
 });
+export const PluginCatalogDriverId = Type.String({
+  minLength: 1,
+  maxLength: 200,
+  pattern: /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.source,
+});
+export const PluginId = Type.String({
+  minLength: 1,
+  maxLength: 512,
+  pattern: /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/.source,
+});
 
 export const Timestamp = Type.String({
   format: "date-time",
@@ -53,6 +63,11 @@ export const CreateNamespaceBody = Type.Object(
 );
 
 export const EmptyQuery = Type.Object({}, { additionalProperties: false });
+
+export const ListPluginsQuery = Type.Object(
+  { driverId: PluginCatalogDriverId },
+  { additionalProperties: false },
+);
 
 export const NamespaceParams = Type.Object(
   { namespaceId: NamespaceId },
@@ -250,6 +265,11 @@ export const UpdateServiceAccountCredentialBody = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginIdentitySchema = Type.Object(
+  { driverId: PluginCatalogDriverId, pluginId: PluginId },
+  { additionalProperties: false },
+);
+
 export const CreateAgentBody = Type.Object(
   {
     name: Name,
@@ -257,6 +277,7 @@ export const CreateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    plugins: Type.Optional(Type.Array(PluginIdentitySchema, { maxItems: 32 })),
   },
   { additionalProperties: false },
 );
@@ -370,11 +391,14 @@ export type RevisionId = Type.Static<typeof RevisionId>;
 export type AuditId = Type.Static<typeof AuditId>;
 export type RequestId = Type.Static<typeof RequestId>;
 export type ProviderId = Type.Static<typeof ProviderId>;
+export type PluginCatalogDriverId = Type.Static<typeof PluginCatalogDriverId>;
+export type PluginId = Type.Static<typeof PluginId>;
 export type Timestamp = Type.Static<typeof Timestamp>;
 export type Name = Type.Static<typeof Name>;
 export type Meta = Type.Static<typeof Meta>;
 export type NamedResourceBody = Type.Static<typeof NamedResourceBody>;
 export type EmptyQuery = Type.Static<typeof EmptyQuery>;
+export type ListPluginsQuery = Type.Static<typeof ListPluginsQuery>;
 export type NamespaceParams = Type.Static<typeof NamespaceParams>;
 export type ConfigurationParams = Type.Static<typeof ConfigurationParams>;
 export type ServiceAccountParams = Type.Static<typeof ServiceAccountParams>;
@@ -396,6 +420,7 @@ export type CreateServiceAccountCredentialBody = Type.Static<
 export type UpdateServiceAccountCredentialBody = Type.Static<
   typeof UpdateServiceAccountCredentialBody
 >;
+export type PluginIdentitySchema = Type.Static<typeof PluginIdentitySchema>;
 export type CreateAgentBody = Type.Static<typeof CreateAgentBody>;
 export type UpdateAgentBody = Type.Static<typeof UpdateAgentBody>;
 export type UpdateWorkspaceFileBody = Type.Static<typeof UpdateWorkspaceFileBody>;
