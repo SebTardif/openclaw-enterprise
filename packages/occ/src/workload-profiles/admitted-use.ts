@@ -880,7 +880,7 @@ export interface WorkloadProfileCandidateQualifiersV2 {
  * No default qualifier, new registry or provider-call authority is supplied. */
 export function createWorkloadProfileCandidateBindingsSourceV2(
   records: WorkloadProfileCandidateRecordsReaderV2,
-  qualifiers?: WorkloadProfileCandidateQualifiersV2,
+  qualifiers?: Partial<WorkloadProfileCandidateQualifiersV2>,
 ): WorkloadProfileCandidateBindingsSourceV2 {
   const read = records?.readLocked?.bind(records);
   const native = qualifiers?.native?.qualifyLocked?.bind(qualifiers.native);
@@ -889,7 +889,16 @@ export function createWorkloadProfileCandidateBindingsSourceV2(
   const roles = qualifiers?.roles?.resolveLocked?.bind(qualifiers.roles);
   const source: WorkloadProfileCandidateBindingsSourceV2 = {
     async resolveLocked(input, originalCandidate, originalManifest, unit, io) {
-      if (!read || !native || !credentials || !storage || !roles) unavailable();
+      // Refuse the incomplete set before any original record or qualifier is
+      // invoked. Partial receiving is diagnostic only, never partial admission.
+      if (!read || !native || !credentials || !storage || !roles)
+        throw new WorkloadProfilePrerequisiteErrorV2([
+          ...(!read ? ["candidate.records"] : []),
+          ...(!native ? ["candidate.native"] : []),
+          ...(!credentials ? ["candidate.credentials"] : []),
+          ...(!storage ? ["candidate.storage"] : []),
+          ...(!roles ? ["candidate.roles"] : []),
+        ]);
       const request = decodeWorkloadProfileSelectionRequestV2(input);
       const held = heldWork(io, () => {
         assertUnit(request, unit);

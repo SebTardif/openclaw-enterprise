@@ -1,6 +1,7 @@
 import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
 import { startRuntimeAuthorityReadback } from "./runtime-authority-readback.ts";
 import { composeSelectedComputeRendererContribution } from "./driver-factories/compute.ts";
+import type { WorkloadProfileCompositionOwnerAssemblyV2 } from "./production.ts";
 import pg from "pg";
 import type { AuditEventFactory } from "@openclaw-enterprise/audit";
 import type {
@@ -51,6 +52,7 @@ import { createWorkspaceFilesAccess, validateWorkspaceFilesApiKeyPath } from "./
 
 export interface PostgresDevelopmentConfig {
   readonly mode: "development";
+  readonly workloadProfileOwners?: WorkloadProfileCompositionOwnerAssemblyV2;
   readonly host: "127.0.0.1" | "::1" | "0.0.0.0";
   readonly databaseUrl: string;
   readonly authSecret: string;
@@ -159,6 +161,11 @@ export async function composePostgresDevelopment(
     };
 
     const loggingLevel = config.logging?.level ?? drivers?.installation.logging.level;
+    const workloadProfileAssembly = config.workloadProfileOwners;
+    const ownerCreate = workloadProfileAssembly?.create;
+    if (workloadProfileAssembly !== undefined && typeof ownerCreate !== "function")
+      throw new Error("Workload profile owner assembly requires an original create method.");
+    const createWorkloadProfileOwners = ownerCreate?.bind(workloadProfileAssembly);
     let workloadProfileService: WorkloadProfileServicePort | undefined;
     const controller = new OpenClawController(persistedInstallation, {
       state,
@@ -187,25 +194,63 @@ export async function composePostgresDevelopment(
           };
           const account = createWorkloadProfilePurposeAccountParticipantV1(accountSources);
           const profile = state.workloadProfileMutationEnrollmentV2(context.selection, account);
+          const sourceEnrollment = state.workloadProfileSourceEnrollmentV2(context.selection);
+          const credentialSource = workloadProfileAssembly?.credentialSource;
           const candidateContext = state.workloadProfileCandidateContextV2(
             context.selection,
             context.candidateNormalizer,
             context.candidateOperations,
+            credentialSource,
           );
+          const owners = createWorkloadProfileOwners?.(
+            context,
+            Object.freeze({
+              sourceEnrollment,
+              candidateRecords: candidateContext.records,
+              consumeCapturedCredentialV1: candidateContext.consumeCapturedCredentialV1,
+            }),
+          );
+          if (owners instanceof Promise) {
+            void owners.catch(() => {});
+            throw new Error("Workload profile owner composition must be synchronous.");
+          }
+          if (
+            owners !== undefined &&
+            (owners === null || typeof owners !== "object" || "then" in owners)
+          )
+            throw new Error(
+              "Workload profile owner composition must return original source ports.",
+            );
+          const supplied = owners?.contributors;
+          const runtime = supplied?.runtime;
+          const identity = supplied?.identity;
+          const credentials = supplied?.credentials;
+          const storage = supplied?.storage;
+          // Receive Compute's original capability once. The installed custodian
+          // authenticates immutable artifacts and operands; this factory does
+          // not infer them from the manifest or construct a second capability.
           const renderer = composeSelectedComputeRendererContribution(
             computeDriver,
             context.selection,
-            state.workloadProfileSourceEnrollmentV2(context.selection),
+            sourceEnrollment,
+            owners?.installedRenderer,
           );
-          // Only the original selected Compute factory can supply this renderer.
-          // TODO(CTL-02): install its immutable-definition custodian and genuine
-          // runtime, identity, credential and storage complete contributors.
+          // TODO(CTL-02): install each genuine original domain supplier in the
+          // process owner factory. Missing contributors remain explicit refusal;
+          // configured records or a partial renderer cannot replace them.
           const capabilities = createWorkloadProfileCapabilityAggregatorV2({
             ...(renderer === undefined ? {} : { renderer }),
+            ...(runtime === undefined ? {} : { runtime }),
+            ...(identity === undefined ? {} : { identity }),
+            ...(credentials === undefined ? {} : { credentials }),
+            ...(storage === undefined ? {} : { storage }),
           });
-          // TODO(CTL-02): compose the original native, credential, storage and role
-          // qualifiers. Captured records alone leave candidate bindings unavailable.
-          const bindings = createWorkloadProfileCandidateBindingsSourceV2(candidateContext.records);
+          // Captured records remain distinct from original native, credential,
+          // storage and role qualification; all four must be supplied together.
+          const bindings = createWorkloadProfileCandidateBindingsSourceV2(
+            candidateContext.records,
+            owners?.candidateQualifiers,
+          );
           const candidates = createWorkloadProfileCandidateSourceV2(
             candidateContext.contexts,
             bindings,

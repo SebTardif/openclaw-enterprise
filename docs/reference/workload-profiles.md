@@ -121,6 +121,22 @@ The focused suite checks fixed composition, detached inputs, correspondence, ret
 
 Production now passes the actual PostgreSQL candidate context/records and inserted-row storage to the existing candidate and Use adapters. The same selected capability aggregator is used for definition acceptance, Use acquisition and inserted-row revalidation. Its missing original contributors and candidate qualifiers remain explicit unavailable dependencies. This composition does not grant renderer-only support, reinterpret metadata as native authority, or permit an unqualified deployment.
 
+Production and PostgreSQL development assemble these connections in two stages.
+The original invocation source is created once and enrolled with State before
+owner collaborators are constructed. Candidate construction then borrows the
+captured credential consumer from that same State context. Credential
+qualification retains the original ServiceAccount observation and its paired
+policy through currentness checks and joined cleanup; copied metadata cannot
+replace either participant. The binding factory checks that the records reader
+and all four qualifier methods are present before acquiring a record or invoking
+any qualifier. An incomplete owner composition remains unavailable.
+
+The maintained candidate-binding, candidate-source, prepared-use, use-v2 and
+construction conformance suites exercise the real adapters, selector and
+controller construction with controlled collaborators. They verify composition
+and refusal behavior; they do not supply the missing production credential
+issuer, complete capability contributors or a successful live deployment.
+
 The selected Compute factory binds its renderer source once to the original
 Driver-owned capability. Admission composition and prepared Harness verification
 use that same instance; a second composition or replacement of a constructor-bound
