@@ -197,24 +197,28 @@ consumption cannot renew its execution clock.
 
 The original PostgreSQL writer samples `process.hrtime.bigint()` immediately before
 the new dispatch update under its existing serialized mutation and Agent lock. The
-`pre-commit-monotonic-v1` clock records `anchorAtMs` and a fixed
-`deadlineAtMs = anchorAtMs + 900000`, in one process-owned epoch. This anchor is a
-conservative lower bound preceding COMMIT, not a measurement of physical COMMIT
-time. The original consumption authority supplies an `executionSelection` with
-exact target and limits; it cannot supply this clock. The same transaction guard
-combines them and transfers the private clock owner only with its newly committed,
-single-use claim. Rollback or an unknown COMMIT exports no sample owner.
+`pre-commit-monotonic-v2` clock records `clockSourceRef`, `clockEpochRef` and
+`anchorAtMs`, without a duration or deadline. This anchor is a conservative lower
+bound preceding COMMIT, not a measurement of physical COMMIT time. The original
+consumption authority supplies an `executionSelection` with the exact target,
+limit reference/version and required `maximumExecutionMs`: explicit `null` for
+uncapped or a positive safe integer for a finite cap. Finite selection also
+requires `anchorAtMs + maximumExecutionMs` to be a safe integer. The same
+transaction guard combines the selection and clock and transfers the private
+clock owner only with its newly committed, single-use claim. Rollback or an
+unknown COMMIT exports no sample owner.
 
 `sampleDispatchClock` accepts only the actual original initiation guard and checks
 its current authority before sampling. It echoes the exchange challenge, full
 execution locator and unchanged dispatch clock with `sampledAtMs`. Ceiling-rounded
-samples conservatively reduce remaining duration. The local owner closes with the
-original initiation callback; serialized values, a copied guard or a restarted
-process cannot recreate it. A native connection must bind a requested sample to its
-actual authenticated exchange. The selected host-controlled profile enforces the
-original deadline in the host process and does not require guest clock correspondence.
-A separately qualified mapped-clock profile would need genuine relative rate/error
-and transit handling; this sampling value alone cannot qualify such a profile.
+samples conservatively reduce remaining duration when a cap is configured. The
+local sampling owner closes with the original initiation callback; serialized
+values, a copied guard or a restarted process cannot recreate it. A native
+connection must bind a requested sample to its actual authenticated exchange.
+The selected host-controlled profile retains stop responsibility in the host
+process and enforces the original deadline only for finite selection. It requires
+no guest clock correspondence. The current codec has no mapped-clock profile;
+a sampling observation does not supply one.
 
 Nested `OCC.transact` can return its callback result before its enclosing
 transaction commits. It must not be used as the outer commit signal. Rollback,
@@ -353,70 +357,89 @@ acquire an intent later. Only the original transaction's newly committed, single
 claim carries this intent to `JournalInitiationGuardV1.executionIntent`. Readback,
 a duplicate consumption and an uncertain consumption commit cannot initiate.
 
-The selected `host-controlled-v1` start records the entire immutable intent,
+The selected `host-controlled-v2` start records the entire immutable intent,
 actual native incarnation/execution/reservation/session/turn association,
-ready-commit evidence and its exact `host-deadline-v1` conditional control. The
-original host process owns enforcement in its original `process.hrtime.bigint()`
-epoch. The deadline is `anchorAtMs + maximumExecutionMs`, at most the original
-900,000-millisecond ceiling. Startup counts toward shorter selected durations;
-native readiness and transport delays never restart the interval. No native clock
-mapping is required or fabricated. Optional `nativeReadyObservation` is genuine
+ready-commit evidence and its exact `host-stop-v2` conditional control. The
+original host process owns stop responsibility in its original
+`process.hrtime.bigint()` epoch. `deadlineAtMs` is required on the control: it is
+`null` exactly when the intent's `maximumExecutionMs` is `null`, otherwise it is
+the safe integer `anchorAtMs + maximumExecutionMs`. Finite caps have no
+fifteen-minute ceiling. Startup, tools and waits consume the same original
+interval; native readiness, activity and transport delays never restart it.
+Uncapped selection supplies no duration timer. No native clock mapping is
+required or fabricated. Optional `nativeReadyObservation` is genuine
 native-process timing evidence only, with no cross-clock arithmetic or authority.
 
-This V1 ceiling is current component behavior, not the target Agent lifetime
-policy. The [configurable execution-limit successor](../../specs/24-configurable-execution-limits.md)
-selects an uncapped default and explicit finite caps. It requires coordinated
-configuration, clock/control, persistence, credential and native changes;
-renewing a current V1 authority call or provider token cannot remove its deadline.
+The [Agent execution duration setting](agents.md#execution-duration-selection)
+defaults new Agents to `null` and is frozen into each newly admitted revision.
+The actual consumption authority must provide the explicit immutable selection
+for the exact execution; the journal neither reads a mutable Agent draft nor
+defaults missing evidence to uncapped. Configuration-to-dispatch authority and
+production native composition remain required. Neither a later configuration
+edit nor renewal of an authority call or provider token changes an admitted cap.
 
 The original known-committed, single-taken claim admits its own mandatory cleanup
 for the one actual pending native construction and its owned Session/children.
 During the original bounded callback, the controller transfers that responsibility
-once into a retained deadline owner. The original owner issues the opaque control
-evidence; `retainDeadlineControl` rechecks its private membership, original
-call/currentness and deadline under accepting locks. `findDeadlineControl` reads
-the one exact retained conditional duty without creating a live timer or stop owner. A copied clock, target label, record or evidence
-object cannot create an original claim. The authenticated native bridge must
-supply its actual pending construction, with no effectful constructor polled yet.
+once into a retained stop owner in both finite and uncapped modes. The original
+owner issues the opaque control evidence; `retainDeadlineControl` rechecks its
+private membership, original call/currentness and any configured deadline under
+accepting locks. `findDeadlineControl` reads the one exact retained conditional
+duty without creating a live timer or stop owner. A copied clock, target label,
+record or evidence object cannot create an original claim. The authenticated
+native bridge must supply its actual pending construction, with no effectful
+constructor polled yet. The existing `deadline-control` operation and method
+names carry this mandatory stop duty even when its deadline is `null`.
 
-The host arms the original deadline before waiting on control retention. Native
-construction remains gated until the exact conditional control is known committed
-and original initiation/deadline checks still pass. Unknown retention cannot create
-or replay construction; the existing timer and stop duty remain retained. This
-`deadline-control` record is admitted self-cleanup, not a claim that a timer fired
-or an invented human cancellation. Its scope grants no Agent, Pod or host kill.
+The host retains the stop owner and arms any configured deadline before waiting
+on control retention. Native construction remains gated until the exact
+conditional control is known committed and original initiation/stop checks still
+pass. Unknown retention cannot create or replay construction. If acceptance
+fails after stop-owner transfer but before a ready owner is retained, the
+controller requests cleanup through that same retained duty, including in
+uncapped mode. A retained ready owner stays gated for exact start readback. This
+control records admitted self-cleanup, not a claim that a timer fired or an
+invented human cancellation. Its scope grants no Agent, Pod or host kill.
 
 Closing the five-second initiation guard does not destroy the transferred stop
-responsibility or extend the initiating permission. At the deadline, the retained
-owner latches cancellation and invokes its already admitted exact native stop
-lane directly. It does not queue behind continuing work, request a fresh human
-grant or wait for a new PostgreSQL write. Every sensitive host continuation also
-checks the same original clock. Timer scheduling or process loss does not establish
-on-time delivery, physical termination or a replacement clock owner. Observed loss
-closes admission/continuation through the actual transport owners; unresolved stop
-and writer exclusion remain held. This profile does not promise daemon survival
-or physical termination at the deadline.
+responsibility or extend the initiating permission. For a finite cap, the host
+schedules waits no longer than 2,147,483,647 milliseconds, rechecking the original
+monotonic deadline after every wake. At expiry, the retained owner latches
+cancellation and invokes its already admitted exact native stop lane directly.
+It does not queue behind continuing work, request a fresh human grant or wait
+for a new PostgreSQL write. Every sensitive host continuation also checks the
+retained stop state and any configured cap. Uncapped selection removes only
+elapsed-duration expiry; initiation and ongoing authority calls retain their
+finite operation deadlines and independently checked authority.
 
-Historical mapped starts and untagged clocks containing `committedAtMs` remain
-closed read data. New starts require the host-controlled branch and its previously
-retained exact conditional control; new intents require `pre-commit-monotonic-v1`.
-Historical data cannot establish a new clock owner. Independently authorized
-interruption of an already retained historical start remains available.
+Timer scheduling or process loss does not establish on-time delivery, physical
+termination or a replacement clock owner. Observed loss closes
+admission/continuation through the actual transport owners; unresolved stop and
+writer exclusion remain held. This profile does not promise daemon survival or
+physical termination at a configured deadline.
+
+Current selected execution codecs accept only `pre-commit-monotonic-v2`,
+`host-stop-v2` and `host-controlled-v2` with explicit finite-or-null selection
+and deadline fields. Untagged `committedAtMs` clocks, older finite-control tags,
+mapped starts and missing selections are unsupported; they are not alternate
+read formats or an uncapped default. Historical readback never establishes a
+new clock or executable owner.
 
 `retainExecutionStart` requires the selected native evidence inspector before and
 after accepting locks and again before insertion. Missing inspection refuses the
 write. One immutable exact start is retained; a changed native identity, original
-intent or deadline conflicts. A selected running outcome must match that retained
+intent or stop control conflicts. A selected running outcome must match that retained
 native session and turn. `findExecution` returns intent-only or the exact retained
 start, with no permission to create another native execution. Lost retention
-acknowledgment therefore preserves the original reference, ready time and deadline.
+acknowledgment therefore preserves the original reference, ready observation and
+finite-or-uncapped selection.
 
 `SelectedExecutionController` connects the original store callback to a mandatory
 native owner. That owner must retain the authenticated connection, complete ready
 Session/task/drain and a separate ongoing control owner
 before returning. Effects remain gated until definite retention of the exact start.
 The controller keeps its original local owner on uncertain acknowledgments and
-serializes ordinary control operations. The pre-admitted deadline stop bypasses
+serializes ordinary control operations. The pre-admitted protective stop bypasses
 that queue. Exact readback can resolve only that retained owner;
 a copied record or a restarted controller cannot create it. An uncertain native
 gate or interrupt submission is not automatically submitted again. The selected
@@ -434,11 +457,12 @@ reservation release remain required. Unknown outcomes continue holding ownership
 The process-local memory journal explicitly refuses selected execution operations
 and selected consumption. Existing unselected behavior remains available. Actual
 PostgreSQL storage tests exercise original claim transfer, rollback/orphan refusal,
-immutable start and clock bounds, revocation across a real Agent lock, lost COMMIT
-acknowledgments and interruption without reservation release. Controlled external
-evidence in those tests does not establish a production human grant, native
-connection, protected clock correspondence, model request or shell execution. Those producers
-must be installed by the actual authenticated transport composition.
+immutable finite and uncapped selections, exact stop/start correspondence, clock
+bounds, revocation across a real Agent lock, lost COMMIT acknowledgments, and
+interruption or unknown construction without reservation release. Controlled
+external evidence in those tests does not establish a production human grant,
+native connection, model request or shell execution. Those producers must be
+installed by the actual authenticated transport composition.
 
 The controller's `acceptInitiation(attempt, guard, call)` joins an already claimed
 original callback without consuming again. It requires the actual store guard's

@@ -43,6 +43,7 @@ export async function seedRuntimeOwner(store) {
     configurationId: configuration.id,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     servicePrincipalId: randomUUID(),
     createdAt,
   };
@@ -57,6 +58,7 @@ export async function seedRuntimeOwner(store) {
     providerId: null,
     configuration: { models: { providers: { openai: {} } } },
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+    maximumExecutionMs: null,
     compute: { id: "compute-test", implementation: "deterministic-test" },
     servicePrincipalId: agent.servicePrincipalId,
     createdAt,

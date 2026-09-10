@@ -276,6 +276,7 @@ test(
       providerId: null,
       draft_spec: {},
       executionMode: "embedded",
+      maximumExecutionMs: null,
       servicePrincipalId: `service-agent-${randomUUID()}`,
       createdAt,
     };
@@ -284,6 +285,7 @@ test(
       namespaceId,
       agentId,
       revision: 1,
+      maximumExecutionMs: null,
       providerId: null,
       configurationId: `cfg_${randomUUID()}`,
       configurationKind: "agent",
@@ -666,6 +668,7 @@ test(
     assert.equal(persistedRevision.rows[0].revision_id, revision.id);
     assert.equal(Number(persistedRevision.rows[0].revision_number), 1);
     assert.deepEqual(persistedRevision.rows[0].admitted_spec, {
+      maximum_execution_ms: revision.maximumExecutionMs,
       configuration_id: revision.configurationId,
       configuration_kind: revision.configurationKind,
       configuration_generation: revision.configurationGeneration,
@@ -870,6 +873,7 @@ test(
         configurationId: fixture.configuration.id,
         providerId: null,
         executionMode: "embedded",
+        maximumExecutionMs: null,
         servicePrincipalId: `service-agent-${siblingId}`,
         createdAt: new Date().toISOString(),
       }),
@@ -1707,6 +1711,7 @@ test(
     );
     assert.equal(persistedRevisions.rowCount, 2);
     assert.deepEqual(persistedRevisions.rows[0].admitted_spec, {
+      maximum_execution_ms: firstRevision.maximumExecutionMs,
       configuration_id: firstRevision.configurationId,
       configuration_kind: firstRevision.configurationKind,
       configuration_generation: firstRevision.configurationGeneration,
@@ -1715,6 +1720,7 @@ test(
       compute: firstRevision.compute,
     });
     assert.deepEqual(persistedRevisions.rows[1].admitted_spec, {
+      maximum_execution_ms: secondRevision.maximumExecutionMs,
       configuration_id: secondRevision.configurationId,
       configuration_kind: secondRevision.configurationKind,
       configuration_generation: secondRevision.configurationGeneration,

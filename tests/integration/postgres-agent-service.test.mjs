@@ -187,6 +187,87 @@ test(
         resource: { kind: "agent", id: agent.id, namespaceId: owner.id },
       });
 
+    await t.test(
+      "execution limits persist and constraints reject missing or invalid new revision policy",
+      async () => {
+        const agent = await create(original.id);
+        assert.equal(agent.maximumExecutionMs, null);
+        const input = { namespaceId: owner.id, agentId: agent.id, configurationId: original.id };
+        const capped = await service.updateAgent(actor, {
+          ...input,
+          maximumExecutionMs: 7_200_000,
+        });
+        assert.equal(capped.maximumExecutionMs, 7_200_000);
+        assert.equal((await service.updateAgent(actor, input)).maximumExecutionMs, 7_200_000);
+        assert.equal(
+          (await service.getAgent(actor, owner.id, agent.id)).maximumExecutionMs,
+          7_200_000,
+        );
+        const revision = await deployments.deployAgent(
+          actor,
+          {
+            namespaceId: owner.id,
+            agentId: agent.id,
+            expectedLifecycleGeneration: null,
+          },
+          resolveApprovedHarness,
+          createRuntimeAdmissionContext(installation.id, actor),
+        );
+        assert.equal(revision.maximumExecutionMs, 7_200_000);
+        assert.equal(
+          (await service.updateAgent(actor, { ...input, maximumExecutionMs: null }))
+            .maximumExecutionMs,
+          null,
+        );
+        assert.equal(
+          (await service.getRevision(actor, owner.id, agent.id, revision.id)).maximumExecutionMs,
+          7_200_000,
+        );
+        // Execute the actual CHECK through the application role; each rejected INSERT
+        // is its own transaction and cannot affect the successfully admitted snapshot.
+        const retained = (
+          await pool.query("SELECT admitted_spec FROM occ.agent_revisions WHERE id=$1", [
+            revision.id,
+          ])
+        ).rows[0].admitted_spec;
+        for (const maximumExecutionMs of [
+          undefined,
+          0,
+          -1,
+          1.5,
+          Number.MAX_SAFE_INTEGER + 1,
+          "1000",
+        ]) {
+          const admitted = { ...retained, maximum_execution_ms: maximumExecutionMs };
+          await assert.rejects(
+            pool.query(
+              `INSERT INTO occ.agent_revisions
+          (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec, admitted_at)
+          VALUES ($1,$2,$3,2,NULL,$4::jsonb,now())`,
+              [id("rev"), owner.id, agent.id, JSON.stringify(admitted)],
+            ),
+            (error) =>
+              error.code === "23514" && error.constraint === "agent_revisions_execution_limit",
+          );
+        }
+        for (const maximumExecutionMs of [0, -1, Number.MAX_SAFE_INTEGER + 1]) {
+          await assert.rejects(
+            pool.query("UPDATE occ.agents SET maximum_execution_ms=$1 WHERE id=$2", [
+              maximumExecutionMs,
+              agent.id,
+            ]),
+            (error) => error.code === "23514" && error.constraint === "agents_maximum_execution_ms",
+          );
+        }
+        for (const maximumExecutionMs of [1, Number.MAX_SAFE_INTEGER, null]) {
+          assert.equal(
+            (await service.updateAgent(actor, { ...input, maximumExecutionMs })).maximumExecutionMs,
+            maximumExecutionMs,
+          );
+        }
+      },
+    );
+
     await t.test("create and update retain exact foreign-key ownership", async () => {
       await assert.rejects(create(foreignCfg.id), ScopeViolationError);
       await assert.rejects(

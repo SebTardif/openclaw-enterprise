@@ -47,6 +47,7 @@ const binding = () => ({
       configurationGeneration: 7,
       providerId: null,
       executionMode: "embedded",
+      maximumExecutionMs: null,
       serviceAccountId: null,
       workloadProfileSelection: {
         manifestRef: uuid(6),

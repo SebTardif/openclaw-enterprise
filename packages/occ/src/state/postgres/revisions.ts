@@ -150,6 +150,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
           revision.revision,
           revision.providerId,
           JSON.stringify({
+            maximum_execution_ms: revision.maximumExecutionMs,
             configuration_id: revision.configurationId,
             configuration_kind: revision.configurationKind,
             configuration_generation: revision.configurationGeneration,
@@ -181,6 +182,7 @@ export const createPostgresRevisionRepository: RepositoryFactory<
         service_principal_id: revision.servicePrincipalId,
         admitted_at: revision.createdAt,
         admitted_spec: {
+          maximum_execution_ms: revision.maximumExecutionMs,
           configuration_id: revision.configurationId,
           configuration_kind: revision.configurationKind,
           configuration_generation: revision.configurationGeneration,

@@ -232,7 +232,15 @@ function validCredential(credential: unknown): credential is ServiceAccountCrede
   );
 }
 
+function assertMaximumExecutionMs(value: unknown): void {
+  if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0))
+    throw new ScopeViolationError(
+      "The Agent execution limit must be null or a positive safe integer.",
+    );
+}
+
 function assertAdmittedAgentRevision(revision: AgentRevision): void {
+  assertMaximumExecutionMs(revision.maximumExecutionMs);
   if (
     (revision.providerId !== null &&
       (typeof revision.providerId !== "string" || !providerIdentifier.test(revision.providerId))) ||
@@ -716,6 +724,7 @@ function repositories(
       ),
     createAgent: async (agent) => {
       agent = immutableCopy(agent);
+      assertMaximumExecutionMs(agent.maximumExecutionMs);
       const selection =
         agent.workloadProfileSelection === undefined
           ? undefined
@@ -778,7 +787,9 @@ function repositories(
       serviceAccountId,
       providerId,
       workloadProfileSelection,
+      maximumExecutionMs,
     ) => {
+      if (maximumExecutionMs !== undefined) assertMaximumExecutionMs(maximumExecutionMs);
       const selection =
         workloadProfileSelection === undefined
           ? undefined
@@ -813,6 +824,8 @@ function repositories(
         configurationId,
         providerId: nextProviderId,
         executionMode: executionMode ?? current.executionMode,
+        maximumExecutionMs:
+          maximumExecutionMs === undefined ? current.maximumExecutionMs : maximumExecutionMs,
         ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
         ...(association === undefined ? {} : { serviceAccountId: association }),
       });
@@ -1214,7 +1227,11 @@ function repositories(
           admission.revisionId,
         );
         const use = revision?.workloadProfileUse;
-        if (revision === undefined || use === undefined)
+        if (
+          revision === undefined ||
+          use === undefined ||
+          revision.maximumExecutionMs === undefined
+        )
           throw new ScopeViolationError(
             "The deployment command requires its original admitted workload Use.",
           );
@@ -1232,6 +1249,7 @@ function repositories(
               configurationGeneration: revision.configurationGeneration,
               providerId: revision.providerId,
               executionMode: revision.harness.mode,
+              maximumExecutionMs: revision.maximumExecutionMs,
               serviceAccountId: revision.serviceAccount?.id ?? null,
               workloadProfileSelection: {
                 manifestRef: use.manifestRef,

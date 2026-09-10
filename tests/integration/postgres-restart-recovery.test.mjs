@@ -85,6 +85,7 @@ async function createQueueRevision(pool, namespaceId, agentId, revisionNumber = 
   );
   assert.equal(configuration.rowCount, 1, "queued revisions require an exact same-Namespace Agent");
   const admittedSpec = {
+    maximum_execution_ms: null,
     draft_spec: {},
     configuration_id: configuration.rows[0].configuration_id,
     configuration_kind: "agent",

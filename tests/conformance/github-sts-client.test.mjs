@@ -223,6 +223,30 @@ test("release rejects expired, malformed, cancelled or successor-attempt deliver
   assert.throws(() => validateRelease(release, current, Date.now(), controller.signal));
 });
 
+test("uncapped original work still rejects expired tokens, missing policy and cancellation", () => {
+  const original = { ...syntheticAttempt(), turnNotAfter: null };
+  const current = request(original);
+  const release = syntheticRelease(original);
+  const controller = new AbortController();
+  assert.equal(
+    validateRelease(release, current, Date.now(), controller.signal),
+    Date.parse(release.expiresAt),
+  );
+  assert.throws(() =>
+    validateRelease(
+      { ...release, expiresAt: new Date(0).toISOString() },
+      current,
+      Date.now(),
+      controller.signal,
+    ),
+  );
+  const missing = { ...original };
+  delete missing.turnNotAfter;
+  assert.throws(() => validateRelease(release, request(missing), Date.now(), controller.signal));
+  controller.abort();
+  assert.throws(() => validateRelease(release, current, Date.now(), controller.signal));
+});
+
 async function helper(action, input, frameReply) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [tools.helper, action], {
@@ -497,31 +521,37 @@ test("child completion waits for delivery settlement and fails after a post-rele
   assert.equal(result.nextAction, "exact-readback-only");
 });
 
-test("unsettled delivery expires locally without reporting child success", async (t) => {
-  const original = syntheticAttempt();
-  const token = syntheticRelease(original);
-  const settlement = Promise.withResolvers();
-  let calls = 0;
-  const delivery = {
-    async withCurrentToken(_request, release) {
-      calls += 1;
-      release(token);
-      await settlement.promise;
-    },
-    async invalidateRuntimeReuse() {},
-  };
-  const { home, options } = await setup(t, original, delivery, { timeoutMs: 500 });
-  const result = await runNativeStep(
-    probe("environment", [], true),
-    request(original, "G11"),
-    options,
-    home,
-  );
-  settlement.resolve();
-  assert.equal(result.status, "unknown");
-  assert.equal(calls, 1);
-  assert.equal(result.stdout, "");
-});
+for (const uncapped of [false, true])
+  test(`unsettled delivery expires locally with ${uncapped ? "uncapped" : "finite"} work`, async (t) => {
+    const original = syntheticAttempt();
+    if (uncapped) original.turnNotAfter = null;
+    const token = syntheticRelease(original);
+    const settlement = Promise.withResolvers();
+    let calls = 0;
+    let lateRelease;
+    const delivery = {
+      async withCurrentToken(_request, release) {
+        calls += 1;
+        lateRelease = release;
+        release(token);
+        await settlement.promise;
+      },
+      async invalidateRuntimeReuse() {},
+    };
+    const { home, options } = await setup(t, original, delivery, { timeoutMs: 500 });
+    const result = await runNativeStep(
+      probe("environment", [], true),
+      request(original, "G11"),
+      options,
+      home,
+    );
+    settlement.resolve();
+    assert.equal(result.status, "unknown");
+    assert.equal(result.nextAction, "exact-readback-only");
+    assert.equal(calls, 1);
+    assert.equal(result.stdout, "");
+    assert.throws(() => lateRelease(token), NativeClientError);
+  });
 
 test("PR planning copies a bounded reviewed body before awaits and retains its full reconciliation tuple", async (t) => {
   const original = syntheticAttempt();

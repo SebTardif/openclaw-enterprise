@@ -17,6 +17,7 @@ import {
   canonicalCredentialStorageRequestV1 as canonicalOriginal,
 } from "@openclaw-enterprise/contracts/credential-storage-v1";
 import * as v from "../fixtures/repository-preparation-v1/vectors.mjs";
+import { authorityObservation } from "../fixtures/credential-storage-v1/vectors.mjs";
 import { protocolTraces } from "../fixtures/repository-preparation-v1/traces.mjs";
 
 const invalid = (kind, input) => assert.throws(() => parse(kind, input));
@@ -285,6 +286,31 @@ test("original-turn requests, digests and readback stay unchanged outside prepar
     v.hash(canonicalOriginal("reserve", wrapped.record.issuance)),
     v.LEGACY_RESERVE_DIGEST,
   );
+});
+
+test("original-purpose uncapped work preserves finite credential authority and canonical bytes", () => {
+  const request = v.legacyReserve();
+  request.original.turnNotAfter = null;
+  const wrapped = { purpose: "original-turn-runtime", request };
+  assert.deepEqual(parse("requestUnion", wrapped).request, request);
+  assert.equal(canonical("requestUnion", wrapped), canonicalOriginal("reserve", request));
+  assert.deepEqual(
+    parse("purpose", { purpose: "original-turn-runtime", original: request.original }).original,
+    request.original,
+  );
+  const observation = authorityObservation();
+  observation.original.turnNotAfter = null;
+  const authority = { purpose: "original-turn-runtime", observation };
+  assert.deepEqual(parse("authorityUnion", authority), authority);
+  for (const field of ["leaseNotAfter", "startNotAfter"]) {
+    invalid("authorityUnion", {
+      ...authority,
+      observation: { ...observation, [field]: null },
+    });
+  }
+  delete request.original.turnNotAfter;
+  invalid("requestUnion", wrapped);
+  invalid("purpose", { purpose: "original-turn-runtime", original: request.original });
 });
 
 test("canonical preparation requests bind their purpose and immutable intent with exact CAS", () => {

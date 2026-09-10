@@ -37,8 +37,10 @@ The accepting integration must provide `withCurrentToken(request, release,
 signal)`. That owner must check actual current authority and protected recorded
 delivery for the exact original attempt at the synchronous `release` boundary.
 It must honor cancellation and settle its promise. The client verifies matching
-attempt and binding digest, finite unexpired original deadline, actual token
-expiry and active invocation before forwarding bytes. It cannot establish that
+attempt and binding digest, explicit original execution-limit projection, actual
+token expiry and active invocation before forwarding bytes. A finite original
+deadline must remain unexpired; explicit `null` means uncapped execution duration,
+and a missing projection is invalid. It cannot establish that
 the supplied token really has the described repository permissions. Configuration
 and descriptors are not verified App/account/installation or Namespace binding.
 
@@ -98,7 +100,8 @@ wrapper forwards only `GH_TOKEN` to its new native child, closes the credential
 channel and does not forward the original binding or alternate token variables.
 
 The default process deadline is 20 seconds, capped at 30 seconds and shortened by
-the original deadline. Child exit also joins pending delivery settlement within
+the original deadline when configured. Uncapped work retains the same finite
+process deadline. Child exit also joins pending delivery settlement within
 that deadline. A post-release rejection or unresolved owner promise cannot turn
 into success. JavaScript cannot forcibly cancel a noncooperating delivery promise;
 late releases are closed locally, while upstream cleanup remains the delivery

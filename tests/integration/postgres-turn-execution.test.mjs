@@ -69,12 +69,12 @@ async function fixture(pool, existing) {
     dispatchClock: {
       clockSourceRef: ref("clock"),
       clockEpochRef: ref("epoch"),
-      committedAtMs: 100,
-      deadlineAtMs: 900100,
+      kind: "pre-commit-monotonic-v2",
+      anchorAtMs: 100,
     },
   };
   const control = {
-    kind: "host-deadline-v1",
+    kind: "host-stop-v2",
     intent,
     operationRef: ref("deadline"),
     operationDigest: digest(),
@@ -85,7 +85,7 @@ async function fixture(pool, existing) {
     deadlineAtMs: 900100,
   };
   const start = {
-    kind: "host-controlled-v1",
+    kind: "host-controlled-v2",
     intent,
     operationRef: ref("start"),
     operationDigest: digest(),
@@ -113,7 +113,10 @@ async function fixture(pool, existing) {
   const dispatch = () => h.issue("dispatch", v.binding);
   const bindIntent = (retained) => {
     Object.assign(intent, retained);
-    control.deadlineAtMs = retained.dispatchClock.anchorAtMs + retained.maximumExecutionMs;
+    control.deadlineAtMs =
+      retained.maximumExecutionMs === null
+        ? null
+        : retained.dispatchClock.anchorAtMs + retained.maximumExecutionMs;
   };
   const consumeIn = async (j) => {
     const dispatched = await j.recordDispatchIntent(dispatch(), h.call);
@@ -218,11 +221,8 @@ test(
               f.bindIntent(guard.executionIntent);
               const sample = await sampleDispatchClock(guard, ref("challenge"));
               same(sample.dispatchClock, f.intent.dispatchClock);
-              assert.equal(sample.dispatchClock.kind, "pre-commit-monotonic-v1");
-              assert.equal(
-                sample.dispatchClock.deadlineAtMs - sample.dispatchClock.anchorAtMs,
-                900000,
-              );
+              assert.equal(sample.dispatchClock.kind, "pre-commit-monotonic-v2");
+              assert.equal(Object.hasOwn(sample.dispatchClock, "deadlineAtMs"), false);
               assert.ok(sample.sampledAtMs >= sample.dispatchClock.anchorAtMs);
               assert.ok(
                 sample.sampledAtMs - sample.dispatchClock.anchorAtMs <=
@@ -460,6 +460,57 @@ test(
               deadlineAtMs: Number.MAX_SAFE_INTEGER,
             }),
           );
+        },
+      );
+      await t.test(
+        "SQL and codec enforce explicit capped and uncapped policy identically",
+        async () => {
+          const f = await fixture(pool);
+          for (const maximumExecutionMs of [null, 1, 900001, 86_400_000]) {
+            const intent = { ...f.intent, maximumExecutionMs };
+            const deadlineAtMs = maximumExecutionMs === null ? null : 100 + maximumExecutionMs;
+            const control = { ...f.control, intent, deadlineAtMs };
+            for (const [kind, value] of [
+              ["executionIntent", intent],
+              ["deadlineControl", control],
+            ]) {
+              parseTurnJournalV1(kind, value);
+              assert.equal(
+                (
+                  await pool.query("SELECT occ.turn_journal_execution_valid($1,$2::jsonb) valid", [
+                    kind,
+                    JSON.stringify(value),
+                  ])
+                ).rows[0].valid,
+                true,
+              );
+            }
+            // Duration mode cannot be omitted, exchanged, or renewed in a retained control.
+            for (const changed of [
+              { ...control, deadlineAtMs: deadlineAtMs === null ? 1100 : null },
+              { ...control, deadlineAtMs: undefined },
+              { ...control, intent: { ...intent, maximumExecutionMs: undefined } },
+              { ...control, intent: { ...intent, maximumExecutionMs: 0 } },
+              {
+                ...control,
+                intent: {
+                  ...intent,
+                  dispatchClock: { ...intent.dispatchClock, deadlineAtMs: 900100 },
+                },
+              },
+            ]) {
+              assert.throws(() => parseTurnJournalV1("deadlineControl", changed));
+              assert.equal(
+                (
+                  await pool.query(
+                    "SELECT occ.turn_journal_execution_valid('deadlineControl',$1::jsonb) valid",
+                    [JSON.stringify(changed)],
+                  )
+                ).rows[0].valid,
+                false,
+              );
+            }
+          }
         },
       );
       await t.test(
@@ -821,6 +872,7 @@ test(
         "owned controller resolves one exact interruption retention ACK before one submit",
         async () => {
           const f = await fixture(pool);
+          f.intent.maximumExecutionMs = null;
           const proxy = await runtimeCommitAckProxy(databaseUrl);
           const faultPool = new pg.Pool({
             connectionString: proxy.url,
@@ -946,6 +998,176 @@ test(
           release();
           assert.equal((await first).kind, "execution-unknown");
           assert.equal(accepts, 1);
+        },
+      );
+      await t.test(
+        "uncapped execution retains original stop control and cannot replay after callback closure",
+        async () => {
+          const f = await fixture(pool);
+          f.intent.maximumExecutionMs = null;
+          let owner,
+            stopped = 0;
+          const result = await f.h.store.dispatchAndConsumeAndInitiate(
+            f.dispatch(),
+            f.consume(),
+            async (_attempt, guard) => {
+              f.bindIntent(guard.executionIntent);
+              takeDispatchClockForExecution(guard, f.h.call);
+              owner = transferDispatchDeadline(
+                guard,
+                f.h.call,
+                {
+                  nativeIncarnationRef: f.start.nativeIncarnationRef,
+                  nativeConstructionRef: f.control.nativeConstructionRef,
+                },
+                async () => {
+                  stopped++;
+                },
+              );
+              assert.equal(owner.control.deadlineAtMs, null);
+              assert.equal(owner.control.intent.maximumExecutionMs, null);
+              assert.equal(
+                committed(await f.h.write((j) => j.retainDeadlineControl(owner.evidence, f.h.call)))
+                  .kind,
+                "recorded",
+              );
+              owner.assertBeforeEffect();
+            },
+            f.h.call,
+          );
+          assert.equal(result.kind, "initiated");
+          owner.assertBeforeEffect();
+          assert.equal(stopped, 0);
+          // A fresh authority call does not renew/reconstruct consumed ownership.
+          assert.equal(
+            (
+              await f.h.store.dispatchAndConsumeAndInitiate(
+                f.dispatch(),
+                f.consume(),
+                async () => assert.fail("replay"),
+                f.p.call(),
+              )
+            ).kind,
+            "unavailable",
+          );
+          assert.equal(
+            (await f.h.read((j) => j.findDeadlineControl(f.execution, f.h.call))).control
+              .deadlineAtMs,
+            null,
+          );
+          f.p.setAllowed(false);
+          await Promise.all([owner.requestStop(), owner.requestStop()]);
+          assert.equal(stopped, 1);
+          assert.throws(() => owner.assertBeforeEffect());
+          const reservations = await pool.query(
+            "SELECT count(*)::int n FROM occ.turn_journal_reservations WHERE attempt_ref=$1",
+            [f.v.attempt.attemptRef],
+          );
+          assert.equal(reservations.rows[0].n, 1);
+        },
+      );
+      await t.test(
+        "controller schedules a cap beyond Node timer range without early expiry or renewal",
+        async () => {
+          const f = await fixture(pool);
+          // The extra minute exceeds the entire bounded initiation window, so
+          // the first remaining delay must exceed Node's signed 32-bit timer limit.
+          f.intent.maximumExecutionMs = 2_147_483_647 + 60_000;
+          let receipt,
+            stops = 0,
+            confirmations = 0,
+            interruptions = 0;
+          const native = {
+            async accept(guard, _call, retainDeadline) {
+              await f.arm(guard, retainDeadline, async () => {
+                stops++;
+              });
+              receipt = { start: f.start, evidence: f.h.issue("consumption", f.start) };
+              return receipt;
+            },
+            async assertCurrent(owned) {
+              assert.equal(owned, receipt);
+            },
+            async confirmRetainedStart(owned, start) {
+              assert.equal(owned, receipt);
+              same(start, f.start);
+              confirmations++;
+            },
+            async inspectInterruption(owned, operation) {
+              assert.equal(owned, receipt);
+              return f.h.issue("consumption", operation);
+            },
+            async interrupt(owned, operation) {
+              assert.equal(owned, receipt);
+              same(operation, f.interruption);
+              interruptions++;
+            },
+          };
+          const controller = new SelectedExecutionController(f.h.store, native, 1);
+          assert.equal(
+            (await controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call)).kind,
+            "initiated",
+          );
+          const originalDeadline = f.intent.dispatchClock.anchorAtMs + f.intent.maximumExecutionMs;
+          assert.equal(f.control.deadlineAtMs, originalDeadline);
+          // Observe actual timers beyond the overflow-to-1ms window. This proves
+          // scheduling at the boundary, not passage of the full 25-day duration.
+          await new Promise((resolve) => setTimeout(resolve, 75));
+          assert.equal(stops, 0);
+          assert.equal(confirmations, 1);
+          const call = f.p.call();
+          const retained = await f.h.read((j) => j.findExecution(f.execution, call), call);
+          assert.equal(retained.kind, "started");
+          assert.equal(retained.start.deadlineControl.deadlineAtMs, originalDeadline);
+          await controller.interrupt(f.interruption, f.p.call());
+          assert.equal(interruptions, 1);
+          assert.equal(stops, 0);
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS n FROM occ.turn_journal_reservations WHERE attempt_ref=$1",
+                [f.v.attempt.attemptRef],
+              )
+            ).rows[0].n,
+            1,
+          );
+        },
+      );
+      await t.test(
+        "uncapped failed construction requests retained cleanup and keeps capacity",
+        async () => {
+          const f = await fixture(pool);
+          f.intent.maximumExecutionMs = null;
+          let stops = 0,
+            accepts = 0;
+          const native = {
+            async accept(guard, _call, retainDeadline) {
+              accepts++;
+              await f.arm(guard, retainDeadline, async () => {
+                stops++;
+              });
+              throw new Error("Unknown construction outcome");
+            },
+          };
+          const controller = new SelectedExecutionController(f.h.store, native, 1);
+          assert.equal(
+            (await controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call)).kind,
+            "execution-unknown",
+          );
+          assert.equal(stops, 1);
+          const second = await fixture(pool, f);
+          second.intent.maximumExecutionMs = null;
+          assert.equal(
+            (await controller.dispatchAndConsume(second.dispatch(), second.consume(), f.p.call()))
+              .kind,
+            "execution-unknown",
+          );
+          assert.equal(accepts, 1);
+          assert.equal(stops, 1);
+          assert.equal(
+            (await f.h.read((j) => j.findExecution(f.execution, f.h.call))).kind,
+            "intent-only",
+          );
         },
       );
       await t.test(

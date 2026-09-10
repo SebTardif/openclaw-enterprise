@@ -70,7 +70,8 @@ export const NATIVE_MEASUREMENT_ENDPOINTS_V1 = Object.freeze({
   "model-service": ["observer-model-request-submitted", "model-response-complete"],
 } satisfies Record<NativeMeasurementCaseIdV1, readonly [string, string]>);
 
-/** Preserved protocol/admission ceilings. Budgets never modify these values. */
+/** Preserved protocol/admission ceilings. Measurement budgets never modify these
+ * values. Execution duration comes from the admitted policy, not this inventory. */
 export const NATIVE_MEASUREMENT_PRESERVED_V1 = Object.freeze({
   harness: Object.freeze({
     connectMs: 5000,
@@ -97,7 +98,6 @@ export const NATIVE_MEASUREMENT_PRESERVED_V1 = Object.freeze({
     executableQueue: 0,
     pendingReceipts: 32,
     pendingDeadlineMs: 30000,
-    turnDeadlineMs: 900000,
     outputCaptureBytes: 262144,
     completedTextUtf8Bytes: 3200,
     completedBodyBytes: 8192,

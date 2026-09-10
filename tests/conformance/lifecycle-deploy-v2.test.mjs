@@ -33,6 +33,7 @@ const command = () => ({
     configurationGeneration: 7,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     serviceAccountId: null,
     workloadProfileSelection: {
       manifestRef: uuid(6),
@@ -73,7 +74,7 @@ test("saved-draft command roundtrips native nullable refs and both installed exe
 
 test("canonical identity has a fixed complete action, scope and command byte vector", () => {
   const expected =
-    '{"action":"agent.deploy","command":{"expectedDraft":{"configurationGeneration":7,"configurationId":"cfg_00000000-0000-4000-8000-000000000005","executionMode":"embedded","providerId":null,"serviceAccountId":null,"workloadProfileSelection":{"admissionRef":"00000000-0000-4000-8000-000000000007","admissionVersion":9,"manifestDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","manifestRef":"00000000-0000-4000-8000-000000000006"}},"expectedLifecycleGeneration":null,"operationRef":"00000000-0000-4000-8000-000000000004","revisionSource":"saved-draft","schemaVersion":2},"scope":{"agentId":"agt_00000000-0000-4000-8000-000000000003","installationId":"ins_00000000-0000-4000-8000-000000000001","namespaceId":"ns_00000000-0000-4000-8000-000000000002"}}';
+    '{"action":"agent.deploy","command":{"expectedDraft":{"configurationGeneration":7,"configurationId":"cfg_00000000-0000-4000-8000-000000000005","executionMode":"embedded","maximumExecutionMs":null,"providerId":null,"serviceAccountId":null,"workloadProfileSelection":{"admissionRef":"00000000-0000-4000-8000-000000000007","admissionVersion":9,"manifestDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","manifestRef":"00000000-0000-4000-8000-000000000006"}},"expectedLifecycleGeneration":null,"operationRef":"00000000-0000-4000-8000-000000000004","revisionSource":"saved-draft","schemaVersion":2},"scope":{"agentId":"agt_00000000-0000-4000-8000-000000000003","installationId":"ins_00000000-0000-4000-8000-000000000001","namespaceId":"ns_00000000-0000-4000-8000-000000000002"}}';
   assert.equal(canonical(scope(), command()), expected);
   assert.deepEqual(bytes(canonical(scope(), command())), bytes(expected));
   assert.deepEqual(plain(parseJson("binding", expected)), plain(bind(scope(), command())));
@@ -168,7 +169,7 @@ test("bodyless, omitted and null operands never silently select a saved snapshot
     const input = command();
     delete input.expectedDraft[field];
     rejected(() => parse("command", input));
-    if (field !== "providerId" && field !== "serviceAccountId") {
+    if (field !== "providerId" && field !== "serviceAccountId" && field !== "maximumExecutionMs") {
       input.expectedDraft[field] = null;
       rejected(() => parse("command", input));
     }
@@ -470,5 +471,20 @@ test("returned command, scope and selection are independent frozen data with clo
   for (const name of ["__proto__", "constructor", "receipt", "useV2", undefined]) {
     rejected(() => parse(name, command()));
     assert.equal(decode(name, command()).kind, "invalid");
+  }
+});
+
+test("execution limit is an explicit immutable command operand with no fifteen-minute ceiling", () => {
+  for (const maximumExecutionMs of [null, 1, 7_200_000, Number.MAX_SAFE_INTEGER]) {
+    const value = command();
+    value.expectedDraft.maximumExecutionMs = maximumExecutionMs;
+    assert.equal(parse("command", value).expectedDraft.maximumExecutionMs, maximumExecutionMs);
+    if (maximumExecutionMs !== null)
+      assert.notEqual(canonical(scope(), value), canonical(scope(), command()));
+  }
+  for (const maximumExecutionMs of [undefined, 0, -1, 1.2, Number.MAX_SAFE_INTEGER + 1, "1000"]) {
+    const value = command();
+    value.expectedDraft.maximumExecutionMs = maximumExecutionMs;
+    rejected(() => parse("command", value));
   }
 });

@@ -23,12 +23,15 @@ These exports provide schemas, immutable value parsing, canonical intent encodin
 
 `RepositoryCredentialSubjectV1`, `RepositoryCredentialAuthorityV1`, `RepositoryCredentialRequestV1`, `RepositoryCredentialExchangeV1` and `RepositoryCredentialInventoryRecordV1` distinguish these variants:
 
-| Purpose                            | Authority and attribution                                                                                                                                                                                             |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `original-turn-runtime`            | The existing original-turn binding, current credential authority, request and inventory dictionaries. The standalone original types and canonical request bytes are unchanged.                                        |
-| `candidate-repository-preparation` | A lifecycle-admitted candidate subject, a preparation-specific authority observation, purpose-tagged requests and inventory retaining that exact candidate. It has no fabricated original turn or runtime assignment. |
+| Purpose                            | Authority and attribution                                                                                                                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `original-turn-runtime`            | The canonical current original-turn binding, current credential authority, request and inventory dictionaries, including the required nullable execution-cap projection. Canonical encoding delegates to credential storage. |
+| `candidate-repository-preparation` | A lifecycle-admitted candidate subject, a preparation-specific authority observation, purpose-tagged requests and inventory retaining that exact candidate. It has no fabricated original turn or runtime assignment.        |
 
 The new purpose is carried by every preparation credential request. The original member of each new request union explicitly excludes preparation keys, including for structurally wider TypeScript values. Closed parsers reject mixed or relabeled variants. The original-turn branch delegates canonical encoding to the existing [credential storage contract](credential-storage.md).
+
+Only original-turn execution duration may be uncapped. Candidate preparation,
+credential authority, and invocation deadlines retain their separate finite bounds.
 
 A preparation subject binds:
 

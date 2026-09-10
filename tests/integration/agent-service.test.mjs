@@ -381,3 +381,46 @@ test("Draft edits preserve admitted immutable revisions and enclosing transactio
     revision,
   );
 });
+
+test("Agent execution limit admissions snapshot the draft and retain earlier selections", async () => {
+  const f = await fixture();
+  const cfg = await f.configuration();
+  const agent = await f.create(cfg.id);
+  assert.equal(agent.maximumExecutionMs, null);
+  const uncapped = await f.revision(agent);
+  assert.equal(uncapped.maximumExecutionMs, null);
+  const input = { namespaceId: f.namespace.id, agentId: agent.id, configurationId: cfg.id };
+  const capped = await f.service.updateAgent("admin", { ...input, maximumExecutionMs: 7_200_000 });
+  assert.equal(capped.maximumExecutionMs, 7_200_000);
+  const finite = await f.revision(capped, 2);
+  assert.equal(finite.maximumExecutionMs, 7_200_000);
+  const preserved = await f.service.updateAgent("admin", input);
+  assert.equal(preserved.maximumExecutionMs, 7_200_000);
+  const cleared = await f.service.updateAgent("admin", { ...input, maximumExecutionMs: null });
+  assert.equal(cleared.maximumExecutionMs, null);
+  const next = await f.revision(cleared, 3);
+  assert.equal(next.maximumExecutionMs, null);
+  assert.equal(
+    (await f.service.getRevision("admin", f.namespace.id, agent.id, finite.id)).maximumExecutionMs,
+    7_200_000,
+  );
+  assert.equal(
+    (await f.service.getRevision("admin", f.namespace.id, agent.id, uncapped.id))
+      .maximumExecutionMs,
+    null,
+  );
+  // The memory adapter mirrors the database's new-write constraint.
+  for (const maximumExecutionMs of [undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1000"]) {
+    await assert.rejects(
+      f.runner.transact((unit) =>
+        unit.revisions.createRevision({
+          ...next,
+          id: id("rev"),
+          revision: 4,
+          maximumExecutionMs,
+        }),
+      ),
+      ScopeViolationError,
+    );
+  }
+});

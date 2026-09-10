@@ -252,6 +252,7 @@ export async function seedRuntimePreparationInvocation(pool, { retainOrigin = tr
       configurationGeneration: revision.configurationGeneration,
       providerId: revision.providerId,
       executionMode: revision.harness.mode,
+      maximumExecutionMs: null,
       serviceAccountId: null,
       workloadProfileSelection: head.selection,
     },

@@ -73,6 +73,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     configurationId: agent.configurationId,
     providerId: agent.providerId,
     executionMode: agent.executionMode,
+    maximumExecutionMs: agent.maximumExecutionMs,
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
     ...(agent.workloadProfileSelection === undefined
@@ -88,6 +89,9 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     namespaceId: revision.namespaceId,
     agentId: revision.agentId,
     revision: revision.revision,
+    ...(revision.maximumExecutionMs === undefined
+      ? {}
+      : { maximumExecutionMs: revision.maximumExecutionMs }),
     configurationId: revision.configurationId,
     configurationKind: revision.configurationKind,
     configurationGeneration: revision.configurationGeneration,
@@ -142,6 +146,9 @@ export function createAgentOperationHandlers(
             configurationId: body.configurationId,
             ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
             ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),
+            ...(body.maximumExecutionMs === undefined
+              ? {}
+              : { maximumExecutionMs: body.maximumExecutionMs }),
             ...(body.serviceAccountId === undefined
               ? {}
               : { serviceAccountId: body.serviceAccountId }),
@@ -168,6 +175,9 @@ export function createAgentOperationHandlers(
         configurationId: body.configurationId,
         ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
         ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),
+        ...(body.maximumExecutionMs === undefined
+          ? {}
+          : { maximumExecutionMs: body.maximumExecutionMs }),
         ...(body.serviceAccountId === undefined ? {} : { serviceAccountId: body.serviceAccountId }),
         ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
       });

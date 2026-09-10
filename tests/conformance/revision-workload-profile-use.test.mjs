@@ -201,6 +201,7 @@ async function accept(f, altered = {}) {
       configurationGeneration: f.revision.configurationGeneration,
       providerId: f.revision.providerId,
       executionMode: f.revision.harness.mode,
+      maximumExecutionMs: null,
       serviceAccountId: f.revision.serviceAccount?.id ?? null,
       workloadProfileSelection: f.selection,
     },

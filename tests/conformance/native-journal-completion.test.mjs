@@ -35,15 +35,14 @@ function data() {
     executionLimitVersion: 1,
     maximumExecutionMs: 1000,
     dispatchClock: {
-      kind: "pre-commit-monotonic-v1",
+      kind: "pre-commit-monotonic-v2",
       clockSourceRef: "host-clock-one",
       clockEpochRef: "host-epoch-one",
       anchorAtMs: 100,
-      deadlineAtMs: 900100,
     },
   };
   const deadlineControl = {
-    kind: "host-deadline-v1",
+    kind: "host-stop-v2",
     intent,
     operationRef: "cleanup/completion-one",
     operationDigest: "b".repeat(64),
@@ -54,7 +53,7 @@ function data() {
     deadlineAtMs: 1100,
   };
   const start = {
-    kind: "host-controlled-v1",
+    kind: "host-controlled-v2",
     intent,
     operationRef: "start/completion-one",
     operationDigest: "c".repeat(64),

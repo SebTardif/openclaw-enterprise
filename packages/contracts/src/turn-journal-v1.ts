@@ -26,7 +26,6 @@ export const TURN_JOURNAL_LIMITS_V1 = Object.freeze({
   intakeDeadlineMs: 30_000,
   activeReservationsPerAgent: 1,
   executableQueue: 0,
-  maximumTurnMs: 900_000,
   startWindowMs: 5_000,
   deliveryAttemptsPerSlot: 3,
   deliveryWindowMs: 120_000,
@@ -211,18 +210,10 @@ export type ExactSelectedExecutionV1 = Readonly<{
   recipientRef: string;
 }>;
 export type PreCommitDispatchClockV1 = Readonly<{
-  kind: "pre-commit-monotonic-v1";
+  kind: "pre-commit-monotonic-v2";
   clockSourceRef: string;
   clockEpochRef: string;
   anchorAtMs: number;
-  deadlineAtMs: number;
-}>;
-/** Historical data only; cannot establish a new active clock owner. */
-export type HistoricalDispatchClockV1 = Readonly<{
-  clockSourceRef: string;
-  clockEpochRef: string;
-  committedAtMs: number;
-  deadlineAtMs: number;
 }>;
 export type JournalExecutionSelectionV1 = Readonly<{
   execution: ExactSelectedExecutionV1;
@@ -230,37 +221,21 @@ export type JournalExecutionSelectionV1 = Readonly<{
   operationDigest: string;
   executionLimitRef: string;
   executionLimitVersion: number;
-  maximumExecutionMs: number;
+  /** Explicit null means no execution-duration cap. */
+  maximumExecutionMs: number | null;
 }>;
 export type JournalExecutionIntentV1 = JournalExecutionSelectionV1 &
   Readonly<{
     /** Genuine pre-commit lower-bound anchor from the original dispatch writer.
      * A known COMMIT transfers ownership; it does not turn this into a measured
      * physical COMMIT timestamp. Native readiness never renews the ceiling. */
-    dispatchClock: PreCommitDispatchClockV1 | HistoricalDispatchClockV1;
+    dispatchClock: PreCommitDispatchClockV1;
   }>;
-export type MappedExecutionStartV1 = Readonly<{
-  intent: JournalExecutionIntentV1;
-  operationRef: string;
-  operationDigest: string;
-  nativeExecutionRef: string;
-  nativeIncarnationRef: string;
-  nativeReservationRef: string;
-  nativeSessionRef: string;
-  nativeTurnRef: string;
-  acceptanceEvidenceRef: string;
-  clockSourceRef: string;
-  clockEpochRef: string;
-  startedAtMs: number;
-  deadlineAtMs: number;
-  /** Original dispatch ceiling mapped into THIS native epoch by its actual owner. */
-  dispatchDeadlineAtMs: number;
-  clockCorrespondenceEvidenceRef: string;
-}>;
-/** Pre-admitted conditional deadline stop, including construction before readiness.
+/** Pre-admitted stop custody, including construction before readiness.
+ * Explicit null disables only duration expiry; cleanup ownership remains mandatory.
  * This immutable value is correlation only; actual retained stop custody is required. */
 export type JournalDeadlineControlV1 = Readonly<{
-  kind: "host-deadline-v1";
+  kind: "host-stop-v2";
   intent: JournalExecutionIntentV1;
   operationRef: string;
   operationDigest: string;
@@ -268,10 +243,10 @@ export type JournalDeadlineControlV1 = Readonly<{
   nativeConstructionRef: string;
   responsibilityRef: string;
   responsibilityVersion: number;
-  deadlineAtMs: number;
+  deadlineAtMs: number | null;
 }>;
 export type HostControlledExecutionStartV1 = Readonly<{
-  kind: "host-controlled-v1";
+  kind: "host-controlled-v2";
   intent: JournalExecutionIntentV1;
   operationRef: string;
   operationDigest: string;
@@ -289,7 +264,7 @@ export type HostControlledExecutionStartV1 = Readonly<{
     observedAtMs: number;
   }>;
 }>;
-export type JournalExecutionStartV1 = MappedExecutionStartV1 | HostControlledExecutionStartV1;
+export type JournalExecutionStartV1 = HostControlledExecutionStartV1;
 declare const deadlineControlProvenance: unique symbol;
 export interface VerifiedDeadlineControlV1 {
   readonly [deadlineControlProvenance]: true;
@@ -944,45 +919,22 @@ export const JournalExecutionSelectionSchemaV1 = object({
   operationDigest: digest,
   executionLimitRef: ref,
   executionLimitVersion: version,
-  maximumExecutionMs: Type.Integer({ minimum: 1, maximum: TURN_JOURNAL_LIMITS_V1.maximumTurnMs }),
+  maximumExecutionMs: Type.Union([
+    Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    Type.Null(),
+  ]),
 });
 export const JournalExecutionIntentSchemaV1 = object({
   ...JournalExecutionSelectionSchemaV1.properties,
-  dispatchClock: Type.Union([
-    object({
-      kind: Type.Literal("pre-commit-monotonic-v1"),
-      clockSourceRef: ref,
-      clockEpochRef: ref,
-      anchorAtMs: sequence,
-      deadlineAtMs: sequence,
-    }),
-    object({
-      clockSourceRef: ref,
-      clockEpochRef: ref,
-      committedAtMs: sequence,
-      deadlineAtMs: sequence,
-    }),
-  ]),
-});
-export const MappedExecutionStartSchemaV1 = object({
-  intent: JournalExecutionIntentSchemaV1,
-  operationRef: ref,
-  operationDigest: digest,
-  nativeExecutionRef: ref,
-  nativeIncarnationRef: ref,
-  nativeReservationRef: ref,
-  nativeSessionRef: ref,
-  nativeTurnRef: ref,
-  acceptanceEvidenceRef: ref,
-  clockSourceRef: ref,
-  clockEpochRef: ref,
-  startedAtMs: sequence,
-  deadlineAtMs: sequence,
-  dispatchDeadlineAtMs: sequence,
-  clockCorrespondenceEvidenceRef: ref,
+  dispatchClock: object({
+    kind: Type.Literal("pre-commit-monotonic-v2"),
+    clockSourceRef: ref,
+    clockEpochRef: ref,
+    anchorAtMs: sequence,
+  }),
 });
 export const JournalDeadlineControlSchemaV1 = object({
-  kind: Type.Literal("host-deadline-v1"),
+  kind: Type.Literal("host-stop-v2"),
   intent: JournalExecutionIntentSchemaV1,
   operationRef: ref,
   operationDigest: digest,
@@ -990,10 +942,10 @@ export const JournalDeadlineControlSchemaV1 = object({
   nativeConstructionRef: ref,
   responsibilityRef: ref,
   responsibilityVersion: version,
-  deadlineAtMs: sequence,
+  deadlineAtMs: Type.Union([sequence, Type.Null()]),
 });
 export const HostControlledExecutionStartSchemaV1 = object({
-  kind: Type.Literal("host-controlled-v1"),
+  kind: Type.Literal("host-controlled-v2"),
   intent: JournalExecutionIntentSchemaV1,
   operationRef: ref,
   operationDigest: digest,
@@ -1012,10 +964,7 @@ export const HostControlledExecutionStartSchemaV1 = object({
     }),
   ),
 });
-export const JournalExecutionStartSchemaV1 = Type.Union([
-  MappedExecutionStartSchemaV1,
-  HostControlledExecutionStartSchemaV1,
-]);
+export const JournalExecutionStartSchemaV1 = HostControlledExecutionStartSchemaV1;
 export const ExactExecutionInterruptionSchemaV1 = object({
   start: JournalExecutionStartSchemaV1,
   operationRef: ref,
@@ -1303,52 +1252,24 @@ function checkIntrinsic(input: unknown): void {
     if (!same(v.attempt, (v.consumption as ExactConsumptionOperationV1).attempt)) invalid();
   }
   if (v.dispatchClock !== undefined) {
-    const c = v.dispatchClock as JournalExecutionIntentV1["dispatchClock"];
-    const anchor = "kind" in c ? c.anchorAtMs : c.committedAtMs;
+    const intent = v as unknown as JournalExecutionIntentV1;
     if (
-      c.deadlineAtMs <= anchor ||
-      c.deadlineAtMs - anchor > TURN_JOURNAL_LIMITS_V1.maximumTurnMs ||
-      ("kind" in c && c.deadlineAtMs - anchor !== TURN_JOURNAL_LIMITS_V1.maximumTurnMs)
+      intent.maximumExecutionMs !== null &&
+      !Number.isSafeInteger(intent.dispatchClock.anchorAtMs + intent.maximumExecutionMs)
     )
       invalid();
   }
-  if (v.kind === "host-deadline-v1") {
+  if (v.kind === "host-stop-v2") {
     const control = v as unknown as JournalDeadlineControlV1;
-    const clock = control.intent.dispatchClock;
-    if (
-      !("kind" in clock) ||
-      clock.kind !== "pre-commit-monotonic-v1" ||
-      !Number.isSafeInteger(clock.anchorAtMs + control.intent.maximumExecutionMs) ||
-      control.deadlineAtMs !== clock.anchorAtMs + control.intent.maximumExecutionMs ||
-      control.deadlineAtMs > clock.deadlineAtMs
-    )
-      invalid();
+    const maximum = control.intent.maximumExecutionMs;
+    const deadline = maximum === null ? null : control.intent.dispatchClock.anchorAtMs + maximum;
+    if (control.deadlineAtMs !== deadline) invalid();
   }
-  if (v.kind === "host-controlled-v1") {
+  if (v.kind === "host-controlled-v2") {
     const start = v as unknown as HostControlledExecutionStartV1;
     if (
       !same(start.intent, start.deadlineControl.intent) ||
       start.nativeIncarnationRef !== start.deadlineControl.nativeIncarnationRef
-    )
-      invalid();
-  }
-  if (v.dispatchDeadlineAtMs !== undefined) {
-    const start = v as unknown as MappedExecutionStartV1;
-    if (
-      start.deadlineAtMs <= start.startedAtMs ||
-      start.deadlineAtMs !==
-        Math.min(start.dispatchDeadlineAtMs, start.startedAtMs + start.intent.maximumExecutionMs) ||
-      !Number.isSafeInteger(start.startedAtMs + start.intent.maximumExecutionMs)
-    )
-      invalid();
-    if (
-      start.clockSourceRef === start.intent.dispatchClock.clockSourceRef &&
-      start.clockEpochRef === start.intent.dispatchClock.clockEpochRef &&
-      (start.dispatchDeadlineAtMs !== start.intent.dispatchClock.deadlineAtMs ||
-        start.startedAtMs <
-          ("kind" in start.intent.dispatchClock
-            ? start.intent.dispatchClock.anchorAtMs
-            : start.intent.dispatchClock.committedAtMs))
     )
       invalid();
   }

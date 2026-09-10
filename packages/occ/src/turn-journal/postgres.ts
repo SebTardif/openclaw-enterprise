@@ -578,10 +578,10 @@ export function createPostgresTurnJournal(
             : conflict;
         if (
           !("kind" in start.intent.dispatchClock) ||
-          start.intent.dispatchClock.kind !== "pre-commit-monotonic-v1"
+          start.intent.dispatchClock.kind !== "pre-commit-monotonic-v2"
         )
           return unavailable;
-        if (!("kind" in start) || start.kind !== "host-controlled-v1") return unavailable;
+        if (!("kind" in start) || start.kind !== "host-controlled-v2") return unavailable;
         const control = await executionOperation(attempt, "deadline-control");
         if (
           control?.operationKind !== "deadline-control" ||

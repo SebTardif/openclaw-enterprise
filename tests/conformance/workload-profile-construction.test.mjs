@@ -119,6 +119,7 @@ test("both real service paths capture the same stable original invocation source
           configurationGeneration: 1,
           providerId: "provider/controlled",
           executionMode: "dedicated",
+          maximumExecutionMs: null,
           serviceAccountId: null,
           workloadProfileSelection: f.head.selection,
         },

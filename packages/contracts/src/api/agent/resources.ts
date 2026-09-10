@@ -22,6 +22,11 @@ import {
   Timestamp,
 } from "../common.ts";
 
+export const MaximumExecutionMs = Type.Union([
+  Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  Type.Null(),
+]);
+
 export const CreateAgentBody = Type.Object(
   {
     name: Name,
@@ -29,6 +34,7 @@ export const CreateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    maximumExecutionMs: Type.Optional(MaximumExecutionMs),
   },
   { additionalProperties: false },
 );
@@ -39,6 +45,7 @@ export const UpdateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(Type.Union([ServiceAccountId, Type.Null()])),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    maximumExecutionMs: Type.Optional(MaximumExecutionMs),
     workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
   },
   { additionalProperties: false },
@@ -53,6 +60,7 @@ export const AgentSchema = Type.Object(
     providerId: Type.Union([ProviderId, Type.Null()]),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
+    maximumExecutionMs: MaximumExecutionMs,
     activeRevisionId: Type.Optional(RevisionId),
     workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
     createdAt: Timestamp,
@@ -76,6 +84,7 @@ export const AgentRevisionSchema = Type.Object(
     namespaceId: NamespaceId,
     agentId: AgentId,
     revision: Type.Integer({ minimum: 1 }),
+    maximumExecutionMs: Type.Optional(MaximumExecutionMs),
     providerId: Type.Union([ProviderId, Type.Null()]),
     configurationId: ConfigurationId,
     configurationKind: ConfigurationKindSchema,

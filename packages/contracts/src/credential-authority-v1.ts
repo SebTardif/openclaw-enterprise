@@ -92,7 +92,9 @@ export const OriginalCredentialBindingSchemaV1 = Type.Object(
     policy: versionedRef,
     canonicalBindingDigest: digest,
     committedDispatchAt: Timestamp,
-    turnNotAfter: Timestamp,
+    // Explicit null means no execution-duration cap, never perpetual authority.
+    // Credential leases and each current operation retain their finite bounds.
+    turnNotAfter: Type.Union([Timestamp, Type.Null()]),
   },
   closed,
 );

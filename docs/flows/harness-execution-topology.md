@@ -63,7 +63,10 @@ and fallback model through the same resolver; fallbacks must keep the
 primary provider and Harness. It preserves their order in the native configuration.
 The admitted revision immutably
 captures its native configuration, approved harness identity/version, explicit mode, Compute
-selection, and Agent ServicePrincipal. Production admits both approved
+selection, Agent ServicePrincipal, and saved `maximumExecutionMs` selection.
+The [duration setting](../reference/agents.md#execution-duration-selection) is
+explicitly `null` for uncapped or a positive safe integer for a finite cap;
+subsequent Agent draft edits do not mutate that admitted revision. Production admits both approved
 `openclaw`/`embedded` and `codex`/`dedicated` combinations. An associated
 `access_token` additionally requires dedicated Codex; the frozen account
 contains only its OCC identity, credential kind, and opaque Secret reference.
@@ -150,6 +153,51 @@ gateway teardown deletes the exact-owned private and shared claims by UID before
 deleting the gateway. The [storage contract](../reference/drivers/kubernetes-compute.md#storage-and-credentials)
 owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 
+## Selected journal execution component
+
+The separate [hosted native owner](../reference/hosted-native-execution.md)
+connects one original dispatch to the
+[selected turn journal](../reference/turn-journal.md#selected-native-execution-retention).
+The direct deployment path above does not install a production dispatcher or
+bind the saved revision policy to this component's actual consumption authority.
+The native gate and Node SDK must share the current successor codecs before
+this sequence can run against a real native owner.
+
+1. `HostedNativeOwner.dispatchAndConsumeAndInitiate` invokes the original
+   combined PostgreSQL transaction. The actual consumption authority supplies
+   the exact execution recipient, immutable limit reference/version and explicit
+   finite-or-null `maximumExecutionMs` selection.
+2. The original writer samples `pre-commit-monotonic-v2` immediately before
+   dispatch under its Agent lock. The source, epoch and anchor survive only with
+   the newly known-committed, single-use initiation claim. Startup and later waits
+   count against a finite cap from this anchor.
+3. `SelectedExecutionController.acceptInitiation` retains the authenticated
+   pending native construction before construction effects. It transfers
+   mandatory `host-stop-v2` cleanup responsibility into the original host's local
+   owner and retains the exact control in PostgreSQL. Only definite retention
+   and live original checks allow construction through the native gate.
+4. A `host-controlled-v2` ready receipt embeds that same control. The controller
+   retains the original ready owner and then the exact start record before
+   confirming the native gate. A lost acknowledgment leaves this owner gated;
+   exact readback can resolve it without a second acceptance.
+5. A finite cap arms bounded timer waits against the original monotonic
+   deadline. Uncapped selection keeps the same stop owner with a `null` deadline
+   and no duration timer. Finite initiation and ongoing authority calls still
+   govern their own operations. Failed acceptance after stop transfer but before
+   ready retention requests the original cleanup in either mode.
+6. Expiry or an admitted protective stop invokes the retained exact native
+   cleanup lane independently of the continuation queue and new database writes.
+   The journal retains uncertain ownership and capacity. A timer firing, cancel
+   acknowledgment or closed socket does not establish physical helper/task
+   closure or authorize replay.
+
+These are current journal/controller component transitions. Actual native
+construction, model/tool interruption, complete task/helper closure and the
+original current-authority composition still require runtime qualification.
+The [hosted owner verification procedure](../reference/hosted-native-execution.md#configuration-and-verification)
+separately describes its PostgreSQL/socket integration fixture and remaining
+real-native prerequisites.
+
 ## Debugging and Verification
 
 - Check placement, immutable policy, and conflicts:
@@ -187,6 +235,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 - [Platform design](../design.md#openclaw-gateways)
 - [Agent placement and deployment](../reference/agents.md#execution-mode)
 - [Controller worker](../reference/controller.md#agentrevision-lifecycle)
+- [Selected turn journal](../reference/turn-journal.md#selected-native-execution-retention)
+- [Hosted native execution owner](../reference/hosted-native-execution.md)
 - [Docker Compute Driver](../reference/drivers/docker-compute.md)
 - [Kubernetes Compute Driver](../reference/drivers/kubernetes-compute.md)
 - [Compute Driver lifecycle hooks flow](compute-driver-lifecycle-hooks.md)

@@ -116,6 +116,7 @@ export async function setup(context, { leaseDurationMs = 30_000 } = {}) {
         configurationId: configuration.id,
         providerId: null,
         executionMode: "embedded",
+        maximumExecutionMs: null,
         servicePrincipalId: `service-agent-${id}`,
         createdAt: new Date().toISOString(),
       });
@@ -127,6 +128,7 @@ export async function setup(context, { leaseDurationMs = 30_000 } = {}) {
       namespaceId: owner.namespaceId,
       agentId: owner.id,
       revision: number,
+      maximumExecutionMs: null,
       providerId: null,
       configuration: { revision: String(number) },
       configurationId: owner.configurationId,

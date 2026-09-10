@@ -20,18 +20,22 @@ Configuration reference, and identity. It does not start a workload, deploy a
 model, or create a revision until an authorized caller explicitly requests
 deployment.
 
-Agent persistence does not impose a lifetime on each task. The selected
-[target execution policy](../design.md#persistent-agents-and-execution-limits)
-uses a configurable duration cap with an uncapped default. Its configuration and
-complete task/Agent stop controls are not current public API settings; the
-[implementation plan](../../specs/24-configurable-execution-limits.md) distinguishes
-that target from the existing finite selected-execution component.
+Agent persistence does not impose a lifetime on each task. The
+[execution duration setting](#execution-duration-selection) supports
+`maximumExecutionMs` with an uncapped default and immutable revision selection.
+The [selected journal component](turn-journal.md#selected-native-execution-retention)
+retains mandatory stop responsibility for both finite and uncapped attempts.
+Production dispatch/native composition and complete task/Agent stop controls
+remain follow-up work; the
+[implementation record](../../specs/24-configurable-execution-limits.md) records
+these boundaries and the outstanding runtime qualification.
 
 ## Supported operations
 
 Agent operations are scoped beneath `/namespaces/:namespaceId/agents`. Creation
 returns `201`, reads and updates return `200`, and deployment returns `202`
-with the newly admitted AgentRevision. Collection reads include only Agents
+with an accepted operation receipt. Revision documents have separate read
+operations. Collection reads include only Agents
 for which the caller has an exact `read` grant. The [API reference](api.md)
 owns route schemas, response envelopes, and permission annotations.
 
@@ -188,6 +192,39 @@ See the
 [Harness execution topology flow](../flows/harness-execution-topology.md) for
 runtime selection, identity boundaries, and activation.
 
+## Execution duration selection
+
+`maximumExecutionMs` selects an Agent's execution duration cap in milliseconds.
+Create omission defaults to `null` (uncapped). PATCH omission preserves the saved
+value; explicit `null` clears a finite cap. A finite value must be a positive
+safe integer, from `1` through `9007199254740991`. There is no fifteen-minute
+configuration ceiling. For example, a two-hour selection is:
+
+```json
+{
+  "configurationId": "cfg_123e4567-e89b-42d3-a456-426614174000",
+  "maximumExecutionMs": 7200000
+}
+```
+
+Agent reads always return this field. Deployment copies the saved value into
+its immutable revision; a subsequent draft edit affects future deployments.
+The retained deployment command's `expectedDraft.maximumExecutionMs` must match
+the saved selection exactly, including `null`, so a changed cap conflicts with a
+stale command. Configuration selection alone grants no execution authority.
+
+Historical immutable revisions can omit `maximumExecutionMs`. Absence means the
+revision has no recorded execution policy and cannot supply a new executable
+selection; it does not mean uncapped. Every newly admitted revision explicitly
+records either `null` or a finite value. Existing attempt policies remain
+unchanged. The [selected journal](turn-journal.md#selected-native-execution-retention)
+requires the actual consumption authority's explicit selection and, for a finite
+cap, a safe-integer sum of its original anchor and configured duration. The
+[hosted native owner](hosted-native-execution.md) still requires matching SDK/native
+codecs and production composition to bind that authority to this revision
+snapshot. Credential lifetimes remain separate from this persisted configuration
+contract.
+
 ## Editable configuration
 
 An Agent's `configurationId` selects exactly one native OpenClaw Configuration
@@ -237,37 +274,35 @@ transformation. Its SandboxDriver selection and the Agent's stable service
 principal are retained internally and are not exposed by the current HTTP
 revision schema. See [SandboxDriver](drivers/sandbox.md).
 
-An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` has no
-request body. It requires a `ready` Namespace, exact-Agent `deploy`, exact
-Configuration `read`, and exact associated-account `read` when present. A
-successful `202` means the immutable revision, its running runtime intent,
-original reconciliation work, and attributable success audit committed together;
-it does not mean the workload is ready. Later Configuration edits or changes to
-an account's selected credential reference affect only future deployments. A
-snapshot freezes a Secret reference, not the value stored at that reference.
+An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` requires an
+[identified V2 command](lifecycle-deploy-v2.md#command-identity). Its body retains
+the original `operationRef`, explicit `expectedLifecycleGeneration` and exact
+saved-draft expectations, including `expectedDraft.maximumExecutionMs`. Bodyless
+requests reject. Admission requires a `ready` Namespace, exact-Agent `deploy`,
+exact Configuration `read`, and exact associated-account `read` when present,
+along with the original enrolled admission and workload-profile capabilities.
 
-Admission initializes intent generation 1 or advances the stored running head
-under the Agent lock. A stored disabled or stopped intent conflicts: deploy does
-not implicitly resume it. Two concurrent bodyless deploys may both succeed in
-sequence with distinct revisions and generations. The route accepts no client
-generation, transition locator, actor, or runtime profile, and repeating the POST
-admits another revision.
+A successful `202` returns the accepted operation receipt, not the revision
+document. The immutable revision, running runtime intent, original reconciliation
+work and attributable success audit commit together; acceptance does not mean
+the workload is ready. Later Configuration edits or changes to an account's
+selected credential reference affect only future deployments. A snapshot freezes
+a Secret reference, not the value stored at that reference.
 
-Trusted OCC domain callers can additionally supply
-`expectedLifecycleGeneration` to `deployAgent`. Explicit `null` requires no
-intent head; a positive safe integer requires that exact current generation.
-The comparison runs under the existing Namespace and Agent locks before
-configuration or Secret Driver calls and revision admission. A mismatch leaves
-no new revision, intent, success audit, or work. Omitting the property retains
-the bodyless bridge behavior; explicit `undefined`, zero, fractional values,
-and unsafe integers are invalid. A matching generation never permits deploy
-to resume a disabled or stopped Agent.
+For a new command, `expectedLifecycleGeneration: null` requires no intent head;
+a positive safe integer requires that exact current generation. The saved draft
+and lifecycle comparison run under the existing locks before admission. A
+mismatch leaves no new revision, intent, success audit or work. A stopped or
+disabled intent conflicts: deploy does not implicitly resume it.
 
-This internal comparison does not enable the client lifecycle protocol.
-The HTTP route still rejects bodies and retains its AgentRevision response.
-Current account and semantic management-role checks, authorized immutable
-image/policy/profile resolution, and coordinated API/worker cutover remain
-required before enabling a client generation body or minimal operation receipt.
+An exact retry retains the same command identity and original attribution. After
+current authorization over the original operands, it returns the original
+accepted association without rebuilding today's draft or admitting another
+revision. Unknown outcomes require exact readback; they do not authorize a new
+operation identity or another provider submission. The
+[deployment command reference](lifecycle-deploy-v2.md) owns this protocol and its
+remaining composition requirements.
+
 An admitted intent alone grants no runtime authority. Namespace locking also
 serializes deployments to different Agents in the same Namespace. Admission
 currently reads the full revision history to allocate the next revision number;

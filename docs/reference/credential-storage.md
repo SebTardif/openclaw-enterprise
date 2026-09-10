@@ -57,7 +57,11 @@ freshness. Aborting a local call does not establish provider nonexecution.
 The original binding is a projection from the sole canonical turn journal:
 installation, Namespace, Agent, assignment/revision/generations, original actor,
 conversation, workspace, message/receipt, attempt/reservation, common grant,
-route/audience/policy versions and original deadlines. The profile fixes provider,
+route/audience/policy versions and the original execution limit. The canonical
+producer supplies required `turnNotAfter`: a timestamp for a finite execution cap
+or explicit `null` for uncapped duration. Missing policy is invalid; null grants
+no current authority and does not remove credential or operation deadlines.
+The profile fixes provider,
 account, transport and credential mode through immutable versioned references.
 References are exact protected lookups, never caller-selected URLs or new registry
 entries.
@@ -73,7 +77,8 @@ Current checks apply at each new effect. Reservation, mint material use and nati
 delivery are distinct effects. A deny, invalidation-channel loss or dependency
 outage closes new authority; it cannot be hidden by a warm material cache. The
 accepted operation-start ceiling is five seconds after guarded comparison and
-never beyond an earlier lease or original turn deadline. Actual assignment,
+never beyond an earlier lease or applicable finite original turn deadline.
+The lease and operation-start limits remain finite for uncapped work. Actual assignment,
 original-human/common-grant and before-send checks remain mandatory.
 
 The model schema can describe API-key import, trusted operator login and separately
