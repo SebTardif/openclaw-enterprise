@@ -155,6 +155,22 @@ export class ComputeLifecycleDispatcher {
     revision: Readonly<AgentRevision>,
     launch: Readonly<WorkloadLaunchContext>,
   ) {
+    return this.#acquireLaunchOperands(revision, launch);
+  }
+
+  /** Read an already completed original launch without invoking any hooks. */
+  acquireCurrentLaunchOperands(revision: Readonly<AgentRevision>) {
+    const captured = this.#launches.get(revision.id);
+    if (captured?.launch === undefined)
+      throw new Error("The original workload launch operands are unavailable.");
+    const operands = this.#acquireLaunchOperands(revision, captured.launch);
+    return Object.freeze({ launch: captured.launch, ...operands });
+  }
+
+  #acquireLaunchOperands(
+    revision: Readonly<AgentRevision>,
+    launch: Readonly<WorkloadLaunchContext>,
+  ) {
     const captured = this.#launches.get(revision.id);
     let released = false;
     const assertCurrent = (): undefined => {

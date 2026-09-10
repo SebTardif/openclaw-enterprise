@@ -124,6 +124,9 @@ interface KubernetesApiClients {
 
 export const GVISOR_IMPLEMENTATION = "occ/kubernetes-gvisor";
 
+const acquireCurrentDispatcherLaunch =
+  ComputeLifecycleDispatcher.prototype.acquireCurrentLaunchOperands;
+
 export interface KubernetesComputeDriverOptions {
   readonly isolationProfile?: "gvisor-systrap";
   readonly authentication:
@@ -714,6 +717,45 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new Error("Compute lifecycle owners cannot change after lifecycle operations begin.");
     }
     this.lifecycle = new ComputeLifecycleDispatcher(drivers);
+  }
+
+  /** Retrieve operands from this Driver's existing completed lifecycle action. */
+  acquireCurrentLaunchOperands(
+    revision: Readonly<AgentRevision>,
+  ): ReturnType<ComputeLifecycleDispatcher["acquireCurrentLaunchOperands"]> {
+    const dispatcher = this.lifecycle;
+    this.#assertLaunchDispatcher(dispatcher);
+    const operands = acquireCurrentDispatcherLaunch.call(dispatcher, revision);
+    let failed = false;
+    const assertCurrent = (): undefined => {
+      try {
+        if (failed)
+          throw new ConfigurationFailure("The original workload launch operands are unavailable.");
+        this.#assertLaunchDispatcher(dispatcher);
+        operands.assertCurrent();
+        this.#assertLaunchDispatcher(dispatcher);
+        if (failed)
+          throw new ConfigurationFailure("The original workload launch operands are unavailable.");
+        return undefined;
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    };
+    try {
+      assertCurrent();
+    } catch (error) {
+      // The captured original release only closes this local operand lease.
+      void operands.release();
+      throw error;
+    }
+    return Object.freeze({ ...operands, assertCurrent });
+  }
+
+  #assertLaunchDispatcher(dispatcher: ComputeLifecycleDispatcher): undefined {
+    if (this.lifecycle !== dispatcher)
+      throw new ConfigurationFailure("The original workload launch dispatcher was replaced.");
+    return undefined;
   }
 
   /** Original native construction captures this SAME selected observer. */
