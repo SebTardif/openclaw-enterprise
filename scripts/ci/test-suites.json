@@ -46,6 +46,17 @@
           "path": "tests/conformance/platform-state-memory.test.mjs"
         },
         {
+          "path": "tests/conformance/plugin-inventory.test.mjs",
+          "expectedTests": [
+            "Codex plugin inventory projection keeps only reviewed remote locator fields",
+            "Codex plugin inventory accepts direct app-server capture wrappers",
+            "Codex plugin inventory IDs are stable with or without raw ID collisions",
+            "Codex plugin inventory rejects incomplete, local, duplicate, and unreviewed captures",
+            "Codex plugin catalog loader accepts reviewed bundled artifacts and reports missing artifacts honestly",
+            "Codex plugin inventory generator preserves the previous artifact when validation fails"
+          ]
+        },
+        {
           "path": "tests/conformance/secret-gateway-delivery.test.mjs"
         },
         {
