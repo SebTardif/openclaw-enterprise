@@ -110,6 +110,44 @@ async function gatewayContainerEnvironment(configuration = {}) {
   return Object.fromEntries(createdContainers[0].Env.map((entry) => splitEnvironment(entry)));
 }
 
+test("Docker Compute rejects selected native plugins before Docker side effects", async () => {
+  const driver = new DockerComputeDriver({
+    images: { gateway: "gateway:local", agent: "agent:local" },
+  });
+  const revision = {
+    id: "revision-docker-native-plugin",
+    namespaceId: tenant.id,
+    agentId: "agent-docker-native-plugin",
+    revision: 1,
+    configurationId: "cfg_00000000-0000-4000-8000-000000000002",
+    configurationKind: "agent",
+    configurationGeneration: 1,
+    configuration: admitLoggingConfiguration({}, "info"),
+    harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
+    compute: { id: driver.id, implementation: driver.implementation },
+    servicePrincipalId: "service-principal-docker-native-plugin",
+    createdAt: tenant.createdAt,
+    selectedPlugins: [
+      {
+        driverId: "driver-native",
+        pluginId: "plugin-native",
+        remoteMarketplaceName: "openai",
+        remotePluginId: "remote-plugin",
+        version: null,
+        catalogCodexVersion: "0.152.1",
+      },
+    ],
+  };
+  let touchedDocker = false;
+  driver.network = async () => {
+    touchedDocker = true;
+    return undefined;
+  };
+
+  await assert.rejects(driver.prepareRevision(revision), /Kubernetes dedicated Codex runtime/);
+  assert.equal(touchedDocker, false);
+});
+
 function splitEnvironment(entry) {
   const separator = entry.indexOf("=");
   assert.ok(separator > 0, `Docker Env entry must be NAME=value: ${entry}`);

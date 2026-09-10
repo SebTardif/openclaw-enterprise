@@ -836,6 +836,60 @@ test("the canonical Kubernetes runtime isolates transport and model Agent Secret
   );
 });
 
+test("native plugins are limited to the bundled Kubernetes dedicated Codex runtime", async () => {
+  const runtime = {
+    transportSecretPrefix: "transport",
+    gatewayStorageClassName: "local-path",
+    modelSecretPrefix: "model",
+  };
+  const selectedPlugins = [
+    {
+      driverId: "driver-native",
+      pluginId: "plugin-native",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "remote-plugin",
+      version: null,
+      catalogCodexVersion: "0.152.1",
+    },
+  ];
+  const revision = (driver, overrides = {}) => ({
+    id: `revision-native-plugin-${overrides.harness?.mode ?? "dedicated"}`,
+    namespaceId: tenant.id,
+    agentId: "agent-native-plugin",
+    revision: 1,
+    configurationId: "cfg_00000000-0000-4000-8000-000000000010",
+    configurationKind: "agent",
+    configurationGeneration: 1,
+    configuration: admitLoggingConfiguration({}, "info"),
+    harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
+    compute: { id: driver.id, implementation: driver.implementation },
+    servicePrincipalId: "service-principal-native-plugin",
+    createdAt: tenant.createdAt,
+    selectedPlugins,
+    ...overrides,
+  });
+
+  const missingRuntime = createKubernetesComputeDriver(options());
+  await assert.rejects(
+    missingRuntime.prepareRevision(revision(missingRuntime)),
+    /bundled Kubernetes dedicated Codex runtime/,
+  );
+
+  const embedded = createKubernetesComputeDriver(options({ runtime }));
+  await assert.rejects(
+    embedded.prepareRevision(
+      revision(embedded, { harness: { id: "openclaw", version: "1.0.0", mode: "embedded" } }),
+    ),
+    /bundled Kubernetes dedicated Codex runtime/,
+  );
+
+  const missingReporter = createKubernetesComputeDriver(options({ runtime }));
+  await assert.rejects(
+    missingReporter.prepareRevision(revision(missingReporter)),
+    /plugin failure reporting/,
+  );
+});
+
 test("dedicated Codex localhost seccomp profile is validated and rendered only on the Agent container", () => {
   const runtime = {
     transportSecretPrefix: "transport",
