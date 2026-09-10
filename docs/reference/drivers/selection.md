@@ -28,6 +28,30 @@ Sandbox packages in trusted YAML in either mode.
 | `sandbox`         | [SandboxDriver](sandbox.md)                | Optional; bundled OpenShell or installed package, and currently requires bundled Kubernetes Compute. |
 | `service_account` | [ServiceAccountDriver](service-account.md) | Optional bundled ChatGPT Provider member; no installed-package selector.                             |
 
+## Codex plugin catalog adapter
+
+The Codex plugin catalog adapter is a bundled controller reader for the
+reviewed `plugin/list` inventory artifact. It is not an Installation Driver
+capability, package selector, tenant upload surface, or Agent runtime. The
+supported adapter ID is `codex`.
+
+The artifact lives beside the adapter under
+`apps/controller/src/drivers/plugins/codex/inventory.json` when a release has a
+reviewed catalog. Generate it with
+`scripts/generate-codex-plugin-inventory.mjs` against the pinned Codex
+app-server version, currently `0.152.1`, using an isolated `CODEX_HOME`. The
+generator calls the app-server `plugin/list` method with `forceRefetch: true`,
+projects only `id`, `remoteMarketplaceName`, `remotePluginId`, display
+`pluginName`, and `version`, and writes the artifact atomically after
+validation. Keep raw capture evidence and generation credentials outside the
+repository.
+
+Catalog entries are release-valid identities only. They do not prove that a
+target Agent account can see, install, authenticate to, or run the plugin. A
+missing, malformed, version-mismatched, or unreviewed empty artifact is
+unavailable to catalog reads; it must not be represented as a successful empty
+catalog. A deliberately empty catalog requires explicit release review.
+
 Installed packages run unsandboxed with control-plane authority and
 access to controller credentials, database state, and Kubernetes identity.
 OCC asks selected IAM to authorize operations, but malicious IAM can disregard

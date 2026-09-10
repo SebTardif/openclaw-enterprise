@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 const NON_EMPTY_SAFE_STRING = /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$/;
 const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
@@ -121,37 +122,6 @@ export const PluginInstallationErrorSchema = Type.Object(
   { additionalProperties: false },
 );
 
-function exactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  description: string,
-): void {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-    throw new PluginInventoryValidationError(`${description} has unexpected fields.`);
-  }
-}
-
-function record(value: unknown, description: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new PluginInventoryValidationError(`${description} must be an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function safeString(value: unknown, description: string): string {
-  if (typeof value !== "string" || !NON_EMPTY_SAFE_STRING.test(value)) {
-    throw new PluginInventoryValidationError(`${description} must be a nonempty safe string.`);
-  }
-  return value;
-}
-
-function nullableVersion(value: unknown, description: string): string | null {
-  if (value === null) return null;
-  return safeString(value, description);
-}
-
 export function validatePluginInventory(
   value: unknown,
   options: {
@@ -160,34 +130,34 @@ export function validatePluginInventory(
     readonly allowEmpty?: boolean;
   } = {},
 ): PluginInventory {
-  const envelope = record(value, "Plugin inventory");
-  exactKeys(envelope, ["driverId", "inventory", "plugins"], "Plugin inventory");
+  if (!Value.Check(PluginInventorySchema, value)) {
+    const firstError = [...Value.Errors(PluginInventorySchema, value)][0];
+    throw new PluginInventoryValidationError(
+      `Plugin inventory does not match its schema${
+        firstError === undefined ? "" : `: ${firstError.message}`
+      }.`,
+    );
+  }
 
-  const driverId = safeString(envelope.driverId, "driverId");
+  const envelope = value as PluginInventory;
+  const { driverId } = envelope;
   if (options.driverId !== undefined && driverId !== options.driverId) {
-    throw new PluginInventoryValidationError("Plugin inventory driverId does not match the catalog.");
+    throw new PluginInventoryValidationError(
+      "Plugin inventory driverId does not match the catalog.",
+    );
   }
 
-  const inventory = record(envelope.inventory, "inventory");
-  exactKeys(inventory, ["schemaVersion", "generatedAt", "codexVersion", "sourceMethod"], "inventory");
-  if (inventory.schemaVersion !== PLUGIN_INVENTORY_SCHEMA_VERSION) {
-    throw new PluginInventoryValidationError("Plugin inventory schemaVersion is unsupported.");
-  }
-  const generatedAt = safeString(inventory.generatedAt, "inventory.generatedAt");
-  if (!UTC_TIMESTAMP.test(generatedAt) || Number.isNaN(Date.parse(generatedAt))) {
+  const { inventory } = envelope;
+  if (
+    !UTC_TIMESTAMP.test(inventory.generatedAt) ||
+    Number.isNaN(Date.parse(inventory.generatedAt))
+  ) {
     throw new PluginInventoryValidationError("inventory.generatedAt must be a UTC timestamp.");
   }
-  const codexVersion = safeString(inventory.codexVersion, "inventory.codexVersion");
-  if (options.codexVersion !== undefined && codexVersion !== options.codexVersion) {
+  if (options.codexVersion !== undefined && inventory.codexVersion !== options.codexVersion) {
     throw new PluginInventoryValidationError("Plugin inventory codexVersion is unsupported.");
   }
-  if (inventory.sourceMethod !== CODEX_PLUGIN_CATALOG_SOURCE_METHOD) {
-    throw new PluginInventoryValidationError("Plugin inventory sourceMethod is unsupported.");
-  }
 
-  if (!Array.isArray(envelope.plugins)) {
-    throw new PluginInventoryValidationError("plugins must be an array.");
-  }
   if (envelope.plugins.length === 0 && options.allowEmpty !== true) {
     throw new PluginInventoryValidationError("Plugin inventory is empty without explicit review.");
   }
@@ -195,25 +165,14 @@ export function validatePluginInventory(
   const ids = new Set<string>();
   const locators = new Map<string, string>();
   let previousId = "";
-  const plugins = envelope.plugins.map((entryValue, index) => {
-    const entry = record(entryValue, `plugins[${index}]`);
-    exactKeys(
-      entry,
-      ["id", "remoteMarketplaceName", "remotePluginId", "pluginName", "version"],
-      `plugins[${index}]`,
-    );
-    const id = safeString(entry.id, `plugins[${index}].id`);
+  const plugins = envelope.plugins.map((entry, index) => {
+    const { id, remoteMarketplaceName, remotePluginId, pluginName, version } = entry;
     if (ids.has(id)) throw new PluginInventoryValidationError(`Duplicate plugin id ${id}.`);
     if (index > 0 && id.localeCompare(previousId) <= 0) {
       throw new PluginInventoryValidationError("Plugin inventory entries must be sorted by id.");
     }
     previousId = id;
     ids.add(id);
-    const remoteMarketplaceName = safeString(
-      entry.remoteMarketplaceName,
-      `plugins[${index}].remoteMarketplaceName`,
-    );
-    const remotePluginId = safeString(entry.remotePluginId, `plugins[${index}].remotePluginId`);
     const locator = `${remoteMarketplaceName}\u0000${remotePluginId}`;
     const existing = locators.get(locator);
     if (existing !== undefined && existing !== id) {
@@ -226,8 +185,8 @@ export function validatePluginInventory(
       id,
       remoteMarketplaceName,
       remotePluginId,
-      pluginName: safeString(entry.pluginName, `plugins[${index}].pluginName`),
-      version: nullableVersion(entry.version, `plugins[${index}].version`),
+      pluginName,
+      version,
     });
   });
 
@@ -235,8 +194,8 @@ export function validatePluginInventory(
     driverId,
     inventory: Object.freeze({
       schemaVersion: PLUGIN_INVENTORY_SCHEMA_VERSION,
-      generatedAt,
-      codexVersion,
+      generatedAt: inventory.generatedAt,
+      codexVersion: inventory.codexVersion,
       sourceMethod: CODEX_PLUGIN_CATALOG_SOURCE_METHOD,
     }),
     plugins: Object.freeze(plugins),
