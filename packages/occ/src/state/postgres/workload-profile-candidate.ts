@@ -17,6 +17,156 @@ import type {
 } from "../../workload-profiles/admitted-use.ts";
 import { canonicalizeWorkloadProfileJson } from "../../workload-profiles/canonical.ts";
 import { ScopeViolationError } from "../../errors.ts";
+import type {
+  CapturedCredentialLeaseV1,
+  CapturedCredentialViewV1,
+} from "../../ports/workload-profile-credentials.ts";
+
+/** This private holder is retained on the original unit before acquisition.
+ * It owns the returned cleanup even if cancellation or a later getter fails.
+ * Source currentness uses the owner lifetime, never the short acquisition IO. */
+export function makeCapturedCredentialObservationV1(owner: {
+  assertOwner(): void;
+  track<Value>(work: () => Promise<Value>): Promise<Value>;
+  poison(error: unknown): never;
+}) {
+  let started = false;
+  let ready = false;
+  let closed = false;
+  let checking = false;
+  let failed = false;
+  let first: unknown;
+  let facts: CapturedCredentialViewV1["facts"] | undefined;
+  let factsSnapshot: CapturedCredentialViewV1["facts"] | undefined;
+  let sourceCurrent: (() => unknown) | undefined;
+  let sourceRelease: (() => Promise<void>) | undefined;
+  let terminal: Promise<void> | undefined;
+  const pending = new Set<Promise<void>>();
+  const fail = (error: unknown): never => {
+    if (!failed) {
+      failed = true;
+      first = error;
+    }
+    try {
+      owner.poison(first);
+    } finally {
+      throw first;
+    }
+  };
+  const track = <Value>(work: () => Promise<Value>): Promise<Value> => {
+    const task = owner.track(work);
+    const joined = task.then(
+      () => {},
+      (error) => {
+        try {
+          fail(error);
+        } catch {
+          /* original failure is retained by both owners */
+        }
+      },
+    );
+    pending.add(joined);
+    void joined.then(() => pending.delete(joined));
+    return task;
+  };
+  const assertCurrent = (): undefined => {
+    if (checking)
+      return fail(new ScopeViolationError("Credential currentness cannot reenter itself."));
+    checking = true;
+    try {
+      if (failed) throw first;
+      if (closed) throw new ScopeViolationError("The captured credential observation is closed.");
+      owner.assertOwner();
+      const returned = sourceCurrent?.();
+      if (returned !== undefined) {
+        // Retain malformed asynchronous assertions before refusing them.
+        if (returned !== null && (typeof returned === "object" || typeof returned === "function")) {
+          const settlement = Promise.resolve(returned);
+          void track(async () => {
+            await settlement;
+          }).catch(() => {});
+        }
+        throw new ScopeViolationError("Credential currentness must settle synchronously.");
+      }
+      owner.assertOwner();
+      if (factsSnapshot !== undefined && !sameCandidateDataV2(facts, factsSnapshot))
+        throw new ScopeViolationError("The captured credential facts changed.");
+      if (failed) throw first;
+      return undefined;
+    } catch (error) {
+      return fail(error);
+    } finally {
+      checking = false;
+    }
+  };
+  const release = (): Promise<void> => {
+    if (terminal !== undefined) return terminal;
+    terminal = Promise.resolve().then(async () => {
+      closed = true;
+      while (pending.size) await Promise.allSettled([...pending]);
+      try {
+        await sourceRelease?.();
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          first = error;
+        }
+      }
+      while (pending.size) await Promise.allSettled([...pending]);
+      if (failed) throw first;
+    });
+    return terminal;
+  };
+  return Object.freeze({
+    lease: Object.freeze({ assertCurrent, release }),
+    acquire(work: () => Promise<CapturedCredentialLeaseV1>): Promise<void> {
+      try {
+        assertCurrent();
+        if (started) throw new ScopeViolationError("The credential capture is already consumed.");
+        started = true;
+        return track(async () => {
+          const source = await work();
+          // Cleanup transfer precedes owner checks and every later result getter.
+          // The outer unit already owns this holder and joins entered acquisition.
+          if (source === null || typeof source !== "object")
+            throw new ScopeViolationError("The original credential observation is unavailable.");
+          const release = source.release;
+          if (typeof release !== "function")
+            throw new ScopeViolationError("The credential cleanup is unavailable.");
+          sourceRelease = () => Reflect.apply(release, source, []);
+          assertCurrent();
+          const current = source.assertCurrent;
+          if (typeof current !== "function")
+            throw new ScopeViolationError("The credential currentness is unavailable.");
+          sourceCurrent = () => Reflect.apply(current, source, []);
+          assertCurrent();
+          facts = source.facts;
+          if (facts === undefined || facts === null || typeof facts !== "object")
+            throw new ScopeViolationError("The captured credential facts are unavailable.");
+          // The original supplier's private policy recognizes this exact object.
+          // A detached snapshot detects changes but never replaces its identity.
+          factsSnapshot = immutableCopy(facts);
+          assertCurrent();
+          ready = true;
+        });
+      } catch (error) {
+        try {
+          return Promise.reject(fail(error));
+        } catch (failure) {
+          const rejected = Promise.reject<void>(failure);
+          void rejected.catch(() => {});
+          return rejected;
+        }
+      }
+    },
+    borrow(): CapturedCredentialViewV1 {
+      assertCurrent();
+      if (!ready || facts === undefined)
+        return fail(new ScopeViolationError("The original credential capture has not completed."));
+      return Object.freeze({ facts, assertCurrent });
+    },
+  });
+}
 
 export function sameCandidateDataV2(left: unknown, right: unknown): boolean {
   return Buffer.from(canonicalizeWorkloadProfileJson(left, "operator-envelope")).equals(

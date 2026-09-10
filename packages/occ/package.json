@@ -65,7 +65,9 @@
     "./gateway-startup-v1/installation-service": "./src/gateway-startup-v1/installation-service.ts",
     "./gateway-startup-v1/material-delivery": "./src/gateway-startup-v1/material-delivery.ts",
     "./runtime-preparation/current-use": "./src/runtime-preparation/current-use.ts",
-    "./runtime-preparation/submission": "./src/runtime-preparation/submission.ts"
+    "./runtime-preparation/submission": "./src/runtime-preparation/submission.ts",
+    "./ports/workload-profile-credentials": "./src/ports/workload-profile-credentials.ts",
+    "./services/service-account/workload-profile-credentials": "./src/services/service-account/workload-profile-credentials.ts"
   },
   "types": "./src/index.ts",
   "files": [

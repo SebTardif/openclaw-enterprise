@@ -20,9 +20,14 @@ import type {
   WorkloadProfileCandidateContinuationV2,
 } from "../ports/workload-profile-candidate.ts";
 import {
+  makeCapturedCredentialObservationV1,
   makeTrackedCandidateOperations,
   sameCandidateDataV2,
 } from "./postgres/workload-profile-candidate.ts";
+import type {
+  OriginalCredentialCandidateSourceV1,
+  OriginalCredentialCaptureConsumerV1,
+} from "../ports/workload-profile-credentials.ts";
 import {
   decodeWorkloadProfileSelectionRequestV2,
   type WorkloadProfileSelectionStorageV2,
@@ -363,6 +368,11 @@ interface ProfileCandidateSlotV2 {
   headStarted: boolean;
   head?: WorkloadProfileAdmissionHeadV2;
   readonly sourceIdentity: object;
+  credential?: {
+    readonly source: OriginalCredentialCandidateSourceV1;
+    readonly request: Parameters<OriginalCredentialCandidateSourceV1["acquireCapturedLocked"]>[0];
+    readonly observation: ReturnType<typeof makeCapturedCredentialObservationV1>;
+  };
   observations?: Pick<
     WorkloadProfileCandidateRecordsV2,
     "agent" | "serviceAccount" | "providerBinding" | "secrets"
@@ -3180,11 +3190,18 @@ export class PostgresPlatformState implements PlatformStateStore {
     selection: DriverSelection,
     normalizer: DeploymentCandidateNormalizerV2,
     original: DeploymentCandidateOriginalOperationsV2,
+    credentialSource?: OriginalCredentialCandidateSourceV1,
   ): Readonly<{
     candidates: WorkloadProfileCandidateContinuationV2;
     contexts: WorkloadProfileCandidateContextReaderV2;
     records: WorkloadProfileCandidateRecordsReaderV2;
+    consumeCapturedCredentialV1: OriginalCredentialCaptureConsumerV1["consumeCapturedCredentialV1"];
   }> {
+    // Capture the fixed original method once; construction performs no acquisition.
+    const sourceMethod = credentialSource?.acquireCapturedLocked;
+    if (credentialSource !== undefined && typeof sourceMethod !== "function")
+      throw new DependencyUnavailableError("The original credential source is unavailable.");
+    const acquireCredential = sourceMethod?.bind(credentialSource);
     const fail = (record: ProfileSelectedEnrollmentV2, error: unknown): never => {
       const slot = record.candidate;
       if (slot && !slot.failed) {
@@ -3338,6 +3355,69 @@ export class PostgresPlatformState implements PlatformStateStore {
         });
       },
     });
+    const consumeCapturedCredentialV1: OriginalCredentialCaptureConsumerV1["consumeCapturedCredentialV1"] =
+      async (input, view, unit, io) => {
+        const record = recognized(unit, io, true);
+        try {
+          const slot = record.candidate;
+          const held = slot?.credential;
+          if (
+            !slot?.accepting ||
+            !slot.completed ||
+            !slot.head ||
+            !slot.configuration ||
+            !slot.observations ||
+            !held ||
+            held.source !== credentialSource ||
+            view.sourceIdentity !== slot.sourceIdentity
+          )
+            throw new ScopeViolationError("The original credential capture is unavailable.");
+          const request = decodeWorkloadProfileSelectionRequestV2(input);
+          const suppliedRecords = view.records;
+          if (
+            !sameCandidateDataV2(request, held.request) ||
+            !sameCandidateDataV2(request.selection, slot.head.selection) ||
+            (suppliedRecords.providerBinding === undefined) !==
+              (slot.observations.providerBinding === undefined) ||
+            !sameCandidateDataV2(
+              {
+                ...suppliedRecords,
+                providerBinding: suppliedRecords.providerBinding ?? null,
+              },
+              {
+                configuration: slot.configuration,
+                ...slot.observations,
+                providerBinding: slot.observations.providerBinding ?? null,
+                head: slot.head,
+              },
+            )
+          )
+            throw new ScopeViolationError(
+              "The credential observation differs from its original capture.",
+            );
+          const borrowed = held.observation.borrow();
+          const assertCurrent = (): undefined => {
+            try {
+              recognized(unit, io, false);
+              if (
+                record.candidate !== slot ||
+                !slot.completed ||
+                slot.credential !== held ||
+                held.source !== credentialSource
+              )
+                throw new ScopeViolationError("The original credential observation expired.");
+              slot.assertCurrent();
+              return borrowed.assertCurrent();
+            } catch (error) {
+              return fail(record, error);
+            }
+          };
+          assertCurrent();
+          return Object.freeze({ facts: borrowed.facts, assertCurrent });
+        } catch (error) {
+          return fail(record, error);
+        }
+      };
     const candidates = Object.freeze<WorkloadProfileCandidateContinuationV2>({
       withCandidate: (unit, io, resolveHarness, work) => {
         const record = recognized(unit, io, true);
@@ -3427,6 +3507,38 @@ export class PostgresPlatformState implements PlatformStateStore {
               providerBinding: observed.providerBinding,
               secrets: observed.secrets,
             });
+            if (credentialSource !== undefined && acquireCredential !== undefined) {
+              const request = decodeWorkloadProfileSelectionRequestV2({
+                schemaVersion: 2,
+                installationId: unit.installationId,
+                namespaceId: unit.namespaceId,
+                agentId: unit.agentId,
+                revisionId: slot.snapshot.id,
+                configurationRef: slot.configuration.configurationRef,
+                configurationVersion: slot.configuration.configurationGeneration,
+                selection: command.expectedDraft.workloadProfileSelection,
+              });
+              const captured = Object.freeze({
+                configuration: slot.configuration,
+                ...slot.observations,
+              });
+              const credential = makeCapturedCredentialObservationV1({
+                assertOwner: () => {
+                  recognized(unit, io, false);
+                  if (record.candidate !== slot)
+                    return fail(record, new ScopeViolationError("The credential owner changed."));
+                  capture.assertCurrent();
+                },
+                track: (operation) => tracked(record, operation),
+                poison: (error) => fail(record, error),
+              });
+              slot.credential = { source: credentialSource, request, observation: credential };
+              // Transfer the holder before awaiting the original source. A late
+              // returned lease still has cleanup even after new IO has closed.
+              unit.retain(credential.lease);
+              await credential.acquire(() => acquireCredential(request, captured, unit, io));
+              recognized(unit, io, true);
+            }
             slot.completed = true;
             capture.assertCurrent();
             return await work(result);
@@ -3438,7 +3550,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         });
       },
     });
-    return Object.freeze({ candidates, contexts, records });
+    return Object.freeze({ candidates, contexts, records, consumeCapturedCredentialV1 });
   }
 
   /** Server-owned composition over the original mutation/read callback. Missing
