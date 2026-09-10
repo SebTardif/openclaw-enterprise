@@ -346,7 +346,7 @@ func RunGatewayStartupClient(parent context.Context, input io.ReadCloser, output
 		}
 	}()
 	consumed := false
-	for sequence := int64(1); sequence <= 9007199254740991; sequence++ {
+	for sequence := int64(1); sequence <= 9007199254740991; {
 		select {
 		case <-life.Done():
 			return errProtocol
@@ -359,11 +359,25 @@ func RunGatewayStartupClient(parent context.Context, input io.ReadCloser, output
 				incoming.timer.Stop()
 				return nil
 			}
+			if command.Kind == "inspect" {
+				// Inspect only this original connection. Parent-pipe sequence and
+				// challenge bind the response without consuming a service request
+				// sequence or manufacturing a current Installation grant.
+				ok := command.ConnectionID == identity.connectionID && command.ExchangeID == "" && command.RequestDigest == "" && idPattern.MatchString(command.Challenge) && command.PayloadBase64 == "" && life.Err() == nil && time.Now().Before(incoming.deadline) && time.Now().Before(expiry) && b.currentBundle()
+				inspection, inspectErr := gatewayInspection(connection)
+				if !ok || inspectErr != nil || b.emit("inspected", identity, command.Challenge, encode(inspection)) != nil {
+					incoming.timer.Stop()
+					return errProtocol
+				}
+				incoming.timer.Stop()
+				continue
+			}
 			ok := b.gatewayClientExchange(life, cancel, connection, identity, incoming, sequence, frames, commands, &consumed)
 			incoming.timer.Stop()
 			if !ok {
 				return errProtocol
 			}
+			sequence++
 		}
 	}
 	return errProtocol
