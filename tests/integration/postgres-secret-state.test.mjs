@@ -40,6 +40,7 @@ function resources() {
     configurationId,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     servicePrincipalId: `service-agent-${randomUUID()}`,
     createdAt,
   };
@@ -142,6 +143,7 @@ function revisionFor(agent, configuration, storedSecret, revisionNumber = 1) {
     namespaceId: agent.namespaceId,
     agentId: agent.id,
     revision: revisionNumber,
+    maximumExecutionMs: agent.maximumExecutionMs,
     configurationId: configuration.id,
     configurationKind: configuration.kind,
     configurationGeneration: configuration.generation,
@@ -461,6 +463,7 @@ test(
           namespace.id,
           agent.id,
           JSON.stringify({
+            maximum_execution_ms: null,
             configuration_id: configuration.id,
             configuration_kind: "agent",
             configuration_generation: 1,

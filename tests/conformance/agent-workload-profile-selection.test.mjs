@@ -69,6 +69,7 @@ function revision(withUse = true) {
     namespaceId,
     agentId,
     revision: 1,
+    maximumExecutionMs: null,
     providerId: null,
     configurationId,
     configurationKind: "agent",
@@ -93,6 +94,7 @@ function agent(withSelection = true) {
     providerId: null,
     serviceAccountId,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     servicePrincipalId,
     activeRevisionId: revisionId,
     ...(withSelection ? { workloadProfileSelection: selection() } : {}),
@@ -767,7 +769,16 @@ test("explicit Agent Selection uses the original enrolled unit and retains curre
     ]);
     assert.deepEqual(control.calls.secretOwners, ["secret/example"]);
     assert.deepEqual(clone(control.calls.update), [
-      [namespaceId, agentId, configurationId, "dedicated", nextServiceAccountId, null, candidate],
+      [
+        namespaceId,
+        agentId,
+        configurationId,
+        "dedicated",
+        nextServiceAccountId,
+        null,
+        candidate,
+        undefined,
+      ],
     ]);
     assert.equal(control.profileCalls.mutationScope, 1);
     assert.equal(control.profileCalls.fallbackAccess, 0);

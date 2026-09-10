@@ -121,6 +121,7 @@ async function setup(context) {
         configurationId,
         providerId: null,
         executionMode: "dedicated",
+        maximumExecutionMs: null,
         servicePrincipalId: `service-agent-${id}`,
         createdAt: new Date().toISOString(),
       });
@@ -133,6 +134,7 @@ async function setup(context) {
       namespaceId: namespace.id,
       agentId: owner.id,
       revision: number,
+      maximumExecutionMs: owner.maximumExecutionMs,
       configuration: { revision: String(number) },
       configurationId: owner.configurationId,
       configurationKind: "agent",

@@ -45,6 +45,7 @@ async function owner(store) {
     configurationId: configuration.id,
     providerId: null,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     servicePrincipalId: randomUUID(),
     createdAt,
   };
@@ -53,6 +54,7 @@ async function owner(store) {
     namespaceId: namespace.id,
     agentId: agent.id,
     revision: 1,
+    maximumExecutionMs: null,
     configurationId: configuration.id,
     configurationKind: "agent",
     configurationGeneration: 1,

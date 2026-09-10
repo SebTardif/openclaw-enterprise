@@ -106,6 +106,7 @@ function protocol(options = {}) {
     configuration_id: configurationId,
     provider_id: options.managed ? provider.id : null,
     execution_mode: "dedicated",
+    maximum_execution_ms: null,
     service_principal_id: "controlled/service-principal",
     service_account_id: serviceAccountId,
     workload_profile_selection: profile.head.selection,

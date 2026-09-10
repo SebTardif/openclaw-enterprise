@@ -74,6 +74,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
         providerId,
         ...(serviceAccountId === undefined ? {} : { serviceAccountId }),
         executionMode,
+        maximumExecutionMs: null,
         servicePrincipalId: `service-agent-${id}`,
         createdAt: new Date().toISOString(),
       });
@@ -107,6 +108,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
       namespaceId: namespace.id,
       agentId: owner.id,
       revision: number,
+      maximumExecutionMs: owner.maximumExecutionMs,
       providerId: owner.providerId,
       configuration: { revision: String(number) },
       configurationId: owner.configurationId,
@@ -279,6 +281,7 @@ test(
           namespaceId: fixture.namespace.id,
           agentId: malformedAdmission.id,
           revision: 1,
+          maximumExecutionMs: null,
           providerId: null,
           configuration: {},
           servicePrincipalId: malformedAdmission.servicePrincipalId,
@@ -300,6 +303,7 @@ test(
           fixture.namespace.id,
           malformedAdmission.id,
           JSON.stringify({
+            maximum_execution_ms: null,
             draft_spec: {},
             configuration_id: malformedAdmission.configurationId,
             configuration_kind: "agent",

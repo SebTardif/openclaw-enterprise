@@ -117,6 +117,7 @@ function fixture(settings = {}) {
     serviceAccountId,
     servicePrincipalId,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     createdAt: time,
   };
   const secret = {
