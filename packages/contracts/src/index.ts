@@ -101,6 +101,8 @@ export type {
   RuntimeAllocationLocator,
 } from "./runtime-assignment.ts";
 
+export type { WorkOwnerValueV2, WorkInvocationValueV2 } from "./work-authority-v2.ts";
+
 export * from "./runtime-authority-v1.ts";
 export * from "./completed-state-v1.ts";
 export * from "./workspace-reservation-v1.ts";
