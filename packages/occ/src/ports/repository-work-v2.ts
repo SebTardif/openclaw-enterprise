@@ -109,6 +109,10 @@ export interface RepositoryWorkTransactionContextV2 {
   readonly installationId: string;
   assertActive(): undefined;
   retain(lease: RepositoryWorkHeldLeaseV2): undefined;
+  /** Register an already-entered Promise with the ORIGINAL transaction drain.
+   * This is cleanup/rejection accounting only. Registration during a synchronous
+   * fence poisons that fence and cannot grant query/reentry/currentness rights. */
+  joinAccepted(pending: Promise<unknown>): undefined;
 }
 /** Original State-retained inventory facts. Qualifiers recognize their own
  * operation/Work or independent observation responsibility; data is not admission. */
@@ -121,7 +125,23 @@ export interface RepositoryWorkInventoryFactsV2 {
   >;
   readonly readset: RepositoryWorkReadsetV2 | undefined;
 }
+/** A fresh original observation reads this exact target/current tuple under
+ * the SAME State scope locks. It never creates a committed claim or mint permit. */
+export type RepositoryWorkInventoryTargetV2 = RepositoryTokenRecordV2["target"];
+export type RepositoryWorkInventoryCurrentV2 =
+  | Readonly<{ kind: "absent"; target: RepositoryWorkInventoryTargetV2 }>
+  | Readonly<{
+      kind: "current";
+      target: RepositoryWorkInventoryTargetV2;
+      record: RepositoryTokenRecordV2;
+      lease: NonNullable<Awaited<ReturnType<RepositoryLeaseInventoryTransactionV2["findLease"]>>>;
+      mintClaim: RepositoryWorkInventoryFactsV2["mintClaim"];
+      revocationClaim: RepositoryWorkInventoryFactsV2["revocationClaim"];
+      liveRecords: readonly RepositoryTokenRecordV2[];
+    }>;
 export interface RepositoryWorkInventoryQualificationV2 {
+  /** Original independently enrolled observer, including after live P closes. */
+  qualifyInventoryCurrent?(current: RepositoryWorkInventoryCurrentV2): Promise<void>;
   qualifyInventory?(facts: RepositoryWorkInventoryFactsV2): Promise<void>;
   qualifyInventoryRead?(operation: RepositoryInventoryOperationV2 | undefined): Promise<void>;
   qualifyMintUse?(
@@ -138,6 +158,10 @@ export interface RepositoryWorkInventoryQualificationV2 {
 export interface RepositoryWorkSourceLeaseV2
   extends RepositoryWorkHeldLeaseV2, RepositoryWorkInventoryQualificationV2 {
   readonly actorId: string;
+  /** Called exactly once after original custody and I/N/A acquisition, before
+   * State admits any unit operation. Live policy acquisition belongs here;
+   * independent historical observers complete their own retained enrollment. */
+  prepareUse(): Promise<void>;
   qualifyReadset(originalReadset: RepositoryWorkReadsetV2): Promise<void>;
   qualifyAdmission(admission: RepositoryWorkAdmissionV2): Promise<void>;
   qualifyClosure(
@@ -206,6 +230,9 @@ export interface RepositoryWorkUnitV2 {
   >;
   /** Exact original inventory operation readback, including after old Work closes. */
   readRepositoryInventoryOperation(): Promise<RepositoryInventoryOperationV2 | undefined>;
+  readRepositoryInventoryCurrent(
+    target: RepositoryWorkInventoryTargetV2,
+  ): Promise<RepositoryWorkInventoryCurrentV2>;
   assertCurrent(): undefined;
 }
 export interface RepositoryWorkStoreV2 {
@@ -264,6 +291,32 @@ export interface RepositoryWorkStateParticipantV2 {
     context: RepositoryWorkTransactionContextV2,
     original: WorkOriginalOperationV2,
     call: AuthorityCallV1,
+  ): undefined;
+  /** Only the entered original prepareUse phase may acquire this head, after
+   * custody and I/N/A. SQL and terminal lock custody stay in the original unit. */
+  acquireCurrentReadset(
+    context: RepositoryWorkTransactionContextV2,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+    work: VersionedWorkRefV2,
+    execution: WorkExecutionAssociationV2,
+  ): Promise<RepositoryWorkHeldLeaseV2 & { readonly readset: RepositoryWorkReadsetV2 }>;
+  acquireCurrentPolicy(
+    context: RepositoryWorkTransactionContextV2,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+    policyRef: string,
+  ): Promise<
+    RepositoryWorkHeldLeaseV2 &
+      Readonly<{
+        policy: import("../lifecycle/repository-work-policy-v2.ts").RepositoryWorkPolicyV2;
+      }>
+  >;
+  assertInventoryCurrent(
+    context: RepositoryWorkTransactionContextV2,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+    current: RepositoryWorkInventoryCurrentV2,
   ): undefined;
   /** Only a borrowed operation projection; no query, COMMIT or second pool. */
   inventory(context: RepositoryWorkTransactionContextV2): RepositoryLeaseInventoryTransactionV2;
@@ -387,4 +440,114 @@ export interface RepositoryWorkPolicySessionSecurityReaderV2 {
   ): Promise<
     import("./workload-profile-session-security.ts").WorkloadProfileSessionReadLeaseV1 | undefined
   >;
+}
+
+/** Construction-only source from the ORIGINAL selected-execution/native
+ * accepting owners. The source's private A binds the exact native Session to
+ * journal-selected execution/ExactAttempt, actual Work admission and policy.
+ * No implementation or data-to-A constructor is supplied by this declaration. */
+export interface RepositoryWorkSelectedExecutionAdmissionSourceV2<N, A, V extends 2 | 3 = 2> {
+  bindState(participant: RepositoryWorkSelectedExecutionParticipantV2<N, A>): undefined;
+  acquire(
+    request: import("../github-mediation-v2/wire.ts").OpenRead<V>,
+    session: N,
+    call: AuthorityCallV1,
+  ): Promise<A | undefined>;
+  inspect(
+    admission: A,
+    session: N,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkSelectedExecutionDataV2<V>>;
+  assertCurrent(admission: A, session: N, call: AuthorityCallV1): undefined;
+  /** Source/registry/journal/custody prefix is retained BEFORE State parent locks.
+   * The participant authenticates the original context; it exports no raw query. */
+  retainUse(
+    context: RepositoryWorkTransactionContextV2,
+    admission: A,
+    session: N,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkHeldLeaseV2>;
+  retainObservation(
+    context: RepositoryWorkTransactionContextV2,
+    admission: A,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkHeldLeaseV2>;
+  observationCall(admission: A): Promise<AuthorityCallV1>;
+  acquireInventory(
+    admission: A,
+    session: N,
+    call: AuthorityCallV1,
+  ): Promise<
+    | import("../lifecycle/repository-work-state-v2.ts").RepositoryWorkInventorySelectionV2
+    | undefined
+  >;
+  release(admission: A): Promise<void>;
+}
+export interface RepositoryWorkSelectedExecutionDataV2<V extends 2 | 3 = 2> {
+  readonly selection: import("../lifecycle/repository-work-state-v2.ts").RepositoryWorkSelectionDataV2<V>;
+  /** Exact historical preparation locator retained by the original execution
+   * admitting operation. childEffectRef never aliases the allocation owner. */
+  readonly runtime: Readonly<{
+    target: import("@openclaw-enterprise/contracts").RuntimeAssignmentTargetV1;
+    preparationRef: string;
+    preparationVersion: number;
+    childEffectRef: string;
+  }>;
+}
+export interface RepositoryWorkSelectedExecutionParticipantV2<N, A> {
+  assertObservationOriginal(
+    context: RepositoryWorkTransactionContextV2,
+    admission: A,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+  ): undefined;
+  assertOriginal(
+    context: RepositoryWorkTransactionContextV2,
+    admission: A,
+    session: N,
+    call: AuthorityCallV1,
+  ): undefined;
+}
+declare const assignmentV2: unique symbol, selectionV2: unique symbol;
+export type RepositoryWorkAssignmentV2<V extends 2 | 3 = 2> = {
+  readonly [assignmentV2]: (v: V) => V;
+};
+export type RepositoryWorkSelectionV2<V extends 2 | 3 = 2> = {
+  readonly [selectionV2]: (v: V) => V;
+};
+export interface RepositoryWorkSelectionConstructionV2<N, A, V extends 2 | 3 = 2> {
+  readonly protocolVersion: V;
+  readonly maximumAssignments: number;
+  readonly native: import("../runtime-authority/repository-work-origin-v2.ts").RepositoryWorkNativeSessionSourceV2<
+    N,
+    V
+  >;
+  readonly selected: RepositoryWorkSelectedExecutionAdmissionSourceV2<N, A, V>;
+}
+export interface RepositoryWorkSelectionBindingV2<N, A, V extends 2 | 3 = 2> {
+  readonly assignments: import("../runtime-authority/repository-work-origin-v2.ts").RepositoryWorkOriginAssignmentSourceV2<
+    RepositoryWorkAssignmentV2<V>,
+    N,
+    V
+  >;
+  readonly selection: import("../lifecycle/repository-work-state-v2.ts").RepositoryWorkSelectionSourceV2<
+    {
+      origin: import("../runtime-authority/repository-work-origin-v2.ts").OriginalRepositoryWorkOriginV2<V>;
+      selection: RepositoryWorkSelectionV2<V>;
+      token: never;
+    },
+    V
+  > & {
+    /** The original Work adapter calls this BEFORE opening its State transaction.
+     * It retires the earlier SQL readset; this grants no currentness during the
+     * handoff. retainPolicy in prepareUse binds the new SAME-unit held readset.
+     * Full Runtime/State assertions follow that completion, never the prefix. */
+    prepareStateUse(
+      selection: RepositoryWorkSelectionV2<V>,
+      origin: import("../runtime-authority/repository-work-origin-v2.ts").OriginalRepositoryWorkOriginV2<V>,
+      call: AuthorityCallV1,
+    ): Promise<void>;
+  };
+  close(): Promise<void>;
 }

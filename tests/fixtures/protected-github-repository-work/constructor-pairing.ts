@@ -17,13 +17,17 @@ import type {
   RepositoryWorkSelectionSourceV2,
   RepositoryWorkStatePreparationV2,
 } from "../../../packages/occ/src/lifecycle/repository-work-state-v2.ts";
-import type { RepositoryWorkSourcesV2 } from "../../../packages/occ/src/lifecycle/repository-work-v2.ts";
+import type {
+  RepositoryWorkNativeBindingV2,
+  RepositoryWorkSourcesV2,
+} from "../../../packages/occ/src/lifecycle/repository-work-v2.ts";
 import type { RepositoryWorkCommittedV2 } from "../../../packages/occ/src/ports/repository-work-v2.ts";
 import type {
   OriginalRepositoryWorkOriginV2,
   RepositoryWorkNativeSessionSourceV2,
   RepositoryWorkOriginAssignmentSourceV2,
   RepositoryWorkOriginOwnerV2,
+  RepositoryWorkOriginNativeRecognizerV2,
 } from "../../../packages/occ/src/runtime-authority/repository-work-origin-v2.ts";
 
 /** Compile-only checks against actual exported constructor declarations. These
@@ -46,6 +50,46 @@ type Sources<V extends GitHubMediationVersion = 2> = RepositoryWorkSourcesV2<
   },
   V
 > & { readonly close: () => Promise<void> };
+
+/** Authored declaration cases only: neither native-only recognition nor its
+ * binding projection establishes a State readset or release authority. */
+export function pairNativeRpcHooks<
+  N extends object,
+  A extends object,
+  S extends object,
+  W extends object,
+>(
+  options: Options<N, A, S, W>,
+  sources: Sources,
+  runtime: RepositoryWorkOriginOwnerV2<N, A, 2>,
+  recognizer: RepositoryWorkOriginNativeRecognizerV2<N, 2>,
+  origin: OriginalRepositoryWorkOriginV2<2>,
+  raw: N,
+  selected: S,
+  call: AuthorityCallV1,
+): void {
+  const refreshed: Promise<RepositoryWorkNativeBindingV2> = sources.native.inspectNative(
+    origin,
+    call,
+  );
+  const original: Promise<RepositoryWorkNativeBindingV2> = runtime.inspectNative(origin, call);
+  sources.native.assertNativeCurrent(origin, call);
+  sources.native.assertCurrent(origin, call);
+  const nativeOnly: N = recognizer.recognizeNative(origin, call);
+  const fullyCurrent: N = recognizer.recognize(origin, call);
+  const handedOff: Promise<void> = options.selection.prepareStateUse(selected, origin, call);
+  // @ts-expect-error A raw native Session cannot be used as the original Runtime origin.
+  sources.native.inspectNative(raw, call);
+  // @ts-expect-error Native correspondence also requires the original Runtime origin.
+  recognizer.recognizeNative(raw, call);
+  const { prepareStateUse: _handoff, ...missingHandoff } = options.selection;
+  // @ts-expect-error State handoff is mandatory, with no fallback to ordinary inspection.
+  createProtectedGitHubRepositorySourcesV2<N, A, S, W>({ ...options, selection: missingHandoff });
+  const { inspectNative: _inspect, ...missingNativeRpc } = sources.native;
+  // @ts-expect-error A synchronous fence cannot replace fresh native RPC authentication.
+  const incomplete: Sources = { ...sources, native: missingNativeRpc };
+  void [refreshed, original, nativeOnly, fullyCurrent, handedOff, incomplete, _handoff, _inspect];
+}
 
 export function pairOriginalConstruction<
   N extends object,

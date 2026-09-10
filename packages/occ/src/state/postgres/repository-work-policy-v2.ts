@@ -1,6 +1,6 @@
 import type { QueryRepositoryFactoryContext } from "../../ports/repository-factory.ts";
 import type { RepositoryWorkPolicyV2 } from "../../lifecycle/repository-work-policy-v2.ts";
-import { canonicalRepositoryWorkV2 } from "./repository-work-v2.ts";
+import { canonicalRepositoryWorkV2 } from "./repository-work-canonical-v2.ts";
 import { ScopeViolationError } from "../../errors.ts";
 
 /** Persistence envelope around the ORIGINAL Work-owned policy document. This

@@ -13,6 +13,12 @@ import type {
   RuntimeInitialBindingOwnerV1,
   RuntimeInitialBindingSourceV1,
 } from "../runtime-authority/initial-binding.ts";
+import { types as nodeTypes } from "node:util";
+import { createPostgresRepositoryWorkSelectionBindingV2 } from "./postgres/repository-work-selection-v2.ts";
+import type {
+  RepositoryWorkSelectionConstructionV2,
+  RepositoryWorkSelectionBindingV2,
+} from "../ports/repository-work-v2.ts";
 import {
   createPostgresRepositoryWorkPolicyBindingV2,
   type RepositoryWorkPolicySessionControlV2,
@@ -26,6 +32,7 @@ import {
   createPostgresRepositoryWorkBindingV2,
   type RepositoryWorkStateBindingV2,
   type RepositoryWorkExecutionV2,
+  type RepositoryWorkEnterV2,
 } from "./postgres/repository-work-v2.ts";
 import { createPostgresCredentialInventoryV1 } from "../credential-inventory-v1/postgres.ts";
 import { readRuntimePreparationSubmissionV1 } from "./postgres/runtime-preparation-submission.ts";
@@ -474,6 +481,7 @@ interface TransactionContext {
   readView?: PlatformReadView;
   readonly lifetime: RepositoryTransactionLifetime;
   readonly assertOwnerActive: () => void;
+  readonly joinRepositoryWorkCompletion: (pending: Promise<unknown>) => undefined;
   readonly readOnly: boolean;
   readonly profileSignal: AbortSignal;
   readonly abortProfile: () => void;
@@ -1161,6 +1169,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     Readonly<ReservedChannelInstallationLocatorV1> | null
   >();
   readonly #repositoryWorkExecution = new AsyncLocalStorage<RepositoryWorkExecutionV2>();
+  readonly #repositoryWorkBindings = new WeakSet<object>();
   readonly #repositoryPolicyAccounts = new WeakMap<
     RepositoryWorkPolicyAccountUnitV2,
     RepositoryWorkPolicySessionControlV2
@@ -5701,86 +5710,125 @@ export class PostgresPlatformState implements PlatformStateStore {
   /** Constructs the private original Work/unit pairing. Work owns its P/R
    * handles; this State owns queries, inventory membership and outer COMMIT. */
   repositoryWorkBindingV2(): RepositoryWorkStateBindingV2 {
-    return createPostgresRepositoryWorkBindingV2(
-      (scope, bounds, execution, body) => {
-        const ambient = this.#repositoryWorkExecution.getStore();
-        if (ambient !== undefined || this.#outerExecution.getStore() !== undefined) {
-          const error = new ScopeViolationError(
-            "Repository Work requires its original outer transaction.",
-          );
-          ambient?.phase.poison(error);
-          this.#repositoryPolicyExecution.getStore()?.phase.poison(error);
-          throw error;
-        }
-        return this.#repositoryWorkExecution.run(execution, () =>
-          this.execute(
-            false,
-            async (_unit, context) => {
-              const installation = await this.currentInstallation(context, context.credentialQuery);
-              if (installation?.id !== scope.installationId)
-                throw new ScopeViolationError("Repository Work belongs to another Installation.");
-              const assertOperation = () => {
-                context.lifetime.assertActive();
-                execution.phase.assertOperationActive();
-              };
-              const query = async (statement: string, parameters?: readonly unknown[]) => {
-                assertOperation();
-                const result = await context.credentialQuery(statement, parameters);
-                assertOperation();
-                return result;
-              };
-              const repositoryContext = {
-                scope: { installationId: scope.installationId, namespaceId: scope.namespaceId },
-                transaction: { assertActive: assertOperation },
-                query: { query },
-              };
-              return body({
-                context: repositoryContext,
-                inventory: (phase) =>
-                  createPostgresCredentialInventoryV1(
-                    {
-                      ...repositoryContext,
-                      inventoryScope: {
-                        installationId: scope.installationId,
-                        namespaceId: scope.namespaceId,
-                        agentId: scope.agentId,
-                      },
-                      commitRef: execution.commitRef,
-                      phase,
-                    },
-                    {},
-                  ).repositoryLeaseV2,
-                appendAudit: (actorId, operationRef, kind) =>
-                  this.appendAudit(
-                    context,
-                    {
-                      id: `aud_${randomUUID()}`,
-                      occurredAt: new Date().toISOString(),
-                      installationId: scope.installationId,
-                      namespaceId: scope.namespaceId,
-                      kind: "mutation",
-                      actorId,
-                      action: `work.repository.${kind}`,
-                      resource: {
-                        kind: "agent",
-                        id: scope.agentId,
-                        namespaceId: scope.namespaceId,
-                      },
-                      outcome: "success",
-                      details: { operationRef, commitRef: execution.commitRef },
-                    },
-                    query,
-                  ),
-              });
-            },
-            bounds,
-            false,
-            execution,
-          ),
-        );
-      },
+    const binding = createPostgresRepositoryWorkBindingV2(
+      this.repositoryWorkEnterV2(),
       () => new CredentialInventoryOwnerPhaseV1(),
     );
+    this.#repositoryWorkBindings.add(binding);
+    return binding;
+  }
+
+  repositoryWorkSelectionBindingV2<N, A, V extends 2 | 3>(
+    work: RepositoryWorkStateBindingV2,
+    options: RepositoryWorkSelectionConstructionV2<N, A, V>,
+  ): RepositoryWorkSelectionBindingV2<N, A, V> {
+    if (!this.#repositoryWorkBindings.has(work))
+      throw new ScopeViolationError(
+        "Repository selection requires the same original State binding.",
+      );
+    return createPostgresRepositoryWorkSelectionBindingV2(
+      this.repositoryWorkEnterV2(),
+      () => new CredentialInventoryOwnerPhaseV1(),
+      work.participant,
+      options,
+    );
+  }
+
+  private repositoryWorkEnterV2(): RepositoryWorkEnterV2 {
+    return (scope, bounds, execution, body) => {
+      const ambient = this.#repositoryWorkExecution.getStore();
+      if (ambient !== undefined || this.#outerExecution.getStore() !== undefined) {
+        const error = new ScopeViolationError(
+          "Repository Work requires its original outer transaction.",
+        );
+        ambient?.phase.poison(error);
+        this.#repositoryPolicyExecution.getStore()?.phase.poison(error);
+        throw error;
+      }
+      return this.#repositoryWorkExecution.run(execution, () =>
+        this.execute(
+          false,
+          async (_unit, context) => {
+            const installation = await this.currentInstallation(context, context.credentialQuery);
+            if (installation?.id !== scope.installationId)
+              throw new ScopeViolationError("Repository Work belongs to another Installation.");
+            const assertOperation = () => {
+              context.lifetime.assertActive();
+              execution.phase.assertOperationActive();
+            };
+            const query = async (statement: string, parameters?: readonly unknown[]) => {
+              assertOperation();
+              const result = await context.credentialQuery(statement, parameters);
+              assertOperation();
+              return result;
+            };
+            const repositoryContext = {
+              scope: { installationId: scope.installationId, namespaceId: scope.namespaceId },
+              transaction: { assertActive: assertOperation },
+              query: { query },
+            };
+            return body({
+              context: repositoryContext,
+              joinAccepted: (pending) => {
+                // The original captured transaction owns completion even when
+                // the callback has just cancelled its operation permission.
+                // No ambient SQL ALS or currentness is recreated by this join.
+                return context.joinRepositoryWorkCompletion(pending);
+              },
+              readRuntimeAllocation: async (assignmentRef) => {
+                const result = await query(
+                  "SELECT * FROM occ.runtime_assignment_allocations WHERE namespace_id=$1 AND agent_id=$2 AND assignment_ref=$3 FOR SHARE",
+                  [scope.namespaceId, scope.agentId, assignmentRef],
+                );
+                if (result.rows.length > 1)
+                  throw new ScopeViolationError("Runtime allocation is ambiguous.");
+                return result.rows.length === 0
+                  ? undefined
+                  : runtimeAllocationFromRow(rows(result.rows)[0]!);
+              },
+              inventory: (phase) =>
+                createPostgresCredentialInventoryV1(
+                  {
+                    ...repositoryContext,
+                    inventoryScope: {
+                      installationId: scope.installationId,
+                      namespaceId: scope.namespaceId,
+                      agentId: scope.agentId,
+                    },
+                    commitRef: execution.commitRef,
+                    phase,
+                  },
+                  {},
+                ).repositoryLeaseV2,
+              appendAudit: (actorId, operationRef, kind) =>
+                this.appendAudit(
+                  context,
+                  {
+                    id: `aud_${randomUUID()}`,
+                    occurredAt: new Date().toISOString(),
+                    installationId: scope.installationId,
+                    namespaceId: scope.namespaceId,
+                    kind: "mutation",
+                    actorId,
+                    action: `work.repository.${kind}`,
+                    resource: {
+                      kind: "agent",
+                      id: scope.agentId,
+                      namespaceId: scope.namespaceId,
+                    },
+                    outcome: "success",
+                    details: { operationRef, commitRef: execution.commitRef },
+                  },
+                  query,
+                ),
+            });
+          },
+          bounds,
+          false,
+          execution,
+        ),
+      );
+    };
   }
 
   private bindCredentialInventoryOwnersV1(
@@ -6290,6 +6338,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       throw new DependencyUnavailableError(
         "Bounded platform reads require a bounded PostgreSQL pool.",
       );
+    // Cleanup enrollment survives cancellation, but never terminal retirement.
+    // It is private to this exact original Repository Work execution.
+    let repositoryCompletionClosed = false;
     const readBegan = performance.now();
     const profileAbort = new AbortController();
     const lifetime = new RepositoryTransactionLifetime();
@@ -6564,6 +6615,33 @@ export class PostgresPlatformState implements PlatformStateStore {
         assertOwnerActive: () => {
           if (closed || released || expired || discardClient || options?.signal.aborted)
             throw abortFailure();
+        },
+        joinRepositoryWorkCompletion: (pending) => {
+          if (
+            repositoryWork === undefined ||
+            repositoryWork !== credential ||
+            repositoryCompletionClosed ||
+            !nodeTypes.isPromise(pending)
+          ) {
+            const error = new ScopeViolationError("The original Work completion owner is retired.");
+            repositoryWork?.phase.poison(error);
+            throw error;
+          }
+          // Permission expiry may already have destroyed the transport. Retain
+          // the entered completion before any authority refusal, in the same
+          // original drain that precedes dependent participant retirement.
+          const owner = context!;
+          const settled = pending.then(
+            () => {},
+            (error) => repositoryWork.phase.poison(error),
+          );
+          owner.profileEnrollments.add(settled);
+          void settled.then(() => owner.profileEnrollments.delete(settled));
+          if (owner.profileEnrollmentClosed)
+            repositoryWork.phase.poison(
+              new ScopeViolationError("Late Work completion cannot pass the final fence."),
+            );
+          return undefined;
         },
         authorityGuard,
         journalGuard,
@@ -6843,6 +6921,14 @@ export class PostgresPlatformState implements PlatformStateStore {
       this.rememberChannelFailure(context, outward);
       throw outward;
     } finally {
+      // Close completion admission before the last drain. Ordinary catch already
+      // joined these promises; this also covers a final fence that registered
+      // completion while terminal processing was in progress. No new completion
+      // may extend the owner after this boundary.
+      repositoryCompletionClosed = true;
+      if (repositoryWork !== undefined && repositoryWork === credential && context !== undefined)
+        while (context.profileEnrollments.size)
+          await Promise.allSettled([...context.profileEnrollments]);
       if (fresh !== undefined) {
         fresh.accepting = false;
         fresh.active = false;

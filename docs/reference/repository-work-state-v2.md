@@ -41,20 +41,49 @@ fresh committed-use and late observation. Reinspection cannot replace them with
 shape-equivalent copies. Mutating an original's data also refuses currentness;
 detaching comparison data never enrolls that copy as authority.
 
-`retainPolicy` borrows actual current policy under the original State context.
-`retainObservation` supplies the separate historical observer under that context.
-Both leases have synchronous currentness, asynchronous preparation and joined
-release. State prepares each retained participant once. `observationCall` must
-return the original bounded cleanup call; the adapter does not renew the cancelled
-repository call or manufacture a replacement context.
+The original source acquisition retains entered native/issue lifetime or the
+separate historical observer, and registers its cleanup join before asynchronous
+acquisition. Its captured `SourceLease.prepareUse()` completes use qualification
+only after State has acquired custody and the Installation/Namespace/Agent locks.
+For live use, completion calls the original `selection.retainPolicy`, retains its
+release before reading later members, and captures the policy document and
+synchronous currentness method. The State selection can borrow the actual policy
+head through `participant.acquireCurrentPolicy(context, original, call, policyRef)`
+only in this phase. Work validates that document's version, profile, permissions,
+execution and time bounds; the existence of a locked row alone grants no use.
+
+Before completion, `assertCurrent` checks only entered original source/native
+lifetime, the operation's unchanged data and the original call bounds. Every
+qualifier and `prepareCommit` requires successful completion. Reentrant or repeated
+completion refuses; a fresh State transaction acquires a fresh source lease.
+State exposes no unit before completion succeeds and prepares each separately
+retained participant once. Cancellation invalidates use immediately while cleanup
+joins entered completion, late acquisitions and unexpected asynchronous final
+assertions. Before entering callbacks, Work captures the original receiver of
+`context.joinAccepted`. A non-void assertion result is registered there before
+Work refuses it, while also remaining in Work's local release join. State holds
+the actual transaction and dependent participants until that entered continuation
+settles; waiting only during reverse participant release would be too late.
+Registration during a synchronous fence poisons currentness and grants no query,
+unit, reentry or use permission. Release publishes one join and does not discard
+those promises.
+
+Historical completion instead uses the independently retained observation lease.
+It neither acquires current Work policy nor requires the old live native use to
+remain open. `observationCall` supplies its original bounded cleanup call; the
+adapter does not renew the cancelled repository call or manufacture a context.
+Observation can append qualified history, but cannot authorize new live use.
 
 ## Transaction sequence
 
 1. Acquire the original selection and validate its complete Work/native/request
    correspondence. Before opening an initial admission transaction, compare the
-   complete candidate Work record with that policy-qualified selection: scope,
+   complete candidate Work record with the original selection data: scope,
    Work and revisions, parent/root, state, horizon, execution and policy. Then
-   commit its independently authorized admission in a separate transaction. Existing Work keeps its original admission.
+   commit its independently authorized admission in a separate transaction.
+   Existing Work keeps its original admission. Each transaction completes its
+   actual policy phase after custody and parent locks, before reading or writing
+   Work through its unit; detached candidate comparison is not that completion.
 2. Read the complete locked Work lineage and stage a distinct preparation with
    exact Work revision, request, receiver, session, DNS and repository target.
    Only an acknowledged transaction returns the private preparation object.
@@ -79,6 +108,9 @@ the earlier adapter call has returned; it does not rely on a transient asynchron
 context to manufacture membership. The returned State lease holds the fresh
 readset through the fixed custody writer's immediate currentness/decrypt/write
 sequence and joins the original transaction when released.
+Its newly acquired Work source completes the same policy phase again under the
+fresh transaction's locks. Earlier successful completion is never carried into
+this reentry as current authority.
 
 Beginning settlement closes new live acquisitions before any cleanup wait.
 Historical recovery and outcome append use independently authenticated observation
@@ -156,7 +188,7 @@ never create a cleanup claim. Data-only operation results do not authorize DELET
 
 ## Validation scope
 
-The focused adapter suite executes this adapter together with the actual State
+The focused adapter suite is designed to execute this adapter together with the actual State
 binding, query repository and transaction phase. Its outer SQL transport and
 policy/native/custody peers are explicitly controlled protocol fixtures. Those
 tests exercise private recognition, phase separation, late cleanup, currentness,
@@ -164,10 +196,47 @@ unknown outcomes and postclosure observation. They do not establish PostgreSQL
 durability, a production policy admission, protected token persistence, native
 identity, live GitHub access or a complete composed repository flow.
 
+Phase cases use the original State policy repository and private
+`acquireCurrentPolicy` participant over a controlled SQL transport. They cover
+custody/parent-lock ordering, pre-completion refusal, late policy changes,
+abort/timeout joining, cleanup ownership before member access, separate historical
+completion and fresh committed-use reentry. Delayed-assertion cases fault native,
+policy, issue and historical peers with entered promises at acquisition,
+completion and later fences. The actual State context registers those promises
+with an explicitly controlled outer transaction drain. Cases require refusal
+without early transaction retirement or dependent release, for both resolution
+and rejection. They are component tests; the controlled outer drain is not
+evidence of PostgreSQL transaction cleanup. A supplied SQL envelope is a controlled
+peer input, not a production policy writer or a PostgreSQL durability result.
+
 Production construction requires the real assignment and admin-managed repository
 policy source, original State database, protected custody and accepting native
 service. The service assembly must supply them; this module supplies no default
 policy, invented root Work or arbitrary confidential sink.
+
+The adapter captures the original `selection.prepareStateUse(selection, origin,
+call)` and native `assertNativeCurrent(origin, call)` methods once. Live adapter
+runs await retirement of the initial assignment SQL readset before opening their
+State transaction. Native-only authentication spans this gap. No current State
+authority exists until `prepareUse` retains the original policy and same-unit
+readset through the State selector. Completed source fences require full original
+native+State currentness; pre-completion fences use only native membership.
+
+The initial native binding is retained as comparison data, and later selection
+inspection cannot replace original operation objects. Work does not call native
+`inspect` between units or reopen the old readset. Fresh committed-use acquisition
+initiated by the original State witness enrolls its own selection handoff during
+source acquisition, with no initial readset still held. Its completion and cleanup
+remain owned by that State acquisition. Historical observation performs neither
+live handoff nor current policy acquisition. Missing genuine methods refuse; no
+full-currentness fallback, new SQL owner or callback-created authority is supplied.
+
+The original State selector must recognize inventory phase originals and each
+historical recovery operation it accepts. The native custody recognizer and fixed
+writer must also use the actual held phase appropriate to their operation. This
+adapter does not broaden those suppliers' private membership or infer authority
+from a known commit or a copied operation. Production assembly must bind those
+original participants; component protocol peers do not prove that construction.
 
 ## Stable native identity and the broker wire binding
 
@@ -206,3 +275,26 @@ JSON persistence. The adapter cannot fill a missing original source from request
 fields, permission strings or reconstructed operation objects. The existing
 same-unit inventory, known mint/cleanup claims, independent observer call and
 submitted-use settlement requirements apply unchanged to both protocol arms.
+
+## Native enrollment before State use
+
+The adapter captures mandatory native.inspectNative with its original receiver.
+Preparation preserves initial full inspection and enrolls the native RPC before
+selection acquisition. Direct current/dispatch calls, live inventory entry and
+fresh committed-use source acquisition also await enrollment before their first
+cutoff-dependent native fence. Internal same-call entries cannot extend the
+original Runtime cutoff. Each response is detached and compared with retained
+context/transport/attachment/receiver/execution/service. The original call object
+is passed through and all five fields must remain unchanged.
+
+Enrollment performs no SQL acquisition. Initial readset retirement still precedes
+Work's transaction; full native-plus-State currentness starts only after prepareUse
+owns the same-unit readset and policy. State source acquisition registers entered
+enrollment with original joinAccepted after retaining its source lease.
+Settlement invalidates further use immediately and joins pending native enrollment
+before releasing selection. Live inventory retains its independent drain.
+Historical recovery/outcome/revocation use their original observer after closure.
+
+These consumer guarantees still require genuine Runtime authentication, State
+operation enrollment and protected provider custody. Comparison data and controlled
+test peers supply none of those production authorities.

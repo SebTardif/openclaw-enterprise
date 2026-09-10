@@ -149,3 +149,35 @@ later nonce remains separate from native Session identity. These additional
 comparisons do not relax known-COMMIT release, one-use transmission, P lifetime,
 late observation or provider settlement. Metadata V2 acquires no contents
 permission even when the administrator's policy also allows Git reads.
+
+## Native authentication across State units
+
+Construction captures both original native methods: `assertNativeCurrent(origin,
+call)` authenticates the original exchange; `assertCurrent(origin, call)` includes
+State currentness. The owner captures its immutable native comparison binding
+before State preparation. It does not call `inspect` again between Work units,
+which would reopen an initial SQL readset. Its outer checks use the native-only
+method, while the State adapter requires the full method after same-unit policy
+and readset completion. A captured binding is data, not current authority; each
+use still depends on genuine State, custody and native participants. No missing
+method falls back to the other method, and no expired original lease is renewed
+by this transfer. Historical settlement retains its separately owned observer.
+
+## Fresh native RPC enrollment
+
+The native construction operand requires inspectNative(origin, call) alongside
+initial inspect and both synchronous currentness methods. The owner captures each
+original receiver once. Initial preparation retains a detached full binding;
+subsequent live RPC entry awaits original inspectNative before its first native
+fence. Context, transport, attachment, receiver, execution and service must match
+the retained association. A changed binding refuses instead of rebasing it.
+
+The original native owner authenticates the fresh Exchange without acquiring
+State assignments. It cannot renew an existing call cutoff or operation/lease
+horizon. No full-inspect or synchronous-assert fallback exists. Same-unit State
+policy/readset qualification remains separate. Entered inspection stays owned
+until its actual continuation settles, including cancellation and late rejection.
+Historical settlement retains its independent observer instead of live admission.
+
+Component cases exercise original Work behavior with controlled native peers;
+they do not establish Runtime transport, PostgreSQL or provider acceptance.

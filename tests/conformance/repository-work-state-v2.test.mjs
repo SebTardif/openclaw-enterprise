@@ -96,6 +96,7 @@ function protocol(hooks = {}) {
       return {
         ...lease("work"),
         actorId: "service",
+        async prepareUse() {}, // Explicit controlled completion; production has no default.
         async qualifyReadset() {},
         async qualifyAdmission() {},
         async qualifyClosure() {},

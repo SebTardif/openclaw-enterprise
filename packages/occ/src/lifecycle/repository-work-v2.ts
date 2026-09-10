@@ -120,6 +120,15 @@ export interface RepositoryWorkSourcesV2<
       call: AuthorityCallV1,
     ) => Promise<B["origin"] | undefined>;
     inspect(origin: B["origin"], call: AuthorityCallV1): Promise<RepositoryWorkNativeBindingV2>;
+    /** Enroll the original fresh native Exchange before any cutoff-dependent
+     * fence. No State acquisition and no renewal of an existing call's bounds. */
+    inspectNative(
+      origin: B["origin"],
+      call: AuthorityCallV1,
+    ): Promise<RepositoryWorkNativeBindingV2>;
+    /** Native membership/current exchange only; safe while the original State
+     * readset is retired. This never substitutes for full same-unit currentness. */
+    assertNativeCurrent(origin: B["origin"], call: AuthorityCallV1): void;
     assertCurrent(origin: B["origin"], call: AuthorityCallV1): void;
     /** Release this Work owner's separately held exchange lease, independent
      * of temporary RPC signals. The broker still owns terminal metadata and
@@ -540,6 +549,8 @@ export class RepositoryWorkOperationOwnerV2<
       native: Object.freeze({
         acquire: native.acquire.bind(native),
         inspect: native.inspect.bind(native),
+        inspectNative: native.inspectNative.bind(native),
+        assertNativeCurrent: native.assertNativeCurrent.bind(native),
         assertCurrent: native.assertCurrent.bind(native),
         release: native.release.bind(native),
       }),
@@ -634,7 +645,7 @@ export class RepositoryWorkOperationOwnerV2<
     return { call, close: () => clearTimeout(timer) };
   }
   private nativeCurrent(entry: Entry<B, V>, call: AuthorityCallV1): void {
-    const result: unknown = this.sources.native.assertCurrent(entry.origin, call);
+    const result: unknown = this.sources.native.assertNativeCurrent(entry.origin, call);
     if (result !== undefined) {
       // A malformed asynchronous final fence never authorizes entry. Own and
       // join its continuation before original exchange cleanup.
@@ -658,14 +669,8 @@ export class RepositoryWorkOperationOwnerV2<
       throw error;
     }
   }
-  private async current(
-    entry: Entry<B, V>,
-    call: AuthorityCallV1,
-  ): Promise<RepositoryWorkCurrentV2<V>> {
-    this.assertCall(call, entry);
-    const raw = await this.sources.native.inspect(entry.origin, call);
-    this.assertCall(call, entry);
-    const native = Object.freeze({
+  private nativeBinding(raw: RepositoryWorkNativeBindingV2): RepositoryWorkNativeBindingV2 {
+    return Object.freeze({
       context: field(raw, "context") as RepositoryWorkNativeBindingV2["context"],
       transportBinding: field(raw, "transportBinding") as object,
       attachmentRef: field(raw, "attachmentRef") as string,
@@ -673,18 +678,50 @@ export class RepositoryWorkOperationOwnerV2<
       execution: data(field(raw, "execution") as WorkExecutionAssociationV2),
       service: data(field(raw, "service") as ServicePrincipal),
     });
+  }
+  private async captureNative(
+    entry: Entry<B, V>,
+    call: AuthorityCallV1,
+    initial = false,
+  ): Promise<void> {
+    this.assertCall(call, entry);
+    // Only initial preparation may inspect the original State association.
+    if (initial) {
+      if (entry.native) throw failure();
+      entry.native = this.nativeBinding(await this.sources.native.inspect(entry.origin, call));
+      this.assertCall(call, entry);
+    }
+    const retained = entry.native;
+    if (!retained) throw failure();
+    // The original native owner authenticates/enrolls this Exchange. Comparison
+    // of its result preserves our association; comparison itself grants nothing.
+    const native = this.nativeBinding(await this.sources.native.inspectNative(entry.origin, call));
+    this.assertCall(call, entry);
     if (
       native.context !== call.context ||
       !native.transportBinding ||
       typeof native.transportBinding !== "object" ||
       native.receiverRef !== call.recipientRef ||
-      (entry.native &&
-        (native.transportBinding !== entry.native.transportBinding ||
-          native.context !== entry.native.context ||
-          !same(native.execution, entry.native.execution) ||
-          !same(native.service, entry.native.service)))
+      native.attachmentRef !== entry.request.attachment_ref ||
+      native.transportBinding !== retained.transportBinding ||
+      native.context !== retained.context ||
+      native.attachmentRef !== retained.attachmentRef ||
+      native.receiverRef !== retained.receiverRef ||
+      !same(native.execution, retained.execution) ||
+      !same(native.service, retained.service)
     )
       throw failure();
+    this.nativeCurrent(entry, call);
+  }
+  private async current(
+    entry: Entry<B, V>,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkCurrentV2<V>> {
+    await this.captureNative(entry, call);
+    // Fixed comparison data captured before State retires its initial readset.
+    // Calling Runtime.inspect here would reopen a different SQL transaction.
+    const native = entry.native;
+    if (!native) throw failure();
     const read = await this.sources.state.readCurrent(entry.state!, entry.origin, call);
     this.assertCall(call, entry);
     const current = compareRepositoryWorkCurrentV2(
@@ -834,6 +871,7 @@ export class RepositoryWorkOperationOwnerV2<
       };
       this.active.add(entry);
       this.assertCall(call, entry);
+      await this.captureNative(entry, call, true);
       entry.state = await this.sources.state.prepare(origin, request, call);
       if (entry.state === undefined) throw failure();
       const current = await this.current(entry, call);

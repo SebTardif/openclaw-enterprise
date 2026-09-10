@@ -197,10 +197,21 @@ function fixture(t, overrides = {}, options = {}) {
         await hooks.inspect?.(c);
         return native;
       },
-      assertCurrent(o, c) {
+      async inspectNative(o, c) {
+        recognize(o, origin);
+        recognize(c.context, context);
+        events.push("enroll-native");
+        return (await hooks.enroll?.(c)) ?? native;
+      },
+      assertNativeCurrent(o, c) {
         recognize(o, origin);
         events.push("fence");
         return hooks.fence?.(c);
+      },
+      assertCurrent(o, c) {
+        recognize(o, origin);
+        events.push("full-fence");
+        return hooks.fullFence?.(c);
       },
       async release(o) {
         recognize(o, origin);
@@ -1150,4 +1161,155 @@ test("retained Git declaration is detached and immutable", () => {
   request.body_sha256 = `sha256:${"8".repeat(64)}`;
   assert.deepEqual(copy(captured), before);
   assert.equal(Object.isFrozen(captured), true);
+});
+
+// The owner is outside State's held unit. These controlled original peers
+// distinguish native membership from full State authority, rather than allowing
+// a full fence to succeed after its SQL readset has retired.
+for (const version of [2, 3])
+  test(`owner ${version} keeps one native snapshot and never refreshes SQL between units`, async (t) => {
+    const f = fixture(t, {}, version === 3 ? { version, request: gitOpen() } : {});
+    let retired = false;
+    f.hooks.inspect = () => assert.equal(retired, false);
+    f.hooks.prepare = () => {
+      retired = true;
+    };
+    // Constructor captured the original native-only receiver before replacement.
+    f.sources.native.assertNativeCurrent = () => {
+      throw new Error("replacement");
+    };
+    f.hooks.fullFence = () => {
+      throw new Error("full State outside unit");
+    };
+    const p = await prepared(f),
+      r = await released(f, p);
+    await f.owner.writeRelease(r.release, metadata(p, r), f.call());
+    assert.equal((await f.owner.check(p.preparation, r.release, f.call())).kind, "current");
+    assert.equal(f.events.filter((e) => e === "inspect").length, 1);
+    assert.equal(f.events.includes("full-fence"), false);
+    assert.equal(await f.owner.settle(p.preparation, r.release, "completed"), "recorded");
+  });
+
+test("owner construction requires the original native-only callable without full-fence fallback", async (t) => {
+  const f = fixture(t);
+  assert.throws(
+    () =>
+      new RepositoryWorkOperationOwnerV2(
+        { ...f.sources, native: { ...f.sources.native, assertNativeCurrent: undefined } },
+        limits,
+      ),
+  );
+});
+
+// Real owner with private controlled native peers: consumer refusal/drain only.
+for (const version of [2, 3])
+  test("owner " + version + " enrolls fresh RPC before its native fence", async (t) => {
+    const f = fixture(t, {}, version === 3 ? { version, request: gitOpen() } : {});
+    let enrolled;
+    const deadlines = [];
+    f.hooks.enroll = (c) => {
+      enrolled = c.deadline;
+      deadlines.push(c.deadline);
+    };
+    f.hooks.fence = (c) => assert.equal(c.deadline, enrolled);
+    f.sources.native.inspectNative = () => {
+      throw new Error("replaced receiver");
+    };
+    const p = await prepared(f);
+    const fresh = (offset) => ({
+      ...f.call(),
+      deadline: new Date(Date.now() + offset).toISOString(),
+    });
+    const r = await f.owner.dispatch(p.preparation, dispatchRequest(p), fresh(7400));
+    assert.equal(r.kind, "released");
+    await f.owner.writeRelease(r.release, metadata(p, r), fresh(7100));
+    assert.equal((await f.owner.check(p.preparation, r.release, fresh(6800))).kind, "current");
+    assert.ok(new Set(deadlines).size >= 4);
+    assert.equal(f.events.filter((e) => e === "inspect").length, 1);
+    assert.equal(f.writes.length, 1);
+    assert.equal(await f.owner.settle(p.preparation, r.release, "completed"), "recorded");
+  });
+for (const [name, changed] of [
+  ["context", (n) => ({ ...n, context: {} })],
+  ["transport", (n) => ({ ...n, transportBinding: {} })],
+  ["attachment", (n) => ({ ...n, attachmentRef: "attachment/other" })],
+  ["receiver", (n) => ({ ...n, receiverRef: "receiver/other" })],
+  [
+    "execution",
+    (n) => ({ ...n, execution: { ...n.execution, assignmentRef: "assignment/other" } }),
+  ],
+  ["service", (n) => ({ ...n, service: {} })],
+])
+  test("fresh native " + name + " cannot rebase original Work association", async (t) => {
+    const f = fixture(t),
+      p = await prepared(f);
+    f.hooks.enroll = () => changed(f.native);
+    const before = f.events.filter((e) => e === "fence").length;
+    assert.equal(
+      (await f.owner.dispatch(p.preparation, dispatchRequest(p), f.call())).kind,
+      "not-released",
+    );
+    assert.equal(f.events.filter((e) => e === "fence").length, before);
+    assert.equal(f.events.includes("mint"), false);
+    assert.equal(f.events.includes("commit"), false);
+    await f.owner.settle(p.preparation, undefined, "not-dispatched");
+  });
+test("same-call cutoff refusal after mint cannot be renewed by inspection", async (t) => {
+  const f = fixture(t),
+    p = await prepared(f);
+  let firstCall,
+    expired = false;
+  f.hooks.enroll = (c) => {
+    firstCall ??= c;
+    assert.equal(c, firstCall, "one original bounded call through dispatch");
+    if (expired) throw new Error("original native cutoff elapsed");
+  };
+  f.hooks.mint = () => {
+    expired = true;
+  };
+  assert.equal(
+    (await f.owner.dispatch(p.preparation, dispatchRequest(p), f.call())).kind,
+    "not-released",
+  );
+  assert.equal(f.events.includes("mint"), true);
+  assert.equal(f.events.includes("commit"), false);
+  await f.owner.settle(p.preparation, undefined, "not-dispatched");
+  assert.equal(f.events.filter((e) => e === "settle-token").length, 1);
+});
+for (const outcome of ["resolve", "reject"])
+  test("stop joins late native " + outcome + " without release or dispatch", async (t) => {
+    const f = fixture(t),
+      p = await prepared(f),
+      entered = deferred(),
+      gate = deferred();
+    f.hooks.enroll = async () => {
+      entered.resolve();
+      await gate.promise;
+      if (outcome === "reject") throw new Error("late native refusal");
+    };
+    const dispatch = f.owner.dispatch(p.preparation, dispatchRequest(p), f.call());
+    await entered.promise;
+    let stopped = false;
+    const stopping = f.owner.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(stopped, false);
+    assert.equal(f.events.includes("release-origin"), false);
+    assert.equal(f.events.includes("mint"), false);
+    gate.resolve();
+    assert.equal((await dispatch).kind, "not-released");
+    await stopping;
+    assert.equal(f.events.filter((e) => e === "release-origin").length, 1);
+    assert.equal(f.events.includes("commit"), false);
+  });
+test("owner requires captured inspectNative without synchronous fallback", async (t) => {
+  const f = fixture(t);
+  assert.throws(
+    () =>
+      new RepositoryWorkOperationOwnerV2(
+        { ...f.sources, native: { ...f.sources.native, inspectNative: undefined } },
+        limits,
+      ),
+  );
 });

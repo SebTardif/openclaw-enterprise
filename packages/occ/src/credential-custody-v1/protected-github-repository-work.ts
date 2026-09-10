@@ -139,6 +139,7 @@ export function createProtectedGitHubRepositorySourcesV2<
     store = options.store;
   const endpoint = Object.freeze({ ...options.endpoint });
   const fixedSelection = options.selection;
+  const sourcePrepareStateUse = fixedSelection.prepareStateUse.bind(fixedSelection);
   const sourceAcquire = fixedSelection.acquire.bind(fixedSelection);
   const sourceInspect = fixedSelection.inspect.bind(fixedSelection);
   const sourceInventory = fixedSelection.acquireInventory?.bind(fixedSelection);
@@ -174,7 +175,8 @@ export function createProtectedGitHubRepositorySourcesV2<
 
   // Only the original Runtime constructor can supply this recognizer. It is
   // captured once before requests; neither it nor a rebinding API escapes.
-  let recognizeNative: RepositoryWorkOriginNativeRecognizerV2<N, V>["recognize"] | undefined;
+  let originsBound = false;
+  let originRecognizers: Readonly<RepositoryWorkOriginNativeRecognizerV2<N, V>> | undefined;
   const originOwner = new RepositoryWorkOriginOwnerV2<N, A, V>({
     ...options,
     trust: options.trust,
@@ -183,16 +185,22 @@ export function createProtectedGitHubRepositorySourcesV2<
     limits: options.originLimits,
     nativeCustody: Object.freeze({
       bindOrigins(recognizer: RepositoryWorkOriginNativeRecognizerV2<N, V>): undefined {
-        if (recognizeNative !== undefined) fail();
-        recognizeNative = recognizer.recognize.bind(recognizer);
+        if (originsBound) fail();
+        originsBound = true;
+        originRecognizers = Object.freeze({
+          recognize: recognizer.recognize.bind(recognizer),
+          recognizeNative: recognizer.recognizeNative.bind(recognizer),
+        });
         return undefined;
       },
     }),
   });
-  const recognize = recognizeNative ?? fail();
+  const { recognize, recognizeNative } = originRecognizers ?? fail();
   const fixedNative = Object.freeze({
     acquire: originOwner.acquire.bind(originOwner),
     inspect: originOwner.inspect.bind(originOwner),
+    inspectNative: originOwner.inspectNative.bind(originOwner),
+    assertNativeCurrent: originOwner.assertNativeCurrent.bind(originOwner),
     assertCurrent: originOwner.assertCurrent.bind(originOwner),
     release: originOwner.release.bind(originOwner),
   });
@@ -338,6 +346,30 @@ export function createProtectedGitHubRepositorySourcesV2<
       );
     },
     inspect: fixedNative.inspect,
+    inspectNative(origin: Origin, call: AuthorityCallV1) {
+      const held = currentSession(origin);
+      if (closing || held.released) fail();
+      return track(
+        fixedNative.inspectNative(origin, call).then((observed) => {
+          // This boundary authenticates the next original native Exchange while
+          // State's readset may be retired. It cannot refresh State authority.
+          if (
+            closing ||
+            held.released ||
+            recognizeNative(origin, call) !== held.nativeSession ||
+            observed.context !== held.binding.context ||
+            observed.transportBinding !== held.binding.transportBinding ||
+            observed.receiverRef !== held.binding.receiverRef ||
+            observed.attachmentRef !== held.binding.attachmentRef ||
+            !same(observed.execution, held.binding.execution) ||
+            !same(observed.service, held.binding.service)
+          )
+            fail();
+          return observed;
+        }),
+      );
+    },
+    assertNativeCurrent: fixedNative.assertNativeCurrent,
     assertCurrent: fixedNative.assertCurrent,
     async release(origin: Origin) {
       const held = currentSession(origin);
@@ -403,6 +435,7 @@ export function createProtectedGitHubRepositorySourcesV2<
       }
       return data;
     },
+    prepareStateUse: sourcePrepareStateUse,
     retainPolicy: sourcePolicy,
     retainObservation: sourceObservation,
     observationCall: sourceObservationCall,
@@ -1204,6 +1237,7 @@ export function createProtectedGitHubRepositorySourcesV2<
               return undefined;
             fixedNative.assertCurrent(origin, call);
             releaseCurrent(held.nativeSession, call);
+            if (recognize(origin, call) !== held.nativeSession) fail();
             const token = Object.freeze({}) as ProtectedGitHubWorkTokenV2;
             tokens.set(token, entry);
             entry.returned = true;

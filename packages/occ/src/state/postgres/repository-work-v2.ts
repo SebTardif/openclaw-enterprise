@@ -19,6 +19,14 @@ import {
 } from "../../credential-inventory-v1/repository-lease-v2.ts";
 import { transitionRepositoryInventoryV2 } from "../../credential-inventory-v1/repository-lease-transactions-v2.ts";
 import { ScopeViolationError } from "../../errors.ts";
+import { createPostgresRepositoryWorkPolicyV2 } from "./repository-work-policy-v2.ts";
+import { readRepositoryWorkInventoryCurrentV2 } from "./repository-work-current-inventory-v2.ts";
+import {
+  canonicalRepositoryWorkV2,
+  repositoryWorkObjectV2 as object,
+  repositoryWorkUnavailableV2 as fail,
+} from "./repository-work-canonical-v2.ts";
+export { canonicalRepositoryWorkV2 } from "./repository-work-canonical-v2.ts";
 
 import type {
   RepositoryWorkJsonV2,
@@ -47,6 +55,7 @@ import type {
   RepositoryWorkCommittedRevocationUseLeaseV2,
   RepositoryWorkStateParticipantV2,
   RepositoryWorkStateBindingV2,
+  RepositoryWorkInventoryCurrentV2,
 } from "../../ports/repository-work-v2.ts";
 export type {
   RepositoryWorkJsonV2,
@@ -75,11 +84,9 @@ export type {
   RepositoryWorkStateParticipantV2,
   RepositoryWorkCommittedRevocationUseLeaseV2,
   RepositoryWorkStateBindingV2,
+  RepositoryWorkInventoryCurrentV2,
 } from "../../ports/repository-work-v2.ts";
 
-function fail(): never {
-  throw new ScopeViolationError("The repository Work operation is unavailable.");
-}
 const ref = (value: unknown): string =>
   typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}(?![\s\S])/.test(value)
     ? value
@@ -96,47 +103,6 @@ const instant = (value: unknown): string =>
   new Date(value).toISOString() === value
     ? value
     : fail();
-function object(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || types.isProxy(value) || Array.isArray(value))
-    return fail();
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return fail();
-  const result: Record<string, unknown> = Object.create(null);
-  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
-    if (!("value" in descriptor) || !descriptor.enumerable) return fail();
-    result[key] = descriptor.value;
-  }
-  if (Reflect.ownKeys(value).length !== Object.keys(result).length) return fail();
-  return result;
-}
-export function canonicalRepositoryWorkV2(value: unknown): string {
-  let nodes = 0;
-  const encode = (input: unknown, depth: number): string => {
-    if (++nodes > 8192 || depth > 24) return fail();
-    if (input === null || typeof input === "boolean" || typeof input === "string")
-      return JSON.stringify(input);
-    if (typeof input === "number" && Number.isSafeInteger(input) && !Object.is(input, -0))
-      return String(input);
-    if (input && typeof input === "object" && types.isProxy(input)) return fail();
-    if (Array.isArray(input)) {
-      const descriptors = Object.getOwnPropertyDescriptors(input);
-      if (Reflect.ownKeys(descriptors).length !== input.length + 1) return fail();
-      return `[${Array.from({ length: input.length }, (_, index) => {
-        const descriptor = descriptors[String(index)];
-        if (!descriptor || !("value" in descriptor)) return fail();
-        return encode(descriptor.value, depth + 1);
-      }).join(",")}]`;
-    }
-    const entries = object(input);
-    return `{${Object.keys(entries)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${encode(entries[key], depth + 1)}`)
-      .join(",")}}`;
-  };
-  const result = encode(value, 0);
-  if (Buffer.byteLength(result) > 131072) return fail();
-  return result;
-}
 function json(value: unknown): RepositoryWorkJsonV2 {
   // This parser only copies canonical data. It does not assign a Work/authority brand.
   const parsed: RepositoryWorkJsonV2 = JSON.parse(canonicalRepositoryWorkV2(value));
@@ -554,6 +520,11 @@ export interface RepositoryWorkExecutionV2 {
 }
 export interface RepositoryWorkBackendV2 {
   readonly context: QueryRepositoryFactoryContext;
+  /** Private exact State transaction pending set; no new work callback. */
+  joinAccepted(pending: Promise<unknown>): undefined;
+  readRuntimeAllocation?(
+    assignmentRef: string,
+  ): Promise<import("@openclaw-enterprise/contracts").RuntimeAllocation | undefined>;
   inventory(phase: {
     assertPreparing(stage: "scope" | "keys"): void;
     assertActive(): void;
@@ -591,7 +562,7 @@ interface Enrollment {
   active: boolean;
   accepting: boolean;
   checking: boolean;
-  stage: "source" | "scope" | "work" | "writing" | "finalizing" | "closed";
+  stage: "source" | "scope" | "policy" | "work" | "writing" | "finalizing" | "closed";
   readset?: RepositoryWorkReadsetV2;
   readWork?: VersionedWorkRefV2;
   readExecution?: WorkExecutionAssociationV2;
@@ -608,6 +579,11 @@ interface Enrollment {
   qualifyRevocation?: (operation: RepositoryInventoryOperationV2) => Promise<void>;
   releaseUntil?: number;
   actorId?: string;
+  policyAcquired?: boolean;
+  policyReady?: boolean;
+  readsetQualified?: boolean;
+  readsetAcquired?: boolean;
+  inventoryCurrent?: RepositoryWorkInventoryCurrentV2;
 }
 
 export function createPostgresRepositoryWorkBindingV2(
@@ -712,9 +688,7 @@ export function createPostgresRepositoryWorkBindingV2(
       for (const held of entry.held.values()) {
         const value: unknown = held.assertCurrent();
         if (value !== undefined) {
-          if (value && typeof value === "object" && "then" in value) {
-            tracked(entry, Promise.resolve(value));
-          }
+          entry.context.joinAccepted(Promise.resolve(value));
           reject(entry);
         }
       }
@@ -752,6 +726,128 @@ export function createPostgresRepositoryWorkBindingV2(
         call.signal.aborted
       )
         reject(entry);
+      return undefined;
+    },
+    acquireCurrentReadset(context, original, call, work, execution) {
+      try {
+        participant.assertOriginal(context, original, call);
+        const entry = members.get(context)!;
+        if (
+          entry.stage !== "policy" ||
+          !entry.policyReady ||
+          entry.readsetAcquired ||
+          entry.readset
+        )
+          reject(entry);
+        entry.readsetAcquired = true;
+        const selectedWork = json(work),
+          selectedExecution = json(execution);
+        return tracked(
+          entry,
+          (async () => {
+            const repository = createPostgresRepositoryWorkV2(
+              entry.backend.context,
+              entry.scope,
+              entry.inventory!.commitRef,
+            );
+            const readset = await repository.readChain(work.workRef);
+            assertEntry(entry);
+            const own = readset.lineage.at(-1);
+            if (
+              entry.stage !== "policy" ||
+              !own ||
+              own.revision !== work.revision ||
+              !equal(own.execution, selectedExecution) ||
+              !equal(work, selectedWork) ||
+              readset.lineage.some(
+                (row) => row.state !== "open" || Date.parse(row.originalHorizon) <= Date.now(),
+              )
+            )
+              reject(entry);
+            entry.readset = readset;
+            entry.readWork = work;
+            entry.readExecution = execution;
+            let held = true;
+            const check = (): undefined => {
+              if (!held || !entry.active) reject(entry);
+              entry.phase.assertActive();
+              return undefined;
+            };
+            const lease = Object.freeze({
+              readset,
+              assertCurrent: check,
+              async prepareCommit() {
+                check();
+              },
+              async release() {
+                held = false;
+              },
+            });
+            retain(entry, lease);
+            check();
+            return lease;
+          })(),
+        );
+      } catch (error) {
+        active.getStore()?.phase.poison(error);
+        const result = Promise.reject<never>(error);
+        void result.catch(() => {});
+        return result;
+      }
+    },
+    acquireCurrentPolicy(context, original, call, policyRef) {
+      try {
+        participant.assertOriginal(context, original, call);
+        const entry = members.get(context)!;
+        if (entry.stage !== "policy" || entry.policyAcquired) reject(entry);
+        entry.policyAcquired = true;
+        const exactRef = ref(policyRef);
+        return tracked(
+          entry,
+          (async () => {
+            const repository = createPostgresRepositoryWorkPolicyV2(
+              entry.backend.context,
+              entry.scope,
+              entry.inventory!.commitRef,
+            );
+            const stored = await repository.find(exactRef);
+            assertEntry(entry);
+            if (entry.stage !== "policy" || !stored) reject(entry);
+            let live = true;
+            const check = (): undefined => {
+              // Query-free: the same transaction still owns I/N/A and head SHARE.
+              // Work owns semantic version/profile/time comparison of this document.
+              if (!live || !entry.active) reject(entry);
+              entry.phase.assertActive();
+              return undefined;
+            };
+            const lease = Object.freeze({
+              policy: stored.document,
+              assertCurrent: check,
+              async prepareCommit() {
+                check();
+              },
+              async release() {
+                live = false;
+              },
+            });
+            retain(entry, lease);
+            check();
+            entry.policyReady = true;
+            return lease;
+          })(),
+        );
+      } catch (error) {
+        active.getStore()?.phase.poison(error);
+        const rejected = Promise.reject<never>(error);
+        void rejected.catch(() => {});
+        return rejected;
+      }
+    },
+    assertInventoryCurrent(context, original, call, current) {
+      participant.assertOriginal(context, original, call);
+      const entry = members.get(context)!;
+      if (entry.stage !== "work" || entry.inventoryCurrent !== current) reject(entry);
       return undefined;
     },
     inventory(context) {
@@ -1122,6 +1218,29 @@ export function createPostgresRepositoryWorkBindingV2(
                 retain(entry, lease);
                 return undefined;
               },
+              joinAccepted(pending) {
+                if (
+                  !entry ||
+                  this !== context ||
+                  !entry.active ||
+                  !types.isPromise(pending) ||
+                  (!entry.checking && active.getStore() !== entry)
+                ) {
+                  if (entry) reject(entry);
+                  fail();
+                }
+                // Preserve completion ownership before a callback's synchronous
+                // cancellation/poison can refuse operation permission. The exact
+                // receiver/private context/Promise checks above still apply.
+                backend.joinAccepted(pending);
+                tracked(entry, pending);
+                if (!entry.checking) entry.phase.assertOperationActive();
+                if (entry.checking)
+                  entry.phase.poison(
+                    new ScopeViolationError("Asynchronous currentness is unavailable."),
+                  );
+                return undefined;
+              },
             });
             const current: Enrollment = {
               original,
@@ -1256,8 +1375,10 @@ export function createPostgresRepositoryWorkBindingV2(
                       sessionRef: string;
                       inventory: RepositoryWorkSourceLeaseV2["qualifyInventory"];
                       inventoryRead: RepositoryWorkSourceLeaseV2["qualifyInventoryRead"];
+                      inventoryCurrent: RepositoryWorkSourceLeaseV2["qualifyInventoryCurrent"];
                       custodyInventory: RepositoryWorkCustodyLeaseV2["qualifyInventory"];
                       custodyInventoryRead: RepositoryWorkCustodyLeaseV2["qualifyInventoryRead"];
+                      custodyInventoryCurrent: RepositoryWorkCustodyLeaseV2["qualifyInventoryCurrent"];
                       inventoryClock: RepositoryWorkCustodyLeaseV2["inventoryClock"];
                       mint: RepositoryWorkSourceLeaseV2["qualifyMintUse"];
                       custodyMint: RepositoryWorkCustodyLeaseV2["qualifyMintUse"];
@@ -1270,12 +1391,14 @@ export function createPostgresRepositoryWorkBindingV2(
                   retain(current, source);
                   const actorId = ref(source.actorId);
                   current.actorId = actorId;
+                  const prepareUse = source.prepareUse;
                   const qualifyReadset = source.qualifyReadset;
                   const qualifyAdmission = source.qualifyAdmission;
                   const qualifyClosure = source.qualifyClosure;
                   const qualifyObservation = source.qualifyObservation;
                   const inventory = source.qualifyInventory,
                     inventoryRead = source.qualifyInventoryRead,
+                    inventoryCurrent = source.qualifyInventoryCurrent,
                     mint = source.qualifyMintUse,
                     revocation = source.qualifyRevocationUse;
                   if (canonicalRepositoryWorkV2(original) !== originalData) reject(current);
@@ -1286,6 +1409,7 @@ export function createPostgresRepositoryWorkBindingV2(
                   const stageRelease = custody.stageRelease;
                   const custodyInventory = custody.qualifyInventory,
                     custodyInventoryRead = custody.qualifyInventoryRead,
+                    custodyInventoryCurrent = custody.qualifyInventoryCurrent,
                     custodyMint = custody.qualifyMintUse,
                     custodyRevocation = custody.qualifyRevocationUse;
                   const clock = custody.inventoryClock,
@@ -1304,6 +1428,7 @@ export function createPostgresRepositoryWorkBindingV2(
                     !session ||
                     typeof session !== "object" ||
                     [
+                      prepareUse,
                       qualifyReadset,
                       qualifyAdmission,
                       qualifyClosure,
@@ -1325,8 +1450,10 @@ export function createPostgresRepositoryWorkBindingV2(
                     sessionRef,
                     inventory,
                     inventoryRead,
+                    inventoryCurrent,
                     custodyInventory,
                     custodyInventoryRead,
+                    custodyInventoryCurrent,
                     inventoryClock,
                     mint,
                     custodyMint,
@@ -1361,6 +1488,15 @@ export function createPostgresRepositoryWorkBindingV2(
                       reject(current);
                     fence(current);
                   }
+                  current.stage = "policy";
+                  // The entered completion is captured once and joined under the
+                  // original acceptance/terminal owner, including cancellation.
+                  await tracked(
+                    current,
+                    Promise.resolve().then(() => Reflect.apply(prepareUse, source, [])),
+                  );
+                  while (current.pending.size) await Promise.allSettled([...current.pending]);
+                  fence(current);
                   current.stage = "work";
                   return true;
                 });
@@ -1376,8 +1512,10 @@ export function createPostgresRepositoryWorkBindingV2(
                   sessionRef,
                   inventory,
                   inventoryRead,
+                  inventoryCurrent,
                   custodyInventory,
                   custodyInventoryRead,
+                  custodyInventoryCurrent,
                   inventoryClock,
                   mint,
                   custodyMint,
@@ -1486,15 +1624,22 @@ export function createPostgresRepositoryWorkBindingV2(
                   current.written = kind;
                 };
                 const requireReadset = () => {
-                  if (!current.readset) reject(current);
+                  if (!current.readset || !current.readsetQualified) reject(current);
                   return current.readset;
                 };
                 const unit = Object.freeze<RepositoryWorkUnitV2>({
                   context,
                   readForMutation: (work, execution) =>
                     operation(async () => {
-                      if (current.readset || current.written) reject(current);
-                      const readset = await repository.readChain(work.workRef);
+                      if (
+                        current.written ||
+                        current.readsetQualified ||
+                        (current.readset &&
+                          (!equal(current.readWork, work) ||
+                            !equal(current.readExecution, execution)))
+                      )
+                        reject(current);
+                      const readset = current.readset ?? (await repository.readChain(work.workRef));
                       const own = readset.lineage.at(-1);
                       if (
                         !own ||
@@ -1509,6 +1654,7 @@ export function createPostgresRepositoryWorkBindingV2(
                         reject(current);
                       await Reflect.apply(qualifyReadset, source!, [readset]);
                       current.readset = readset;
+                      current.readsetQualified = true;
                       current.readWork = Object.freeze({ ...work });
                       current.readExecution = execution;
                       return readset;
@@ -1703,6 +1849,29 @@ export function createPostgresRepositoryWorkBindingV2(
                       );
                       fence(current);
                       return found;
+                    }),
+                  readRepositoryInventoryCurrent: (target) =>
+                    operation(async () => {
+                      if (
+                        current.written ||
+                        current.inventoryCurrent ||
+                        typeof inventoryCurrent !== "function" ||
+                        typeof custodyInventoryCurrent !== "function"
+                      )
+                        reject(current);
+                      const facts = await readRepositoryWorkInventoryCurrentV2(
+                        repositoryInventory,
+                        fixedScope,
+                        target,
+                      );
+                      current.inventoryCurrent = facts;
+                      await Reflect.apply(inventoryCurrent, source!, [facts]);
+                      fence(current);
+                      await inCustody(current, () =>
+                        Reflect.apply(custodyInventoryCurrent, custody!, [facts]),
+                      );
+                      fence(current);
+                      return facts;
                     }),
                   readExactOperation: () =>
                     operation(async () => {

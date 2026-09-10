@@ -89,7 +89,8 @@ type Missing = { readonly [K in keyof RepositoryWorkStateBindingsV2]: never };
 /** Original assignment/admission/current-policy owner. The fixed source must
  * privately recognize S and its relationship to the SAME Runtime origin.
  * No implementation, default admission or synthetic root is supplied here.
- * retainPolicy borrows the real policy participant in the original State unit;
+ * retainPolicy borrows the real policy participant only in that unit's captured
+ * prepareUse phase, after custody and I/N/A locks and before unit operations;
  * retainObservation is distinct post-closure historical responsibility.
  */
 export interface RepositoryWorkSelectionSourceV2<
@@ -113,6 +114,13 @@ export interface RepositoryWorkSelectionSourceV2<
     origin: B["origin"],
     call: AuthorityCallV1,
   ): Promise<RepositoryWorkSelectionDataV2<V>>;
+  /** Retire the original initial SQL readset before a Work transaction starts.
+   * Later fresh-use enrollment carries no old readset and grants no authority. */
+  prepareStateUse(
+    selection: B["selection"],
+    origin: B["origin"],
+    call: AuthorityCallV1,
+  ): Promise<void>;
   retainPolicy(
     context: RepositoryWorkTransactionContextV2,
     selection: B["selection"],
@@ -280,6 +288,8 @@ type Entry<B extends RepositoryWorkStateBindingsV2, V extends GitHubMediationVer
   joined?: Promise<"recorded" | "unavailable">;
   inventory?: Inventory<B, V>;
   selectionRelease?: Promise<void>;
+  readonly nativePending: Set<Promise<void>>;
+  useFailed?: boolean;
 };
 type InventoryPhase = {
   original: WorkOriginalOperationV2;
@@ -529,6 +539,8 @@ export class RepositoryWorkStateAdapterV2<
     this.native = Object.freeze({
       acquire: native.acquire.bind(native),
       inspect: native.inspect.bind(native),
+      inspectNative: native.inspectNative.bind(native),
+      assertNativeCurrent: native.assertNativeCurrent.bind(native),
       assertCurrent: native.assertCurrent.bind(native),
       release: native.release.bind(native),
     });
@@ -537,6 +549,7 @@ export class RepositoryWorkStateAdapterV2<
       ...(acquireInventory ? { acquireInventory: acquireInventory.bind(selection) } : {}),
       acquire: selection.acquire.bind(selection),
       inspect: selection.inspect.bind(selection),
+      prepareStateUse: selection.prepareStateUse.bind(selection),
       retainPolicy: selection.retainPolicy.bind(selection),
       retainObservation: selection.retainObservation.bind(selection),
       observationCall: selection.observationCall.bind(selection),
@@ -552,6 +565,10 @@ export class RepositoryWorkStateAdapterV2<
     this.store = binding.bindOriginalSources(
       Object.freeze<RepositoryWorkOriginalSourceV2>({
         acquire: async (context, original, call) => {
+          // Capture the original State receiver before entering source callbacks.
+          // A refused asynchronous assertion must join the transaction itself,
+          // before rollback or any dependent participant can retire.
+          const joinAccepted = context.joinAccepted.bind(context);
           assertOriginal(context, original, call);
           const member = this.operations.get(original);
           if (!member || (member.inventory ? member.inventory.released : !member.entry.active))
@@ -573,52 +590,45 @@ export class RepositoryWorkStateAdapterV2<
             phase = member.phase;
           if (entry.settling && !historical) fail();
           if (inventory && (!phase || !inventory.source)) fail();
-          const held =
-            mode === "inventory-observation"
-              ? await inventory!.source!.retainObservation(context, original, phase!.input, call)
-              : mode === "observation"
-                ? await this.selection.retainObservation(context, entry.selection, original, call)
-                : await this.selection.retainPolicy(context, entry.selection, original, call);
-          // Transfer release before other lease members/getters or subsequent awaits.
-          context.retain(held);
-          const check = held.assertCurrent.bind(held);
-          const policy = historical
-            ? undefined
-            : (snapshot(own(held, "policy")) as RepositoryWorkPolicyV2);
-          // Token issuance is a separate original lease. Retain its cleanup
-          // before currentness/getters or any later asynchronous acquisition.
-          const issue =
-            mode === "inventory-issue"
-              ? await inventory!.source!.retainIssue(context, original, phase!.input, call)
-              : undefined;
-          if (mode === "inventory-issue") {
-            if (!issue || typeof issue !== "object") fail();
-            context.retain(issue);
-          }
-          const checkIssue = issue?.assertCurrent.bind(issue);
           let live = true;
+          let sourceReady = false;
+          let completed = false;
+          let completion: Promise<void> | undefined;
+          let joinedRelease: Promise<void> | undefined;
+          let checkPrefix: (() => undefined) | undefined;
+          let checkPolicy: (() => undefined) | undefined;
+          let policy: RepositoryWorkPolicyV2 | undefined;
           const pending = new Set<Promise<unknown>>();
+          const tracked = <T>(work: Promise<T>): Promise<T> => {
+            pending.add(work);
+            void work.then(
+              () => pending.delete(work),
+              () => pending.delete(work),
+            );
+            return work;
+          };
           const sync = (value: unknown): void => {
             if (value === undefined) return;
-            const work = Promise.resolve(value);
-            pending.add(work);
-            void work.finally(() => pending.delete(work)).catch(() => {});
+            live = false;
+            const entered = tracked(Promise.resolve(value));
+            joinAccepted(entered);
             fail();
           };
           const current = (): undefined => {
             if (!live) fail();
-            if (entry.settling && !historical) fail();
+            if ((entry.settling || entry.useFailed) && !historical) fail();
             if (inventory && (inventory.closing || inventory.released)) fail();
             if (!equal(original, member.originalData)) fail();
-            sync(check());
-            if (checkIssue) sync(checkIssue());
+            if (checkPrefix) sync(checkPrefix());
             if (
               call.signal.aborted ||
               !Number.isFinite(Date.parse(call.deadline)) ||
               Date.parse(call.deadline) <= Date.now()
             )
               fail();
-            if (!historical) {
+            if (completed && !historical) {
+              if (!checkPolicy || !policy) fail();
+              sync(checkPolicy());
               const decision = evaluateRepositoryWorkProtocolPolicyV2(
                 policy,
                 {
@@ -641,29 +651,79 @@ export class RepositoryWorkStateAdapterV2<
                 repositoryWorkCurrentPolicyArmV2(entry.current),
               );
               if (decision.kind !== "matches") fail();
-              sync(this.native.assertCurrent(entry.origin, call));
+              if (call.signal.aborted) fail();
+            }
+            if (!historical) {
+              // No State readset exists during acquisition. Full currentness
+              // becomes required only after retainPolicy completes in this unit.
+              sync(
+                completed
+                  ? this.native.assertCurrent(entry.origin, call)
+                  : this.native.assertNativeCurrent(entry.origin, call),
+              );
               if (call.signal.aborted) fail();
             }
             if (!equal(original, member.originalData)) fail();
             return undefined;
           };
+          const qualifiedCurrent = (): undefined => {
+            if (!completed) fail();
+            return current();
+          };
           const lease = Object.freeze<RepositoryWorkSourceLeaseV2>({
             actorId: entry.data.current.service.id,
             assertCurrent: current,
+            prepareUse: () => {
+              // State captures this method once. Fresh committed-use reentry
+              // acquires a new original source lease, never reuses completion.
+              if (completion || !sourceReady) {
+                live = false;
+                fail();
+              }
+              completion = tracked(
+                Promise.resolve()
+                  .then(async () => {
+                    current();
+                    if (!historical) {
+                      const held = await this.selection.retainPolicy(
+                        context,
+                        entry.selection,
+                        original,
+                        call,
+                      );
+                      // Transfer even a late acquisition before observing any
+                      // policy/currentness getter. The original State joins release.
+                      context.retain(held);
+                      checkPolicy = held.assertCurrent.bind(held);
+                      policy = snapshot(own(held, "policy")) as RepositoryWorkPolicyV2;
+                    }
+                    current();
+                    completed = true;
+                    qualifiedCurrent();
+                  })
+                  .catch((error: unknown) => {
+                    live = false;
+                    throw error;
+                  }),
+              );
+              return completion;
+            },
             prepareCommit: async () => {
-              current();
+              qualifiedCurrent();
             }, // State prepares the separately retained original lease once.
-            release: async () => {
+            release: () => {
               live = false;
-              while (pending.size) await Promise.allSettled([...pending]);
+              return (joinedRelease ??= Promise.resolve().then(async () => {
+                while (pending.size) await Promise.allSettled([...pending]);
+              }));
             },
             qualifyReadset: async (rows) => {
-              current();
+              qualifiedCurrent();
               compareRepositoryWorkStateReadsetV2(rows, entry.current);
-              current();
+              qualifiedCurrent();
             },
             qualifyAdmission: async (candidate) => {
-              current();
+              qualifiedCurrent();
               if (
                 mode !== "admission" ||
                 entry.data.admission.kind !== "new" ||
@@ -671,11 +731,11 @@ export class RepositoryWorkStateAdapterV2<
               )
                 fail();
               compareAdmission(candidate, entry.current);
-              current();
+              qualifiedCurrent();
             },
             qualifyClosure: async () => fail(), // Repository use grants no independent Work closure.
             qualifyObservation: async (operation, observation) => {
-              current();
+              qualifiedCurrent();
               if (
                 mode !== "observation" ||
                 operation.operationRef !== entry.data.current.original.operationRef ||
@@ -686,26 +746,26 @@ export class RepositoryWorkStateAdapterV2<
                 observation.evidenceRef !== entry.data.observationEvidenceRef
               )
                 fail();
-              current();
+              qualifiedCurrent();
             },
             qualifyInventory: async (facts) => {
-              current();
+              qualifiedCurrent();
               if (!inventory || !phase) fail();
               this.qualifyInventoryFacts(inventory, phase, facts);
               if (liveMutation(phase.input)) {
                 if (mode !== "inventory-issue" || !facts.readset) fail();
                 compareRepositoryWorkStateReadsetV2(facts.readset, entry.current);
               } else if (mode !== "inventory-observation") fail();
-              current();
+              qualifiedCurrent();
             },
             qualifyInventoryRead: async (operation) => {
-              current();
+              qualifiedCurrent();
               if (!inventory || !phase) fail();
               if (operation) this.qualifyInventoryOperation(inventory, phase, operation);
-              current();
+              qualifiedCurrent();
             },
             qualifyMintUse: async (operation, record, rows) => {
-              current();
+              qualifiedCurrent();
               if (
                 !inventory ||
                 !phase ||
@@ -722,10 +782,10 @@ export class RepositoryWorkStateAdapterV2<
               )
                 fail();
               compareRepositoryWorkStateReadsetV2(rows, entry.current);
-              current();
+              qualifiedCurrent();
             },
             qualifyRevocationUse: async (operation, record) => {
-              current();
+              qualifiedCurrent();
               if (
                 !inventory ||
                 !phase ||
@@ -744,9 +804,56 @@ export class RepositoryWorkStateAdapterV2<
                 record.protectedRevocationRef !== phase.input.protectedRevocationRef
               )
                 fail();
-              current();
+              qualifiedCurrent();
             },
           });
+          // Register the source's join before any entered prefix acquisition or
+          // currentness callback. State deduplicates this exact retained lease.
+          context.retain(lease);
+          try {
+            if (!historical) {
+              const enrollment = tracked(this.enrollNative(entry, call));
+              joinAccepted(enrollment);
+              await enrollment;
+            }
+            if (!historical && !active) {
+              // Original State may reenter through a known committed witness.
+              // Adapter runs retire the initial readset before store.run; no
+              // later native inspection reopens it. This fresh enrollment is
+              // owned by the entered State acquisition and creates no readset.
+              current();
+              await this.selection.prepareStateUse(entry.selection, entry.origin, call);
+              current();
+            }
+            let prefix: RepositoryWorkHeldLeaseV2 | undefined;
+            if (mode === "inventory-observation") {
+              prefix = await inventory!.source!.retainObservation(
+                context,
+                original,
+                phase!.input,
+                call,
+              );
+            } else if (mode === "observation") {
+              prefix = await this.selection.retainObservation(
+                context,
+                entry.selection,
+                original,
+                call,
+              );
+            } else if (mode === "inventory-issue") {
+              prefix = await inventory!.source!.retainIssue(context, original, phase!.input, call);
+            }
+            if (historical || mode === "inventory-issue") {
+              if (!prefix || typeof prefix !== "object") fail();
+              context.retain(prefix);
+              checkPrefix = prefix.assertCurrent.bind(prefix);
+            }
+            current();
+            sourceReady = true;
+          } catch (error) {
+            live = false;
+            throw error;
+          }
           return lease;
         },
       }),
@@ -815,7 +922,8 @@ export class RepositoryWorkStateAdapterV2<
   }
   private liveInventory(scope: Inventory<B, V>, call: AuthorityCallV1): void {
     const entry = scope.entry;
-    if (entry.settling || !entry.active || scope.closing || scope.released) fail();
+    if (entry.settling || entry.useFailed || !entry.active || scope.closing || scope.released)
+      fail();
     this.bounds(call);
     if (
       call.context !== entry.native.context ||
@@ -823,8 +931,9 @@ export class RepositoryWorkStateAdapterV2<
       call.requestRef !== entry.request.request_ref
     )
       fail();
-    const checked = this.native.assertCurrent(entry.origin, call);
+    const checked = this.native.assertNativeCurrent(entry.origin, call);
     if (checked !== undefined) {
+      entry.useFailed = true;
       const joined = Promise.resolve(checked);
       scope.pending.add(joined);
       void joined.finally(() => scope.pending.delete(joined)).catch(() => {});
@@ -852,6 +961,7 @@ export class RepositoryWorkStateAdapterV2<
     scope.opening = this.trackedInventory(scope, async () => {
       let release: (() => Promise<void>) | undefined;
       try {
+        await this.enrollNative(entry, call);
         this.liveInventory(scope, call);
         const source = await this.selection.acquireInventory!(entry.selection, origin, call);
         if (!source) return undefined;
@@ -997,8 +1107,10 @@ export class RepositoryWorkStateAdapterV2<
     return this.trackedInventory(scope, async () => {
       const live = liveMutation(input);
       const call = live ? (liveCall ?? fail()) : await scope.source!.observationCall();
-      if (live) this.liveInventory(scope, call);
-      else this.bounds(call);
+      if (live) {
+        await this.enrollNative(scope.entry, call);
+        this.liveInventory(scope, call);
+      } else this.bounds(call);
       // Reserve is the fixed original selected input. All other phase originals
       // come from the same original State selection, never from the caller.
       const original =
@@ -1098,9 +1210,10 @@ export class RepositoryWorkStateAdapterV2<
     const scope = this.inventoryMember(handle),
       member = this.inventoryClaims.get(claim);
     if (!member || member.inventory !== scope || member.used) fail();
-    this.liveInventory(scope, call);
     member.used = true;
     return this.trackedInventory(scope, async () => {
+      await this.enrollNative(scope.entry, call);
+      this.liveInventory(scope, call);
       const lease = await this.acquireCommittedMint(member.commit, call);
       if (!lease) return undefined;
       const release = lease.release.bind(lease);
@@ -1228,6 +1341,64 @@ export class RepositoryWorkStateAdapterV2<
     });
     return scope.joined;
   }
+  private nativeBinding(raw: RepositoryWorkNativeBindingV2): RepositoryWorkNativeBindingV2 {
+    return Object.freeze({
+      context: own(raw, "context") as RepositoryWorkNativeBindingV2["context"],
+      transportBinding: own(raw, "transportBinding") as object,
+      attachmentRef: own(raw, "attachmentRef") as string,
+      receiverRef: own(raw, "receiverRef") as string,
+      execution: snapshot(own(raw, "execution") as RepositoryWorkNativeBindingV2["execution"]),
+      service: snapshot(own(raw, "service") as RepositoryWorkNativeBindingV2["service"]),
+    });
+  }
+  private async inspectNative(
+    origin: B["origin"],
+    retained: RepositoryWorkNativeBindingV2,
+    request: OpenRead<V>,
+    call: AuthorityCallV1,
+  ): Promise<void> {
+    const fields = ["context", "signal", "requestRef", "recipientRef", "deadline"] as const;
+    const before = fields.map((name) => own(call, name));
+    this.bounds(call);
+    const native = this.nativeBinding(await this.native.inspectNative(origin, call));
+    if (fields.some((name, i) => own(call, name) !== before[i])) fail();
+    this.bounds(call);
+    if (
+      native.context !== call.context ||
+      native.receiverRef !== call.recipientRef ||
+      call.requestRef !== request.request_ref ||
+      native.attachmentRef !== request.attachment_ref ||
+      !native.transportBinding ||
+      typeof native.transportBinding !== "object" ||
+      native.context !== retained.context ||
+      native.transportBinding !== retained.transportBinding ||
+      native.attachmentRef !== retained.attachmentRef ||
+      native.receiverRef !== retained.receiverRef ||
+      !equal(native.execution, retained.execution) ||
+      !equal(native.service, retained.service)
+    )
+      fail();
+  }
+  private enrollNative(entry: Entry<B, V>, call: AuthorityCallV1): Promise<void> {
+    // Register ownership before entering even a synchronous supplier callback.
+    // Settlement invalidates new entry immediately, then joins this actual work.
+    const pending = Promise.resolve().then(async () => {
+      if (!entry.active || entry.settling || entry.useFailed) fail();
+      try {
+        await this.inspectNative(entry.origin, entry.native, entry.request, call);
+        if (!entry.active || entry.settling || entry.useFailed) fail();
+      } catch (error) {
+        entry.useFailed = true;
+        throw error;
+      }
+    });
+    entry.nativePending.add(pending);
+    void pending.then(
+      () => entry.nativePending.delete(pending),
+      () => entry.nativePending.delete(pending),
+    );
+    return pending;
+  }
   private bounds(call: AuthorityCallV1) {
     const remaining = Date.parse(call.deadline) - Date.now();
     if (call.signal.aborted || !Number.isFinite(remaining) || remaining <= 0) fail();
@@ -1253,9 +1424,30 @@ export class RepositoryWorkStateAdapterV2<
     mode: Run<B, V>["mode"],
     body: (unit: Parameters<Parameters<RepositoryWorkStoreV2["run"]>[3]>[0]) => Promise<T>,
   ) {
-    return this.enrolled(entry, original, mode, () =>
-      this.store.run(original, call, this.bounds(call), body),
-    );
+    return this.enrolled(entry, original, mode, async () => {
+      if (mode !== "observation" && mode !== "inventory-observation") {
+        // This runs before opening State's transaction or acquiring custody.
+        // No full State fence is permitted across the original readset gap.
+        try {
+          if (entry.useFailed) fail();
+          await this.enrollNative(entry, call);
+          for (const after of [false, true]) {
+            if (after) await this.selection.prepareStateUse(entry.selection, entry.origin, call);
+            const checked: unknown = this.native.assertNativeCurrent(entry.origin, call);
+            if (checked !== undefined) {
+              entry.useFailed = true;
+              await Promise.allSettled([Promise.resolve(checked)]);
+              fail();
+            }
+            this.bounds(call);
+          }
+        } catch (error) {
+          entry.useFailed = true;
+          throw error;
+        }
+      }
+      return this.store.run(original, call, this.bounds(call), body);
+    });
   }
   private original(p: RepositoryWorkStatePreparationV2<V>, origin?: B["origin"]): Entry<B, V> {
     const entry = this.entries.get(p);
@@ -1292,6 +1484,10 @@ export class RepositoryWorkStateAdapterV2<
     );
     if (decoded?.method !== "open-read" || captured.version !== this.protocolVersion) fail();
     request = captured;
+    // Preserve initial full inspection; refresh the actual native RPC before
+    // selection acquisition can use its first native/cutoff-dependent fence.
+    const native = this.nativeBinding(await this.native.inspect(origin, call));
+    await this.inspectNative(origin, native, request, call);
     const selection = await this.selection.acquire(origin, request, call);
     if (selection === undefined) return undefined;
     let accepted = false;
@@ -1299,7 +1495,6 @@ export class RepositoryWorkStateAdapterV2<
       const supplied = await this.selection.inspect(selection, origin, call);
       const originals = this.selectionOriginals(supplied);
       const raw = snapshot(supplied);
-      const native = await this.native.inspect(origin, call);
       const current = compareRepositoryWorkCurrentV2(
         raw.current,
         request,
@@ -1335,6 +1530,7 @@ export class RepositoryWorkStateAdapterV2<
         data: raw,
         originals,
         native,
+        nativePending: new Set(),
         current,
         active: true,
         settling: false,
@@ -1439,6 +1635,7 @@ export class RepositoryWorkStateAdapterV2<
     call: AuthorityCallV1,
   ): Promise<RepositoryWorkCurrentV2<V>> {
     const entry = this.original(p, origin);
+    await this.enrollNative(entry, call);
     const supplied = await this.selection.inspect(entry.selection, origin, call);
     const originals = this.selectionOriginals(supplied);
     if (
@@ -1449,7 +1646,9 @@ export class RepositoryWorkStateAdapterV2<
     )
       fail();
     const selected = snapshot(supplied);
-    const native = await this.native.inspect(origin, call),
+    // Runtime.inspect owns initial assignment acquisition and must not reopen
+    // it between units. Current policy/rows are qualified inside prepareUse.
+    const native = entry.native,
       current = compareRepositoryWorkCurrentV2(
         selected.current,
         entry.request,
@@ -1502,6 +1701,7 @@ export class RepositoryWorkStateAdapterV2<
       wire.dns_binding_ref !== expected.dnsBindingRef
     )
       fail();
+    await this.enrollNative(entry, call);
     const supplied = this.tokens.inspect(token, entry.selection);
     const receiver = own(supplied, "receiver"),
       session = own(supplied, "session");
@@ -1606,6 +1806,7 @@ export class RepositoryWorkStateAdapterV2<
     entry.joined = Promise.resolve().then(async () => {
       let result: "recorded" | "unavailable" = "unavailable";
       try {
+        while (entry.nativePending.size) await Promise.allSettled([...entry.nativePending]);
         if (!entry.dispatchEntered) result = "recorded";
         else {
           const call = await this.selection.observationCall(entry.selection);

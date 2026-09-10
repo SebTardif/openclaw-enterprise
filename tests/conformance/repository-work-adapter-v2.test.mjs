@@ -373,9 +373,29 @@ function fixture(options = {}) {
     db.heads.set(record.workRef, canonicalRepositoryWorkV2(record));
     db.operations.set(admission.operationRef, canonicalRepositoryWorkV2(admission));
   }
+  let initialReadset = true,
+    handoff = false,
+    fullCurrent = false;
   const enter = async (scope, bounds, execution, body) => {
+    if (options.strictTransfer)
+      assert.equal(initialReadset, false, "old SQL owner retired before entry");
+    events.push(["outer-enter"]);
     assert.equal(bounds.signal.aborted, false);
     const local = Object.fromEntries(Object.entries(db).map(([k, v]) => [k, new Map(v)]));
+    // Controlled outer SQL owner models the original backend's accepted-work
+    // drain, not its authority. Actual State context membership/phase checks
+    // still decide whether Work can register a continuation.
+    const accepted = new Set();
+    // Model the selected outer transaction bound while preserving its drain.
+    // This is a controlled clock/SQL peer, not a real database timeout result.
+    const timer = setTimeout(() => {
+      execution.phase.poison(new Error("Controlled transaction deadline."));
+      events.push(["outer-timeout"]);
+    }, bounds.timeoutMs);
+    let enrollmentClosed = false;
+    const drainAccepted = async () => {
+      while (accepted.size) await Promise.all([...accepted]);
+    };
     const context = {
       scope,
       transaction: {
@@ -390,6 +410,35 @@ function fixture(options = {}) {
           await hooks.query?.(sql, args);
           if (sql.startsWith("SELECT id FROM occ."))
             return { rows: [{ id: args.at(-1) }], rowCount: 1 };
+          if (
+            options.currentPolicy &&
+            sql.startsWith("SELECT v.canonical_document FROM occ.repository_work_policy_heads_v2")
+          ) {
+            assert.deepEqual(args, [
+              sqlScope.installationId,
+              sqlScope.namespaceId,
+              sqlScope.agentId,
+              policy.policyRef,
+            ]);
+            // Only the SQL transport is controlled. The original State policy
+            // repository decodes this envelope and the Work adapter decides use.
+            return {
+              rows: [
+                {
+                  canonical_document: canonicalRepositoryWorkV2({
+                    ...policy.scope,
+                    policyRef: policy.policyRef,
+                    version: policy.version,
+                    status: policy.status,
+                    servicePrincipalId: policy.servicePrincipalId,
+                    repositoryId: policy.repository.target.repositoryId,
+                    document: policy,
+                  }),
+                },
+              ],
+              rowCount: 1,
+            };
+          }
           let table = sql.includes("repository_work_heads_v2")
             ? local.heads
             : sql.includes("repository_work_operations_v2")
@@ -418,6 +467,18 @@ function fixture(options = {}) {
     try {
       const result = await body({
         context,
+        joinAccepted(pending) {
+          const settled = pending.then(
+            () => undefined,
+            (error) => execution.phase.poison(error),
+          );
+          accepted.add(settled);
+          void settled.then(() => accepted.delete(settled));
+          events.push(["outer-join-accepted"]);
+          if (enrollmentClosed)
+            execution.phase.poison(new Error("Controlled late Work enrollment."));
+          return undefined;
+        },
         inventory(owner) {
           if (options.inventory) return inventoryStorage(local, owner, execution.commitRef, hooks);
           const unused = async () => {
@@ -466,8 +527,10 @@ function fixture(options = {}) {
         },
       });
       await execution.phase.drainAccepted();
+      await drainAccepted();
       await execution.phase.runFinalization(() => execution.prepareCommit());
       await execution.phase.drainAccepted();
+      await drainAccepted();
       execution.phase.assertCommitReady();
       execution.assertCommitReady();
       execution.disposition = "sent";
@@ -478,8 +541,11 @@ function fixture(options = {}) {
       events.push(["ack"]);
       return result;
     } finally {
+      enrollmentClosed = true;
+      await drainAccepted();
       execution.close();
       execution.phase.close();
+      clearTimeout(timer);
       events.push(["outer-closed"]);
     }
   };
@@ -492,11 +558,29 @@ function fixture(options = {}) {
       return v.origin;
     },
     async inspect(o, c) {
+      if (options.strictTransfer)
+        assert.equal(initialReadset, true, "no later initial-readset refresh");
+      events.push(["native-inspect"]);
       assert.equal(o, v.origin);
       assert.equal(c.context, v.context);
       return v.native;
     },
+    async inspectNative(o, c) {
+      assert.equal(o, v.origin);
+      assert.equal(c.context, v.context);
+      events.push(["native-enroll", c.deadline]);
+      return (await hooks.enroll?.(c)) ?? v.native;
+    },
+    assertNativeCurrent(o, c) {
+      assert.equal(o, v.origin);
+      assert.equal(c.signal.aborted, false);
+      events.push(["native-only"]);
+      return hooks.nativeOnly?.(c) ?? hooks.nativeCurrent?.(c);
+    },
     assertCurrent(o, c) {
+      if (options.strictTransfer)
+        assert.equal(fullCurrent, true, "full fence requires same-unit State hold");
+      events.push(["native-and-state"]);
       assert.equal(o, v.origin);
       assert.equal(c.signal.aborted, false);
       return hooks.nativeCurrent?.();
@@ -589,7 +673,63 @@ function fixture(options = {}) {
       assert.equal(o, v.origin);
       return hooks.inspect?.(data) ?? data;
     },
+    async prepareStateUse(s, o, c) {
+      assert.equal(s, selected);
+      assert.equal(o, v.origin);
+      if (options.strictTransfer) {
+        assert.equal(handoff, false);
+        assert.equal(fullCurrent, false);
+      }
+      events.push(["handoff-enter"]);
+      await hooks.handoff?.(c);
+      initialReadset = false;
+      handoff = true;
+      events.push(["readset-retired"]);
+    },
     async retainPolicy(context, s, o, c) {
+      if (options.strictTransfer) assert.equal(handoff, true);
+      if (options.currentPolicy) {
+        assert.equal(s, selected);
+        assert.ok(issuedSelectionOriginals.has(o) || issuedInventoryOriginals.has(o));
+        events.push(["held", "policy", o.operationRef]);
+        const lease = await binding.participant.acquireCurrentPolicy(
+          context,
+          o,
+          c,
+          policy.policyRef,
+        );
+        await hooks.acquiredCurrentPolicy?.(lease, c);
+        if (options.strictTransfer) {
+          const rows = await binding.participant.acquireCurrentReadset(
+            context,
+            o,
+            c,
+            v.current.work,
+            v.execution,
+          );
+          compareRepositoryWorkStateReadsetV2(rows.readset, v.current);
+          fullCurrent = true;
+          const check = lease.assertCurrent.bind(lease),
+            release = lease.release.bind(lease);
+          return {
+            policy: lease.policy,
+            assertCurrent() {
+              rows.assertCurrent();
+              return check();
+            },
+            async prepareCommit() {
+              rows.assertCurrent();
+              check();
+            },
+            async release() {
+              fullCurrent = false;
+              handoff = false;
+              await release();
+            },
+          };
+        }
+        return lease;
+      }
       return held(context, s, o, c, "policy");
     },
     async retainObservation(context, s, o, c) {
@@ -614,7 +754,8 @@ function fixture(options = {}) {
     events.push(["held", kind, o.operationRef]);
     await hooks.acquire?.(kind, c);
     let live = true;
-    return {
+    if (kind === "policy") fullCurrent = true;
+    const lease = {
       policy,
       assertCurrent() {
         assert.equal(live, true);
@@ -626,14 +767,21 @@ function fixture(options = {}) {
       },
       async release() {
         live = false;
+        if (kind === "policy") {
+          fullCurrent = false;
+          handoff = false;
+        }
         events.push(["policy-release", kind]);
       },
     };
+    return hooks.heldResult?.(kind, lease) ?? lease;
   }
   const tokenBinding = {
     source: {
       async acquire(context, o, c) {
         binding.participant.assertOriginal(context, o, c);
+        events.push(["custody-acquire", o.operationRef]);
+        await hooks.custodyAcquire?.(context, o, c);
         let live = true;
         return {
           receiver,
@@ -693,9 +841,39 @@ function fixture(options = {}) {
       return hooks.token?.(answer) ?? answer;
     },
   };
-  const adapter = new RepositoryWorkStateAdapterV2(binding, native, source, tokenBinding, 2000, {
-    protocolVersion: version,
-  });
+  const sourceLeases = [];
+  // A controlled construction observer forwards to the actual original binding
+  // and returns each exact Work-created lease unchanged. It grants no authority.
+  const observedBinding = options.inspectSource
+    ? {
+        participant: binding.participant,
+        bindOriginalSources(work, custody) {
+          const acquire = work.acquire.bind(work);
+          return binding.bindOriginalSources(
+            {
+              async acquire(context, original, call) {
+                hooks.sourceAcquire?.(context, original, call);
+                const lease = await acquire(context, original, call);
+                sourceLeases.push(lease);
+                events.push(["source-acquired", original.operationRef]);
+                return lease;
+              },
+            },
+            custody,
+          );
+        },
+      }
+    : binding;
+  const adapter = new RepositoryWorkStateAdapterV2(
+    observedBinding,
+    native,
+    source,
+    tokenBinding,
+    options.transactionMilliseconds ?? 2000,
+    {
+      protocolVersion: version,
+    },
+  );
   const dispatch = () => ({
     version,
     sequence: 2,
@@ -739,8 +917,387 @@ function fixture(options = {}) {
     reservation,
     inventorySelection,
     selected,
+    sourceLeases,
   };
 }
+
+const policyRead = (event) =>
+  event[0] === "query" &&
+  event[1].startsWith("SELECT v.canonical_document FROM occ.repository_work_policy_heads_v2");
+test("Work completion acquires actual State policy after custody and all parents before a Work read", async () => {
+  const f = fixture({ currentPolicy: true, inspectSource: true });
+  f.hooks.custodyAcquire = async () => {
+    assert.equal(f.events.some(policyRead), false);
+    const lease = f.sourceLeases.at(-1);
+    assert.equal(lease.assertCurrent(), undefined);
+    await assert.rejects(lease.prepareCommit());
+    await assert.rejects(lease.qualifyReadset({}));
+  };
+  const p = await f.prepare();
+  assert.ok(p);
+  const custody = f.events.findIndex((e) => e[0] === "custody-acquire");
+  const policy = f.events.findIndex(policyRead);
+  const parents = f.events.flatMap((e, i) =>
+    e[0] === "query" && e[1].startsWith("SELECT id FROM occ.") ? [i] : [],
+  );
+  const work = f.events.findIndex(
+    (e) => e[0] === "query" && e[1].includes("repository_work_heads_v2"),
+  );
+  assert.equal(parents.length, 3);
+  assert.ok(custody >= 0 && custody < parents[0]);
+  assert.ok(parents.every((i) => i < policy) && policy < work);
+  assert.equal(f.events.filter(policyRead).length, 1);
+  await f.adapter.state.settle(p, undefined, "not-dispatched");
+});
+
+test("each original admission and preparation completes its own policy phase", async () => {
+  const f = fixture({ initial: true, currentPolicy: true, inspectSource: true });
+  const p = await f.prepare();
+  assert.ok(p);
+  assert.equal(f.sourceLeases.length, 2);
+  assert.notEqual(f.sourceLeases[0], f.sourceLeases[1]);
+  assert.equal(f.events.filter(policyRead).length, 2);
+  assert.deepEqual(
+    f.events.filter((e) => e[0] === "audit").map((e) => e[1]),
+    ["admission", "preparation"],
+  );
+  await f.adapter.state.settle(p, undefined, "not-dispatched");
+});
+
+test("policy changed during custody wait is read later and refuses before a unit write", async () => {
+  const f = fixture({ currentPolicy: true });
+  f.hooks.custodyAcquire = async () => {
+    f.policy.status = "disabled";
+  };
+  assert.equal(await f.prepare(), undefined);
+  assert.equal(f.events.filter(policyRead).length, 1);
+  assert.equal(
+    f.events.some((e) => e[0] === "audit" || e[0] === "ack"),
+    false,
+  );
+});
+
+test("abort in custody prevents policy acquisition and joins the entered source", async () => {
+  const f = fixture({ currentPolicy: true, inspectSource: true });
+  const gate = deferred(),
+    entered = deferred(),
+    controller = new AbortController();
+  f.hooks.custodyAcquire = async () => {
+    entered.resolve();
+    await gate.promise;
+  };
+  const result = f.adapter.state.prepare(f.origin, f.open, {
+    ...f.call(),
+    signal: controller.signal,
+  });
+  await entered.promise;
+  controller.abort();
+  assert.equal(f.events.some(policyRead), false);
+  assert.equal(
+    f.events.some((e) => e[0] === "outer-closed"),
+    false,
+  );
+  gate.resolve();
+  assert.equal(await result, undefined);
+  assert.equal(f.events.some(policyRead), false);
+  assert.equal(f.events.filter((e) => e[0] === "custody-release").length, 1);
+  assert.throws(() => f.sourceLeases[0].assertCurrent());
+});
+
+for (const cancellation of ["abort", "timeout"])
+  test(`pending original policy read is joined through ${cancellation} before outer cleanup`, async () => {
+    const f = fixture({
+      currentPolicy: true,
+      inspectSource: true,
+      transactionMilliseconds: cancellation === "timeout" ? 30 : 2000,
+    });
+    const gate = deferred(),
+      entered = deferred(),
+      controller = new AbortController();
+    f.hooks.query = async (sql) => {
+      if (sql.startsWith("SELECT v.canonical_document FROM occ.repository_work_policy_heads_v2")) {
+        entered.resolve();
+        await gate.promise;
+      }
+    };
+    const result = f.adapter.state.prepare(f.origin, f.open, {
+      ...f.call(),
+      signal: controller.signal,
+    });
+    await entered.promise;
+    if (cancellation === "abort") controller.abort();
+    else await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(
+      f.events.some((e) => e[0] === "outer-closed" || e[0] === "ack"),
+      false,
+    );
+    gate.resolve();
+    assert.equal(await result, undefined);
+    assert.equal(f.events.filter(policyRead).length, 1);
+    assert.equal(
+      f.events.some((e) => e[0] === "audit" || e[0] === "ack"),
+      false,
+    );
+    assert.throws(() => f.sourceLeases[0].assertCurrent());
+  });
+
+test("late policy lease transfers release before its policy accessor is rejected", async () => {
+  const f = fixture({ inspectSource: true });
+  let getterCalls = 0;
+  f.hooks.heldResult = (kind, lease) => {
+    if (kind === "policy")
+      Object.defineProperty(lease, "policy", {
+        get() {
+          getterCalls++;
+          throw new Error("unselected policy getter");
+        },
+      });
+    return lease;
+  };
+  assert.equal(await f.prepare(), undefined);
+  assert.equal(getterCalls, 0);
+  assert.equal(f.events.filter((e) => e[0] === "policy-release" && e[1] === "policy").length, 1);
+  assert.equal(
+    f.events.some((e) => e[0] === "audit" || e[0] === "ack"),
+    false,
+  );
+});
+
+test("a policy lease resolving after abort remains owned and released once", async () => {
+  const f = fixture({ inspectSource: true });
+  const gate = deferred(),
+    entered = deferred(),
+    controller = new AbortController();
+  f.hooks.acquire = async (kind) => {
+    if (kind === "policy") {
+      entered.resolve();
+      await gate.promise;
+    }
+  };
+  const result = f.adapter.state.prepare(f.origin, f.open, {
+    ...f.call(),
+    signal: controller.signal,
+  });
+  await entered.promise;
+  controller.abort();
+  assert.equal(
+    f.events.some((e) => e[0] === "outer-closed"),
+    false,
+  );
+  gate.resolve();
+  assert.equal(await result, undefined);
+  assert.equal(f.events.filter((e) => e[0] === "policy-release" && e[1] === "policy").length, 1);
+  assert.throws(() => f.sourceLeases[0].assertCurrent());
+});
+
+test("historical completion retains its own observer after current Work policy and native use close", async () => {
+  const f = fixture({ currentPolicy: true });
+  const p = await f.prepare(),
+    r = await f.release(p);
+  assert.equal(r.kind, "committed");
+  const policyReads = f.events.filter(policyRead).length;
+  f.policy.status = "disabled";
+  f.hooks.nativeCurrent = () => {
+    throw new Error("old live native use closed");
+  };
+  assert.equal(await f.adapter.state.settle(p, r.receipt, "unknown"), "recorded");
+  assert.equal(f.events.filter(policyRead).length, policyReads);
+  assert.equal(
+    JSON.parse(f.db.operations.get(f.data.observation.operationRef)).document.outcome,
+    "unknown",
+  );
+});
+
+test("fresh committed use acquires and completes a new original policy source lease", async () => {
+  const f = fixture({ currentPolicy: true, inspectSource: true });
+  const p = await f.prepare(),
+    r = await f.release(p);
+  assert.equal(r.kind, "committed");
+  const old = [...f.sourceLeases],
+    reads = f.events.filter(policyRead).length;
+  const held = await f.binding.participant.acquireCommittedRelease(
+    r.receipt,
+    f.call(),
+    f.receiver,
+    f.session,
+  );
+  assert.ok(held);
+  const fresh = f.sourceLeases.at(-1);
+  assert.equal(old.includes(fresh), false);
+  assert.equal(f.sourceLeases.length, old.length + 1);
+  assert.equal(f.events.filter(policyRead).length, reads + 1);
+  held.assertCurrent();
+  await held.release();
+  assert.throws(() => fresh.assertCurrent());
+  await f.adapter.state.settle(p, r.receipt, "completed");
+});
+
+test("reentrant prepareUse refuses without repeating original policy acquisition", async () => {
+  const f = fixture({ inspectSource: true });
+  f.hooks.acquire = async (kind) => {
+    if (kind === "policy") assert.throws(() => f.sourceLeases.at(-1).prepareUse());
+  };
+  assert.equal(await f.prepare(), undefined);
+  assert.equal(f.events.filter((e) => e[0] === "held" && e[1] === "policy").length, 1);
+  assert.equal(f.events.filter((e) => e[0] === "policy-release" && e[1] === "policy").length, 1);
+  assert.equal(
+    f.events.some((e) => e[0] === "ack"),
+    false,
+  );
+});
+
+// These regressions fault a declared synchronous peer with an actual entered
+// Promise. The real Work adapter and State context must refuse and enroll it in
+// the controlled outer owner's drain; a local source-release join is too late.
+for (const site of [
+  "native acquisition",
+  "native pre-completion fence",
+  "policy completion",
+  "policy later fence",
+])
+  for (const outcome of ["fulfilled", "rejected"])
+    test(
+      "asynchronous " + site + " joins before transaction retirement (" + outcome + ")",
+      async () => {
+        const f = fixture({ inspectSource: true }),
+          gate = deferred(),
+          entered = deferred();
+        let called = false,
+          finished = false;
+        const assertion = () => {
+          if (called) return undefined;
+          called = true;
+          entered.resolve();
+          return gate.promise.then(() => {
+            finished = true;
+            if (outcome === "rejected") throw new Error("Controlled assertion rejection.");
+          });
+        };
+        if (site === "native acquisition")
+          f.hooks.sourceAcquire = () => {
+            f.hooks.nativeCurrent = assertion;
+          };
+        else if (site === "native pre-completion fence")
+          f.hooks.custodyAcquire = async () => {
+            f.hooks.nativeCurrent = assertion;
+          };
+        else {
+          let ready = site === "policy completion";
+          f.hooks.query = async (sql) => {
+            if (sql.includes("repository_work_heads_v2")) ready = true;
+          };
+          f.hooks.current = (kind) => (kind === "policy" && ready ? assertion() : undefined);
+        }
+        const result = f.prepare();
+        try {
+          await entered.promise;
+          await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(finished, false);
+          assert.ok(f.events.some((e) => e[0] === "outer-join-accepted"));
+          assert.equal(
+            f.events.some((e) =>
+              [
+                "outer-closed",
+                "policy-release",
+                "custody-release",
+                "selection-release",
+                "ack",
+              ].includes(e[0]),
+            ),
+            false,
+            "the transaction and entered dependent leases survive refused currentness",
+          );
+          if (f.sourceLeases.length) assert.throws(() => f.sourceLeases.at(-1).assertCurrent());
+        } finally {
+          gate.resolve();
+        }
+        assert.equal(await result, undefined);
+        assert.equal(finished, true);
+        assert.equal(f.events.filter((e) => e[0] === "outer-closed").length, 1);
+        assert.equal(f.events.filter((e) => e[0] === "selection-release").length, 1);
+        assert.equal(
+          f.events.some((e) => e[0] === "ack"),
+          false,
+        );
+        assert.equal(f.db.operations.has(f.data.preparation.operationRef), false);
+        for (const kind of ["custody-release", "policy-release"])
+          assert.ok(f.events.filter((e) => e[0] === kind).length <= 1);
+      },
+    );
+
+for (const responsibility of ["issue", "history"])
+  test(
+    "asynchronous " + responsibility + " assertion retains its original phase until settlement",
+    async () => {
+      const f = fixture({ inventory: responsibility === "issue" }),
+        p = await f.prepare(),
+        gate = deferred(),
+        entered = deferred();
+      assert.ok(p);
+      let inventory;
+      if (responsibility === "issue") {
+        inventory = await f.adapter.inventory.acquire(p, f.origin, f.call());
+        assert.ok(inventory);
+      }
+      const committed = responsibility === "history" ? await f.release(p) : undefined;
+      if (committed) assert.equal(committed.kind, "committed");
+      const start = f.events.length;
+      let called = false;
+      f.hooks.current = (kind) => {
+        if (kind !== responsibility || called) return undefined;
+        called = true;
+        entered.resolve();
+        return gate.promise;
+      };
+      const result =
+        responsibility === "issue"
+          ? f.adapter.inventory.transition(
+              inventory,
+              f.adapter.inventory.reservation(inventory),
+              f.call(),
+            )
+          : f.adapter.state.settle(p, committed.receipt, "unknown");
+      try {
+        await entered.promise;
+        await new Promise((resolve) => setImmediate(resolve));
+        const pendingEvents = f.events.slice(start);
+        assert.ok(pendingEvents.some((e) => e[0] === "outer-join-accepted"));
+        assert.equal(
+          pendingEvents.some((e) =>
+            [
+              "outer-closed",
+              "policy-release",
+              "custody-release",
+              "selection-release",
+              "ack",
+            ].includes(e[0]),
+          ),
+          false,
+        );
+      } finally {
+        gate.resolve();
+      }
+      const refused = await result;
+      assert.equal(
+        responsibility === "issue" ? refused.kind : refused,
+        responsibility === "issue" ? "not-committed" : "unavailable",
+      );
+      const settledEvents = f.events.slice(start);
+      assert.equal(settledEvents.filter((e) => e[0] === "outer-closed").length, 1);
+      assert.equal(
+        settledEvents.filter((e) => e[0] === "policy-release" && e[1] === responsibility).length,
+        1,
+      );
+      assert.equal(
+        settledEvents.some((e) => e[0] === "ack"),
+        false,
+      );
+      if (inventory) {
+        await f.adapter.state.settle(p, undefined, "not-dispatched");
+        await f.adapter.inventory.release(inventory);
+      }
+    },
+  );
 
 test("existing admission is preserved and a distinct preparation is actually staged", async () => {
   const f = fixture(),
@@ -1964,4 +2521,261 @@ test("V3 changed request projection after preparation cannot be staged as dispat
   await assert.rejects(f.release(p));
   assert.equal(f.db.operations.has(f.current.original.operationRef), false);
   await f.adapter.state.settle(p, undefined, "not-dispatched");
+});
+
+// Real Work + real State phase/readset/policy parsing with controlled original
+// assignment/native/SQL peers. No production admission or provider is implied.
+for (const version of [2, 3])
+  test(`adapter ${version} retires initial readset and reenters actual same-unit policy/readset`, async () => {
+    const f = fixture({
+      version,
+      ...(version === 3 ? { request: gitOpen() } : {}),
+      currentPolicy: true,
+      strictTransfer: true,
+      inspectSource: true,
+    });
+    const originalRetirement = f.source.prepareStateUse;
+    f.source.prepareStateUse = () => {
+      throw new Error("replacement retirement");
+    };
+    f.nativeSource.assertNativeCurrent = () => {
+      throw new Error("replacement native fence");
+    };
+    const p = await f.prepare(),
+      r = await f.release(p);
+    assert.ok(p);
+    assert.equal(r.kind, "committed");
+    assert.equal(f.events.filter((e) => e[0] === "native-inspect").length, 1);
+    const firstEntry = f.events.findIndex((e) => e[0] === "outer-enter");
+    assert.ok(f.events.findIndex((e) => e[0] === "readset-retired") < firstEntry);
+    const prior = f.sourceLeases.length;
+    const held = await f.binding.participant.acquireCommittedRelease(
+      r.receipt,
+      f.call(),
+      f.receiver,
+      f.session,
+    );
+    assert.ok(held);
+    held.assertCurrent();
+    assert.equal(f.sourceLeases.length, prior + 1);
+    await held.release();
+    assert.throws(() => f.sourceLeases.at(-1).assertCurrent());
+    const handoffs = f.events.filter((e) => e[0] === "handoff-enter").length;
+    f.hooks.nativeCurrent = () => {
+      throw new Error("closed live origin");
+    };
+    assert.equal(await f.adapter.state.settle(p, r.receipt, "completed"), "recorded");
+    assert.equal(f.events.filter((e) => e[0] === "handoff-enter").length, handoffs);
+    assert.equal(typeof originalRetirement, "function");
+  });
+
+for (const result of ["resolve", "reject"])
+  test(`readset retirement ${result} after cancellation joins before any State entry`, async () => {
+    const f = fixture({ strictTransfer: true }),
+      gate = deferred(),
+      entered = deferred(),
+      abort = new AbortController();
+    f.hooks.handoff = async () => {
+      entered.resolve();
+      await gate.promise;
+      if (result === "reject") throw new Error("controlled retirement failure");
+    };
+    let settled = false;
+    const pending = f.adapter.state.prepare(f.origin, f.open, {
+      ...f.call(),
+      signal: abort.signal,
+    });
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await entered.promise;
+    abort.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    assert.equal(
+      f.events.some((e) => e[0] === "outer-enter" || e[0] === "selection-release"),
+      false,
+    );
+    gate.resolve();
+    await assert.rejects(pending);
+    assert.equal(f.events.filter((e) => e[0] === "selection-release").length, 1);
+    assert.equal(
+      f.events.some((e) => e[0] === "outer-enter" || e[0] === "ack"),
+      false,
+    );
+  });
+
+for (const missing of ["inspectNative", "assertNativeCurrent", "prepareStateUse"])
+  test(`adapter refuses missing original ${missing} instead of falling back`, () => {
+    const f = fixture();
+    const native = { ...f.nativeSource },
+      selection = { ...f.source };
+    if (missing === "inspectNative") native.inspectNative = undefined;
+    else if (missing === "assertNativeCurrent") native.assertNativeCurrent = undefined;
+    else selection.prepareStateUse = undefined;
+    assert.throws(
+      () => new RepositoryWorkStateAdapterV2(f.binding, native, selection, f.tokenBinding, 2000),
+    );
+  });
+
+// Real adapter/State phases with controlled native/assignment/SQL peers; no live proof.
+for (const version of [2, 3])
+  test("adapter " + version + " enrolls direct entries and fresh committed use", async () => {
+    const f = fixture({ version, ...(version === 3 ? { request: gitOpen() } : {}) });
+    let enrolled;
+    f.hooks.enroll = (c) => {
+      enrolled = c.deadline;
+    };
+    f.hooks.nativeOnly = (c) => assert.equal(c.deadline, enrolled);
+    f.nativeSource.inspectNative = () => {
+      throw new Error("replacement");
+    };
+    const p = await f.prepare();
+    assert.ok(p);
+    const fresh = (offset) => ({
+      ...f.call(),
+      deadline: new Date(Date.now() + offset).toISOString(),
+    });
+    const current = await f.adapter.state.readCurrent(p, f.origin, fresh(7500));
+    const r = await f.adapter.state.commitDispatch(
+      p,
+      f.origin,
+      f.token,
+      f.dispatch(),
+      current,
+      fresh(7100),
+    );
+    assert.equal(r.kind, "committed");
+    const use = await f.binding.participant.acquireCommittedRelease(
+      r.receipt,
+      fresh(6800),
+      f.receiver,
+      f.session,
+    );
+    assert.ok(use);
+    use.assertCurrent();
+    await use.release();
+    const count = f.events.filter((e) => e[0] === "native-enroll").length;
+    f.hooks.enroll = () => {
+      throw new Error("history must not enroll live RPC");
+    };
+    assert.equal(await f.adapter.state.settle(p, r.receipt, "completed"), "recorded");
+    assert.equal(f.events.filter((e) => e[0] === "native-enroll").length, count);
+    assert.equal(f.events.filter((e) => e[0] === "native-inspect").length, 1);
+  });
+for (const outcome of ["resolve", "reject"])
+  test(
+    "adapter settlement joins late native " + outcome + " before selection release",
+    async () => {
+      const f = fixture(),
+        p = await f.prepare(),
+        gate = deferred(),
+        entered = deferred();
+      assert.ok(p);
+      f.hooks.enroll = async () => {
+        entered.resolve();
+        await gate.promise;
+        if (outcome === "reject") throw new Error("late original refusal");
+      };
+      const reading = f.adapter.state.readCurrent(p, f.origin, f.call());
+      const refused = assert.rejects(reading);
+      await entered.promise;
+      let settled = false;
+      const closing = f.adapter.state.settle(p, undefined, "not-dispatched").then((r) => {
+        settled = true;
+        return r;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(settled, false);
+      assert.equal(
+        f.events.some((e) => e[0] === "selection-release"),
+        false,
+      );
+      gate.resolve();
+      await refused;
+      assert.equal(await closing, "recorded");
+      assert.equal(f.events.filter((e) => e[0] === "selection-release").length, 1);
+    },
+  );
+test("adapter refuses original call mutation during enrollment before State entry", async () => {
+  const f = fixture(),
+    p = await f.prepare(),
+    c = f.call();
+  const entered = f.events.filter((e) => e[0] === "outer-enter").length;
+  f.hooks.enroll = (original) => {
+    assert.equal(original, c);
+    original.deadline = new Date(Date.now() + 9000).toISOString();
+  };
+  await assert.rejects(f.adapter.state.readCurrent(p, f.origin, c));
+  assert.equal(f.events.filter((e) => e[0] === "outer-enter").length, entered);
+  await f.adapter.state.settle(p, undefined, "not-dispatched");
+});
+test("adapter refuses changed native transport before token or State entry", async () => {
+  const f = fixture(),
+    p = await f.prepare();
+  const current = await f.adapter.state.readCurrent(p, f.origin, f.call());
+  f.hooks.enroll = () => ({ ...f.native, transportBinding: {} });
+  const entered = f.events.filter((e) => e[0] === "outer-enter").length;
+  await assert.rejects(
+    f.adapter.state.commitDispatch(p, f.origin, f.token, f.dispatch(), current, f.call()),
+  );
+  assert.equal(f.events.filter((e) => e[0] === "outer-enter").length, entered);
+  assert.equal(f.db.operations.has(current.original.operationRef), false);
+  await f.adapter.state.settle(p, undefined, "not-dispatched");
+});
+test("inventory reservation, mint claim and fresh use enroll before live fences", async () => {
+  const f = await inventoryFixture();
+  let enrolled;
+  f.hooks.enroll = (c) => {
+    enrolled = c.deadline;
+  };
+  f.hooks.nativeOnly = (c) => assert.equal(c.deadline, enrolled);
+  const reserved = await f.reserve();
+  assert.equal(reserved.kind, "committed");
+  const claimed = await f.adapter.inventory.transition(
+    f.i,
+    f.claim(reserved.operation.record),
+    f.call(),
+  );
+  assert.equal(claimed.kind, "committed");
+  const use = await f.adapter.inventory.acquireMint(f.i, claimed.claim, f.call());
+  assert.ok(use);
+  use.assertCurrent();
+  await use.release();
+  f.hooks.enroll = () => {
+    throw new Error("no live enrollment during observer cleanup");
+  };
+  await f.done();
+});
+test("inventory opening retains late native enrollment through original release", async () => {
+  const f = fixture({ inventory: true }),
+    p = await f.prepare();
+  const entered = deferred(),
+    gate = deferred();
+  f.hooks.enroll = async () => {
+    entered.resolve();
+    await gate.promise;
+  };
+  let ended = false;
+  const opening = f.adapter.inventory.acquire(p, f.origin, f.call()).then((v) => {
+    ended = true;
+    return v;
+  });
+  await entered.promise;
+  const closing = f.adapter.state.settle(p, undefined, "not-dispatched");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ended, false);
+  assert.equal(
+    f.events.some((e) => e[0] === "selection-release"),
+    false,
+  );
+  gate.resolve();
+  assert.equal(await opening, undefined);
+  await closing;
+  assert.equal(f.events.filter((e) => e[0] === "selection-release").length, 1);
 });
