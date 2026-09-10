@@ -2,8 +2,13 @@
 
 This page explains how to verify the selected clone/fetch READ components with
 publication disabled. It distinguishes actual component behavior, controlled
-local composition, and deployed internal access. The initial READ verification
-commands below are **pending execution**; their presence is not a passing result.
+local composition, and deployed internal access. The receiving results below
+record selected fixture and component coverage; three clone/fetch opt-ins remain
+unselected.
+
+Receiving checkpoint: **2026-09-10**, source commit
+`1c1e3e8741df7e7a8f3ec25d52a4e0553ae0a919`. These results describe that exact
+checkpoint, not later source changes or full internal READ acceptance.
 
 The current source supplies the [Git read broker](github-mediation.md#git-read-successor),
 [native identity/session boundary](github-mediation-identity.md), and
@@ -71,11 +76,12 @@ artifacts have been prepared. Keep test selectors scoped to the selected process
 follow the [testing guide](../testing.md#run-tests) for environment selection.
 Do not install or reconcile dependencies as a side effect of verification.
 
-The following is the initial check inventory. Each command is **pending**, and
-coverage must be reconciled with the final test source and run receipt before
-being recorded as verified.
+The inventory below describes each suite's target and input boundary. The
+entrypoints remain subject to each fixture's actual selectors and prepared
+artifacts; an entrypoint alone does not select every case. Observed receiving
+results are recorded separately below.
 
-| Check                    | Actual component or client intended for verification                          | Controlled inputs and evidence limit                                                                                                                                                                                                                                 | Pending command                                                                        |
+| Check                    | Actual component or client intended for verification                          | Controlled inputs and evidence limit                                                                                                                                                                                                                                 | Suite entrypoint                                                                       |
 | ------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | READ-01: local origin    | Real Git client and Git smart-HTTP backend                                    | Canonical disposable origin in `tests/fixtures/github-read-mvp/external-service.mjs`, used through the READ adapter in `tests/fixtures/read-mvp/git-origin.mjs` with distinct lifecycle tests; proves the origin fixture only. Record exact Git and helper binaries. | `node --test tests/integration/read-mvp-git-origin.test.mjs`                           |
 | READ-02: broker          | Actual V3 `GitHubMediationService` and closed wire/digest contracts           | Explicit transport and original-operation dependency substitutes in `tests/fixtures/read-mvp/broker-peers.mjs`; identify supplied preparation, release and currentness outcomes. No production owner acceptance follows from a mock allow.                           | `node --test tests/integration/read-mvp-broker.test.mjs`                               |
@@ -94,6 +100,33 @@ documents the native executable and external Workload API fixture used by that
 component. The existing [native client mechanics](native-git-client-mechanics.md#verification-and-remaining-qualification)
 documents the prepared Git/gh manifest for its own selected qualification suite.
 Those requirements remain scoped to the files that actually consume them.
+
+## Recorded receiving results
+
+The selected receiving cases passed with no failures or cancellations. Counts
+retain their original suite and selection boundaries:
+
+| Check   | Result at the receiving checkpoint                                    | Evidence scope                                                                                                        |
+| ------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| READ-01 | **6 passed**, none skipped                                            | Actual controlled Git-origin lifecycle through the canonical external fixture and READ adapter.                       |
+| READ-02 | **43 test nodes passed**: 10 top-level and 33 nested; none skipped    | Actual broker with contract peers and supplied operation-owner outcomes.                                              |
+| READ-03 | **4 passed**, none skipped                                            | Actual native identity sessions with a refusing consumer; no positive original repository-use admission.              |
+| READ-04 | **7 passed; 3 explicitly unselected**                                 | Seven client/transport contract cases. The three opt-ins below were reported skipped and supply no acceptance credit. |
+| READ-05 | **8 component cases and 3 native parser groups passed**, none skipped | Selected configuration parsers and native profile validation; separate component and native selections.               |
+
+The three READ-04 opt-ins remain unexecuted: **two actual external-Git fixture
+cases for cancellation/failure**, and **one clone/fetch case through genuine
+accepting composition**. The seven contract passes do not establish those
+external-Git observations or successful clone/fetch through the internal accepting
+path. Select each remaining case through its maintained fixture contract when
+its required inputs are ready; do not substitute contract-case counts for it.
+
+These are scoped fixture/component receiving results. A real controlled Git
+origin is an external-service fixture, and a refusing native consumer does not
+supply positive internal admission. The recorded cases do not establish the full
+internal flow, S2 acceptance, live Codex execution, live GitHub qualification or
+publication readiness. This documentation update records existing results and
+adds no test execution.
 
 ## Accepting a result
 
@@ -139,7 +172,7 @@ apply. See the [native transport reference](native-github-egress.md#broker-backe
 for the exact limits. A successful small fixture does not qualify arbitrary
 repository sizes or other Git features.
 
-All new READ cases remain **UNRUN**. Historical verification maps as follows:
+Historical verification remains separate from the receiving results above:
 
 - Rust **60/60** is reusable for the exact **118 unchanged inputs**; do not repeat
   it solely for these READ additions.
@@ -156,5 +189,5 @@ The separate **468-case CNI** result provides no Git bridge regression credit.
 Live GitHub token issuance, expiry/revocation and upstream permission boundaries;
 PostgreSQL durability; installed Kubernetes/gVisor routing and bypass denial;
 real execution attachment replacement; and production publication remain outside
-the evidence recorded here unless independently selected and executed. No new
-READ result presently establishes production readiness.
+the evidence recorded here unless independently selected and executed. This
+receiving checkpoint does not establish production readiness.
