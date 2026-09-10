@@ -548,6 +548,40 @@ uses dedicated Codex execution. Sharing a Kubernetes namespace never grants
 another Agent access to gateway credentials, Channel credentials, workload
 identity, provider configuration, or runtime traffic.
 
+## Persistent Agents and execution limits
+
+An Agent may exist indefinitely as a stable service identity and configuration.
+Its resource lifetime is distinct from a revision, running Pod, Harness instance,
+conversation, logical work and native execution attempt. Persistence does not
+promise that any particular process never fails or automatically resumes.
+
+The execution duration cap is configurable and defaults to **uncapped**. An
+uncapped attempt continues until completion, explicit stop, withdrawal of required
+authority or an independently configured resource/spend limit. A finite configured
+cap applies to the original attempt's elapsed time from dispatch, including
+startup and waiting. Admission records the effective policy immutably; draft
+edits, activity, model/tool rounds and credential renewal do not alter it.
+
+Every enforcement lease remains finite and bound to current authority for exact
+work and execution. Applicable configured work/ancestor deadlines and stop bounds
+still constrain renewal. Uncapped execution does not authorize broader scope,
+offline writes, terminal-work revival or replay of uncertain effects. Numerical
+authority and outage profiles require separate selection and qualification.
+
+Authorized users need Agent inventory, current-work status, exact task stopping,
+durable Agent stop and explicit Start. Incoming messages, stale dispatch and
+controller restart must not undo stopped intent. Accepted stop, blocked new work,
+authority withdrawal, physical termination and credential cleanup are separate
+facts; report unknown termination and retain writer ownership when proof is
+missing. Replacement must exclude predecessor writers before new serving or
+shared-state mutation.
+
+The [execution-policy implementation plan](../specs/24-configurable-execution-limits.md)
+defines the correction and qualification scope. Current selected-execution V1
+still has a fifteen-minute ceiling; current stop/status components do not yet
+implement this complete product contract. Active-session migration/replay and
+durable replacement coordination are separate later capabilities.
+
 ## Agent deployment
 
 An `Agent` is the stable, user-configured platform resource. Its explicit

@@ -72,6 +72,14 @@ Installation
 Creating an Agent does not start a workload. Deployment creates an immutable
 revision, which the controller worker provisions asynchronously.
 
+The [target execution policy](design.md#persistent-agents-and-execution-limits)
+defaults to uncapped duration and permits a configured finite cap. The current
+selected-execution V1 journal still enforces a fifteen-minute maximum; its native
+owner remains a component integration surface. Lifecycle read APIs and protective
+intent storage do not yet supply a complete user-to-runtime stop/start workflow.
+See the [implementation plan](../specs/24-configurable-execution-limits.md) for the
+coordinated successor and qualification requirements.
+
 ## Control plane
 
 The API authenticates human clients with Better Auth sessions and non-Agent

@@ -30,6 +30,9 @@ OpenClaw Enterprise is the open platform for managing agents.
 - [`integration/dev` overview](integration-dev-overview.md): branch scope, system diagrams, and team review priorities.
 - [Platform design](design.md): platform architecture and resource model.
 - [Current architecture](ARCHITECTURE.md): API, worker, storage, and Agent execution.
+- [Configurable execution limits and persistent Agent controls](../specs/24-configurable-execution-limits.md):
+  selected uncapped default, finite authority, status/stop requirements and the
+  remaining coordinated implementation and runtime qualification.
 
 ## Draft RFCs
 

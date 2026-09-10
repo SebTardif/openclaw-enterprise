@@ -29,6 +29,13 @@ The `closed` promise establishes native TLS socket closure only. Native turn com
 
 ## Configuration and verification
 
+The selected [execution-policy successor](../../specs/24-configurable-execution-limits.md)
+defaults to uncapped duration while retaining independently authorized stop
+ownership. This V1 component still requires its finite deadline control. Do not
+substitute a large timestamp or Infinity, omit mandatory control, or claim that
+credential renewal extends the original attempt. A matching native successor
+and actual production composition are required for the new policy.
+
 The selected SDK must contain the concrete connector and the matching public selected codec. Configure the Workload API socket, exact local/native SPIFFE IDs, assignment, native `/native` endpoint and finite bounds through the trusted host composition. No standalone server command or environment-based authority factory is provided by this module.
 
 The upstream socket tests use generated identities and actual local TLS/Unix sockets. Controlled protocol responses prove Node adapter behavior only. Original dispatch-clock and journal tests separately exercise real PostgreSQL persistence. A composed real native/journal acceptance and deadline-triggered cancellation are still required before claiming a provider-backed model turn or deployed gVisor execution.
