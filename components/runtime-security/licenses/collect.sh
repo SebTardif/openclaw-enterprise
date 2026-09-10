@@ -10,7 +10,7 @@ cp "$(go env GOROOT)/LICENSE" "$(go env GOROOT)/PATENTS" "$destination/go/"
 
 listing=$(mktemp)
 trap 'rm -f "$listing" "$listing.sorted" "$listing.notices"' EXIT
-CGO_ENABLED=0 go list -mod=readonly -deps -f '{{if .Module}}{{if not .Module.Main}}{{.Module.Path}} {{.Module.Version}} {{.Module.Dir}}{{end}}{{end}}' ./cmd/oce-runtime-security > "$listing"
+CGO_ENABLED=0 go list -mod=readonly -deps -f '{{if .Module}}{{if not .Module.Main}}{{.Module.Path}} {{.Module.Version}} {{.Module.Dir}}{{end}}{{end}}' ./cmd/oce-runtime-security ./cmd/oce-runtime-authority ./cmd/oce-clock-observation ./cmd/oce-github-mediation > "$listing"
 sort -u "$listing" > "$listing.sorted"
 : > "$destination/modules.tsv"
 while read -r module version directory; do

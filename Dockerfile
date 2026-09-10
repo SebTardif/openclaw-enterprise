@@ -19,7 +19,13 @@ RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARG
 RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARGETPLATFORM},target=/var/cache/oce-go-build,sharing=locked \
     if [ -n "$GO_BUILD_CACHE_SCOPE" ]; then export GOCACHE=/var/cache/oce-go-build; fi; \
     CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-runtime-authority ./cmd/oce-runtime-authority
-RUN chmod 0555 /out/oce-runtime-authority
+RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARGETPLATFORM},target=/var/cache/oce-go-build,sharing=locked \
+    if [ -n "$GO_BUILD_CACHE_SCOPE" ]; then export GOCACHE=/var/cache/oce-go-build; fi; \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-clock-observation ./cmd/oce-clock-observation
+RUN --mount=type=cache,id=oce-go-${GO_BUILD_CACHE_SCOPE}-${GO_BASE_IMAGE}-${TARGETPLATFORM},target=/var/cache/oce-go-build,sharing=locked \
+    if [ -n "$GO_BUILD_CACHE_SCOPE" ]; then export GOCACHE=/var/cache/oce-go-build; fi; \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w" -o /out/oce-github-mediation ./cmd/oce-github-mediation
+RUN chmod 0555 /out/oce-runtime-authority /out/oce-clock-observation /out/oce-github-mediation
 RUN sh licenses/collect.sh /out/licenses
 
 # Consume a separately frozen package-input context, never the host .build tree.
@@ -54,6 +60,8 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
 FROM dependencies AS development
 COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
 COPY --from=native-build /out/oce-runtime-authority /usr/local/bin/oce-runtime-authority
+COPY --from=native-build /out/oce-clock-observation /usr/local/bin/oce-clock-observation
+COPY --from=native-build /out/oce-github-mediation /usr/local/bin/oce-github-mediation
 COPY --from=native-build /out/licenses /usr/share/licenses/oce-runtime-security
 ENV NODE_ENV=development
 WORKDIR /app
@@ -75,6 +83,8 @@ CMD ["apps/controller/src/server.mjs"]
 FROM ${NODE_BASE_IMAGE} AS runtime
 COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security
 COPY --from=native-build /out/oce-runtime-authority /usr/local/bin/oce-runtime-authority
+COPY --from=native-build /out/oce-clock-observation /usr/local/bin/oce-clock-observation
+COPY --from=native-build /out/oce-github-mediation /usr/local/bin/oce-github-mediation
 COPY --from=native-build /out/licenses /usr/share/licenses/oce-runtime-security
 ENV NODE_ENV=production
 WORKDIR /app
