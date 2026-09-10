@@ -472,11 +472,11 @@ export function validateRelease(
   signal: AbortSignal,
 ): number {
   const expiry = Date.parse(value.expiresAt);
-  const turnExpiry = Date.parse(request.original.turnNotAfter);
+  const turnExpiry =
+    request.original.turnNotAfter === null ? null : Date.parse(request.original.turnNotAfter);
   if (
     signal.aborted ||
-    !Number.isFinite(turnExpiry) ||
-    turnExpiry <= now ||
+    (turnExpiry !== null && (!Number.isFinite(turnExpiry) || turnExpiry <= now)) ||
     value.attemptRef !== request.original.attemptRef ||
     value.canonicalBindingDigest !== request.original.canonicalBindingDigest ||
     typeof value.token !== "string" ||

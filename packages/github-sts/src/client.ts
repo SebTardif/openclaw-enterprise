@@ -116,6 +116,8 @@ export async function runNativeStep(
   const now = options.now ?? Date.now;
   const timeoutMs = options.timeoutMs ?? 20_000;
   const maxOutputBytes = options.maxOutputBytes ?? 64 * 1024;
+  const turnDeadline =
+    request.original.turnNotAfter === null ? null : Date.parse(request.original.turnNotAfter);
   if (
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 1 ||
@@ -124,8 +126,7 @@ export async function runNativeStep(
     maxOutputBytes < 1 ||
     maxOutputBytes > 256 * 1024 ||
     options.signal.aborted ||
-    !Number.isFinite(Date.parse(request.original.turnNotAfter)) ||
-    Date.parse(request.original.turnNotAfter) <= now() ||
+    (turnDeadline !== null && (!Number.isFinite(turnDeadline) || turnDeadline <= now())) ||
     process.platform === "win32"
   )
     return failResult(false, operation);
@@ -140,7 +141,7 @@ export async function runNativeStep(
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(
     () => deadline.abort(),
-    Math.min(timeoutMs, Date.parse(request.original.turnNotAfter) - now()),
+    turnDeadline === null ? timeoutMs : Math.min(timeoutMs, turnDeadline - now()),
   );
   const signal = AbortSignal.any([options.signal, deadline.signal]);
   const tokens: string[] = [];
@@ -200,11 +201,11 @@ export async function runNativeStep(
             repositoryName(request.repository).toLowerCase()
         )
           throw new NativeClientError();
-        if (!active || signal.aborted || Date.parse(request.original.turnNotAfter) <= now())
+        if (!active || signal.aborted || (turnDeadline !== null && turnDeadline <= now()))
           throw new NativeClientError();
         if (value.kind === "erase") {
           await options.delivery.invalidateRuntimeReuse(request, signal);
-          if (Date.parse(request.original.turnNotAfter) <= now()) throw new NativeClientError();
+          if (turnDeadline !== null && turnDeadline <= now()) throw new NativeClientError();
           send({ kind: "erased" });
           return;
         }

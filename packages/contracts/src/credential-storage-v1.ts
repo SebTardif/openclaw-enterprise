@@ -934,6 +934,7 @@ function validTimes(value: unknown): boolean {
   if (Array.isArray(value)) return value.every(validTimes);
   if (!record(value)) return true;
   for (const [key, item] of Object.entries(value)) {
+    if (key === "turnNotAfter" && item === null) continue;
     if (/(?:At|NotAfter)$/.test(key) || key === "deadline") {
       if (
         typeof item !== "string" ||
@@ -959,7 +960,8 @@ function relationships(value: unknown): boolean {
     return false;
   if (
     value.turnNotAfter !== undefined &&
-    !duration(value.committedDispatchAt, value.turnNotAfter, 900_000)
+    value.turnNotAfter !== null &&
+    !duration(value.committedDispatchAt, value.turnNotAfter, Number.MAX_SAFE_INTEGER)
   )
     return false;
   if (value.scope !== undefined) {
@@ -1062,7 +1064,8 @@ function relationships(value: unknown): boolean {
       time(value.comparedAt) < time(value.original.committedDispatchAt) ||
       !duration(value.comparedAt, value.startNotAfter, 5000) ||
       time(value.startNotAfter) > time(value.leaseNotAfter) ||
-      time(value.leaseNotAfter) > time(value.original.turnNotAfter)
+      (value.original.turnNotAfter !== null &&
+        time(value.leaseNotAfter) > time(value.original.turnNotAfter))
     )
       return false;
     if ((value.effect === "model-use") !== (value.profile.kind === "model")) return false;

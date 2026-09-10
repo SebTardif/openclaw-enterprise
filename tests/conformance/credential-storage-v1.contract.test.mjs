@@ -501,7 +501,7 @@ test("versions and deadlines have explicit safe numeric and temporal boundaries"
     "2026-01-01T00:00:05.000+00:00",
   ])
     invalid("reserve", { ...v.reserve(), deadline });
-  invalid("originalBinding", { ...v.originalBinding(), turnNotAfter: v.at(900_001) });
+  parse("originalBinding", { ...v.originalBinding(), turnNotAfter: v.at(900_001) });
   invalid("originalBinding", { ...v.originalBinding(), turnNotAfter: v.now });
   for (const patch of [
     { startNotAfter: v.now },
@@ -510,6 +510,24 @@ test("versions and deadlines have explicit safe numeric and temporal boundaries"
     { leaseNotAfter: v.at(900_001) },
   ])
     invalid("authorityObservation", { ...v.authorityObservation(), ...patch });
+});
+
+test("uncapped work retains finite credential authority and an explicit original binding", () => {
+  const original = { ...v.originalBinding(), turnNotAfter: null };
+  parse("originalBinding", original);
+  const missing = { ...original };
+  delete missing.turnNotAfter;
+  invalid("originalBinding", missing);
+  const observation = {
+    ...v.authorityObservation(),
+    original,
+    leaseNotAfter: v.at(900_001),
+  };
+  parse("authorityObservation", observation);
+  // Uncapped computation changes neither lease validity nor the finite start window.
+  invalid("authorityObservation", { ...observation, leaseNotAfter: null });
+  invalid("authorityObservation", { ...observation, startNotAfter: v.at(5_001) });
+  invalid("authorityObservation", { ...observation, leaseNotAfter: v.at(4_999) });
 });
 
 test("every represented generation and CAS version rejects unsafe or noninteger values", () => {
