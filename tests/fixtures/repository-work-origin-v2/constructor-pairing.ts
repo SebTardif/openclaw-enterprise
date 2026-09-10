@@ -151,3 +151,25 @@ export function rejectCrossedCustody(
   git.recognize(metadataOrigin, call);
   void [crossed, session];
 }
+
+/** Original Work captures this method with its Runtime receiver; its native
+ * port extension and SQL phase remain original Work-owned implementation. */
+export function captureOriginalGitNativeHandoff<Assignment>(
+  owner: RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+): Readonly<
+  Pick<
+    RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+    "assertNativeCurrent"
+  >
+> {
+  return Object.freeze({ assertNativeCurrent: owner.assertNativeCurrent.bind(owner) });
+}
+
+export function rejectCrossedNativeHandoff<Assignment>(
+  owner: RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+  metadata: OriginalRepositoryWorkOriginV2,
+  call: Parameters<typeof owner.assertNativeCurrent>[1],
+): void {
+  // @ts-expect-error Native-only handoff still requires the original selected Git origin.
+  owner.assertNativeCurrent(metadata, call);
+}

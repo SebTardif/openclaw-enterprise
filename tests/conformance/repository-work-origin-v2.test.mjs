@@ -637,6 +637,7 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
   let nativeCurrent = true;
   let stateCurrent = true;
   let stateFence = () => undefined;
+  let nativeFence = () => undefined;
   let nativeReleases = 0;
   let assignmentReleases = 0;
   const custody = {
@@ -675,6 +676,7 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
         assert.equal(original, session);
         assert.equal(actualCall.context, context);
         if (!nativeCurrent) denied();
+        return nativeFence();
       },
       async release(original) {
         assert.equal(original, session);
@@ -730,6 +732,9 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
     },
     setStateFence(value) {
       stateFence = value;
+    },
+    setNativeFence(value) {
+      nativeFence = value;
     },
   };
 }
@@ -832,6 +837,133 @@ test("custody failed synchronous fence joins accepted continuation before borrow
   });
   f.setStateFence(() => pending);
   assert.throws(() => f.recognizer.recognize(f.origin, f.initial));
+  const closed = f.owner.close();
+  await Promise.resolve();
+  assert.equal(f.nativeReleases, 0);
+  assert.equal(f.assignmentReleases, 0);
+  finish();
+  await closed;
+  assert.equal(f.nativeReleases, 1);
+  assert.equal(f.assignmentReleases, 1);
+});
+
+test("captured native-only fence crosses the SQL handoff without asserting State authority", async () => {
+  for (const version of [2, 3]) {
+    const f = await controlledCustodyOrigin(version);
+    let stateAssertions = 0;
+    const nativeOnly = f.owner.assertNativeCurrent.bind(f.owner);
+    const full = f.owner.assertCurrent.bind(f.owner);
+    f.owner.assertNativeCurrent = denied;
+    f.setStateFence(() => {
+      stateAssertions++;
+      throw new Error("Initial SQL readset has retired.");
+    });
+    try {
+      assert.equal(nativeOnly(f.origin, f.initial), undefined);
+      assert.equal(stateAssertions, 0);
+      assert.throws(() => full(f.origin, f.initial));
+      assert.equal(stateAssertions, 1);
+    } finally {
+      await f.owner.close();
+    }
+  }
+});
+
+test("native-only handoff preserves the same origin for the separately reacquired State readset", async () => {
+  const f = await controlledCustodyOrigin(3);
+  let stateAssertions = 0;
+  f.setStateFence(() => {
+    stateAssertions++;
+    throw new Error("SQL handoff gap.");
+  });
+  try {
+    f.owner.assertNativeCurrent(f.origin, f.initial);
+    assert.equal(stateAssertions, 0);
+    // Controlled State peer models its own new same-operation readset. Runtime
+    // does not acquire or authorize this transition through the native fence.
+    f.setStateFence(() => {
+      stateAssertions++;
+    });
+    f.owner.assertCurrent(f.origin, f.initial);
+    assert.equal(stateAssertions, 1);
+    assert.equal(f.recognizer.recognize(f.origin, f.initial), f.session);
+  } finally {
+    await f.owner.close();
+  }
+});
+
+test("native-only handoff still refuses foreign origin, call, receiver and native lifetime", async () => {
+  for (const change of [
+    (f, actual) => {
+      actual.context = Object.freeze({});
+    },
+    (f, actual) => {
+      actual.requestRef = "2".repeat(32);
+    },
+    (f, actual) => {
+      actual.recipientRef = "recipient/foreign";
+    },
+    (f, actual) => {
+      actual.signal = AbortSignal.abort();
+    },
+    (f, actual) => {
+      actual.deadline = new Date(Date.now() + 10000).toISOString();
+    },
+    (f) => {
+      f.invalidateNative();
+    },
+    (f) => {
+      f.lifetime.abort();
+    },
+  ]) {
+    const f = await controlledCustodyOrigin(3);
+    let stateAssertions = 0;
+    f.setStateFence(() => {
+      stateAssertions++;
+      denied();
+    });
+    try {
+      const actual = { ...f.initial };
+      change(f, actual);
+      assert.throws(() => f.owner.assertNativeCurrent(f.origin, actual));
+      assert.equal(stateAssertions, 0);
+    } finally {
+      await f.owner.close();
+    }
+  }
+  const a = await controlledCustodyOrigin(2);
+  const b = await controlledCustodyOrigin(2);
+  try {
+    assert.throws(() => a.owner.assertNativeCurrent(b.origin, a.initial));
+    assert.throws(() => a.owner.assertNativeCurrent({ ...a.origin }, a.initial));
+    b.owner.assertNativeCurrent(b.origin, b.initial);
+    await b.owner.release(b.origin);
+    assert.throws(() => b.owner.assertNativeCurrent(b.origin, b.initial));
+  } finally {
+    await Promise.all([a.owner.close(), b.owner.close()]);
+  }
+});
+
+test("native-only synchronous fence retains its monotonic cutoff without timer delivery", async () => {
+  const f = await controlledCustodyOrigin(3, { maximumCallMilliseconds: 20 });
+  f.setNativeFence(delayTimerDelivery);
+  try {
+    assert.throws(() => f.owner.assertNativeCurrent(f.origin, f.initial));
+    assert.equal(f.initial.signal.aborted, false);
+  } finally {
+    await f.owner.close();
+  }
+  assert.equal(f.nativeReleases, 1);
+});
+
+test("native-only invalid asynchronous fence remains joined before original release", async () => {
+  const f = await controlledCustodyOrigin(3);
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  f.setNativeFence(() => pending);
+  assert.throws(() => f.owner.assertNativeCurrent(f.origin, f.initial));
   const closed = f.owner.close();
   await Promise.resolve();
   assert.equal(f.nativeReleases, 0);

@@ -787,6 +787,19 @@ export class RepositoryWorkOriginOwnerV2<
       throw failure();
     }
   }
+  /** Original Work captures this separate fence for its SQL-readset handoff.
+   * It recognizes native membership/current Exchange only; State authority must
+   * be reacquired through the original unit before full assertCurrent can pass. */
+  assertNativeCurrent(origin: OriginalRepositoryWorkOriginV2<V>, call: AuthorityCallV1): void {
+    const entry = this.member(origin);
+    try {
+      if (entry.native === undefined || entry.original === undefined) throw failure();
+      this.assert(entry, call, true, "native");
+    } catch {
+      void this.retire(entry);
+      throw failure();
+    }
+  }
   async release(origin: OriginalRepositoryWorkOriginV2<V>): Promise<void> {
     const entry = origin && typeof origin === "object" ? this.entries.get(origin) : undefined;
     if (!entry) throw failure();
