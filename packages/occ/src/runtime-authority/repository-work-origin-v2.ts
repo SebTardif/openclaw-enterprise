@@ -93,6 +93,12 @@ export interface RepositoryWorkOriginNativeRecognizerV2<
   V extends GitHubMediationVersion = 2,
 > {
   readonly recognize: (origin: OriginalRepositoryWorkOriginV2<V>, call: AuthorityCallV1) => Session;
+  /** Native correspondence only during the original State readset handoff.
+   * The full recognizer remains required after reacquiring State authority. */
+  readonly recognizeNative: (
+    origin: OriginalRepositoryWorkOriginV2<V>,
+    call: AuthorityCallV1,
+  ) => Session;
 }
 
 /** The custody owner captures this binding once. There is no later receiver
@@ -438,6 +444,22 @@ export class RepositoryWorkOriginOwnerV2<
               throw failure();
             }
           },
+          recognizeNative: (
+            origin: OriginalRepositoryWorkOriginV2<V>,
+            call: AuthorityCallV1,
+          ): N => {
+            const entry = this.member(origin);
+            try {
+              // The fixed custody receiver deliberately selects correspondence
+              // during the SQL handoff; this cannot supply State authority.
+              if (entry.native === undefined || entry.original === undefined) throw failure();
+              this.assert(entry, call, true, "native");
+              return entry.native;
+            } catch {
+              void this.retire(entry);
+              throw failure();
+            }
+          },
         }),
       );
       if (bound !== undefined) throw failure();
@@ -530,6 +552,7 @@ export class RepositoryWorkOriginOwnerV2<
     entry: Entry<N, A, V>,
     call: AuthorityCallV1,
     work: (bounded: AuthorityCallV1, clock: GitHubMediationClockSample) => Promise<T>,
+    finalSources: "native" | "all" = "all",
   ): Promise<T> {
     // Each RPC has a new Exchange. Native/State inspection must recognize that
     // Exchange before their synchronous currentness assertions can accept it.
@@ -576,7 +599,7 @@ export class RepositoryWorkOriginOwnerV2<
       .catch(() => {});
     try {
       const result = await Promise.race([pending, aborted]);
-      this.assert(entry, bounded, entry.original !== undefined);
+      this.assert(entry, bounded, entry.original !== undefined, finalSources);
       return result;
     } finally {
       clearTimeout(timer);
@@ -635,11 +658,7 @@ export class RepositoryWorkOriginOwnerV2<
     if (entry.registry !== undefined && entry.registry !== encoded) throw failure();
     entry.registry = encoded;
   }
-  private async refresh(
-    entry: Entry<N, A, V>,
-    call: AuthorityCallV1,
-    clock: GitHubMediationClockSample,
-  ): Promise<RepositoryWorkNativeBindingV2> {
+  private async observeNative(entry: Entry<N, A, V>, call: AuthorityCallV1) {
     if (entry.native === undefined) throw failure();
     const observed = await this.native.inspect(entry.native, call);
     this.assert(entry, call, false, "native");
@@ -668,6 +687,15 @@ export class RepositoryWorkOriginOwnerV2<
       entry.stopNative = () => observed.lifetime.removeEventListener("abort", abort);
     }
     await this.registry(entry, observed.verified, call);
+    return observed;
+  }
+  private async refresh(
+    entry: Entry<N, A, V>,
+    call: AuthorityCallV1,
+    clock: GitHubMediationClockSample,
+  ): Promise<RepositoryWorkNativeBindingV2> {
+    if (entry.native === undefined) throw failure();
+    const observed = await this.observeNative(entry, call);
     if (entry.assignment === undefined) {
       entry.assignment = await this.assignments.acquire(entry.request, entry.native, call);
       this.assert(entry, call, false, "native");
@@ -773,6 +801,61 @@ export class RepositoryWorkOriginOwnerV2<
     const entry = this.member(origin);
     try {
       return await this.run(entry, call, (bounded, clock) => this.refresh(entry, bounded, clock));
+    } catch {
+      void this.retire(entry);
+      throw failure();
+    }
+  }
+  /** Authenticates the actual next native Exchange without reopening State SQL.
+   * Original Work captures this method before its State readset handoff. */
+  async inspectNative(
+    origin: OriginalRepositoryWorkOriginV2<V>,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkNativeBindingV2> {
+    const entry = this.member(origin);
+    try {
+      const original = entry.original;
+      if (entry.native === undefined || original === undefined) throw failure();
+      return await this.run(
+        entry,
+        call,
+        async (bounded, clock) => {
+          const observed = await this.observeNative(entry, bounded);
+          // Refresh may shorten the original horizons, but cannot replace the
+          // held State lease or grant another operation/session lifetime.
+          entry.operationEnd = Math.min(
+            entry.operationEnd,
+            this.deadline(entry.clock, observed.verified.expiresAt),
+          );
+          const leaseEnd = Math.min(
+            entry.leaseEnd,
+            entry.operationEnd,
+            this.deadline(clock, observed.verified.expiresAt),
+          );
+          if (leaseEnd < entry.leaseEnd) {
+            entry.leaseEnd = leaseEnd;
+            if (entry.timer) clearTimeout(entry.timer);
+            entry.timer = setTimeout(
+              () => {
+                void this.retire(entry);
+              },
+              Math.max(1, leaseEnd - performance.now()),
+            );
+          }
+          this.assert(entry, bounded, true, "native");
+          await this.registry(entry, observed.verified, bounded);
+          this.assert(entry, bounded, true, "native");
+          return Object.freeze({
+            context: observed.context,
+            transportBinding: observed.verified.transportBinding,
+            attachmentRef: original.attachmentRef,
+            receiverRef: original.execution.receiverRef,
+            execution: original.execution,
+            service: original.service,
+          });
+        },
+        "native",
+      );
     } catch {
       void this.retire(entry);
       throw failure();

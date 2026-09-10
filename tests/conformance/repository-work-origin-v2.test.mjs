@@ -638,6 +638,12 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
   let stateCurrent = true;
   let stateFence = () => undefined;
   let nativeFence = () => undefined;
+  let nativeInspectionFence = () => undefined;
+  let nativeObservation = (value) => value;
+  let currentRecord = record;
+  let nativeInspections = 0;
+  let assignmentInspections = 0;
+  let registryReads = 0;
   let nativeReleases = 0;
   let assignmentReleases = 0;
   const custody = {
@@ -649,7 +655,12 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
   };
   const owner = new RepositoryWorkOriginOwnerV2({
     protocolVersion: version,
-    trust: { readCurrentRecord: async () => record },
+    trust: {
+      readCurrentRecord: async () => {
+        registryReads++;
+        return currentRecord;
+      },
+    },
     limits: {
       ...limits,
       maximumCallMilliseconds: 500,
@@ -663,20 +674,22 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
         assert.deepEqual({ ...selected }, declaration);
         return session;
       },
-      async inspect(original) {
+      async inspect(original, actualCall) {
         assert.equal(original, session);
-        return {
+        nativeInspections++;
+        await nativeInspectionFence(actualCall);
+        return nativeObservation({
           context,
           verified,
           lifetime: lifetime.signal,
           sessionRef: "fixture/native-session",
-        };
+        });
       },
       assertCurrent(original, actualCall) {
         assert.equal(original, session);
         assert.equal(actualCall.context, context);
         if (!nativeCurrent) denied();
-        return nativeFence();
+        return nativeFence(actualCall);
       },
       async release(original) {
         assert.equal(original, session);
@@ -693,6 +706,7 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
       },
       async inspect(original) {
         assert.equal(original, assignment);
+        assignmentInspections++;
         return value;
       },
       assertCurrent(original) {
@@ -735,6 +749,24 @@ async function controlledCustodyOrigin(version = 2, changes = {}) {
     },
     setNativeFence(value) {
       nativeFence = value;
+    },
+    setNativeInspectionFence(value) {
+      nativeInspectionFence = value;
+    },
+    setNativeObservation(value) {
+      nativeObservation = value;
+    },
+    changeRegistry(update) {
+      currentRecord = update(currentRecord);
+    },
+    get nativeInspections() {
+      return nativeInspections;
+    },
+    get assignmentInspections() {
+      return assignmentInspections;
+    },
+    get registryReads() {
+      return registryReads;
     },
   };
 }
@@ -972,4 +1004,414 @@ test("native-only invalid asynchronous fence remains joined before original rele
   await closed;
   assert.equal(f.nativeReleases, 1);
   assert.equal(f.assignmentReleases, 1);
+});
+
+test("fixed custody native correspondence crosses the SQL gap while full recognition refuses", async () => {
+  for (const version of [2, 3]) {
+    const f = await controlledCustodyOrigin(version);
+    let stateAssertions = 0;
+    const nativeOnly = f.recognizer.recognizeNative.bind(f.recognizer);
+    const full = f.recognizer.recognize.bind(f.recognizer);
+    f.setStateFence(() => {
+      stateAssertions++;
+      throw new Error("Initial SQL readset has retired.");
+    });
+    try {
+      assert.equal(f.bindings, 1);
+      assert.ok(Object.isFrozen(f.recognizer));
+      assert.equal(f.owner.recognizeNative, undefined);
+      f.custody.bindOrigins = denied;
+      assert.equal(nativeOnly(f.origin, f.initial), f.session);
+      assert.equal(stateAssertions, 0);
+      assert.throws(() => full(f.origin, f.initial));
+      assert.equal(stateAssertions, 1);
+      // Full failure still irreversibly retires the origin; the explicit native
+      // arm is not a fallback that can recover permission or revive membership.
+      assert.throws(() => nativeOnly(f.origin, f.initial));
+    } finally {
+      await f.owner.close();
+    }
+  }
+});
+
+test("custody correspondence preserves the retained Session through a fresh call and State handoff", async () => {
+  for (const version of [2, 3]) {
+    const f = await controlledCustodyOrigin(version);
+    let stateAssertions = 0;
+    try {
+      f.opening.abort();
+      assert.equal(f.lifetime.signal.aborted, false);
+      const next = {
+        ...f.initial,
+        signal: new AbortController().signal,
+        deadline: new Date(Date.now() + 1000).toISOString(),
+      };
+      await f.owner.inspect(f.origin, next);
+      f.setStateFence(() => {
+        stateAssertions++;
+        throw new Error("SQL handoff gap.");
+      });
+      assert.equal(f.recognizer.recognizeNative(f.origin, next), f.session);
+      assert.equal(stateAssertions, 0);
+      // Only the controlled State peer supplies its new same-operation readset.
+      // Native correspondence itself neither performs nor authorizes this step.
+      f.setStateFence(() => {
+        stateAssertions++;
+      });
+      assert.equal(f.recognizer.recognize(f.origin, next), f.session);
+      assert.equal(stateAssertions, 1);
+    } finally {
+      await f.owner.close();
+    }
+    assert.equal(f.nativeReleases, 1);
+    assert.equal(f.assignmentReleases, 1);
+  }
+});
+
+test("custody native correspondence refuses foreign origins and changed call or lifetime operands", async () => {
+  for (const change of [
+    (f, actual) => {
+      actual.context = Object.freeze({});
+    },
+    (f, actual) => {
+      actual.requestRef = "2".repeat(32);
+    },
+    (f, actual) => {
+      actual.recipientRef = "recipient/foreign";
+    },
+    (f, actual) => {
+      actual.signal = AbortSignal.abort();
+    },
+    (f, actual) => {
+      actual.deadline = new Date(Date.now() + 10000).toISOString();
+    },
+    (f) => {
+      f.invalidateNative();
+    },
+    (f) => {
+      f.lifetime.abort();
+    },
+  ]) {
+    const f = await controlledCustodyOrigin(3);
+    let stateAssertions = 0;
+    f.setStateFence(() => {
+      stateAssertions++;
+      denied();
+    });
+    try {
+      const actual = { ...f.initial };
+      change(f, actual);
+      assert.throws(() => f.recognizer.recognizeNative(f.origin, actual));
+      assert.equal(stateAssertions, 0);
+    } finally {
+      await f.owner.close();
+    }
+  }
+  const a = await controlledCustodyOrigin(2);
+  const b = await controlledCustodyOrigin(2);
+  try {
+    assert.throws(() => a.recognizer.recognizeNative(b.origin, a.initial));
+    assert.throws(() => a.recognizer.recognizeNative({ ...a.origin }, a.initial));
+    assert.equal(a.recognizer.recognizeNative(a.origin, a.initial), a.session);
+    assert.equal(b.recognizer.recognizeNative(b.origin, b.initial), b.session);
+    await b.owner.release(b.origin);
+    assert.throws(() => b.recognizer.recognizeNative(b.origin, b.initial));
+  } finally {
+    await Promise.all([a.owner.close(), b.owner.close()]);
+  }
+});
+
+test("custody native correspondence checks the elapsed cutoff after its synchronous native fence", async () => {
+  const f = await controlledCustodyOrigin(3, { maximumCallMilliseconds: 20 });
+  f.setNativeFence(delayTimerDelivery);
+  try {
+    assert.throws(() => f.recognizer.recognizeNative(f.origin, f.initial));
+    assert.equal(f.initial.signal.aborted, false);
+  } finally {
+    await f.owner.close();
+  }
+  assert.equal(f.nativeReleases, 1);
+});
+
+test("custody native correspondence joins an accepted invalid asynchronous fence before release", async () => {
+  const f = await controlledCustodyOrigin(3);
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  f.setNativeFence(() => pending);
+  assert.throws(() => f.recognizer.recognizeNative(f.origin, f.initial));
+  const closed = f.owner.close();
+  await Promise.resolve();
+  assert.equal(f.nativeReleases, 0);
+  assert.equal(f.assignmentReleases, 0);
+  finish();
+  await closed;
+  assert.equal(f.nativeReleases, 1);
+  assert.equal(f.assignmentReleases, 1);
+});
+
+test("captured native inspection authenticates later RPCs and new deadlines without State checkout", async () => {
+  for (const version of [2, 3]) {
+    const f = await controlledCustodyOrigin(version);
+    const inspectNative = f.owner.inspectNative.bind(f.owner);
+    let stateAssertions = 0;
+    let expectedExchange;
+    let inspectedExchange;
+    f.owner.inspectNative = denied;
+    f.setStateFence(() => {
+      stateAssertions++;
+      throw new Error("SQL readset is in the original handoff.");
+    });
+    // These exact fixture Exchange contexts are owned by the controlled native
+    // peer. Merely changing the declared call deadline does not enroll one.
+    f.setNativeInspectionFence((actual) => {
+      assert.equal(actual.context, expectedExchange.context);
+      assert.equal(actual.deadline, expectedExchange.deadline);
+      inspectedExchange = actual.deadline;
+    });
+    f.setNativeFence((actual) => {
+      assert.equal(actual.deadline, inspectedExchange);
+    });
+    let previous = f.opening;
+    try {
+      for (const offset of [100, 200]) {
+        previous.abort();
+        assert.equal(f.lifetime.signal.aborted, false);
+        const rpc = new AbortController();
+        expectedExchange = {
+          ...f.initial,
+          signal: rpc.signal,
+          deadline: new Date(Date.parse(f.initial.deadline) + offset).toISOString(),
+        };
+        const binding = await inspectNative(f.origin, expectedExchange);
+        assert.equal(binding.context, f.initial.context);
+        assert.equal(f.recognizer.recognizeNative(f.origin, expectedExchange), f.session);
+        f.owner.assertNativeCurrent(f.origin, expectedExchange);
+        previous = rpc;
+      }
+      assert.equal(f.nativeInspections, 3);
+      assert.equal(f.registryReads, 6);
+      assert.equal(f.assignmentInspections, 1);
+      assert.equal(stateAssertions, 0);
+      assert.throws(() => f.recognizer.recognize(f.origin, expectedExchange));
+      assert.equal(stateAssertions, 1);
+    } finally {
+      await f.owner.close();
+    }
+  }
+});
+
+test("native inspection cannot authenticate a fabricated next Exchange", async () => {
+  const f = await controlledCustodyOrigin(3);
+  const selected = new Date(Date.parse(f.initial.deadline) + 100).toISOString();
+  f.setNativeInspectionFence((actual) => {
+    assert.equal(actual.deadline, selected);
+  });
+  try {
+    const copied = {
+      ...f.initial,
+      signal: new AbortController().signal,
+      deadline: new Date(Date.parse(selected) + 100).toISOString(),
+    };
+    await assert.rejects(f.owner.inspectNative(f.origin, copied));
+    assert.throws(() => f.recognizer.recognizeNative(f.origin, copied));
+    assert.equal(f.assignmentInspections, 1);
+  } finally {
+    await f.owner.close();
+  }
+});
+
+test("native inspection rechecks current registry presence and exact admitted profile", async () => {
+  for (const update of [
+    () => undefined,
+    (record) => ({ ...record, changedRevision: 1 }),
+    (record) => ({
+      ...record,
+      admission: {
+        ...record.admission,
+        profile: { ...record.admission.profile, operationPolicy: "github-metadata-rpc-v2" },
+      },
+    }),
+    (record) => ({
+      ...record,
+      admission: {
+        ...record.admission,
+        profile: {
+          ...record.admission.profile,
+          transportProfileRef: "owned-child-stdio-github-metadata-v2",
+        },
+      },
+    }),
+    (record) => ({
+      ...record,
+      admission: {
+        ...record.admission,
+        configuration: { ...record.admission.configuration, role: "foreign-role" },
+      },
+    }),
+  ]) {
+    const f = await controlledCustodyOrigin(3);
+    let stateAssertions = 0;
+    f.setStateFence(() => {
+      stateAssertions++;
+      denied();
+    });
+    f.changeRegistry(update);
+    try {
+      await assert.rejects(
+        f.owner.inspectNative(f.origin, {
+          ...f.initial,
+          signal: new AbortController().signal,
+          deadline: new Date(Date.parse(f.initial.deadline) + 100).toISOString(),
+        }),
+      );
+      assert.equal(f.assignmentInspections, 1);
+      assert.equal(stateAssertions, 0);
+    } finally {
+      await f.owner.close();
+    }
+  }
+});
+
+test("native inspection preserves original call and native observation correspondence", async () => {
+  for (const change of [
+    (f, actual) => {
+      actual.context = Object.freeze({});
+    },
+    (f, actual) => {
+      actual.requestRef = "2".repeat(32);
+    },
+    (f, actual) => {
+      actual.recipientRef = "recipient/foreign";
+    },
+    (f, actual) => {
+      actual.signal = AbortSignal.abort();
+    },
+    (f) => {
+      f.setNativeObservation((value) => ({ ...value, context: Object.freeze({}) }));
+    },
+    (f) => {
+      f.setNativeObservation((value) => ({ ...value, sessionRef: "session/foreign" }));
+    },
+    (f) => {
+      f.setNativeObservation((value) => ({
+        ...value,
+        verified: { ...value.verified, transportBinding: Object.freeze({}) },
+      }));
+    },
+    (f) => {
+      f.setNativeObservation((value) => ({ ...value, lifetime: new AbortController().signal }));
+    },
+  ]) {
+    const f = await controlledCustodyOrigin(3);
+    const actual = {
+      ...f.initial,
+      signal: new AbortController().signal,
+      deadline: new Date(Date.parse(f.initial.deadline) + 100).toISOString(),
+    };
+    change(f, actual);
+    try {
+      await assert.rejects(f.owner.inspectNative(f.origin, actual));
+      assert.equal(f.assignmentInspections, 1);
+    } finally {
+      await f.owner.close();
+    }
+  }
+  const a = await controlledCustodyOrigin(2);
+  const b = await controlledCustodyOrigin(2);
+  try {
+    await assert.rejects(a.owner.inspectNative(b.origin, a.initial));
+    await assert.rejects(a.owner.inspectNative({ ...a.origin }, a.initial));
+    await b.owner.inspectNative(b.origin, b.initial);
+    await b.owner.release(b.origin);
+    await assert.rejects(b.owner.inspectNative(b.origin, b.initial));
+  } finally {
+    await Promise.all([a.owner.close(), b.owner.close()]);
+  }
+});
+
+test("native inspection preserves the elapsed per-call cutoff across awaited native authentication", async () => {
+  const f = await controlledCustodyOrigin(3, { maximumCallMilliseconds: 20 });
+  f.setNativeInspectionFence(async () => {
+    await Promise.resolve();
+    delayTimerDelivery();
+  });
+  try {
+    const actual = {
+      ...f.initial,
+      signal: new AbortController().signal,
+      deadline: new Date(Date.parse(f.initial.deadline) + 100).toISOString(),
+    };
+    await assert.rejects(f.owner.inspectNative(f.origin, actual));
+    assert.equal(actual.signal.aborted, false);
+    assert.equal(f.assignmentInspections, 1);
+  } finally {
+    await f.owner.close();
+  }
+});
+
+test("native inspection cancellation drains accepted native authentication before release", async () => {
+  const f = await controlledCustodyOrigin(3);
+  let entered;
+  let finish;
+  const started = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  f.setNativeInspectionFence(() => {
+    entered();
+    return pending;
+  });
+  const rpc = new AbortController();
+  const actual = {
+    ...f.initial,
+    signal: rpc.signal,
+    deadline: new Date(Date.parse(f.initial.deadline) + 100).toISOString(),
+  };
+  const observed = f.owner.inspectNative(f.origin, actual);
+  await started;
+  rpc.abort();
+  await assert.rejects(observed);
+  const closed = f.owner.close();
+  await Promise.resolve();
+  assert.equal(f.nativeReleases, 0);
+  assert.equal(f.assignmentReleases, 0);
+  finish();
+  await closed;
+  assert.equal(f.nativeReleases, 1);
+  assert.equal(f.assignmentReleases, 1);
+});
+
+test("native inspection cannot extend the held lease, operation or same-call cutoff", async () => {
+  for (const [changes, wait, sameCall] of [
+    [{ maximumLeaseMilliseconds: 80 }, 90, false],
+    [{ maximumOperationMilliseconds: 60 }, 75, false],
+    [{ maximumCallMilliseconds: 20 }, 45, true],
+  ]) {
+    const f = await controlledCustodyOrigin(3, changes);
+    const actual = {
+      ...f.initial,
+      signal: new AbortController().signal,
+      deadline: new Date(Date.parse(f.initial.deadline) + 100).toISOString(),
+    };
+    try {
+      await f.owner.inspectNative(f.origin, actual);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      const next = sameCall
+        ? actual
+        : {
+            ...actual,
+            signal: new AbortController().signal,
+            deadline: new Date(Date.parse(actual.deadline) + 100).toISOString(),
+          };
+      await assert.rejects(f.owner.inspectNative(f.origin, next));
+      assert.equal(next.signal.aborted, false);
+      assert.equal(f.assignmentInspections, 1);
+    } finally {
+      await f.owner.close();
+    }
+  }
 });

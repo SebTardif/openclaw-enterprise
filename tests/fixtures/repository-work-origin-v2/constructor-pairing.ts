@@ -173,3 +173,53 @@ export function rejectCrossedNativeHandoff<Assignment>(
   // @ts-expect-error Native-only handoff still requires the original selected Git origin.
   owner.assertNativeCurrent(metadata, call);
 }
+
+/** The fixed custody receiver captures both explicit fences once. It owns the
+ * deliberate native-only handoff call and full authority check before effect. */
+export function captureOriginalGitCustodyCorrespondence(
+  recognizer: RepositoryWorkOriginNativeRecognizerV2<GitHubMediationNativeServiceSession, 3>,
+): RepositoryWorkOriginNativeRecognizerV2<GitHubMediationNativeServiceSession, 3> {
+  return Object.freeze({
+    recognize: recognizer.recognize.bind(recognizer),
+    recognizeNative: recognizer.recognizeNative.bind(recognizer),
+  });
+}
+
+export function rejectCrossedCustodyCorrespondence(
+  recognizer: RepositoryWorkOriginNativeRecognizerV2<GitHubMediationNativeServiceSession, 3>,
+  origin: OriginalRepositoryWorkOriginV2<3>,
+  metadata: OriginalRepositoryWorkOriginV2,
+  call: Parameters<typeof recognizer.recognizeNative>[1],
+): void {
+  const session: GitHubMediationNativeServiceSession = recognizer.recognizeNative(origin, call);
+  // @ts-expect-error Native-only correspondence still requires the selected Git origin.
+  recognizer.recognizeNative(metadata, call);
+  // @ts-expect-error The returned original native Session is not a Runtime origin.
+  const projectedOrigin: OriginalRepositoryWorkOriginV2<3> = session;
+  void projectedOrigin;
+}
+
+/** The original Work receiver captures authenticated fresh-Exchange inspection
+ * separately from its synchronous native fence and its full State-backed use. */
+export function captureOriginalGitNativeInspection<Assignment>(
+  owner: RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+): Readonly<
+  Pick<
+    RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+    "inspectNative" | "assertNativeCurrent"
+  >
+> {
+  return Object.freeze({
+    inspectNative: owner.inspectNative.bind(owner),
+    assertNativeCurrent: owner.assertNativeCurrent.bind(owner),
+  });
+}
+
+export function rejectCrossedNativeInspection<Assignment>(
+  owner: RepositoryWorkOriginOwnerV2<GitHubMediationNativeServiceSession, Assignment, 3>,
+  metadata: OriginalRepositoryWorkOriginV2,
+  call: Parameters<typeof owner.inspectNative>[1],
+): void {
+  // @ts-expect-error Fresh native inspection requires the original selected Git origin.
+  void owner.inspectNative(metadata, call);
+}
