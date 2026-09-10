@@ -124,6 +124,9 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
   and [protected GitHub custody](reference/protected-github-custody.md): understand
   recorded credential responsibility, protected material storage and recovery;
   accepting authority and delivery remain with their original owners.
+- [Trusted repository publication](reference/repository-publication-v1.md): inspect
+  immutable Git candidates and the approval/publication component; original Work,
+  State/IAM, dispatcher and persistent-storage composition remain required.
 - [GitHub read mediation](reference/github-mediation.md) and
   [native mediation identity](reference/github-mediation-identity.md): inspect the
   broker protocol and native connection boundary; production installation and

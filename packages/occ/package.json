@@ -82,7 +82,8 @@
     "./github-app-provider-v1/provider": "./src/github-app-provider-v1/provider.ts",
     "./runtime-preparation/create-reference": "./src/runtime-preparation/create-reference.ts",
     "./runtime-preparation/create-correlation": "./src/runtime-preparation/create-correlation.ts",
-    "./runtime-authority/repository-work-origin-v2": "./src/runtime-authority/repository-work-origin-v2.ts"
+    "./runtime-authority/repository-work-origin-v2": "./src/runtime-authority/repository-work-origin-v2.ts",
+    "./repository-publication-v1": "./src/repository-publication-v1/index.ts"
   },
   "types": "./src/index.ts",
   "files": [
