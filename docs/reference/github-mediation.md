@@ -256,8 +256,8 @@ Controlled service observations in refusal tests create no admitted Work,
 preparation, release or token. They do not prove native authentication, a committed
 operation, credential storage or successful GitHub access.
 
-Successful source integration requires the genuine internal owners and their
-actual transaction, native transport and custody implementations. An external
+Production composition requires the genuine internal owners and their actual
+transaction, native transport and custody implementations. An external
 GitHub response may be substituted only at its actual external boundary and must
 be identified as such. Live App scope/revocation, selected gVisor routing and
 no-bypass behavior require separate deployed evidence.

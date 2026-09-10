@@ -193,8 +193,8 @@ TypeScript conformance test rejects missing or widened V3 selection and crossed
 operation-owner or native-source types. Original Work, State and custody
 acceptance remains separate from these transport and service-admission results.
 
-Composed source acceptance additionally needs the real current service profile,
-controller broker, original work/assignment producer and custody/dispatch owner.
+Production startup additionally needs the real current service profile, controller
+broker, original work/assignment producer and custody/dispatch owner.
 Installed qualification must prove that the selected gVisor execution cannot
 reach the broker socket or provider credentials directly, that protected
 attachment identity changes on execution replacement, and that permission
