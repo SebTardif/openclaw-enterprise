@@ -15,12 +15,14 @@ registerHooks({
 const {
   canonicalGatewayStartupValueV1,
   gatewayStartupCommandDigestV1,
+  gatewayStartupCommandDigestV2,
   GatewayStartupOwnerPhaseV1,
 } = await import(ownerUrl);
 const { RepositoryTransactionLifetime } =
   await import("../../packages/occ/src/ports/transaction.ts");
 const {
   createInstallationServiceRegistrationReaderV1,
+  createInstallationServiceRegistrationReaderV2,
   createInstallationServiceMaterialRegistrationReaderV1,
 } = await import("../../apps/controller/src/admission/installation-service-registration.ts");
 
@@ -29,14 +31,23 @@ const object = (name) => ({ name, uid: name + "-uid", resourceVersion: "1" });
 function fixture(options = {}) {
   // These are controlled reader participants, not an authenticated native source,
   // SPIRE registration, Compute observation or real transaction.
-  const startup = {
+  const subject = {
+    kind: "agent-gateway",
     installationId: "installation-one",
+    namespaceRef: "namespace-one",
+    agentRef: "agent-one",
+  };
+  const startup = {
+    ...(options.version === 2
+      ? { schemaVersion: 2, subject }
+      : { installationId: "installation-one" }),
     processRef: "process-one",
     processGeneration: 1,
     operationRef: "accept-one",
     operationDigest: "a".repeat(64),
   };
   const binding = {
+    ...(options.version === 2 ? { schemaVersion: 2 } : {}),
     startup,
     createEffectRef: "effect-one",
     selection: ref("selection-one"),
@@ -68,7 +79,8 @@ function fixture(options = {}) {
     observation: ref("observation-one"),
   };
   const startupCommand = {
-    schemaVersion: 1,
+    schemaVersion: options.version === 2 ? 2 : 1,
+    ...(options.version === 2 ? { subject } : {}),
     kind: "consume-startup",
     operationRef: "consume-one",
     startup,
@@ -205,7 +217,9 @@ function fixture(options = {}) {
     released = [];
   let active = true,
     current = true;
-  const unit = options.unit ?? { installationId: startup.installationId };
+  const unit =
+    options.unit ??
+    (options.version === 2 ? { subject } : { installationId: startup.installationId });
   const io = options.io ?? {
     assertActive() {
       if (!active) throw new Error("controlled unit closed");
@@ -233,7 +247,11 @@ function fixture(options = {}) {
           nativeConfiguration: structuredClone(nativeConfiguration),
           gatewaySpiffeId: entry.spiffeId,
           controllerSpiffeId: selection.controllerSpiffeId,
-          commandDigest: options.material ? "" : gatewayStartupCommandDigestV1(input),
+          commandDigest: options.material
+            ? ""
+            : options.version === 2
+              ? gatewayStartupCommandDigestV2(input)
+              : gatewayStartupCommandDigestV1(input),
           operationProfile: "installation-gateway-startup-v1",
           transportProfile: "owned-child-stdio-installation-gateway-startup-v1",
           expiresAtMs: now + 10000,
@@ -298,7 +316,9 @@ function fixture(options = {}) {
   const reader = (
     options.material
       ? createInstallationServiceMaterialRegistrationReaderV1
-      : createInstallationServiceRegistrationReaderV1
+      : options.version === 2
+        ? createInstallationServiceRegistrationReaderV2
+        : createInstallationServiceRegistrationReaderV1
   )(participants, expectedAssociation);
   return {
     reader,
@@ -1064,6 +1084,81 @@ test("material native proof correspondence cannot mutate after lease acquisition
   f.nativeInspection().requestDigest = "e".repeat(64);
   assert.throws(() => lease.assertCurrent(), /unavailable/);
   assert.deepEqual(f.released, []);
+  await lease.release();
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+});
+
+test("V2 registration retains the exact Agent unit and independent original process observation", async () => {
+  const f = fixture({ version: 2 });
+  const lease = await f.acquire();
+  assert.equal(lease.assertCurrent(), undefined);
+  assert.deepEqual(f.acquired, ["registry", "registrar", "process"]);
+  f.closeUnit();
+  assert.equal(
+    lease.assertCurrent(),
+    undefined,
+    "held provider leases outlive acquisition IO only",
+  );
+  await lease.release();
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+  assert.throws(() => lease.assertCurrent());
+});
+for (const [name, change] of [
+  [
+    "foreign Agent",
+    (selection) => {
+      selection.binding.startup.subject.agentRef = "another-agent";
+      return selection;
+    },
+  ],
+  [
+    "foreign namespace",
+    (selection) => {
+      selection.binding.startup.subject.namespaceRef = "another-namespace";
+      return selection;
+    },
+  ],
+  [
+    "V1 locator projection",
+    (selection) => {
+      selection.binding.startup.installationId = selection.binding.startup.subject.installationId;
+      delete selection.binding.startup.subject;
+      delete selection.binding.startup.schemaVersion;
+      return selection;
+    },
+  ],
+])
+  test(`V2 registration refuses ${name} without invoking physical observation`, async () => {
+    const f = fixture({ version: 2, selection: change });
+    await assert.rejects(f.acquire());
+    assert.deepEqual(f.acquired, ["registry"]);
+    assert.deepEqual(f.released, ["registry"]);
+  });
+test("V2 registration does not substitute a matching Pod label for execution identity", async () => {
+  const f = fixture({
+    version: 2,
+    process(value) {
+      value.identity.executionIncarnationRef = "foreign-execution";
+      return value;
+    },
+  });
+  await assert.rejects(f.acquire());
+  assert.deepEqual(f.released, ["process", "registrar", "registry"]);
+});
+test("V2 registration keeps complete SPIRE-entry coverage and native lifetime required", async () => {
+  const ambiguous = fixture({
+    version: 2,
+    registration(value) {
+      value.entries.push(structuredClone(value.entries[0]));
+      return value;
+    },
+  });
+  await assert.rejects(ambiguous.acquire());
+  assert.deepEqual(ambiguous.released, ["registrar", "registry"]);
+  const f = fixture({ version: 2 });
+  const lease = await f.acquire();
+  f.sourceAbort.abort();
+  assert.throws(() => lease.assertCurrent());
   await lease.release();
   assert.deepEqual(f.released, ["process", "registrar", "registry"]);
 });

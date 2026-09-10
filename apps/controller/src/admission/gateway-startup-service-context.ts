@@ -3,16 +3,29 @@ import { randomBytes } from "node:crypto";
 import {
   canonicalGatewayStartupValueV1,
   gatewayStartupCommandDigestV1,
+  gatewayStartupCommandDigestV2,
   parseGatewayStartupCommandV1,
+  parseGatewayStartupCommandV2,
   type createGatewayStartupOwnerV1,
+  type createGatewayStartupOwnerV2,
+  type GatewayStartupInvocationV1,
+  type GatewayStartupInvocationV2,
   type GatewayStartupCommandBoundsV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
-import type {
-  createGatewayInstallationServiceAuthorityV1,
-  GatewayInstallationNativeSourceV1,
-  GatewayInstallationServiceAssociationV1,
-  GatewayInstallationServiceCommandV1,
+import {
+  parseGatewayInstallationServiceAssociationV1,
+  parseGatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV2,
+  type createGatewayInstallationServiceAuthorityV1,
+  type GatewayInstallationNativeSourceV1,
+  type GatewayInstallationServiceAssociationV1,
+  type GatewayInstallationServiceCommandV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
+import type {
+  createGatewayInstallationServiceAuthorityV2,
+  GatewayInstallationNativeSourceV2,
+  GatewayInstallationServiceCommandV2,
+} from "@openclaw-enterprise/occ/gateway-startup-v1/agent-service";
 import {
   closeNativeChild,
   nativeChildExit,
@@ -110,6 +123,127 @@ export interface GatewayStartupNativeServiceOptionsV1 {
   }>;
 }
 
+/** Agent command membership remains a separate original receiver domain. The
+ * native transport profile authenticates the connection, never the Agent grant. */
+export interface GatewayStartupRegistrationNativeV2 {
+  originalFor(
+    command: GatewayInstallationServiceCommandV2,
+    bounds: GatewayStartupCommandBoundsV1,
+  ): object | undefined;
+  inspectOriginal(
+    original: object,
+    command: GatewayInstallationServiceCommandV2,
+    bounds: GatewayStartupCommandBoundsV1,
+  ): ReturnType<GatewayStartupRegistrationNativeV1["inspectOriginal"]>;
+}
+export interface GatewayStartupNativeServiceOptionsV2 extends Omit<
+  GatewayStartupNativeServiceOptionsV1,
+  "association" | "compose"
+> {
+  readonly association: GatewayInstallationServiceAssociationV2;
+  readonly compose: (
+    native: GatewayInstallationNativeSourceV2,
+    registrationNative: GatewayStartupRegistrationNativeV2,
+  ) => Readonly<{
+    service: ReturnType<typeof createGatewayInstallationServiceAuthorityV2>;
+    owner: ReturnType<typeof createGatewayStartupOwnerV2>;
+  }>;
+}
+type ServiceCommand = GatewayInstallationServiceCommandV1 | GatewayInstallationServiceCommandV2;
+type Association =
+  GatewayInstallationServiceAssociationV1 | GatewayInstallationServiceAssociationV2;
+interface NativeSource<C, A> {
+  inspect(
+    proof: object,
+    command: C,
+    bounds: GatewayStartupCommandBoundsV1,
+  ): Promise<
+    | Readonly<{
+        profile: "installation-gateway-startup-v1";
+        transport: "owned-child-stdio-installation-gateway-startup-v1";
+        association: A;
+        signal: AbortSignal;
+        assertCurrent(): undefined;
+        close(): Promise<void>;
+      }>
+    | undefined
+  >;
+}
+interface RegistrationNative<C> {
+  originalFor(command: C, bounds: GatewayStartupCommandBoundsV1): object | undefined;
+  inspectOriginal(
+    original: object,
+    command: C,
+    bounds: GatewayStartupCommandBoundsV1,
+  ): ReturnType<GatewayStartupRegistrationNativeV1["inspectOriginal"]>;
+}
+interface NativeOptions<C, A, I, R> extends Omit<
+  GatewayStartupNativeServiceOptionsV1,
+  "association" | "compose"
+> {
+  readonly association: A;
+  readonly compose: (
+    native: NativeSource<C, A>,
+    registrationNative: RegistrationNative<C>,
+  ) => Readonly<{
+    service: {
+      enroll(
+        proof: object,
+        input: unknown,
+        bounds: GatewayStartupCommandBoundsV1,
+      ): Promise<Readonly<{ invocation: I; close(): Promise<void> }> | undefined>;
+    };
+    owner: {
+      execute(input: unknown, invocation: I, bounds: GatewayStartupCommandBoundsV1): Promise<R>;
+    };
+  }>;
+}
+
+export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativeServiceOptionsV1) {
+  return createNativeService<
+    GatewayInstallationServiceCommandV1,
+    GatewayInstallationServiceAssociationV1,
+    GatewayStartupInvocationV1,
+    Awaited<ReturnType<ReturnType<typeof createGatewayStartupOwnerV1>["execute"]>>
+  >(
+    options,
+    (value) => {
+      const command = parseGatewayStartupCommandV1(value);
+      if (
+        command.kind !== "consume-startup" &&
+        command.kind !== "read-current" &&
+        command.kind !== "read-operation"
+      )
+        throw nativeUnavailable();
+      return command;
+    },
+    gatewayStartupCommandDigestV1,
+    parseGatewayInstallationServiceAssociationV1,
+  );
+}
+export function createGatewayStartupNativeServiceV2(options: GatewayStartupNativeServiceOptionsV2) {
+  return createNativeService<
+    GatewayInstallationServiceCommandV2,
+    GatewayInstallationServiceAssociationV2,
+    GatewayStartupInvocationV2,
+    Awaited<ReturnType<ReturnType<typeof createGatewayStartupOwnerV2>["execute"]>>
+  >(
+    options,
+    (value) => {
+      const command = parseGatewayStartupCommandV2(value);
+      if (
+        command.kind !== "consume-startup" &&
+        command.kind !== "read-current" &&
+        command.kind !== "read-operation"
+      )
+        throw nativeUnavailable();
+      return command;
+    },
+    gatewayStartupCommandDigestV2,
+    parseGatewayInstallationServiceAssociationV2,
+  );
+}
+
 const id = () => randomBytes(16).toString("hex");
 const idPattern = /^[0-9a-f]{32}$/;
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
@@ -150,10 +284,10 @@ type Event = Record<string, unknown> & {
   requestDigest: string;
   deadline: string;
 };
-interface Exchange {
+interface Exchange<C> {
   readonly event: Event;
   readonly proof: object;
-  readonly input: GatewayInstallationServiceCommandV1;
+  readonly input: C;
   readonly inputText: string;
   readonly bounds: GatewayStartupCommandBoundsV1;
   readonly abort: AbortController;
@@ -169,11 +303,19 @@ interface Exchange {
 /** Owns only this factory's original Go child, pipe and connection. There is no
  * entrypoint accepting a decoded peer/context to construct native provenance.
  * The Runtime owner still performs every current grant and transaction check. */
-export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativeServiceOptionsV1) {
+function createNativeService<
+  C extends ServiceCommand,
+  A extends Association,
+  I,
+  R extends { kind: string },
+>(
+  options: NativeOptions<C, A, I, R>,
+  parseCommand: (input: unknown) => C,
+  commandDigest: (command: C) => string,
+  parseAssociation: (input: unknown) => A,
+) {
   const profile = freeze(JSON.parse(canonical(options.profile))) as GatewayStartupNativeProfileV1;
-  const association = freeze(
-    JSON.parse(canonical(options.association)),
-  ) as GatewayInstallationServiceAssociationV1;
+  const association = parseAssociation(options.association);
   const binaryPath = options.binaryPath,
     listenAddress = options.listenAddress;
   const configurationVersion = options.configurationVersion;
@@ -202,10 +344,10 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
   const profileDigest = nativeDigest(profileBytes);
   const incarnation = id();
   const lifetime = new AbortController();
-  const proofs = new WeakMap<object, Exchange>();
+  const proofs = new WeakMap<object, Exchange<C>>();
   const requests = new Set<Promise<void>>();
-  const resourceOwners = new Set<Exchange>();
-  let active: Exchange | undefined;
+  const resourceOwners = new Set<Exchange<C>>();
+  let active: Exchange<C> | undefined;
   let connection:
     { id: string; deadline: string; inspectionText: string; expiry: number } | undefined;
   let connectionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -225,20 +367,20 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
     readyReject: () => void = () => {};
   let pending:
     | {
-        exchange: Exchange;
+        exchange: Exchange<C>;
         challenge: string;
         resolve: (value: Event) => void;
         reject: () => void;
         stop: () => void;
       }
     | undefined;
-  const cancelled: { exchange: Exchange; challenge: string }[] = [];
-  const match = (event: Event, exchange: Exchange) =>
+  const cancelled: { exchange: Exchange<C>; challenge: string }[] = [];
+  const match = (event: Event, exchange: Exchange<C>) =>
     event.connectionId === exchange.event.connectionId &&
     event.exchangeId === exchange.event.exchangeId &&
     event.requestDigest === exchange.event.requestDigest &&
     event.deadline === exchange.event.deadline;
-  const valid = (exchange: Exchange, bounds: GatewayStartupCommandBoundsV1) =>
+  const valid = (exchange: Exchange<C>, bounds: GatewayStartupCommandBoundsV1) =>
     !stopped &&
     active === exchange &&
     !exchange.terminal &&
@@ -252,12 +394,12 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
     Date.now() < Date.parse(bounds.deadline) &&
     performance.now() - exchange.started < exchange.budget &&
     Date.now() < connection.expiry;
-  const requireCurrent = (exchange: Exchange): undefined => {
+  const requireCurrent = (exchange: Exchange<C>): undefined => {
     if (!valid(exchange, exchange.bounds) || performance.now() - exchange.inspectedAt >= 1000)
       throw nativeUnavailable();
     return undefined;
   };
-  const stopExchange = (exchange: Exchange) => {
+  const stopExchange = (exchange: Exchange<C>) => {
     if (exchange.terminal) return;
     exchange.terminal = true;
     clearTimeout(exchange.timer);
@@ -293,7 +435,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
   };
   const send = (
     kind: "inspect" | "result" | "cancel",
-    exchange: Exchange,
+    exchange: Exchange<C>,
     challenge: string,
     payloadBase64: string,
     signal: AbortSignal,
@@ -340,7 +482,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
       throw nativeUnavailable();
     return canonical(peer);
   };
-  const inspect = async (exchange: Exchange): Promise<void> => {
+  const inspect = async (exchange: Exchange<C>): Promise<void> => {
     if (!valid(exchange, exchange.bounds) || pending) throw nativeUnavailable();
     const challenge = id();
     let abort = () => {};
@@ -375,20 +517,18 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
   };
   const corresponds = (
     proof: object,
-    input: GatewayInstallationServiceCommandV1,
+    input: C,
     bounds: GatewayStartupCommandBoundsV1,
-  ): Exchange | undefined => {
+  ): Exchange<C> | undefined => {
     const exchange = proofs.get(proof);
     if (!exchange || !valid(exchange, bounds)) return undefined;
     try {
-      return canonical(parseGatewayStartupCommandV1(input)) === exchange.inputText
-        ? exchange
-        : undefined;
+      return canonical(parseCommand(input)) === exchange.inputText ? exchange : undefined;
     } catch {
       return undefined;
     }
   };
-  const native = Object.freeze<GatewayInstallationNativeSourceV1>({
+  const native = Object.freeze<NativeSource<C, A>>({
     async inspect(proof, input, bounds) {
       const exchange = corresponds(proof, input, bounds);
       if (!exchange || exchange.acquired) return undefined;
@@ -414,7 +554,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
       }
     },
   });
-  const registrationNative = Object.freeze<GatewayStartupRegistrationNativeV1>({
+  const registrationNative = Object.freeze<RegistrationNative<C>>({
     originalFor(input, bounds) {
       if (
         !active ||
@@ -444,7 +584,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
           }),
           gatewaySpiffeId: profile.peerSPIFFEId,
           controllerSpiffeId: profile.ownSPIFFEId,
-          commandDigest: gatewayStartupCommandDigestV1(exchange.input),
+          commandDigest: commandDigest(exchange.input),
           operationProfile: "installation-gateway-startup-v1" as const,
           transportProfile: "owned-child-stdio-installation-gateway-startup-v1" as const,
           expiresAtMs: Math.min(connection!.expiry, Date.parse(exchange.bounds.deadline)),
@@ -472,7 +612,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
       void pollWork.finally(poll);
     }, 750);
   };
-  const handle = async (exchange: Exchange) => {
+  const handle = async (exchange: Exchange<C>) => {
     let enrollment: Awaited<ReturnType<typeof enroll>>;
     try {
       enrollment = await enroll(exchange.proof, exchange.input, exchange.bounds);
@@ -599,7 +739,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
         "deadline",
         "operation",
       ]);
-      const input = parseGatewayStartupCommandV1(request.operation);
+      const input = parseCommand(request.operation);
       if (
         request.schemaVersion !== 1 ||
         request.method !== input.kind ||
@@ -622,7 +762,7 @@ export function createGatewayStartupNativeServiceV1(options: GatewayStartupNativ
         deadline: event.deadline,
         signal: abort.signal,
       });
-      const exchange: Exchange = {
+      const exchange: Exchange<C> = {
         event,
         proof,
         input,

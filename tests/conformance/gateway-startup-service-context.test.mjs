@@ -14,21 +14,32 @@ import {
   nativeDigest,
   writeNativeFrame,
 } from "../../apps/controller/src/admission/runtime-authority-wire.ts";
-import { createGatewayStartupNativeServiceV1 } from "../../apps/controller/src/admission/gateway-startup-service-context.ts";
+import {
+  createGatewayStartupNativeServiceV1,
+  createGatewayStartupNativeServiceV2,
+} from "../../apps/controller/src/admission/gateway-startup-service-context.ts";
 import {
   createGatewayStartupOwnerV1,
+  createGatewayStartupOwnerV2,
   parseGatewayStartupCommandV1,
 } from "../../packages/occ/src/gateway-startup-v1/owner.ts";
 import { createGatewayInstallationServiceAuthorityV1 } from "../../packages/occ/src/gateway-startup-v1/installation-service.ts";
+import { createGatewayInstallationServiceAuthorityV2 } from "../../packages/occ/src/gateway-startup-v1/agent-service.ts";
 
 // This suite exercises closed construction and actual foreign-proof denials.
 // Authentic native Source/TLS/pipe accepting paths use the separate Go fixture;
 // these synthetic values never supply registration, a service grant or a claim.
-function fixture() {
+function fixture(version = 1) {
   const digest = `sha256:${"1".repeat(64)}`;
   const record = (recordRef) => ({ recordRef, recordVersion: 1 });
-  const startup = {
+  const subject = {
+    kind: "agent-gateway",
     installationId: "ins_11111111-1111-4111-8111-111111111111",
+    namespaceRef: "namespace-fixture",
+    agentRef: "agent-fixture",
+  };
+  const startup = {
+    ...(version === 2 ? { schemaVersion: 2, subject } : { installationId: subject.installationId }),
     processRef: "process/gateway",
     processGeneration: 1,
     operationRef: "operation/startup",
@@ -80,7 +91,8 @@ function fixture() {
     },
   };
   const input = {
-    schemaVersion: 1,
+    schemaVersion: version,
+    ...(version === 2 ? { subject } : {}),
     kind: "read-current",
     startup,
     expectedRecordVersion: 1,
@@ -101,7 +113,11 @@ function fixture() {
       compositionCount++;
       native = source;
       registrationNative = registration;
-      service = createGatewayInstallationServiceAuthorityV1({
+      service = (
+        version === 2
+          ? createGatewayInstallationServiceAuthorityV2
+          : createGatewayInstallationServiceAuthorityV1
+      )({
         native: source,
         account: {
           async consume() {
@@ -115,7 +131,10 @@ function fixture() {
           },
         },
       });
-      return { service, owner: createGatewayStartupOwnerV1({}) };
+      return {
+        service,
+        owner: (version === 2 ? createGatewayStartupOwnerV2 : createGatewayStartupOwnerV1)({}),
+      };
     },
   };
   return {
@@ -646,3 +665,37 @@ test(
     await assert.rejects(blockedResponse);
   },
 );
+
+test("V2 receiver constructs its own Agent proof domain and rejects foreign metadata without a child", async () => {
+  const f = fixture(2);
+  const receiver = createGatewayStartupNativeServiceV2(f.options);
+  const bounds = {
+    requestRef: "foreign",
+    deadline: new Date(Date.now() + 2000).toISOString(),
+    signal: new AbortController().signal,
+  };
+  try {
+    for (const proof of [
+      {},
+      { ...f.options.association },
+      { valid: true, subject: f.input.subject },
+    ]) {
+      assert.equal(await f.native.inspect(proof, f.input, bounds), undefined);
+      assert.equal(f.registrationNative.originalFor(f.input, bounds), undefined);
+      assert.equal(f.registrationNative.inspectOriginal(proof, f.input, bounds), undefined);
+      assert.equal(await f.service.enroll(proof, f.input, bounds), undefined);
+    }
+    assert.equal(f.accountCalls, 0);
+    assert.equal(f.compositionCount, 1);
+  } finally {
+    await receiver.close();
+  }
+});
+test("native receiver constructors cannot select the other startup subject version", () => {
+  const old = fixture();
+  const agent = fixture(2);
+  assert.throws(() => createGatewayStartupNativeServiceV2(old.options), /unavailable/);
+  assert.throws(() => createGatewayStartupNativeServiceV1(agent.options), /unavailable/);
+  assert.equal(old.compositionCount, 0);
+  assert.equal(agent.compositionCount, 0);
+});

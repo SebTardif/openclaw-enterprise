@@ -96,6 +96,12 @@ import {
 } from "./postgres/turn-command-owner.ts";
 import {
   GatewayStartupOwnerPhaseV1,
+  createGatewayStartupOwnerV2,
+  canonicalGatewayStartupValueV1,
+  gatewayStartupCommandDigestV1,
+  gatewayStartupCommandDigestV2,
+  type GatewayStartupMutationEventV1,
+  type GatewayStartupMutationEventV2,
   parseGatewayStartupSubjectV2,
   type GatewayStartupCommandV2,
   type GatewayStartupCompletionV2,
@@ -113,6 +119,16 @@ import {
   type GatewayStartupTransactionOwnerV1,
   type GatewayStartupTransactionResultV1,
 } from "../gateway-startup-v1/owner.ts";
+import type {
+  GatewayStartupControllerParticipantsV2,
+  GatewayStartupControllerOwnerV2,
+} from "../gateway-startup-v1/controller.ts";
+import type { GatewayLaunchResourceSourceV2 } from "../gateway-startup-v1/launch-resource.ts";
+import type { GatewayLaunchResourceAllocationV2 } from "@openclaw-enterprise/contracts/gateway-launch-resource-v2";
+import { prepareGatewayLaunchAllocationV2 } from "./postgres/gateway-launch-allocation.ts";
+import type { LocalAccountSecurityRecordV1 } from "../account-authority/local-account-security.ts";
+import type { GatewayStartupAccountBindingReaderV1 } from "../gateway-startup-v1/account-binding.ts";
+import { decodePostgresAccountSecurityRecordV1 } from "./postgres/account-security.ts";
 import {
   createPostgresGatewayStartupV1,
   createPostgresGatewayStartupV2,
@@ -622,6 +638,10 @@ interface GatewayStartupEnrollmentV1 {
   readonly installationId: string;
   readonly context: TransactionContext;
   readonly phase: GatewayStartupOwnerPhaseV1;
+  readonly bindingToken: object;
+  readonly allocations: Partial<Record<"process" | "create-effect" | "audit", string>>;
+  authorityAttribution?: GatewayStartupAuthorityLeaseV1["attribution"];
+  auditStarted: boolean;
   readonly execution: GatewayStartupExecutionV1;
   readonly command: GatewayStartupCommandV1;
   readonly bounds: GatewayStartupCommandBoundsV1;
@@ -632,6 +652,13 @@ interface GatewayStartupEnrollmentV1 {
   readonly nativeIAM: NativeIAMTransactionView;
   authorityIO?: GatewayStartupAcceptedOperationV1 | undefined;
   authorityStarted: boolean;
+  accountSessionStarted?: boolean;
+  accountSessionPending?: boolean;
+  /** Captured only by the original account reader, never by an authority DTO. */
+  accountObservation?: Readonly<LocalAccountSecurityRecordV1>;
+  accountPrincipal?: Readonly<Pick<Principal, "id" | "issuer" | "subject">>;
+  accountRequiredPrincipal?: string;
+  accountAuthorized?: boolean;
   policyState: "unlocked" | "locking" | "locked";
   active: boolean;
 }
@@ -639,8 +666,9 @@ interface GatewayStartupEnrollmentV1 {
 type GatewayStartupRuntimeConsumeV2 = GatewayStartupOwnerParticipantsV2["authority"]["consume"];
 interface GatewayStartupCentralParticipantsV2 extends Omit<
   GatewayStartupOwnerParticipantsV2,
-  "authority" | "selection"
+  "authority" | "selection" | "audit" | "allocate"
 > {
+  readonly launchResource?: GatewayLaunchResourceSourceV2;
   readonly selection: RuntimeCredentialSelectionResolverV2;
   readonly driverSelection: DriverSelection;
   readonly authority: {
@@ -670,12 +698,14 @@ interface GatewayStartupEnrollmentV2 extends Omit<
 type GatewayStartupEnrollment = GatewayStartupEnrollmentV1 | GatewayStartupEnrollmentV2;
 interface GatewayStartupRunV1 {
   readonly version: 1;
+  readonly bindingToken: object;
   readonly args: Parameters<GatewayStartupTransactionOwnerV1["run"]>;
   readonly selection: DriverSelection | undefined;
   readonly participants: GatewayStartupOwnerParticipantsV1 | undefined;
 }
 interface GatewayStartupRunV2 {
   readonly version: 2;
+  readonly bindingToken: object;
   readonly args: Parameters<GatewayStartupTransactionOwnerV2["run"]>;
   readonly selection: DriverSelection | undefined;
   readonly participants: GatewayStartupOwnerParticipantsV2 | undefined;
@@ -1117,6 +1147,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
+  readonly #gatewayControllerBindings = new WeakSet<object>();
   readonly #gatewaySourceSelections = new WeakMap<object, DriverSelection>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
   readonly #initialBindingExecution = new AsyncLocalStorage<PostgresInitialBindingExecutionV1>();
@@ -4427,6 +4458,217 @@ export class PostgresPlatformState implements PlatformStateStore {
     }
   }
 
+  /** Account lookup for an independently authenticated native service command.
+   * The original current command supplies the locator, and the existing account
+   * phase owns the shared account lock before IAM. This reader issues no native
+   * registration, process or purpose authority and cannot extend call lifetime. */
+  gatewayStartupAccountBindingV1(): GatewayStartupAccountBindingReaderV1 {
+    return Object.freeze<GatewayStartupAccountBindingReaderV1>({
+      lock: (unit, io, bounds) => {
+        const record = this.#gatewayExecution.getStore();
+        const unavailable = () =>
+          new DependencyUnavailableError("The retained Gateway account is unavailable.");
+        try {
+          if (
+            !record ||
+            record.unit !== unit ||
+            record.bounds !== bounds ||
+            record.accountSessionStarted ||
+            record.policyState !== "unlocked"
+          )
+            throw unavailable();
+          this.assertGatewayAuthorityOperationV1(record, io);
+          GatewayStartupOwnerPhaseV1.prototype.assertOwnedOperation.call(
+            record.phase,
+            io,
+            "account",
+          );
+          const command = record.command;
+          if (
+            command.kind !== "consume-startup" &&
+            command.kind !== "read-current" &&
+            command.kind !== "read-operation"
+          )
+            throw unavailable();
+          const startup =
+            command.kind === "read-operation" ? command.operation.startup : command.startup;
+          if (!startup) throw unavailable();
+          record.accountSessionStarted = true;
+          record.accountSessionPending = true;
+          let released = false;
+          const release = () => {
+            released = true;
+          };
+          record.phase.retainCleanup(async () => release());
+          const current = (): undefined => {
+            if (
+              released ||
+              !record.active ||
+              this.#gatewayContexts.get(record.token) !== record ||
+              record.context.gateway !== record.execution ||
+              record.execution.phase !== record.phase ||
+              bounds.signal.aborted
+            )
+              throw unavailable();
+            record.selected.assertCurrent();
+            record.nativeIAM.assertCurrent();
+            return undefined;
+          };
+          record.phase.retainCurrentness(current);
+          return record.phase.runOperation("account-binding", async (queryIO) => {
+            try {
+              current();
+              this.assertGatewayAuthorityOperationV1(record, io);
+              const result = await queryIO.query(
+                `SELECT * FROM occ.read_locked_gateway_startup_account_v1($1,$2,$3,$4,$5,$6::jsonb)`,
+                [
+                  record.installationId,
+                  startup.operationRef,
+                  startup.operationDigest,
+                  startup.processRef,
+                  String(startup.processGeneration),
+                  canonicalGatewayStartupValueV1(startup),
+                ],
+              );
+              current();
+              this.assertGatewayAuthorityOperationV1(record, io);
+              queryIO.assertActive();
+              if (record.policyState !== "unlocked") throw unavailable();
+              if (result.rowCount === 0 && result.rows.length === 0) return undefined;
+              if (result.rowCount !== 1 || result.rows.length !== 1) throw unavailable();
+              const row = result.rows[0];
+              if (
+                !row ||
+                typeof row !== "object" ||
+                Array.isArray(row) ||
+                !("account_id" in row) ||
+                !("principal_id" in row) ||
+                typeof row.account_id !== "string" ||
+                typeof row.principal_id !== "string" ||
+                row.principal_id.length === 0
+              )
+                throw unavailable();
+              const account = decodePostgresAccountSecurityRecordV1(row, {
+                installationId: record.installationId,
+                accountId: row.account_id,
+                issuer: `occ:installation:${record.installationId}:better-auth`,
+                subject: row.account_id,
+              });
+              if (account.state !== "active") throw unavailable();
+              record.accountObservation = account;
+              record.accountRequiredPrincipal = row.principal_id;
+              return Object.freeze({
+                account,
+                principalId: row.principal_id,
+                assertCurrent: current,
+                release,
+              });
+            } finally {
+              record.accountSessionPending = false;
+            }
+          });
+        } catch (error) {
+          record?.phase.poison(error);
+          return Promise.reject(error);
+        }
+      },
+    });
+  }
+
+  /** The actual selected NativeIAM driver can read only through this original
+   * account phase. The startup purposes use this same
+   * current account/principal/admin-decision capture, never a returned lease DTO. */
+  private gatewayPrivatePolicy(
+    record: GatewayStartupEnrollment,
+    io: GatewayStartupAcceptedOperationV1,
+  ): GatewayStartupPrivatePolicyV1 {
+    const unavailable = () =>
+      new DependencyUnavailableError("The original Gateway policy is unavailable.");
+    const assertLocked = () => {
+      this.assertGatewayAuthorityOperationV1(record, io);
+      if (record.policyState !== "locked") throw unavailable();
+    };
+    const iam: NativeIAMTransactionView = Object.freeze({
+      assertCurrent: () => {
+        try {
+          assertLocked();
+        } catch (error) {
+          record.phase.poison(error);
+          throw error;
+        }
+      },
+      lookupIdentity: async (input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0]) => {
+        try {
+          assertLocked();
+          const result = await record.nativeIAM.lookupIdentity(input);
+          assertLocked();
+          const account = record.accountObservation;
+          if (
+            account !== undefined &&
+            result?.kind === "principal" &&
+            result.namespaceId === undefined &&
+            result.issuer === account.issuer &&
+            result.subject === account.subject &&
+            input.issuer === account.issuer &&
+            input.subject === account.subject &&
+            (record.accountRequiredPrincipal === undefined ||
+              result.id === record.accountRequiredPrincipal)
+          )
+            record.accountPrincipal = Object.freeze({
+              id: result.id,
+              issuer: result.issuer,
+              subject: result.subject,
+            });
+          return result;
+        } catch (error) {
+          record.phase.poison(error);
+          throw error;
+        }
+      },
+      authorize: async (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) => {
+        try {
+          assertLocked();
+          const result = await record.nativeIAM.authorize(request);
+          assertLocked();
+          if (
+            result.allowed === true &&
+            record.accountPrincipal !== undefined &&
+            request.principalId === record.accountPrincipal.id &&
+            request.action === "administer" &&
+            request.resource.kind === "installation" &&
+            request.resource.id === record.installationId &&
+            result.driverId === record.selected.registration?.id &&
+            result.evidence.identityId === record.accountPrincipal.id
+          )
+            record.accountAuthorized = true;
+          return result;
+        } catch (error) {
+          record.phase.poison(error);
+          throw error;
+        }
+      },
+    });
+    return Object.freeze<GatewayStartupPrivatePolicyV1>({
+      iam,
+      lockPolicy: async () => {
+        try {
+          this.assertGatewayAuthorityOperationV1(record, io);
+          if (record.policyState !== "unlocked" || record.accountSessionPending)
+            throw unavailable();
+          record.policyState = "locking";
+          // Genuine authority locks account/security/registration first.
+          // This existing function holds the complete native IAM writer set.
+          await io.query("SELECT occ.lock_workload_profile_iam()");
+          this.assertGatewayAuthorityOperationV1(record, io);
+          record.policyState = "locked";
+        } catch (error) {
+          record.phase.poison(error);
+          throw error;
+        }
+      },
+    });
+  }
+
   /** No public producer/configuration is created here. Only the original owner
    * can compose the genuine private participants with the released Runtime owner. */
   private bindGatewayAuthorityConsumerV1<
@@ -4476,66 +4718,28 @@ export class PostgresPlatformState implements PlatformStateStore {
           record.nativeIAM.assertCurrent();
           return undefined;
         });
-        const assertLocked = () => {
-          this.assertGatewayAuthorityOperationV1(record, io);
-          if (record.policyState !== "locked") throw unavailable();
-        };
-        const iam: NativeIAMTransactionView = Object.freeze({
-          assertCurrent: () => {
-            try {
-              assertLocked();
-            } catch (error) {
-              record.phase.poison(error);
-              throw error;
-            }
-          },
-          lookupIdentity: async (
-            input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0],
-          ) => {
-            try {
-              assertLocked();
-              const result = await record.nativeIAM.lookupIdentity(input);
-              assertLocked();
-              return result;
-            } catch (error) {
-              record.phase.poison(error);
-              throw error;
-            }
-          },
-          authorize: async (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) => {
-            try {
-              assertLocked();
-              const result = await record.nativeIAM.authorize(request);
-              assertLocked();
-              return result;
-            } catch (error) {
-              record.phase.poison(error);
-              throw error;
-            }
-          },
-        });
-        const policy: GatewayStartupPrivatePolicyV1 = Object.freeze({
-          iam,
-          lockPolicy: async () => {
-            try {
-              this.assertGatewayAuthorityOperationV1(record, io);
-              if (record.policyState !== "unlocked") throw unavailable();
-              record.policyState = "locking";
-              // Genuine authority locks account/security/registration first.
-              // This existing function holds the complete native IAM writer set.
-              await io.query("SELECT occ.lock_workload_profile_iam()");
-              this.assertGatewayAuthorityOperationV1(record, io);
-              record.policyState = "locked";
-            } catch (error) {
-              record.phase.poison(error);
-              throw error;
-            }
-          },
-        });
+        const policy = this.gatewayPrivatePolicy(record, io);
         lease = await consume(...args, policy);
         release = lease.release.bind(lease);
         this.assertGatewayAuthorityOperationV1(record, io);
         if (record.policyState !== "locked") throw unavailable();
+        // Capture under local cleanup ownership, before either parent wait. The
+        // account check, retained audit attribution and Runtime's original
+        // request/decision validation must all observe these same fixed values.
+        const sourceAttribution = lease.attribution;
+        const attribution = Object.freeze({
+          actorId: sourceAttribution.actorId,
+          requestRef: sourceAttribution.requestRef,
+          decisionRef: sourceAttribution.decisionRef,
+        });
+        const assertCurrent = lease.assertCurrent.bind(lease);
+        if (
+          this.#gatewayControllerBindings.has(record.bindingToken) &&
+          (record.accountObservation?.state !== "active" ||
+            !record.accountAuthorized ||
+            record.accountPrincipal?.id !== attribution.actorId)
+        )
+          throw unavailable();
         if (record.version === 2) {
           const subject = record.unit.subject;
           // Genuine account/security and the complete IAM policy barrier precede
@@ -4553,8 +4757,10 @@ export class PostgresPlatformState implements PlatformStateStore {
           this.assertGatewayAuthorityOperationV1(record, io);
           if (agent.rowCount !== 1) throw unavailable();
         }
+        const retained = Object.freeze({ attribution, assertCurrent, release });
+        record.authorityAttribution = attribution;
         transferred = true;
-        return lease;
+        return retained;
       } catch (error) {
         record.phase.poison(error);
         // Runtime has not received this lease yet; keep its failed acquisition
@@ -4573,9 +4779,288 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
   }
 
+  /** Recognizes only this binding's original live Gateway phase. Allocation and
+   * audit never accept a structural unit, raw query, profile or caller token. */
+  private requireGatewayStartupProducerV1(version: 1 | 2, bindingToken: object) {
+    const record = this.#gatewayExecution.getStore();
+    try {
+      if (
+        !record ||
+        !record.active ||
+        record.version !== version ||
+        record.bindingToken !== bindingToken ||
+        this.#gatewayContexts.get(record.token) !== record ||
+        record.context.gateway !== record.execution ||
+        record.execution.phase !== record.phase ||
+        record.bounds.signal.aborted ||
+        record.policyState !== "locked" ||
+        record.authorityIO !== undefined ||
+        !record.authorityAttribution ||
+        record.authorityAttribution.requestRef !== record.bounds.requestRef
+      )
+        throw new DependencyUnavailableError("The original Gateway audit owner is unavailable.");
+      record.context.lifetime.assertActive();
+      record.selected.assertCurrent();
+      record.nativeIAM.assertCurrent();
+      return record;
+    } catch (error) {
+      record?.phase.poison(error);
+      throw error;
+    }
+  }
+
+  /** Identifiers are allocated only inside the original authenticated command.
+   * They identify possible effects; allocating one never authorizes submission. */
+  private allocateGatewayStartupIdentityV1(
+    version: 1 | 2,
+    bindingToken: object,
+    kind: "process" | "create-effect" | "audit",
+  ): string {
+    const record = this.requireGatewayStartupProducerV1(version, bindingToken);
+    try {
+      if (
+        record.auditStarted ||
+        record.command.kind === "read-current" ||
+        record.command.kind === "read-operation" ||
+        (kind !== "audit" && record.command.kind !== "accept-startup") ||
+        (kind !== "process" && kind !== "create-effect" && kind !== "audit") ||
+        record.allocations[kind] !== undefined
+      )
+        throw new DependencyUnavailableError("The original Gateway identifier is unavailable.");
+      const value = kind === "audit" ? `aud_${randomUUID()}` : `${kind}_${randomUUID()}`;
+      record.allocations[kind] = value;
+      return value;
+    } catch (error) {
+      record.phase.poison(error);
+      throw error;
+    }
+  }
+
+  /** Mandatory append uses the same original callback/client as the retained
+   * startup event and head. Original transaction completion alone establishes
+   * COMMIT; this append never creates a second transaction or a policy grant. */
+  private async appendGatewayStartupAuditV1(
+    version: 1 | 2,
+    bindingToken: object,
+    input: GatewayStartupMutationEventV1 | GatewayStartupMutationEventV2,
+    attribution: GatewayStartupAuthorityLeaseV1["attribution"],
+    unit: GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2,
+    io: GatewayStartupAcceptedOperationV1,
+    launchResource?: GatewayLaunchResourceSourceV2,
+  ): Promise<void> {
+    const record = this.requireGatewayStartupProducerV1(version, bindingToken);
+    try {
+      const event = immutableCopy(input);
+      const expectedAttribution = record.authorityAttribution!;
+      const command = record.command;
+      const canonical = canonicalGatewayStartupValueV1(command);
+      const operationDigest =
+        record.version === 1
+          ? gatewayStartupCommandDigestV1(record.command)
+          : gatewayStartupCommandDigestV2(record.command);
+      const assertCurrent = () => {
+        if (
+          this.requireGatewayStartupProducerV1(version, bindingToken) !== record ||
+          unit !== record.unit ||
+          unit.policy !== record.policy
+        )
+          throw new DependencyUnavailableError("The original Gateway audit unit is unavailable.");
+        GatewayStartupOwnerPhaseV1.prototype.assertOwnedOperation.call(
+          record.phase,
+          io,
+          "mandatory-audit",
+        );
+      };
+      assertCurrent();
+      if (
+        record.auditStarted ||
+        command.kind === "read-current" ||
+        command.kind === "read-operation" ||
+        event.kind !== command.kind ||
+        event.command.operationRef !== command.operationRef ||
+        event.command.operationDigest !== operationDigest ||
+        event.canonicalCommand !== canonical ||
+        event.auditEventId !== record.allocations.audit ||
+        canonicalGatewayStartupValueV1(attribution) !==
+          canonicalGatewayStartupValueV1(expectedAttribution)
+      )
+        throw new DependencyUnavailableError("The Gateway audit correspondence is unavailable.");
+      if (record.version === 1) {
+        if (
+          "schemaVersion" in event ||
+          !("installationId" in event.command) ||
+          event.command.installationId !== record.installationId ||
+          !("installationId" in event.startup) ||
+          event.startup.installationId !== record.installationId
+        )
+          throw new ScopeViolationError("The Gateway audit belongs to another Installation.");
+      } else {
+        if (
+          !("schemaVersion" in event) ||
+          event.schemaVersion !== 2 ||
+          !("subject" in event.command) ||
+          !("subject" in event.startup) ||
+          canonicalGatewayStartupValueV1(event.command.subject) !==
+            canonicalGatewayStartupValueV1(record.unit.subject) ||
+          canonicalGatewayStartupValueV1(event.startup.subject) !==
+            canonicalGatewayStartupValueV1(record.unit.subject)
+        )
+          throw new ScopeViolationError("The Gateway audit belongs to another Agent.");
+      }
+      if (
+        command.kind === "accept-startup" &&
+        (event.startup.processRef !== record.allocations.process ||
+          event.createEffectRef !== record.allocations["create-effect"])
+      )
+        throw new DependencyUnavailableError("The Gateway audit effect identity is unavailable.");
+      record.auditStarted = true;
+      let launchAllocation: GatewayLaunchResourceAllocationV2 | undefined;
+      if (launchResource !== undefined && record.version === 2 && event.kind === "accept-startup") {
+        if (
+          !("schemaVersion" in event) ||
+          event.schemaVersion !== 2 ||
+          !record.accountAuthorized ||
+          !record.accountObservation ||
+          record.accountPrincipal?.id !== expectedAttribution.actorId
+        )
+          throw new DependencyUnavailableError(
+            "The original Gateway launch account is unavailable.",
+          );
+        launchAllocation = await prepareGatewayLaunchAllocationV2(
+          launchResource,
+          event,
+          Object.freeze({
+            recordRef: `gla_${randomUUID()}`,
+            recordVersion: 1,
+            effectRef: `launch-effect_${randomUUID()}`,
+          }),
+          record.unit,
+          io,
+          assertCurrent,
+        );
+        assertCurrent();
+      }
+      const namespaceId = record.version === 2 ? record.unit.subject.namespaceRef : undefined;
+      await this.appendAudit(
+        record.context,
+        {
+          id: event.auditEventId,
+          occurredAt: new Date().toISOString(),
+          schemaVersion: 1,
+          source: "occ",
+          kind: "mutation",
+          installationId: record.installationId,
+          ...(namespaceId === undefined ? {} : { namespaceId }),
+          actorId: expectedAttribution.actorId,
+          requestId: expectedAttribution.requestRef,
+          admissionDecisionId: expectedAttribution.decisionRef,
+          action: `gateway-startup.${event.kind}`,
+          resource:
+            record.version === 2
+              ? {
+                  kind: "agent",
+                  id: record.unit.subject.agentRef,
+                  namespaceId: record.unit.subject.namespaceRef,
+                }
+              : { kind: "installation", id: record.installationId },
+          outcome: "success",
+          details: {
+            startupSchemaVersion: version,
+            command: event.command,
+            startup: event.startup,
+            createEffectRef: event.createEffectRef,
+            beforeHeadVersion: event.beforeHeadVersion,
+            afterHeadVersion: event.afterHeadVersion,
+            beforeRecordVersion: event.beforeRecordVersion,
+            afterRecordVersion: event.afterRecordVersion,
+            previousOperationRef: event.previousOperationRef,
+            ...(launchAllocation === undefined
+              ? {}
+              : {
+                  launchAllocation: {
+                    recordRef: launchAllocation.recordRef,
+                    recordVersion: launchAllocation.recordVersion,
+                    effectRef: launchAllocation.effectRef,
+                    documentDigest: launchAllocation.documentDigest,
+                    target: launchAllocation.target,
+                  },
+                }),
+          },
+        },
+        (statement, parameters) => io.query(statement, parameters),
+      );
+      assertCurrent();
+      if (command.kind === "accept-startup" && record.accountObservation !== undefined) {
+        const account = record.accountObservation;
+        if (
+          !record.accountAuthorized ||
+          record.accountPrincipal?.id !== expectedAttribution.actorId
+        )
+          throw new DependencyUnavailableError(
+            "The original Gateway account attribution is unavailable.",
+          );
+        const retained = await io.query(
+          `SELECT occ.retain_gateway_startup_account_v1($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS retained`,
+          [
+            record.installationId,
+            event.startup.operationRef,
+            event.startup.operationDigest,
+            event.startup.processRef,
+            String(event.startup.processGeneration),
+            event.createEffectRef,
+            event.auditEventId,
+            account.accountId,
+            account.incarnation,
+            String(account.accountVersion),
+            expectedAttribution.actorId,
+            expectedAttribution.requestRef,
+          ],
+        );
+        assertCurrent();
+        const retainedRow = retained.rows[0];
+        if (
+          retained.rowCount !== 1 ||
+          retained.rows.length !== 1 ||
+          retainedRow === null ||
+          typeof retainedRow !== "object" ||
+          Array.isArray(retainedRow) ||
+          !("retained" in retainedRow) ||
+          retainedRow.retained !== true
+        )
+          throw new DependencyUnavailableError(
+            "The retained Gateway account attribution is unavailable.",
+          );
+      }
+      if (launchAllocation !== undefined) {
+        const result = await io.query(
+          "SELECT occ.retain_gateway_launch_allocation_v2($1::jsonb,$2) AS retained",
+          [canonicalGatewayStartupValueV1(launchAllocation), event.auditEventId],
+        );
+        assertCurrent();
+        const row = result.rows[0];
+        if (
+          result.rowCount !== 1 ||
+          result.rows.length !== 1 ||
+          row === null ||
+          typeof row !== "object" ||
+          Array.isArray(row) ||
+          !("retained" in row) ||
+          row.retained !== true
+        )
+          throw new DependencyUnavailableError(
+            "The original Gateway launch allocation is unavailable.",
+          );
+      }
+    } catch (error) {
+      record.phase.poison(error);
+      throw error;
+    }
+  }
+
   private bindGatewayStartupOwnersV1(
     source?: GatewayStartupCentralParticipantsV1,
   ): GatewayStartupOwnerBindingV1 {
+    const bindingToken = Object.freeze({});
     const selection = source?.driverSelection;
     let participants: GatewayStartupOwnerParticipantsV1 | undefined;
 
@@ -4608,7 +5093,13 @@ export class PostgresPlatformState implements PlatformStateStore {
 
     const transaction: GatewayStartupTransactionOwnerV1 = Object.freeze({
       run: (...args: Parameters<GatewayStartupTransactionOwnerV1["run"]>) =>
-        this.runGatewayStartupTransactionV1({ version: 1, args, selection, participants }),
+        this.runGatewayStartupTransactionV1({
+          version: 1,
+          bindingToken,
+          args,
+          selection,
+          participants,
+        }),
     });
     return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
   }
@@ -4727,44 +5218,78 @@ export class PostgresPlatformState implements PlatformStateStore {
 
   private bindGatewayStartupOwnersV2(
     source?: GatewayStartupCentralParticipantsV2,
+    requireOriginalAccount = false,
   ): GatewayStartupOwnerBindingV2 {
+    const bindingToken = Object.freeze({});
+    if (requireOriginalAccount) this.#gatewayControllerBindings.add(bindingToken);
+    const originalLaunch = source?.launchResource;
+    const prepareLaunch = originalLaunch?.prepareLocked;
+    if (
+      (requireOriginalAccount || originalLaunch !== undefined) &&
+      typeof prepareLaunch !== "function"
+    )
+      throw new DependencyUnavailableError("The original Gateway launch source is unavailable.");
+    const launchResource =
+      originalLaunch === undefined || prepareLaunch === undefined
+        ? undefined
+        : Object.freeze({ prepareLocked: prepareLaunch.bind(originalLaunch) });
     const selection = source?.driverSelection;
     let participants: GatewayStartupOwnerParticipantsV2 | undefined;
+
+    const authority = source?.authority;
+    const consumeMethod = authority?.consume;
+    const selectedSource = source?.selection;
+    const resolveMethod = selectedSource?.resolveLocked;
+    const process = source?.process;
+    const dispositionMethod = process?.requireDisposition;
+    const currentMethod = process?.requireCurrent;
 
     // Capture actual producer methods once, matching Runtime's own capture.
     if (
       source !== undefined &&
-      typeof source.authority?.consume === "function" &&
-      typeof source.selection?.resolveLocked === "function" &&
-      typeof source.process?.requireDisposition === "function" &&
-      typeof source.process?.requireCurrent === "function" &&
-      typeof source.audit?.append === "function" &&
-      typeof source.allocate === "function"
+      typeof consumeMethod === "function" &&
+      typeof resolveMethod === "function" &&
+      typeof dispositionMethod === "function" &&
+      typeof currentMethod === "function"
     ) {
-      const consume = source.authority.consume.bind(source.authority);
+      const consume = consumeMethod.bind(authority);
       participants = Object.freeze({
         authority: Object.freeze({
           consume: this.bindGatewayAuthorityConsumerV1(2, consume),
         }),
         selection: Object.freeze({
-          resolveLocked: this.bindGatewayCredentialSelectionV2(
-            source.selection.resolveLocked.bind(source.selection),
-          ),
+          resolveLocked: this.bindGatewayCredentialSelectionV2(resolveMethod.bind(selectedSource)),
         }),
         process: Object.freeze({
-          requireDisposition: source.process.requireDisposition.bind(source.process),
-          requireCurrent: source.process.requireCurrent.bind(source.process),
+          requireDisposition: dispositionMethod.bind(process),
+          requireCurrent: currentMethod.bind(process),
         }),
-        audit: Object.freeze({ append: source.audit.append.bind(source.audit) }),
-        allocate: source.allocate.bind(source),
+        audit: Object.freeze({
+          append: (...args: Parameters<GatewayStartupOwnerParticipantsV2["audit"]["append"]>) =>
+            this.appendGatewayStartupAuditV1(2, bindingToken, ...args, launchResource),
+        }),
+        allocate: (kind: Parameters<GatewayStartupOwnerParticipantsV2["allocate"]>[0]) =>
+          this.allocateGatewayStartupIdentityV1(2, bindingToken, kind),
       });
     }
 
     const transaction: GatewayStartupTransactionOwnerV2 = Object.freeze({
       run: (...args: Parameters<GatewayStartupTransactionOwnerV2["run"]>) =>
-        this.runGatewayStartupTransactionV1({ version: 2, args, selection, participants }),
+        this.runGatewayStartupTransactionV1({
+          version: 2,
+          bindingToken,
+          args,
+          selection,
+          participants,
+        }),
     });
     return Object.freeze({ transaction, ...(participants === undefined ? {} : { participants }) });
+  }
+
+  gatewayStartupControllerOwnerV2(
+    source: GatewayStartupControllerParticipantsV2,
+  ): GatewayStartupControllerOwnerV2 {
+    return createGatewayStartupOwnerV2(this.bindGatewayStartupOwnersV2(source, true));
   }
 
   private runGatewayStartupTransactionV1(
@@ -4849,6 +5374,9 @@ export class PostgresPlatformState implements PlatformStateStore {
             });
             const enrolled: GatewayStartupEnrollmentV1 = {
               version: 1,
+              bindingToken: request.bindingToken,
+              allocations: {},
+              auditStarted: false,
               installationId: installation.id,
               context,
               phase,
@@ -4882,6 +5410,9 @@ export class PostgresPlatformState implements PlatformStateStore {
             });
             const enrolled: GatewayStartupEnrollmentV2 = {
               version: 2,
+              bindingToken: request.bindingToken,
+              allocations: {},
+              auditStarted: false,
               installationId: installation.id,
               context,
               phase,

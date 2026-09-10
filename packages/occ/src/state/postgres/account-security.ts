@@ -171,3 +171,5 @@ export function createPostgresAccountSecurityReaderV1(
     },
   });
 }
+
+export { decodeRecord as decodePostgresAccountSecurityRecordV1 };

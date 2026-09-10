@@ -10,6 +10,13 @@ See [protected Gateway startup](gateway-startup-v1.md) for command/process owner
 and [hosted Gateway composition](hosted-gateway.md) for the fixed Slack/Teams host
 adapter and its implementation limits.
 
+The Controller-side `createControllerGatewayStartupNativeServiceV2` now joins the
+Agent service receiver to its original State, account, IAM, registration and
+launch interfaces. It requires those actual producers and the restricted database
+helper configuration before accepting a command. This programmatic composition
+does not fill the executable's protected configuration supplier or establish
+hosted readiness. See the [Controller composition boundary](gateway-startup-v1.md#controller-composition-for-agent-startup).
+
 ## Construction and local lifetime
 
 `createGatewayStartupBootstrapV2(service, confirmedMaterial, adapter)` receives the

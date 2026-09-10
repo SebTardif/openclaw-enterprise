@@ -51,3 +51,24 @@ export const registeredTables = {
   gatewayStartupHeads,
   gatewayStartupOperations,
 };
+
+// The Agent native receiver/authority requires the original Controller policy
+// argument and cannot be installed as a standalone five-argument Runtime port.
+import {
+  createGatewayInstallationServiceAuthorityV2,
+  type GatewayInstallationNativeSourceV2,
+} from "../../../packages/occ/src/gateway-startup-v1/agent-service.ts";
+import type { GatewayStartupControllerParticipantsV2 } from "../../../packages/occ/src/gateway-startup-v1/controller.ts";
+import type { GatewayStartupOwnerParticipantsV2 } from "../../../packages/occ/src/gateway-startup-v1/owner.ts";
+declare const agentAccount: GatewayStartupControllerParticipantsV2["authority"];
+declare const agentNative: GatewayInstallationNativeSourceV2;
+const agentService = createGatewayInstallationServiceAuthorityV2({
+  account: agentAccount,
+  native: agentNative,
+});
+const controllerAgentAuthority: GatewayStartupControllerParticipantsV2["authority"] =
+  agentService.authority;
+// @ts-expect-error The original Controller policy view cannot be omitted.
+const standaloneAgentAuthority: GatewayStartupOwnerParticipantsV2["authority"] =
+  agentService.authority;
+void [controllerAgentAuthority, standaloneAgentAuthority];

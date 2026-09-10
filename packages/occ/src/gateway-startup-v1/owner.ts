@@ -308,6 +308,10 @@ export class GatewayStartupOwnerPhaseV1<
   readonly #pending = new Set<Promise<unknown>>();
   readonly #fences: (() => undefined)[] = [];
   readonly #cleanup: (() => Promise<void>)[] = [];
+  readonly #operations = new WeakMap<
+    GatewayStartupAcceptedOperationV1,
+    { readonly label: string; active: boolean }
+  >();
   #admitted = false;
   #open = true;
   #active = true;
@@ -371,7 +375,7 @@ export class GatewayStartupOwnerPhaseV1<
     return e;
   }
   runOperation<T>(
-    _label: string,
+    label: string,
     work: (scope: GatewayStartupAcceptedOperationV1) => Promise<T>,
   ): Promise<T> {
     if (!this.#admitted || !this.#open || !this.#active || this.#failed)
@@ -413,17 +417,34 @@ export class GatewayStartupOwnerPhaseV1<
         return query;
       },
     });
+    const operation = { label, active: true };
+    this.#operations.set(scope, operation);
     return this.#track(
       (async () => {
         try {
           return await work(scope);
         } finally {
           acceptingQueries = false;
+          operation.active = false;
           while (queries.size) await Promise.allSettled([...queries]);
           operationActive = false;
         }
       })(),
     );
+  }
+  /** Recognizes an original active callback of this exact phase. Data, a copied
+   * scope or a scope retained from another phase cannot supply tracked query IO. */
+  assertOwnedOperation(scope: GatewayStartupAcceptedOperationV1, label: string): void {
+    const operation = this.#operations.get(scope);
+    if (
+      !operation ||
+      !operation.active ||
+      operation.label !== label ||
+      !this.#active ||
+      this.#failed
+    )
+      this.#reject();
+    this.#lifetime.assertActive();
   }
   retainCurrentness(assertion: () => undefined): void {
     if (!this.#open || !this.#active || !this.#admitted || typeof assertion !== "function")
@@ -946,12 +967,21 @@ declare const invocationV2Brand: unique symbol;
 export interface GatewayStartupInvocationV2 {
   readonly [invocationV2Brand]: true;
 }
-export interface GatewayStartupOwnerUnitV2 {
+/** Borrowed selection/account operations on an original Agent unit. The view
+ * cannot admit a command, dispatch COMMIT or produce a transaction completion.
+ * State must still recognize exact unit and IO membership, including its purpose. */
+export interface GatewayStartupSelectionUnitV2 {
   readonly subject: GatewayStartupSubjectV2;
-  readonly phase: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
+  readonly phase: Pick<
+    GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>,
+    "runOperation" | "assertOwnedOperation" | "retainCurrentness" | "retainCleanup" | "poison"
+  >;
   readonly backend: GatewayStartupBackendV2;
   /** Actual private NativeIAM view/context is consumed only by the original account participant. */
   readonly policy: object;
+}
+export interface GatewayStartupOwnerUnitV2 extends GatewayStartupSelectionUnitV2 {
+  readonly phase: GatewayStartupOwnerPhaseV1<GatewayStartupCompletionV2>;
 }
 export interface GatewayStartupOwnerParticipantsV2 {
   authority: {

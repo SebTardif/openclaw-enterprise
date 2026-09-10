@@ -23,7 +23,7 @@ import { binding as historicalBinding } from "../fixtures/gateway-startup-v1/val
 
 // Real central binding, sole execute/phase, Runtime owners, NativeIAM loader and
 // scoped PostgreSQL backend. The row peer supplies protocol replies, not SQL
-// storage/lock behavior. Controlled account/selection/process/audit collaborators
+// storage/lock behavior. Controlled account/selection/process collaborators
 // exercise integration only; they are not production authority or physical proof.
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const subject = {
@@ -137,6 +137,23 @@ function protocol(options = {}) {
       if (statement === "SELECT id FROM occ.agents WHERE namespace_id=$1 AND id=$2 FOR SHARE") {
         events.push("agent");
         return options.agent ? options.agent() : result([{ id: parameters[1] }]);
+      }
+      if (statement.startsWith("INSERT INTO occ.audit_events")) {
+        // Observe the real State audit insert on the same client. This peer
+        // controls the database response; it does not supply an audit producer.
+        events.push("audit");
+        audits.push({
+          id: parameters[0],
+          actorId: parameters[3],
+          action: parameters[4],
+          namespaceId: parameters[5],
+          resourceKind: parameters[6],
+          resourceId: parameters[7],
+          outcome: parameters[8],
+          details: JSON.parse(parameters[9]),
+        });
+        if (options.audit) await options.audit();
+        return result([], "INSERT");
       }
       if (statement.startsWith("SELECT") && statement.includes("occ.gateway_startup_operations")) {
         events.push("history");
@@ -461,7 +478,15 @@ test("actual V2 acceptance keeps audit-before-history ordering and original subj
   assert.ok(p.events.indexOf("audit") < p.events.indexOf("append"));
   assert.ok(p.events.indexOf("append") < p.events.indexOf("advance"));
   assert.ok(p.events.indexOf("advance") < p.events.indexOf("commit"));
-  assert.equal(p.audits[0].event.command.operationRef, "original-admission");
+  assert.equal(p.audits.length, 1);
+  assert.match(p.audits[0].id, /^aud_[0-9a-f-]{36}$/);
+  assert.equal(p.audits[0].details.command.operationRef, "original-admission");
+  assert.equal(p.audits[0].actorId, "controlled-actor");
+  assert.equal(p.audits[0].action, "gateway-startup.accept-startup");
+  assert.equal(p.audits[0].namespaceId, subject.namespaceRef);
+  assert.equal(p.audits[0].resourceKind, "agent");
+  assert.equal(p.audits[0].resourceId, subject.agentRef);
+  assert.equal(p.audits[0].outcome, "success");
   assert.equal(
     p.acquired.every((lease) => lease.releases === 1),
     true,

@@ -70,7 +70,10 @@
     "./services/service-account/workload-profile-credentials": "./src/services/service-account/workload-profile-credentials.ts",
     "./runtime-preparation/submission-owner": "./src/runtime-preparation/submission-owner.ts",
     "./runtime-preparation/create-reference": "./src/runtime-preparation/create-reference.ts",
-    "./runtime-preparation/create-correlation": "./src/runtime-preparation/create-correlation.ts"
+    "./runtime-preparation/create-correlation": "./src/runtime-preparation/create-correlation.ts",
+    "./gateway-startup-v1/controller": "./src/gateway-startup-v1/controller.ts",
+    "./gateway-startup-v1/account-binding": "./src/gateway-startup-v1/account-binding.ts",
+    "./gateway-startup-v1/agent-service": "./src/gateway-startup-v1/agent-service.ts"
   },
   "types": "./src/index.ts",
   "files": [

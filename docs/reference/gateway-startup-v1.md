@@ -224,6 +224,53 @@ physical-settlement participants.
 
 ## Verification and current limits
 
+### Controller composition for Agent startup
+
+`createControllerGatewayStartupNativeServiceV2` connects the original native
+receiver, registration reader, account currentness and State owner for the exact
+Agent subject. Trusted application code supplies the selected Driver, account,
+credential-selection, process and launch-resource owners. The constructor captures
+those owners once; request data cannot install or replace them. The public OCC
+subpaths `gateway-startup-v1/controller`, `gateway-startup-v1/account-binding` and
+`gateway-startup-v1/agent-service` expose their interfaces and service component.
+
+State's `gatewayStartupControllerOwnerV2` supplies its own identifiers and mandatory
+audit insert on the original transaction client. It captures account attribution
+before the Namespace and Agent lock waits and retains that same attribution for
+the audit. The account callback receives the same-client IAM policy as its sixth
+operand. Native registration, current account identity and the selected IAM
+decision remain independently required through transaction completion.
+
+The account-binding reader accepts only its original active account operation and
+the exact retained startup locator. Its SQL helper must hold the corresponding
+account before IAM acquisition. A separately selected restricted Controller
+database login and the account/allocation helper objects are still required for
+configured use; the ordinary application role is not granted those privileges by
+this source composition. Initial acceptance also needs the genuine original
+account and selected launch-material producers. Missing inputs remain unavailable.
+
+The launch-resource contract retains immutable allocation and document expectations.
+Those data do not authorize a Kubernetes write. The selected launch owner must
+provide the original process target, Namespace identity and bounded canonical
+document; creation, recipient consumption and physical settlement remain separate
+operations. Importing the Controller constructor does not launch a service or
+enable a deployment route.
+
+The Controller conformance cases exercise the real State phase, NativeIAM loader,
+registration and service components with controlled row and native participants.
+The central transaction regression observes the actual State audit SQL and keeps
+audit-before-history, rollback and unknown-COMMIT assertions. Run
+`tests/conformance/gateway-startup-controller-owner.test.mjs`,
+`tests/conformance/gateway-startup-central-v2.test.mjs`,
+`tests/conformance/gateway-startup-service-context.test.mjs` and
+`tests/conformance/installation-service-registration.test.mjs`, and compile
+`tests/fixtures/gateway-startup-central/tsconfig.json` for this interface boundary.
+These checks do not prove SQL helper privileges, live registration, an accepting
+launch producer or a served Gateway. The receiver's real-native case remains an
+explicit skip unless its separate native fixture is selected.
+
+### Owner and runtime verification
+
 The conformance suites exercise the real owner, phase, private submission ticket,
 Installation invocation router and local lifetime with controlled collaborators.
 They do not establish genuine account/session/IAM, native TLS, registrar,

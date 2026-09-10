@@ -5,29 +5,41 @@ import { isDeepStrictEqual } from "node:util";
 import {
   canonicalGatewayStartupValueV1,
   gatewayStartupCommandDigestV1,
+  gatewayStartupCommandDigestV2,
   parseGatewayStartupCommandV1,
+  parseGatewayStartupCommandV2,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
 import type {
   GatewayStartupAcceptedOperationV1,
   GatewayStartupCommandBoundsV1,
   GatewayStartupCommandV1,
+  GatewayStartupCommandV2,
   GatewayStartupOwnerLeaseV1,
   GatewayStartupOwnerUnitV1,
+  GatewayStartupOwnerUnitV2,
   GatewayStartupRecipientBindingV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/owner";
 import type {
   GatewayProcessObservationResultV1,
+  GatewayProcessObservationResultV2,
   GatewayStartupBindingV1,
+  GatewayStartupBindingV2,
   GatewayStartupRecordRefV1,
 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
 
-import type {
-  GatewayInstallationServiceAssociationV1,
-  GatewayInstallationServiceEndpointsV1,
+import {
+  parseGatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV2,
+  type GatewayInstallationServiceAssociationV1,
+  type GatewayInstallationServiceEndpointsV1,
 } from "@openclaw-enterprise/occ/gateway-startup-v1/installation-service";
 
 type Command = Extract<
   GatewayStartupCommandV1,
+  { kind: "consume-startup" | "read-current" | "read-operation" }
+>;
+type CommandV2 = Extract<
+  GatewayStartupCommandV2,
   { kind: "consume-startup" | "read-current" | "read-operation" }
 >;
 type Selector = Readonly<{ type: string; value: string }>;
@@ -74,6 +86,15 @@ export type InstallationServiceRegistrationSelectionV1 = Readonly<{
   maximumObservationAgeMs: number;
   clockUncertaintyMs: number;
 }>;
+export type InstallationServiceRegistrationSelectionV2 = Omit<
+  InstallationServiceRegistrationSelectionV1,
+  "binding"
+> &
+  Readonly<{ binding: GatewayStartupBindingV2 }>;
+type RegistrationSelection =
+  InstallationServiceRegistrationSelectionV1 | InstallationServiceRegistrationSelectionV2;
+type RegistrationUnit = GatewayStartupOwnerUnitV1 | GatewayStartupOwnerUnitV2;
+type ProcessObservation = GatewayProcessObservationResultV1 | GatewayProcessObservationResultV2;
 export type InstallationServiceNativeInspectionV1 = Readonly<{
   /** Expected association metadata only; it is not observed native authority. */
   expectedSourceConfiguration: GatewayStartupRecordRefV1;
@@ -118,7 +139,9 @@ export type InstallationServiceMaterialSelectionV1 = InstallationServiceRegistra
 interface RegistrationParticipants<
   C,
   N extends NativeEvidence,
-  S extends InstallationServiceRegistrationSelectionV1,
+  S extends RegistrationSelection,
+  U extends RegistrationUnit = GatewayStartupOwnerUnitV1,
+  O extends ProcessObservation = GatewayProcessObservationResultV1,
 > {
   native: {
     inspectOriginal(
@@ -132,7 +155,7 @@ interface RegistrationParticipants<
       native: N,
       command: C,
       bounds: GatewayStartupCommandBoundsV1,
-      unit: GatewayStartupOwnerUnitV1,
+      unit: U,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<Lease<S>>;
   };
@@ -157,13 +180,13 @@ interface RegistrationParticipants<
       selection: S,
       command: C,
       bounds: GatewayStartupCommandBoundsV1,
-      unit: GatewayStartupOwnerUnitV1,
+      unit: U,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<
       Lease<
         Timed &
           Readonly<{
-            observation: GatewayProcessObservationResultV1;
+            observation: O;
             /** Independently protected execution observation, not a label or derived PID value. */
             identity: InstallationServiceProcessIdentityV1;
             executionObservation: Timed;
@@ -184,6 +207,14 @@ export type InstallationServiceMaterialRegistrationParticipantsV1 = Registration
   InstallationServiceMaterialSelectionV1
 >;
 
+export type InstallationServiceRegistrationParticipantsV2 = RegistrationParticipants<
+  CommandV2,
+  InstallationServiceNativeInspectionV1,
+  InstallationServiceRegistrationSelectionV2,
+  GatewayStartupOwnerUnitV2,
+  GatewayProcessObservationResultV2
+>;
+
 const unavailable = () => new Error("Installation service registration unavailable");
 function snapshot<T>(value: T): T {
   // The original closed canonical-data helper rejects getters/prototypes/cycles/oversize.
@@ -197,7 +228,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 /** Closed configuration snapshot only; this helper creates no invocation or current grant. */
-function captureAssociation(value: GatewayInstallationServiceAssociationV1) {
+function captureAssociationV1(value: GatewayInstallationServiceAssociationV1) {
   try {
     const result = snapshot(value);
     const exact = (object: unknown, keys: readonly string[]) => {
@@ -320,11 +351,30 @@ function commandBinding(
   )
     throw unavailable();
 }
+function captureAssociation(
+  value: Readonly<
+    Omit<GatewayInstallationServiceAssociationV1, "startup"> & {
+      startup:
+        | GatewayInstallationServiceAssociationV1["startup"]
+        | GatewayInstallationServiceAssociationV2["startup"];
+    }
+  >,
+) {
+  try {
+    // Reject accessors/prototypes before selecting the closed locator grammar.
+    const captured = snapshot(value);
+    if ("subject" in captured.startup)
+      return parseGatewayInstallationServiceAssociationV2(captured);
+    return captureAssociationV1({ ...captured, startup: captured.startup });
+  } catch {
+    throw unavailable();
+  }
+}
 function processBinding(
-  selection: InstallationServiceRegistrationSelectionV1,
+  selection: RegistrationSelection,
   value: Timed &
     Readonly<{
-      observation: GatewayProcessObservationResultV1;
+      observation: ProcessObservation;
       identity: InstallationServiceProcessIdentityV1;
       executionObservation: Timed;
     }>,
@@ -362,14 +412,18 @@ function processBinding(
 function createRegistrationReader<
   C,
   N extends NativeEvidence,
-  S extends InstallationServiceRegistrationSelectionV1,
+  S extends RegistrationSelection,
+  U extends RegistrationUnit = GatewayStartupOwnerUnitV1,
+  O extends ProcessObservation = GatewayProcessObservationResultV1,
 >(
-  participants: RegistrationParticipants<C, N, S> | undefined,
-  expectedAssociation: GatewayInstallationServiceAssociationV1 | undefined,
+  participants: RegistrationParticipants<C, N, S, U, O> | undefined,
+  expectedAssociation:
+    GatewayInstallationServiceAssociationV1 | GatewayInstallationServiceAssociationV2 | undefined,
   rules: Readonly<{
     parse(input: C): C;
     nativeMatches(native: N, command: C): boolean;
     commandBinding(command: C, selection: S): void;
+    unitBinding(selection: S, unit: U): boolean;
     maximumCallMs?: number;
   }>,
 ) {
@@ -388,7 +442,7 @@ function createRegistrationReader<
       original: object,
       input: C,
       bounds: GatewayStartupCommandBoundsV1,
-      unit: GatewayStartupOwnerUnitV1,
+      unit: U,
       io: GatewayStartupAcceptedOperationV1,
     ): Promise<GatewayStartupOwnerLeaseV1> {
       try {
@@ -533,7 +587,7 @@ function createRegistrationReader<
             !Number.isSafeInteger(selection.clockUncertaintyMs) ||
             selection.clockUncertaintyMs < 0 ||
             selection.clockUncertaintyMs >= selection.maximumObservationAgeMs ||
-            selection.binding.startup.installationId !== unit.installationId ||
+            !rules.unitBinding(selection, unit) ||
             selection.entry.spiffeId !== native.gatewaySpiffeId ||
             selection.controllerSpiffeId !== native.controllerSpiffeId ||
             !isDeepStrictEqual(selection.source, expectedSourceConfiguration) ||
@@ -626,6 +680,8 @@ export function createInstallationServiceRegistrationReaderV1(
       native.transportProfile === "owned-child-stdio-installation-gateway-startup-v1" &&
       native.commandDigest === gatewayStartupCommandDigestV1(command),
     commandBinding,
+    unitBinding: (selection, unit) =>
+      selection.binding.startup.installationId === unit.installationId,
   });
 }
 
@@ -644,6 +700,8 @@ export function createInstallationServiceMaterialRegistrationReaderV1(
     InstallationServiceMaterialSelectionV1
   >(participants, expectedAssociation, {
     parse: parseGatewayMaterialDeliveryRequestV1,
+    unitBinding: (selection, unit) =>
+      selection.binding.startup.installationId === unit.installationId,
     maximumCallMs: 5000,
     nativeMatches: (native, request) =>
       native.operationProfile === "installation-channel-material-v1" &&
@@ -660,6 +718,50 @@ export function createInstallationServiceMaterialRegistrationReaderV1(
         selection.material.purpose !== request.purpose ||
         selection.material.use !== request.use ||
         !isDeepStrictEqual(selection.material.consumedClaim, request.consumedClaim)
+      )
+        throw unavailable();
+    },
+  });
+}
+
+/** Agent-scoped startup registration uses the same original native/registrar/
+ * physical observation lifecycle, with V2 command, binding and unit correspondence. */
+export function createInstallationServiceRegistrationReaderV2(
+  participants: InstallationServiceRegistrationParticipantsV2 | undefined,
+  expectedAssociation: GatewayInstallationServiceAssociationV2 | undefined,
+) {
+  return createRegistrationReader<
+    CommandV2,
+    InstallationServiceNativeInspectionV1,
+    InstallationServiceRegistrationSelectionV2,
+    GatewayStartupOwnerUnitV2,
+    GatewayProcessObservationResultV2
+  >(participants, expectedAssociation, {
+    parse(input): CommandV2 {
+      const parsed = parseGatewayStartupCommandV2(input);
+      if (
+        parsed.kind !== "consume-startup" &&
+        parsed.kind !== "read-current" &&
+        parsed.kind !== "read-operation"
+      )
+        throw unavailable();
+      return parsed;
+    },
+    nativeMatches: (native, command) =>
+      native.operationProfile === "installation-gateway-startup-v1" &&
+      native.transportProfile === "owned-child-stdio-installation-gateway-startup-v1" &&
+      native.commandDigest === gatewayStartupCommandDigestV2(command),
+    unitBinding: (selection, unit) =>
+      isDeepStrictEqual(selection.binding.startup.subject, unit.subject),
+    commandBinding(command, selection) {
+      const startup =
+        command.kind === "read-operation" ? command.operation.startup : command.startup;
+      if (
+        !startup ||
+        !isDeepStrictEqual(startup, selection.binding.startup) ||
+        !isDeepStrictEqual(command.subject, selection.binding.startup.subject) ||
+        (command.kind !== "read-operation" &&
+          !isDeepStrictEqual(command.recipient, selection.recipient))
       )
         throw unavailable();
     },
