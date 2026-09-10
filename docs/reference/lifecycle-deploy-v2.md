@@ -24,6 +24,7 @@ catalog does not supply those producers or enable a missing composition.
     configurationGeneration,
     providerId: string | null,
     executionMode: "embedded" | "dedicated",
+    maximumExecutionMs: null | positiveSafeInteger,
     serviceAccountId: string | null,
     workloadProfileSelection: {
       manifestRef,
@@ -39,7 +40,12 @@ catalog does not supply those producers or enable a missing composition.
 expectation is explicit; omission, `undefined`, or a bodyless request cannot
 select a different snapshot. Configuration generation belongs to the existing
 Configuration resource. It is independent of lifecycle generation and revision
-number. `providerId` retains its model-provider meaning.
+number. `providerId` retains its model-provider meaning. `maximumExecutionMs`
+must match the saved Agent cap: explicit `null` means uncapped duration. A finite
+selection has no fifteen-minute ceiling and is copied into the newly admitted
+immutable revision. Creation-time defaulting does not permit omission from this
+identified command; changing a draft or replaying an accepted command cannot
+extend an existing attempt.
 
 `parseLifecycleDeployJsonV2("command", bytes)` accepts bounded UTF-8 or a string
 and rejects duplicate keys, unsupported fields or versions, invalid encoding,

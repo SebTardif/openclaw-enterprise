@@ -34,7 +34,8 @@ these boundaries and the outstanding runtime qualification.
 
 Agent operations are scoped beneath `/namespaces/:namespaceId/agents`. Creation
 returns `201`, reads and updates return `200`, and deployment returns `202`
-with the newly admitted AgentRevision. Collection reads include only Agents
+with an accepted operation receipt. Revision documents have separate read
+operations. Collection reads include only Agents
 for which the caller has an exact `read` grant. The [API reference](api.md)
 owns route schemas, response envelopes, and permission annotations.
 
@@ -273,37 +274,35 @@ transformation. Its SandboxDriver selection and the Agent's stable service
 principal are retained internally and are not exposed by the current HTTP
 revision schema. See [SandboxDriver](drivers/sandbox.md).
 
-An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` has no
-request body. It requires a `ready` Namespace, exact-Agent `deploy`, exact
-Configuration `read`, and exact associated-account `read` when present. A
-successful `202` means the immutable revision, its running runtime intent,
-original reconciliation work, and attributable success audit committed together;
-it does not mean the workload is ready. Later Configuration edits or changes to
-an account's selected credential reference affect only future deployments. A
-snapshot freezes a Secret reference, not the value stored at that reference.
+An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` requires an
+[identified V2 command](lifecycle-deploy-v2.md#command-identity). Its body retains
+the original `operationRef`, explicit `expectedLifecycleGeneration` and exact
+saved-draft expectations, including `expectedDraft.maximumExecutionMs`. Bodyless
+requests reject. Admission requires a `ready` Namespace, exact-Agent `deploy`,
+exact Configuration `read`, and exact associated-account `read` when present,
+along with the original enrolled admission and workload-profile capabilities.
 
-Admission initializes intent generation 1 or advances the stored running head
-under the Agent lock. A stored disabled or stopped intent conflicts: deploy does
-not implicitly resume it. Two concurrent bodyless deploys may both succeed in
-sequence with distinct revisions and generations. The route accepts no client
-generation, transition locator, actor, or runtime profile, and repeating the POST
-admits another revision.
+A successful `202` returns the accepted operation receipt, not the revision
+document. The immutable revision, running runtime intent, original reconciliation
+work and attributable success audit commit together; acceptance does not mean
+the workload is ready. Later Configuration edits or changes to an account's
+selected credential reference affect only future deployments. A snapshot freezes
+a Secret reference, not the value stored at that reference.
 
-Trusted OCC domain callers can additionally supply
-`expectedLifecycleGeneration` to `deployAgent`. Explicit `null` requires no
-intent head; a positive safe integer requires that exact current generation.
-The comparison runs under the existing Namespace and Agent locks before
-configuration or Secret Driver calls and revision admission. A mismatch leaves
-no new revision, intent, success audit, or work. Omitting the property retains
-the bodyless bridge behavior; explicit `undefined`, zero, fractional values,
-and unsafe integers are invalid. A matching generation never permits deploy
-to resume a disabled or stopped Agent.
+For a new command, `expectedLifecycleGeneration: null` requires no intent head;
+a positive safe integer requires that exact current generation. The saved draft
+and lifecycle comparison run under the existing locks before admission. A
+mismatch leaves no new revision, intent, success audit or work. A stopped or
+disabled intent conflicts: deploy does not implicitly resume it.
 
-This internal comparison does not enable the client lifecycle protocol.
-The HTTP route still rejects bodies and retains its AgentRevision response.
-Current account and semantic management-role checks, authorized immutable
-image/policy/profile resolution, and coordinated API/worker cutover remain
-required before enabling a client generation body or minimal operation receipt.
+An exact retry retains the same command identity and original attribution. After
+current authorization over the original operands, it returns the original
+accepted association without rebuilding today's draft or admitting another
+revision. Unknown outcomes require exact readback; they do not authorize a new
+operation identity or another provider submission. The
+[deployment command reference](lifecycle-deploy-v2.md) owns this protocol and its
+remaining composition requirements.
+
 An admitted intent alone grants no runtime authority. Namespace locking also
 serializes deployments to different Agents in the same Namespace. Admission
 currently reads the full revision history to allocate the next revision number;
