@@ -15,6 +15,7 @@ import { OpenClawController, PostgresPlatformState } from "@openclaw-enterprise/
 import { createPostgresControllerAuth } from "../auth/index.ts";
 import { createDockerDevelopmentComputeDriverFromEnv } from "../drivers/compute/docker/index.ts";
 import { createFilesystemDevelopmentConfigurationDriverFromEnv } from "../drivers/configuration/filesystem/index.ts";
+import { loadCodexPluginInventory } from "../drivers/plugins/codex/index.ts";
 import { createFastifyApp } from "../index.ts";
 import type {
   InstallationRuntimeDrivers,
@@ -124,11 +125,16 @@ export async function composePostgresDevelopment(
     };
 
     const loggingLevel = config.logging?.level ?? drivers?.installation.logging.level;
+    const codexPluginCatalog = await loadCodexPluginInventory({ allowEmptyInventory: true });
+    const pluginCatalogs = codexPluginCatalog.available
+      ? [codexPluginCatalog.inventory]
+      : undefined;
     const controller = new OpenClawController(persistedInstallation, {
       state,
       recordOperations: true,
       ...(loggingLevel === undefined ? {} : { loggingLevel }),
       ...(drivers === undefined ? {} : { providers: drivers.installation.provider }),
+      ...(pluginCatalogs === undefined ? {} : { pluginCatalogs }),
     });
     controller.registerDriver(iamDriver);
     const selected = controller.selectDriver("iam", driverId);
@@ -176,6 +182,7 @@ export async function composePostgresDevelopment(
       ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
       resolveHarness: resolveApprovedHarness,
       auditSink: state.auditSink,
+      ...(pluginCatalogs === undefined ? {} : { pluginCatalogs }),
       ...(drivers === undefined
         ? {}
         : { providerSummaries: providerSummariesFromDefinitions(drivers.installation.provider) }),
