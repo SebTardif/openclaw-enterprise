@@ -3,12 +3,16 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import pg from "pg";
+import { canonicalRuntimeFaultRequestV1 } from "@openclaw-enterprise/contracts";
 import { createFastifyApp } from "../../apps/controller/src/index.ts";
 import { createPostgresControllerAuth } from "../../apps/controller/src/auth/index.ts";
 import { createControllerLifecycleStatusV1 } from "../../apps/controller/src/lifecycle/read-integration-v1.ts";
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";
 import { OpenClawController, PostgresPlatformState } from "../../packages/occ/src/index.ts";
+import { runtimePreparationDigest } from "../../packages/occ/src/runtime-preparation/types.ts";
 import { authenticatedHeaders, signInToControllerApp } from "../helpers/auth-session.mjs";
+import { fault as faultShape } from "../fixtures/runtime-effects-v1/vectors.mjs";
+import { seedProfileGate } from "../fixtures/runtime-profile-gate.mjs";
 import {
   seedRuntimeOwner,
   seedRunning,
@@ -96,6 +100,7 @@ test(
     await apply(state, disable);
     const stop = protectiveWrite(owner, "stop", 2);
     await apply(state, stop);
+    const cleanup = await seedProfileGate(pool);
 
     auth = await createPostgresControllerAuth({
       mode: "production",
@@ -129,7 +134,15 @@ test(
       memberships: [],
       restrictions: [],
       roles: [{ id: seed.roles[0].id, permissions: [{ action: "read", resourceKind: "agent" }] }],
-      bindings: [binding],
+      bindings: [
+        binding,
+        {
+          ...binding,
+          id: randomUUID(),
+          namespaceId: cleanup.owner.scope.namespaceId,
+          resourceId: cleanup.owner.scope.agentId,
+        },
+      ],
     });
     const iam = new NativeIAMDriver(state);
     const controller = new OpenClawController(installation, { state });
@@ -245,6 +258,101 @@ test(
           assert.equal(operation.requestedRevisionId, owner.revision.id);
           assert.equal(observation.reasonCode, "NOT_OBSERVED");
           assert.equal(observation.observedAt, null);
+        }
+      },
+    );
+    await t.test(
+      "retained fault and profile cleanup preserve reads of the original lifecycle work",
+      async (t) => {
+        const scope = cleanup.owner.scope;
+        const intent = await cleanup.owner.head();
+        const cleanupBase = `/namespaces/${scope.namespaceId}/agents/${scope.agentId}/lifecycle`;
+        const read = async (suffix = "") => {
+          const response = await app.inject({
+            method: "GET",
+            url: `${cleanupBase}${suffix}`,
+            headers,
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          return safe(response).data;
+        };
+        const originalStatus = await read();
+        const originalOperation = await read(`/operations/${intent.transitionRef}`);
+        assert.equal(originalStatus.head.operationRef, intent.transitionRef);
+        assert.equal(originalOperation.operation.kind, "deploy");
+
+        // Real repository retention supplies accepted storage associations. These
+        // controlled fault inputs do not qualify a live fault producer or runtime.
+        const fault = faultShape();
+        fault.operation = { ...fault.operation, scope, operationRef: randomUUID() };
+        fault.target = cleanup.owner.target;
+        fault.guard = (await cleanup.read()).guard;
+        fault.cleanupResponsibility = {
+          responsibilityRef: randomUUID(),
+          responsibilityVersion: 1,
+          kind: "protective-fence",
+        };
+        fault.operation.requestDigest = runtimePreparationDigest(
+          canonicalRuntimeFaultRequestV1(fault),
+        );
+        const faultWorkId = `runtime-fault:${randomUUID()}`;
+        const closures = [
+          [
+            "schema-2 fault cleanup",
+            [0, 2],
+            async () => {
+              const result = await cleanup.state.transact((unit) =>
+                unit.runtimeEffectAdmission.retainFaultRequest({
+                  fault,
+                  workId: faultWorkId,
+                  audit: {
+                    id: `aud_${randomUUID()}`,
+                    installationId: scope.installationId,
+                    namespaceId: scope.namespaceId,
+                    occurredAt: new Date().toISOString(),
+                    kind: "mutation",
+                    actorId: "test/lifecycle-read-fault-storage-writer",
+                    action: "runtime.fault.request",
+                    resource: { kind: "agent", id: scope.agentId, namespaceId: scope.namespaceId },
+                    outcome: "success",
+                  },
+                }),
+              );
+              assert.equal(result.kind, "provisional");
+              assert.equal(result.retained.work.workId, faultWorkId);
+            },
+          ],
+          [
+            "schema-3 profile cleanup",
+            [0, 2, 3],
+            async () => {
+              await cleanup.withdraw();
+              assert.equal((await cleanup.closure()).work.schemaVersion, 3);
+            },
+          ],
+        ];
+        for (const [name, versions, close] of closures) {
+          await t.test(name, async () => {
+            await close();
+            // Cleanup intentionally shares the original intent. Confirm the
+            // persisted collision before reading through the protected HTTP path.
+            const work = await pool.query(
+              `SELECT idempotency_key, work_schema_version FROM occ.controller_work
+               WHERE namespace_id=$1 AND agent_id=$2 AND runtime_transition_ref=$3
+               ORDER BY work_schema_version`,
+              [scope.namespaceId, scope.agentId, intent.transitionRef],
+            );
+            assert.deepEqual(
+              work.rows.map((row) => row.work_schema_version),
+              versions,
+            );
+            assert.equal(
+              work.rows[0].idempotency_key,
+              `agent_revision:${cleanup.owner.target.revisionId}:reconcile`,
+            );
+            assert.deepEqual(await read(), originalStatus);
+            assert.deepEqual(await read(`/operations/${intent.transitionRef}`), originalOperation);
+          });
         }
       },
     );

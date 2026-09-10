@@ -79,7 +79,7 @@ export async function readPostgresLifecycleStatusV1<K extends LifecycleStatusRea
     const result = await context.query(
       `SELECT attempt_count, state FROM occ.controller_work
        WHERE namespace_id=$1 AND agent_id=$2 AND runtime_transition_ref=$3
-       AND namespace_target IS NULL LIMIT 2`,
+       AND namespace_target IS NULL AND work_schema_version IN (0, 1) LIMIT 2`,
       [scope.namespaceId, scope.agentId, operationRef],
     );
     if (result.rows.length !== 1) throw unavailable();
