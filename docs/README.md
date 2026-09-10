@@ -140,6 +140,8 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
   credential-service packaging, local preflight, and outstanding runtime requirements.
 - [External model egress flow](flows/external-model-egress.md): exact request,
   connection, dispatch, and cancellation ownership in the adapter components.
+- [Native GitHub HTTPS transport](reference/native-github-egress.md): finite Git/gh
+  transport and DNS validation, controlled client tests, and missing production admission.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Runtime identity ports](reference/runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.

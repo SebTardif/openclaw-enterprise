@@ -1,0 +1,25 @@
+[package]
+name = "oce-native-egress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+[dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring", "tls12"] }
+hyper = { version = "=1.11.1", default-features = false, features = ["http1", "client", "server"] }
+hyper-util = { version = "=0.1.20", default-features = false, features = ["tokio"] }
+http-body-util = { version = "=0.1.3", default-features = false }
+http = "1"
+serde = "1"
+serde_json = "1"
+hickory-resolver = { workspace = true, features = ["tokio"] }
+hickory-proto = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+tokio = { workspace = true, features = ["process"] }

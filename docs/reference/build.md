@@ -34,7 +34,7 @@ node scripts/build-mvp.mjs check-types
 | Target         | Prerequisites and outputs                                                                                                                                                                                       |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `check-types`  | Node.js 24, the installed TypeScript version from root `package.json`, and the current pnpm dependency graph. Runs workspace isolation and the six TypeScript project references; verifies declaration outputs. |
-| `check-native` | Checks the exact Rust version in `dataplane/rust-toolchain.toml`, Cargo metadata, and the eight selected workspace members and their local path dependencies.                                                   |
+| `check-native` | Checks the exact Rust version in `dataplane/rust-toolchain.toml`, Cargo metadata, and the selected workspace members and their local path dependencies.                                                         |
 | `native-dns`   | `check-native`, then a release build of the `oce-dnsgate` OCE adapter in package `ds-dnsgate`. Copies the verified executable to `.build/mvp/native/oce-dnsgate`.                                               |
 | `native-tls`   | `check-native`, then a release build of the `oce-egress` OCE adapter in package `ds-tlsproxy`. Copies the verified executable to `.build/mvp/native/oce-egress`.                                                |
 | `native`       | Both native product binaries. Each shared prerequisite runs once per invocation.                                                                                                                                |
@@ -61,8 +61,11 @@ when an OCE adapter is missing.
 
 The selected Cargo members are `ds-contracts`, `policy-core`,
 `ds-policy-snapshot`, `ds-telemetry`, `ds-admission-shm`, `ds-nft`, `ds-dnsgate`,
-and `ds-tlsproxy`. The final two live under `dataplane/services`; the others live
-under `dataplane/crates`. Missing manifests, unavailable cached dependencies,
+`ds-tlsproxy`, `oce-native-egress`, and `oce-network-fence`. The final four live
+under `dataplane/services`; the others live under `dataplane/crates`. The native
+GitHub library and closed node fence are workspace members; the default native
+product build still emits only `oce-dnsgate` and `oce-egress`.
+Missing manifests, unavailable cached dependencies,
 different workspace members, external entrypoints, and resolved local path
 dependencies or Cargo patches outside this selection fail
 the build. There is no fallback to an external checkout or prebuilt executable.

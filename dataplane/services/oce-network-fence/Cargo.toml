@@ -1,0 +1,22 @@
+[package]
+name = "oce-network-fence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "oce-network-fence"
+path = "src/bin/oce-network-fence.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+# Reuse the selected workspace digest implementation; no new registry graph.
+ds-contracts = { path = "../../crates/ds-contracts" }

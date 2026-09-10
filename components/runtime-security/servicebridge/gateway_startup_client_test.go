@@ -102,6 +102,30 @@ func (c *gatewayClientHarness) send(t *testing.T, method string) (servicebridge.
 	return command, raw
 }
 
+// Recheck native Source/TLS ownership on the same original child connection.
+// This carries no service request and grants no Installation startup authority.
+func (c *gatewayClientHarness) inspect(t *testing.T) servicebridge.Inspection {
+	t.Helper()
+	c.sequence++
+	command := servicebridge.Command{SchemaVersion: 1, Kind: "inspect", Incarnation: c.boot.Incarnation, Sequence: c.sequence, ConnectionID: c.ready.ConnectionID, Challenge: strings.Repeat("a", 32)}
+	if servicebridge.WriteFrame(c.input, jsonBytes(t, command), servicebridge.MaxFrameBytes) != nil {
+		t.Fatal("client inspection write")
+	}
+	event := c.next(t)
+	if event.Kind != "inspected" || event.ConnectionID != c.ready.ConnectionID || event.ExchangeID != "" || event.RequestDigest != "" || event.Challenge != command.Challenge || event.Deadline != c.ready.Deadline || event.Incarnation != c.boot.Incarnation || event.ProfileDigest != c.boot.ProfileDigest || event.ConfigurationVersion != c.boot.ConfigurationVersion {
+		t.Fatal("inspection lost original connection and challenge")
+	}
+	raw, err := base64.StdEncoding.DecodeString(event.PayloadBase64)
+	var inspection servicebridge.Inspection
+	if err != nil || json.Unmarshal(raw, &inspection) != nil || !inspection.Valid {
+		t.Fatal("original native inspection unavailable")
+	}
+	if event.PayloadBase64 != c.ready.PayloadBase64 {
+		t.Fatal("inspection changed the original authenticated peer")
+	}
+	return inspection
+}
+
 // These are actual native Source/TLS/pipe tests. The controller returns only a
 // negative application result; transport success never claims registry admission.
 func TestGatewayStartupActualSequentialConnectionAndTerminalLoss(t *testing.T) {
@@ -116,6 +140,10 @@ func TestGatewayStartupActualSequentialConnectionAndTerminalLoss(t *testing.T) {
 		}
 		var previous servicebridge.Event
 		for _, method := range []string{"consume-startup", "read-current", "read-operation"} {
+			// Repeated inspections must not advance the peer service-request
+			// sequence or spend the connection's sole consume attempt.
+			c.inspect(t)
+			c.inspect(t)
 			command, raw := c.send(t, method)
 			request := h.next(t, "request")
 			payload, _ := base64.StdEncoding.DecodeString(request.PayloadBase64)
@@ -164,6 +192,25 @@ func TestGatewayStartupActualSequentialConnectionAndTerminalLoss(t *testing.T) {
 			}
 		case <-time.After(time.Second):
 			t.Fatal("second consume not terminal")
+		}
+	})
+	t.Run("inspection cannot select another connection", func(t *testing.T) {
+		f := startFixture(t, binary)
+		h := newBridgeWithPolicy(t, f, "installation-gateway-startup-v1")
+		c := newGatewayClient(t, h)
+		h.next(t, "connected")
+		c.sequence++
+		command := servicebridge.Command{SchemaVersion: 1, Kind: "inspect", Incarnation: c.boot.Incarnation, Sequence: c.sequence, ConnectionID: strings.Repeat("f", 32), Challenge: strings.Repeat("a", 32)}
+		if servicebridge.WriteFrame(c.input, jsonBytes(t, command), servicebridge.MaxFrameBytes) != nil {
+			t.Fatal("client inspection write")
+		}
+		select {
+		case _, ok := <-c.events:
+			if ok {
+				t.Fatal("foreign connection produced an inspection")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("foreign inspection not terminal")
 		}
 	})
 	t.Run("unlisted method cannot dispatch", func(t *testing.T) {
