@@ -76,6 +76,22 @@ then resume the production installation sequence with the generated YAML copies.
 
 ### Stop or remove a production deployment
 
+Stop or drain the API and worker before incompatible Driver changes; the Driver
+lifecycle database lock does not stop running processes. To remove a selected
+Driver, first run the outgoing lifecycle command from the retained outgoing
+controller image, Installation YAML, database credential, and Driver
+credentials:
+
+```bash
+node scripts/driver-lifecycle.mjs uninstall --capability <capability> --id <driver-id>
+```
+
+Run this before removing the package, deleting its credentials, or applying
+incompatible migrations. The command must verify that platform resources,
+retained revisions, cleanup work, and Provider bindings no longer depend on the
+Driver. Removing a Driver from Installation YAML never runs uninstall by
+itself.
+
 Inventory tenant workloads before uninstalling the control plane:
 
 ```bash
@@ -92,7 +108,7 @@ For runtime proof, see the [production TUI flow](../flows/production-tui.md).
 ## Customization
 
 Use `.env` and extra Compose files for development. Use Helm values, Kubernetes
-manifests, Installation startup YAML, and Collector Secrets for production. Use
+manifests, Installation startup YAML, Driver lifecycle egress, and Collector Secrets for production. Use
 [`deploy/runtime`](../../deploy/runtime/README.md) for runtime image recipe and
 package-version overrides. The [settings reference](../reference/settings.md)
 and Driver references own field defaults, precedence, and limits.

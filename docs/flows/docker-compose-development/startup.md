@@ -23,7 +23,7 @@ which `dev-up` converts to JSON inside its private temporary directory before
 running the same effective port, image, and service checks. The helper appends
 `compose.podman.yaml` last so the worker receives Podman's reported API socket
 at `/var/run/docker.sock` and disables SELinux labeling only for that service.
-The override also gives migration, bootstrap, API, and worker one shared
+The override also gives migration, bootstrap, lifecycle, API, and worker one shared
 development image. Because podman-compose otherwise rebuilds that identical
 target once per service, `dev-up` builds it once through the migration service
 and starts the stack with `--no-build`. Docker keeps its native `up --build`
@@ -72,9 +72,17 @@ configuration, and revision history. Missing, expired, or revoked keys do not
 trigger another bootstrap issue.
 
 Only the initializer mounts `occ_bootstrap_data`; the API and worker load
-committed state after initializer success. The
+committed state after initializer and Driver lifecycle success. The
 [bootstrap flow](../local-password-authentication.md) owns credentials, concurrent
 attempts, and failure recovery.
+
+After bootstrap, Compose runs `scripts/driver-lifecycle.mjs apply` using the
+application database role and explicitly selected Installation YAML. It receives
+neither the migrator credential nor bootstrap output. `dev-up` recreates this
+one-shot service on each invocation and waits for success before starting the
+API and worker. A failed hook blocks that startup; existing processes must be
+stopped or drained separately before incompatible changes. Without explicit
+Installation YAML, development has no selected lifecycle targets.
 
 ### 4. The API admits only local development traffic
 

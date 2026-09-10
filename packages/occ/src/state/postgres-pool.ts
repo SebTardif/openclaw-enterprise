@@ -1,17 +1,33 @@
 import pg from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
 
-/** Shared connection authentication for the API, worker, bootstrap, and migrator. */
+interface PostgresPoolOptions {
+  readonly max?: number;
+  readonly authMode?: string;
+  readonly connectionTimeoutMillis?: number;
+  readonly query_timeout?: number;
+}
+
+/**
+ * Shared connection authentication for the API, worker, bootstrap, migrator,
+ * and Driver lifecycle CLI. One-shot callers may pass pg timeout options.
+ */
 export async function createPostgresPool(
   databaseUrl: string,
   {
     max,
     authMode = process.env.OCC_DATABASE_AUTH ?? "password",
-  }: { readonly max?: number; readonly authMode?: string } = {},
+    connectionTimeoutMillis,
+    query_timeout,
+  }: PostgresPoolOptions = {},
 ): Promise<pg.Pool> {
-  const limits = max === undefined ? {} : { max };
+  const poolOptions = {
+    ...(max === undefined ? {} : { max }),
+    ...(connectionTimeoutMillis === undefined ? {} : { connectionTimeoutMillis }),
+    ...(query_timeout === undefined ? {} : { query_timeout }),
+  };
   if (authMode === "password") {
-    return new pg.Pool({ connectionString: databaseUrl, ...limits });
+    return new pg.Pool({ connectionString: databaseUrl, ...poolOptions });
   }
   if (authMode !== "azure-workload-identity") {
     throw new Error("Unsupported OCC_DATABASE_AUTH mode.");
@@ -42,7 +58,7 @@ export async function createPostgresPool(
   const credential = new WorkloadIdentityCredential();
   return new pg.Pool({
     ...connection,
-    ...limits,
+    ...poolOptions,
     ssl: {
       ...(typeof connection.ssl === "object" ? connection.ssl : {}),
       rejectUnauthorized: true,

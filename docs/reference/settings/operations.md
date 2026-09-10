@@ -5,8 +5,9 @@ This reference owns worker, compose, and postgresql settings. Start with the
 
 ## PostgreSQL connection authentication
 
-Both PostgreSQL API modes, the worker, shared Installation bootstrap, and
-`node scripts/migrate-production.mjs` use the same connection pool factory.
+Both PostgreSQL API modes, the worker, shared Installation bootstrap,
+`node scripts/driver-lifecycle.mjs`, and `node scripts/migrate-production.mjs`
+use the same connection pool factory.
 `OCC_DATABASE_AUTH` defaults to `password`, which preserves PostgreSQL URL
 credentials. The other supported mode is `azure-workload-identity`; unknown
 modes fail before opening a pool.
@@ -23,8 +24,8 @@ verification, such as
 `postgresql://occ_app@database.example/occ?sslmode=verify-full`.
 The factory rejects nested connection strings, URL passwords, missing TLS, and
 parsed TLS options that disable certificate or hostname checks. Keep the
-application and migrator database roles separate: API, worker, and bootstrap
-use `OCC_DATABASE_URL`; migrations use `OCC_MIGRATION_DATABASE_URL` with the
+application and migrator database roles separate: API, worker, bootstrap, and
+Driver lifecycle use `OCC_DATABASE_URL`; migrations use `OCC_MIGRATION_DATABASE_URL` with the
 migrator identity.
 
 Each new pool connection requests an access token through the Azure SDK's

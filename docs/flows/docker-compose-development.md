@@ -12,7 +12,7 @@ last_updated_session: codex/01a08890-87c8-7293-bd75-d7fc58e52cf2
 point. The helper performs host preflight, selects Docker Engine or Podman,
 selects or verifies runtime images, wraps the selected Compose implementation,
 waits for PostgreSQL migration, Installation bootstrap,
-API health, and worker readiness, then proves authenticated `/installation`
+Driver lifecycle apply, API health, and worker readiness, then proves authenticated `/installation`
 access with a protected local copy of the bootstrap service key. That startup
 proof does not create an Agent, deploy an AgentRevision, or start a TUI. The
 Podman real-runtime proof continues through isolated Namespace creation, one
@@ -40,6 +40,7 @@ the first authenticated development API checks.
   provisioning. Interactive `docker exec -it` TUI attachment remains
   Docker-only.
 - Source: `scripts/dev-up`, `compose.yaml`, `compose.podman.yaml`,
+  `scripts/driver-lifecycle.mjs`,
   `apps/controller/src/server.mjs:start`,
   `apps/controller/src/worker.ts:ControllerWorker`, and
   `apps/controller/src/drivers/compute/docker/index.ts:DockerComputeDriver`.
@@ -60,11 +61,12 @@ the first authenticated development API checks.
 graph TD
   A["scripts/dev-up"] --> B["Preflight host tools and resolved Compose config"]
   B --> C["Select quickstart runtime image or validate custom images"]
-  C --> D["Selected Compose starts PostgreSQL, migrate, bootstrap, API, and worker"]
-  D --> E["Copy bootstrap service-key response to private local file"]
-  E --> F["scripts/occ-api GET /installation proves authenticated access"]
-  F --> G["Operator sends authenticated API provisioning and deploy calls"]
-  G --> H["Worker claims durable Namespace and AgentRevision work"]
+  C --> D["Selected Compose runs PostgreSQL, migrate, bootstrap, and driver-lifecycle"]
+  D --> E["Selected Compose starts API and worker after lifecycle success"]
+  E --> F["Copy bootstrap service-key response to private local file"]
+  F --> G["scripts/occ-api GET /installation proves authenticated access"]
+  G --> T["Operator sends authenticated API provisioning and deploy calls"]
+  T --> H["Worker claims durable Namespace and AgentRevision work"]
   H --> I["Docker driver ensures one network per Namespace"]
   H --> J{"Harness topology"}
   J -->|embedded OpenClaw| K["Start one gateway plus embedded Harness container"]
@@ -83,7 +85,7 @@ graph TD
 
 ### 1–5. Start and initialize the local stack
 
-[Docker or Podman Compose startup](docker-compose-development/startup.md) covers engine and image selection, PostgreSQL/migration/bootstrap ordering, local API admission, and worker startup.
+[Docker or Podman Compose startup](docker-compose-development/startup.md) covers engine and image selection, PostgreSQL/migration/bootstrap/lifecycle ordering, local API admission, and worker startup.
 
 ### 6–11. Deploy an Agent, run the TUI, and clean up
 

@@ -14,12 +14,16 @@ test("password authentication preserves the existing pg connection configuration
   const pool = await createPostgresPool("postgresql://occ_app:test-only@localhost/occ", {
     authMode: "password",
     max: 3,
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 10_000,
   });
   try {
     const client = new Client(pool.options);
     assert.equal(client.user, "occ_app");
     assert.equal(client.password, "test-only");
     assert.equal(pool.options.max, 3);
+    assert.equal(pool.options.connectionTimeoutMillis, 10_000);
+    assert.equal(pool.options.query_timeout, 10_000);
   } finally {
     await pool.end();
   }
@@ -69,7 +73,12 @@ test("the real pg client retains the Azure token callback and verified TLS after
     Object.assign(process.env, environment);
     pool = await createPostgresPool(
       "postgresql://occ_app@localhost/occ?sslmode=verify-full&application_name=occ-worker",
-      { authMode: "azure-workload-identity", max: 2 },
+      {
+        authMode: "azure-workload-identity",
+        max: 2,
+        connectionTimeoutMillis: 10_000,
+        query_timeout: 10_000,
+      },
     );
     const client = new Client(pool.options);
     assert.equal(client.user, "occ_app");
@@ -79,6 +88,8 @@ test("the real pg client retains the Azure token callback and verified TLS after
     assert.notEqual(client.ssl, false);
     assert.equal(client.ssl?.rejectUnauthorized, true);
     assert.equal(pool.options.max, 2);
+    assert.equal(pool.options.connectionTimeoutMillis, 10_000);
+    assert.equal(pool.options.query_timeout, 10_000);
 
     // pg reparses this reserved option after the factory's checks, which would
     // overwrite both the token callback and verified TLS configuration.

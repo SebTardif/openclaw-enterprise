@@ -13,10 +13,10 @@ The manual operator-controlled registry path below remains available.
 
 Build and push two images to a registry your cluster can access:
 
-| Image      | Source                                                                                                    | Used by                                          |
-| ---------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Controller | Root [`Dockerfile`](../../../Dockerfile), target `runtime`                                                | API, worker, migration, and bootstrap            |
-| Runtime    | [`deploy/runtime/Dockerfile`](../../../deploy/runtime/Dockerfile), installing OpenClaw and Codex from npm | Gateways and Agents (the same image serves both) |
+| Image      | Source                                                                                                    | Used by                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Controller | Root [`Dockerfile`](../../../Dockerfile), target `runtime`                                                | API, worker, migration, bootstrap, and Driver lifecycle |
+| Runtime    | [`deploy/runtime/Dockerfile`](../../../deploy/runtime/Dockerfile), installing OpenClaw and Codex from npm | Gateways and Agents (the same image serves both)        |
 
 You need Docker with Buildx and registry push access. Replace the example
 registry and repository, and select the platform matching your Kubernetes
@@ -115,7 +115,9 @@ Edit the protected YAML copies before provisioning anything:
   `bootstrap.adminEmail` to the first administrator, `database.cidr` to the
   exact PostgreSQL endpoint CIDR, `cluster.cidr` to the Kubernetes API endpoint
   CIDR, `api.clients` to approved client selectors, and
-  `bootstrap.password.claimName` to the bootstrap PVC name.
+  `bootstrap.password.claimName` to the bootstrap PVC name. If selected Driver
+  lifecycle hooks call external systems, set `driverLifecycle.egress` to the
+  exact `/32` TCP destinations they require.
 - `$OCC_INPUT_DIRECTORY/installation.yaml`: set `occ.cluster`, `logging.level`,
   both `drivers.compute.configuration.images` digests, the DNS and gateway-client
   selectors, the service-principal token settings, the runtime Secret prefixes,
@@ -163,7 +165,7 @@ or a variable name such as `OCC_DATABASE_URL=`.
 
 | File                  | Contents and source                                                                                                                                                                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `occ-application-url` | PostgreSQL connection URL for the limited application role, used by bootstrap, the API, and the worker. Obtain it from your database administrator or provider. Example shape: `postgresql://occ_app:<url-encoded-password>@<postgres-host>:5432/<database>`.                   |
+| `occ-application-url` | PostgreSQL connection URL for the limited application role, used by bootstrap, Driver lifecycle, the API, and the worker. Obtain it from your database administrator or provider. Example shape: `postgresql://occ_app:<url-encoded-password>@<postgres-host>:5432/<database>`. |
 | `occ-migration-url`   | Connection URL for a separate role allowed to apply schema migrations. It targets the same database. Example shape: `postgresql://occ_migrator:<url-encoded-password>@<postgres-host>:5432/<database>`. Obtain this credential separately; do not give it to the API or worker. |
 | `occ-auth-secret`     | A random secret used to sign and verify user sessions. Generate it once for this Installation with the command below, then retain it across redeployments. It is separate from the administrator password, service API key, and model-provider key.                             |
 
@@ -213,7 +215,8 @@ synchronizer.
 For [Azure workload-identity database authentication](../../reference/settings/operations.md#postgresql-connection-authentication),
 use password-free URLs with verified TLS in the database URL files above.
 Prepare the identity environment variables and a renewed federation-token
-projection for each connecting process: migration, bootstrap, API, and worker.
+projection for each connecting process: migration, bootstrap, Driver lifecycle,
+API, and worker.
 Provision federation and database grants for separate application and migrator
 identities; keep the migrator privileges confined to migration. Use
 `node scripts/migrate-production.mjs` for this authentication mode.
@@ -260,9 +263,9 @@ helm upgrade --install oce deploy/helm/openclaw-enterprise \
   --wait --timeout 5m
 ```
 
-Helm owns migration and bootstrap ordering through its initialization hook.
-Readiness covers the API and worker probes. It does not prove authenticated API
-access, Agent deployment, or a model turn.
+Helm owns migration, bootstrap, and Driver lifecycle apply ordering through its
+initialization hook. Readiness covers the API and worker probes. It does not
+prove authenticated API access, Agent deployment, or a model turn.
 
 ## Authenticate to the production API
 

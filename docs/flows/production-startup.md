@@ -17,7 +17,7 @@ retrieved bootstrap service key. This flow ends at control-plane access; tenant
 Agent deployment and model-backed TUI proof are later flows.
 
 For the operator commands, use the [deployment guide](../guides/deploy.md). The
-chart owns migration/bootstrap ordering and controller readiness. It does not
+chart owns migration/bootstrap/lifecycle ordering and controller readiness. It does not
 provision cloud infrastructure, publish images, create TLS, retrieve keys, or
 prepare application Secrets automatically.
 
@@ -46,8 +46,9 @@ graph TD
         D --> E["Render chart with native values"]
         E --> F["Run initialization Job with migrator and application roles"]
         F --> G["Bootstrap administrators and write protected key output"]
-        G --> H["Start private API Deployment"]
-        G --> I["Start independent worker Deployment"]
+        G --> L["Apply Driver lifecycle hooks and successful version receipts"]
+        L --> H["Start private API Deployment"]
+        L --> I["Start independent worker Deployment"]
     end
     subgraph Proof["Operator-owned authenticated proof"]
         H --> J["Retrieve service-key response from protected storage"]
@@ -120,11 +121,20 @@ from the bootstrap container to the protected PVC. Existing output, unsafe
 storage permissions, inconsistent accounts, or mismatched IAM identity fail the
 Job; Helm failure does not imply the database hook was rolled back.
 
+After initialization succeeds, a separate Helm hook Job runs
+`scripts/driver-lifecycle.mjs apply` at weight `-5`, following initialization at
+weight `-10`. It loads the selected Drivers with the application database role,
+startup YAML, scoped Driver credentials, and `driverLifecycle.egress`. It has no
+migrator credential or bootstrap PVC. Hook failure stops the Helm operation;
+existing API and worker processes require operator draining for incompatible
+changes. The [Driver selection reference](../reference/drivers/selection.md)
+owns receipt, retry, and uninstall semantics.
+
 ### 4. Start private API and worker Deployments
 
 `apps/controller/src/server.mjs:138`, `apps/controller/src/worker.ts:312`
 
-After successful initialization, Kubernetes starts separate API and worker
+After successful initialization and lifecycle apply, Kubernetes starts separate API and worker
 Deployments. The API validates production listener settings, Better Auth,
 database access, trusted Installation YAML, selected Drivers, Provider
 membership, and Kubernetes Compute preflight before readiness. It serves private
