@@ -83,7 +83,11 @@
     "./runtime-preparation/create-reference": "./src/runtime-preparation/create-reference.ts",
     "./runtime-preparation/create-correlation": "./src/runtime-preparation/create-correlation.ts",
     "./runtime-authority/repository-work-origin-v2": "./src/runtime-authority/repository-work-origin-v2.ts",
-    "./repository-publication-v1": "./src/repository-publication-v1/index.ts"
+    "./repository-publication-v1": "./src/repository-publication-v1/index.ts",
+    "./runtime-authority/repository-work-selected-execution-v2": "./src/runtime-authority/repository-work-selected-execution-v2.ts",
+    "./ports/repository-work-selected-execution-v2": "./src/ports/repository-work-selected-execution-v2.ts",
+    "./lifecycle/repository-work-v2": "./src/lifecycle/repository-work-v2.ts",
+    "./lifecycle/work-authority-ports-v2": "./src/lifecycle/work-authority-ports-v2.ts"
   },
   "types": "./src/index.ts",
   "files": [

@@ -131,6 +131,9 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
   [native mediation identity](reference/github-mediation-identity.md): inspect the
   broker protocol and native connection boundary; production installation and
   complete accepting authority remain separate.
+- [Repository read execution binding](reference/repository-work-selected-execution-v2.md):
+  connect original native Sessions, retained execution and State admission for
+  metadata and Git read services.
 - [GitHub read MVP verification](reference/read-mvp-verification.md): inspect the
   supported component checks, recorded results, and remaining accepting-flow requirements.
 - [Preparation Job interfaces](reference/preparation-job.md): versioned preparation identity, Job and Pod lineage, conditional effect observations, and retained staging handoff; definitions do not establish live provider authority.

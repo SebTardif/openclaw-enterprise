@@ -1,3 +1,7 @@
+import {
+  startControllerGitHubReadMediation,
+  type ControllerGitHubReadService,
+} from "./github-read-mediation.ts";
 import { composeSelectedComputeRendererContribution } from "./driver-factories/compute.ts";
 import type { KubernetesInstalledRendererDefinitionOwner } from "../drivers/compute/kubernetes/renderer-source.ts";
 import pg from "pg";
@@ -108,6 +112,7 @@ export interface ProductionConfig {
   readonly gatewayApiKeyPath?: string;
   readonly runtimeAuthorityBinaryPath?: string;
   readonly githubMediationProfileValidation?: NativeGitHubMediationProfileValidation;
+  readonly githubReadServices?: readonly ControllerGitHubReadService[];
   readonly runtimeAuthorityReadbackConfigPath?: string;
 }
 
@@ -133,13 +138,23 @@ export async function composeProduction(config: ProductionConfig) {
 
   const sources = installation.runtimeAuthoritySources ?? [];
   if (
-    (sources.length > 0 || config.runtimeAuthorityReadbackConfigPath !== undefined) &&
+    (sources.length > 0 ||
+      config.runtimeAuthorityReadbackConfigPath !== undefined ||
+      (config.githubReadServices?.length ?? 0) > 0) &&
     config.poolMax === 1
   )
     throw new Error("Runtime service trust requires at least two PostgreSQL connections.");
   const binaryPath = config.runtimeAuthorityBinaryPath ?? DEFAULT_RUNTIME_AUTHORITY_BINARY_PATH;
   let runtimeReadback: Awaited<ReturnType<typeof startRuntimeAuthorityReadback>> | undefined;
   let readbackLive = true;
+  let githubReads: Awaited<ReturnType<typeof startControllerGitHubReadMediation>> | undefined;
+  const closeNativeReads = async () => {
+    const results = await Promise.allSettled([githubReads?.close(), runtimeReadback?.close()]);
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Native read cleanup failed.");
+  };
   const driverId = installation.drivers.iam.id;
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
@@ -214,6 +229,9 @@ export async function composeProduction(config: ProductionConfig) {
       throw new Error("Workload profile owner assembly requires an original create method.");
     const createWorkloadProfileOwners = ownerCreate?.bind(workloadProfileAssembly);
     let workloadProfileService: WorkloadProfileServicePort | undefined;
+    let githubReadSelection:
+      | Parameters<NonNullable<ControllerOptions["workloadProfiles"]>["create"]>[0]["selection"]
+      | undefined;
     const controller = new OpenClawController(persistedInstallation, {
       state,
       reservedChannelInstallationCreate: Object.freeze<
@@ -230,6 +248,9 @@ export async function composeProduction(config: ProductionConfig) {
         create(context) {
           if (context.state !== state || context.installation.id !== persistedInstallation.id)
             throw new Error("The workload profile factory requires the original controller state.");
+          if (githubReadSelection !== undefined && githubReadSelection !== context.selection)
+            throw new Error("Repository reads require the original controller DriverSelection.");
+          githubReadSelection = context.selection;
           const security = createControllerWorkloadProfileSessionSecurityV1({
             requests: workloadProfileRequests,
             reader: state.workloadProfileSessionSecurityV1(),
@@ -419,6 +440,16 @@ export async function composeProduction(config: ProductionConfig) {
         },
       );
     }
+    if (config.githubReadServices !== undefined) {
+      if (githubReadSelection === undefined)
+        throw new Error("Repository reads require the original controller DriverSelection.");
+      githubReads = await startControllerGitHubReadMediation(config.githubReadServices, {
+        state,
+        selection: githubReadSelection,
+        installationId: persistedInstallation.id,
+        trust: runtimeServiceTrust,
+      });
+    }
     app.get("/healthz", async () => ({ status: "ok" }));
     app.get("/readyz", async () => {
       if (!readbackLive) throw new Error("Native runtime readback unavailable.");
@@ -427,7 +458,7 @@ export async function composeProduction(config: ProductionConfig) {
     });
     app.addHook("onClose", async () => {
       try {
-        await runtimeReadback?.close();
+        await closeNativeReads();
       } finally {
         await state.close();
       }
@@ -435,7 +466,7 @@ export async function composeProduction(config: ProductionConfig) {
     return app;
   } catch (error) {
     try {
-      await runtimeReadback?.close();
+      await closeNativeReads();
     } finally {
       await pool.end();
     }
