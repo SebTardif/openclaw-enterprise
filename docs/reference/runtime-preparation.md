@@ -11,6 +11,34 @@ submit a request, establish current service authority, complete a fence or autho
 a writable successor. The authenticated runtime authority service preserves its
 existing mutation and purpose denials until those accepting dependencies exist.
 
+## Effect admission consumer
+
+`RuntimePreparationEffectAdmissionV1` implements the five local admission methods:
+`readGate`, `admitChild`, `completeFence`, `recordFaultAndRequestStop` and
+`readRequest`. Construct it with the original native context inspector and State
+operation owner. It compares the original retained preparation, complete history
+and exact provider request before the selected accepting operation. Each history
+entry retains its own canonical size bound; a valid complete history is not
+truncated to fit one request's byte limit.
+
+The original source must independently qualify the exact purpose and retained
+objects. Missing positive child/fence writers remain unavailable, including after
+all data comparisons succeed. This consumer does not implement those writers,
+issue an SDK permit or replace the provider's final currentness fence.
+
+Cancellation and the bounded public deadline can return before late work settles.
+The original owner still owns its transaction and transferred source lease;
+`joinPending()` joins the consumer's outstanding continuations and cleanup.
+Unknown COMMIT outcomes remain distinct from definite refusal, and a later
+callback or cleanup result cannot manufacture successful admission.
+
+Run `node --test
+tests/conformance/runtime-preparation-effect-admission.test.mjs` to exercise the
+real consumer and memory preparation/history repositories. Native recognition,
+current-source qualification and accepting operations are controlled ports in
+this suite. Its results do not establish the missing internal producers,
+PostgreSQL fencing, Kubernetes effects or a complete application E2E flow.
+
 ## Canonical closed gate and fault retention
 
 The PostgreSQL store exposes the optional internal `runtimeEffectAdmission`

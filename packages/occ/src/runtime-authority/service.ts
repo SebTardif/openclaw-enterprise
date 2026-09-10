@@ -21,6 +21,10 @@ import {
   type RuntimeServiceTrustConfigurationV1,
 } from "@openclaw-enterprise/contracts";
 import type { PlatformStateStore } from "../state/platform-state.ts";
+import {
+  acceptInitialRuntimeBindingV1,
+  type RuntimeInitialBindingOwnerV1,
+} from "./initial-binding.ts";
 import type { RuntimeServiceOperationPolicy } from "./service-trust-schema.ts";
 import { PostgresCommitOutcomeUnknownError } from "../ports/transaction-errors.ts";
 import {
@@ -92,6 +96,9 @@ export interface RuntimeAuthorityServiceOptions {
   readonly contextFactory?: Pick<RuntimeAuthorityContextFactoryV1<unknown>, "inspect">;
   readonly currentTrust?: RuntimeAuthorityCurrentTrustReader;
   readonly requestBinding?: RuntimeAuthorityRequestBindingVerifier;
+  /** Original accepting transaction owner with its independently qualified source.
+   * Missing composition stays unavailable; registry/request data cannot replace it. */
+  readonly initialBinding?: RuntimeInitialBindingOwnerV1;
 }
 function sameConfiguration(
   left: RuntimeServiceTrustConfigurationV1,
@@ -119,18 +126,25 @@ function sameConfiguration(
 }
 
 /** Authenticated service profiles constrain calls independently of role ceilings. Exact
- * original-service readback is available; binding and purpose guards remain unintegrated.
+ * original-service readback and the optional original initial-binding owner are separate.
  * Stored binding/evidence is never sufficient for a positive purpose result. */
 export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
   private readonly options: RuntimeAuthorityServiceOptions;
   private readonly pendingReadbacks = new Set<Promise<unknown>>();
-  /** Native accepting-path cleanup owns these actual store reads after public cancellation.
-   * It never waits for arbitrary external inspector/current-reader promises. */
+  private readonly pendingBindings = new Set<Promise<unknown>>();
+  private readonly initialBinding: RuntimeInitialBindingOwnerV1 | undefined;
+  /** The existing native cleanup hook joins actual owned store reads and binding
+   * transactions even after public cancellation. Arbitrary external inspector or
+   * current-reader promises are not enrolled transaction work. */
   async joinPendingReadbacks(): Promise<void> {
-    while (this.pendingReadbacks.size > 0) await Promise.allSettled([...this.pendingReadbacks]);
+    while (this.pendingReadbacks.size > 0 || this.pendingBindings.size > 0)
+      await Promise.allSettled([...this.pendingReadbacks, ...this.pendingBindings]);
   }
   constructor(options: RuntimeAuthorityServiceOptions) {
     this.options = options;
+    const owner = options.initialBinding;
+    this.initialBinding =
+      owner === undefined ? undefined : Object.freeze({ run: owner.run.bind(owner) });
   }
   private async bounded<T>(
     call: AuthorityCallV1,
@@ -240,6 +254,7 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
     call: AuthorityCallV1,
     method: RuntimeMutationV1["kind"],
   ): Promise<RuntimeMutationResultV1> {
+    let acceptedOperation: ExactAuthorityOperationV1 | undefined;
     try {
       const request = parseRuntimeAuthorityV1("mutation", input);
       if (request.kind !== method)
@@ -248,42 +263,67 @@ export class RuntimeAuthorityService implements RuntimeAssignmentAuthorityV1 {
           result: "rejected-before-effect",
           reasonCode: "operation-denied",
         };
-      const verified = await this.bounded(call, (boundedCall) => this.caller(boundedCall));
-      if (
-        !verified ||
-        request.requestRef !== call.requestRef ||
-        !this.scopeAllowed(verified, request.target)
-      )
-        return { schemaVersion: 1, result: "rejected-before-effect", reasonCode: "scope-hidden" };
-      const policy = RUNTIME_AUTHORITY_ROLE_POLICY_V1[verified.configuration.role];
-      const permission =
-        request.kind === "record-evidence"
-          ? `record-evidence:${request.evidence.kind}`
-          : request.kind;
-      if (
-        !(policy.mutations as readonly string[]).includes(permission) ||
-        verified.operationPolicy !== "initial-harness-bind-v1" ||
-        request.kind !== "bind" ||
-        request.target.component !== "harness" ||
-        request.binding.provider !== "occ/kubernetes-gvisor" ||
-        request.expectedBindingVersion !== null
-      )
+      // Authentication and the accepting owner share one original public deadline.
+      // A canceled transaction remains joined by native cleanup below.
+      return await this.bounded(call, async (boundedCall): Promise<RuntimeMutationResultV1> => {
+        const verified = await this.caller(boundedCall);
+        if (
+          !verified ||
+          request.requestRef !== boundedCall.requestRef ||
+          !this.scopeAllowed(verified, request.target)
+        )
+          return { schemaVersion: 1, result: "rejected-before-effect", reasonCode: "scope-hidden" };
+        const policy = RUNTIME_AUTHORITY_ROLE_POLICY_V1[verified.configuration.role];
+        const permission =
+          request.kind === "record-evidence"
+            ? `record-evidence:${request.evidence.kind}`
+            : request.kind;
+        if (
+          !(policy.mutations as readonly string[]).includes(permission) ||
+          verified.operationPolicy !== "initial-harness-bind-v1" ||
+          request.kind !== "bind" ||
+          request.target.component !== "harness" ||
+          request.binding.provider !== "occ/kubernetes-gvisor" ||
+          request.expectedBindingVersion !== null
+        )
+          return {
+            schemaVersion: 1,
+            result: "rejected-before-effect",
+            reasonCode: "operation-denied",
+          };
+        if (this.options.requestBinding?.matchesRequest("bind", request, boundedCall) !== true)
+          return { schemaVersion: 1, result: "rejected-before-effect", reasonCode: "scope-hidden" };
+        if (this.initialBinding === undefined)
+          return {
+            schemaVersion: 1,
+            result: "rejected-before-effect",
+            reasonCode: "lookup-unavailable",
+          };
+        if (boundedCall.signal.aborted) throw new Error("Runtime authority call expired.");
+        acceptedOperation = exactRuntimeAuthorityOperation(request);
+        const running = acceptInitialRuntimeBindingV1(
+          this.initialBinding,
+          request,
+          verified,
+          boundedCall,
+        );
+        this.pendingBindings.add(running);
+        running.then(
+          () => this.pendingBindings.delete(running),
+          () => this.pendingBindings.delete(running),
+        );
+        return await running;
+      });
+    } catch {
+      // Public cancellation cannot assert rollback while the original owner may
+      // still be settling COMMIT. Only that owner's terminal result can do so.
+      if (acceptedOperation !== undefined)
         return {
           schemaVersion: 1,
-          result: "rejected-before-effect",
-          reasonCode: "operation-denied",
+          result: "commit-unknown",
+          operation: acceptedOperation,
+          nextAction: "exact-readback-only",
         };
-      if (!this.options.requestBinding?.matchesRequest("bind", request, call))
-        return { schemaVersion: 1, result: "rejected-before-effect", reasonCode: "scope-hidden" };
-      // TODO(runtime authority acceptor): bind independent observation/profile proofs and
-      // preparation/selection/responsibility CAS to this exact platform unit before wiring
-      // writes. Plain service admission and fixture records cannot supply those predicates.
-      return {
-        schemaVersion: 1,
-        result: "rejected-before-effect",
-        reasonCode: "lookup-unavailable",
-      };
-    } catch {
       return {
         schemaVersion: 1,
         result: "rejected-before-effect",

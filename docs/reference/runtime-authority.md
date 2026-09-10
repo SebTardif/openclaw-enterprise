@@ -76,8 +76,9 @@ and complete parsed input with the native owner's original protected exchange;
 missing or changed correspondence denies. It supplies no authentication or
 operation grant. These code paths do not establish deployment-qualified timing.
 
-The service currently rejects all mutation submissions and returns no positive
-purpose result. Required protected Compute/verifier observation, admitted profile,
+Without an original initial-binding owner, the service rejects all mutation
+submissions and returns no positive purpose result. Required protected
+Compute/verifier observation, admitted profile,
 preparation/selection, cleanup successor exclusion and completed-context policy
 readers are not integrated. In particular it does not implement cleanup readback
 for a different original service: that requires the separately accepted exact
@@ -85,6 +86,30 @@ cleanup responsibility reader. Retained internal storage remains readable after
 retirement, while service disclosure stays denied until that narrow guard exists.
 There is no provider allocation, route selection, registrar write, runtime start,
 credential issuance, context restore or physical teardown in this component.
+
+### Initial binding transaction consumer
+
+`RuntimeAuthorityService` accepts an optional `initialBinding` owner captured at
+construction. Its `acceptInitialRuntimeBindingV1` consumer preserves the original
+native context and opaque transport identity, and asks that owner to perform the
+exact operation on one transaction. Historical replay is checked before acquiring
+fresh preparation or profile observations. A new append requires the original
+private preparation locator, one exact retained proposal and current independent
+proofs; matching request fields cannot supply those proofs.
+
+The consumer checks callback and terminal-result correspondence and joins entered
+work. An exact owner `commit-unknown` result survives an earlier callback failure
+and retains the original operation for readback only. Cancellation does not
+authorize a retry or discard the owner's pending transaction and cleanup.
+The consumer creates no transaction, registry grant or default accepting owner.
+Production still needs the genuine preparation, profile and protected observation
+participants with the owner's final synchronous COMMIT fence.
+
+Run `node --test tests/conformance/runtime-initial-binding.test.mjs` for the
+consumer's correspondence, replay, uncertainty and cleanup cases. The suite uses
+the real memory preparation and authority repositories with controlled native,
+locator and proof ports. It establishes component behavior, not authenticated
+production admission or PostgreSQL durability.
 
 ## Preparing an observed binding candidate
 
