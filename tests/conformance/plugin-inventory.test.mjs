@@ -123,6 +123,38 @@ test("Codex plugin inventory rejects incomplete, local, duplicate, and unreviewe
 
   assert.throws(
     () =>
+      normalizePluginListResponse(rawPluginList({ marketplaces: [] }), {
+        codexVersion: "0.152.1",
+        allowMarketplaces: ["openai-curated-remote"],
+        allowEmptyReviewed: true,
+      }),
+    /Expected marketplace/,
+  );
+
+  assert.throws(
+    () =>
+      normalizePluginListResponse(rawPluginList({ marketplaces: [] }), {
+        codexVersion: "0.152.1",
+        allowMarketplaces: [],
+        allowEmptyReviewed: true,
+      }),
+    /At least one --allow-marketplace/,
+  );
+
+  const reviewedEmpty = normalizePluginListResponse(
+    rawPluginList({
+      marketplaces: [{ name: "openai-curated-remote", path: null, plugins: [] }],
+    }),
+    {
+      codexVersion: "0.152.1",
+      allowMarketplaces: ["openai-curated-remote"],
+      allowEmptyReviewed: true,
+    },
+  );
+  assert.deepEqual(reviewedEmpty.plugins, []);
+
+  assert.throws(
+    () =>
       normalizePluginListResponse(
         rawPluginList({
           marketplaces: [
@@ -231,6 +263,19 @@ test("Codex plugin inventory generator preserves the previous artifact when vali
         output,
         codexVersion: "0.152.1",
         allowMarketplaces: ["openai-curated-remote"],
+      }),
+    /Expected marketplace/,
+  );
+  assert.equal(await readFile(output, "utf8"), '{"previous":true}\n');
+
+  await assert.rejects(
+    () =>
+      runGenerator({
+        rawInput,
+        output,
+        codexVersion: "0.152.1",
+        allowMarketplaces: ["openai-curated-remote"],
+        allowEmptyReviewed: true,
       }),
     /Expected marketplace/,
   );
