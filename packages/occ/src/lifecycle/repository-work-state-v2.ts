@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { types } from "node:util";
+import {
+  RepositoryWorkObservationOwnerV2,
+  type RepositoryWorkObservationSummaryV2,
+} from "./repository-work-observer-v2.ts";
 import type { AuthorityCallV1 } from "@openclaw-enterprise/contracts/runtime-authority-v1";
 import type {
   RepositoryWorkAdmissionV2,
@@ -276,7 +280,11 @@ type Entry<B extends RepositoryWorkStateBindingsV2, V extends GitHubMediationVer
   current: RepositoryWorkCurrentV2<V>;
   active: boolean;
   settling: boolean;
+  observationActive: boolean;
+  observationOutcome?: GitHubMediationOutcome;
   dispatchEntered: boolean;
+  /** Only the original State run can establish no COMMIT, after its join. */
+  dispatchNotCommitted: boolean;
   dispatch?: RepositoryWorkDispatchV2;
   /** Detached actual inbound wire binding; original native prepared exchange
    * independently authenticates the same nonce and complete metadata. */
@@ -301,6 +309,9 @@ type Inventory<B extends RepositoryWorkStateBindingsV2, V extends GitHubMediatio
   entry: Entry<B, V>;
   handle: RepositoryWorkInventoryResponsibilityV2;
   source?: RepositoryWorkInventorySelectionV2;
+  /** Captured before offered data; retained even when opening refuses later. */
+  openingRelease?: () => Promise<void>;
+  cleanupSucceeded?: boolean;
   reservation?: ReserveRepositoryTokenV2;
   phases: Map<string, InventoryPhase>;
   pending: Set<Promise<unknown>>;
@@ -457,6 +468,22 @@ export class RepositoryWorkStateAdapterV2<
 > {
   readonly state: RepositoryWorkSourcesV2<Bindings<B, V>, V>["state"];
   readonly inventory: RepositoryWorkInventoryPortV2<B, V>;
+  /** Trusted construction-owned inspection. Original State preparation or the
+   * bounded internally selected next responsibility can request reconciliation;
+   * copied refs never enroll or reopen live Work.
+   * Process retention is explicit: durable State restart enrollment is separate. */
+  readonly observations: Readonly<{
+    inspect(preparation: RepositoryWorkStatePreparationV2<V>): RepositoryWorkObservationSummaryV2;
+    inspectPending(): readonly RepositoryWorkObservationSummaryV2[];
+    reconcileNext(): Promise<RepositoryWorkObservationSummaryV2 | null>;
+    reconcile(
+      preparation: RepositoryWorkStatePreparationV2<V>,
+    ): Promise<"recorded" | "unavailable">;
+    join(
+      preparation: RepositoryWorkStatePreparationV2<V>,
+    ): Promise<RepositoryWorkObservationSummaryV2>;
+  }>;
+  private readonly observationOwner: RepositoryWorkObservationOwnerV2<Entry<B, V>>;
   private readonly entries = new WeakMap<object, Entry<B, V>>();
   private readonly commits = new WeakMap<object, Entry<B, V>>();
   private readonly activeRun = new AsyncLocalStorage<Run<B, V>>();
@@ -507,7 +534,9 @@ export class RepositoryWorkStateAdapterV2<
     selection: RepositoryWorkSelectionSourceV2<B, NoInfer<V>>,
     tokens: RepositoryWorkTokenBindingV2<B>,
     transactionMilliseconds: number,
-    options: WorkRepositoryProtocolOptionsV2<V>,
+    options: WorkRepositoryProtocolOptionsV2<V> & {
+      readonly maximumObservationResponsibilities?: number;
+    },
   );
   constructor(
     binding: RepositoryWorkStateBindingV2,
@@ -523,7 +552,10 @@ export class RepositoryWorkStateAdapterV2<
     selection: RepositoryWorkSelectionSourceV2<B, V>,
     tokens: RepositoryWorkTokenBindingV2<B>,
     transactionMilliseconds: number,
-    options?: { readonly protocolVersion?: GitHubMediationVersion },
+    options?: {
+      readonly protocolVersion?: GitHubMediationVersion;
+      readonly maximumObservationResponsibilities?: number;
+    },
   ) {
     const version = options?.protocolVersion ?? 2;
     if (version !== 2 && version !== 3) fail();
@@ -536,6 +568,15 @@ export class RepositoryWorkStateAdapterV2<
     )
       fail();
     this.transactionMilliseconds = transactionMilliseconds;
+    // Bounded process-owned retention, reserved before State preparation. No
+    // eviction or successful cleanup is inferred when persistent handoff is absent.
+    this.observationOwner = new RepositoryWorkObservationOwnerV2(
+      {
+        reconcile: this.reconcileObservation.bind(this),
+        retire: this.retireObservation.bind(this),
+      },
+      { maximumResponsibilities: options?.maximumObservationResponsibilities ?? 128 },
+    );
     this.native = Object.freeze({
       acquire: native.acquire.bind(native),
       inspect: native.inspect.bind(native),
@@ -571,7 +612,12 @@ export class RepositoryWorkStateAdapterV2<
           const joinAccepted = context.joinAccepted.bind(context);
           assertOriginal(context, original, call);
           const member = this.operations.get(original);
-          if (!member || (member.inventory ? member.inventory.released : !member.entry.active))
+          if (
+            !member ||
+            (member.inventory
+              ? member.inventory.released
+              : !member.entry.active && !member.entry.observationActive)
+          )
             fail();
           if (!equal(original, member.originalData)) fail();
           const active = this.activeRun.getStore();
@@ -586,6 +632,8 @@ export class RepositoryWorkStateAdapterV2<
           const mode = active?.mode ?? member.mode;
           const entry = member.entry;
           const historical = mode === "observation" || mode === "inventory-observation";
+          if (!entry.active && !historical) fail();
+          if (!member.inventory && historical && entry.settling && !entry.observationActive) fail();
           const inventory = member.inventory,
             phase = member.phase;
           if (entry.settling && !historical) fail();
@@ -867,6 +915,19 @@ export class RepositoryWorkStateAdapterV2<
       inspectCommitted: this.inspectCommitted.bind(this),
       settle: this.settle.bind(this),
     });
+    this.observations = Object.freeze({
+      inspect: (p: RepositoryWorkStatePreparationV2<V>) =>
+        this.observationOwner.inspect(this.observationEntry(p)),
+      inspectPending: this.observationOwner.inspectPending.bind(this.observationOwner),
+      reconcileNext: this.observationOwner.reconcileNext.bind(this.observationOwner),
+      reconcile: (p: RepositoryWorkStatePreparationV2<V>) => {
+        const entry = this.observationEntry(p);
+        if (!entry.settling) fail();
+        return this.reconcileRetained(entry);
+      },
+      join: (p: RepositoryWorkStatePreparationV2<V>) =>
+        this.observationOwner.join(this.observationEntry(p)),
+    });
     this.inventory = Object.freeze({
       acquire: this.openInventory.bind(this),
       reservation: (i: RepositoryWorkInventoryResponsibilityV2) =>
@@ -967,6 +1028,7 @@ export class RepositoryWorkStateAdapterV2<
         if (!source) return undefined;
         // Take cleanup before reading reservation data or any later method getter.
         release = source.release.bind(source);
+        scope.openingRelease = release;
         const offered = source.reservation;
         const original = own(offered, "original") as WorkOriginalOperationV2;
         snapshot(original); // Refuse accessors; retain the actual State-issued object.
@@ -1014,12 +1076,25 @@ export class RepositoryWorkStateAdapterV2<
           // exclude only itself when joining the refused acquisition.
           while ([...scope.pending].some((work) => work !== scope.opening))
             await Promise.allSettled([...scope.pending].filter((work) => work !== scope.opening));
+          let failed = false;
+          let firstFailure: unknown;
           try {
             if (release) await release();
-          } finally {
-            scope.released = true;
-            if (!entry.active) await this.releaseSelection(entry);
+            scope.cleanupSucceeded = true;
+          } catch (error) {
+            failed = true;
+            firstFailure = error;
           }
+          scope.released = true;
+          try {
+            await this.finishInventoryRetirement(entry);
+          } catch (error) {
+            if (!failed) {
+              failed = true;
+              firstFailure = error;
+            }
+          }
+          if (failed) throw firstFailure;
         }
       }
     });
@@ -1332,12 +1407,26 @@ export class RepositoryWorkStateAdapterV2<
     scope.joined = Promise.resolve().then(async () => {
       while (scope.pending.size) await Promise.allSettled([...scope.pending]);
       for (const phase of scope.phases.values()) this.operations.delete(phase.original);
+      let failed = false;
+      let firstFailure: unknown;
       try {
         if (scope.source) await scope.source.release();
-      } finally {
-        scope.released = true;
-        if (!scope.entry.active) await this.releaseSelection(scope.entry);
+        else if (scope.openingRelease) await scope.openingRelease();
+        scope.cleanupSucceeded = true;
+      } catch (error) {
+        failed = true;
+        firstFailure = error;
       }
+      scope.released = true;
+      try {
+        await this.finishInventoryRetirement(scope.entry);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          firstFailure = error;
+        }
+      }
+      if (failed) throw firstFailure;
     });
     return scope.joined;
   }
@@ -1534,8 +1623,17 @@ export class RepositoryWorkStateAdapterV2<
         current,
         active: true,
         settling: false,
+        observationActive: false,
         dispatchEntered: false,
+        dispatchNotCommitted: false,
       };
+      // Reserve retention before the first State unit, so exhaustion cannot
+      // discard an already-submitted dispatch or silently overwrite old unknowns.
+      this.observationOwner.register(entry, {
+        operationRef: current.original.operationRef,
+        observationRef: raw.observationRef,
+        workRef: current.work.workRef,
+      });
       this.operations.set(originals.preparation, {
         entry,
         mode: "preparation",
@@ -1606,6 +1704,7 @@ export class RepositoryWorkStateAdapterV2<
         if (!accepted) {
           entry.active = false;
           for (const original of Object.values(originals)) this.operations.delete(original);
+          this.observationOwner.discard(entry);
         }
       }
     } finally {
@@ -1750,10 +1849,14 @@ export class RepositoryWorkStateAdapterV2<
         unit.assertCurrent();
       },
     );
-    if (result.kind !== "committed")
+    if (result.kind !== "committed") {
+      // This is the original State's definitive joined result. Absent readback
+      // and a caller's outcome never establish this negative commitment fact.
+      if (result.kind === "not-committed") entry.dispatchNotCommitted = true;
       return result.kind === "unknown"
         ? { kind: "unknown" as const }
         : { kind: "not-committed" as const };
+    }
     entry.commit = result.commit;
     this.commits.set(result.commit, entry);
     const recognized = this.recognize(result.commit, dispatch.releaseRef, receiver, session);
@@ -1793,70 +1896,118 @@ export class RepositoryWorkStateAdapterV2<
       fail();
     return Object.freeze({ releaseRef: entry.dispatch.releaseRef });
   }
+  private observationEntry(p: RepositoryWorkStatePreparationV2<V>): Entry<B, V> {
+    const entry = this.entries.get(p);
+    if (!entry) fail();
+    return entry;
+  }
+  private async reconcileRetained(entry: Entry<B, V>): Promise<"recorded" | "unavailable"> {
+    const result = await this.observationOwner.reconcile(entry);
+    // Observation persistence and original retirement are distinct. A recorded
+    // observation cannot hide a rejected release or discharge retained ownership.
+    return result === "recorded" && this.observationOwner.inspect(entry).retirement === "retired"
+      ? "recorded"
+      : "unavailable";
+  }
+  private async reconcileObservation(entry: Entry<B, V>): Promise<"recorded" | "unavailable"> {
+    if (!entry.settling || !entry.observationActive || entry.observationOutcome === undefined)
+      fail();
+    while (entry.nativePending.size) await Promise.allSettled([...entry.nativePending]);
+    if (!entry.dispatchEntered || entry.dispatchNotCommitted) return "recorded";
+    // Every explicit attempt obtains the original independent bounded call. It
+    // never renews the user's cancelled call or reopens live Work/native use.
+    const call = await this.selection.observationCall(entry.selection);
+    const recovered = await this.enrolled(entry, entry.originals.dispatch, "observation", () =>
+      this.store.recoverAfterUnwind(entry.originals.dispatch, call, this.bounds(call)),
+    );
+    if (
+      recovered.kind !== "recorded" ||
+      recovered.operation.kind !== "dispatch" ||
+      recovered.operation.operationRef !== entry.data.current.original.operationRef ||
+      recovered.operation.requestDigest !== entry.data.current.original.requestDigest ||
+      !equal(recovered.operation.document, entry.dispatch)
+    )
+      return "unavailable";
+    const observation = {
+      observationRef: entry.data.observationRef,
+      dispatchOperationRef: entry.data.current.original.operationRef,
+      outcome: entry.observationOutcome,
+      evidenceRef: entry.data.observationEvidenceRef,
+    };
+    // Resolve an uncertain previous observation COMMIT before another append.
+    // Exact readback is evidence only; source/State private membership still
+    // qualifies both original operations on every new transaction.
+    const prior = await this.enrolled(entry, entry.originals.observation, "observation", () =>
+      this.store.recoverAfterUnwind(entry.originals.observation, call, this.bounds(call)),
+    );
+    if (prior.kind === "unavailable") return "unavailable";
+    if (prior.kind === "recorded") {
+      return prior.operation.kind === "observation" &&
+        prior.operation.operationRef === entry.originals.observation.operationRef &&
+        prior.operation.requestDigest === entry.originals.observation.requestDigest &&
+        equal(prior.operation.document, observation)
+        ? "recorded"
+        : "unavailable";
+    }
+    const observed = await this.run(
+      entry,
+      entry.originals.observation,
+      call,
+      "observation",
+      async (unit) => {
+        await unit.appendObservation(observation);
+        unit.assertCurrent();
+      },
+    );
+    return observed.kind === "committed" ? "recorded" : "unavailable";
+  }
+  private async finishInventoryRetirement(entry: Entry<B, V>): Promise<void> {
+    if (entry.active) return;
+    if (!entry.observationActive) {
+      await this.releaseSelection(entry);
+      return;
+    }
+    // Inventory completion cannot start historical reads or rearm dispatch.
+    // Only an already-recorded observation may now join its dependent release.
+    if (this.observationOwner.inspect(entry).status !== "recorded") return;
+    await this.observationOwner.join(entry);
+    if (!entry.observationActive) return;
+    if ((await this.reconcileRetained(entry)) !== "recorded") fail();
+  }
+  private async retireObservation(entry: Entry<B, V>): Promise<void> {
+    // Do not await inventory here: Work joins State settlement before token
+    // cleanup. Retain the recorded observation and return unavailable instead;
+    // an explicit later reconciliation retries only original retirement.
+    if (entry.inventory && !entry.inventory.released) fail();
+    // Once recording is known, join the other original cleanup even when the
+    // inventory release failed. That failure still forbids successful retirement.
+    await this.releaseSelection(entry);
+    if (entry.inventory && !entry.inventory.cleanupSucceeded) fail();
+    entry.observationActive = false;
+    for (const original of Object.values(entry.originals)) this.operations.delete(original);
+  }
   private settle(
     p: RepositoryWorkStatePreparationV2<V>,
     receipt: RepositoryWorkCommittedV2 | undefined,
     outcome: GitHubMediationOutcome,
   ): Promise<"recorded" | "unavailable"> {
     const entry = this.entries.get(p);
-    if (!entry || (receipt !== undefined && entry.commit !== receipt))
+    if (
+      !entry ||
+      (receipt !== undefined && entry.commit !== receipt) ||
+      !["not-dispatched", "completed", "unknown"].includes(outcome)
+    )
       return Promise.resolve("unavailable");
     if (entry.joined) return entry.joined;
+    // One-way closure happens before any entered callback. Independent history
+    // stays privately enrolled; live preparation/dispatch never becomes usable.
     entry.settling = true;
-    entry.joined = Promise.resolve().then(async () => {
-      let result: "recorded" | "unavailable" = "unavailable";
-      try {
-        while (entry.nativePending.size) await Promise.allSettled([...entry.nativePending]);
-        if (!entry.dispatchEntered) result = "recorded";
-        else {
-          const call = await this.selection.observationCall(entry.selection);
-          const recovered = await this.enrolled(
-            entry,
-            entry.originals.dispatch,
-            "observation",
-            () => this.store.recoverAfterUnwind(entry.originals.dispatch, call, this.bounds(call)),
-          );
-          if (
-            recovered.kind === "recorded" &&
-            recovered.operation.kind === "dispatch" &&
-            recovered.operation.operationRef === entry.data.current.original.operationRef &&
-            recovered.operation.requestDigest === entry.data.current.original.requestDigest &&
-            equal(recovered.operation.document, entry.dispatch)
-          ) {
-            const observed = await this.run(
-              entry,
-              entry.originals.observation,
-              call,
-              "observation",
-              async (unit) => {
-                await unit.appendObservation({
-                  observationRef: entry.data.observationRef,
-                  dispatchOperationRef: entry.data.current.original.operationRef,
-                  outcome,
-                  evidenceRef: entry.data.observationEvidenceRef,
-                });
-                unit.assertCurrent();
-              },
-            );
-            if (observed.kind === "committed") result = "recorded";
-          }
-        }
-      } catch {
-        /* No absence/noncommit inference; original durable owner retains uncertainty. */
-      } finally {
-        entry.active = false;
-        for (const original of Object.values(entry.originals)) this.operations.delete(original);
-        try {
-          // Inventory owns its independent observer/mitigation exchange until
-          // custody joins the original provider attempt and releases it. Work
-          // settlement invalidates new issuance without deleting that enrollment.
-          if (!entry.inventory || entry.inventory.released) await this.releaseSelection(entry);
-        } catch {
-          result = "unavailable";
-        }
-      }
-      return result;
-    });
+    entry.active = false;
+    entry.observationActive = true;
+    entry.observationOutcome =
+      entry.dispatchEntered && !entry.commit && !entry.dispatchNotCommitted ? "unknown" : outcome;
+    this.observationOwner.activate(entry);
+    entry.joined = this.reconcileRetained(entry);
     return entry.joined;
   }
 }
