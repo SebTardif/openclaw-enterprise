@@ -233,8 +233,25 @@ function scenario(options = {}) {
         }
         if (statement.includes("FROM occ.agent_runtime_intents"))
           return response(saved.intent ? [saved.intent] : []);
-        if (statement.includes("pg_advisory_xact_lock_shared")) {
+        if (
+          statement ===
+          "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))"
+        ) {
+          // Replay retains the original owner's lock-order prefix; it still must
+          // not acquire today's profile head, qualifiers or capabilities.
+          assert.deepEqual(parameters, [profile.installationId]);
+          trace.push("head-gate");
+          return response();
+        }
+        if (
+          statement ===
+          "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-head:' || $1 || ':' || $2,0))"
+        ) {
           assert.equal(replayOnly, false);
+          assert.deepEqual(parameters, [
+            profile.installationId,
+            profile.head.selection.admissionRef,
+          ]);
           trace.push("head-gate");
           return response();
         }
@@ -266,9 +283,15 @@ function scenario(options = {}) {
           return response([], "INSERT");
         }
         if (statement.includes("FROM occ.agent_revisions")) {
-          if (statement.includes("FOR SHARE")) {
+          // The real selector reads an immutable revision without UPDATE rights.
+          // Bind fault injection to its exact scoped query, not a removed lock.
+          if (
+            statement.replace(/\s+/g, " ").trim() ===
+            "SELECT id,namespace_id,agent_id,admitted_spec FROM occ.agent_revisions WHERE namespace_id=$1 AND agent_id=$2 AND id=$3"
+          ) {
             record("selector-own-row");
             assert.ok(saved.revision);
+            assert.deepEqual(parameters, [profile.namespaceId, agentId, saved.revision.id]);
             if (options.corruptInsert) {
               const changed = copy(saved.revision);
               changed.admitted_spec.workload_profile_use.admittedConfigurationDigest = "f".repeat(
