@@ -48,9 +48,11 @@ repository.
 
 Catalog entries are release-valid identities only. They do not prove that a
 target Agent account can see, install, authenticate to, or run the plugin. A
-missing, malformed, version-mismatched, or unreviewed empty artifact is
-unavailable to catalog reads; it must not be represented as a successful empty
-catalog. A deliberately empty catalog requires explicit release review.
+missing, malformed, or version-mismatched artifact is unavailable to catalog
+reads. A bundled `plugins: []` artifact is valid only after the generator has
+observed the expected marketplace and release review has accepted an
+intentionally empty collection; an absent raw capture or missing marketplace
+must not be represented as a successful empty catalog.
 
 Installed packages run unsandboxed with control-plane authority and
 access to controller credentials, database state, and Kubernetes identity.

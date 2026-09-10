@@ -17,7 +17,6 @@ export type CodexPluginCatalogLoadResult =
 
 export interface CodexPluginCatalogOptions {
   readonly inventoryPath?: string;
-  readonly allowEmptyInventory?: boolean;
 }
 
 const DEFAULT_INVENTORY_PATH = join(dirname(fileURLToPath(import.meta.url)), "inventory.json");
@@ -42,7 +41,7 @@ export async function loadCodexPluginInventory(
       inventory: validatePluginInventory(parsed, {
         driverId: CODEX_PLUGIN_CATALOG_DRIVER_ID,
         codexVersion: CODEX_PLUGIN_CATALOG_VERSION,
-        allowEmpty: options.allowEmptyInventory === true,
+        allowEmpty: true,
       }),
     };
   } catch (error) {

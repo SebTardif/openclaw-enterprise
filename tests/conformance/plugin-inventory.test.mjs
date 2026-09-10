@@ -206,7 +206,7 @@ test("Codex plugin inventory rejects incomplete, local, duplicate, and unreviewe
   );
 });
 
-test("Codex plugin catalog loader reports unavailable artifacts honestly", async (t) => {
+test("Codex plugin catalog loader accepts reviewed bundled artifacts and reports missing artifacts honestly", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-catalog-loader-"));
   t.after(() =>
     import("node:fs/promises").then(({ rm }) => rm(directory, { recursive: true, force: true })),
@@ -234,14 +234,7 @@ test("Codex plugin catalog loader reports unavailable artifacts honestly", async
       plugins: [],
     }),
   );
-  const emptyWithoutReview = await loadCodexPluginInventory({ inventoryPath });
-  assert.equal(emptyWithoutReview.available, false);
-  assert.match(emptyWithoutReview.reason, /empty without explicit review/);
-
-  const emptyReviewed = await loadCodexPluginInventory({
-    inventoryPath,
-    allowEmptyInventory: true,
-  });
+  const emptyReviewed = await loadCodexPluginInventory({ inventoryPath });
   assert.equal(emptyReviewed.available, true);
   assert.deepEqual(emptyReviewed.inventory.plugins, []);
 });
