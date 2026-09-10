@@ -1345,7 +1345,7 @@ test("rejected exact replay exception does not broaden other original-link resul
   );
 });
 
-test("dispatch clocks distinguish the pre-commit anchor from historical commit labels", () => {
+test("selected execution requires an explicit cap and the original successor clock", () => {
   const selection = {
     execution: {
       attempt: v.attempt,
@@ -1361,11 +1361,10 @@ test("dispatch clocks distinguish the pre-commit anchor from historical commit l
     maximumExecutionMs: 900000,
   };
   const clock = {
-    kind: "pre-commit-monotonic-v1",
+    kind: "pre-commit-monotonic-v2",
     clockSourceRef: "original-clock",
     clockEpochRef: "original-epoch",
     anchorAtMs: 100,
-    deadlineAtMs: 900100,
   };
   const intent = { ...selection, dispatchClock: clock };
   assert.equal(parseTurnJournalV1("executionIntent", intent).dispatchClock.anchorAtMs, 100);
@@ -1386,18 +1385,25 @@ test("dispatch clocks distinguish the pre-commit anchor from historical commit l
     assert.throws(() =>
       parseTurnJournalV1("executionIntent", { ...selection, dispatchClock: changed }),
     );
-  // Closed history decoding preserves the old data without qualifying a sampler.
+  // Obsolete clock formats cannot silently acquire current execution semantics.
   const historical = {
     clockSourceRef: clock.clockSourceRef,
     clockEpochRef: clock.clockEpochRef,
     committedAtMs: 100,
     deadlineAtMs: 900100,
   };
-  assert.equal(
-    parseTurnJournalV1("executionIntent", { ...selection, dispatchClock: historical }).dispatchClock
-      .committedAtMs,
-    100,
+  assert.throws(() =>
+    parseTurnJournalV1("executionIntent", { ...selection, dispatchClock: historical }),
   );
+  for (const maximumExecutionMs of [null, 1, 900001, 86_400_000]) {
+    assert.equal(
+      parseTurnJournalV1("executionIntent", { ...intent, maximumExecutionMs }).maximumExecutionMs,
+      maximumExecutionMs,
+    );
+  }
+  for (const maximumExecutionMs of [undefined, 0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => parseTurnJournalV1("executionIntent", { ...intent, maximumExecutionMs }));
+  }
 });
 
 test("host deadline control includes startup and rejects renewal or a historical clock", () => {
@@ -1415,15 +1421,14 @@ test("host deadline control includes startup and rejects renewal or a historical
     executionLimitVersion: 1,
     maximumExecutionMs: 1000,
     dispatchClock: {
-      kind: "pre-commit-monotonic-v1",
+      kind: "pre-commit-monotonic-v2",
       clockSourceRef: "host",
       clockEpochRef: "epoch",
       anchorAtMs: 100,
-      deadlineAtMs: 900100,
     },
   };
   const control = {
-    kind: "host-deadline-v1",
+    kind: "host-stop-v2",
     intent,
     operationRef: "cleanup",
     operationDigest: "b".repeat(64),
@@ -1434,6 +1439,17 @@ test("host deadline control includes startup and rejects renewal or a historical
     deadlineAtMs: 1100,
   };
   assert.equal(parseTurnJournalV1("deadlineControl", control).deadlineAtMs, 1100);
+  const uncapped = {
+    ...control,
+    intent: { ...intent, maximumExecutionMs: null },
+    deadlineAtMs: null,
+  };
+  assert.equal(parseTurnJournalV1("deadlineControl", uncapped).deadlineAtMs, null);
+  for (const deadlineAtMs of [undefined, 0, 1100]) {
+    assert.throws(() => parseTurnJournalV1("deadlineControl", { ...uncapped, deadlineAtMs }));
+  }
+  assert.throws(() => parseTurnJournalV1("deadlineControl", { ...control, deadlineAtMs: null }));
+
   for (const change of [
     { deadlineAtMs: 1101 },
     { deadlineAtMs: 900100 },
@@ -1453,7 +1469,7 @@ test("host deadline control includes startup and rejects renewal or a historical
   ])
     assert.throws(() => parseTurnJournalV1("deadlineControl", { ...control, ...change }));
   const start = {
-    kind: "host-controlled-v1",
+    kind: "host-controlled-v2",
     intent,
     operationRef: "start",
     operationDigest: "c".repeat(64),
@@ -1467,7 +1483,7 @@ test("host deadline control includes startup and rejects renewal or a historical
   };
   assert.equal(
     parseTurnJournalJsonV1("executionStart", JSON.stringify(start)).kind,
-    "host-controlled-v1",
+    "host-controlled-v2",
   );
   const observed = {
     ...start,

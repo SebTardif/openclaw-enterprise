@@ -250,14 +250,11 @@ function elapsed(roundUp: boolean): number {
  * its transaction guard's known-COMMIT claim. No caller clock is accepted. */
 function captureDispatchClock(): PreCommitDispatchClockV1 {
   const anchorAtMs = elapsed(false);
-  const deadlineAtMs = anchorAtMs + TURN_JOURNAL_LIMITS_V1.maximumTurnMs;
-  if (!Number.isSafeInteger(deadlineAtMs)) throw unavailable();
   const clock = Object.freeze({
-    kind: "pre-commit-monotonic-v1" as const,
+    kind: "pre-commit-monotonic-v2" as const,
     clockSourceRef,
     clockEpochRef,
     anchorAtMs,
-    deadlineAtMs,
   });
   return clock;
 }
@@ -293,7 +290,7 @@ export function bindCommittedTurnJournalClock(
     !guard.executionIntent ||
     !sameJournalValue(guard.executionIntent, retained.executionIntent) ||
     !("kind" in guard.executionIntent.dispatchClock) ||
-    guard.executionIntent.dispatchClock.kind !== "pre-commit-monotonic-v1" ||
+    guard.executionIntent.dispatchClock.kind !== "pre-commit-monotonic-v2" ||
     clock.clockSourceRef !== clockSourceRef ||
     clock.clockEpochRef !== clockEpochRef ||
     !sameJournalValue(guard.executionIntent.dispatchClock, clock)
@@ -338,8 +335,8 @@ export function takeDispatchClockForExecution(
 
 /** Sample only the exact original initiation, after its currentness check. A
  * native transport must bind this response to its original authenticated socket
- * and challenge, and qualify cross-clock rate/error before mapping the ceiling.
- * Ceil rounding of the sample conservatively shortens remaining duration. */
+ * and challenge. The host retains enforcement; this is an observation, not a
+ * guest-clock deadline mapping. Ceil rounding shortens capped remaining duration. */
 export async function sampleDispatchClock(
   guard: JournalInitiationGuardV1,
   challengeRef: string,
@@ -365,7 +362,11 @@ export async function sampleDispatchClock(
   if (!state.active || guard.signal.aborted || initiations.get(guard) !== state)
     throw unavailable();
   const sampledAtMs = elapsed(true);
-  if (sampledAtMs < state.clock.anchorAtMs || sampledAtMs >= state.clock.deadlineAtMs)
+  if (
+    sampledAtMs < state.clock.anchorAtMs ||
+    (guard.executionIntent!.maximumExecutionMs !== null &&
+      sampledAtMs >= state.clock.anchorAtMs + guard.executionIntent!.maximumExecutionMs)
+  )
     throw unavailable();
   return Object.freeze({
     challengeRef,
@@ -375,7 +376,7 @@ export async function sampleDispatchClock(
   });
 }
 
-/** Retained local lifetime, independent of the consumed initiation guard. It
+/** Retained local stop lifetime, independent of the consumed initiation guard. It
  * carries no continuing grant and never establishes termination or release. */
 export interface RetainedDispatchDeadline {
   readonly control: JournalDeadlineControlV1;
@@ -413,14 +414,17 @@ export function transferDispatchDeadline(
   const operationRef = `deadline-control:${randomUUID()}`;
   const responsibilityRef = `execution-cleanup:${randomUUID()}`;
   const payload = {
-    kind: "host-deadline-v1" as const,
+    kind: "host-stop-v2" as const,
     intent: guard.executionIntent,
     operationRef,
     nativeIncarnationRef: target.nativeIncarnationRef,
     nativeConstructionRef: target.nativeConstructionRef,
     responsibilityRef,
     responsibilityVersion: 1,
-    deadlineAtMs: state.clock.anchorAtMs + guard.executionIntent.maximumExecutionMs,
+    deadlineAtMs:
+      guard.executionIntent.maximumExecutionMs === null
+        ? null
+        : state.clock.anchorAtMs + guard.executionIntent.maximumExecutionMs,
   };
   const control = parseTurnJournalV1("deadlineControl", {
     ...payload,
@@ -454,7 +458,11 @@ export function transferDispatchDeadline(
     if (cancellation.signal.aborted) throw unavailable();
     try {
       const now = elapsed(true);
-      if (now < state.clock.anchorAtMs || now >= control.deadlineAtMs) throw unavailable();
+      if (
+        now < state.clock.anchorAtMs ||
+        (control.deadlineAtMs !== null && now >= control.deadlineAtMs)
+      )
+        throw unavailable();
     } catch (error) {
       void requestStop();
       throw error;
@@ -463,6 +471,7 @@ export function transferDispatchDeadline(
   const wake = (): void => {
     try {
       assertBeforeEffect();
+      if (control.deadlineAtMs === null) return;
       const remaining = control.deadlineAtMs - elapsed(true);
       if (remaining <= 0) {
         void requestStop();
@@ -470,7 +479,7 @@ export function transferDispatchDeadline(
       }
       // A delayed or early wake cannot renew the original deadline. Process
       // lifetime is owned by the host; exit is unknown, never successful stop.
-      timer = setTimeout(wake, remaining);
+      timer = setTimeout(wake, Math.min(remaining, 2_147_483_647));
       timer.unref();
     } catch {
       void requestStop();

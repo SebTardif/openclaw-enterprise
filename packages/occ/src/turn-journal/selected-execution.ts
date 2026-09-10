@@ -180,89 +180,99 @@ export class SelectedExecutionController {
     let deadline: RetainedDispatchDeadline | undefined;
     let pendingSeen = false;
     let controlRetained = false;
-    const receipt = await this.native.accept(guard, call, async (pending) => {
-      if (pendingSeen) throw unavailable();
-      pendingSeen = true;
-      // Capture the actual original pending owner before the first await. The
-      // bridge authenticates this target; original claim membership authenticates
-      // admission, not a native target copied into this interface.
-      const target = Object.freeze({
-        nativeIncarnationRef: pending.target.nativeIncarnationRef,
-        nativeConstructionRef: pending.target.nativeConstructionRef,
+    let readyRetained = false;
+    try {
+      const receipt = await this.native.accept(guard, call, async (pending) => {
+        if (pendingSeen) throw unavailable();
+        pendingSeen = true;
+        // Capture the actual original pending owner before the first await. The
+        // bridge authenticates this target; original claim membership authenticates
+        // admission, not a native target copied into this interface.
+        const target = Object.freeze({
+          nativeIncarnationRef: pending.target.nativeIncarnationRef,
+          nativeConstructionRef: pending.target.nativeConstructionRef,
+        });
+        const interrupt = pending.interrupt.bind(pending);
+        Object.freeze(pending.target);
+        Object.freeze(pending);
+        await guard.assertCurrent();
+        deadline = transferDispatchDeadline(guard, call, target, interrupt);
+        const control = deadline.control;
+        const locator = key(control.intent.execution);
+        if (this.deadlines.has(locator)) throw unavailable();
+        this.deadlines.set(locator, deadline);
+        // Retain cleanup before waiting on PostgreSQL. Expiry can interrupt a
+        // blocked retention independently; unknown COMMIT cannot open construction.
+        deadline.assertBeforeEffect();
+        const retained = await this.journal.transact(
+          control.operationRef,
+          (j) => j.retainDeadlineControl(deadline!.evidence, call),
+          call,
+        );
+        if (
+          retained.kind !== "committed" ||
+          !["recorded", "existing"].includes(retained.value.kind) ||
+          !("record" in retained.value) ||
+          !sameJournalValue(retained.value.record, control)
+        )
+          throw unavailable();
+        await guard.assertCurrent();
+        deadline.assertBeforeEffect();
+        controlRetained = true;
+        return control;
       });
-      const interrupt = pending.interrupt.bind(pending);
-      Object.freeze(pending.target);
-      Object.freeze(pending);
-      await guard.assertCurrent();
-      deadline = transferDispatchDeadline(guard, call, target, interrupt);
-      const control = deadline.control;
-      const locator = key(control.intent.execution);
-      if (this.deadlines.has(locator)) throw unavailable();
-      this.deadlines.set(locator, deadline);
-      // Retain cleanup before waiting on PostgreSQL. Expiry can interrupt a
-      // blocked retention independently; unknown COMMIT cannot open construction.
-      deadline.assertBeforeEffect();
-      const retained = await this.journal.transact(
-        control.operationRef,
-        (j) => j.retainDeadlineControl(deadline!.evidence, call),
-        call,
-      );
+      const start = parseTurnJournalV1("executionStart", receipt.start);
       if (
-        retained.kind !== "committed" ||
-        !["recorded", "existing"].includes(retained.value.kind) ||
-        !("record" in retained.value) ||
-        !sameJournalValue(retained.value.record, control)
+        !deadline ||
+        !controlRetained ||
+        !("kind" in start) ||
+        start.kind !== "host-controlled-v2" ||
+        !sameJournalValue(start.intent, guard.executionIntent) ||
+        !sameJournalValue(start.deadlineControl, deadline.control)
       )
         throw unavailable();
-      await guard.assertCurrent();
       deadline.assertBeforeEffect();
-      controlRetained = true;
-      return control;
-    });
-    const start = parseTurnJournalV1("executionStart", receipt.start);
-    if (
-      !deadline ||
-      !controlRetained ||
-      !("kind" in start) ||
-      start.kind !== "host-controlled-v1" ||
-      !sameJournalValue(start.intent, guard.executionIntent) ||
-      !sameJournalValue(start.deadlineControl, deadline.control)
-    )
-      throw unavailable();
-    deadline.assertBeforeEffect();
-    const locator = key(start.intent.execution);
-    if (this.executions.has(locator)) throw unavailable();
-    const owned: OwnedExecution = {
-      deadline,
-      native: receipt,
-      start,
-      tail: Promise.resolve(),
-      confirmationAttempted: false,
-      interruption: undefined,
-      interruptionAttempted: false,
-    };
-    // Retain original ownership before any following wait. Exceptions and lost
-    // acknowledgments leave this same ready execution gated/unknown.
-    this.executions.set(locator, owned);
-    await this.serial(owned, async () => {
-      await guard.assertCurrent();
-      await this.native.assertCurrent(receipt, "continue", call);
-      owned.deadline.assertBeforeEffect();
-      await guard.assertCurrent();
-      const retained = await this.journal.transact(
-        start.operationRef,
-        (j) => j.retainExecutionStart(receipt.evidence, call),
-        call,
-      );
-      if (
-        retained.kind !== "committed" ||
-        !["recorded", "existing"].includes(retained.value.kind) ||
-        !("record" in retained.value) ||
-        !sameJournalValue(retained.value.record, start)
-      )
-        throw unavailable();
-      await this.confirm(owned, call);
-    });
+      const locator = key(start.intent.execution);
+      if (this.executions.has(locator)) throw unavailable();
+      const owned: OwnedExecution = {
+        deadline,
+        native: receipt,
+        start,
+        tail: Promise.resolve(),
+        confirmationAttempted: false,
+        interruption: undefined,
+        interruptionAttempted: false,
+      };
+      // Retain original ownership before any following wait. Exceptions and lost
+      // acknowledgments leave this same ready execution gated/unknown.
+      this.executions.set(locator, owned);
+      readyRetained = true;
+      await this.serial(owned, async () => {
+        await guard.assertCurrent();
+        await this.native.assertCurrent(receipt, "continue", call);
+        owned.deadline.assertBeforeEffect();
+        await guard.assertCurrent();
+        const retained = await this.journal.transact(
+          start.operationRef,
+          (j) => j.retainExecutionStart(receipt.evidence, call),
+          call,
+        );
+        if (
+          retained.kind !== "committed" ||
+          !["recorded", "existing"].includes(retained.value.kind) ||
+          !("record" in retained.value) ||
+          !sameJournalValue(retained.value.record, start)
+        )
+          throw unavailable();
+        await this.confirm(owned, call);
+      });
+    } catch (error) {
+      // Unknown construction keeps ownership and admission reserved. Cleanup
+      // remains necessary without duration expiry. A retained ready owner stays
+      // gated and can still resolve its original start retention acknowledgment.
+      if (deadline && !readyRetained) void deadline.requestStop().catch(() => {});
+      throw error;
+    }
   }
 
   /** Exact readback can resolve only this controller's original pending native
