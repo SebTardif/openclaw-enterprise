@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -42,6 +43,102 @@ type fixturePeerError struct {
 func (e *fixturePeerError) Error() string       { return e.stage }
 func (e *fixturePeerError) Unwrap() error       { return e.err }
 func peerFailure(stage string, err error) error { return &fixturePeerError{stage: stage, err: err} }
+
+// Only fixed error categories cross the external test boundary. In particular,
+// a local I/O deadline or write failure is not evidence of a peer refusal.
+func fixtureIOError(err error) (string, bool) {
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return "timeout", true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "peer-eof", false
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return "peer-reset", false
+	}
+	return "other", false
+}
+
+// ReadFrame deliberately sanitizes errors. Retain only the actual transport's
+// original I/O error for fixed-category diagnostics, without changing parsing.
+type fixtureObservedReader struct {
+	io.Reader
+	err error
+}
+
+func (r *fixtureObservedReader) Read(buffer []byte) (int, error) {
+	n, err := r.Reader.Read(buffer)
+	if err != nil {
+		r.err = err
+	}
+	return n, err
+}
+
+func TestCrossLanguageReadFailureCategories(t *testing.T) {
+	for _, closePeer := range []bool{true, false} {
+		name := "local-read-deadline"
+		if closePeer {
+			name = "remote-eof"
+		}
+		t.Run(name, func(t *testing.T) {
+			client, peer := net.Pipe()
+			defer client.Close()
+			defer peer.Close()
+			must(t, client.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
+			if closePeer {
+				must(t, peer.Close())
+			}
+			// Both failures pass through the actual parser, which sanitizes its
+			// error. Only the retained underlying I/O separates timeout from EOF.
+			observed := &fixtureObservedReader{Reader: client}
+			frame, err := ReadFrame(observed)
+			if frame != nil || err == nil {
+				t.Fatal("expected actual incomplete-frame refusal")
+			}
+			code, timedOut := fixtureIOError(observed.err)
+			if closePeer {
+				if code != "peer-eof" || timedOut {
+					t.Fatal("remote EOF was not distinguished")
+				}
+			} else if code != "timeout" || !timedOut {
+				t.Fatal("local read deadline was accepted as peer closure")
+			}
+		})
+	}
+}
+
+// Poll the original client socket without reading, writing, or setting a deadline.
+// Its client's current authority is inspected separately before this observation.
+func fixturePeerWriteClosed(raw net.Conn) (bool, error) {
+	connection, ok := raw.(*net.UnixConn)
+	if !ok {
+		return false, errRejected
+	}
+	fd, err := connection.SyscallConn()
+	if err != nil {
+		return false, err
+	}
+	var closed bool
+	var inner error
+	err = fd.Control(func(value uintptr) {
+		fds := []unix.PollFd{{Fd: int32(value), Events: unix.POLLRDHUP}}
+		for {
+			_, inner = unix.Poll(fds, 0)
+			if !errors.Is(inner, unix.EINTR) {
+				break
+			}
+		}
+		if inner == nil && fds[0].Revents&(unix.POLLNVAL|unix.POLLERR) != 0 {
+			inner = errRejected
+		}
+		closed = fds[0].Revents&(unix.POLLRDHUP|unix.POLLHUP) != 0
+	})
+	if err != nil {
+		return false, err
+	}
+	return closed, inner
+}
 
 func captureFixturePeer(raw net.Conn) (*fixturePeerProcess, error) {
 	connection, ok := raw.(*net.UnixConn)
@@ -195,7 +292,17 @@ func TestCrossLanguageFixture(t *testing.T) {
 	must(t, e)
 	defer source.Close()
 	must(t, source.Start(ctx))
-	transport, e := servicepeer.New(source, servicepeer.Config{Side: servicepeer.Client, OwnSPIFFEID: clientID, PeerSPIFFEID: serverID, RecipientSPIFFEID: serverID, ApplicationProtocol: profile.applicationProtocol(), HandshakeTimeout: time.Second, RecheckInterval: 100 * time.Millisecond, MaxConnectionAge: 30 * time.Second, MaxConnections: 4})
+	clientMaximumAge := 30 * time.Second
+	switch os.Getenv("OCE_GITHUB_BRIDGE_FIXTURE_SCENARIO") {
+	case "":
+	case "server-expiry":
+		// Only the external client's lifetime changes. The real broker retains
+		// its supported 30-second profile and its own independent expiry watcher.
+		clientMaximumAge = 60 * time.Second
+	default:
+		t.Fatal("unsupported external fixture scenario")
+	}
+	transport, e := servicepeer.New(source, servicepeer.Config{Side: servicepeer.Client, OwnSPIFFEID: clientID, PeerSPIFFEID: serverID, RecipientSPIFFEID: serverID, ApplicationProtocol: profile.applicationProtocol(), HandshakeTimeout: time.Second, RecheckInterval: 100 * time.Millisecond, MaxConnectionAge: clientMaximumAge, MaxConnections: 4})
 	must(t, e)
 	defer transport.Close()
 	var output sync.Mutex
@@ -208,6 +315,9 @@ func TestCrossLanguageFixture(t *testing.T) {
 	}
 	type clientSession struct {
 		connection *servicepeer.Connection
+		raw        net.Conn
+		connected  time.Time
+		requests   int
 		cancel     context.CancelFunc
 		busy       bool
 		work       sync.WaitGroup
@@ -239,7 +349,7 @@ func TestCrossLanguageFixture(t *testing.T) {
 		}
 	}
 	defer closeAll()
-	emit(map[string]any{"kind": "ready", "version": 1, "native_profile": profile})
+	emit(map[string]any{"kind": "ready", "version": 1, "native_profile": profile, "client_max_connection_age_ms": clientMaximumAge.Milliseconds()})
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), MaxControlMetadata)
 	for scanner.Scan() {
@@ -296,7 +406,7 @@ func TestCrossLanguageFixture(t *testing.T) {
 			}
 			sessionsMu.Lock()
 			peers[command.Session] = peer
-			sessions[command.Session] = &clientSession{connection: connection, cancel: stop}
+			sessions[command.Session] = &clientSession{connection: connection, raw: raw, connected: time.Now(), cancel: stop}
 			sessionsMu.Unlock()
 			emit(map[string]any{"kind": "connected", "command_id": command.CommandID, "session": command.Session})
 		case "request":
@@ -314,6 +424,7 @@ func TestCrossLanguageFixture(t *testing.T) {
 				continue
 			}
 			s.busy = true
+			s.requests++
 			s.work.Add(1)
 			sessionsMu.Unlock()
 			// Copy nonsecret metadata before scanner advances. The raw object bytes are
@@ -323,17 +434,23 @@ func TestCrossLanguageFixture(t *testing.T) {
 			go func() {
 				defer s.work.Done()
 				defer func() { sessionsMu.Lock(); s.busy = false; sessionsMu.Unlock() }()
-				failure := func() {
-					emit(map[string]any{"kind": "failed", "command_id": id, "session": name, "operation": "request"})
+				failure := func(stage string, err error) {
+					code, timeout := fixtureIOError(err)
+					emit(map[string]any{"kind": "failed", "command_id": id, "session": name, "operation": "request", "failure_stage": stage, "error_code": code, "timed_out": timeout})
 				}
-				if s.connection.SetDeadline(time.Now().Add(5*time.Second)) != nil || WriteFrame(s.connection, &Frame{Metadata: metadata}) != nil {
-					failure()
+				if err := s.connection.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+					failure("set-deadline", err)
+					return
+				}
+				if err := WriteFrame(s.connection, &Frame{Metadata: metadata}); err != nil {
+					failure("write", err)
 					return
 				}
 				emit(map[string]any{"kind": "request-started", "command_id": id, "session": name})
-				frame, e := ReadFrame(s.connection)
+				observed := &fixtureObservedReader{Reader: s.connection}
+				frame, e := ReadFrame(observed)
 				if e != nil {
-					failure()
+					failure("read", observed.err)
 					return
 				}
 				defer frame.Clear()
@@ -341,12 +458,36 @@ func TestCrossLanguageFixture(t *testing.T) {
 				// receive primitive owns and clears them even on a test-only positive reply.
 				count := len(frame.Secret)
 				frame.Clear()
-				if s.connection.SetDeadline(time.Time{}) != nil {
-					failure()
+				if err := s.connection.SetDeadline(time.Time{}); err != nil {
+					failure("clear-deadline", err)
 					return
 				}
 				emit(map[string]any{"kind": "response", "command_id": id, "session": name, "metadata": json.RawMessage(frame.Metadata), "secret_length": count})
 			}()
+		case "client-state":
+			if !fields(fieldsValue, "kind command_id session") {
+				t.Fatal("invalid fixture client state")
+			}
+			sessionsMu.Lock()
+			s := sessions[command.Session]
+			if s == nil || s.busy {
+				sessionsMu.Unlock()
+				fail()
+				continue
+			}
+			requests := s.requests
+			sessionsMu.Unlock()
+			peer, err := s.connection.Inspect()
+			if err != nil {
+				fail()
+				continue
+			}
+			closed, err := fixturePeerWriteClosed(s.raw)
+			if err != nil {
+				fail()
+				continue
+			}
+			emit(map[string]any{"kind": "client-state", "command_id": command.CommandID, "session": command.Session, "client_authority_current": true, "client_remaining_ms": time.Until(peer.ExpiresAt).Milliseconds(), "connected_age_ms": time.Since(s.connected).Milliseconds(), "requests_started": requests, "peer_write_closed": closed})
 		case "close":
 			if !fields(fieldsValue, "kind command_id session") {
 				t.Fatal("invalid fixture close")

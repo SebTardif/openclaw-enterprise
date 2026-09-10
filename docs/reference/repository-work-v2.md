@@ -13,6 +13,16 @@ the incoming request cannot choose or change that selection. Token issuance is a
 It cannot substitute for current `work.repository.use` policy at preparation,
 dispatch or later online checks. Git mutation and publication are separate uses.
 
+## GitHub read release status
+
+The [GitHub read MVP milestone](../../specs/github-read-mvp-release.md) requires
+an authenticated metadata and clone/fetch flow on one explicit configuration,
+with publication unavailable. That milestone is **not released**. This operation
+owner remains a component: its current original admission and complete service
+assembly are required before a deployment can offer that flow. Constructor
+selection and controlled component tests do not establish a supported
+installation or successful repository access.
+
 ## Original bindings
 
 The owner retains the existing Work operation, versioned logical Work, complete

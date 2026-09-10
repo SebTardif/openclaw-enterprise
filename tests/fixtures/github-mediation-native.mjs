@@ -19,13 +19,17 @@ export const nativeFixtureSelected = binaryPath && fixturePath;
 
 // External Workload API and DS network fixture only. This helper does not
 // authorize Work or manufacture an original State/custody release.
-export async function externalFixture(protocolVersion = 2) {
+export async function externalFixture(protocolVersion = 2, scenario = "ordinary") {
   assert.ok(protocolVersion === 2 || protocolVersion === 3);
+  assert.ok(scenario === "ordinary" || scenario === "server-expiry");
   const child = spawn(fixturePath, ["-test.run=^TestCrossLanguageFixture$"], {
     env: {
       ...(process.env.HOME === undefined ? {} : { HOME: process.env.HOME }),
       OCE_GITHUB_BRIDGE_FIXTURE: "1",
       ...(protocolVersion === 3 ? { OCE_GITHUB_BRIDGE_FIXTURE_PROTOCOL_VERSION: "3" } : {}),
+      ...(scenario === "server-expiry"
+        ? { OCE_GITHUB_BRIDGE_FIXTURE_SCENARIO: "server-expiry" }
+        : {}),
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -101,6 +105,7 @@ export async function externalFixture(protocolVersion = 2) {
   const ready = await wait((event) => event.kind === "ready");
   return {
     profile: ready.native_profile,
+    clientMaximumConnectionAgeMilliseconds: ready.client_max_connection_age_ms,
     command,
     async close() {
       if (!ended) {
@@ -126,11 +131,16 @@ export async function externalFixture(protocolVersion = 2) {
 // Actual service admission backed by InMemoryPlatformState. Callers requiring
 // shared PostgreSQL authority can reuse externalFixture with their own original
 // registry/State assembly. Interface phase fixtures do not prove that assembly.
-export async function actualAssembly(t, operationsFactory, protocolVersion = 2) {
+export async function actualAssembly(
+  t,
+  operationsFactory,
+  protocolVersion = 2,
+  scenario = "ordinary",
+) {
   assert.ok(protocolVersion === 2 || protocolVersion === 3);
   const selectedBinary =
     protocolVersion === 3 ? process.env.OCC_GITHUB_GIT_READ_TEST_BINARY : binaryPath;
-  const external = await externalFixture(protocolVersion);
+  const external = await externalFixture(protocolVersion, scenario);
   t.after(() => external.close());
   const native = external.profile;
   const deployment = Object.freeze({
