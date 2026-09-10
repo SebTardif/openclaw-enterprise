@@ -6,14 +6,10 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import { asRecord, isNonEmptyString } from "@openclaw-enterprise/utils";
 
-export interface NativePluginRevision extends AgentRevision {
-  readonly selectedPlugins?: readonly AgentPluginSnapshot[];
-}
-
-export interface NativePluginComputeContext extends ComputeRevisionContext {
+export type NativePluginComputeContext = ComputeRevisionContext & {
   readonly failedPlugins?: readonly PluginIdentity[];
   readonly reportPluginInstallFailure?: (identity: PluginIdentity) => Promise<void>;
-}
+};
 
 export function nativePluginIdentityKey(identity: PluginIdentity): string {
   return `${identity.driverId}\u0000${identity.pluginId}`;
@@ -22,8 +18,7 @@ export function nativePluginIdentityKey(identity: PluginIdentity): string {
 export function selectedNativePlugins(
   revision: Readonly<AgentRevision>,
 ): readonly AgentPluginSnapshot[] {
-  const candidate = (revision as NativePluginRevision).selectedPlugins;
-  if (candidate === undefined) return [];
+  const candidate = revision.selectedPlugins;
   if (!Array.isArray(candidate)) {
     throw new Error("AgentRevision selected plugin snapshot is invalid.");
   }

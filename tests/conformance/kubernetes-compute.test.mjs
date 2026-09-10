@@ -890,6 +890,121 @@ test("native plugins are limited to the bundled Kubernetes dedicated Codex runti
   );
 });
 
+test("native plugin preparation reports failed installs before rebuilding and proving", async () => {
+  const runtime = {
+    transportSecretPrefix: "transport",
+    gatewayStorageClassName: "local-path",
+    modelSecretPrefix: "model",
+  };
+  const driver = createKubernetesComputeDriver(options({ runtime }));
+  const namespace = kubernetesNamespaceName(tenant.id);
+  const selectedPlugins = [
+    {
+      driverId: "driver-native",
+      pluginId: "plugin-failing",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "remote-failing",
+      version: null,
+      catalogCodexVersion: "0.152.1",
+    },
+    {
+      driverId: "driver-native",
+      pluginId: "plugin-admitted",
+      remoteMarketplaceName: "openai",
+      remotePluginId: "remote-admitted",
+      version: null,
+      catalogCodexVersion: "0.152.1",
+    },
+  ];
+  const revision = routedRevision(driver, {
+    id: "revision-native-plugin-rebuild",
+    agentId: "agent-native-plugin-rebuild",
+    servicePrincipalId: "service-principal-native-plugin-rebuild",
+    selectedPlugins,
+  });
+  const pods = [
+    { name: "candidate-before-report", uid: "uid-before-report" },
+    { name: "candidate-after-report", uid: "uid-after-report" },
+  ];
+  const events = [];
+  const calls = [];
+  driver.waitForNativeCandidatePod = async () => {
+    const pod = pods.shift();
+    assert.ok(pod);
+    events.push(`pod:${pod.name}`);
+    return pod;
+  };
+  driver.rebuildNativeCandidatePod = async (_namespace, pod) => {
+    events.push(`rebuild:${pod.name}:${pod.uid}`);
+  };
+  driver.executeNativeJsonRpc = async (_namespace, pod, method, params) => {
+    calls.push(`${pod.name}:${method}:${params.pluginName ?? params.forceReload ?? ""}`);
+    if (method === "plugin/read") {
+      return {
+        ok: true,
+        result: {
+          plugin: {
+            marketplaceName: params.remoteMarketplaceName,
+            summary: {
+              remotePluginId: params.pluginName,
+              availability: "AVAILABLE",
+              installPolicy: "AVAILABLE",
+            },
+          },
+        },
+      };
+    }
+    if (method === "plugin/install" && params.pluginName === "remote-failing") {
+      return { ok: false, applicationError: { code: "APPLICATION" } };
+    }
+    if (method === "plugin/installed") {
+      return {
+        ok: true,
+        result: {
+          marketplaces: [
+            {
+              plugins: [
+                { id: "plugin-admitted", remotePluginId: "remote-admitted", installed: true },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    return { ok: true, result: { ok: true } };
+  };
+
+  await driver.prepareNativePlugins(
+    revision,
+    {
+      secretEnvironment: [],
+      failedPlugins: [],
+      async reportPluginInstallFailure(identity) {
+        events.push(`report:${identity.driverId}:${identity.pluginId}`);
+      },
+    },
+    namespace,
+    selectedPlugins,
+  );
+
+  assert.deepEqual(events, [
+    "pod:candidate-before-report",
+    "report:driver-native:plugin-failing",
+    "rebuild:candidate-before-report:uid-before-report",
+    "pod:candidate-after-report",
+  ]);
+  assert.deepEqual(calls, [
+    "candidate-before-report:plugin/read:remote-failing",
+    "candidate-before-report:plugin/install:remote-failing",
+    "candidate-after-report:plugin/read:remote-admitted",
+    "candidate-after-report:plugin/install:remote-admitted",
+    "candidate-after-report:plugin/installed:",
+    "candidate-after-report:skills/list:true",
+    "candidate-after-report:hooks/list:",
+    "candidate-after-report:mcpServerStatus/list:",
+  ]);
+});
+
 test("dedicated Codex localhost seccomp profile is validated and rendered only on the Agent container", () => {
   const runtime = {
     transportSecretPrefix: "transport",
