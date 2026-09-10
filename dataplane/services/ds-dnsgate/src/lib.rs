@@ -104,6 +104,8 @@ pub mod handler;
 pub mod policy;
 pub mod reresolve;
 pub mod server;
+#[path = "oce/split_dns.rs"]
+pub mod split_dns;
 pub mod sweep;
 pub mod txn;
 pub mod warm_restart;

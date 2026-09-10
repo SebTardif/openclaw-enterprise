@@ -28,6 +28,11 @@ pub struct Repository {
     commit: String,
 }
 impl Repository {
+    pub(crate) fn components(&self) -> (&str, &str) {
+        self.path
+            .split_once('/')
+            .expect("validated repository path")
+    }
     pub fn new(owner: &str, name: &str, commit: &str) -> Result<Self, Refusal> {
         let component = |s: &str| {
             !s.is_empty()

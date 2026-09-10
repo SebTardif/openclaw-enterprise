@@ -4,7 +4,7 @@
 //! Once receive returns, the daemon owns the request and descriptor independently
 //! of this connection. A disconnect or failed reply must not discard that owner.
 
-use crate::{Error, cni};
+use crate::{attachment, cni, Error};
 use std::ffi::CString;
 use std::io;
 use std::mem::{size_of, zeroed};
@@ -26,6 +26,12 @@ pub struct Server {
 pub struct Connection {
     socket: OwnedFd,
     phase: Phase,
+    path: ProtectedPath,
+}
+
+pub enum Incoming {
+    Cni(cni::Request, Option<OwnedFd>),
+    Attachment(attachment::Request, Option<OwnedFd>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -117,21 +123,109 @@ impl Server {
         Ok(Some(Connection {
             socket,
             phase: Phase::Fresh,
+            path: ProtectedPath {
+                directory: self.path.directory.try_clone()?,
+                socket_inode: self.path.socket_inode,
+            },
         }))
     }
 }
 
 impl Connection {
     pub fn receive(&mut self) -> Result<(cni::Request, Option<OwnedFd>), Error> {
+        match self.receive_request()? {
+            Incoming::Cni(request, namespace) => Ok((request, namespace)),
+            Incoming::Attachment(_, _) => Err(Error::Invalid("expected CNI request")),
+        }
+    }
+
+    /// Both protocols use this original protected connection. OBSERVE carries
+    /// an inbound namespace FD; ACQUIRE and INSPECT cannot supply one.
+    pub fn receive_request(&mut self) -> Result<Incoming, Error> {
         if self.phase != Phase::Fresh {
             return Err(Error::Invalid("connection request already consumed"));
         }
         self.phase = Phase::Finished;
         root_peer(self.socket.as_raw_fd())?;
+        self.path.current()?;
         let (bytes, descriptors) = receive_packet(self.socket.as_raw_fd())?;
-        let (request, namespace) = decode_request(&bytes, descriptors)?;
+        let request = decode_incoming(&bytes, descriptors)?;
+        self.path.current()?;
         self.phase = Phase::Received;
-        Ok((request, namespace))
+        Ok(request)
+    }
+
+    /// Polling leaves the main loop able to accept CNI DEL and other callers
+    /// while an observation consumer is idle. A disconnected session is final.
+    pub fn ready(&self) -> Result<bool, Error> {
+        self.packet_ready(false)
+    }
+
+    /// A submitted CNI packet remains owned even if its caller disconnects
+    /// before acceptance. Consume queued data on POLLIN|POLLHUP in this phase.
+    pub fn request_ready(&self) -> Result<bool, Error> {
+        self.packet_ready(true)
+    }
+
+    fn packet_ready(&self, allow_queued_disconnect: bool) -> Result<bool, Error> {
+        if self.phase != Phase::Fresh {
+            return Err(Error::Invalid("observation exchange is not ready"));
+        }
+        self.path.current()?;
+        let mut waiting = libc::pollfd {
+            fd: self.socket.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let count = unsafe { libc::poll(&mut waiting, 1, 0) };
+        if count < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        if count == 0 {
+            return Ok(false);
+        }
+        if waiting.revents != libc::POLLIN
+            && !(allow_queued_disconnect && waiting.revents == (libc::POLLIN | libc::POLLHUP))
+        {
+            return Err(Error::Unavailable("observation connection lost"));
+        }
+        Ok(true)
+    }
+
+    pub fn reply_observation(&mut self, reply: &attachment::Reply<'_>) -> Result<(), Error> {
+        self.reply_observation_with_rights(reply, &[])
+    }
+
+    pub fn reply_acquired(
+        &mut self,
+        reply: &attachment::Reply<'_>,
+        namespace: &OwnedFd,
+    ) -> Result<(), Error> {
+        self.reply_observation_with_rights(reply, &[namespace.as_raw_fd()])
+    }
+
+    fn reply_observation_with_rights(
+        &mut self,
+        reply: &attachment::Reply<'_>,
+        descriptors: &[RawFd],
+    ) -> Result<(), Error> {
+        if self.phase != Phase::Received {
+            return Err(Error::Invalid("observation cannot send another reply"));
+        }
+        self.phase = Phase::Finished;
+        self.path.current()?;
+        root_peer(self.socket.as_raw_fd())?;
+        let bytes = serde_json::to_vec(reply)
+            .map_err(|_| Error::Invalid("cannot encode observation reply"))?;
+        // A reader that stops receiving must not stall CNI or other sessions.
+        send_packet_flags(
+            self.socket.as_raw_fd(),
+            &bytes,
+            descriptors,
+            libc::MSG_DONTWAIT,
+        )?;
+        self.phase = Phase::Fresh;
+        Ok(())
     }
 
     /// A failed send is delivery uncertainty. It does not relinquish the daemon's
@@ -146,6 +240,20 @@ impl Connection {
             serde_json::to_vec(reply).map_err(|_| Error::Invalid("cannot encode fence reply"))?;
         send_packet(self.socket.as_raw_fd(), &bytes, &[])
     }
+}
+
+fn decode_incoming(bytes: &[u8], mut descriptors: Vec<OwnedFd>) -> Result<Incoming, Error> {
+    // Parse the original bytes independently, so duplicate-field rejection is
+    // preserved. A generic JSON Value round trip would lose those duplicates.
+    if let Ok(request) = serde_json::from_slice::<attachment::Request>(bytes) {
+        request.validate()?;
+        if request.descriptor_count() != descriptors.len() {
+            return Err(Error::Invalid("wrong observation descriptor count"));
+        }
+        return Ok(Incoming::Attachment(request, descriptors.pop()));
+    }
+    let (request, namespace) = decode_request(bytes, descriptors)?;
+    Ok(Incoming::Cni(request, namespace))
 }
 
 fn decode_request(
@@ -419,6 +527,15 @@ fn path_stat(directory: RawFd) -> Result<libc::stat, Error> {
 }
 
 fn send_packet(fd: RawFd, bytes: &[u8], descriptors: &[RawFd]) -> Result<(), Error> {
+    send_packet_flags(fd, bytes, descriptors, 0)
+}
+
+fn send_packet_flags(
+    fd: RawFd,
+    bytes: &[u8],
+    descriptors: &[RawFd],
+    flags: libc::c_int,
+) -> Result<(), Error> {
     if bytes.is_empty() || bytes.len() > PACKET_LIMIT || descriptors.len() > MAX_RIGHTS {
         return Err(Error::Invalid("invalid fence packet extent"));
     }
@@ -453,7 +570,7 @@ fn send_packet(fd: RawFd, bytes: &[u8], descriptors: &[RawFd]) -> Result<(), Err
             );
         }
     }
-    let sent = unsafe { libc::sendmsg(fd, &message, libc::MSG_NOSIGNAL) };
+    let sent = unsafe { libc::sendmsg(fd, &message, libc::MSG_NOSIGNAL | flags) };
     if sent < 0 {
         return Err(io::Error::last_os_error().into());
     }
@@ -556,6 +673,52 @@ fn received_rights(message: &libc::msghdr) -> Result<Vec<OwnedFd>, Error> {
 mod tests {
     use super::*;
     use std::fs::File;
+
+    #[test]
+    fn observation_descriptor_contract_and_malformed_packets_close_custody() {
+        let observe = br#"{"schemaVersion":1,"operation":"OBSERVE","requestRef":"q","containerId":"s","networkName":"p","interfaceName":"eth0"}"#;
+        assert!(decode_incoming(observe, vec![]).is_err());
+        let fd: OwnedFd = File::open("/proc/self/ns/net").unwrap().into();
+        let raw = fd.as_raw_fd();
+        let Incoming::Attachment(attachment::Request::Observe(_), Some(owned)) =
+            decode_incoming(observe, vec![fd]).unwrap()
+        else {
+            panic!("wrong protocol");
+        };
+        assert_eq!(owned.as_raw_fd(), raw);
+        drop(owned);
+        let fd = unsafe { libc::memfd_create(c"observation-rejected".as_ptr(), libc::MFD_CLOEXEC) };
+        assert!(fd >= 0);
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let raw = fd.as_raw_fd();
+        let original = inode(&fd_stat(raw).unwrap());
+        assert!(
+            decode_incoming(br#"{"operation":"INSPECT","schemaVersion":1}"#, vec![fd]).is_err()
+        );
+        // Other parallel tests may reuse the FD number, but cannot acquire this
+        // unique memfd after the failed decoder released its only reference.
+        if let Ok(current) = fd_stat(raw) {
+            assert!(inode(&current) != original);
+        }
+        let inspect = format!(
+            r#"{{"schemaVersion":1,"operation":"INSPECT","requestRef":"q","observationRef":"{}","recordDigest":"sha256:{}"}}"#,
+            "a".repeat(32),
+            "b".repeat(64)
+        );
+        assert!(matches!(
+            decode_incoming(inspect.as_bytes(), vec![]).unwrap(),
+            Incoming::Attachment(attachment::Request::Inspect(_), None)
+        ));
+        let fd: OwnedFd = File::open("/proc/self/ns/net").unwrap().into();
+        assert!(decode_incoming(inspect.as_bytes(), vec![fd]).is_err());
+        let acquire = br#"{"schemaVersion":1,"operation":"ACQUIRE","requestRef":"q","containerId":"s","networkName":"p","interfaceName":"eth0"}"#;
+        assert!(matches!(
+            decode_incoming(acquire, vec![]).unwrap(),
+            Incoming::Attachment(attachment::Request::Acquire(_), None)
+        ));
+        let fd: OwnedFd = File::open("/proc/self/ns/net").unwrap().into();
+        assert!(decode_incoming(acquire, vec![fd]).is_err());
+    }
 
     fn pair() -> (OwnedFd, OwnedFd) {
         let mut fds = [-1; 2];

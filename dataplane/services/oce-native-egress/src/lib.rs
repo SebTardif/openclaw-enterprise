@@ -1,10 +1,15 @@
-//! Native HTTPS transport mechanics. No production admission supplier or listener.
+//! Native and broker-mediated HTTPS mechanics. Deployment suppliers are external.
 #![forbid(unsafe_code)]
 
 mod admission;
+mod broker_rpc;
 pub mod dns;
+mod git_pack;
+mod git_protocol;
 mod http;
+mod ingress;
 mod json;
+pub mod mediated;
 mod route;
 mod transport;
 

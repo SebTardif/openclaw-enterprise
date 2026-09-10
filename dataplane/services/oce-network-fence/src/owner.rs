@@ -1,10 +1,10 @@
 //! Original node-local ownership of a negative attachment attempt. Durable
 //! receipts retain uncertainty; they never reconstruct execution authority.
-use crate::Error;
 use crate::cni::{Operation, Reply, Request, Status};
 use crate::kernel::Table;
 use crate::linux::RetainedLink;
 use crate::tool::NftTool;
+use crate::Error;
 use serde::Serialize;
 use std::fs::File;
 use std::io::Write;
@@ -22,6 +22,8 @@ pub struct Owner {
     receipts: Receipts,
     nft: NftTool,
     attempts: Vec<Attempt>,
+    observation_owner: std::sync::Arc<()>,
+    instance: String,
 }
 struct Attempt {
     request: Request,
@@ -64,10 +66,124 @@ impl Owner {
             receipts: Receipts::open(Path::new(DIRECTORY))?,
             nft: NftTool::open(nft_path, nft_digest)?,
             attempts: Vec::new(),
+            observation_owner: std::sync::Arc::new(()),
+            instance: crate::attachment::nonce()?,
         })
     }
     pub fn poll_processes(&self) {
         self.nft.poll_pending();
+    }
+    /// Acquire namespace custody directly from this process's original CNI ADD.
+    /// Selectors locate an attempt; its retained descriptor and live observation
+    /// supply the physical source. Original CRI/Work correspondence is separate.
+    pub fn acquire(
+        &mut self,
+        request: crate::attachment::Observe,
+    ) -> Result<(crate::attachment::Observation, OwnedFd), Error> {
+        let started = std::time::Instant::now();
+        request.validate()?;
+        let check = request.check();
+        let index = self
+            .attempts
+            .iter()
+            .position(|a| a.same(&check))
+            .ok_or(Error::Unavailable("original CNI attachment unavailable"))?;
+        self.observe_current(index, &check, None)?;
+        let namespace = self.attempts[index].link.duplicate_namespace()?;
+        // SCM_RIGHTS creates a recipient-owned duplicate. The observation and
+        // original ADD owner independently keep their own descriptors.
+        let transferred = namespace.try_clone()?;
+        let observation = self.observe_started(request, namespace, started)?;
+        Ok((observation, transferred))
+    }
+    /// Observe only an already closed original attachment. The supplied FD is
+    /// independently retained for this exchange; strings remain correlation.
+    pub fn observe(
+        &mut self,
+        request: crate::attachment::Observe,
+        namespace: OwnedFd,
+    ) -> Result<crate::attachment::Observation, Error> {
+        self.observe_started(request, namespace, std::time::Instant::now())
+    }
+    fn observe_started(
+        &mut self,
+        request: crate::attachment::Observe,
+        namespace: OwnedFd,
+        started: std::time::Instant,
+    ) -> Result<crate::attachment::Observation, Error> {
+        request.validate()?;
+        let check = request.check();
+        let index = self
+            .attempts
+            .iter()
+            .position(|a| a.same(&check))
+            .ok_or(Error::Unavailable("original attachment unavailable"))?;
+        self.observe_current(index, &check, Some(&namespace))?;
+        let attempt = &self.attempts[index];
+        let observation = crate::attachment::Observation::new(
+            self.observation_owner.clone(),
+            &self.instance,
+            index,
+            namespace,
+            request,
+            attempt.table.name(),
+            attempt.link.observed().clone(),
+            attempt
+                .table
+                .observed()
+                .ok_or(Error::Unavailable("kernel identity unavailable"))?
+                .clone(),
+            started,
+        )?;
+        self.inspect(&observation)?;
+        Ok(observation)
+    }
+    /// No receipt is read and no kernel rule is changed. A wrong/expired read
+    /// does not close the underlying attachment or impose an execution lifetime.
+    pub fn inspect(&mut self, observation: &crate::attachment::Observation) -> Result<(), Error> {
+        observation.current()?;
+        if !std::sync::Arc::ptr_eq(&self.observation_owner, &observation.owner) {
+            return Err(Error::Unavailable("observation belongs to another owner"));
+        }
+        self.observe_current(
+            observation.attempt,
+            &observation.request.check(),
+            Some(&observation.namespace),
+        )?;
+        observation.current()
+    }
+    fn observe_current(
+        &mut self,
+        index: usize,
+        check: &Request,
+        namespace: Option<&OwnedFd>,
+    ) -> Result<(), Error> {
+        let attempt = self
+            .attempts
+            .get_mut(index)
+            .ok_or(Error::Unavailable("original attachment unavailable"))?;
+        if !attempt.closed || !attempt.same(check) {
+            return Err(Error::Unavailable("attachment is not closed"));
+        }
+        // A wrong caller FD is a refused query, not evidence that the original
+        // attachment failed. Actual original-source/rule loss is permanent.
+        if let Some(namespace) = namespace {
+            attempt.link.require_namespace(namespace)?;
+        }
+        let observed = self
+            .receipts
+            .current()
+            .and_then(|_| attempt.link.current())
+            .and_then(|_| self.nft.inspect(&attempt.table))
+            .and_then(|_| attempt.link.current())
+            .and_then(|_| self.receipts.current());
+        if observed.is_err() {
+            attempt.closed = false;
+            self.receipts
+                .update(&attempt.receipt("observation-unknown"))?;
+            return Err(Error::Unavailable("closed attachment is not current"));
+        }
+        Ok(())
     }
     /// A received request is owned to settlement independently of client socket
     /// lifetime. No receipt permits a later process to adopt the old handles.

@@ -104,3 +104,42 @@ See [runtime effects](runtime-effects.md) for the larger observation contract.
 The Linux source also includes an internal helper obtained from the original retained process handle. It retains that process's network namespace and subscribes to link notifications before capture; observation loss or changed process, namespace or link state invalidates it. It has no public constructor or restored identity representation and does not change the physical-execution record above.
 
 For runsc, the sentry process's namespace is not automatically the workload's CNI namespace. The helper does not establish that correspondence, installed network enforcement or current authority. The separately owned [closed node network attachment](node-network-fence.md) documents the CNI/veth boundary and remaining qualification requirements.
+
+The source also includes a private retained client for the fence's protected Unix
+packet protocol. It uses the actual original capture's request reference and CRI
+sandbox ID, duplicates and verifies a supplied CNI network-namespace descriptor,
+and brackets `OBSERVE`/`INSPECT` with fresh original API/CRI/runtime currentness
+checks. The client retains the protected socket path, root kernel peer, descriptor
+identity, original record bytes and digest. Unexpected descriptors, malformed or
+substituted records, socket replacement, disconnect, expiry or source loss refuse
+the observation; closing it releases the retained descriptors.
+
+The authenticated capture-network operation retains an actual physical execution
+capture together with the original ADD attachment acquired from the node fence.
+The controller preserves their separate observation type and exact bytes,
+rechecks both sources, and supplies that data to its selected profile/summary
+producers. The original execution producer must already retain the
+creator-to-CRI-to-ADD association; absent that current original record, observation
+refuses. Source configuration and physical network records do not grant Work,
+identity, endpoint or complete-profile authority.
+
+One attachment observation lasts at most ten seconds and permits sixteen
+inspections. This is a bounded source read, not an execution limit: another
+independently authenticated observation can use the same original current owner.
+Actual socket/namespace-descriptor and race tests cover the private receiving
+client. They do not establish the missing CRI/CNI creation integration, gVisor
+traversal, positive endpoints, workload identity or container start ordering.
+
+`capture.acquireAttachment(networkName, interfaceName)` can obtain the actual
+CNI namespace descriptor directly from the fence's original retained ADD attempt.
+The source sends ACQUIRE without descriptors and receives exactly one namespace
+descriptor through the protected root connection. It verifies descriptor type,
+original record identity and digest, while retaining the same inspection
+connection and actual physical capture. Unexpected, missing or surplus rights are
+closed before refusal; no namespace path is reopened to replace the original FD.
+
+This resolves descriptor acquisition, while the original Compute creation,
+assignment and Work correspondence remains a separate integration. Expiry releases
+the receiver's local custody but cannot revoke a descriptor already transferred to another
+process. A later independent acquisition needs current original source ownership;
+an expired record or retained FD alone grants no currentness.

@@ -24,6 +24,8 @@
 //! privileged ports, so this binds high ports only; the real service binds :53 behind
 //! the NFT-2 redirect.
 
+pub(crate) mod selected_transport;
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -4462,7 +4464,7 @@ async fn accept_loop<
         conns.spawn(async move {
             // The permit is held for the whole connection lifetime, then released.
             let _permit = permit;
-            serve_tcp_connection(stream, src, handler, timeout).await;
+            serve_tcp_connection(stream, src, handler, timeout, None).await;
         });
 
         // Reap finished connection tasks so the JoinSet does not grow unbounded.
@@ -4479,20 +4481,18 @@ async fn accept_loop<
 /// the handler, and write the length-prefixed responses back. Reuses hickory's
 /// `Request` decode, `RequestHandler` dispatch, and `ResponseHandle` serialization,
 /// so the served wire shape matches the UDP path byte for byte.
-async fn serve_tcp_connection<
-    P: PolicyHook,
-    M: AdmissionMap + Send + Sync + 'static,
-    S: NftSetProgrammer + Send + Sync + 'static,
->(
+async fn serve_tcp_connection<H: hickory_server::server::RequestHandler>(
     mut stream: TcpStream,
     src: SocketAddr,
-    handler: Arc<StubRequestHandler<P, M, S>>,
+    handler: Arc<H>,
     timeout: Duration,
+    limits: Option<TcpServeLimits>,
 ) {
     loop {
         // DNS over TCP framing: a 2-byte big-endian length prefix, then the message.
         // The per-connection read timeout is the DoS lever (doc 11 §3.4): a
         // connection that sends no complete frame in time is dropped.
+        let frame_deadline = tokio::time::Instant::now() + timeout;
         let mut len_buf = [0u8; 2];
         match tokio::time::timeout(timeout, stream.read_exact(&mut len_buf)).await {
             Ok(Ok(_)) => {}
@@ -4500,48 +4500,95 @@ async fn serve_tcp_connection<
             _ => return,
         }
         let msg_len = u16::from_be_bytes(len_buf) as usize;
-        if msg_len == 0 {
+        if msg_len == 0 || limits.is_some_and(|limits| msg_len > limits.max_frame_bytes) {
             return;
         }
         let mut msg = vec![0u8; msg_len];
-        match tokio::time::timeout(timeout, stream.read_exact(&mut msg)).await {
+        let body_deadline = if limits.is_some() {
+            frame_deadline
+        } else {
+            tokio::time::Instant::now() + timeout
+        };
+        match tokio::time::timeout_at(body_deadline, stream.read_exact(&mut msg)).await {
             Ok(Ok(_)) => {}
             _ => return,
         }
 
-        // Decode into a hickory Request; a malformed frame closes the connection
-        // (mirrors hickory's own "bail on this connection" behavior).
-        let Ok(request) = Request::from_bytes(msg, src, Protocol::Tcp) else {
-            return;
-        };
-
-        // A per-message response sink: the handler authors into this channel via the
-        // ResponseHandle; we then drain and frame the serialized bytes.
-        let (stream_handle, mut receiver) = BufDnsStreamHandle::new(src);
-        let response_handle = ResponseHandle::new(src, stream_handle, Protocol::Tcp);
-
-        let _ =
-            <StubRequestHandler<P, M, S> as hickory_server::server::RequestHandler>::handle_request::<
-                _,
-                TokioTime,
-            >(&handler, &request, response_handle)
-            .await;
-
-        // Drain every serialized response the handler produced for this query and
-        // write each back with the TCP length prefix.
-        while let Some(serial) = next_serial(&mut receiver).await {
-            let (bytes, _addr) = serial.into_parts();
-            let Ok(len) = u16::try_from(bytes.len()) else {
-                return;
+        let exchange = async {
+            let Some(mut receiver) =
+                dispatch_wire_request(&*handler, msg, src, Protocol::Tcp, limits.is_some()).await
+            else {
+                return false;
             };
-            if stream.write_all(&len.to_be_bytes()).await.is_err()
-                || stream.write_all(&bytes).await.is_err()
-                || stream.flush().await.is_err()
-            {
-                return;
+            while let Some(serial) = next_serial(&mut receiver).await {
+                let (bytes, _addr) = serial.into_parts();
+                if limits.is_some_and(|limits| bytes.len() > limits.max_frame_bytes) {
+                    return false;
+                }
+                let Ok(len) = u16::try_from(bytes.len()) else {
+                    return false;
+                };
+                if stream.write_all(&len.to_be_bytes()).await.is_err()
+                    || stream.write_all(&bytes).await.is_err()
+                    || stream.flush().await.is_err()
+                {
+                    return false;
+                }
             }
+            true
+        };
+        let completed = match limits {
+            Some(limits) => tokio::time::timeout(limits.exchange_timeout, exchange)
+                .await
+                .unwrap_or(false),
+            None => exchange.await,
+        };
+        if !completed {
+            return;
         }
     }
+}
+
+/// Optional bounds for the selected OCE listener; legacy DS callers retain their
+/// existing framing and exchange behavior by passing `None`.
+#[derive(Clone, Copy)]
+struct TcpServeLimits {
+    max_frame_bytes: usize,
+    exchange_timeout: Duration,
+}
+
+/// Decode and dispatch through the same Hickory request/response machinery for
+/// both transports. Query grammar and authority remain the handler's concern.
+async fn dispatch_wire_request<H: hickory_server::server::RequestHandler>(
+    handler: &H,
+    message: Vec<u8>,
+    source: SocketAddr,
+    protocol: Protocol,
+    single_response: bool,
+) -> Option<hickory_server::net::xfer::StreamReceiver> {
+    let request = Request::from_bytes(message, source, protocol).ok()?;
+    // Never answer a response on the selected listener: two resolvers otherwise
+    // keep reflecting FORMERR packets at one another without further input.
+    if single_response
+        && request.metadata.message_type == hickory_server::proto::op::MessageType::Response
+    {
+        return None;
+    }
+    let (stream_handle, receiver) = BufDnsStreamHandle::new(source);
+    let response_handle = ResponseHandle::new(source, stream_handle, protocol);
+    if single_response {
+        handler
+            .handle_request::<_, TokioTime>(
+                &request,
+                selected_transport::SingleResponseHandle::new(response_handle),
+            )
+            .await;
+    } else {
+        handler
+            .handle_request::<_, TokioTime>(&request, response_handle)
+            .await;
+    }
+    Some(receiver)
 }
 
 /// Pull the next serialized response out of the per-connection sink, if any is

@@ -143,6 +143,12 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
 - [Final Pod comparator](reference/final-pod-comparison.md): compare complete supplied Pod and Deployment documents; a conforming result establishes no authenticated expectation, current authority, or runtime qualification.
 - [Containment control observations](reference/containment-controls-v1.md): consume bounded observation contracts and strict decoders; authenticated producers, eligibility evaluation, and physical enforcement remain separate.
 - [Containment evidence and fault requests](reference/containment-evidence-v1.md): compare supplied control evidence and retain exact fault-request readback; current authority, durable fault persistence, and physical stop remain separate.
+- [Node execution observer](reference/node-execution-observer.md): inspect
+  node-local capture and the controller client; protected installation, current
+  enrollment and live CRI/runsc qualification remain required.
+- [Closed node network attachment](reference/node-network-fence.md): inspect
+  closed CNI attachments and retained observations; production CNI installation,
+  runtime start ordering and live gVisor qualification remain separate.
 - [Direct Compute interruption preparation](reference/direct-compute-interruption.md): run controlled create, observe, and route interruption checks; these reports do not establish runtime qualification.
 - [Retained store preflight](reference/retained-store-preflight-v1.md): compare trusted store and mount descriptors; a match establishes no physical storage integrity, credential-home exclusion, or writer authority.
 - [Same-build recovery preflight](reference/same-build-recovery-preflight-v1.md): compare producer tuples and checkpoint references; the complete recovery preflight remains unavailable without the native candidate boundary.
@@ -159,8 +165,12 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
   credential-service packaging, local preflight, and outstanding runtime requirements.
 - [External model egress flow](flows/external-model-egress.md): exact request,
   connection, dispatch, and cancellation ownership in the adapter components.
-- [Native GitHub HTTPS transport](reference/native-github-egress.md): finite Git/gh
-  transport and DNS validation, controlled client tests, and missing production admission.
+- [Agent split DNS](reference/agent-split-dns.md): inspect the bounded UDP/TCP
+  listener; positive production routing remains unavailable without the original
+  authenticated attachment, current Work and assigned endpoint producer.
+- [Native GitHub HTTPS transport](reference/native-github-egress.md): finite
+  transport and DNS validation, broker-backed metadata/Git read, and controlled
+  client tests; original admission and production qualification remain required.
 - [Upstream headless consumption probe](reference/upstream-consumption.md): verify
   the pinned source kernel and understand the remaining package and adapter gaps.
 - [Runtime identity ports](reference/runtime-identity.md): verification and stream-guard definitions; native composition and live provider qualification remain separate.

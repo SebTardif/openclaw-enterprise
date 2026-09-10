@@ -3,6 +3,35 @@
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
 use std::fmt;
+use zeroize::{Zeroize, Zeroizing};
+
+/// Own decoded values, including partial containers on parse errors. Library
+/// unescape scratch remains serde's internal allocation; this guard covers the
+/// strings and keys our visitor has actually received and retained.
+pub(super) struct OwnedJson(pub Value);
+impl OwnedJson {
+    fn take(mut self) -> Value {
+        std::mem::take(&mut self.0)
+    }
+}
+impl Drop for OwnedJson {
+    fn drop(&mut self) {
+        fn erase(value: &mut Value) {
+            match value {
+                Value::String(text) => text.zeroize(),
+                Value::Array(values) => values.iter_mut().for_each(erase),
+                Value::Object(values) => {
+                    for (mut key, mut value) in std::mem::take(values) {
+                        key.zeroize();
+                        erase(&mut value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        erase(&mut self.0);
+    }
+}
 
 // The selected envelope permits at most 20,000 JSON values and depth 64.
 // Containers count as values, keys do not; the root has depth zero.
@@ -64,28 +93,32 @@ impl<'de> Visitor<'de> for Unique<'_> {
         Ok(Value::Null)
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Value, A::Error> {
-        let mut out = Vec::new();
+        let mut out = OwnedJson(Value::Array(Vec::new()));
         while let Some(v) = a.next_element_seed(Unique {
             budget: self.budget,
             depth: self.depth + 1,
         })? {
-            out.push(v);
+            out.0.as_array_mut().unwrap().push(v);
         }
-        Ok(Value::Array(out))
+        Ok(out.take())
     }
     fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Value, A::Error> {
-        let mut out = Map::new();
+        let mut out = OwnedJson(Value::Object(Map::new()));
         while let Some(k) = a.next_key::<String>()? {
-            if out.contains_key(&k) {
+            let mut k = Zeroizing::new(k);
+            if out.0.as_object().unwrap().contains_key(k.as_str()) {
                 return Err(de::Error::custom("duplicate key"));
             }
             let v = a.next_value_seed(Unique {
                 budget: self.budget,
                 depth: self.depth + 1,
             })?;
-            out.insert(k, v);
+            out.0
+                .as_object_mut()
+                .unwrap()
+                .insert(std::mem::take(&mut *k), v);
         }
-        Ok(Value::Object(out))
+        Ok(out.take())
     }
 }
 
@@ -97,20 +130,22 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Value, super::Refusal> {
     let mut d = serde_json::Deserializer::from_slice(bytes);
     // Seed checks run before deserializing each value, bounding DOM expansion
     // even for a small wire representation containing millions of scalars.
-    let value = Unique {
-        budget: &mut budget,
-        depth: 0,
-    }
-    .deserialize(&mut d)
-    .map_err(|_| {
-        if budget.exceeded {
-            super::Refusal::Bounds
-        } else {
-            super::Refusal::Protocol
+    let value = OwnedJson(
+        Unique {
+            budget: &mut budget,
+            depth: 0,
         }
-    })?;
+        .deserialize(&mut d)
+        .map_err(|_| {
+            if budget.exceeded {
+                super::Refusal::Bounds
+            } else {
+                super::Refusal::Protocol
+            }
+        })?,
+    );
     d.end().map_err(|_| super::Refusal::Protocol)?;
-    Ok(value)
+    Ok(value.take())
 }
 
 #[cfg(test)]

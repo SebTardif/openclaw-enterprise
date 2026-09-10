@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::{process::Command, sync::watch};
 
-async fn command(
+pub(crate) async fn command(
     path: &Path,
     args: &[&str],
     env: &BTreeMap<String, String>,
@@ -76,7 +76,7 @@ async fn command(
         }
     }
 }
-async fn success(path: &Path, args: &[&str], env: &BTreeMap<String, String>) -> String {
+pub(crate) async fn success(path: &Path, args: &[&str], env: &BTreeMap<String, String>) -> String {
     let output = command(path, args, env, None).await;
     assert!(
         output.status.success(),
@@ -85,7 +85,7 @@ async fn success(path: &Path, args: &[&str], env: &BTreeMap<String, String>) -> 
     );
     String::from_utf8(output.stdout).unwrap()
 }
-fn base_environment(home: &Path, exec_path: &str) -> BTreeMap<String, String> {
+pub(crate) fn base_environment(home: &Path, exec_path: &str) -> BTreeMap<String, String> {
     [
         ("PATH", "/usr/bin:/bin"),
         ("HOME", home.to_str().unwrap()),

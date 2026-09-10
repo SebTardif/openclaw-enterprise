@@ -452,7 +452,7 @@ async fn slow_request_expires_and_settles_upstream_driver() {
     assert_eq!(fixture.settle().await.2, Some(Err(Refusal::Deadline)));
 }
 
-mod native;
+pub(crate) mod native;
 
 #[tokio::test]
 async fn shorter_request_permit_terminates_response_body_and_upstream_driver() {

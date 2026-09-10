@@ -53,7 +53,7 @@ except (OSError,AssertionError): sys.exit(2)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
-    parser.add_argument('--scenario', choices=['closed','caller-loss','link-replacement','incomplete-readback'], default='closed')
+    parser.add_argument('--scenario', choices=['closed','caller-loss','link-replacement','incomplete-readback','observation','observation-rules','observation-link','acquisition','acquisition-rules','acquisition-link'], default='closed')
     parser.add_argument('--isolated-container', action='store_true', required=True)
     args = parser.parse_args()
     require(os.geteuid() == 0 and Path('/.dockerenv').exists(), 'requires disposable Docker container')
@@ -98,6 +98,13 @@ def main():
         require(daemon.poll() is None, 'daemon startup failed')
         config = json.dumps({'cniVersion':'1.0.0','name':'closed-test','type':'oce-network-fence','prevResult':{'cniVersion':'1.0.0','interfaces':[]}})
         env = dict(os.environ, CNI_CONTAINERID='original-sandbox', CNI_IFNAME='fencepod', CNI_NETNS=ns)
+        acquiring = args.scenario.startswith('acquisition')
+        if acquiring:
+            # External CNI invokes the actual executable through this original
+            # path. Later removal proves ACQUIRE lends held custody, not a reopen.
+            original_alias = Path('/run/original-cni-netns')
+            original_alias.symlink_to(ns)
+            env['CNI_NETNS'] = str(original_alias)
 
         def cni(operation, success):
             result = subprocess.run([binary], env=dict(env, CNI_COMMAND=operation), input=config, text=True, capture_output=True, timeout=15)
@@ -136,6 +143,157 @@ def main():
             require(receipt['status'] == 'closed' and receipt['kernelIdentity'], 'missing actual installed identity')
         table = receipt['operationRef']
         observed = json.loads(run('nft','-j','list','table','netdev',table).stdout)
+        extra_assertions = []
+        if acquiring:
+            original_alias.unlink()
+            env['CNI_NETNS'] = ns
+            extra_assertions += ['original-cni-namespace-path-removed']
+
+        if args.scenario.startswith('observation') or acquiring:
+            sockets = []
+            acquired_descriptors = []
+            def connect():
+                connection = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+                connection.settimeout(3)
+                connection.connect(str(socket_path))
+                sockets.append(connection)
+                return connection
+            def send(connection, payload, path=None):
+                descriptors = []
+                if path is not None:
+                    fd = os.open(path, os.O_RDONLY)
+                    descriptors = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i',[fd]))]
+                try:
+                    connection.sendmsg([json.dumps(payload,separators=(',',':')).encode()], descriptors)
+                finally:
+                    if path is not None: os.close(fd)
+            def capture(path=ns):
+                connection = connect()
+                query = {'schemaVersion':1,'operation':'ACQUIRE' if acquiring else 'OBSERVE','requestRef':'source:original',
+                    'containerId':env['CNI_CONTAINERID'],'networkName':'closed-test','interfaceName':'fencepod'}
+                send(connection,query,None if acquiring and path == ns else path)
+                raw,ancillary,flags,_ = connection.recvmsg(65536,socket.CMSG_SPACE(253*4),socket.MSG_CMSG_CLOEXEC)
+                descriptors = []
+                for level,kind,data in ancillary:
+                    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                        rights = array.array('i'); rights.frombytes(data)
+                        descriptors.extend(rights)
+                    else:
+                        raise AssertionError('unexpected acquisition ancillary data')
+                acquired_descriptors.extend(descriptors)
+                require(not flags & (socket.MSG_TRUNC|socket.MSG_CTRUNC), 'truncated source reply')
+                if path != ns:
+                    require(not raw and not descriptors, 'wrong namespace descriptor contract produced an observation')
+                    return None
+                require(len(descriptors) == (1 if acquiring else 0), 'wrong acquired descriptor count')
+                reply = json.loads(raw)
+                record = reply['record']
+                if acquiring:
+                    transferred = os.fstat(descriptors[0])
+                    actual = os.stat(ns)
+                    require((transferred.st_dev,transferred.st_ino)==(actual.st_dev,actual.st_ino),
+                        'acquired descriptor is not original CNI namespace')
+                    require(record['topology']['pod_namespace']=={'device':transferred.st_dev,'inode':transferred.st_ino},
+                        'acquired descriptor differs from retained record')
+                expected = hashlib.sha256(json.dumps(record,separators=(',',':')).encode()).hexdigest()
+                require(reply['status']=='observed' and reply['recordDigest']=='sha256:'+expected, 'wrong original record digest')
+                require(record['operationRef']==table and record['topology']==receipt['topology']
+                    and record['kernelIdentity']==receipt['kernelIdentity'], 'observation did not use original custody')
+                return connection,reply
+            def command(reply):
+                return {'schemaVersion':1,'operation':'INSPECT','requestRef':'source:original',
+                    'observationRef':reply['record']['observationRef'],'recordDigest':reply['recordDigest']}
+            def inspect(connection,reply):
+                send(connection,command(reply))
+                current = json.loads(connection.recv(65536))
+                require(current=={'schemaVersion':1,'status':'current','requestRef':'source:original',
+                    'recordDigest':reply['recordDigest'],'record':None}, 'wrong current reply')
+            def refused(connection,payload):
+                try:
+                    send(connection,payload)
+                    require(not connection.recv(65536), 'invalid session was accepted')
+                except (BrokenPipeError,ConnectionResetError):
+                    pass
+            try:
+                if acquiring:
+                    absent = connect()
+                    refused(absent,{'schemaVersion':1,'operation':'ACQUIRE','requestRef':'source:absent',
+                        'containerId':'absent-sandbox','networkName':'closed-test','interfaceName':'fencepod'})
+                # A foreign FD refuses that query without poisoning the original
+                # closed attachment. A copied record cannot start another session.
+                capture('/proc/self/ns/net')
+                connection,reply = capture()
+                inspect(connection,reply)
+                refused(connect(),command(reply))
+                if args.scenario.endswith('-rules'):
+                    # Genuine lost DROP evidence permanently invalidates the
+                    # original attempt, even if another writer restores DROP.
+                    run('nft','add','chain','netdev',table,'from_pod','{ policy accept; }')
+                    refused(connection,command(reply))
+                    run('nft','add','chain','netdev',table,'from_pod','{ policy drop; }')
+                    cni('CHECK',False)
+                    connection = connect()
+                    send(connection,{'schemaVersion':1,'operation':'ACQUIRE' if acquiring else 'OBSERVE','requestRef':'source:later',
+                        'containerId':env['CNI_CONTAINERID'],'networkName':'closed-test','interfaceName':'fencepod'},None if acquiring else ns)
+                    require(not connection.recv(65536),'restored rules revived original source')
+                    extra_assertions += ['genuine-rule-loss-invalidates-session','restoration-does-not-revive-source']
+                elif args.scenario.endswith('-link'):
+                    # The retained observation cannot follow a same-name veth
+                    # successor, even with a still-live original namespace FD.
+                    run('ip','link','del','fencehost')
+                    run('ip','link','add','fencehost','type','veth','peer','name','fencepod')
+                    run('ip','link','set','fencepod','netns',str(child.pid))
+                    refused(connection,command(reply))
+                    cni('CHECK',False)
+                    if acquiring:
+                        refused(connect(),{'schemaVersion':1,'operation':'ACQUIRE','requestRef':'source:successor',
+                            'containerId':env['CNI_CONTAINERID'],'networkName':'closed-test','interfaceName':'fencepod'})
+                    run('ip','link','show','fencehost')
+                    extra_assertions += ['link-loss-invalidates-retained-observation','same-name-successor-not-adopted-or-deleted']
+                else:
+                    bad = command(reply); bad['recordDigest']='sha256:'+'0'*64
+                    refused(connection,bad)
+                    connection,reply = capture()
+                    for _ in range(16): inspect(connection,reply)
+                    refused(connection,command(reply))
+                    cni('CHECK',True)
+                    # An idle newly accepted caller must not consume the old
+                    # sixty-second receive timeout and block other CNI work.
+                    idle = connect()
+                    start = time.monotonic(); cni('CHECK',True)
+                    require(time.monotonic()-start<3,'idle first-packet caller stalled CNI')
+                    idle.close()
+                    connection,reply = capture()
+                    time.sleep(10.5)
+                    refused(connection,command(reply))
+                    connection,reply = capture()
+                    inspect(connection,reply)
+                    cni('DEL',False)
+                    refused(connection,command(reply))
+                    if acquiring:
+                        refused(connect(),{'schemaVersion':1,'operation':'ACQUIRE','requestRef':'source:retired',
+                            'containerId':env['CNI_CONTAINERID'],'networkName':'closed-test','interfaceName':'fencepod'})
+                    extra_assertions += ['inspect-budget-closes-only-session','idle-caller-does-not-stall-cni',
+                        'absolute-expiry-refuses-old-session','fresh-observation-after-expiry','del-invalidates-retained-observation']
+                extra_assertions += ['incoming-rights-refused-without-poisoning' if acquiring else 'wrong-netns-refused-without-poisoning','live-original-handle-observation',
+                    'original-record-digest','same-connection-currentness','cross-connection-replay-refused']
+                if acquiring:
+                    extra_assertions += ['absent-attempt-acquisition-refused','actual-add-descriptor-transfer',
+                        'acquired-descriptor-matches-original-record','original-cni-path-not-reopened']
+            finally:
+                for connection in sockets: connection.close()
+                for descriptor in acquired_descriptors: os.close(descriptor)
+
+        if args.scenario in ('observation-link','acquisition-link'):
+            require(json.loads(receipts[0].read_text())['status'] == 'observation-unknown', 'lost attachment retained closed status')
+            require(os.readlink('/proc/self/ns/net') == original, 'fixture entered child namespace')
+            # Successor has no configured traffic path. Only the original path's
+            # earlier positive controls and DROP check can support traffic claims.
+            print(json.dumps({'status':'passed','scenario':args.scenario,
+                'kernel':os.uname().release,'nft':run(nft,'--version').stdout.strip(),
+                'assertions':extra_assertions+['healthy-bidirectional-tcp',
+                    'original-attachment-bidirectional-drop','production-cni-add-check']},sort_keys=True))
+            return
 
         if args.scenario == 'link-replacement':
             # An identically named successor is a new attachment. A stale CHECK
@@ -160,7 +318,7 @@ def main():
         restart = subprocess.run([binary,'serve',nft,digest], capture_output=True, timeout=5)
         require(restart.returncode != 0, 'restart adopted unresolved attachment')
         require(os.readlink('/proc/self/ns/net') == original, 'fixture entered child namespace')
-        assertions = ['healthy-bidirectional-tcp', 'bidirectional-drop' if expected_closed else 'neutral-anchor-passes-traffic',
+        assertions = extra_assertions + ['healthy-bidirectional-tcp', 'bidirectional-drop' if expected_closed else 'neutral-anchor-passes-traffic',
                       'del-preserves-policy-and-uncertainty',
                       'daemon-death-preserves-policy',
                       'restart-refuses-unresolved-ownership']

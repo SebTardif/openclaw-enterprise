@@ -3,6 +3,7 @@
 #![cfg(target_os = "linux")]
 
 mod activation;
+pub mod attachment;
 pub mod cni;
 pub mod ipc;
 mod kernel;

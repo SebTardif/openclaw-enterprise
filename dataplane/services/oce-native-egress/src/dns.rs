@@ -161,6 +161,14 @@ fn in_network(ip: Ipv4Addr, base: Ipv4Addr, prefix: u8) -> bool {
     u32::from(ip) & mask == u32::from(base) & mask
 }
 fn allowed_ip(ip: Ipv4Addr, policy: &Policy) -> bool {
+    public_ipv4(ip)
+        && !policy
+            .denied_networks
+            .iter()
+            .any(|(base, prefix)| in_network(ip, *base, *prefix))
+}
+
+pub(crate) fn public_ipv4(ip: Ipv4Addr) -> bool {
     const SPECIAL: &[(u32, u8)] = &[
         (0x00000000, 8),
         (0x0a000000, 8),
@@ -181,10 +189,6 @@ fn allowed_ip(ip: Ipv4Addr, policy: &Policy) -> bool {
     !SPECIAL
         .iter()
         .any(|(base, prefix)| in_network(ip, Ipv4Addr::from(*base), *prefix))
-        && !policy
-            .denied_networks
-            .iter()
-            .any(|(base, prefix)| in_network(ip, *base, *prefix))
 }
 fn validate(
     origin: Origin,

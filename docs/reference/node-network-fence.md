@@ -18,6 +18,65 @@ The acquisition has a ten-second currentness ceiling and one-second response wai
 
 The node volume and its storage durability require original installation qualification; a synchronized receipt is not proof of power-loss durability on an arbitrary mount. The attempt remains owned after caller disconnect. A failed or timed-out command, lost response, failed readback or uncertain receipt commit never produces a closed response from historical receipt data. If submission may have happened, its negative operation locator remains retained. No error path removes an installed drop.
 
+## Retained closed attachment observations
+
+The same protected socket accepts `OBSERVE` with one retained CNI network-namespace
+descriptor and the original container/network/interface correlation. It can
+observe only an already closed attempt owned by this service process. The supplied
+descriptor must match the original namespace; the service checks the retained
+namespace/veth topology and exact installed DROP handles before returning a record.
+The record contains the original operation, topology, kernel handles, request
+reference and fresh service/observation references. Those references and the
+record are evidence locators, not authority to reconstruct an observation.
+
+`INSPECT` requires the original connection, request and observation references,
+SHA-256 of the exact original JSON record bytes, and no descriptors. Each successful
+inspection repeats actual attachment and DROP readback. A copied record, connection
+replacement or altered digest cannot inspect or revive another observation. A
+wrong namespace refuses that request without invalidating the genuine attachment.
+Actual attachment or rule loss instead retains `observation-unknown` and permanently
+invalidates that original attempt; restoring matching rule text does not revive it.
+
+Each observation has a ten-second absolute validity ceiling and sixteen inspections.
+These bounds apply to a source read session, not the execution lifetime. A later
+independently authenticated observation may use the same still-current original
+CNI namespace owner. Expired observations grant no authority between reads. Idle
+initial callers and retained observations use bounded polled connection pools;
+observation replies are nonblocking. The existing cooperative kernel/process
+deadline and unresolved-settlement limits still apply.
+
+The private Go receiving client brackets these exchanges with its original node
+capture's currentness checks and retains the exact protected socket and namespace
+descriptor. OBSERVE requires that descriptor from its caller; ACQUIRE obtains it
+from the original fence ADD owner as described below. Both require the actual
+original CRI/Pod/create-effect owner to prove correspondence to the captured
+sandbox attempt and assignment. A sentry namespace, Pod label or copied inode
+cannot supply that missing association. The physical-execution protocol remains unchanged.
+Neither protocol authenticates a DS endpoint or authorizes a positive opening.
+
+`ACQUIRE` provides the original ADD descriptor to that private Go client. It
+accepts the same request/container/network/interface fields as OBSERVE with no
+incoming descriptors. The original node owner duplicates the CNI namespace FD
+held continuously in its retained ADD attempt, brackets the duplication with live
+attachment and DROP checks, and returns exactly one descriptor with the initial
+observation record. The original namespace path is never reopened. Later INSPECT
+requests stay on that connection and exchange no descriptors.
+
+This supplies original ADD descriptor custody to
+`capture.acquireAttachment(networkName, interfaceName)`; the source derives the
+sandbox selector and request reference from its actual physical capture. The
+separate original Compute owner still must pair that ADD with the exact observed
+CRI creation timestamp/attempt, Pod UID, node boot and original create effect and
+assignment. The network operation reference cannot stand in for an OCC operation,
+Work or purpose decision. A new short acquisition must preserve that original
+owner correspondence and refuse a changed service/operation/namespace.
+
+The original ADD owner retains its descriptor independently of read-session
+closure. A transferred FD may physically outlive a reader or server session;
+expiry does not remotely revoke it. Current use still requires fresh inspection
+and original-owner checks. Acquisition after DEL or detected genuine source loss
+refuses, including after matching rules are restored.
+
 ## Cleanup and restart limits
 
 DEL returns nonterminal cleanup uncertainty and preserves the original table and handles. Deletion intent does not prove the original interface is gone, and this component does not remove a name-matching successor. The original runtime must retain the unresolved cleanup responsibility.
@@ -28,7 +87,7 @@ A new service process refuses existing operation receipts and an existing socket
 
 TODO(node-network-fence): connect observed attachment retirement and the original runtime's cleanup responsibility before supporting terminal cleanup or a restart recovery operation. Positive endpoint admission additionally requires the original current runtime/profile/grant and authenticated endpoint producers. Neither capability can be supplied by a caller-created receipt or Boolean.
 
-The internal Go node observer also has a retained process-network-namespace helper. Its existing physical-execution protocol remains unchanged. A runsc sentry's namespace is not automatically the workload's CNI namespace; that correspondence is an independent receiving prerequisite. See [node execution observer](node-execution-observer.md).
+The internal Go node observer also has a retained process-network-namespace helper. A runsc sentry's namespace is not automatically the workload's CNI namespace; that correspondence is an independent receiving prerequisite. See [node execution observer](node-execution-observer.md).
 
 ## Build and controlled verification
 
@@ -78,6 +137,25 @@ removing that successor. Every scenario starts with healthy TCP receivers in bot
 namespaces. The closed path then checks actual bidirectional denial, retained
 kernel identity, DEL uncertainty, drop after daemon death, and restart refusal.
 
+The `observation` scenario exercises actual descriptor transfer and retained
+readback, exact record bytes/digest, wrong namespace rejection, cross-connection
+replay refusal, session budget and expiry, independent re-observation, idle caller
+isolation and DEL invalidation. `observation-rules` changes an actual DROP policy
+and verifies that later restoration cannot revive the original source.
+`observation-link` replaces the observed veth and requires the retained session to
+refuse without adopting or deleting the successor. Each needs its own fresh
+container. The two link-replacement scenarios stop after successor checks: their
+traffic assertions concern the original attachment before replacement, since the
+successor has no configured traffic path.
+
+`acquisition`, `acquisition-rules` and `acquisition-link` exercise the same current
+read behavior using the descriptor supplied by ACQUIRE. Each removes the original
+CNI namespace path after actual ADD and checks that the returned descriptor still
+matches the original namespace and record. The cases also reject unexpected
+incoming descriptors and missing attempts; DEL, rule loss and link replacement
+prevent later acquisition. These remain component namespace/transport tests,
+without a claim of original Compute/CRI creation integration.
+
 The selected nft executable must return the attached `dev` in each chain's JSON
 readback. The fixture has passed with nftables 1.1.3 and Linux 6.8.0. nftables 1.0.6
 omits this field: installation may have happened, but the service refuses to
@@ -97,3 +175,60 @@ by device replacement, table recreation with reused numeric chain handles, or
 removal of the second chain. The production policy-only activation must refuse;
 no surviving chain may become DROP. The missing-second-chain case additionally
 checks atomic rollback of the first policy update.
+
+## Reproducible gVisor traversal fixture
+
+`dataplane/services/oce-network-fence/tests/gvisor_kernel_live.py` exercises the
+actual runsc sandbox network stack against the existing CNI/service executable.
+It creates one original network namespace and reciprocal veth, supplies that
+namespace as the OCI network path, and retains it for actual CNI ADD. The fixture
+checks that the same sentry owns the same AF_PACKET socket in that namespace
+before and after closure.
+
+Use a separately selected disposable container with the same isolation rules as
+the native kernel fixture. Supply Python 3 and its standard library, `ldd`, the
+network tools, the built fence binary, and a pinned complete runsc runtime tree
+with its required sidecars. Mount the runtime tree, binary and fixture read-only.
+Bound the outer container to 2 GiB memory, 2 CPUs and 512 PIDs. The fixture fixes
+runsc to sandbox networking, systrap, STRICT sidecars and XDP off; it disables
+runsc host-setting adjustments and leaves cgroup limits to the outer container.
+It copies at most 256 MiB of Python files from the selected image into a temporary
+probe rootfs. The harmless guest runs as UID/GID 1000 with no capabilities and a
+read-only root filesystem.
+
+Inside that separately provisioned container, run:
+
+```sh
+python3 /absolute/gvisor_kernel_live.py --binary /absolute/oce-network-fence --runsc /absolute/runtime/bin/runsc --isolated-container
+```
+
+The fixture limits execution to 270 seconds and bounds each guest readiness or
+traffic request to at most 30 seconds. An outer launcher must also enforce a
+five-minute deadline and remove only its uniquely named container on timeout.
+Preserve the fixture's emitted JSON and the launcher's command, artifact hashes,
+exit status and final container-absence observation. Log size is checked after
+execution; the launcher must bound retained output independently.
+
+Both the sentry and gofer need permission to change mount propagation in their
+private mount namespaces. An outer Docker AppArmor policy can deny that operation
+even with `SYS_ADMIN` and a permissive seccomp profile. The bounded fixture has
+run with a separately selected container-local `apparmor=unconfined` option; this
+is an outer test-container prerequisite, not an Agent runtime profile. Do not
+change host profiles or add host namespaces, devices, writable host volumes or
+privileged mode to run this test. Preserve actual startup failures without
+counting them as network denial.
+
+The actual fixture has passed with runsc release-20260831.0, nftables 1.1.3 and
+Linux 6.8.0. It establishes healthy bidirectional IPv4 TCP/UDP delivery and
+pre-established TCP connections before ADD, then requires new TCP, UDP and
+established-connection payload delivery to fail in both directions after the
+original attachment closes. Receiver logs independently exclude those payloads;
+local TCP and UDP health probes show that the same receivers remain functional.
+The original sandbox PID, AF_PACKET socket and closed CNI CHECK remain current
+through the assertions. Teardown force-deletes the test sandbox and removes its
+veth; outer container removal retires the remaining private fixture state.
+
+This result qualifies that runsc/veth/fence traversal tuple. It does not establish
+cold start behind an already closed fence, containerd/CRI/CNI start ordering,
+original Work association, IPv6 or XDP behavior, positive endpoint rules, DS or
+workload identity, restart recovery, or product terminal cleanup.

@@ -137,12 +137,33 @@ impl RetainedLink {
     /// continuity through this original observer. This never captures a new
     /// interface or adopts a replacement observer.
     pub fn matches_namespace(&self, namespace: &OwnedFd) -> Result<(), Error> {
+        self.require_namespace(namespace)?;
+        self.current()
+    }
+
+    pub(crate) fn require_namespace(&self, namespace: &OwnedFd) -> Result<(), Error> {
         if namespace_identity(namespace.as_raw_fd())? != self.observed.pod_namespace {
             return Err(Error::Invalid(
                 "request network namespace does not match original",
             ));
         }
-        self.current()
+        Ok(())
+    }
+
+    /// Lend only the descriptor continuously owned since the original CNI ADD.
+    /// The owner brackets this duplication with live link and DROP readback.
+    /// No namespace path, supplied inode or historical receipt is reopened.
+    pub(crate) fn duplicate_namespace(&self) -> Result<OwnedFd, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Unknown("network observation lock poisoned"))?;
+        if !state.valid
+            || namespace_identity(state.pod_namespace.as_raw_fd())? != self.observed.pod_namespace
+        {
+            return Err(Error::Unavailable("original CNI namespace is not current"));
+        }
+        duplicate(state.pod_namespace.as_raw_fd())
     }
 
     /// A successful read is an observation at this boundary, not a lifetime
