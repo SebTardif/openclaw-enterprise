@@ -98,3 +98,9 @@ Positive node execution acceptance requires a separately selected disposable
 cluster with actual gVisor, CRI, protected node enrollment, API credentials and
 runtime artifacts. The current component checks do not establish that result.
 See [runtime effects](runtime-effects.md) for the larger observation contract.
+
+## Internal network-namespace contribution
+
+The Linux source also includes an internal helper obtained from the original retained process handle. It retains that process's network namespace and subscribes to link notifications before capture; observation loss or changed process, namespace or link state invalidates it. It has no public constructor or restored identity representation and does not change the physical-execution record above.
+
+For runsc, the sentry process's namespace is not automatically the workload's CNI namespace. The helper does not establish that correspondence, installed network enforcement or current authority. The separately owned [closed node network attachment](node-network-fence.md) documents the CNI/veth boundary and remaining qualification requirements.

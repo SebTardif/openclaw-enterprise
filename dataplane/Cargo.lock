@@ -989,6 +989,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oce-network-fence"
+version = "0.0.0"
+dependencies = [
+ "ds-contracts",
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

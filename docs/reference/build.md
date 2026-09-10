@@ -61,8 +61,11 @@ when an OCE adapter is missing.
 
 The selected Cargo members are `ds-contracts`, `policy-core`,
 `ds-policy-snapshot`, `ds-telemetry`, `ds-admission-shm`, `ds-nft`, `ds-dnsgate`,
-and `ds-tlsproxy`. The final two live under `dataplane/services`; the others live
-under `dataplane/crates`. Missing manifests, unavailable cached dependencies,
+`ds-tlsproxy`, `oce-native-egress`, and `oce-network-fence`. The final four live
+under `dataplane/services`; the others live under `dataplane/crates`. The native
+GitHub library and closed node fence are workspace members; the default native
+product build still emits only `oce-dnsgate` and `oce-egress`.
+Missing manifests, unavailable cached dependencies,
 different workspace members, external entrypoints, and resolved local path
 dependencies or Cargo patches outside this selection fail
 the build. There is no fallback to an external checkout or prebuilt executable.

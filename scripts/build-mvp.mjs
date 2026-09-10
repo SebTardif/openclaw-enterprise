@@ -30,6 +30,7 @@ const nativeMembers = [
   "ds-dnsgate",
   "ds-tlsproxy",
   "oce-native-egress",
+  "oce-network-fence",
 ];
 const nativeProducts = [
   { package: "ds-dnsgate", binary: "oce-dnsgate" },
@@ -212,7 +213,9 @@ async function checkNative() {
   const memberDirectories = nativeMembers.map((name) =>
     join(
       nativeDirectory,
-      ["ds-dnsgate", "ds-tlsproxy", "oce-native-egress"].includes(name) ? "services" : "crates",
+      ["ds-dnsgate", "ds-tlsproxy", "oce-native-egress", "oce-network-fence"].includes(name)
+        ? "services"
+        : "crates",
       name,
     ),
   );

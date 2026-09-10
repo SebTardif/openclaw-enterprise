@@ -38,3 +38,9 @@ namespace with the required capabilities. It is not a shipped daemon.
 
 See [LICENSE](LICENSE), [NOTICE](NOTICE), [source manifest](SOURCE_MANIFEST.json),
 and [dependency notices](third-party-notices/THIRD_PARTY_NOTICES.txt) for attribution.
+
+The separately selected `oce-network-fence` crate provides a closed node/CNI
+attachment component. It is not included in the two default native products and
+does not open endpoints or grant runtime authority. See the [closed node network
+attachment reference](../docs/reference/node-network-fence.md) for its source,
+installation and verification boundaries.

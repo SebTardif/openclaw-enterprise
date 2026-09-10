@@ -171,7 +171,7 @@ entrypoints so loader failures stop the build.
 
 The native build must produce exactly
 `.build/mvp/native/oce-dnsgate` and `.build/mvp/native/oce-egress`, using the selected
-selected Rust workspace and the repository's pinned Rust toolchain. The image
+Rust workspace and the repository's pinned Rust toolchain. The image
 does not include the stock DS executables, mint, host/tap tooling, or a fallback
 binary. The recipe copies the source license, attribution, source manifest, and
 Cargo/Rust library notices into `/usr/share/doc/oce-egress/`. OS package notices
