@@ -1,4 +1,5 @@
 import { occApiRoutes, type OccApiRoute } from "@openclaw-enterprise/contracts/api/routes";
+import type { WorkloadProfileApiRoute } from "@openclaw-enterprise/contracts/api/workload-profile/routes";
 import type { PermissionAction, ResourceKind, ResourceRef } from "@openclaw-enterprise/contracts";
 import type { FastifyReply, FastifyRequest, FastifySchema } from "fastify";
 
@@ -47,11 +48,23 @@ export function operationTarget(
   return { kind: "installation", id: installationId };
 }
 
-export function requiredPermissions(operation: OccApiRoute): readonly RequiredPermission[] {
+export function requiredPermissions(
+  operation: OccApiRoute | WorkloadProfileApiRoute,
+): readonly RequiredPermission[] {
   const permission = {
     action: operation.iamAction,
     resourceKind: operation.resourceKind,
   };
+
+  if (
+    operation.operationId === "getWorkloadProfileOperation" ||
+    operation.operationId === "getWorkloadProfile"
+  ) {
+    return [
+      { action: "administer", resourceKind: "installation", scope: "requested" },
+      { action: "read", resourceKind: "installation", scope: "requested" },
+    ];
+  }
 
   if (operation.operationId === "getAgentRevision") {
     return [

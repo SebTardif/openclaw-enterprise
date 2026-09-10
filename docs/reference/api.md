@@ -2968,6 +2968,7 @@ Read an original-actor workload profile operation with current read and administ
 
 | Action | Resource | Scope |
 | --- | --- | --- |
+| `administer` | `installation` | `requested` |
 | `read` | `installation` | `requested` |
 
 #### Parameters
@@ -3075,6 +3076,7 @@ Read a retained workload profile with current read and administer authority
 
 | Action | Resource | Scope |
 | --- | --- | --- |
+| `administer` | `installation` | `requested` |
 | `read` | `installation` | `requested` |
 
 #### Parameters

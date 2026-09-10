@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createFastifyApp } from "../../apps/controller/src/index.ts";
 import { occApiRoutes } from "../../packages/contracts/src/api/routes.ts";
+import { workloadProfileApiRoutes } from "../../packages/contracts/src/api/workload-profile/routes.ts";
 import {
   createOperationRegistry,
   ordinaryOperations,
@@ -19,6 +20,7 @@ const documentationOptions = {
 };
 
 const separateProfiles = [
+  ...workloadProfileApiRoutes,
   { method: "POST", path: "/api/auth/service-keys", operationId: "createServiceKey" },
   { method: "DELETE", path: "/api/auth/service-keys/:keyId", operationId: "revokeServiceKey" },
   { method: "POST", path: "/api/auth/sign-in/email", operationId: "signInEmail" },
@@ -122,6 +124,24 @@ test("actual Fastify registrations cover every catalog operation, schema, permis
   }
   assert.deepEqual(document.security, [{ sessionCookie: [] }, { serviceApiKey: [] }]);
   assert.deepEqual(document.paths["/api/auth/accounts"].post.security, [{ sessionCookie: [] }]);
+
+  // Workload-profile reads retain the operator's administer requirement as well
+  // as read authority. Check actual registration output, not a second mapper.
+  for (const operation of workloadProfileApiRoutes) {
+    const documented =
+      document.paths[documentedPath(operation.path)][operation.method.toLowerCase()];
+    assert.deepEqual(
+      documented["x-openclaw-permissions"],
+      [
+        { action: "administer", resourceKind: "installation", scope: "requested" },
+        ...(operation.method === "GET"
+          ? [{ action: "read", resourceKind: "installation", scope: "requested" }]
+          : []),
+      ],
+      operation.operationId,
+    );
+    assert.deepEqual(documented.security, [{ sessionCookie: [] }]);
+  }
 });
 
 test("protected registration rejects missing handlers and infrastructure before adding routes", async (t) => {
