@@ -2,6 +2,9 @@
 ARG NODE_BASE_IMAGE
 # Operators must also select an approved, immutable Go 1.26 build image.
 ARG GO_BASE_IMAGE
+# A parse-only default keeps unrelated controller targets unchanged. The hosted
+# target below refuses this default and requires the selected full Runtime image.
+ARG HOSTED_GATEWAY_RUNTIME_IMAGE=${NODE_BASE_IMAGE}
 FROM ${GO_BASE_IMAGE} AS native-build
 ENV GOTOOLCHAIN=local
 WORKDIR /src
@@ -79,6 +82,49 @@ RUN mkdir -p /app/.development/configurations /var/lib/openclaw/bootstrap \
 USER node
 ENTRYPOINT ["node"]
 CMD ["apps/controller/src/server.mjs"]
+
+# The full OpenClaw/Codex payload comes from its separately verified Runtime
+# image. Do not replace it with the preparation-only SDK in dependencies.
+FROM ${HOSTED_GATEWAY_RUNTIME_IMAGE} AS hosted-gateway
+ARG HOSTED_GATEWAY_RUNTIME_IMAGE
+ARG NODE_BASE_IMAGE
+USER root
+WORKDIR /app
+RUN test "$HOSTED_GATEWAY_RUNTIME_IMAGE" != "$NODE_BASE_IMAGE" \
+    && node -e 'if (!/^(?:sha256:[a-f0-9]{64}|[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[a-f0-9]{64})$/.test(process.env.HOSTED_GATEWAY_RUNTIME_IMAGE)) throw new Error("Select the exact verified Runtime image identity.")' \
+    && test -f /app/node_modules/openclaw/openclaw.mjs \
+    && test "$OPENCLAW_BUNDLED_PLUGINS_DIR" = /app/node_modules/openclaw/dist-runtime/extensions
+
+COPY --from=native-build /out/oce-runtime-authority /usr/local/bin/oce-runtime-authority
+COPY --from=native-build /out/oce-clock-observation /usr/local/bin/oce-clock-observation
+COPY --from=native-build /out/oce-github-mediation /usr/local/bin/oce-github-mediation
+COPY --from=native-build /out/licenses /usr/share/licenses/oce-runtime-security
+# Preserve the enterprise lock's dependencies (including TypeBox) without
+# overwriting the full Runtime's top-level packages or upstream plugin copies.
+COPY --from=dependencies /app/node_modules/.pnpm /app/node_modules/.pnpm
+COPY --from=dependencies /app/packages /app/packages
+COPY packages/contracts/src packages/contracts/src
+COPY packages/utils/src packages/utils/src
+COPY packages/occ/src packages/occ/src
+COPY packages/iam/src packages/iam/src
+COPY packages/audit/src packages/audit/src
+COPY apps/gateway/package.json apps/gateway/package.json
+COPY apps/gateway/src apps/gateway/src
+COPY deploy/runtime/write-installed-native.mjs /tmp/write-installed-native.mjs
+RUN mkdir -p apps/gateway/node_modules/@openclaw-enterprise \
+    && ln -s /app/packages/contracts apps/gateway/node_modules/@openclaw-enterprise/contracts \
+    && ln -s /app/packages/occ apps/gateway/node_modules/@openclaw-enterprise/occ \
+    && ln -s /app/packages/utils apps/gateway/node_modules/@openclaw-enterprise/utils \
+    && ln -s /app/node_modules/openclaw apps/gateway/node_modules/openclaw \
+    && rm packages/contracts/node_modules/openclaw \
+    && ln -s /app/node_modules/openclaw packages/contracts/node_modules/openclaw \
+    && chmod -R a+rX,a-w packages apps/gateway node_modules/.pnpm \
+    && node /tmp/write-installed-native.mjs \
+    && rm /tmp/write-installed-native.mjs
+
+USER node
+ENTRYPOINT ["node"]
+CMD ["/app/apps/gateway/src/main.mjs"]
 
 FROM ${NODE_BASE_IMAGE} AS runtime
 COPY --from=native-build /out/oce-runtime-security /usr/local/bin/oce-runtime-security

@@ -176,3 +176,51 @@ Before enabling Slack in an Installation, run the
 [live Slack test](../../docs/testing.md#slack) with the verified image, projected
 credentials, and required proxy configuration. It must prove a real mention,
 Codex turn, and gateway-authored reply; gateway readiness alone is insufficient.
+
+## Protected hosted-gateway image
+
+The root [Dockerfile](../../Dockerfile) has a separate `hosted-gateway` target.
+It adds the fixed enterprise launcher at `/app/apps/gateway/src/main.mjs`, its
+workspace packages and the actual `oce-runtime-authority`, `oce-clock-observation`
+and `oce-github-mediation` binaries to the verified
+OpenClaw/Codex Runtime image. It reuses the original native build and frozen
+enterprise dependency stages. Enterprise package dependencies retain their
+locked versions, including TypeBox; OpenClaw imports resolve to the full Runtime
+payload, whose bundled plugin copies remain unchanged.
+
+Use the same approved Node/Go image pins and reviewed SDK input context/hash as
+the controller build. `HOSTED_GATEWAY_RUNTIME_IMAGE` must identify the exact
+verified Runtime image available to the Docker builder: its local `sha256:` image
+ID or an available registry `@sha256:` reference. A Kubernetes/containerd manifest
+reference is usable only when that same reference is available to this builder.
+The hosted target rejects the parse-only Node default and mutable tags.
+
+```bash
+docker build --file Dockerfile --target hosted-gateway \
+  --build-arg NODE_BASE_IMAGE="$OCC_BUILD_NODE_BASE_IMAGE" \
+  --build-arg GO_BASE_IMAGE="$OCC_BUILD_GO_BASE_IMAGE" \
+  --build-context oce-upstream-inputs="$OCC_BUILD_UPSTREAM_SDK_CONTEXT" \
+  --build-arg OCE_UPSTREAM_SDK_MANIFEST_SHA256="$OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256" \
+  --build-arg HOSTED_GATEWAY_RUNTIME_IMAGE="$HOSTED_GATEWAY_RUNTIME_IMAGE" \
+  --tag openclaw-enterprise-hosted-gateway:local .
+
+OCC_TEST_HOSTED_GATEWAY_IMAGE=openclaw-enterprise-hosted-gateway:local \
+  node --test tests/integration/hosted-gateway-image-packaging.test.mjs
+```
+
+Image construction writes root-owned, read-only `installed-native.mjs` from the
+actual copied `/usr/local/bin/oce-runtime-authority` bytes. It supplies the fixed
+binary path and digest; a launch descriptor cannot select them. The image smoke
+loads the real fixed SDK factories, verifies enterprise dependency selection,
+executes the actual native invalid-profile parser over owned pipes, and requires
+the fixed launcher to refuse missing protected launch inputs. It runs without
+network access and proves no authenticated startup, material delivery, readiness
+or model turn. Those require the original protected launch, registration and
+material owners; a successful package check cannot supply their authority.
+
+This target requires the full Runtime's trusted plugin directory at
+`/app/node_modules/openclaw/dist-runtime/extensions`. Select and verify that
+actual input independently; adding this target does not qualify another Runtime
+recipe or an older build. The copied native executables retain root ownership and
+mode0555. A later build must run all three selected packaging cases with zero
+skips; no packaging outcome is implied by the source recipe.
