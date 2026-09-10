@@ -12,6 +12,7 @@ import {
 } from "../../drivers/compute/kubernetes/workload-profile-capability.ts";
 import type {
   KubernetesCreateCorrelationObservationOwnerV1,
+  KubernetesNodeNetworkConfiguration,
   KubernetesRuntimeObservationAdmission,
   KubernetesRuntimeObservationDependencies,
 } from "../../drivers/compute/kubernetes/runtime-observations.ts";
@@ -146,6 +147,7 @@ export function createComputeDriver(
   driverPackage?: LoadedDriverPackage,
   workloadProfileRendererSource?: KubernetesRendererSource,
   runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies,
+  nodeNetworkObservation?: KubernetesNodeNetworkConfiguration,
 ): ComputeDriver {
   if (driverPackage !== undefined) {
     return createExternalDriver(
@@ -187,6 +189,7 @@ export function createComputeDriver(
       ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
       workloadProfileRendererSource: sourceReceiver,
       ...(runtimeObservationDependencies === undefined ? {} : { runtimeObservationDependencies }),
+      ...(nodeNetworkObservation === undefined ? {} : { nodeNetworkObservation }),
     },
   );
   selectedComputeContributions.set(driver, {

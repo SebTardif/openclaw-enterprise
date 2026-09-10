@@ -359,3 +359,23 @@ Synthetic Compute observations in that representation test qualify neither a
 live provider nor authenticated mutation admission. Production acceptance still
 requires current preparation/service/profile evidence and the actual provider
 accepting boundary; this store does not supply those missing producers.
+
+## Selected node-network observation
+
+The Kubernetes constructor and selected Compute factory accept an optional trusted
+`nodeNetworkObservation` configuration containing the existing node client, network
+name and interface name. It is passed to the same Driver alongside its original
+observation dependencies. Configuration must match the selected gVisor and cluster
+context; omitting it preserves the observation-only construction.
+
+For a selected Harness observation, the node client keeps physical execution and
+original CNI ADD attachment handles distinct and compares their retained association.
+The observation joins actual entered supplier reads and cleanup even when cancellation
+wins an outer timeout. Late supplier success does not replace the chosen refusal.
+This invocation's pending work is separate from the create-correlation operation's
+own reads and lifetime. Native close failure remains a refusal.
+
+A genuine creator/assignment-to-CRI-to-ADD record and current original execution
+reader are still required. A new physical snapshot, copied association or configured
+node client cannot establish that authority. The original native and State owners
+must enroll and persist the first association; missing inputs continue to refuse.

@@ -377,3 +377,63 @@ func imageIdentity(value string) string {
 	}
 	return ""
 }
+
+// networkCapture holds both original observations. Releasing this bounded read
+// never closes or replaces the CNI owner's independently retained ADD attempt.
+type networkCapture struct {
+	execution  *capture
+	attachment *retainedAttachment
+	raw        []byte
+}
+
+func (s *Source) captureNetwork(ctx context.Context, request NetworkRequest, requestDigest string) (*networkCapture, error) {
+	execution, err := s.capture(ctx, request.Execution, requestDigest)
+	if err != nil {
+		return nil, err
+	}
+	result := &networkCapture{execution: execution}
+	ok := false
+	defer func() {
+		if !ok {
+			result.close()
+		}
+	}()
+	result.attachment, err = execution.acquireAttachment(request.NetworkName, request.InterfaceName)
+	if err != nil {
+		return nil, err
+	}
+	// ACQUIRE duplicated the namespace from the original retained ADD. The actual
+	// CRI/API/runsc capture brackets that operation; request fields never select a PID.
+	record, err := result.attachment.inspect()
+	if err != nil || execution.current() != nil {
+		return nil, ErrUnavailable
+	}
+	result.raw = encoded(NetworkRecord{SchemaVersion: 1, Kind: "node-physical-network", Execution: execution.record, Attachment: networkAttachment(record, result.attachment.raw)})
+	if _, err := parseNetworkRecord(result.raw, request, requestDigest, execution.record.EnrollmentDigest); err != nil {
+		return nil, err
+	}
+	ok = true
+	return result, nil
+}
+
+func (c *networkCapture) current() error {
+	if c == nil || c.execution == nil || c.attachment == nil || c.execution.current() != nil {
+		return ErrUnavailable
+	}
+	if _, err := c.attachment.inspect(); err != nil {
+		return ErrUnavailable
+	}
+	return c.execution.current()
+}
+
+func (c *networkCapture) close() {
+	if c == nil {
+		return
+	}
+	if c.attachment != nil {
+		c.attachment.close()
+	}
+	if c.execution != nil {
+		c.execution.close()
+	}
+}

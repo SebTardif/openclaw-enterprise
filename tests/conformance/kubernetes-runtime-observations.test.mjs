@@ -108,6 +108,7 @@ function fixture({
   expectedEvidenceVersion = null,
   deadline,
   sourceDeadline,
+  nodeNetworkObservation,
 } = {}) {
   const input = method === "discover" ? v.exactCreate() : v.candidate();
   if (method === "observe") input.expectedEvidenceVersion = expectedEvidenceVersion;
@@ -375,7 +376,10 @@ function fixture({
   }
   const driver = new KubernetesComputeDriver(
     { ...v.copy(lifecycleOptions), ...(isolation ? { isolationProfile: "gvisor-systrap" } : {}) },
-    { ...(dependencies ? { runtimeObservationDependencies: dependenciesValue } : {}) },
+    {
+      ...(dependencies ? { runtimeObservationDependencies: dependenciesValue } : {}),
+      ...(nodeNetworkObservation === undefined ? {} : { nodeNetworkObservation }),
+    },
   );
   driver.apiClients = Promise.resolve(clients);
   return {
@@ -1396,3 +1400,159 @@ test("cancellation and deadlines bound caller, provider, and source reads withou
     },
   );
 });
+
+function selectedNodeNetwork(clusterRef = "cluster") {
+  return {
+    client: {
+      binaryPath: "/unavailable-node-observer/oce-node-observer",
+      binaryDigest: v.digest(90),
+      clientConfiguration: {
+        enrollment: { clusterRef, namespace: "tenant", nodeName: "node", nodeUID: "node-uid" },
+        workloadSocket: "/unavailable-node-observer/workload.sock",
+        enrollmentDigest: v.digest(91),
+      },
+    },
+    networkName: "pods",
+    interfaceName: "eth0",
+  };
+}
+
+test("selected node network source requires the original Compute cluster and gVisor constructor", () => {
+  assert.throws(() => fixture({ nodeNetworkObservation: selectedNodeNetwork("another-cluster") }));
+  assert.throws(() => fixture({ isolation: false, nodeNetworkObservation: selectedNodeNetwork() }));
+  assert.throws(() =>
+    fixture({ dependencies: false, nodeNetworkObservation: selectedNodeNetwork() }),
+  );
+  assert.throws(() =>
+    fixture({ nodeNetworkObservation: { ...selectedNodeNetwork(), interfaceName: "eth0/other" } }),
+  );
+});
+
+test("selected network configuration cannot supply missing original observation admission", async () => {
+  const f = fixture({ nodeNetworkObservation: selectedNodeNetwork() });
+  f.caller.registrations.delete(f.caller.call.context);
+  const result = await f.run();
+  notPositive(result);
+  assert.deepEqual(f.apiCalls, []);
+  assert.deepEqual(f.sourceReads, []);
+  // The actual original admission boundary refuses before any Node client,
+  // Kubernetes chain, profile producer, or summary producer can be selected.
+});
+
+test("selected network observation cannot invent the first retained creator-to-ADD association", async () => {
+  const f = fixture({ nodeNetworkObservation: selectedNodeNetwork() });
+  const result = await f.run();
+  notPositive(result);
+  assert.equal(result.reasonCode, "evidence-incomplete");
+  assert.ok(f.sourceReads.some(({ kind }) => kind === "execution"));
+  assert.equal(
+    f.sourceReads.some(({ kind }) => kind === "profiles" || kind === "observation"),
+    false,
+  );
+  // The original execution record is valid but intentionally has no retained
+  // CNI association. The configured node endpoint must not mint that ownership.
+});
+
+for (const outcome of ["late success", "late rejection"]) {
+  test(
+    `selected CNI observation joins entered supplier ${outcome} and cleanup after cancellation`,
+    { timeout: 5000 },
+    async (t) => {
+      for (const stage of ["read", "readCurrent", "inspect"]) {
+        await t.test(stage, async () => {
+          const f = fixture({ nodeNetworkObservation: selectedNodeNetwork() });
+          let entered;
+          let release;
+          let cleanupEntered;
+          let closeCleanup;
+          const entry = new Promise((resolve) => {
+            entered = resolve;
+          });
+          const continuation = new Promise((resolve) => {
+            release = resolve;
+          });
+          const cleanupEntry = new Promise((resolve) => {
+            cleanupEntered = resolve;
+          });
+          const cleanup = new Promise((resolve) => {
+            closeCleanup = resolve;
+          });
+          let supplierClosed = false;
+          let settled = false;
+          const lateError = new Error("controlled late supplier rejection");
+          const delayed = async (next) => {
+            // Capture the existing controlled source's real return before abort;
+            // no native handle, source registration or positive result is added.
+            const original = await next();
+            entered();
+            try {
+              await continuation;
+              if (outcome === "late rejection") throw lateError;
+              return original;
+            } finally {
+              cleanupEntered();
+              await cleanup;
+              supplierClosed = true;
+            }
+          };
+          if (stage === "read") {
+            f.hooks.read = (kind, _query, _call, next) =>
+              kind === "execution" ? delayed(next) : next();
+          } else if (stage === "readCurrent") {
+            f.hooks.current = (kind, _reference, _call, next) =>
+              kind === "execution" ? delayed(next) : next();
+          } else {
+            const factory = f.sourceAuthorities.execution.contextFactory;
+            const inspect = factory.inspect.bind(factory);
+            factory.inspect = (handle, call) => delayed(() => inspect(handle, call));
+          }
+          const running = f.run();
+          void running.then(
+            () => {
+              settled = true;
+            },
+            () => {
+              settled = true;
+            },
+          );
+          t.after(async () => {
+            f.owner.abort();
+            release();
+            closeCleanup();
+            await running;
+          });
+          try {
+            await entry;
+            assert.ok(f.sourceReads.some(({ kind }) => kind === "execution"));
+            f.owner.abort(new Error("controlled original observation cancellation"));
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(settled, false, "entered callback still belongs to observation");
+            assert.equal(supplierClosed, false);
+            release();
+            await cleanupEntry;
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(settled, false, "supplier cleanup must join too");
+            assert.equal(supplierClosed, false);
+            closeCleanup();
+            const result = await running;
+            assert.equal(supplierClosed, true);
+            notPositive(result);
+            assert.equal(result.status, "unknown");
+            assert.equal(result.reasonCode, "cancelled");
+            assert.equal(
+              f.sourceReads.some(({ kind }) => kind === "profiles" || kind === "observation"),
+              false,
+            );
+            // The authentic execution record still lacks its first retained ADD
+            // association. No native process is entered or replaced by this case.
+          } finally {
+            f.owner.abort();
+            release();
+            closeCleanup();
+            await running;
+          }
+        });
+      }
+    },
+  );
+}

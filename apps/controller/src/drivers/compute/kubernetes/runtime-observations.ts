@@ -32,6 +32,20 @@ import { sha256Hex } from "@openclaw-enterprise/utils";
 import { withComputeAbortSignal } from "../operation-context.ts";
 import { PREPARED_DEPLOYMENT_ANNOTATIONS } from "./prepared-deployment.ts";
 
+import {
+  createNodeExecutionClient,
+  type NodeExecutionClientConfiguration,
+  type NodeNetworkObservation,
+} from "./node-execution-client.ts";
+
+/** Protected deployment input to the original Compute constructor. This selects
+ * the existing node observer, never a request-supplied executable or authority. */
+export interface KubernetesNodeNetworkConfiguration {
+  readonly client: NodeExecutionClientConfiguration;
+  readonly networkName: string;
+  readonly interfaceName: string;
+}
+
 type Method = "discover" | "observe";
 type Input = ExactCreateEffectV1 | RuntimeObservationInputV1;
 type CompleteObservation = Extract<RuntimeObservationResultV1, { status: "complete" }>;
@@ -99,12 +113,33 @@ export interface KubernetesRuntimeUidChain {
 export interface KubernetesRuntimeObservationQuery {
   readonly input: RuntimeObservationInputV1;
   readonly chain: KubernetesRuntimeUidChain;
+  /** Actual same-session node/CNI observation when that original source is selected.
+   * It is data consumed by the existing profile producer, not sourceCall authority. */
+  readonly network?: NodeNetworkObservation;
+}
+
+/** Original creation/execution record operand. The existing authenticated
+ * producer retains this association across reads; these values alone confer no
+ * membership and this adapter never initializes them from a requested locator. */
+export interface KubernetesRetainedNetworkAssociation {
+  readonly serviceInstance: string;
+  readonly operationRef: string;
+  readonly namespaceDevice: string;
+  readonly namespaceInode: string;
+  readonly nodeUID: string;
+  readonly bootID: string;
+  readonly namespaceUID: string;
+  readonly podUID: string;
+  readonly sandboxID: string;
+  readonly sandboxCreatedAt: string;
+  readonly sandboxAttempt: number;
 }
 
 export interface KubernetesExecutionCorrespondence extends RecordRef {
   readonly query: KubernetesRuntimeObservationQuery;
   readonly binding: RuntimeBindingV1;
   readonly evidence: RuntimeEvidenceProvenanceV1;
+  readonly networkAssociation?: KubernetesRetainedNetworkAssociation;
 }
 
 export interface KubernetesProfileObservation extends RecordRef {
@@ -392,15 +427,46 @@ export class KubernetesRuntimeObservations implements Pick<
   private readonly dependencies: KubernetesRuntimeObservationDependencies | undefined;
   private readonly isolationProfile: "gvisor-systrap" | undefined;
   private nativeAdmission: KubernetesRuntimeObservationAdmission | undefined;
+  private readonly nodeNetwork:
+    | {
+        client: ReturnType<typeof createNodeExecutionClient>;
+        configuration: KubernetesNodeNetworkConfiguration;
+        assertSelected(): undefined;
+      }
+    | undefined;
 
   constructor(
     provider: ProviderReads,
     dependencies: KubernetesRuntimeObservationDependencies | undefined,
     isolationProfile: "gvisor-systrap" | undefined,
+    nodeNetwork?: Readonly<{
+      configuration: KubernetesNodeNetworkConfiguration;
+      assertSelected(): undefined;
+    }>,
   ) {
     this.provider = provider;
     this.dependencies = dependencies;
     this.isolationProfile = isolationProfile;
+    if (nodeNetwork !== undefined) {
+      const configuration = detached(nodeNetwork.configuration);
+      requireValue(
+        isolationProfile === "gvisor-systrap" &&
+          dependencies &&
+          configuration.client.clientConfiguration.enrollment.clusterRef ===
+            dependencies.clusterRef,
+        "ownership-mismatch",
+      );
+      requireValue(
+        /^[A-Za-z0-9_.-]{1,256}$/.test(configuration.networkName) &&
+          /^[A-Za-z0-9_.-]{1,15}$/.test(configuration.interfaceName),
+        "precondition-failed",
+      );
+      this.nodeNetwork = {
+        client: createNodeExecutionClient(configuration.client),
+        configuration,
+        assertSelected: nodeNetwork.assertSelected,
+      };
+    }
   }
 
   /** Captured by the original native constructor through the SAME Driver.
@@ -453,6 +519,7 @@ export class KubernetesRuntimeObservations implements Pick<
     call: RuntimeReadCallV1,
     ceiling: number,
     work: (boundedCall: RuntimeReadCallV1) => Promise<T>,
+    pending?: Set<Promise<unknown>>,
   ): Promise<T> {
     const admission = this.nativeAdmission;
     const clock = admission?.clock ?? this.dependencies?.clock;
@@ -489,11 +556,25 @@ export class KubernetesRuntimeObservations implements Pick<
     let timer: ReturnType<typeof setTimeout> | undefined;
     let aborted: (() => void) | undefined;
     try {
+      // Register the actual work before its callback can run. A timeout owns
+      // only refusal; it cannot settle a still-entered supplier operation.
+      const operation = Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return withComputeAbortSignal(signal, () => work({ ...call, signal }));
+      });
+      if (pending !== undefined) {
+        pending.add(operation);
+        void operation.then(
+          () => {
+            pending.delete(operation);
+          },
+          () => {
+            pending.delete(operation);
+          },
+        );
+      }
       const result = await Promise.race([
-        Promise.resolve().then(() => {
-          signal.throwIfAborted();
-          return withComputeAbortSignal(signal, () => work({ ...call, signal }));
-        }),
+        operation,
         new Promise<never>((_resolve, reject) => {
           aborted = () => {
             cancellation.abort();
@@ -559,58 +640,64 @@ export class KubernetesRuntimeObservations implements Pick<
     input: Input,
     call: RuntimeReadCallV1,
     original?: KubernetesObservationAuthorization,
+    pending?: Set<Promise<unknown>>,
   ): Promise<KubernetesObservationAuthorization> {
     const dependencies = this.nativeAdmission ?? this.dependencies;
     requireValue(dependencies, "authority-unavailable");
-    return this.bounded(call, 3000, async (currentCall) => {
-      const service = this.serviceSnapshot(
-        await dependencies.contextFactory.inspect(currentCall.context, currentCall),
-        currentCall,
-        input,
-      );
-      const value = await dependencies.readAuthorization(method, input, currentCall);
-      const authorization =
-        value === undefined
-          ? undefined
-          : {
-              ...value,
-              configuration: parseRuntimeAuthorityV1("serviceTrust", value.configuration),
-            };
-      currentCall.signal.throwIfAborted();
-      const again = this.serviceSnapshot(
-        await dependencies.contextFactory.inspect(currentCall.context, currentCall),
-        currentCall,
-        input,
-      );
-      requireValue(
-        authorization &&
-          authorization.transportBinding === service.transportBinding &&
-          again.transportBinding === service.transportBinding,
-        "authority-unavailable",
-      );
-      requireValue(
-        same(authorization.configuration, service.configuration) &&
-          same(again.configuration, service.configuration),
-        "authority-lost",
-      );
-      requireValue(
-        authorization.method === method &&
-          authorization.requestRef === call.requestRef &&
-          authorization.recipientRef === call.recipientRef &&
-          authorization.inputDigest === `sha256:${sha256Hex(serialized(input))}`,
-        "denied",
-      );
-      if (original)
+    return this.bounded(
+      call,
+      3000,
+      async (currentCall) => {
+        const service = this.serviceSnapshot(
+          await dependencies.contextFactory.inspect(currentCall.context, currentCall),
+          currentCall,
+          input,
+        );
+        const value = await dependencies.readAuthorization(method, input, currentCall);
+        const authorization =
+          value === undefined
+            ? undefined
+            : {
+                ...value,
+                configuration: parseRuntimeAuthorityV1("serviceTrust", value.configuration),
+              };
+        currentCall.signal.throwIfAborted();
+        const again = this.serviceSnapshot(
+          await dependencies.contextFactory.inspect(currentCall.context, currentCall),
+          currentCall,
+          input,
+        );
         requireValue(
-          original.transportBinding === authorization.transportBinding &&
-            same(original.configuration, authorization.configuration),
+          authorization &&
+            authorization.transportBinding === service.transportBinding &&
+            again.transportBinding === service.transportBinding,
+          "authority-unavailable",
+        );
+        requireValue(
+          same(authorization.configuration, service.configuration) &&
+            same(again.configuration, service.configuration),
           "authority-lost",
         );
-      return {
-        ...authorization,
-        configuration: parseRuntimeAuthorityV1("serviceTrust", authorization.configuration),
-      };
-    });
+        requireValue(
+          authorization.method === method &&
+            authorization.requestRef === call.requestRef &&
+            authorization.recipientRef === call.recipientRef &&
+            authorization.inputDigest === `sha256:${sha256Hex(serialized(input))}`,
+          "denied",
+        );
+        if (original)
+          requireValue(
+            original.transportBinding === authorization.transportBinding &&
+              same(original.configuration, authorization.configuration),
+            "authority-lost",
+          );
+        return {
+          ...authorization,
+          configuration: parseRuntimeAuthorityV1("serviceTrust", authorization.configuration),
+        };
+      },
+      pending,
+    );
   }
 
   private fresh(
@@ -653,9 +740,13 @@ export class KubernetesRuntimeObservations implements Pick<
     input: Input,
     call: RuntimeReadCallV1,
     evidence: (record: Record) => readonly RuntimeEvidenceProvenanceV1[],
+    pending?: Set<Promise<unknown>>,
   ): Promise<{ record: Record; recheck(): Promise<void> }> {
-    const contribution = await this.bounded(call, 10_000, (boundedCall) =>
-      reader.read(detached(query), boundedCall),
+    const contribution = await this.bounded(
+      call,
+      10_000,
+      (boundedCall) => reader.read(detached(query), boundedCall),
+      pending,
     );
     requireValue(contribution.status === "observed", "evidence-incomplete");
     const bytes = serialized(contribution.record);
@@ -672,48 +763,57 @@ export class KubernetesRuntimeObservations implements Pick<
     let original: KubernetesCurrentProducerRecord | undefined;
     let transport: RuntimeAuthorityTransportBindingV1 | undefined;
     const recheck = async () => {
-      await this.bounded(sourceCall, 3000, async (boundedCall) => {
-        const service = this.serviceSnapshot(
-          await reader.contextFactory.inspect(boundedCall.context, boundedCall),
-          boundedCall,
-          input,
-        );
-        const value = await reader.readCurrent(reference, boundedCall);
-        const current = value === undefined ? undefined : detached(value);
-        boundedCall.signal.throwIfAborted();
-        const again = this.serviceSnapshot(
-          await reader.contextFactory.inspect(boundedCall.context, boundedCall),
-          boundedCall,
-          input,
-        );
-        requireValue(
-          current &&
-            current.kind === kind &&
-            same(recordRef(current), reference) &&
-            current.recordDigest === `sha256:${sha256Hex(bytes)}`,
-          "evidence-incomplete",
-        );
-        requireValue(
-          same(current.configuration, service.configuration) &&
-            same(again.configuration, service.configuration) &&
-            service.transportBinding === again.transportBinding,
-          "authority-lost",
-        );
-        if (original)
+      await this.bounded(
+        sourceCall,
+        3000,
+        async (boundedCall) => {
+          const service = this.serviceSnapshot(
+            await reader.contextFactory.inspect(boundedCall.context, boundedCall),
+            boundedCall,
+            input,
+          );
+          const value = await reader.readCurrent(reference, boundedCall);
+          const current = value === undefined ? undefined : detached(value);
+          boundedCall.signal.throwIfAborted();
+          const again = this.serviceSnapshot(
+            await reader.contextFactory.inspect(boundedCall.context, boundedCall),
+            boundedCall,
+            input,
+          );
           requireValue(
-            same(current, original) && transport === again.transportBinding,
+            current &&
+              current.kind === kind &&
+              same(recordRef(current), reference) &&
+              current.recordDigest === `sha256:${sha256Hex(bytes)}`,
+            "evidence-incomplete",
+          );
+          requireValue(
+            same(current.configuration, service.configuration) &&
+              same(again.configuration, service.configuration) &&
+              service.transportBinding === again.transportBinding,
             "authority-lost",
           );
-        for (const item of evidence(record)) this.fresh(item, current.producer);
-        original = JSON.parse(serialized(current)) as KubernetesCurrentProducerRecord;
-        transport = again.transportBinding;
-      });
+          if (original)
+            requireValue(
+              same(current, original) && transport === again.transportBinding,
+              "authority-lost",
+            );
+          for (const item of evidence(record)) this.fresh(item, current.producer);
+          original = JSON.parse(serialized(current)) as KubernetesCurrentProducerRecord;
+          transport = again.transportBinding;
+        },
+        pending,
+      );
     };
     await recheck();
     return { record, recheck };
   }
 
-  private async correlation(input: ExactCreateEffectV1, call: RuntimeReadCallV1) {
+  private async correlation(
+    input: ExactCreateEffectV1,
+    call: RuntimeReadCallV1,
+    pending?: Set<Promise<unknown>>,
+  ) {
     const value = await this.contribution(
       "create-correlation",
       this.dependencies!.correlation,
@@ -721,6 +821,7 @@ export class KubernetesRuntimeObservations implements Pick<
       input,
       call,
       (record) => [record.evidence],
+      pending,
     );
     requireValue(same(value.record.input, input), "precondition-failed");
     requireValue(
@@ -741,10 +842,18 @@ export class KubernetesRuntimeObservations implements Pick<
     return value;
   }
 
-  private async root(correlation: KubernetesCreateCorrelation, call: RuntimeReadCallV1) {
-    const clients = await this.bounded(call, 10_000, () => this.provider.clients());
-    const namespace = await this.bounded(call, 10_000, () =>
-      this.provider.request(() => clients.core.readNamespace({ name: correlation.namespace })),
+  private async root(
+    correlation: KubernetesCreateCorrelation,
+    call: RuntimeReadCallV1,
+    pending?: Set<Promise<unknown>>,
+  ) {
+    const clients = await this.bounded(call, 10_000, () => this.provider.clients(), pending);
+    const namespace = await this.bounded(
+      call,
+      10_000,
+      () =>
+        this.provider.request(() => clients.core.readNamespace({ name: correlation.namespace })),
+      pending,
     );
     requireValue(
       namespace.kind === "Namespace" && namespace.apiVersion === "v1",
@@ -755,13 +864,17 @@ export class KubernetesRuntimeObservations implements Pick<
       namespaceIdentity.uid === correlation.object.target.kubernetesNamespaceUid,
       "ownership-mismatch",
     );
-    const deployment = await this.bounded(call, 10_000, () =>
-      this.provider.request(() =>
-        clients.apps.readNamespacedDeployment({
-          name: correlation.object.target.name,
-          namespace: correlation.namespace,
-        }),
-      ),
+    const deployment = await this.bounded(
+      call,
+      10_000,
+      () =>
+        this.provider.request(() =>
+          clients.apps.readNamespacedDeployment({
+            name: correlation.object.target.name,
+            namespace: correlation.namespace,
+          }),
+        ),
+      pending,
     );
     requireValue(
       deployment.kind === "Deployment" &&
@@ -781,22 +894,31 @@ export class KubernetesRuntimeObservations implements Pick<
   private async chain(
     correlation: KubernetesCreateCorrelation,
     call: RuntimeReadCallV1,
+    pending?: Set<Promise<unknown>>,
   ): Promise<KubernetesRuntimeUidChain> {
-    const root = await this.root(correlation, call);
-    const clients = await this.bounded(call, 10_000, () => this.provider.clients());
+    const root = await this.root(correlation, call, pending);
+    const clients = await this.bounded(call, 10_000, () => this.provider.clients(), pending);
     const limit = RUNTIME_EFFECT_LIMITS_V1.maxChildren;
-    const replicaSets = await this.bounded(call, 10_000, () =>
-      this.provider.request(() =>
-        clients.apps.listNamespacedReplicaSet({
-          namespace: correlation.namespace,
-          limit: limit + 1,
-        }),
-      ),
+    const replicaSets = await this.bounded(
+      call,
+      10_000,
+      () =>
+        this.provider.request(() =>
+          clients.apps.listNamespacedReplicaSet({
+            namespace: correlation.namespace,
+            limit: limit + 1,
+          }),
+        ),
+      pending,
     );
-    const pods = await this.bounded(call, 10_000, () =>
-      this.provider.request(() =>
-        clients.core.listNamespacedPod({ namespace: correlation.namespace, limit: limit + 1 }),
-      ),
+    const pods = await this.bounded(
+      call,
+      10_000,
+      () =>
+        this.provider.request(() =>
+          clients.core.listNamespacedPod({ namespace: correlation.namespace, limit: limit + 1 }),
+        ),
+      pending,
     );
     for (const [list, kind, version] of [
       [replicaSets, "ReplicaSetList", "apps/v1"],
@@ -847,6 +969,99 @@ export class KubernetesRuntimeObservations implements Pick<
     return { ...root, replicaSet: candidate.replicaSet, pod: podIdentity(candidate.pod) };
   }
 
+  private async captureNetwork(
+    query: KubernetesRuntimeObservationQuery,
+    correlation: KubernetesCreateCorrelation,
+    authorization: KubernetesObservationAuthorization,
+    execution: KubernetesExecutionCorrespondence,
+    call: RuntimeReadCallV1,
+    pending?: Set<Promise<unknown>>,
+  ) {
+    const source = this.nodeNetwork;
+    requireValue(source && this.dependencies, "authority-unavailable");
+    const expected = execution.networkAssociation;
+    // The original producer must retain the first genuine creator/CRI/ADD join.
+    // A new read or replacement Driver must not silently adopt another ADD.
+    requireValue(expected, "evidence-incomplete");
+    const binding = execution.binding;
+    const enrollment = source.configuration.client.clientConfiguration.enrollment;
+    requireValue(
+      enrollment.namespace === correlation.namespace &&
+        enrollment.nodeName === query.chain.pod.nodeName,
+      "ownership-mismatch",
+    );
+    requireValue(source.assertSelected() === undefined, "authority-lost");
+    await this.authorize("observe", query.input, call, authorization, pending);
+    call.signal.throwIfAborted();
+    const handle = await source.client.captureNetwork({
+      requestRef: call.requestRef,
+      podName: query.chain.pod.name,
+      podUID: query.chain.pod.uid,
+      deadline: new Date(Math.min(Date.parse(call.deadline), Date.now() + 10_000)).toISOString(),
+      signal: call.signal,
+      networkName: source.configuration.networkName,
+      interfaceName: source.configuration.interfaceName,
+    });
+    let retained = false;
+    try {
+      const record = await source.client.inspectNetwork(handle);
+      const physical = record.execution.physical as Readonly<Record<string, unknown>>;
+      requireValue(
+        same(expected, {
+          serviceInstance: record.attachment.serviceInstance,
+          operationRef: record.attachment.operationRef,
+          namespaceDevice: record.attachment.namespaceDevice,
+          namespaceInode: record.attachment.namespaceInode,
+          nodeUID: physical.nodeUID,
+          bootID: physical.bootID,
+          namespaceUID: physical.namespaceUID,
+          podUID: physical.podUID,
+          sandboxID: physical.sandboxID,
+          sandboxCreatedAt: physical.sandboxCreatedAt,
+          sandboxAttempt: physical.sandboxAttempt,
+        }),
+        "ownership-mismatch",
+      );
+      requireValue(
+        binding.provider === "occ/kubernetes-gvisor" &&
+          binding.runscSandboxId === physical.sandboxID &&
+          binding.runtimeBinaryDigest === physical.runtimeBinaryDigest,
+        "ownership-mismatch",
+      );
+      requireValue(
+        physical.namespaceUID === query.chain.namespace.uid &&
+          physical.podUID === query.chain.pod.uid &&
+          physical.podResourceVersion === query.chain.pod.resourceVersion &&
+          physical.nodeUID === enrollment.nodeUID,
+        "ownership-mismatch",
+      );
+      requireValue(
+        same(query.chain, await this.chain(correlation, call, pending)),
+        "ownership-mismatch",
+      );
+      await this.authorize("observe", query.input, call, authorization, pending);
+      requireValue(!call.signal.aborted && source.assertSelected() === undefined, "authority-lost");
+      retained = true;
+      return {
+        record,
+        recheck: async () => {
+          requireValue(
+            !call.signal.aborted && source.assertSelected() === undefined,
+            "authority-lost",
+          );
+          const current = await source.client.inspectNetwork(handle);
+          requireValue(
+            same(current, record) && !call.signal.aborted && source.assertSelected() === undefined,
+            "authority-lost",
+          );
+        },
+        close: () => source.client.close(handle),
+      };
+    } finally {
+      if (!retained) await source.client.close(handle);
+    }
+  }
+
   async discover(value: ExactCreateEffectV1, call: RuntimeReadCallV1): Promise<DiscoveryResultV1> {
     const input = parseRuntimeEffectsV1("exactCreate", value);
     try {
@@ -886,103 +1101,139 @@ export class KubernetesRuntimeObservations implements Pick<
     call: RuntimeReadCallV1,
   ): Promise<RuntimeObservationResultV1> {
     const input = parseRuntimeEffectsV1("observationInput", value);
+    // Only the selected CNI harness observation owns this additional drain.
+    // It is private work accounting, not source or observation membership.
+    const pending =
+      this.nodeNetwork !== undefined && input.target.component === "harness"
+        ? new Set<Promise<unknown>>()
+        : undefined;
+    let entered: Promise<RuntimeObservationResultV1> | undefined;
     try {
-      return await this.bounded(call, 10_000, async (call) => {
-        const authorization = await this.authorize("observe", input, call);
-        requireValue(this.dependencies, "authority-unavailable");
-        requireValue(input.kind === "preallocated-candidate", "capability-unsupported");
-        requireValue(
-          input.target.component !== "harness" || this.isolationProfile === "gvisor-systrap",
-          "capability-unsupported",
-        );
-        const dependencies = this.dependencies!;
-        const correlation = await this.correlation(input.createEffect, call);
-        const chain = await this.chain(correlation.record, call);
-        const query = { input, chain };
-        const execution = await this.contribution(
-          "execution",
-          dependencies.execution,
-          query,
-          input,
-          call,
-          (record) => [record.evidence],
-        );
-        requireValue(same(execution.record.query, query), "precondition-failed");
-        const binding = execution.record.binding;
-        requireValue(
-          binding.clusterRef === dependencies.clusterRef &&
-            binding.kubernetesNamespaceUid === chain.namespace.uid &&
-            binding.deploymentUid === chain.deployment.uid &&
-            binding.replicaSetUid === chain.replicaSet.uid &&
-            binding.podUid === chain.pod.uid,
-          "ownership-mismatch",
-        );
-        if (input.target.component === "harness")
-          requireValue(
-            binding.provider === "occ/kubernetes-gvisor" &&
-              chain.pod.runtimeClassName === "oce-gvisor-systrap",
-            "ownership-mismatch",
-          );
-        else requireValue(binding.provider === "occ/kubernetes-gateway", "ownership-mismatch");
-        const profiles = await this.contribution(
-          "profiles",
-          dependencies.profiles,
-          query,
-          input,
-          call,
-          (record) => [
-            record.evidence,
-            record.profile.delivered.evidence,
-            record.profile.effective.evidence,
-          ],
-        );
-        requireValue(same(profiles.record.query, query), "precondition-failed");
-        const summaryQuery = {
-          ...query,
-          correlation: recordRef(correlation.record),
-          execution: recordRef(execution.record),
-          profiles: recordRef(profiles.record),
-        };
-        const summary = await this.contribution(
-          "observation",
-          dependencies.observation,
-          summaryQuery,
-          input,
-          call,
-          (record) => [record.evidence, record.ownerChainEvidence],
-        );
-        requireValue(same(summary.record.query, summaryQuery), "precondition-failed");
-        requireValue(
-          same(chain, await this.chain(correlation.record, call)),
-          "evidence-incomplete",
-        );
-        for (const contribution of [correlation, execution, profiles, summary])
-          await contribution.recheck();
-        await this.authorize("observe", input, call, authorization);
-        for (const evidence of [
-          correlation.record.evidence,
-          execution.record.evidence,
-          profiles.record.evidence,
-          profiles.record.profile.delivered.evidence,
-          profiles.record.profile.effective.evidence,
-          summary.record.evidence,
-          summary.record.ownerChainEvidence,
-        ])
-          this.fresh(evidence);
-        return parseRuntimeEffectsResponseV1("observe", input, {
-          schemaVersion: 1,
-          status: "complete",
-          input,
-          object: correlation.record.object,
-          binding,
-          observation: summary.record.evidence,
-          ownerChainEvidence: summary.record.ownerChainEvidence,
-          executionCorrespondenceEvidence: execution.record.evidence,
-          profile: profiles.record.profile,
-          identityEvidence: null,
-          eligibility: "observation-only",
-        });
-      });
+      return await this.bounded(
+        call,
+        10_000,
+        (call) => {
+          entered = Promise.resolve().then(async () => {
+            const authorization = await this.authorize("observe", input, call, undefined, pending);
+            requireValue(this.dependencies, "authority-unavailable");
+            requireValue(input.kind === "preallocated-candidate", "capability-unsupported");
+            requireValue(
+              input.target.component !== "harness" || this.isolationProfile === "gvisor-systrap",
+              "capability-unsupported",
+            );
+            const dependencies = this.dependencies!;
+            const correlation = await this.correlation(input.createEffect, call, pending);
+            const chain = await this.chain(correlation.record, call, pending);
+            const query = { input, chain };
+            const execution = await this.contribution(
+              "execution",
+              dependencies.execution,
+              query,
+              input,
+              call,
+              (record) => [record.evidence],
+              pending,
+            );
+            requireValue(same(execution.record.query, query), "precondition-failed");
+            const binding = execution.record.binding;
+            requireValue(
+              binding.clusterRef === dependencies.clusterRef &&
+                binding.kubernetesNamespaceUid === chain.namespace.uid &&
+                binding.deploymentUid === chain.deployment.uid &&
+                binding.replicaSetUid === chain.replicaSet.uid &&
+                binding.podUid === chain.pod.uid,
+              "ownership-mismatch",
+            );
+            if (input.target.component === "harness")
+              requireValue(
+                binding.provider === "occ/kubernetes-gvisor" &&
+                  chain.pod.runtimeClassName === "oce-gvisor-systrap",
+                "ownership-mismatch",
+              );
+            else requireValue(binding.provider === "occ/kubernetes-gateway", "ownership-mismatch");
+            const network =
+              this.nodeNetwork && input.target.component === "harness"
+                ? await this.captureNetwork(
+                    query,
+                    correlation.record,
+                    authorization,
+                    execution.record,
+                    call,
+                    pending,
+                  )
+                : undefined;
+            try {
+              const profileQuery =
+                network === undefined ? query : { ...query, network: network.record };
+              const profiles = await this.contribution(
+                "profiles",
+                dependencies.profiles,
+                profileQuery,
+                input,
+                call,
+                (record) => [
+                  record.evidence,
+                  record.profile.delivered.evidence,
+                  record.profile.effective.evidence,
+                ],
+                pending,
+              );
+              requireValue(same(profiles.record.query, profileQuery), "precondition-failed");
+              const summaryQuery = {
+                ...profileQuery,
+                correlation: recordRef(correlation.record),
+                execution: recordRef(execution.record),
+                profiles: recordRef(profiles.record),
+              };
+              const summary = await this.contribution(
+                "observation",
+                dependencies.observation,
+                summaryQuery,
+                input,
+                call,
+                (record) => [record.evidence, record.ownerChainEvidence],
+                pending,
+              );
+              requireValue(same(summary.record.query, summaryQuery), "precondition-failed");
+              requireValue(
+                same(chain, await this.chain(correlation.record, call, pending)),
+                "evidence-incomplete",
+              );
+              for (const contribution of [correlation, execution, profiles, summary])
+                await contribution.recheck();
+              await this.authorize("observe", input, call, authorization, pending);
+              if (network !== undefined) await network.recheck();
+              for (const evidence of [
+                correlation.record.evidence,
+                execution.record.evidence,
+                profiles.record.evidence,
+                profiles.record.profile.delivered.evidence,
+                profiles.record.profile.effective.evidence,
+                summary.record.evidence,
+                summary.record.ownerChainEvidence,
+              ])
+                this.fresh(evidence);
+              return parseRuntimeEffectsResponseV1("observe", input, {
+                schemaVersion: 1,
+                status: "complete",
+                input,
+                object: correlation.record.object,
+                binding,
+                observation: summary.record.evidence,
+                ownerChainEvidence: summary.record.ownerChainEvidence,
+                executionCorrespondenceEvidence: execution.record.evidence,
+                profile: profiles.record.profile,
+                identityEvidence: null,
+                eligibility: "observation-only",
+              });
+            } finally {
+              if (network !== undefined) await network.close();
+            }
+          });
+          return entered;
+        },
+        pending,
+      );
     } catch (error) {
       const unavailable = this.failure(error, call);
       return parseRuntimeEffectsResponseV1("observe", input, {
@@ -991,6 +1242,16 @@ export class KubernetesRuntimeObservations implements Pick<
         input,
         reasonCode: unavailable.reasonCode,
       });
+    } finally {
+      // The body joins the original native close, including its rejection.
+      // A rejected close is refusal, never proof of physical closure. For the
+      // selected lifetime, also drain actual work lost by nested timeout races.
+      if (entered !== undefined)
+        await entered.then(
+          () => undefined,
+          () => undefined,
+        );
+      while (pending !== undefined && pending.size > 0) await Promise.allSettled([...pending]);
     }
   }
 

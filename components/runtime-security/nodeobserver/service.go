@@ -45,6 +45,7 @@ type originalRequest struct {
 	identity     *identity.Source
 	bundleDigest string
 	request      Request
+	network      *NetworkRequest
 	raw          []byte
 	digest       string
 	deadline     time.Time
@@ -66,7 +67,7 @@ func receive(connection *servicepeer.Connection, identitySource *identity.Source
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	r, err := ParseRequest(raw)
+	r, network, err := parseCaptureRequest(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func receive(connection *servicepeer.Connection, identitySource *identity.Source
 	if _, err = connection.Inspect(); err != nil {
 		return nil, ErrUnavailable
 	}
-	original := &originalRequest{connection: connection, identity: identitySource, bundleDigest: e.TrustBundleDigest, request: r, raw: bytes.Clone(raw), digest: hash(raw), deadline: d}
+	original := &originalRequest{connection: connection, identity: identitySource, bundleDigest: e.TrustBundleDigest, request: r, network: network, raw: bytes.Clone(raw), digest: hash(raw), deadline: d}
 	if original.current() != nil {
 		return nil, ErrUnavailable
 	}
@@ -132,17 +133,29 @@ func serveConnection(ctx context.Context, source *Source, identitySource *identi
 		}
 	}()
 	defer func() { cancel(); connection.Close(); <-done }()
-	capture, err := source.capture(call, original.request, original.digest)
-	if err != nil {
-		return err
+	var raw []byte
+	var current func() error
+	if original.network == nil {
+		capture, err := source.capture(call, original.request, original.digest)
+		if err != nil {
+			return err
+		}
+		defer capture.close()
+		raw, current = capture.raw, capture.current
+	} else {
+		capture, err := source.captureNetwork(call, *original.network, original.digest)
+		if err != nil {
+			return err
+		}
+		defer capture.close()
+		raw, current = capture.raw, capture.current
 	}
-	defer capture.close()
-	recordDigest := hash(capture.raw)
+	recordDigest := hash(raw)
 	write := func(status string) error {
-		if original.current() != nil || capture.current() != nil || original.current() != nil || call.Err() != nil {
+		if original.current() != nil || current() != nil || original.current() != nil || call.Err() != nil {
 			return ErrUnavailable
 		}
-		reply := Reply{SchemaVersion: 1, Status: status, RequestDigest: original.digest, RecordDigest: recordDigest, Record: json.RawMessage(capture.raw)}
+		reply := Reply{SchemaVersion: 1, Status: status, RequestDigest: original.digest, RecordDigest: recordDigest, Record: json.RawMessage(raw)}
 		if servicebridge.WriteFrame(connection, encoded(reply), MaxBytes) != nil {
 			return ErrUnavailable
 		}
@@ -237,6 +250,7 @@ type ClientCapture struct {
 	cancel                                                      context.CancelFunc
 	requestDigest, recordDigest, bundleDigest, enrollmentDigest string
 	request                                                     Request
+	network                                                     *NetworkRequest
 	record                                                      Record
 	raw                                                         []byte
 	mu                                                          sync.Mutex
@@ -253,14 +267,21 @@ type ClientConfiguration struct {
 }
 
 func Capture(ctx context.Context, configuration ClientConfiguration, r Request) (*ClientCapture, error) {
+	return captureClient(ctx, configuration, encoded(r))
+}
+
+func CaptureNetwork(ctx context.Context, configuration ClientConfiguration, r NetworkRequest) (*ClientCapture, error) {
+	return captureClient(ctx, configuration, encoded(r))
+}
+
+func captureClient(ctx context.Context, configuration ClientConfiguration, raw []byte) (*ClientCapture, error) {
 	validated, err := ParseEnrollment(encoded(configuration.Enrollment))
 	if err != nil || !cleanPath(configuration.WorkloadSocket) || len(configuration.WorkloadSocket) > 103 || !digest.MatchString(configuration.EnrollmentDigest) {
 		return nil, ErrUnavailable
 	}
 	e := validated
 	e.WorkloadSocket = configuration.WorkloadSocket
-	raw := encoded(r)
-	r, err = ParseRequest(raw)
+	r, network, err := parseCaptureRequest(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +293,7 @@ func Capture(ctx context.Context, configuration ClientConfiguration, r Request) 
 		return nil, ErrUnavailable
 	}
 	owned, cancel := context.WithDeadline(ctx, deadline)
-	c := &ClientCapture{cancel: cancel, requestDigest: hash(raw), bundleDigest: e.TrustBundleDigest, enrollmentDigest: configuration.EnrollmentDigest, request: r}
+	c := &ClientCapture{cancel: cancel, requestDigest: hash(raw), bundleDigest: e.TrustBundleDigest, enrollmentDigest: configuration.EnrollmentDigest, request: r, network: network}
 	c.self = c
 	ok := false
 	defer func() {
@@ -319,8 +340,16 @@ func (c *ClientCapture) reply(status string) error {
 		return ErrUnavailable
 	}
 	var record Record
-	if json.Unmarshal(reply.Record, &record) != nil || record.SchemaVersion != 1 || record.Kind != "node-physical-execution" || record.RequestDigest != c.requestDigest || record.EnrollmentDigest != c.enrollmentDigest || record.Physical.NodeUID != c.request.NodeUID || record.Physical.PodUID != c.request.PodUID || record.ValidUntil != c.request.Deadline {
-		return ErrUnavailable
+	if c.network == nil {
+		if decode(reply.Record, &record) != nil || record.SchemaVersion != 1 || record.Kind != "node-physical-execution" || record.RequestDigest != c.requestDigest || record.EnrollmentDigest != c.enrollmentDigest || record.Physical.NodeUID != c.request.NodeUID || record.Physical.PodUID != c.request.PodUID || record.ValidUntil != c.request.Deadline {
+			return ErrUnavailable
+		}
+	} else {
+		network, err := parseNetworkRecord(reply.Record, *c.network, c.requestDigest, c.enrollmentDigest)
+		if err != nil {
+			return err
+		}
+		record = network.Execution
 	}
 	if status == "current" && (reply.RecordDigest != c.recordDigest || !bytes.Equal(c.raw, reply.Record)) {
 		return ErrUnavailable
@@ -343,7 +372,7 @@ func (c *ClientCapture) Record() (Record, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || c.network != nil {
 		return Record{}, ErrUnavailable
 	}
 	var record Record
@@ -351,6 +380,17 @@ func (c *ClientCapture) Record() (Record, error) {
 		return record, ErrUnavailable
 	}
 	return record, nil
+}
+func (c *ClientCapture) NetworkRecord() (NetworkRecord, error) {
+	if c == nil || c.self != c {
+		return NetworkRecord{}, ErrUnavailable
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.network == nil {
+		return NetworkRecord{}, ErrUnavailable
+	}
+	return parseNetworkRecord(c.raw, *c.network, c.requestDigest, c.enrollmentDigest)
 }
 func (c *ClientCapture) Inspect() error {
 	if c == nil || c.self != c {
@@ -403,11 +443,7 @@ func RunClient(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err != nil {
 		return ErrUnavailable
 	}
-	r, err := ParseRequest(raw)
-	if err != nil {
-		return err
-	}
-	c, err := Capture(ctx, configuration, r)
+	c, err := captureClient(ctx, configuration, raw)
 	if err != nil {
 		return err
 	}

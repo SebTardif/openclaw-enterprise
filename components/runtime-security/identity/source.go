@@ -581,6 +581,9 @@ func safeError(err error) *Error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return contextFailure(err)
 	}
+	if status.Code(err) == codes.Canceled {
+		return failure("ABORTED")
+	}
 	if status.Code(err) == codes.DeadlineExceeded {
 		return failure("TIMEOUT")
 	}

@@ -71,6 +71,70 @@ type Request struct {
 	Deadline      string `json:"deadline"`
 }
 
+// NetworkRequest selects an additional physical read on the same authenticated
+// execution request. Neither the selectors nor its result grant Work authority.
+type NetworkRequest struct {
+	SchemaVersion int     `json:"schemaVersion"`
+	Method        string  `json:"method"`
+	Execution     Request `json:"execution"`
+	NetworkName   string  `json:"networkName"`
+	InterfaceName string  `json:"interfaceName"`
+}
+
+type NetworkAttachment struct {
+	RecordJSON      string `json:"recordJSON"`
+	RecordDigest    string `json:"recordDigest"`
+	ServiceInstance string `json:"serviceInstance"`
+	OperationRef    string `json:"operationRef"`
+	NamespaceDevice string `json:"namespaceDevice"`
+	NamespaceInode  string `json:"namespaceInode"`
+}
+
+// The exact attachment bytes stay a string: native uint64 identities must not
+// round through a JavaScript number or a different JSON serialization.
+type NetworkRecord struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	Kind          string            `json:"kind"`
+	Execution     Record            `json:"execution"`
+	Attachment    NetworkAttachment `json:"attachment"`
+}
+
+func parseCaptureRequest(raw []byte) (Request, *NetworkRequest, error) {
+	if r, err := ParseRequest(raw); err == nil {
+		return r, nil, nil
+	}
+	var network NetworkRequest
+	if decode(raw, &network) != nil || network.SchemaVersion != 1 || network.Method != "capture-network" || !attachmentReference.MatchString(network.NetworkName) || !attachmentInterface.MatchString(network.InterfaceName) {
+		return Request{}, nil, ErrUnavailable
+	}
+	r, err := ParseRequest(encoded(network.Execution))
+	if err != nil {
+		return Request{}, nil, err
+	}
+	return r, &network, nil
+}
+
+func networkAttachment(record attachmentRecord, raw []byte) NetworkAttachment {
+	return NetworkAttachment{RecordJSON: string(raw), RecordDigest: hash(raw), ServiceInstance: record.ServiceInstance, OperationRef: record.OperationRef, NamespaceDevice: strconv.FormatUint(record.Topology.PodNamespace.Device, 10), NamespaceInode: strconv.FormatUint(record.Topology.PodNamespace.Inode, 10)}
+}
+
+func parseNetworkRecord(raw []byte, request NetworkRequest, requestDigest, enrollmentDigest string) (NetworkRecord, error) {
+	var record NetworkRecord
+	if decode(raw, &record) != nil || record.SchemaVersion != 1 || record.Kind != "node-physical-network" {
+		return record, ErrUnavailable
+	}
+	execution := record.Execution
+	if execution.SchemaVersion != 1 || execution.Kind != "node-physical-execution" || execution.RequestDigest != requestDigest || execution.EnrollmentDigest != enrollmentDigest || execution.ValidUntil != request.Execution.Deadline || execution.Physical.NodeUID != request.Execution.NodeUID || execution.Physical.PodUID != request.Execution.PodUID {
+		return record, ErrUnavailable
+	}
+	attachmentRaw := []byte(record.Attachment.RecordJSON)
+	var attachment attachmentRecord
+	if decodeAttachment(attachmentRaw, &attachment) != nil || !attachment.matches(attachmentRequest{SchemaVersion: 1, Operation: "ACQUIRE", RequestRef: request.Execution.RequestRef, ContainerID: execution.Physical.SandboxID, NetworkName: request.NetworkName, InterfaceName: request.InterfaceName}, attachment.Topology.PodNamespace) || record.Attachment != networkAttachment(attachment, attachmentRaw) {
+		return record, ErrUnavailable
+	}
+	return record, nil
+}
+
 type Container struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`

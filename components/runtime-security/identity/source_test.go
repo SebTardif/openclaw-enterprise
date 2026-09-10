@@ -405,6 +405,36 @@ func TestTrustViewConcurrentCompleteGenerations(t *testing.T) {
 	unavailableTrustView(t, f.source, "ABORTED")
 }
 
+func TestWatchStatusPreservesCancellationAndFailureCodes(t *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		status codes.Code
+		code   string
+	}{
+		{"cancelled", codes.Canceled, "ABORTED"},
+		{"deadline", codes.DeadlineExceeded, "TIMEOUT"},
+		{"unavailable", codes.Unavailable, "UNAVAILABLE"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newFixture(t, nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			must(t, f.source.Start(ctx))
+			// End the actual external stream while the caller stays live. This
+			// forces the SDK watch-error path to classify a gRPC status without
+			// the caller's cancellation callback winning the terminal-state race.
+			f.wire.events <- wireEvent{end: true, err: status.Error(scenario.status, "fixture stream ended")}
+			eventually(t, func() bool { _, err := f.source.TrustView(); return err != nil })
+			if ctx.Err() != nil {
+				t.Fatal("watch failure cancelled the caller's context")
+			}
+			unavailableTrustView(t, f.source, scenario.code)
+			_, err := f.source.Metadata()
+			safeError(t, err, scenario.code)
+		})
+	}
+}
+
 func TestX509ExactIdentityOverridesSharedHint(t *testing.T) {
 	f := newFixture(t, func(w *wireServer, c credentials) {
 		first, selected := clone(c.other), clone(c.first)

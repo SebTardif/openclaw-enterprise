@@ -219,3 +219,107 @@ test("factory correlation owner preserves original construction, association and
   assert.equal(lateMethodReads, 0);
   assert.equal(clusterReads, 1);
 });
+
+// These protected-input shapes exercise the actual constructor only. The native
+// paths are deliberately unavailable; no capture, provider read or enrollment is
+// performed or inferred from successful construction.
+test("factory forwards selected CNI input without replacing original ownership", async (t) => {
+  const options = structuredClone(originalOptions);
+  delete options.runtime;
+  options.isolationProfile = "gvisor-systrap";
+  options.servicePrincipalCredentials = { mode: "disabled" };
+  options.images = {
+    gateway: `example.invalid/gateway@sha256:${"1".repeat(64)}`,
+    agent: `example.invalid/harness@sha256:${"2".repeat(64)}`,
+    requireImmutableDigest: true,
+  };
+  const configuration = {
+    id: "controlled-cni-configuration",
+    capability: "configuration",
+    implementation: "controlled",
+  };
+  const dependencies = Object.freeze({ clusterRef: "controlled-cluster" });
+  const nodeNetwork = Object.freeze({
+    client: Object.freeze({
+      binaryPath: "/unavailable-node-observer/oce-node-observer",
+      binaryDigest: `sha256:${"3".repeat(64)}`,
+      clientConfiguration: Object.freeze({
+        enrollment: Object.freeze({
+          clusterRef: "controlled-cluster",
+          namespace: "controlled-namespace",
+          nodeName: "controlled-node",
+          nodeUID: "controlled-node-uid",
+        }),
+        workloadSocket: "/unavailable-node-observer/workload.sock",
+        enrollmentDigest: `sha256:${"4".repeat(64)}`,
+      }),
+    }),
+    networkName: "pods",
+    interfaceName: "eth0",
+  });
+  const construct = (id, observations, network) =>
+    createComputeDriver(
+      { id, implementation: GVISOR_IMPLEMENTATION, configuration: options },
+      configuration,
+      undefined,
+      undefined,
+      undefined,
+      observations,
+      network,
+    );
+  const driver = construct("factory-cni", dependencies, nodeNetwork);
+  assert.equal(Object.getPrototypeOf(driver), KubernetesComputeDriver.prototype);
+  assert.equal(
+    selectedComputeWorkloadProfileCapability(driver),
+    driver.getWorkloadProfileCapability(),
+  );
+  assert.equal(selectedComputeRendererOwner(driver), driver.getRendererOwner());
+  assert.equal(driver.apiClients, undefined);
+
+  // If the factory drops argument seven these original constructor refusals
+  // would disappear. The node input cannot compensate for absent or mismatched
+  // observation dependencies, nor bypass the selected interface grammar.
+  const unavailable = { message: "The exact Kubernetes runtime observation is unavailable." };
+  assert.throws(() => construct("cni-without-observations", undefined, nodeNetwork), unavailable);
+  assert.throws(
+    () => construct("cni-wrong-cluster", { clusterRef: "another-cluster" }, nodeNetwork),
+    unavailable,
+  );
+  assert.throws(
+    () =>
+      construct("cni-wrong-interface", dependencies, {
+        ...nodeNetwork,
+        interfaceName: "eth0/other",
+      }),
+    unavailable,
+  );
+
+  // Omitting the optional CNI source retains the original observation-only
+  // construction. Both instances still require their own original selection.
+  const omitted = construct("factory-no-cni", dependencies, undefined);
+  assert.equal(Object.getPrototypeOf(omitted), KubernetesComputeDriver.prototype);
+  assert.equal(omitted.apiClients, undefined);
+  const selection = new DriverSelection();
+  selection.registerDriver(driver);
+  selection.registerDriver(omitted);
+  selection.selectDriver("compute", omitted.id);
+  assert.throws(() => createSelectedComputeCorrelationObservationOwner(driver, selection), {
+    message: "The expected Driver is not the current selection.",
+  });
+  const omittedOwner = createSelectedComputeCorrelationObservationOwner(omitted, selection);
+  t.after(async () => {
+    await omittedOwner.close();
+  });
+  assert.throws(() => selection.selectDriver("compute", driver.id));
+  await omittedOwner.close();
+  assert.equal(selection.selectDriver("compute", driver.id), driver);
+  const owner = createSelectedComputeCorrelationObservationOwner(driver, selection);
+  t.after(async () => {
+    await owner.close();
+  });
+  assert.throws(() => selection.selectDriver("compute", omitted.id));
+  await owner.close();
+  assert.equal(selection.selectDriver("compute", omitted.id), omitted);
+  assert.equal(driver.apiClients, undefined);
+  assert.equal(omitted.apiClients, undefined);
+});

@@ -27,6 +27,7 @@ import {
   type KubernetesCreateCorrelationObservationOwnerV1,
   type KubernetesRuntimeObservationAdmission,
   type KubernetesRuntimeObservationDependencies,
+  type KubernetesNodeNetworkConfiguration,
 } from "./runtime-observations.ts";
 import {
   KubernetesInstallationProcess,
@@ -564,6 +565,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly lifecycleDrivers?: readonly Driver[];
       readonly sandboxDriver?: SandboxDriver;
       readonly runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies;
+      readonly nodeNetworkObservation?: KubernetesNodeNetworkConfiguration;
       readonly installationProcessDependencies?: KubernetesInstallationProcessDependencies;
       readonly agentGatewayDependencies?: KubernetesAgentGatewayDependencies;
       readonly resourcePolicy?: KubernetesResourcePolicy;
@@ -616,6 +618,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
     this.agentGatewaySelected = selection.agentGatewayDependencies !== undefined;
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
+    const observationDriverId = this.id;
+    const observationImplementation = this.implementation;
+    const observationOptions = this.options;
     this.runtimeObservations = new KubernetesRuntimeObservations(
       {
         clients: () => this.clients(),
@@ -623,6 +628,22 @@ export class KubernetesComputeDriver implements ComputeDriver {
       },
       selection.runtimeObservationDependencies,
       this.options.isolationProfile,
+      selection.nodeNetworkObservation === undefined
+        ? undefined
+        : {
+            configuration: selection.nodeNetworkObservation,
+            assertSelected: () => {
+              if (
+                this.id !== observationDriverId ||
+                this.implementation !== observationImplementation ||
+                this.options !== observationOptions
+              )
+                throw new ConfigurationFailure(
+                  "The original node observation Driver is no longer selected.",
+                );
+              return undefined;
+            },
+          },
     );
     this.installationProcess = new KubernetesInstallationProcess(
       {
