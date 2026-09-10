@@ -188,6 +188,34 @@ See the
 [Harness execution topology flow](../flows/harness-execution-topology.md) for
 runtime selection, identity boundaries, and activation.
 
+## Execution duration selection
+
+`maximumExecutionMs` selects an Agent's execution duration cap in milliseconds.
+Create omission defaults to `null` (uncapped). PATCH omission preserves the saved
+value; explicit `null` clears a finite cap. A finite value must be a positive
+safe integer, from `1` through `9007199254740991`. There is no fifteen-minute
+configuration ceiling. For example, a two-hour selection is:
+
+```json
+{
+  "configurationId": "cfg_123e4567-e89b-42d3-a456-426614174000",
+  "maximumExecutionMs": 7200000
+}
+```
+
+Agent reads always return this field. Deployment copies the saved value into
+its immutable revision; a subsequent draft edit affects future deployments.
+The retained deployment command's `expectedDraft.maximumExecutionMs` must match
+the saved selection exactly, including `null`, so a changed cap conflicts with a
+stale command. Configuration selection alone grants no execution authority.
+
+Historical immutable revisions can omit `maximumExecutionMs`. Absence means the
+revision has no recorded execution policy and cannot supply a new executable
+selection; it does not mean uncapped. Every newly admitted revision explicitly
+records either `null` or a finite value. Existing attempt policies remain
+unchanged. Runtime enforcement and credential lifetimes are separate from this
+persisted configuration contract.
+
 ## Editable configuration
 
 An Agent's `configurationId` selects exactly one native OpenClaw Configuration

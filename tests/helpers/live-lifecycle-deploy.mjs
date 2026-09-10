@@ -58,6 +58,7 @@ export async function prepareLiveDeployCommand({ request, namespaceId, agentId }
       configurationGeneration: configuration.generation,
       providerId: agent.providerId,
       executionMode: agent.executionMode,
+      maximumExecutionMs: agent.maximumExecutionMs,
       serviceAccountId: agent.serviceAccountId,
       workloadProfileSelection: {
         manifestRef: selection.manifestRef,

@@ -80,6 +80,7 @@ export function createDeploymentCandidateNormalizerV2(
         lockedAgent.configurationId !== expected.configurationId ||
         lockedAgent.providerId !== expected.providerId ||
         lockedAgent.executionMode !== expected.executionMode ||
+        lockedAgent.maximumExecutionMs !== expected.maximumExecutionMs ||
         (lockedAgent.serviceAccountId ?? null) !== expected.serviceAccountId ||
         selected.value.manifestRef !== expected.workloadProfileSelection.manifestRef ||
         selected.value.manifestDigest !== expected.workloadProfileSelection.manifestDigest ||
@@ -242,6 +243,7 @@ export function createDeploymentCandidateNormalizerV2(
       namespaceId: namespace.id,
       agentId: lockedAgent.id,
       revision: previous.length + 1,
+      maximumExecutionMs: lockedAgent.maximumExecutionMs,
       providerId,
       configurationId: configuration.id,
       configurationKind: configuration.kind,

@@ -49,6 +49,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     configurationId: configuration.id,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     servicePrincipalId: identifier("service-agent"),
     createdAt: new Date().toISOString(),
   };
@@ -71,6 +72,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
       gateway: { controlUi: { enabled: false } },
     },
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+    maximumExecutionMs: null,
     compute: { id: "compute-contract", implementation: "deterministic-contract" },
     servicePrincipalId: agent.servicePrincipalId,
     createdAt: new Date().toISOString(),
@@ -656,6 +658,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     configurationId: accountConfiguration.id,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     servicePrincipalId: identifier("service-agent"),
     serviceAccountId: account.id,
     createdAt: new Date().toISOString(),

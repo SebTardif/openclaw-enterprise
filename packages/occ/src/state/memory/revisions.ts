@@ -27,6 +27,9 @@ function publicRevision(revision: Readonly<StoredAgentRevision>): Readonly<Agent
     namespaceId: revision.namespaceId,
     agentId: revision.agentId,
     revision: revision.revision,
+    ...(revision.maximumExecutionMs === undefined
+      ? {}
+      : { maximumExecutionMs: revision.maximumExecutionMs }),
     providerId: revision.providerId,
     configurationId: revision.configurationId,
     configurationKind: revision.configurationKind,

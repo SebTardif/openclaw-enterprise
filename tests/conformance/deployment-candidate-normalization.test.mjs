@@ -52,6 +52,7 @@ const command = () => ({
     configurationGeneration: 3,
     providerId,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     serviceAccountId,
     workloadProfileSelection: selection(),
   },
@@ -77,6 +78,7 @@ function fixture() {
     serviceAccountId,
     servicePrincipalId,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     createdAt,
     workloadProfileSelection: selection(),
   };
@@ -923,6 +925,9 @@ test("deployment normalizer compares every retained V2 draft operand before crea
     },
     (expected) => {
       expected.executionMode = "embedded";
+    },
+    (expected) => {
+      expected.maximumExecutionMs = 7_200_000;
     },
     (expected) => {
       expected.serviceAccountId = id("sa", 26);

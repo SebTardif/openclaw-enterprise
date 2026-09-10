@@ -366,6 +366,8 @@ export class AgentService implements AgentServicePort {
           ? {}
           : { serviceAccountId: input.serviceAccountId }),
         executionMode,
+        maximumExecutionMs:
+          input.maximumExecutionMs === undefined ? null : input.maximumExecutionMs,
         servicePrincipalId: `service-agent-${agentId}`,
         createdAt: this.options.now(),
       });
@@ -389,6 +391,9 @@ export class AgentService implements AgentServicePort {
           ? {}
           : { serviceAccountId: input.serviceAccountId }),
         ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
+        ...(input.maximumExecutionMs === undefined
+          ? {}
+          : { maximumExecutionMs: input.maximumExecutionMs }),
         workloadProfileSelection: selected.value,
       });
     }
@@ -507,7 +512,8 @@ export class AgentService implements AgentServicePort {
           input.executionMode,
           input.serviceAccountId,
           input.providerId === undefined ? undefined : providerId,
-          ...(selectingProfile ? ([input.workloadProfileSelection!] as const) : []),
+          selectingProfile ? input.workloadProfileSelection! : undefined,
+          input.maximumExecutionMs,
         );
         owned?.io.assertActive();
         checkSelection?.();

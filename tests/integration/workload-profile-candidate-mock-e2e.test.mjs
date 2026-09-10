@@ -77,6 +77,7 @@ function scenario(options = {}) {
       configurationGeneration: 1,
       providerId: null,
       executionMode: "dedicated",
+      maximumExecutionMs: null,
       serviceAccountId: accountId,
       workloadProfileSelection: profile.head.selection,
     },

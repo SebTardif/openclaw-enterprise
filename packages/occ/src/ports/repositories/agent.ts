@@ -17,6 +17,7 @@ export interface AgentRepository extends AgentReadRepository {
     serviceAccountId?: string | null,
     providerId?: string | null,
     workloadProfileSelection?: WorkloadProfileSelectionV1,
+    maximumExecutionMs?: number | null,
   ): Promise<Readonly<Agent> | undefined>;
   compareAndSetActiveRevision(
     namespaceId: string,

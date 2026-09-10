@@ -295,6 +295,7 @@ export function makeTrackedCandidateOperations(owner: CandidateOperationOwnerV2)
               result.configurationId === draft.configurationId &&
               result.providerId === draft.providerId &&
               result.executionMode === draft.executionMode &&
+              result.maximumExecutionMs === draft.maximumExecutionMs &&
               (result.serviceAccountId ?? null) === draft.serviceAccountId &&
               sameCandidateDataV2(
                 result.workloadProfileSelection,
@@ -632,6 +633,7 @@ export function makeTrackedCandidateOperations(owner: CandidateOperationOwnerV2)
           sameCandidateDataV2(candidate.configuration, validated!.values) &&
           candidate.servicePrincipalId === agent!.servicePrincipalId &&
           candidate.harness.mode === agent!.executionMode &&
+          candidate.maximumExecutionMs === agent!.maximumExecutionMs &&
           sameCandidateDataV2(candidate.compute, compute) &&
           candidate.sandboxDriverId === sandbox?.id &&
           candidate.secretDriverId === secret?.id &&

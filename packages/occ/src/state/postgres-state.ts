@@ -799,6 +799,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    maximumExecutionMs: row.maximum_execution_ms === null ? null : Number(row.maximum_execution_ms),
     ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
     servicePrincipalId: text(row, "service_principal_id"),
     ...(serviceAccountId === undefined ? {} : { serviceAccountId }),
@@ -813,6 +814,7 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
   if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision <= 0)
     throw new DependencyUnavailableError("Persisted AgentRevision numbering is invalid.");
   const admitted = jsonObject(row.admitted_spec) as {
+    maximum_execution_ms?: number | null;
     configuration_id: AgentRevision["configurationId"];
     configuration_kind: AgentRevision["configurationKind"];
     configuration_generation: AgentRevision["configurationGeneration"];
@@ -848,6 +850,9 @@ function revisionFromRow(row: PostgresRow): Readonly<AgentRevision> {
     agentId: text(row, "agent_id"),
     revision,
     providerId: row.provider_id === null ? null : text(row, "provider_id"),
+    ...(admitted.maximum_execution_ms === undefined
+      ? {}
+      : { maximumExecutionMs: admitted.maximum_execution_ms }),
     configurationId: admitted.configuration_id,
     configurationKind: admitted.configuration_kind,
     configurationGeneration: admitted.configuration_generation,
@@ -5973,7 +5978,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                     a.provider_id, a.service_principal_id, a.service_account_id,
-                    a.active_revision_id, a.created_at, a.workload_profile_selection
+                    a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
              WHERE a.namespace_id = $1 AND a.id = $2${lock ? " FOR UPDATE OF a" : ""}`,
@@ -5993,7 +5998,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                       a.provider_id, a.service_principal_id, a.service_account_id,
-                      a.active_revision_id, a.created_at, a.workload_profile_selection
+                      a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
                WHERE a.namespace_id = $1 ORDER BY a.created_at, a.id`,
@@ -6028,8 +6033,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at, workload_profile_selection)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+             service_principal_id, service_account_id, active_revision_id, created_at, workload_profile_selection, maximum_execution_ms)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
           [
             agent.id,
             agent.namespaceId,
@@ -6042,6 +6047,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             agent.activeRevisionId ?? null,
             agent.createdAt,
             selection === undefined ? null : JSON.stringify(selection.value),
+            agent.maximumExecutionMs,
           ],
         );
         await client.query(
@@ -6059,6 +6065,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         serviceAccountId,
         providerId,
         workloadProfileSelection,
+        maximumExecutionMs,
       ) => {
         const selection =
           workloadProfileSelection === undefined
@@ -6077,13 +6084,14 @@ export class PostgresPlatformState implements PlatformStateStore {
                SET configuration_id = $3, execution_mode = COALESCE($4::text, a.execution_mode),
                    service_account_id = CASE WHEN $5::boolean THEN $6::text ELSE a.service_account_id END,
                    provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END,
-                   workload_profile_selection = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.workload_profile_selection END
+                   workload_profile_selection = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.workload_profile_selection END,
+                   maximum_execution_ms = CASE WHEN $11::boolean THEN $12::bigint ELSE a.maximum_execution_ms END
                FROM occ.namespaces AS n
                WHERE a.namespace_id = $1 AND a.id = $2
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at, a.workload_profile_selection`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms`,
               [
                 namespaceId,
                 agentId,
@@ -6095,6 +6103,8 @@ export class PostgresPlatformState implements PlatformStateStore {
                 providerId ?? null,
                 selection !== undefined,
                 selection === undefined ? null : JSON.stringify(selection.value),
+                maximumExecutionMs !== undefined,
+                maximumExecutionMs ?? null,
               ],
             )
           ).rows,
@@ -6117,7 +6127,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at, a.workload_profile_selection`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
           ).rows,

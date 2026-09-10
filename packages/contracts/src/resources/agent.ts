@@ -18,6 +18,7 @@ export interface Agent extends Scope {
   readonly providerId: ProviderRef;
   readonly serviceAccountId?: string;
   readonly executionMode: HarnessExecutionMode;
+  readonly maximumExecutionMs: number | null;
   readonly servicePrincipalId: string;
   readonly activeRevisionId?: string;
   readonly workloadProfileSelection?: WorkloadProfileSelectionV1;
@@ -38,6 +39,8 @@ export interface AgentRevision extends Scope {
   readonly namespaceId: string;
   readonly agentId: string;
   readonly revision: number;
+  /** Absent only on historical revisions whose execution policy is unavailable. */
+  readonly maximumExecutionMs?: number | null;
   readonly providerId: ProviderRef;
   readonly configurationId: string;
   readonly configurationKind: ConfigurationKind;

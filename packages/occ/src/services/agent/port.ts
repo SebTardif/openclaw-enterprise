@@ -38,6 +38,7 @@ export interface CreateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string;
   readonly executionMode?: HarnessExecutionMode;
+  readonly maximumExecutionMs?: number | null;
 }
 
 export interface UpdateAgentInput {
@@ -47,6 +48,7 @@ export interface UpdateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string | null;
   readonly executionMode?: HarnessExecutionMode;
+  readonly maximumExecutionMs?: number | null;
   /** Explicit immutable draft selection; omission preserves the stored selection. */
   readonly workloadProfileSelection?: WorkloadProfileSelectionV1;
 }

@@ -334,3 +334,58 @@ test("Agent service HTTP rechecks current Native IAM authority and audits denied
     [],
   );
 });
+
+test("Agent execution limit HTTP defaults, preserves, clears and rejects invalid values", async (t) => {
+  const f = await fixture(t);
+  await f.bootstrap();
+  const tenant = await f.namespace("Execution limits");
+  const cfg = await f.configuration(tenant.id, { model: "retained" });
+  const created = await createAgent(f, tenant.id, cfg.id);
+  assert.equal(created.data.maximumExecutionMs, null);
+  const path = `/namespaces/${tenant.id}/agents/${created.data.id}`;
+  // A finite cap larger than the former fifteen-minute ceiling is valid.
+  const capped = await f.request("PATCH", path, {
+    body: { configurationId: cfg.id, maximumExecutionMs: 7_200_000 },
+  });
+  assert.equal(capped.status, 200, JSON.stringify(capped.body));
+  assert.equal(capped.data.maximumExecutionMs, 7_200_000);
+  const preserved = await f.request("PATCH", path, { body: { configurationId: cfg.id } });
+  assert.equal(preserved.data.maximumExecutionMs, 7_200_000);
+  assert.equal((await f.request("GET", path)).data.maximumExecutionMs, 7_200_000);
+  assert.equal(
+    (await f.request("GET", `/namespaces/${tenant.id}/agents`)).data[0].maximumExecutionMs,
+    7_200_000,
+  );
+  for (const maximumExecutionMs of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1000", false]) {
+    assertFailure(
+      await f.request("PATCH", path, {
+        body: { configurationId: cfg.id, maximumExecutionMs },
+      }),
+      400,
+      "INVALID_REQUEST",
+    );
+    assertFailure(
+      await f.request("POST", `/namespaces/${tenant.id}/agents`, {
+        body: { name: "Invalid cap", configurationId: cfg.id, maximumExecutionMs },
+      }),
+      400,
+      "INVALID_REQUEST",
+    );
+  }
+  const cleared = await f.request("PATCH", path, {
+    body: { configurationId: cfg.id, maximumExecutionMs: null },
+  });
+  assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+  assert.equal(cleared.data.maximumExecutionMs, null);
+  for (const maximumExecutionMs of [1, Number.MAX_SAFE_INTEGER, null]) {
+    const response = await f.request("POST", `/namespaces/${tenant.id}/agents`, {
+      body: {
+        name: `Accepted cap ${maximumExecutionMs}`,
+        configurationId: cfg.id,
+        maximumExecutionMs,
+      },
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.data.maximumExecutionMs, maximumExecutionMs);
+  }
+});

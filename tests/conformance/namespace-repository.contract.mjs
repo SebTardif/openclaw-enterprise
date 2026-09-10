@@ -32,6 +32,7 @@ export function namespaceChildren(namespace) {
       configurationId: configuration.id,
       providerId: null,
       executionMode: "embedded",
+      maximumExecutionMs: null,
       servicePrincipalId: randomUUID(),
       createdAt: namespace.createdAt,
     },

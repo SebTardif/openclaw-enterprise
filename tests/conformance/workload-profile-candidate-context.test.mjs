@@ -121,6 +121,7 @@ function protocol(options = {}) {
       configurationGeneration: 1,
       providerId: agentRow.provider_id,
       executionMode: "dedicated",
+      maximumExecutionMs: null,
       serviceAccountId,
       workloadProfileSelection: profile.head.selection,
     },

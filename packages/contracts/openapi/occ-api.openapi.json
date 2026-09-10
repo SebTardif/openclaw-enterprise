@@ -4457,6 +4457,12 @@
                             "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                             "type": "string"
                           },
+                          "maximumExecutionMs": {
+                            "anyOf": [
+                              { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                              { "type": "null" }
+                            ]
+                          },
                           "name": {
                             "maxLength": 200,
                             "minLength": 1,
@@ -4525,6 +4531,7 @@
                           "configurationId",
                           "providerId",
                           "executionMode",
+                          "maximumExecutionMs",
                           "createdAt"
                         ],
                         "type": "object"
@@ -4624,6 +4631,12 @@
                       { "const": "dedicated", "type": "string" }
                     ]
                   },
+                  "maximumExecutionMs": {
+                    "anyOf": [
+                      { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                      { "type": "null" }
+                    ]
+                  },
                   "name": {
                     "maxLength": 200,
                     "minLength": 1,
@@ -4685,6 +4698,12 @@
                         "id": {
                           "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
+                        },
+                        "maximumExecutionMs": {
+                          "anyOf": [
+                            { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                            { "type": "null" }
+                          ]
                         },
                         "name": {
                           "maxLength": 200,
@@ -4754,6 +4773,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "maximumExecutionMs",
                         "createdAt"
                       ],
                       "type": "object"
@@ -4909,6 +4929,12 @@
                           "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
                         },
+                        "maximumExecutionMs": {
+                          "anyOf": [
+                            { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                            { "type": "null" }
+                          ]
+                        },
                         "name": {
                           "maxLength": 200,
                           "minLength": 1,
@@ -4977,6 +5003,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "maximumExecutionMs",
                         "createdAt"
                       ],
                       "type": "object"
@@ -5082,6 +5109,12 @@
                       { "const": "dedicated", "type": "string" }
                     ]
                   },
+                  "maximumExecutionMs": {
+                    "anyOf": [
+                      { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                      { "type": "null" }
+                    ]
+                  },
                   "providerId": {
                     "anyOf": [
                       {
@@ -5178,6 +5211,12 @@
                           "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
                         },
+                        "maximumExecutionMs": {
+                          "anyOf": [
+                            { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                            { "type": "null" }
+                          ]
+                        },
                         "name": {
                           "maxLength": 200,
                           "minLength": 1,
@@ -5246,6 +5285,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "maximumExecutionMs",
                         "createdAt"
                       ],
                       "type": "object"
@@ -5392,6 +5432,12 @@
                           { "const": "dedicated", "type": "string" }
                         ]
                       },
+                      "maximumExecutionMs": {
+                        "anyOf": [
+                          { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                          { "type": "null" }
+                        ]
+                      },
                       "providerId": {
                         "anyOf": [
                           {
@@ -5453,6 +5499,7 @@
                       "configurationGeneration",
                       "providerId",
                       "executionMode",
+                      "maximumExecutionMs",
                       "serviceAccountId",
                       "workloadProfileSelection"
                     ],
@@ -7182,6 +7229,12 @@
                             "pattern": "^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                             "type": "string"
                           },
+                          "maximumExecutionMs": {
+                            "anyOf": [
+                              { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                              { "type": "null" }
+                            ]
+                          },
                           "namespaceId": {
                             "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                             "type": "string"
@@ -7654,6 +7707,12 @@
                         "id": {
                           "pattern": "^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
+                        },
+                        "maximumExecutionMs": {
+                          "anyOf": [
+                            { "maximum": 9007199254740991, "minimum": 1, "type": "integer" },
+                            { "type": "null" }
+                          ]
                         },
                         "namespaceId": {
                           "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",

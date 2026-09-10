@@ -25,6 +25,7 @@ const command = () => ({
     configurationGeneration: 7,
     providerId: null,
     executionMode: "embedded",
+    maximumExecutionMs: null,
     serviceAccountId: null,
     workloadProfileSelection: {
       manifestRef: uuid(6),
@@ -532,6 +533,7 @@ async function httpFixture(t) {
               configurationId: request.body.configurationId,
               providerId: null,
               executionMode: "embedded",
+              maximumExecutionMs: null,
               createdAt: acceptedAt,
             },
             meta: { requestId: request.id },
@@ -865,6 +867,7 @@ const serviceCommand = () => {
   Object.assign(value.expectedDraft, {
     providerId: "provider/model",
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     serviceAccountId,
   });
   return value;
@@ -974,6 +977,7 @@ async function deploymentFixture(settings = {}) {
     serviceAccountId,
     servicePrincipalId,
     executionMode: "dedicated",
+    maximumExecutionMs: null,
     createdAt: acceptedAt,
     workloadProfileSelection: clone(input.command.expectedDraft.workloadProfileSelection),
   };

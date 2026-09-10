@@ -140,6 +140,7 @@ function protocol(options = {}) {
           configurationGeneration: 1,
           providerId: "provider/controlled",
           executionMode: "dedicated",
+          maximumExecutionMs: null,
           serviceAccountId: null,
           workloadProfileSelection: f.head.selection,
         },

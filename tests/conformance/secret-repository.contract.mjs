@@ -29,6 +29,7 @@ export function secretRevision({ configuration, agent, secret }, revision = 1) {
     providerId: agent.providerId,
     configuration: { models: { providers: { openai: {} } } },
     harness: { id: "openclaw", version: "1.0.0", mode: agent.executionMode },
+    maximumExecutionMs: null,
     compute: { id: "compute-test", implementation: "deterministic-test" },
     servicePrincipalId: agent.servicePrincipalId,
     ...(secret

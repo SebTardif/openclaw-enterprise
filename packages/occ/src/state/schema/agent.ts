@@ -42,6 +42,7 @@ export function createAgentTables(
       name: collatedText("name").notNull(),
       configurationId: text("configuration_id").notNull(),
       providerId: text("provider_id"),
+      maximumExecutionMs: bigint("maximum_execution_ms", { mode: "number" }),
       executionMode: text("execution_mode").$type<HarnessExecutionMode>().notNull(),
       servicePrincipalId: text("service_principal_id").notNull(),
       serviceAccountId: text("service_account_id"),
@@ -59,6 +60,10 @@ export function createAgentTables(
           table.namespaceId,
           table.id,
           table.servicePrincipalId,
+        ),
+        check(
+          "agents_maximum_execution_ms",
+          sql`${table.maximumExecutionMs} IS NULL OR ${table.maximumExecutionMs} BETWEEN 1 AND 9007199254740991`,
         ),
         check("agents_id_format", sql`${table.id} ~ ${identifierPatterns.agent}`),
         check("agents_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
@@ -150,6 +155,17 @@ export function createAgentTables(
         "agent_revisions_provider_id_valid",
         sql`${table.providerId} IS NULL OR (char_length(${table.providerId}) BETWEEN 1 AND 200 AND ${table.providerId} = btrim(${table.providerId}) AND ${table.providerId} !~ '[[:cntrl:]]')`,
       ),
+      // Existing immutable revisions retain absent policy; the forward migration
+      // uses NOT VALID so only new writes must contain this selection.
+      check(
+        "agent_revisions_execution_limit",
+        sql`(${table.admittedSpec} ? 'maximum_execution_ms') AND CASE
+        WHEN ${table.admittedSpec}->'maximum_execution_ms' = 'null'::jsonb THEN true
+        WHEN jsonb_typeof(${table.admittedSpec}->'maximum_execution_ms') = 'number' THEN
+          (${table.admittedSpec}->>'maximum_execution_ms')::numeric BETWEEN 1 AND 9007199254740991
+          AND mod((${table.admittedSpec}->>'maximum_execution_ms')::numeric, 1) = 0
+        ELSE false END`,
+      ),
       check("agent_revisions_spec_object", sql`jsonb_typeof(${table.admittedSpec}) = 'object'`),
       check(
         "agent_revisions_workload_profile_use",
@@ -168,7 +184,7 @@ export function createAgentTables(
         AND (${table.admittedSpec}
           - 'configuration_id' - 'configuration_kind' - 'configuration_generation'
           - 'draft_spec' - 'harness' - 'compute' - 'sandbox_driver_id'
-          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection' - 'workload_profile_use') = '{}'::jsonb
+          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection' - 'workload_profile_use' - 'maximum_execution_ms') = '{}'::jsonb
         AND jsonb_typeof(${table.admittedSpec}->'configuration_id') = 'string'
         AND (${table.admittedSpec}->>'configuration_id') ~ ${identifierPatterns.configuration}
         AND jsonb_typeof(${table.admittedSpec}->'configuration_kind') = 'string'

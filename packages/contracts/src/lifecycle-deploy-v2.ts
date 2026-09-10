@@ -48,6 +48,10 @@ export const LifecycleDeployExpectedDraftSchemaV2 = object({
   configurationGeneration: { ...ConfigurationGeneration },
   providerId: Type.Union([{ ...ProviderId }, Type.Null()]),
   executionMode: Type.Union(HarnessExecutionModeSchema.anyOf.map((schema) => ({ ...schema }))),
+  maximumExecutionMs: Type.Union([
+    Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+    Type.Null(),
+  ]),
   serviceAccountId: Type.Union([{ ...ServiceAccountId }, Type.Null()]),
   workloadProfileSelection: selection,
 });
@@ -56,6 +60,7 @@ export interface LifecycleDeployExpectedDraftV2 {
   readonly configurationGeneration: number;
   readonly providerId: ProviderRef;
   readonly executionMode: HarnessExecutionMode;
+  readonly maximumExecutionMs: number | null;
   readonly serviceAccountId: string | null;
   readonly workloadProfileSelection: Readonly<WorkloadProfileSelectionV1>;
 }
