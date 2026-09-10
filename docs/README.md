@@ -109,6 +109,7 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
 - [Account authority interface](reference/account-authority.md): consume current account and exact-operation contracts; live authority adapters and effect guards remain separate implementations.
 - [Credential backend profile](reference/credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
 - [Linux custody clock](reference/custody-clock.md): read conservative kernel clock bounds through a protected native executable; unsynchronized hosts refuse and deployment selection remains explicit.
+- [SPIRE registration client](reference/spire-registration-client.md): create, inspect and retire constrained native provider entries; OCE enrollment, immutable runtime correspondence and durable recovery remain with their original owners.
 - [Repository preparation interfaces](reference/repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
 - [Work authority ports V2](reference/work-authority-ports-v2.md): inspect inactive
   interface declarations and their original-owner requirements; declarations

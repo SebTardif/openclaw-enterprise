@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/spiffe/go-spiffe/v2 v2.8.1
+	github.com/spiffe/spire-api-sdk v1.2.5-0.20260428072036-00f73a61093a
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
 )
