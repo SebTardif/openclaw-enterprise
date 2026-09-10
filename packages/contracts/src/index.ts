@@ -28,25 +28,6 @@ export {
   normalizeLoggingLevel,
   type LoggingLevel,
 } from "./logging.ts";
-export {
-  AgentPluginSnapshotSchema,
-  CODEX_PLUGIN_CATALOG_DRIVER_ID,
-  CODEX_PLUGIN_CATALOG_SOURCE_METHOD,
-  PLUGIN_INVENTORY_SCHEMA_VERSION,
-  PluginIdentitySchema,
-  PluginInstallationErrorSchema,
-  PluginInventoryEntrySchema,
-  PluginInventorySchema,
-  SUPPORTED_PLUGIN_CATALOG_DRIVER_IDS,
-  PluginInventoryValidationError,
-  validatePluginInventory,
-  type AgentPluginSnapshot,
-  type PluginIdentity,
-  type PluginInstallationError,
-  type PluginInventory,
-  type PluginInventoryEntry,
-  type SupportedPluginCatalogDriverId,
-} from "./plugins.ts";
 
 export const DRIVER_CAPABILITIES = Object.freeze([
   "iam",
