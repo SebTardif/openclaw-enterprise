@@ -110,6 +110,23 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
 - [Credential backend profile](reference/credential-backend.md): validate local capability and configuration declarations; protected custody, current authority, and backend/runtime qualification remain separate.
 - [Linux custody clock](reference/custody-clock.md): read conservative kernel clock bounds through a protected native executable; unsynchronized hosts refuse and deployment selection remains explicit.
 - [Repository preparation interfaces](reference/repository-preparation.md): validate preparation and credential-custody records; current authority, durable storage, native delivery, and provider effects remain with their accepting implementations.
+- [Work authority ports V2](reference/work-authority-ports-v2.md): inspect inactive
+  interface declarations and their original-owner requirements; declarations
+  do not activate Work authority.
+- [Repository Work owner](reference/repository-work-v2.md),
+  [business-use policy](reference/repository-work-policy-v2.md),
+  [State adapter](reference/repository-work-state-v2.md), and
+  [Runtime origin](reference/repository-work-origin-v2.md): follow repository-use
+  component construction and its required original native, State, policy and
+  custody inputs.
+- [Repository credential inventory](reference/repository-credential-inventory-v2.md)
+  and [protected GitHub custody](reference/protected-github-custody.md): understand
+  recorded credential responsibility, protected material storage and recovery;
+  accepting authority and delivery remain with their original owners.
+- [GitHub read mediation](reference/github-mediation.md) and
+  [native mediation identity](reference/github-mediation-identity.md): inspect the
+  broker protocol and native connection boundary; production installation and
+  complete accepting authority remain separate.
 - [Preparation Job interfaces](reference/preparation-job.md): versioned preparation identity, Job and Pod lineage, conditional effect observations, and retained staging handoff; definitions do not establish live provider authority.
 - [Lifecycle admission and durable work definitions](reference/lifecycle-admission-ports.md): consume parsed requests and worker ports; authenticated admission, persistence, and installed worker integration remain separate.
 - [Lifecycle handler and observation definitions](reference/lifecycle-handler-ports.md): consume handler and observation definitions; installed handlers, authentic observation producers, and runtime/provider composition remain separate.

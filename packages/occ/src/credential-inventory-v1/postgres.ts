@@ -26,6 +26,15 @@ import {
   isLiveInventoryRecordV1,
   INVENTORY_LIMITS_V1,
 } from "./transactions.ts";
+import { bindRepositoryLeaseInventoryV2 } from "./repository-lease-postgres-v2.ts";
+import type {
+  RepositoryAccessLeaseV2,
+  RepositoryTokenRecordV2,
+  RepositoryInventoryOperationV2,
+  RepositoryLeaseInventoryTransactionV2,
+  RepositoryMintClaimV2,
+  RepositoryRevocationClaimV2,
+} from "./repository-lease-v2.ts";
 
 /** The original owner admits and drains the WHOLE credential transition, including
  * accepting authority, audit, custody and final currentness. This assertion is
@@ -43,6 +52,17 @@ export interface PostgresCredentialInventoryPhaseV1 {
   recordEffect(effect: PostgresCredentialInventoryEffectV1): void;
 }
 export type PostgresCredentialInventoryEffectV1 =
+  | { readonly kind: "repository-lease-inserted"; readonly lease: RepositoryAccessLeaseV2 }
+  | { readonly kind: "repository-record-inserted"; readonly record: RepositoryTokenRecordV2 }
+  | {
+      readonly kind: "repository-record-replaced";
+      readonly expectedVersion: number;
+      readonly record: RepositoryTokenRecordV2;
+    }
+  | {
+      readonly kind: "repository-operation-appended";
+      readonly operation: RepositoryInventoryOperationV2;
+    }
   | { readonly kind: "record-inserted"; readonly record: OutstandingTokenRecordV1 }
   | {
       readonly kind: "record-replaced";
@@ -51,6 +71,11 @@ export type PostgresCredentialInventoryEffectV1 =
     }
   | { readonly kind: "operation-appended"; readonly operation: InventoryOperationV1 }
   | { readonly kind: "mint-claim-inserted"; readonly claim: ProviderMintClaimV1 }
+  | { readonly kind: "repository-mint-claim-inserted"; readonly claim: RepositoryMintClaimV2 }
+  | {
+      readonly kind: "repository-revocation-claim-appended";
+      readonly claim: RepositoryRevocationClaimV2;
+    }
   | { readonly kind: "revocation-claim-appended"; readonly claim: RetainedRevocationClaimV1 }
   | { readonly kind: "snapshot-inserted"; readonly snapshot: InventorySnapshotV1 }
   | {
@@ -403,7 +428,9 @@ export async function preparePostgresCredentialInventoryKeysV1(
 export function createPostgresCredentialInventoryV1(
   context: PostgresCredentialInventoryContextV1,
   dependencies: PostgresCredentialInventoryDependenciesV1,
-): CredentialInventoryTransactionV1 {
+): CredentialInventoryTransactionV1 & {
+  readonly repositoryLeaseV2: RepositoryLeaseInventoryTransactionV2;
+} {
   const scope = Object.freeze({ ...context.inventoryScope });
   const commitRef = reference(context.commitRef);
   const values = [scope.installationId, scope.namespaceId, scope.agentId] as const;
@@ -644,7 +671,7 @@ export function createPostgresCredentialInventoryV1(
     listLive: (bindingRef: string) =>
       run(async () => {
         const result = await query(
-          `SELECT document FROM ${tables.records} WHERE ${scopeWhere} AND binding_ref=$4 AND live ORDER BY record_ref COLLATE "C" LIMIT $5`,
+          `SELECT document FROM ${tables.records} WHERE ${scopeWhere} AND binding_ref=$4 AND live AND document->>'schemaVersion'='1' ORDER BY record_ref COLLATE "C" LIMIT $5`,
           [...values, reference(bindingRef), INVENTORY_LIMITS_V1.perAgent + 1],
         );
         if (result.rows.length > INVENTORY_LIMITS_V1.perAgent)
@@ -755,5 +782,8 @@ export function createPostgresCredentialInventoryV1(
         return evidence;
       }, true),
   };
-  return Object.freeze(repository);
+  return Object.freeze({
+    ...repository,
+    repositoryLeaseV2: bindRepositoryLeaseInventoryV2(context, repository, run, query),
+  });
 }

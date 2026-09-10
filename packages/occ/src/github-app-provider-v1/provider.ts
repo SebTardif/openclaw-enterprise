@@ -24,6 +24,33 @@ export interface GitHubAppTokenObservationV1 {
   readonly providerAttemptRef: string;
   readonly expiresAt: string | undefined;
   readonly scopeAccepted: boolean;
+  /** Exact bounded parsed response, including broader scope. Unavailable never
+   * substitutes requested permissions for a malformed provider observation. */
+  readonly returnedPermissions?: GitHubAppReturnedPermissionsV1;
+}
+export type GitHubAppReturnedPermissionsV1 =
+  Readonly<Record<string, "read" | "write" | "admin">> | Readonly<{ kind: "unavailable" }>;
+
+export function snapshotGitHubAppReturnedPermissionsV1(
+  value: unknown,
+): GitHubAppReturnedPermissionsV1 {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const entries = Object.entries(descriptors);
+    if (
+      entries.length <= 64 &&
+      entries.every(
+        ([name, descriptor]) =>
+          /^[a-z][a-z0-9_]{0,63}(?![\s\S])/.test(name) &&
+          "value" in descriptor &&
+          ["read", "write", "admin"].includes(descriptor.value),
+      )
+    )
+      return Object.freeze(
+        Object.fromEntries(entries.map(([name, descriptor]) => [name, descriptor.value])),
+      );
+  }
+  return Object.freeze({ kind: "unavailable" });
 }
 /** The fixed external custody owner captures bytes synchronously into protected
  * material. This is staging only, never proof of durable inventory recording.
@@ -93,7 +120,9 @@ function freezeSelection(input: GitHubAppSelectionV1): GitHubAppSelectionV1 {
   const permissions = Object.freeze({ ...input.permissions });
   if (
     permissions.metadata !== "read" ||
-    !["read", "write"].includes(permissions.contents ?? "") ||
+    (permissions.contents === undefined
+      ? Object.keys(permissions).length !== 1
+      : !["read", "write"].includes(permissions.contents)) ||
     Object.entries(permissions).some(
       ([name, value]) =>
         !["metadata", "contents", "issues", "pull_requests"].includes(name) ||
@@ -181,18 +210,42 @@ async function settleOwner<T>(
  * native delivery callback is supplied here. Caller must durably claim the exact
  * attempt before invocation and record every outcome before any runtime release.
  */
-export function createGitHubAppProviderV1(options: {
-  readonly selection: GitHubAppSelectionV1;
-  readonly material: GitHubAppMaterialV1;
-  readonly custody: GitHubAppTokenCustodyV1;
+interface GitHubAppProviderCommonOptionsV1 {
   readonly assertDispatchCurrent: (attempt: Readonly<GitHubAppProviderAttemptV1>) => void;
   readonly clock: () => number;
   readonly endpoint: GitHubAppEndpointV1;
-}) {
-  const selected = freezeSelection(options.selection);
-  const material = options.material;
+}
+interface GitHubAppProviderOptionsV1 extends GitHubAppProviderCommonOptionsV1 {
+  readonly selection: GitHubAppSelectionV1;
+  readonly material: GitHubAppMaterialV1;
+  readonly custody: GitHubAppTokenCustodyV1;
+}
+interface GitHubAppRevocationOptionsV1 extends GitHubAppProviderCommonOptionsV1 {
+  readonly custody: Pick<GitHubAppTokenCustodyV1, "withRevocationToken">;
+}
+export function createGitHubAppProviderV1(options: GitHubAppProviderOptionsV1) {
+  return createGitHubAppProviderCoreV1(options);
+}
+
+/** Exact retained-token mitigation does not require the App signing key. This
+ * construction has no mint method and reuses the same bounded DELETE protocol. */
+export function createGitHubAppRevocationProviderV1(options: GitHubAppRevocationOptionsV1) {
+  const provider = createGitHubAppProviderCoreV1(options);
+  return Object.freeze({ revoke: provider.revoke, settleAttempt: provider.settleAttempt });
+}
+
+function createGitHubAppProviderCoreV1(
+  options: GitHubAppProviderOptionsV1 | GitHubAppRevocationOptionsV1,
+) {
+  const issuance =
+    "selection" in options
+      ? {
+          selected: freezeSelection(options.selection),
+          material: options.material,
+          capture: options.custody.capture.bind(options.custody),
+        }
+      : undefined;
   const custody = Object.freeze({
-    capture: options.custody.capture.bind(options.custody),
     withRevocationToken: options.custody.withRevocationToken.bind(options.custody),
   });
   const assertDispatchCurrent = options.assertDispatchCurrent;
@@ -218,6 +271,18 @@ export function createGitHubAppProviderV1(options: {
       throw new GitHubAppProviderErrorV1();
   } else if (options.endpoint.kind !== "github") throw new GitHubAppProviderErrorV1();
   let active = false;
+  const settlements = new WeakMap<object, Promise<void>>();
+  type Invocation = { drained: Promise<void> };
+  const invoke = async <R extends GitHubAppMintResultV1 | GitHubAppRevokeResultV1>(
+    operation: (invocation: Invocation) => Promise<R>,
+  ): Promise<R> => {
+    // An invalid or busy call owns only its own no-work result. It cannot use a
+    // diagnostic reference to join or take over whichever invocation is active.
+    const invocation: Invocation = { drained: Promise.resolve() };
+    const result = Object.freeze(await operation(invocation));
+    settlements.set(result, invocation.drained);
+    return result;
+  };
   function attempt(input: GitHubAppProviderAttemptV1): Readonly<GitHubAppProviderAttemptV1> {
     if (!/^[A-Za-z0-9._:/-]{1,200}$/.test(input.providerAttemptRef))
       throw new GitHubAppProviderErrorV1();
@@ -266,6 +331,13 @@ export function createGitHubAppProviderV1(options: {
         },
       });
       let settled = false;
+      const chunks: Buffer[] = [];
+      let length = 0;
+      const discardChunks = () => {
+        for (const chunk of chunks) chunk.fill(0);
+        chunks.length = 0;
+        length = 0;
+      };
       const cleanup = () => {
         clearTimeout(timer);
         call.bounds.signal.removeEventListener("abort", cancel);
@@ -274,6 +346,7 @@ export function createGitHubAppProviderV1(options: {
         if (settled) return;
         settled = true;
         cleanup();
+        discardChunks();
         request.destroy();
         reject(new GitHubAppProviderErrorV1());
       };
@@ -282,22 +355,34 @@ export function createGitHubAppProviderV1(options: {
       call.bounds.signal.addEventListener("abort", cancel, { once: true });
       request.on("error", fail);
       request.on("response", (response) => {
-        const chunks: Buffer[] = [];
-        let length = 0;
         response.on("error", fail);
         response.on("aborted", fail);
         response.on("data", (chunk: Buffer) => {
+          if (settled) {
+            chunk.fill(0);
+            return;
+          }
           length += chunk.length;
           if (length > 256 * 1024) {
+            chunk.fill(0);
             response.destroy();
             fail();
           } else chunks.push(chunk);
         });
         response.on("end", () => {
           if (settled) return;
+          let body: Buffer;
+          try {
+            body = Buffer.concat(chunks);
+          } catch {
+            fail();
+            return;
+          } finally {
+            discardChunks();
+          }
           settled = true;
           cleanup();
-          resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) });
+          resolve({ status: response.statusCode ?? 0, body });
         });
       });
       if (call.bounds.signal.aborted) {
@@ -314,8 +399,14 @@ export function createGitHubAppProviderV1(options: {
       }
     });
   }
-  return Object.freeze({
-    async mint(input: GitHubAppProviderAttemptV1): Promise<GitHubAppMintResultV1> {
+  const operations = {
+    async mint(
+      input: GitHubAppProviderAttemptV1,
+      invocation: Invocation,
+    ): Promise<GitHubAppMintResultV1> {
+      if (issuance === undefined)
+        return { kind: "not-dispatched", providerAttemptRef: safeAttemptRef(input) };
+      const { selected, material, capture } = issuance;
       let call: GitHubAppProviderAttemptV1;
       try {
         call = attempt(input);
@@ -377,12 +468,13 @@ export function createGitHubAppProviderV1(options: {
           try {
             // Even a scope-invalid response can contain a live token. Retain it
             // for exact mitigation; never return it as an accepted scoped mint.
-            staged = custody.capture(
+            staged = capture(
               bytes,
               Object.freeze({
                 providerAttemptRef: call.providerAttemptRef,
                 expiresAt: Number.isFinite(expiry) ? new Date(expiry).toISOString() : undefined,
                 scopeAccepted,
+                returnedPermissions: snapshotGitHubAppReturnedPermissionsV1(packet.permissions),
               }),
             );
           } finally {
@@ -420,6 +512,10 @@ export function createGitHubAppProviderV1(options: {
             await callbackWork?.catch(() => {});
             active = false;
           });
+        invocation.drained = work.then(
+          () => undefined,
+          () => undefined,
+        );
         ownerStarted = true;
         const result = await settleOwner(work, call.bounds, clock);
         if (!entered || callbackResult === undefined || result !== callbackResult)
@@ -444,6 +540,7 @@ export function createGitHubAppProviderV1(options: {
     async revoke(
       input: GitHubAppProviderAttemptV1,
       handle: EphemeralTokenHandleV1,
+      invocation: Invocation,
     ): Promise<GitHubAppRevokeResultV1> {
       let call: GitHubAppProviderAttemptV1;
       try {
@@ -503,6 +600,10 @@ export function createGitHubAppProviderV1(options: {
             await callbackWork?.catch(() => {});
             active = false;
           });
+        invocation.drained = work.then(
+          () => undefined,
+          () => undefined,
+        );
         ownerStarted = true;
         const result = await settleOwner(work, call.bounds, clock);
         if (!entered || callbackResult === undefined || result !== callbackResult)
@@ -525,6 +626,29 @@ export function createGitHubAppProviderV1(options: {
           active = false;
         }
       }
+    },
+  };
+  return Object.freeze({
+    mint(input: GitHubAppProviderAttemptV1): Promise<GitHubAppMintResultV1> {
+      return invoke((invocation) => operations.mint(input, invocation));
+    },
+    revoke(
+      input: GitHubAppProviderAttemptV1,
+      handle: EphemeralTokenHandleV1,
+    ): Promise<GitHubAppRevokeResultV1> {
+      return invoke((invocation) => operations.revoke(input, handle, invocation));
+    },
+    /** Joins this exact returned result's original owner/callback finalizer.
+     * An outward timeout does not settle late capture or material postchecks.
+     * This carries no bytes, new provider action or evidence of nonexecution. */
+    async settleAttempt(
+      originalResult: GitHubAppMintResultV1 | GitHubAppRevokeResultV1,
+    ): Promise<void> {
+      if (!originalResult || typeof originalResult !== "object")
+        throw new GitHubAppProviderErrorV1();
+      const drained = settlements.get(originalResult);
+      if (drained === undefined) throw new GitHubAppProviderErrorV1();
+      await drained;
     },
   });
 }

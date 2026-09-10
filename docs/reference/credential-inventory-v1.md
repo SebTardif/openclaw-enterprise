@@ -16,6 +16,13 @@ The separate [GitHub App provider component](github-app-provider.md) implements
 bounded provider protocol handling; it is not connected to this inventory's
 production authority or custody owners and does not enable native delivery.
 
+The internal [repository-lease V2 extension](repository-credential-inventory-v2.md)
+adds immutable Work/access-lease correspondence, stable GitHub target holds and
+two-slot overlap accounting in these same record, operation and mint-claim tables.
+It preserves the V1 facade and original-turn format. The extension remains a
+storage component; its actual accepting/audit/custody/release composition is
+required separately.
+
 ## Public composition
 
 The OCC package exports these subpaths:

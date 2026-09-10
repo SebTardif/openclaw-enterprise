@@ -382,7 +382,11 @@ export class RuntimeServiceTrustService implements RuntimeAuthorityCurrentTrustR
             trustRootsRef: source.trustRootsRef,
             verifierProfileRef: source.verifierProfileRef,
             permittedRecipientRef: source.recipientRef,
-            role: "lifecycle-authority",
+            role:
+              profile.operationPolicy === "github-metadata-rpc-v2" ||
+              profile.operationPolicy === "github-git-read-rpc-v3"
+                ? "repository-issuer"
+                : "lifecycle-authority",
             allowedScope: {
               kind: "agent",
               installationId: this.options.installationId,

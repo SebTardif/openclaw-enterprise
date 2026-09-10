@@ -29,18 +29,19 @@ const (
 	Server Side = "server"
 )
 
-// Config has no defaults. RecipientSPIFFEID names the server, not a caller
+// Config requires explicit limits. RecipientSPIFFEID names the server, not a caller
 // assertion or an arbitrary destination. Only one explicitly selected trust
 // domain is supported; federation and CRL-bearing sources are not supported.
 type Config struct {
-	Side              Side
-	OwnSPIFFEID       string
-	PeerSPIFFEID      string
-	RecipientSPIFFEID string
-	HandshakeTimeout  time.Duration // positive, at most three seconds
-	RecheckInterval   time.Duration // positive, at most five seconds
-	MaxConnectionAge  time.Duration // positive, explicitly chosen by the caller
-	MaxConnections    int           // 1..64, including handshakes
+	Side                Side
+	OwnSPIFFEID         string
+	PeerSPIFFEID        string
+	RecipientSPIFFEID   string
+	ApplicationProtocol string        // optional exact ALPN; when set, 1..255 visible ASCII bytes
+	HandshakeTimeout    time.Duration // positive, at most three seconds
+	RecheckInterval     time.Duration // positive, at most five seconds
+	MaxConnectionAge    time.Duration // positive, explicitly chosen by the caller
+	MaxConnections      int           // 1..64, including handshakes
 }
 
 // Error intentionally excludes certificate, provider, endpoint and key details.
@@ -83,6 +84,7 @@ func New(source *identity.Source, config Config) (*Transport, error) {
 		(config.Side != Client && config.Side != Server) ||
 		(config.Side == Client && config.RecipientSPIFFEID != config.PeerSPIFFEID) ||
 		(config.Side == Server && config.RecipientSPIFFEID != config.OwnSPIFFEID) ||
+		!validApplicationProtocol(config.ApplicationProtocol) ||
 		config.HandshakeTimeout <= 0 || config.HandshakeTimeout > 3*time.Second ||
 		config.RecheckInterval <= 0 || config.RecheckInterval > 5*time.Second ||
 		config.MaxConnectionAge <= 0 || config.MaxConnections < 1 || config.MaxConnections > 64 {
@@ -94,6 +96,18 @@ func New(source *identity.Source, config Config) (*Transport, error) {
 		return nil, err
 	}
 	return t, nil
+}
+
+func validApplicationProtocol(protocol string) bool {
+	if len(protocol) > 255 {
+		return false
+	}
+	for index := range len(protocol) {
+		if protocol[index] < 0x21 || protocol[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 type material struct {
@@ -256,6 +270,9 @@ func (t *Transport) Handshake(ctx context.Context, raw net.Conn) (*Connection, e
 	}
 	config.MinVersion = tls.VersionTLS13
 	config.MaxVersion = tls.VersionTLS13
+	if t.config.ApplicationProtocol != "" {
+		config.NextProtos = []string{t.config.ApplicationProtocol}
+	}
 	verifyPeer := config.VerifyPeerCertificate
 	config.VerifyPeerCertificate = func(raw [][]byte, chains [][]*x509.Certificate) error {
 		if len(raw) == 0 || len(raw) > 64 {
@@ -312,7 +329,8 @@ func (t *Transport) Handshake(ctx context.Context, raw net.Conn) (*Connection, e
 	source.mu.Lock()
 	c.ownCertificate = bytes.Clone(source.ownCertificate)
 	source.mu.Unlock()
-	if !state.HandshakeComplete || state.DidResume || len(state.PeerCertificates) == 0 || len(c.ownCertificate) == 0 {
+	if !state.HandshakeComplete || state.DidResume || len(state.PeerCertificates) == 0 || len(c.ownCertificate) == 0 ||
+		(t.config.ApplicationProtocol != "" && state.NegotiatedProtocol != t.config.ApplicationProtocol) {
 		c.closeWithError(failure("PEER_REJECTED"))
 		return nil, failure("PEER_REJECTED")
 	}

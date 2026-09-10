@@ -13,6 +13,21 @@ import type {
   RuntimeInitialBindingOwnerV1,
   RuntimeInitialBindingSourceV1,
 } from "../runtime-authority/initial-binding.ts";
+import {
+  createPostgresRepositoryWorkPolicyBindingV2,
+  type RepositoryWorkPolicySessionControlV2,
+} from "./postgres/repository-work-policy-v2.ts";
+import type {
+  RepositoryWorkPolicyBindingV2,
+  RepositoryWorkPolicyAccountUnitV2,
+  RepositoryWorkPolicySessionSecurityReaderV2,
+} from "../ports/repository-work-v2.ts";
+import {
+  createPostgresRepositoryWorkBindingV2,
+  type RepositoryWorkStateBindingV2,
+  type RepositoryWorkExecutionV2,
+} from "./postgres/repository-work-v2.ts";
+import { createPostgresCredentialInventoryV1 } from "../credential-inventory-v1/postgres.ts";
 import { readRuntimePreparationSubmissionV1 } from "./postgres/runtime-preparation-submission.ts";
 import { createPostgresDelegationRepository } from "../delegation/postgres.ts";
 import type { DelegationRepository, DelegationTransactionHost } from "../delegation/repository.ts";
@@ -553,6 +568,7 @@ interface CredentialInventoryBoundParticipantV1 {
 }
 
 interface CredentialInventoryExecutionV1 {
+  readonly submittedUse?: RepositoryWorkExecutionV2["submittedUse"];
   readonly phase: CredentialInventoryOwnerPhaseV1;
   readonly prepareCommit: () => Promise<void>;
   readonly assertCommitReady: () => void;
@@ -1143,6 +1159,23 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #channelCreationFailures = new WeakMap<
     object,
     Readonly<ReservedChannelInstallationLocatorV1> | null
+  >();
+  readonly #repositoryWorkExecution = new AsyncLocalStorage<RepositoryWorkExecutionV2>();
+  readonly #repositoryPolicyAccounts = new WeakMap<
+    RepositoryWorkPolicyAccountUnitV2,
+    RepositoryWorkPolicySessionControlV2
+  >();
+  readonly #repositoryPolicyExecution = new AsyncLocalStorage<RepositoryWorkExecutionV2>();
+  readonly #repositoryPolicyContexts = new WeakMap<
+    object,
+    {
+      readonly context: TransactionContext;
+      readonly query: PostgresClient["query"];
+      readonly installationId: string;
+      readonly execution: RepositoryWorkExecutionV2;
+      locked: boolean;
+      active: boolean;
+    }
   >();
   readonly #credentialExecution = new AsyncLocalStorage<CredentialInventoryEnrollmentV1>();
   readonly #gatewayExecution = new AsyncLocalStorage<GatewayStartupEnrollment>();
@@ -2060,6 +2093,32 @@ export class PostgresPlatformState implements PlatformStateStore {
   /** Only a live token minted by the real guarded owner can read this projection.
    * Never accepts a state snapshot or a caller-supplied transaction/current flag. */
   async loadNativeIAMStateInTransaction(token: object): Promise<PersistedNativeIAMState> {
+    const repositoryPolicy = this.#repositoryPolicyContexts.get(token);
+    if (repositoryPolicy !== undefined) {
+      if (
+        !repositoryPolicy.active ||
+        !repositoryPolicy.locked ||
+        this.#repositoryPolicyExecution.getStore() !== repositoryPolicy.execution
+      )
+        throw new ScopeViolationError("The original repository policy IAM unit is unavailable.");
+      repositoryPolicy.execution.phase.assertOperationActive();
+      const state = await this.nativeIAMState(
+        repositoryPolicy.context,
+        repositoryPolicy.query,
+        repositoryPolicy.installationId,
+      );
+      repositoryPolicy.execution.phase.assertOperationActive();
+      return state;
+    }
+    const ambientPolicy = this.#repositoryPolicyExecution.getStore();
+    if (ambientPolicy !== undefined) {
+      const error = new ScopeViolationError(
+        "The original repository policy IAM token is unavailable.",
+      );
+      ambientPolicy.phase.poison(error);
+      throw error;
+    }
+
     const turn = this.#turnContexts.get(token);
     if (turn !== undefined) {
       return this.trackTurnIO(turn, async () => {
@@ -3342,6 +3401,56 @@ export class PostgresPlatformState implements PlatformStateStore {
     } catch {
       return Object.freeze({ status: "unavailable", effectRef: request.effectRef });
     }
+  }
+
+  /** Reuses the original fixed account/session read under a distinct policy unit.
+   * Profile units and structural copies cannot enter this owner. */
+  repositoryWorkPolicySessionSecurityV2(): RepositoryWorkPolicySessionSecurityReaderV2 {
+    return Object.freeze<RepositoryWorkPolicySessionSecurityReaderV2>({
+      lock: (unit, lookup) => {
+        const control = this.#repositoryPolicyAccounts.get(unit);
+        if (!control) {
+          const error = new ScopeViolationError("The original policy session unit is unavailable.");
+          this.#repositoryPolicyExecution.getStore()?.phase.poison(error);
+          return Promise.reject(error);
+        }
+        let released = false;
+        const release = () => {
+          released = true;
+        };
+        try {
+          control.assertAcquiring();
+          control.retainCleanup(release);
+        } catch (error) {
+          control.poison(error);
+          return Promise.reject(error);
+        }
+        const pending = readPostgresWorkloadProfileSessionV1(
+          {
+            installationId: unit.installationId,
+            signal: unit.signal,
+            assertAcquiring: () => {
+              control.assertAcquiring();
+              if (released)
+                throw new ScopeViolationError("The policy session observation is closed.");
+            },
+            assertCurrent: () => {
+              control.assertCurrent();
+              if (released)
+                throw new ScopeViolationError("The policy session observation is closed.");
+              return undefined;
+            },
+            query: (statement, parameters) => unit.query(statement, parameters),
+            retainCurrentness: (check) => control.retainCurrentness(check),
+            poison: (error) => control.poison(error),
+            release,
+          },
+          lookup,
+        );
+        control.retainAccepted(pending.then(() => {}));
+        return pending;
+      },
+    });
   }
 
   workloadProfileSessionSecurityV1(): WorkloadProfileSessionSecurityReaderV1 {
@@ -5477,6 +5586,203 @@ export class PostgresPlatformState implements PlatformStateStore {
 
   /** TODO: Connect the actual account, accepting-audit and protected-custody
    * participants after their same-client lock/completion handoff is available. */
+  /** Actual private policy transaction and SAME selected Native IAM instance.
+   * The separate authenticated human request/account participant is required;
+   * the broker cannot construct an operator or mutate policy from its Session. */
+  repositoryWorkPolicyBindingV2(selection: DriverSelection): RepositoryWorkPolicyBindingV2 {
+    if (
+      Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
+      selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
+      selection.acquireGuardedSelection !== DriverSelection.prototype.acquireGuardedSelection
+    )
+      throw new ScopeViolationError("The original policy IAM selection is unavailable.");
+    return createPostgresRepositoryWorkPolicyBindingV2(
+      async (scope, bounds, execution, body) => {
+        const ambient = this.#repositoryPolicyExecution.getStore();
+        if (ambient !== undefined || this.#outerExecution.getStore() !== undefined) {
+          const error = new ScopeViolationError(
+            "Repository policy requires its original outer transaction.",
+          );
+          ambient?.phase.poison(error);
+          this.#repositoryWorkExecution.getStore()?.phase.poison(error);
+          throw error;
+        }
+        const driver = selection.selectedDriver("iam");
+        const selected = selection.acquireGuardedSelection("iam", driver);
+        const token = Object.freeze({});
+        try {
+          return await this.#repositoryPolicyExecution.run(execution, () =>
+            this.execute(
+              false,
+              async (_unit, context) => {
+                const installation = await this.currentInstallation(
+                  context,
+                  context.credentialQuery,
+                );
+                if (installation?.id !== scope.installationId)
+                  throw new ScopeViolationError(
+                    "The repository policy belongs to another Installation.",
+                  );
+                const assertOperation = () => {
+                  context.lifetime.assertActive();
+                  execution.phase.assertOperationActive();
+                  selected.assertCurrent();
+                };
+                const query: PostgresClient["query"] = async (statement, parameters) => {
+                  assertOperation();
+                  const value = await context.credentialQuery(statement, parameters);
+                  assertOperation();
+                  return value;
+                };
+                const enrollment = {
+                  context,
+                  query,
+                  installationId: scope.installationId,
+                  execution,
+                  locked: false,
+                  active: true,
+                };
+                this.#repositoryPolicyContexts.set(token, enrollment);
+                const nativeIAM = bindNativeIAMTransaction(driver, this, token);
+                return body({
+                  context: {
+                    scope,
+                    transaction: { assertActive: assertOperation },
+                    query: { query },
+                  },
+                  iam: Object.freeze({
+                    lookupIdentity: nativeIAM.lookupIdentity,
+                    authorize: nativeIAM.authorize,
+                    assertCurrent: () => {
+                      selected.assertCurrent();
+                      nativeIAM.assertCurrent();
+                      context.assertOwnerActive();
+                    },
+                  }),
+                  registerAccountUnit: (unit, control) => {
+                    context.assertOwnerActive();
+                    if (
+                      this.#repositoryPolicyExecution.getStore() !== execution ||
+                      this.#repositoryPolicyAccounts.has(unit)
+                    )
+                      throw new ScopeViolationError(
+                        "The policy session unit is already or incorrectly enrolled.",
+                      );
+                    this.#repositoryPolicyAccounts.set(unit, control);
+                    return () => {
+                      this.#repositoryPolicyAccounts.delete(unit);
+                    };
+                  },
+                  lockIAM: async () => {
+                    if (enrollment.locked)
+                      throw new ScopeViolationError("Repository policy IAM is already locked.");
+                    await query("SELECT occ.lock_workload_profile_iam()");
+                    enrollment.locked = true;
+                  },
+                  appendAudit: (event) => this.appendAudit(context, event, query),
+                });
+              },
+              bounds,
+              false,
+              execution,
+            ),
+          );
+        } finally {
+          const enrollment = this.#repositoryPolicyContexts.get(token);
+          if (enrollment) enrollment.active = false;
+          this.#repositoryPolicyContexts.delete(token);
+          selected.release();
+        }
+      },
+      () => new CredentialInventoryOwnerPhaseV1(),
+    );
+  }
+
+  /** Constructs the private original Work/unit pairing. Work owns its P/R
+   * handles; this State owns queries, inventory membership and outer COMMIT. */
+  repositoryWorkBindingV2(): RepositoryWorkStateBindingV2 {
+    return createPostgresRepositoryWorkBindingV2(
+      (scope, bounds, execution, body) => {
+        const ambient = this.#repositoryWorkExecution.getStore();
+        if (ambient !== undefined || this.#outerExecution.getStore() !== undefined) {
+          const error = new ScopeViolationError(
+            "Repository Work requires its original outer transaction.",
+          );
+          ambient?.phase.poison(error);
+          this.#repositoryPolicyExecution.getStore()?.phase.poison(error);
+          throw error;
+        }
+        return this.#repositoryWorkExecution.run(execution, () =>
+          this.execute(
+            false,
+            async (_unit, context) => {
+              const installation = await this.currentInstallation(context, context.credentialQuery);
+              if (installation?.id !== scope.installationId)
+                throw new ScopeViolationError("Repository Work belongs to another Installation.");
+              const assertOperation = () => {
+                context.lifetime.assertActive();
+                execution.phase.assertOperationActive();
+              };
+              const query = async (statement: string, parameters?: readonly unknown[]) => {
+                assertOperation();
+                const result = await context.credentialQuery(statement, parameters);
+                assertOperation();
+                return result;
+              };
+              const repositoryContext = {
+                scope: { installationId: scope.installationId, namespaceId: scope.namespaceId },
+                transaction: { assertActive: assertOperation },
+                query: { query },
+              };
+              return body({
+                context: repositoryContext,
+                inventory: (phase) =>
+                  createPostgresCredentialInventoryV1(
+                    {
+                      ...repositoryContext,
+                      inventoryScope: {
+                        installationId: scope.installationId,
+                        namespaceId: scope.namespaceId,
+                        agentId: scope.agentId,
+                      },
+                      commitRef: execution.commitRef,
+                      phase,
+                    },
+                    {},
+                  ).repositoryLeaseV2,
+                appendAudit: (actorId, operationRef, kind) =>
+                  this.appendAudit(
+                    context,
+                    {
+                      id: randomUUID(),
+                      occurredAt: new Date().toISOString(),
+                      installationId: scope.installationId,
+                      namespaceId: scope.namespaceId,
+                      kind: "mutation",
+                      actorId,
+                      action: `work.repository.${kind}`,
+                      resource: {
+                        kind: "agent",
+                        id: scope.agentId,
+                        namespaceId: scope.namespaceId,
+                      },
+                      outcome: "success",
+                      details: { operationRef, commitRef: execution.commitRef },
+                    },
+                    query,
+                  ),
+              });
+            },
+            bounds,
+            false,
+            execution,
+          ),
+        );
+      },
+      () => new CredentialInventoryOwnerPhaseV1(),
+    );
+  }
+
   private bindCredentialInventoryOwnersV1(
     participants?: CredentialInventoryOwnerParticipantsV1,
   ): CredentialInventoryOwnerBindingV1 {
@@ -5900,6 +6206,20 @@ export class PostgresPlatformState implements PlatformStateStore {
       ambientResponse?.poison(error);
       throw error;
     }
+    const repositoryPolicy = this.#repositoryPolicyExecution.getStore();
+    if (repositoryPolicy !== undefined && repositoryPolicy !== credential) {
+      const error = new ScopeViolationError(
+        "A repository policy transaction cannot start another State transaction.",
+      );
+      repositoryPolicy.phase.poison(error);
+      throw error;
+    }
+    const repositoryWork = this.#repositoryWorkExecution.getStore();
+    if (repositoryWork !== undefined && repositoryWork !== credential) {
+      const error = new ScopeViolationError("Repository Work cannot open a mixed transaction.");
+      repositoryWork.phase.poison(error);
+      throw error;
+    }
     const ambientFresh = this.#freshExecution.getStore();
     if (
       (ambientFresh !== undefined && ambientFresh !== fresh) ||
@@ -6000,16 +6320,26 @@ export class PostgresPlatformState implements PlatformStateStore {
         raw.release(destroy);
       }
     };
+    const submittedRepositoryUse =
+      this.#repositoryWorkExecution.getStore() === credential
+        ? credential?.submittedUse
+        : undefined;
     const abort = () => {
+      submittedRepositoryUse?.invalidate();
       profileAbort.abort();
       runtimeParticipant?.poison(abortFailure());
       credential?.phase.poison(abortFailure());
       gateway?.phase?.poison(abortFailure());
       turn?.phase?.poison(options?.signal.reason ?? abortFailure());
-      lifetime.close();
       expired = true;
       closed = true;
-      cleanup(() => release(true));
+      // A submitted fixed native write owns physical cleanup independently of
+      // permission expiry. The tracked original transition must settle before
+      // rollback/client release; no new query or write is admitted meanwhile.
+      if (!submittedRepositoryUse?.held()) {
+        lifetime.close();
+        cleanup(() => release(true));
+      }
       rejectAbort?.(abortFailure());
     };
     const cancelled =
@@ -6196,6 +6526,14 @@ export class PostgresPlatformState implements PlatformStateStore {
           "SELECT set_config('statement_timeout',$1,true), set_config('transaction_timeout',$1,true), set_config('idle_in_transaction_session_timeout',$1,true)",
           [`${remaining}ms`],
         );
+        if (submittedRepositoryUse !== undefined) {
+          // Only the private fresh-release path may outlive its permission timer
+          // while an original write is draining. Per-statement bounds remain;
+          // SQL locks terminate with the joined ACK/retirement owner, not idle age.
+          await client.query(
+            "SELECT set_config('transaction_timeout','0',true), set_config('idle_in_transaction_session_timeout','0',true)",
+          );
+        }
         await client.query("SET LOCAL client_connection_check_interval = '100ms'");
       }
       context = {

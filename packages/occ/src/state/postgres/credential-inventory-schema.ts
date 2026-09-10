@@ -5,10 +5,13 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   jsonb,
   primaryKey,
+  smallint,
   text,
   unique,
+  uniqueIndex,
   type AnyPgColumn,
   type PgSchema,
   type PgTableExtraConfigValue,
@@ -53,11 +56,68 @@ export function createCredentialInventoryTablesV1(
     );
   const safeVersion = (name: string, column: AnyPgColumn) =>
     check(name, sql`${column} BETWEEN 1 AND 9007199254740991`);
+  // Immutable metadata only; a lease row does not grant execution authority.
+  const accessLeases = schema.table(
+    "credential_inventory_access_leases",
+    {
+      ...scope(),
+      accessLeaseRef: text("access_lease_ref").notNull(),
+      stableTargetDigest: text("stable_target_digest").notNull(),
+      document: jsonb("document").notNull(),
+    },
+    (table): PgTableExtraConfigValue[] => [
+      primaryKey({
+        name: "credential_inventory_access_leases_pk",
+        columns: [table.installationId, table.accessLeaseRef],
+      }),
+      agentOwner("credential_inventory_access_leases_agent", table),
+      unique("credential_inventory_access_leases_identity_tuple").on(
+        ...columns(table),
+        table.accessLeaseRef,
+        table.stableTargetDigest,
+      ),
+      bounded("credential_inventory_access_leases_document", table.document),
+      check(
+        "credential_inventory_access_leases_identity",
+        sql`(
+          ${table.document}->>'schemaVersion' = '2'
+          AND ${table.document}->>'accessLeaseRef' = ${table.accessLeaseRef}
+          AND ${table.document}#>>'{original,scope,installationRef}' = ${table.installationId}
+          AND ${table.document}#>>'{original,scope,namespaceRef}' = ${table.namespaceId}
+          AND ${table.document}#>>'{original,scope,agentRef}' = ${table.agentId}
+          AND length(${table.document}#>>'{original,scope,revisionRef}') > 0
+          AND ${table.document}#>>'{target,installationId}' = ${table.installationId}
+          AND ${table.document}#>>'{target,githubHost}' = 'github.com'
+          AND ${table.document}#>>'{target,installationId}' ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+          AND ${table.document}#>>'{target,appId}' ~ '^[1-9][0-9]{0,19}$'
+          AND ${table.document}#>>'{target,githubInstallationId}' ~ '^[1-9][0-9]{0,19}$'
+          AND ${table.document}#>>'{target,repositoryId}' ~ '^[1-9][0-9]{0,19}$'
+          AND jsonb_typeof(${table.document}->'work') = 'object'
+          AND jsonb_typeof(${table.document}->'execution') = 'object'
+          AND length(${table.document}->>'createdAt') > 0
+          AND length(${table.document}->>'notAfter') > 0
+          AND ${table.stableTargetDigest} ~ '^sha256:[0-9a-f]{64}$'
+          AND ${table.stableTargetDigest} = 'sha256:' || encode(sha256(convert_to(
+            (${table.document}#>>'{target,installationId}') || E'\\n' ||
+            (${table.document}#>>'{target,githubHost}') || E'\\n' ||
+            (${table.document}#>>'{target,appId}') || E'\\n' ||
+            (${table.document}#>>'{target,githubInstallationId}') || E'\\n' ||
+            (${table.document}#>>'{target,repositoryId}'), 'UTF8')), 'hex')
+        ) IS TRUE`,
+      ),
+    ],
+  );
   const records = schema.table(
     "credential_inventory_records",
     {
       ...scope(),
       recordRef: text("record_ref").notNull(),
+      schemaVersion: integer("schema_version").notNull().default(1),
+      stableTargetDigest: text("stable_target_digest"),
+      accessLeaseRef: text("access_lease_ref"),
+      liveSlot: smallint("live_slot"),
+      mintActive: boolean("mint_active").notNull().default(false),
+      targetHeld: boolean("target_held").notNull().default(false),
       inventoryVersion: bigint("inventory_version", { mode: "number" }).notNull(),
       bindingRef: text("binding_ref").notNull(),
       live: boolean("live").notNull(),
@@ -70,6 +130,26 @@ export function createCredentialInventoryTablesV1(
         columns: [...columns(table), table.recordRef],
       }),
       agentOwner("credential_inventory_records_agent", table),
+      foreignKey({
+        name: "credential_inventory_records_access_lease",
+        columns: [...columns(table), table.accessLeaseRef, table.stableTargetDigest],
+        foreignColumns: [
+          ...columns(accessLeases),
+          accessLeases.accessLeaseRef,
+          accessLeases.stableTargetDigest,
+        ],
+      })
+        .onUpdate("restrict")
+        .onDelete("restrict"),
+      uniqueIndex("credential_inventory_records_lease_live_slot")
+        .on(table.installationId, table.accessLeaseRef, table.liveSlot)
+        .where(sql`${table.schemaVersion} = 2 AND ${table.live}`),
+      uniqueIndex("credential_inventory_records_lease_active_mint")
+        .on(table.installationId, table.accessLeaseRef)
+        .where(sql`${table.schemaVersion} = 2 AND ${table.mintActive}`),
+      index("credential_inventory_records_target_hold")
+        .on(table.installationId, table.stableTargetDigest)
+        .where(sql`${table.schemaVersion} = 2 AND ${table.targetHeld} AND ${table.live}`),
       bounded("credential_inventory_records_document", table.document),
       safeVersion("credential_inventory_records_version", table.inventoryVersion),
       index("credential_inventory_records_live")
@@ -83,11 +163,31 @@ export function createCredentialInventoryTablesV1(
       AND ${table.document}#>>'{issuance,scope,agentId}' = ${table.agentId}
       AND ${table.document}#>>'{target,recordRef}' = ${table.recordRef}
       AND (${table.document}->>'inventoryVersion')::numeric = ${table.inventoryVersion}
-      AND ${table.document}#>>'{issuance,binding,bindingRef}' = ${table.bindingRef}
+      AND (
+        (${table.schemaVersion} = 1
+          AND ${table.document}->>'schemaVersion' = '1'
+          AND ${table.document}#>>'{issuance,binding,bindingRef}' = ${table.bindingRef}
+          AND ${table.stableTargetDigest} IS NULL AND ${table.accessLeaseRef} IS NULL
+          AND ${table.liveSlot} IS NULL AND NOT ${table.mintActive} AND NOT ${table.targetHeld})
+        OR (${table.schemaVersion} = 2
+          AND ${table.document}->>'schemaVersion' = '2'
+          AND ${table.document}#>>'{issuance,bindingRef}' = ${table.bindingRef}
+          AND ${table.document}#>>'{issuance,lease,accessLeaseRef}' = ${table.accessLeaseRef}
+          AND ${table.accessLeaseRef} IS NOT NULL
+          AND ${table.stableTargetDigest} ~ '^sha256:[0-9a-f]{64}$'
+          AND ((${table.live} AND ${table.liveSlot} IN (1, 2))
+            OR (NOT ${table.live} AND ${table.liveSlot} IS NULL))
+          AND ${table.mintActive} = (${table.document}->>'state' IN ('reserved','mint-unknown'))
+          AND ${table.targetHeld} = (${table.document}->>'state' = 'mint-unknown'
+            OR (${table.document}->>'state' = 'outstanding'
+              AND ${table.document}->>'disposition' = 'mitigation-only')))
+      )
       AND ${table.document}->>'state' IN ('reserved','mint-unknown','not-issued','outstanding','resolved-without-token')
       AND ${table.unresolved} = (${table.document}->>'state' IN ('reserved','mint-unknown'))
       AND ${table.live} = (${table.document}->>'state' IN ('reserved','mint-unknown') OR
-        (${table.document}->>'state' = 'outstanding' AND ${table.document}#>>'{revocation,state}' NOT IN ('confirmed','expired')))
+        (${table.document}->>'state' = 'outstanding' AND (
+          ${table.schemaVersion} = 2 OR (${table.schemaVersion} = 1
+            AND ${table.document}#>>'{revocation,state}' NOT IN ('confirmed','expired')))))
     ) IS TRUE`,
       ),
     ],
@@ -234,6 +334,7 @@ export function createCredentialInventoryTablesV1(
     ],
   );
   return {
+    credentialInventoryAccessLeases: accessLeases,
     credentialInventoryRecords: records,
     credentialInventoryOperations: operations,
     credentialInventoryMintClaims: mintClaims,

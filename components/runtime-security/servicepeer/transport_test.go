@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -390,6 +391,12 @@ func TestRejectsInvalidConfiguration(t *testing.T) {
 		}},
 		{"wrong recipient", func(c *servicepeer.Config) { c.RecipientSPIFFEID = otherID }},
 		{"missing recipient", func(c *servicepeer.Config) { c.RecipientSPIFFEID = "" }},
+		{"long ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = strings.Repeat("a", 256) }},
+		{"NUL ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = "oce\x00github" }},
+		{"control ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = "oce\ngithub" }},
+		{"space ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = "oce github" }},
+		{"DEL ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = "oce\x7fgithub" }},
+		{"non-ASCII ALPN", func(c *servicepeer.Config) { c.ApplicationProtocol = "océ-github" }},
 		{"zero handshake timeout", func(c *servicepeer.Config) { c.HandshakeTimeout = 0 }},
 		{"negative handshake timeout", func(c *servicepeer.Config) { c.HandshakeTimeout = -time.Second }},
 		{"unbounded handshake timeout", func(c *servicepeer.Config) { c.HandshakeTimeout = 3*time.Second + 1 }},
@@ -418,6 +425,10 @@ func TestRejectsInvalidConfiguration(t *testing.T) {
 	config := defaultConfig(servicepeer.Client)
 	config.HandshakeTimeout, config.RecheckInterval, config.MaxConnections = 3*time.Second, 5*time.Second, 64
 	newTransport(t, f, config)
+	for _, protocol := range []string{"a", strings.Repeat("a", 255)} {
+		config.ApplicationProtocol = protocol
+		newTransport(t, f, config)
+	}
 }
 
 func TestServerRecipientMustBeOwnIdentity(t *testing.T) {
@@ -878,6 +889,58 @@ func TestTLS13Only(t *testing.T) {
 					t.Fatal("connection did not negotiate a fresh TLS 1.3 session")
 				}
 				transfer(t, result.connection, external.connection, "TLS 1.3 application bytes")
+			})
+		}
+	}
+}
+
+func TestExactApplicationProtocolALPN(t *testing.T) {
+	const protocol = "oce-github-mediation-v2"
+	for _, externalServer := range []bool{false, true} {
+		for _, scenario := range []string{"exact", "offered with other protocol", "missing", "wrong"} {
+			name := "transport server/"
+			if externalServer {
+				name = "transport client/"
+			}
+			t.Run(name+scenario, func(t *testing.T) {
+				f := newPairFixture(t, func(client, server *servicepeer.Config) {
+					client.ApplicationProtocol, server.ApplicationProtocol = protocol, protocol
+				})
+				transport, externalSVID := f.serverSide, f.client.svid
+				if externalServer {
+					transport, externalSVID = f.clientSide, f.server.svid
+				}
+				config := externalTLSConfig(t, externalSVID, externalServer)
+				config.MinVersion, config.MaxVersion = tls.VersionTLS13, tls.VersionTLS13
+				config.SessionTicketsDisabled = true
+				switch scenario {
+				case "exact":
+					config.NextProtos = []string{protocol}
+				case "offered with other protocol":
+					config.NextProtos = []string{"oce-other-v1", protocol}
+				case "wrong":
+					config.NextProtos = []string{"oce-other-v1"}
+				}
+				result, external := handshakeExternal(t, transport, config, externalServer)
+				if scenario == "missing" || scenario == "wrong" {
+					// TLS permits a missing ALPN extension. The transport must
+					// reject that successful TLS handshake before issuing a handle.
+					requireError(t, result.err)
+					if result.connection != nil {
+						t.Fatal("ALPN mismatch returned an authenticated connection")
+					}
+					if external.err == nil {
+						requireReadClosed(t, pendingRead(external.connection))
+					}
+					return
+				}
+				must(t, result.err)
+				must(t, external.err)
+				if external.connection.ConnectionState().NegotiatedProtocol != protocol {
+					t.Fatal("TLS did not negotiate the exact application protocol")
+				}
+				transfer(t, result.connection, external.connection, "exact ALPN application bytes")
+				transfer(t, external.connection, result.connection, "exact ALPN response")
 			})
 		}
 	}

@@ -17,7 +17,11 @@ export const RUNTIME_SERVICE_NATIVE_LIMITS = Object.freeze({
 
 /** Protected deployment input. This technical configuration grants no service identity. */
 export type RuntimeServiceOperationPolicy =
-  "read-operation-only-v1" | "initial-harness-bind-v1" | "runtime-observation-read-v1";
+  | "read-operation-only-v1"
+  | "initial-harness-bind-v1"
+  | "runtime-observation-read-v1"
+  | "github-metadata-rpc-v2"
+  | "github-git-read-rpc-v3";
 export interface RuntimeAuthoritySource {
   readonly schemaVersion: 1;
   readonly sourceRef: string;
@@ -33,7 +37,9 @@ export interface RuntimeAuthoritySource {
   readonly transportProfileRef:
     | "owned-child-stdio-readback-v1"
     | "owned-child-stdio-initial-harness-bind-v1"
-    | "owned-child-stdio-runtime-observation-v1";
+    | "owned-child-stdio-runtime-observation-v1"
+    | "owned-child-stdio-github-metadata-v2"
+    | "owned-child-stdio-github-git-read-v3";
   readonly limits: typeof RUNTIME_SERVICE_NATIVE_LIMITS;
 }
 export type RuntimeServiceNativeProfile = RuntimeAuthoritySource & {
@@ -51,6 +57,14 @@ export type RuntimeServiceNativeProfile = RuntimeAuthoritySource & {
     | {
         readonly transportProfileRef: "owned-child-stdio-runtime-observation-v1";
         readonly operationPolicy: "runtime-observation-read-v1";
+      }
+    | {
+        readonly transportProfileRef: "owned-child-stdio-github-metadata-v2";
+        readonly operationPolicy: "github-metadata-rpc-v2";
+      }
+    | {
+        readonly transportProfileRef: "owned-child-stdio-github-git-read-v3";
+        readonly operationPolicy: "github-git-read-rpc-v3";
       }
   );
 
@@ -72,7 +86,11 @@ export type RuntimeServiceTrustRequest = RuntimeServiceTrustRequestBase &
         readonly agentId: string;
         readonly peerSPIFFEId: string;
         /** Absent only for the original closed readback admission. */
-        readonly operationPolicy?: "initial-harness-bind-v1" | "runtime-observation-read-v1";
+        readonly operationPolicy?:
+          | "initial-harness-bind-v1"
+          | "runtime-observation-read-v1"
+          | "github-metadata-rpc-v2"
+          | "github-git-read-rpc-v3";
       }
     | { readonly kind: "service-withdraw"; readonly serviceIdentityRef: string }
   );
@@ -212,11 +230,21 @@ const observationSourceProperties = {
   ...sourceProperties,
   transportProfileRef: literal("owned-child-stdio-runtime-observation-v1"),
 };
+const githubSourceProperties = {
+  ...sourceProperties,
+  transportProfileRef: literal("owned-child-stdio-github-metadata-v2"),
+};
+const githubGitReadSourceProperties = {
+  ...sourceProperties,
+  transportProfileRef: literal("owned-child-stdio-github-git-read-v3"),
+};
 export const RuntimeAuthoritySourceSchema: JsonSchema = {
   anyOf: [
     object(sourceProperties),
     object(bindSourceProperties),
     object(observationSourceProperties),
+    object(githubSourceProperties),
+    object(githubGitReadSourceProperties),
   ],
 };
 export const RuntimeServiceNativeProfileSchema: JsonSchema = {
@@ -236,6 +264,18 @@ export const RuntimeServiceNativeProfileSchema: JsonSchema = {
     object({
       ...observationSourceProperties,
       operationPolicy: literal("runtime-observation-read-v1"),
+      sourceConfigurationDigest: digest,
+      peerSPIFFEId: spiffe,
+    }),
+    object({
+      ...githubSourceProperties,
+      operationPolicy: literal("github-metadata-rpc-v2"),
+      sourceConfigurationDigest: digest,
+      peerSPIFFEId: spiffe,
+    }),
+    object({
+      ...githubGitReadSourceProperties,
+      operationPolicy: literal("github-git-read-rpc-v3"),
       sourceConfigurationDigest: digest,
       peerSPIFFEId: spiffe,
     }),
@@ -269,7 +309,12 @@ export const RuntimeServiceTrustRequestSchema: JsonSchema = {
       agentId: id("agt"),
       peerSPIFFEId: spiffe,
       operationPolicy: {
-        anyOf: [literal("initial-harness-bind-v1"), literal("runtime-observation-read-v1")],
+        anyOf: [
+          literal("initial-harness-bind-v1"),
+          literal("runtime-observation-read-v1"),
+          literal("github-metadata-rpc-v2"),
+          literal("github-git-read-rpc-v3"),
+        ],
       },
     }),
   ],
@@ -523,7 +568,11 @@ export function parseRuntimeServiceTrustRecord(
         configuration.installationId !== record.installationId ||
         configuration.serviceIdentityRef !== record.subjectRef ||
         configuration.configurationVersion !== record.recordVersion ||
-        configuration.role !== "lifecycle-authority" ||
+        configuration.role !==
+          (profile.operationPolicy === "github-metadata-rpc-v2" ||
+          profile.operationPolicy === "github-git-read-rpc-v3"
+            ? "repository-issuer"
+            : "lifecycle-authority") ||
         configuration.allowedScope.kind !== "agent" ||
         configuration.allowedScope.installationId !== record.installationId ||
         configuration.allowedScope.namespaceId !== request.namespaceId ||

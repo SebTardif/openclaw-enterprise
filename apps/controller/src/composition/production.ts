@@ -49,7 +49,10 @@ import { resolveApprovedProductionHarness } from "./production-harness.ts";
 import type { ControllerWorkspaceFilesAccess } from "../gateway/contracts.ts";
 import { createWorkspaceFilesAccess, validateWorkspaceFilesApiKeyPath } from "./workspace-files.ts";
 
-import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
+import {
+  validateNativeRuntimeServiceProfile,
+  type NativeGitHubMediationProfileValidation,
+} from "../admission/runtime-authority-profile.ts";
 import {
   DEFAULT_RUNTIME_AUTHORITY_BINARY_PATH,
   startRuntimeAuthorityReadback,
@@ -104,6 +107,7 @@ export interface ProductionConfig {
   readonly workspaceFilesAccess?: ControllerWorkspaceFilesAccess;
   readonly gatewayApiKeyPath?: string;
   readonly runtimeAuthorityBinaryPath?: string;
+  readonly githubMediationProfileValidation?: NativeGitHubMediationProfileValidation;
   readonly runtimeAuthorityReadbackConfigPath?: string;
 }
 
@@ -278,7 +282,7 @@ export async function composeProduction(config: ProductionConfig) {
             sourceEnrollment,
             owners?.installedRenderer,
           );
-          // TODO(CTL-02): install each genuine original domain supplier in the
+          // TODO: install each genuine original domain supplier in the
           // process owner factory. Missing contributors remain explicit refusal;
           // configured records or a partial renderer cannot replace them.
           const capabilities = createWorkloadProfileCapabilityAggregatorV2({
@@ -359,7 +363,12 @@ export async function composeProduction(config: ProductionConfig) {
       iam: () => controller.selectedDriver("iam"),
       sources,
       validateProfile: (profile, signal) =>
-        validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
+        validateNativeRuntimeServiceProfile(
+          binaryPath,
+          profile,
+          signal,
+          config.githubMediationProfileValidation,
+        ),
     });
     if (workloadProfileService === undefined)
       throw new Error("The original workload profile composition was not constructed.");

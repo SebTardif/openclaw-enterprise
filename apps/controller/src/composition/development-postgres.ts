@@ -1,4 +1,7 @@
-import { validateNativeRuntimeServiceProfile } from "../admission/runtime-authority-profile.ts";
+import {
+  validateNativeRuntimeServiceProfile,
+  type NativeGitHubMediationProfileValidation,
+} from "../admission/runtime-authority-profile.ts";
 import { startRuntimeAuthorityReadback } from "./runtime-authority-readback.ts";
 import { composeSelectedComputeRendererContribution } from "./driver-factories/compute.ts";
 import type { WorkloadProfileCompositionOwnerAssemblyV2 } from "./production.ts";
@@ -59,6 +62,7 @@ export interface PostgresDevelopmentConfig {
   readonly authBaseURL: string;
   readonly poolMax?: number;
   readonly runtimeAuthorityBinaryPath?: string;
+  readonly githubMediationProfileValidation?: NativeGitHubMediationProfileValidation;
   readonly runtimeAuthorityReadbackConfigPath?: string;
   readonly logger?: OccLogger;
   readonly logging?: LoggingConfiguration;
@@ -235,7 +239,7 @@ export async function composePostgresDevelopment(
             sourceEnrollment,
             owners?.installedRenderer,
           );
-          // TODO(CTL-02): install each genuine original domain supplier in the
+          // TODO: install each genuine original domain supplier in the
           // process owner factory. Missing contributors remain explicit refusal;
           // configured records or a partial renderer cannot replace them.
           const capabilities = createWorkloadProfileCapabilityAggregatorV2({
@@ -329,7 +333,12 @@ export async function composePostgresDevelopment(
             iam: () => controller.selectedDriver("iam"),
             sources,
             validateProfile: (profile, signal) =>
-              validateNativeRuntimeServiceProfile(binaryPath, profile, signal),
+              validateNativeRuntimeServiceProfile(
+                binaryPath,
+                profile,
+                signal,
+                config.githubMediationProfileValidation,
+              ),
           });
     if (
       config.runtimeAuthorityReadbackConfigPath !== undefined &&

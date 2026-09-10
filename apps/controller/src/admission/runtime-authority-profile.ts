@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { GitHubMediationNativeDeployment } from "./github-mediation-context.ts";
 import {
   canonicalRuntimeServiceTrust,
   parseRuntimeServiceNativeProfile,
@@ -17,6 +18,12 @@ export {
   nativeChildExit,
   closeNativeChild,
 } from "./native-child-lifetime.ts";
+
+/** Fixed protected process configuration for the separate GitHub native parser. */
+export interface NativeGitHubMediationProfileValidation {
+  readonly binaryPath: string;
+  readonly deployment: GitHubMediationNativeDeployment;
+}
 import {
   verifyNativeExecutable,
   nativeChildExit,
@@ -29,9 +36,29 @@ export async function validateNativeRuntimeServiceProfile(
   binaryPath: string,
   input: Readonly<RuntimeServiceNativeProfile>,
   parentSignal: AbortSignal,
+  github?: NativeGitHubMediationProfileValidation,
 ): Promise<void> {
   const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(3000)]);
   const profile = parseRuntimeServiceNativeProfile(input);
+  if (
+    profile.operationPolicy === "github-metadata-rpc-v2" ||
+    profile.operationPolicy === "github-git-read-rpc-v3"
+  ) {
+    if (github === undefined) throw nativeUnavailable();
+    const { binaryPath: githubBinaryPath, deployment } = github;
+    const selectedDeployment = {
+      listenPath: deployment.listenPath,
+      peerUid: deployment.peerUid,
+      trustedAncestorUids: [...deployment.trustedAncestorUids],
+    };
+    const { validateNativeGitHubMediationProfile } = await import("./github-mediation-context.ts");
+    return validateNativeGitHubMediationProfile(
+      githubBinaryPath,
+      profile,
+      selectedDeployment,
+      signal,
+    );
+  }
   await verifyNativeExecutable(binaryPath, profile.nativeExecutableSha256, signal);
   const child = spawn(binaryPath, ["validate-profile"], {
     env: {},

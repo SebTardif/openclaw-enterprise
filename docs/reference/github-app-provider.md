@@ -120,3 +120,10 @@ and currentness controls are explicitly test inputs. They are not production
 material, human/turn authority, durable token inventory, or live GitHub permission
 qualification. Actual App selection, protected key source, inventory owner joins
 and runtime delivery remain required integration work.
+
+## Protected material integration
+
+[Protected GitHub credential custody](protected-github-custody.md) implements encrypted
+installation-token retention, exact recovery and revocation without the App signing
+key. Its material receipt does not replace original inventory/current-authority
+or committed-release acceptance.

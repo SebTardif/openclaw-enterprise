@@ -84,10 +84,10 @@ export type WorkExecutionAssociationV2 = Readonly<{
       }>;
 }>;
 
-/** TODO(AUT44/contracts): the integrated diagnostic values currently have no
- * package export. The original contracts owner must expose WorkOwnerValueV2 and
- * WorkInvocationValueV2 before binding these slots. Do not duplicate their schema
- * or bypass the package boundary with a cross-package relative source import.
+/** TODO(work diagnostic exports): expose WorkOwnerValueV2 and
+ * WorkInvocationValueV2 through the supported contracts package entrypoint before
+ * binding these slots. Do not duplicate their schemas or bypass the package
+ * boundary with a cross-package relative source import.
  */
 export interface WorkDiagnosticBindingsV2 {
   readonly owner: unknown;
@@ -121,8 +121,37 @@ export type WorkServiceOperationV2 =
   | "work.authority.renew"
   | "work.model.generate"
   | "work.repository-token.issue"
+  | "work.repository.use"
   | "work.delivery.submit"
   | "work.delivery.observe";
+/** Closed repository-use comparison data. The constructor selects the protocol;
+ * this record supplies neither the original operation nor its authority. */
+export type WorkRepositoryProtocolVersionV2 = 2 | 3;
+/** Fixed options preserve one trusted literal selection across generic assembly. */
+export type WorkRepositoryProtocolOptionsV2<V extends WorkRepositoryProtocolVersionV2 = 2> = {
+  readonly protocolVersion?: V;
+} & (V extends 2 ? { readonly protocolVersion?: 2 } : { readonly protocolVersion: 3 }) &
+  ([WorkRepositoryProtocolVersionV2] extends [V] ? never : unknown);
+/** A trusted constructor chooses one literal profile before receiving requests. */
+export type WorkRepositoryProtocolSelectionV2<V extends WorkRepositoryProtocolVersionV2 = 2> =
+  (V extends 2 ? [options?: { protocolVersion?: 2 }] : [options: { protocolVersion: 3 }]) &
+    ([WorkRepositoryProtocolVersionV2] extends [V] ? never : unknown);
+export type WorkRepositoryPolicyArmV2<V extends WorkRepositoryProtocolVersionV2 = 2> = V extends 3
+  ? Readonly<{
+      repositoryOperation: "git:read";
+      requiredPermissions: readonly ["contents:read", "metadata:read"];
+    }>
+  : Readonly<{ permission: "metadata:read" }>;
+/** Exact retained Git request declaration, distinct from physical body custody. */
+export interface WorkRepositoryGitReadV3 {
+  readonly version: 3;
+  readonly operation: "git:read";
+  readonly gitOperation: "discovery" | "upload-pack";
+  readonly gitProtocol: "version=2";
+  readonly bodyBytes: number;
+  readonly bodySha256: string;
+  readonly requestDigest: string;
+}
 export type WorkPolicyIntentV2 = WorkOriginalOperationV2 &
   Readonly<{
     work: VersionedWorkRefV2;
@@ -139,7 +168,35 @@ export type WorkPolicyIntentV2 = WorkOriginalOperationV2 &
         operation: "work.authority.issue" | "work.authority.renew";
         phase: "original" | "activation";
       }>
+    | Readonly<{
+        operation: "work.repository.use";
+        phase: "preparation" | "dispatch" | "check";
+        repository: Readonly<{
+          id: string;
+          owner: string;
+          name: string;
+          profile: WorkProfileRefV2;
+        }>;
+        execution: WorkExecutionAssociationV2;
+        attachmentRef: string;
+        receiverRef: string;
+      }>
   );
+/** Repository use is independently evaluated. Token issuance and authority
+ * renewal cannot substitute for preparation, committed dispatch or online use.
+ */
+export type WorkRepositoryUseIntentV2 = Extract<
+  WorkPolicyIntentV2,
+  { operation: "work.repository.use" }
+>;
+/** V3 is an explicit separate authority arm; token issue/renewal is insufficient. */
+export type WorkRepositoryUseIntentV3 = WorkRepositoryUseIntentV2 &
+  Readonly<{
+    protocolVersion: 3;
+    repositoryOperation: "git:read";
+    requiredPermissions: readonly ["contents:read", "metadata:read"];
+    repositoryRequest: WorkRepositoryGitReadV3;
+  }>;
 export type WorkAdmissionCandidateV2<D extends WorkDiagnosticBindingsV2 = MissingDiagnostics> =
   WorkOriginalOperationV2 &
     Readonly<{
@@ -255,7 +312,7 @@ export type WorkRecoveryResultV2<T> =
 
 /** Bind these slots to ORIGINAL implementation-owned types. The default is never,
  * not an object-shaped authority substitute. Type compatibility alone does not
- * authenticate any supplied object. Central retains WeakMap/token/operation
+ * authenticate any supplied object. The transaction owner retains private operation
  * recognition, security -> IAM -> parent -> issuer/root/ancestor/work locking,
  * caught/unawaited failure poisoning, drain, prepareCommit, final fencing, actual
  * COMMIT ACK and terminal cleanup. A consumer never releases a held participant.
@@ -343,7 +400,7 @@ export interface WorkAdmissionPortV2<
  * compares exact operation/scope/Work revisions and protected closure or withdrawal
  * evidence. Provisional records and the original staged receipt are not COMMIT.
  * Existing finite compound delivery methods remain a separate port. No new Work
- * operation is added to Central's private operation recognizer by this declaration.
+ * operation is added to the transaction owner's private recognizer by this declaration.
  */
 export interface WorkGeneralLifecyclePortV2<
   P extends WorkPrivateBindingsV2 = MissingPrivateBindings,

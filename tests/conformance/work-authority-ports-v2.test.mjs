@@ -15,9 +15,193 @@ import type { ExactAttemptV1 } from "@openclaw-enterprise/contracts/completed-co
 import type { ExactDeliveryOperationV1 } from "@openclaw-enterprise/contracts/turn-journal-v1";
 // Synthetic parameter markers make return-type inspection usable without
 // manufacturing the default-never private participants or invoking any port.
+import { RepositoryWorkOperationOwnerV2 } from "../../packages/occ/src/lifecycle/repository-work-v2.ts";
+import type { RepositoryWorkSourcesV2, RepositoryWorkLimitsV2, OriginalRepositoryPreparationV2, OriginalCommittedRepositoryReleaseV2 } from "../../packages/occ/src/lifecycle/repository-work-v2.ts";
+import { RepositoryWorkStateAdapterV2 } from "../../packages/occ/src/lifecycle/repository-work-state-v2.ts";
+import type { RepositoryWorkStateBindingsV2, RepositoryWorkStatePreparationV2, RepositoryWorkSelectionSourceV2, RepositoryWorkTokenBindingV2 } from "../../packages/occ/src/lifecycle/repository-work-state-v2.ts";
+import type { RepositoryWorkStateBindingV2, RepositoryWorkCommittedV2 } from "../../packages/occ/src/ports/repository-work-v2.ts";
+import type { GitHubMediationOperationOwner } from "../../packages/occ/src/github-mediation-v2/ports.ts";
 type RecoveryFixtureBindings = { readonly [K in keyof W.WorkPrivateBindingsV2]: K };
+type AdapterBindings<B extends RepositoryWorkStateBindingsV2,V extends W.WorkRepositoryProtocolVersionV2> = {
+  origin:B["origin"];preparation:RepositoryWorkStatePreparationV2<V>;token:B["token"];commit:RepositoryWorkCommittedV2;
+};
+type AdapterNative<V extends W.WorkRepositoryProtocolVersionV2> = RepositoryWorkSourcesV2<AdapterBindings<never,V>,V>["native"];
+declare const stateBinding:RepositoryWorkStateBindingV2;
+declare const native2:AdapterNative<2>,native3:AdapterNative<3>;
+declare const selection2:RepositoryWorkSelectionSourceV2<never,2>,selection3:RepositoryWorkSelectionSourceV2<never,3>;
+declare const tokens:RepositoryWorkTokenBindingV2<never>;
 `;
 const cases = [
+  {
+    name: "explicit Git use retains exact operation, ordered permissions and request declaration",
+    code: `declare const intent: W.WorkRepositoryUseIntentV3;
+const version:3=intent.protocolVersion;const operation:"git:read"=intent.repositoryOperation;
+const permissions:readonly ["contents:read","metadata:read"]=intent.requiredPermissions;
+const body:W.WorkRepositoryGitReadV3=intent.repositoryRequest;
+const originalUse:W.WorkRepositoryUseIntentV2=intent;`,
+  },
+  {
+    name: "Git use cannot replace its ordered permission arm",
+    reject: true,
+    code: `declare const intent:W.WorkRepositoryUseIntentV3;const changed:W.WorkRepositoryUseIntentV3={...intent,requiredPermissions:["metadata:read","contents:read"]};`,
+  },
+  {
+    name: "Git use cannot omit its body declaration",
+    reject: true,
+    code: `declare const intent:Omit<W.WorkRepositoryUseIntentV3,"repositoryRequest">;const complete:W.WorkRepositoryUseIntentV3=intent;`,
+  },
+  {
+    name: "default metadata owner and explicit Git owner bind their exact broker version",
+    code: `declare const two:RepositoryWorkSourcesV2;declare const three:RepositoryWorkSourcesV2<never,3>;declare const limits:RepositoryWorkLimitsV2;
+const metadata=new RepositoryWorkOperationOwnerV2(two,limits);
+const git=new RepositoryWorkOperationOwnerV2<never,3>(three,limits,{protocolVersion:3});
+const b2:GitHubMediationOperationOwner<OriginalRepositoryPreparationV2,OriginalCommittedRepositoryReleaseV2>=metadata;
+const b3:GitHubMediationOperationOwner<OriginalRepositoryPreparationV2<3>,OriginalCommittedRepositoryReleaseV2<3>,3>=git;`,
+  },
+  {
+    name: "generic protected assembly forwards fixed options to both original constructors without casts",
+    code: `function assemble<B extends RepositoryWorkStateBindingsV2,V extends W.WorkRepositoryProtocolVersionV2>(options:{
+  readonly protocolVersion?:V;
+  readonly sources:RepositoryWorkSourcesV2<AdapterBindings<B,NoInfer<V>>,NoInfer<V>>;
+  readonly limits:RepositoryWorkLimitsV2;
+  readonly binding:RepositoryWorkStateBindingV2;
+  readonly selection:RepositoryWorkSelectionSourceV2<B,NoInfer<V>>;
+  readonly tokens:RepositoryWorkTokenBindingV2<B>;
+} & (V extends 2 ? {readonly protocolVersion?:2}:{readonly protocolVersion:3}) & ([W.WorkRepositoryProtocolVersionV2] extends[V]?never:unknown)) {
+  const owner=new RepositoryWorkOperationOwnerV2<AdapterBindings<B,V>,V>(options.sources,options.limits,options);
+  const adapter=new RepositoryWorkStateAdapterV2<B,V>(options.binding,options.sources.native,options.selection,options.tokens,1000,options);
+  const state:RepositoryWorkSourcesV2<AdapterBindings<B,V>,V>["state"]=adapter.state;
+  return {owner,state};
+}`,
+  },
+  {
+    name: "fixed options alias forwards across an unresolved generic version",
+    code: `function forward<V extends W.WorkRepositoryProtocolVersionV2>(sources:RepositoryWorkSourcesV2<never,NoInfer<V>>,limits:RepositoryWorkLimitsV2,options:W.WorkRepositoryProtocolOptionsV2<V>){return new RepositoryWorkOperationOwnerV2<never,V>(sources,limits,options);}`,
+  },
+  {
+    name: "literal options infer Git owner and adapter while omitted adapter options remain metadata",
+    code: `declare const three:RepositoryWorkSourcesV2<never,3>;declare const limits:RepositoryWorkLimitsV2;
+const owner:RepositoryWorkOperationOwnerV2<never,3>=new RepositoryWorkOperationOwnerV2(three,limits,{protocolVersion:3});
+const adapter:RepositoryWorkStateAdapterV2<never,3>=new RepositoryWorkStateAdapterV2(stateBinding,native3,selection3,tokens,1000,{protocolVersion:3});
+const metadata:RepositoryWorkStateAdapterV2<never,2>=new RepositoryWorkStateAdapterV2(stateBinding,native2,selection2,tokens,1000);`,
+  },
+  {
+    name: "fixed metadata options retain the V2 constructors",
+    code: `declare const two:RepositoryWorkSourcesV2<never,2>;declare const limits:RepositoryWorkLimitsV2;const options:W.WorkRepositoryProtocolOptionsV2<2>={};
+const owner:RepositoryWorkOperationOwnerV2<never,2>=new RepositoryWorkOperationOwnerV2(two,limits,options);
+const adapter:RepositoryWorkStateAdapterV2<never,2>=new RepositoryWorkStateAdapterV2(stateBinding,native2,selection2,tokens,1000,options);`,
+  },
+  ...[
+    [
+      "Git owner refuses empty fixed options",
+      `declare const three:RepositoryWorkSourcesV2<never,3>;declare const limits:RepositoryWorkLimitsV2;new RepositoryWorkOperationOwnerV2<never,3>(three,limits,{});`,
+    ],
+    [
+      "Git adapter refuses empty fixed options",
+      `new RepositoryWorkStateAdapterV2<never,3>(stateBinding,native3,selection3,tokens,1000,{});`,
+    ],
+    [
+      "Git adapter requires explicit options",
+      `new RepositoryWorkStateAdapterV2<never,3>(stateBinding,native3,selection3,tokens,1000);`,
+    ],
+    [
+      "owner sources cannot select Git when options are omitted",
+      `declare const three:RepositoryWorkSourcesV2<never,3>;declare const limits:RepositoryWorkLimitsV2;new RepositoryWorkOperationOwnerV2(three,limits);`,
+    ],
+    [
+      "adapter sources cannot select Git when options are omitted",
+      `new RepositoryWorkStateAdapterV2(stateBinding,native3,selection3,tokens,1000);`,
+    ],
+    [
+      "fixed Git owner refuses metadata sources",
+      `declare const two:RepositoryWorkSourcesV2<never,2>;declare const limits:RepositoryWorkLimitsV2;new RepositoryWorkOperationOwnerV2(two,limits,{protocolVersion:3});`,
+    ],
+    [
+      "fixed Git adapter refuses metadata native source",
+      `new RepositoryWorkStateAdapterV2(stateBinding,native2,selection3,tokens,1000,{protocolVersion:3});`,
+    ],
+    [
+      "fixed Git adapter refuses metadata selection source",
+      `new RepositoryWorkStateAdapterV2(stateBinding,native3,selection2,tokens,1000,{protocolVersion:3});`,
+    ],
+    [
+      "fixed metadata adapter refuses Git selection source",
+      `new RepositoryWorkStateAdapterV2(stateBinding,native2,selection3,tokens,1000,{protocolVersion:2});`,
+    ],
+    [
+      "explicit union adapter cannot select a trusted protocol",
+      `declare const native:AdapterNative<2|3>;declare const selection:RepositoryWorkSelectionSourceV2<never,2|3>;declare const version:2|3;new RepositoryWorkStateAdapterV2<never,2|3>(stateBinding,native,selection,tokens,1000,{protocolVersion:version});`,
+    ],
+    [
+      "union-valued owner options cannot widen a metadata source",
+      `declare const two:RepositoryWorkSourcesV2<never,2>;declare const limits:RepositoryWorkLimitsV2;declare const version:2|3;new RepositoryWorkOperationOwnerV2(two,limits,{protocolVersion:version});`,
+    ],
+  ].map(([name, code]) => ({ name, code, reject: true, diagnosticCodes: [2345, 2554, 2769] })),
+  {
+    name: "Git constructor cannot omit explicit version selection",
+    reject: true,
+    diagnosticCodes: [2554],
+    code: `declare const three:RepositoryWorkSourcesV2<never,3>;declare const limits:RepositoryWorkLimitsV2;new RepositoryWorkOperationOwnerV2<never,3>(three,limits);`,
+  },
+  {
+    name: "runtime-selected union cannot select trusted Work constructor protocol",
+    reject: true,
+    diagnosticCodes: [2769],
+    code: `declare const sources:RepositoryWorkSourcesV2<never,2|3>;declare const limits:RepositoryWorkLimitsV2;declare const version:2|3;new RepositoryWorkOperationOwnerV2<never,2|3>(sources,limits,{protocolVersion:version});`,
+  },
+  {
+    name: "Git owner cannot occupy metadata broker",
+    reject: true,
+    code: `declare const git:RepositoryWorkOperationOwnerV2<never,3>;const broker:GitHubMediationOperationOwner<OriginalRepositoryPreparationV2,OriginalCommittedRepositoryReleaseV2>=git;`,
+  },
+  {
+    name: "metadata owner cannot occupy Git broker",
+    reject: true,
+    code: `declare const metadata:RepositoryWorkOperationOwnerV2;const broker:GitHubMediationOperationOwner<OriginalRepositoryPreparationV2<3>,OriginalCommittedRepositoryReleaseV2<3>,3>=metadata;`,
+  },
+  {
+    name: "metadata source cannot be widened to Git source",
+    reject: true,
+    code: `declare const metadata:RepositoryWorkSourcesV2;const git:RepositoryWorkSourcesV2<never,3>=metadata;`,
+  },
+  {
+    name: "Git issue or renewal cannot replace repository use",
+    reject: true,
+    code: `declare const use:W.WorkRepositoryUseIntentV3;const issue:W.WorkRepositoryUseIntentV3={...use,operation:"work.repository-token.issue"};const renewal:W.WorkRepositoryUseIntentV3={...use,operation:"work.authority.renew"};`,
+  },
+
+  {
+    name: "repository use keeps preparation, dispatch and check phases distinct",
+    code: `declare const intent: W.WorkRepositoryUseIntentV2;
+const operation: "work.repository.use" = intent.operation;
+const phase: "preparation" | "dispatch" | "check" = intent.phase;
+const policy: W.WorkPolicyIntentV2 = intent;
+const serviceOperation: W.WorkServiceOperationV2 = operation;`,
+  },
+  {
+    name: "authority renewal cannot replace repository use",
+    reject: true,
+    code: `declare const intent: W.WorkRepositoryUseIntentV2;
+const replacement: W.WorkRepositoryUseIntentV2 = { ...intent, operation: "work.authority.renew" };`,
+  },
+  {
+    name: "token issuance cannot replace repository use",
+    reject: true,
+    code: `declare const intent: W.WorkRepositoryUseIntentV2;
+const replacement: W.WorkRepositoryUseIntentV2 = { ...intent, operation: "work.repository-token.issue" };`,
+  },
+  {
+    name: "repository policy cannot omit original receiver or full execution",
+    reject: true,
+    code: `declare const intent: Omit<W.WorkRepositoryUseIntentV2, "receiverRef" | "execution">;
+const incomplete: W.WorkRepositoryUseIntentV2 = intent;`,
+  },
+  {
+    name: "repository use does not accept receiver activation phase",
+    reject: true,
+    code: `declare const intent: W.WorkRepositoryUseIntentV2;
+const replacement: W.WorkRepositoryUseIntentV2 = { ...intent, phase: "activation" };`,
+  },
   {
     name: "a logical Work identity is not an operation identity",
     reject: true,

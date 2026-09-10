@@ -1,0 +1,43 @@
+{
+  "scope": "Representation only; no original preparation, release or authority is created.",
+  "vectors": [
+    {
+      "operation": "discovery",
+      "canonical_request_utf8": "oce.github.git-read.v3\ndiscovery\nGET\nhttps\ngithub.com\n443\n/example/project.git/info/refs?service=git-upload-pack\naccept:application/x-git-upload-pack-advertisement\naccept-encoding:identity\ncontent-type:\ngit-protocol:version=2\nuser-agent:oce-github-git-read\nconnection:close\nbody-bytes:0\nbody-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+      "body_utf8": "",
+      "open_read": {
+        "version": 3,
+        "sequence": 1,
+        "request_ref": "0123456789abcdef0123456789abcdef",
+        "method": "open-read",
+        "attachment_ref": "attachment/example",
+        "repository_owner": "example",
+        "repository_name": "project",
+        "git_operation": "discovery",
+        "git_protocol": "version=2",
+        "body_bytes": 0,
+        "body_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "request_sha256": "sha256:1d558dc32779e5b4aca0c37defcdf0a5018f1517ff7716f42419a2e531cc069a"
+      }
+    },
+    {
+      "operation": "upload-pack",
+      "canonical_request_utf8": "oce.github.git-read.v3\nupload-pack\nPOST\nhttps\ngithub.com\n443\n/example/project.git/git-upload-pack\naccept:application/x-git-upload-pack-result\naccept-encoding:identity\ncontent-type:application/x-git-upload-pack-request\ngit-protocol:version=2\nuser-agent:oce-github-git-read\nconnection:close\nbody-bytes:72\nbody-sha256:30f5149ff5f5a60ddababe9b0932fd61736653a3e2e310b7ae2d9f2138ebdb9d\n",
+      "body_utf8": "0014command=ls-refs\n0017object-format=sha1\n00010009peel\n000csymrefs\n0000",
+      "open_read": {
+        "version": 3,
+        "sequence": 1,
+        "request_ref": "0123456789abcdef0123456789abcdef",
+        "method": "open-read",
+        "attachment_ref": "attachment/example",
+        "repository_owner": "example",
+        "repository_name": "project",
+        "git_operation": "upload-pack",
+        "git_protocol": "version=2",
+        "body_bytes": 72,
+        "body_sha256": "sha256:30f5149ff5f5a60ddababe9b0932fd61736653a3e2e310b7ae2d9f2138ebdb9d",
+        "request_sha256": "sha256:792994a0d426f5dd513a227dfb83ac91381eba7d8e40c1e47916f3bde4435f62"
+      }
+    }
+  ]
+}

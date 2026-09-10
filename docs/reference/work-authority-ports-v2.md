@@ -66,7 +66,7 @@ schema or import another package through a private relative path.
 `WorkPrivateBindingsV2` requires the original implementation's private operand
 types. Every unbound slot defaults to `never`; the module exports no way to create
 one. A consuming implementation still must recognize actual private ownership at
-runtime. `TurnCommandOwnedUnitV1` is the existing Central token; it is not the
+runtime. `TurnCommandOwnedUnitV1` is the existing transaction-owner token; it is not the
 journal's outward `PlatformUnitOfWork`, a database connection or an initiation
 claimant. The original owner must join these identities without conflating them.
 
@@ -122,7 +122,7 @@ Failed, cancelled and completed non-delivery Work can express general closure
 without a `deliveryRef`, `CompletionRecordV1`, attempt, output or result slot.
 General closure is not an alias for the successful finite-delivery computation
 seal. Its `work-closure` discriminator identifies a data record; it does not add a
-service authorization operation or extend Central's private operation recognizer.
+service authorization operation or extend the transaction owner's private recognizer.
 
 General withdrawal separately retains the original scope reference, expected
 withdrawal revision, explicit protected cause and cause-evidence reference. The
@@ -136,7 +136,19 @@ General staging returns the corresponding general record with the original priva
 staged receipt. It is provisional, and neither a data reference nor an `existing`
 result supplies COMMIT acknowledgement, effect authority or a new claim. Actual
 private lock-domain, operation recognition, token, readset, receipt and persistence
-extensions remain the original Central/journal owners' implementation work.
+extensions belong to the transaction and journal implementations.
+
+## Repository use
+
+`WorkRepositoryUseIntentV2` selects `work.repository.use` with an explicit
+`preparation`, `dispatch` or `check` phase, exact repository/profile, complete
+execution association, attachment and receiver. It retains the common original
+operation, Work, service, purpose, ceiling and horizon operands. Repository token
+issuance and authority renewal cannot substitute for this policy decision.
+
+These intent declarations remain inert. The [repository Work owner](repository-work-v2.md)
+implements bounded preparation and one-use dispatch sequencing with privately
+recognized handles and concrete State, native and custody dependencies.
 
 ## Issue reservation and receiver activation
 
@@ -236,15 +248,23 @@ finite millisecond range 0 through 253402300799999, checked conversions and no
 coercion, overflow or negative zero. Semantic cardinality profiles remain separate
 from parser limits. No decoder or authentic clock is supplied here.
 
-Original semantic/IDN producer and consumer examples are independently authored
-private supplier inputs. They remain unexecuted and are not recast as this author's
-positive fixtures. Original Central and journal suppliers accepted the earlier
-emitted admission/readset placement, grouped issue operands and finite-delivery
-signatures, and requested these separate general Work and attempt-recovery
-extensions. The new exact records and declarations await their affected review;
-that review does not install private producer types. Exact generic bindings, the
-diagnostic package export, original sender claim/sink, audit origin and issuer/feed
-implementations still require their owning extensions. This slice
-changes none of those owners' source, package exports, database schema or runtime
-wiring. It selects no PR-first policy, aggregate baseline authority, worker-wide
-cancellation policy or additional product default.
+Using these ports requires authenticated producer-owned generic bindings and
+supported diagnostic exports. Sender claim and sink, audit-origin, and issuer/feed
+implementations remain separate dependencies. The declarations provide no
+persistence or runtime wiring. They select no publication policy, aggregate
+baseline authority, worker-wide cancellation policy or additional product default.
+
+## Repository-use protocol declarations
+
+`WorkRepositoryUseIntentV3` retains the original `work.repository.use` intent,
+complete execution/lineage/target/horizon operands and existing phases. It adds
+literal protocol version 3, `git:read`, ordered contents-read and metadata-read
+permissions, and `WorkRepositoryGitReadV3`. The descriptor binds discovery or
+upload-pack, the fixed Git protocol, declared body length/hash and semantic
+request digest. It is comparison data, not a native preparation or authority.
+
+The V2 metadata arm remains literal metadata read. Trusted owner and adapter
+construction selects one version; incoming wire data cannot widen it. Token issue
+and authority renewal cannot substitute for either repository-use intent. Original
+State selection, locked current policy, native body/exchange recognition and
+protected custody must implement their own private accepting participants.
