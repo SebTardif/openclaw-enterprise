@@ -105,6 +105,22 @@ The consumer creates no transaction, registry grant or default accepting owner.
 Production still needs the genuine preparation, profile and protected observation
 participants with the owner's final synchronous COMMIT fence.
 
+`PostgresPlatformState.runtimeInitialBindingOwnerV1(source)` supplies the
+transaction owner when an original independent proof source is explicitly
+provided. It acquires that source on the original PostgreSQL transaction, holds
+the binding-operation and preparation association before the Agent lock, and
+checks the exact stored result against the callback outcome. Caught, nested or
+outlived operations poison the same transaction. Entered operations and source
+queries drain before the final synchronous COMMIT fence, and source cleanup
+joins after client settlement. Missing proof sources refuse before pool checkout;
+stored preparation and matching fields do not establish current authority.
+
+Run `node --test tests/conformance/runtime-initial-binding-owner.test.mjs` for
+the owner, locator, replay and cleanup checks. Its transaction transport and
+proof participants are controlled, while preparation and authority repository
+cases use the actual in-memory implementations. These checks do not establish
+PostgreSQL concurrency, durable COMMIT or genuine native observation authority.
+
 Run `node --test tests/conformance/runtime-initial-binding.test.mjs` for the
 consumer's correspondence, replay, uncertainty and cleanup cases. The suite uses
 the real memory preparation and authority repositories with controlled native,

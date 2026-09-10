@@ -1,4 +1,6 @@
 import type { QueryRepositoryFactoryContext } from "../../ports/repository-factory.ts";
+import type { BindRuntimeV1 } from "@openclaw-enterprise/contracts";
+import { ScopeViolationError } from "../../errors.ts";
 import type { RuntimeAssignmentReadRepository } from "../../ports/repositories/runtime-assignment.ts";
 import type { RuntimeAdmissionReadRepository } from "../../ports/repositories/runtime-admission.ts";
 import type {
@@ -10,6 +12,50 @@ import {
   decodeRuntimePreparationOperation,
 } from "../../runtime-preparation/repository.ts";
 import { parseRuntimePreparationCanonical } from "../../runtime-preparation/types.ts";
+
+/** Private accepting-owner join. The original binding identity is held before
+ * its preparation and Agent; this does not expose a public reverse reader. */
+export async function lockRuntimeBindingPreparationLocatorV1(
+  context: QueryRepositoryFactoryContext,
+  request: BindRuntimeV1,
+): Promise<Readonly<{ preparationRef: string }> | undefined> {
+  context.transaction.assertActive();
+  if (context.scope.installationId !== request.target.installationId)
+    throw new ScopeViolationError("The binding preparation scope is unavailable.");
+  await context.query.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('runtime-preparation:'||$1,0))",
+    [`binding:${request.operationRef}`],
+  );
+  context.transaction.assertActive();
+  const found = await context.query.query(
+    "SELECT record FROM occ.runtime_preparation_operations WHERE binding_operation_ref=$1",
+    [request.operationRef],
+  );
+  context.transaction.assertActive();
+  if (found.rows.length === 0) return undefined;
+  if (found.rows.length !== 1)
+    throw new ScopeViolationError("The binding preparation identity is ambiguous.");
+  const row = found.rows[0];
+  if (row === null || typeof row !== "object" || !("record" in row))
+    throw new ScopeViolationError("The binding preparation record is invalid.");
+  const entry = decodeRuntimePreparationOperation(row.record);
+  const retained = parseRuntimePreparationCanonical(entry.canonicalRequest);
+  if (
+    retained.kind !== "retain-binding" ||
+    retained.operation.operationRef !== request.operationRef ||
+    entry.target.installationId !== request.target.installationId ||
+    entry.target.namespaceId !== request.target.namespaceId ||
+    entry.target.agentId !== request.target.agentId ||
+    entry.target.assignmentRef.id !== request.target.assignmentRef.id
+  )
+    throw new ScopeViolationError("The binding preparation belongs to another operation.");
+  await context.query.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('runtime-preparation:'||$1,0))",
+    [`preparation:${entry.preparationRef}`],
+  );
+  context.transaction.assertActive();
+  return Object.freeze({ preparationRef: entry.preparationRef });
+}
 
 export function createPostgresRuntimePreparation(
   context: QueryRepositoryFactoryContext,

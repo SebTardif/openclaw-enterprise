@@ -1,3 +1,8 @@
+import { PostgresInitialBindingExecutionV1 } from "./postgres/runtime-initial-binding.ts";
+import type {
+  RuntimeInitialBindingOwnerV1,
+  RuntimeInitialBindingSourceV1,
+} from "../runtime-authority/initial-binding.ts";
 import { readRuntimePreparationSubmissionV1 } from "./postgres/runtime-preparation-submission.ts";
 import { createPostgresDelegationRepository } from "../delegation/postgres.ts";
 import type { DelegationRepository, DelegationTransactionHost } from "../delegation/repository.ts";
@@ -1104,6 +1109,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   readonly #gatewayContexts = new WeakMap<object, GatewayStartupEnrollment>();
   readonly #gatewaySourceSelections = new WeakMap<object, DriverSelection>();
   readonly #outerExecution = new AsyncLocalStorage<true>();
+  readonly #initialBindingExecution = new AsyncLocalStorage<PostgresInitialBindingExecutionV1>();
   readonly #profileAmbient = new AsyncLocalStorage<{
     context: TransactionContext;
     platform: PlatformUnitOfWork;
@@ -1134,6 +1140,74 @@ export class PostgresPlatformState implements PlatformStateStore {
     this.auditSink = {
       append: async (event) => this.transact(async (state) => state.audit.append(event)),
     };
+  }
+
+  /** Construct the private initial-binding owner with its genuine independent source.
+   * Missing source refuses before pool checkout; stored preparation is not proof. */
+  runtimeInitialBindingOwnerV1(
+    source?: RuntimeInitialBindingSourceV1,
+  ): RuntimeInitialBindingOwnerV1 {
+    const original =
+      source === undefined ? undefined : Object.freeze({ acquire: source.acquire.bind(source) });
+    const owner: RuntimeInitialBindingOwnerV1 = {
+      run: async (input, suppliedService, suppliedCall, work) => {
+        if (original === undefined)
+          throw new DependencyUnavailableError(
+            "The original initial binding source is unavailable.",
+          );
+        if (
+          this.#outerExecution.getStore() !== undefined ||
+          this.#initialBindingExecution.getStore() !== undefined
+        ) {
+          const error = new ScopeViolationError(
+            "Initial binding requires its original outer transaction.",
+          );
+          this.#initialBindingExecution.getStore()?.poison(error);
+          throw error;
+        }
+        const request = parseRuntimeAuthorityV1("bind", immutableCopy(input));
+        const service = Object.freeze({
+          configuration: immutableCopy(suppliedService.configuration),
+          authenticatedAt: suppliedService.authenticatedAt,
+          expiresAt: suppliedService.expiresAt,
+          peerEvidenceRef: suppliedService.peerEvidenceRef,
+          transportBinding: suppliedService.transportBinding,
+        });
+        const call = Object.freeze({
+          context: suppliedCall.context,
+          signal: suppliedCall.signal,
+          requestRef: suppliedCall.requestRef,
+          recipientRef: suppliedCall.recipientRef,
+          deadline: suppliedCall.deadline,
+        });
+        if (request.requestRef !== call.requestRef)
+          throw new ScopeViolationError("The original binding request is unavailable.");
+        const execution = new PostgresInitialBindingExecutionV1(request, service, call, original);
+        return this.#initialBindingExecution.run(execution, () =>
+          this.execute(
+            false,
+            async (unit, context) => {
+              const installation = await this.requireInitialized(context);
+              return execution.invoke(
+                unit,
+                { query: (statement, parameters) => context.client.query(statement, parameters) },
+                installation.id,
+                context.assertOwnerActive,
+                work,
+              );
+            },
+            { signal: call.signal, timeoutMs: execution.timeoutMs },
+            true,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            execution,
+          ),
+        );
+      },
+    };
+    return Object.freeze(owner);
   }
 
   /** Diagnostic correlation for this state's exact failed command only. The
@@ -5178,7 +5252,26 @@ export class PostgresPlatformState implements PlatformStateStore {
     gateway?: GatewayStartupExecution,
     turn?: TurnCommandExecutionV1,
     fresh?: FreshBootstrapExecutionV1,
+    initialBinding?: PostgresInitialBindingExecutionV1,
   ): Promise<T> {
+    const ambientBinding = this.#initialBindingExecution.getStore();
+    if (
+      (ambientBinding !== undefined && ambientBinding !== initialBinding) ||
+      (initialBinding !== undefined &&
+        (readOnly ||
+          !profileReadCommitted ||
+          credential !== undefined ||
+          gateway !== undefined ||
+          turn !== undefined ||
+          fresh !== undefined ||
+          this.#outerExecution.getStore() !== undefined))
+    ) {
+      const error = new ScopeViolationError(
+        "Initial binding cannot mix or nest transaction owners.",
+      );
+      ambientBinding?.poison(error);
+      throw error;
+    }
     const ambientFresh = this.#freshExecution.getStore();
     if (
       (ambientFresh !== undefined && ambientFresh !== fresh) ||
@@ -5281,6 +5374,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
     const abort = () => {
       profileAbort.abort();
+      initialBinding?.poison(abortFailure());
       credential?.phase.poison(abortFailure());
       gateway?.phase?.poison(abortFailure());
       turn?.phase?.poison(options?.signal.reason ?? abortFailure());
@@ -5317,6 +5411,9 @@ export class PostgresPlatformState implements PlatformStateStore {
     let trackProfileOrder = false;
     const onTransportError = () => {
       discardClient = true;
+      initialBinding?.poison(
+        new DependencyUnavailableError("The binding transaction transport failed."),
+      );
       if (context?.channelFirstCreate) {
         const error = new DependencyUnavailableError("The channel transaction transport failed.");
         this.recordChannelFirstCreateFailure(context, error);
@@ -5569,6 +5666,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               "Fresh bootstrap requires its Namespace, work and attributable audit.",
             );
         }
+        if (initialBinding !== undefined) await initialBinding.prepareCommit();
         if (turn !== undefined) await turn.phase!.prepareCommit();
         if (gateway !== undefined) {
           gateway.phase!.closeAdmissions();
@@ -5623,6 +5721,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         // No awaited work may intervene between this marker and the raw COMMIT.
         gateway?.phase?.markCommitDispatched();
         turn?.phase?.markCommitDispatched();
+        initialBinding?.assertCommitReady();
         if (fresh?.failed) throw fresh.failure;
       } catch (error) {
         if (fresh !== undefined) this.captureFreshFailure(fresh, error, "completion-check");
@@ -5669,6 +5768,13 @@ export class PostgresPlatformState implements PlatformStateStore {
       return result;
     } catch (error) {
       primaryFailure = true;
+      if (initialBinding !== undefined) {
+        initialBinding.poison(error);
+        initialBinding.closeAdmissions();
+        await initialBinding.drain();
+        if (running !== undefined) await Promise.allSettled([running]);
+        await initialBinding.drain();
+      }
       // An outer callback failure and accepted command failures share the same
       // first-error latch; a later catch/rethrow cannot replace its original cause.
       lifecyclePhase.poisonChannelFirstCreate(error);
@@ -5776,6 +5882,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         fresh.active = false;
         fresh.establishedNoCommit = establishedNoCommit;
       }
+      cleanup(() => initialBinding?.closeAdmissions());
       cleanup(() => turn?.phase?.closeAdmissions());
       cleanup(() => turn?.close());
       cleanup(() => gateway?.phase?.closeAdmissions());
@@ -5833,6 +5940,16 @@ export class PostgresPlatformState implements PlatformStateStore {
               : "rolled-back";
         try {
           await turn.phase.finishTerminal(terminal);
+        } catch (error) {
+          if (!cleanupFailed) {
+            cleanupFailed = true;
+            cleanupFailure = error;
+          }
+        }
+      }
+      if (initialBinding !== undefined) {
+        try {
+          await initialBinding.finishTerminal();
         } catch (error) {
           if (!cleanupFailed) {
             cleanupFailed = true;
