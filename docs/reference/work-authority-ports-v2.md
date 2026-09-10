@@ -42,11 +42,11 @@ owners authenticate these facts. Recording an association cannot start an attemp
 restore a claimant or authorize a second reservation.
 
 The previously integrated `WorkOwnerValueV2` and `WorkInvocationValueV2` remain
-unchanged. They currently lack a contracts package export. `WorkDiagnosticBindingsV2`
-therefore leaves their binding explicit and defaults both slots to `never`. The
-original contracts owner must allocate the exact additive export before ordinary
-package consumers bind those existing types. This module does not duplicate their
-schema or import another package through a private relative path.
+unchanged and are available as type-only exports from the contracts package root.
+`WorkDiagnosticBindingsV2` keeps their binding explicit; unbound diagnostic slots
+still default to `never`. Export availability binds neither these slots nor any
+private operand. This module does not duplicate their schema or import another
+package through a private relative path.
 
 ## Original transaction custody
 

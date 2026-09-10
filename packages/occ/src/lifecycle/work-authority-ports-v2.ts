@@ -84,10 +84,11 @@ export type WorkExecutionAssociationV2 = Readonly<{
       }>;
 }>;
 
-/** TODO(work diagnostic exports): expose WorkOwnerValueV2 and
- * WorkInvocationValueV2 through the supported contracts package entrypoint before
- * binding these slots. Do not duplicate their schemas or bypass the package
- * boundary with a cross-package relative source import.
+/** Supported contracts exports provide WorkOwnerValueV2 and WorkInvocationValueV2
+ * as types only. Keep diagnostic bindings explicit and unbound slots at never.
+ * Export availability does not bind these slots or any private operand.
+ * Do not duplicate their schemas or bypass the package boundary with a
+ * cross-package relative source import.
  */
 export interface WorkDiagnosticBindingsV2 {
   readonly owner: unknown;
