@@ -60,14 +60,18 @@ Installation
 - **ServiceAccount:** A Namespace-owned provider account with an opaque
   credential reference; credential values are not returned through the API.
 - **Agent:** A Namespace-owned Agent referencing one Configuration and,
-  optionally, one ServiceAccount in the same Namespace and one configured Provider.
+  optionally, one ServiceAccount in the same Namespace, one configured Provider,
+  and a selection of catalog plugins.
 - **Secret:** A Namespace-owned value stored by the selected SecretDriver and
   returned through OCC as metadata only.
 - **AgentRevision:** An immutable snapshot of the Agent's Configuration,
-  Harness, Secret references, credentials, nullable Provider reference, and selected Compute implementation.
+  Harness, Secret references, credentials, nullable Provider reference, selected
+  Compute implementation, and server-resolved plugin selection.
 
 Creating an Agent does not start a workload. Deployment creates an immutable
 revision, which the controller worker provisions asynchronously.
+The deployment ID is that revision's ID. Its status reports the original
+reconciliation outcome and any plugin installation errors independently.
 
 ## Control plane
 
@@ -177,19 +181,31 @@ sequenceDiagram
     API->>IAM: Authorize exact Agent and referenced resources
     API->>OCC: Admit immutable AgentRevision
     OCC->>DB: Persist revision, audit, and work
-    API-->>Client: 202 AgentRevision
+    API-->>Client: 202 deploymentId and AgentRevision
     Worker->>DB: Claim revision work
     Worker->>IAM: Reauthorize deploy and references
     Worker->>Compute: prepareRevision(revision)
     Compute->>Runtime: Create or reuse one gateway for the Agent
     alt dedicated Codex
-        Compute->>Runtime: Start revision Codex harness and route gateway
+        Compute->>Runtime: Prepare revision Codex harness
+        opt selected plugins on supported Kubernetes topology
+            Compute->>Runtime: Install selected plugins in private candidate
+            opt recoverable plugin installation error
+                Compute->>Worker: Report failed selection identity
+                Worker->>DB: Persist plugin error under live claim
+                Worker-->>Compute: Acknowledge persisted error
+                Compute->>Runtime: Rebuild candidate and verify failed plugins excluded
+            end
+        end
+        Compute->>Runtime: Route gateway to admitted candidate
     else embedded OpenClaw
         Compute->>Runtime: Start combined gateway and harness
     end
     Worker->>DB: Persist active revision
     Worker->>Compute: Retire prior revision when present
     Worker->>DB: Persist completion and audit
+    Client->>API: Read exact Agent deployment status
+    API-->>Client: Status, pluginErrors, and fatal error
 ```
 
 See [Agent management](reference/agents.md) and the
