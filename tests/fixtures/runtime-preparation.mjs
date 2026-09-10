@@ -112,7 +112,9 @@ export function writablePreparationPlan(fixture) {
 export async function seedPreparation(store, { admitted = true, owner: originalOwner } = {}) {
   const owner = originalOwner ?? (await seedRuntimeOwner(store));
   const actorId = "test/runtime-preparation-owner";
-  const admission = createRuntimeAdmissionContext(owner.installation.id, actorId);
+  const admission = createRuntimeAdmissionContext(owner.installation.id, actorId, {
+    requestId: `req_${randomUUID()}`,
+  });
   const attribution = { actorId, requestId: admission.requestId };
   const work = {
     kind: "agent_revision",
