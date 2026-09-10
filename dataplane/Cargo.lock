@@ -970,6 +970,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oce-native-egress"
+version = "0.0.0"
+dependencies = [
+ "hickory-proto",
+ "hickory-resolver",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

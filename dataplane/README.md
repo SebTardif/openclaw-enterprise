@@ -5,6 +5,11 @@ adapters: `oce-dnsgate` for DNS admission and scoped nftables enforcement, and
 `oce-egress` for fixed-origin HTTPS model requests with external credential custody.
 The TLS adapter uses Hyper HTTP/1 and rustls on the exact admitted socket.
 
+The workspace also includes the inactive `oce-native-egress` library for a
+finite GitHub HTTPS route profile. It has no executable or positive production
+admission supplier. See [GitHub transport](../docs/reference/native-github-egress.md)
+for its credential boundary, DNS validation, and real-client test commands.
+
 The [external egress reference](../docs/reference/egress.md) owns configuration,
 local-development commands, supported boundaries and troubleshooting. The
 [request flow](../docs/flows/external-model-egress.md) traces the implementation.

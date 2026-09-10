@@ -6,6 +6,10 @@ or network delivery route. It implements part of the native direction in
 [repository access modes](../../specs/20-repository-access-modes.md); it does not
 make that proposed mode a supported platform setting.
 
+The separate [native HTTPS transport library](native-github-egress.md) implements
+a controlled, finite HTTP/1 transport subset. Its production admission remains
+unavailable; it does not supply this client's credential delivery owner.
+
 The native profile permits a scoped ephemeral GitHub installation token inside
 the tool runtime. That bearer token and fetched Git history are visible to runtime
 code. These helpers constrain platform-managed invocations and output handling;
