@@ -627,6 +627,7 @@ test(
       "namespaceId",
       "providerId",
       "revision",
+      "selectedPlugins",
     ]);
     assert.equal(firstRevision.namespaceId, namespaceA);
     assert.equal(firstRevision.agentId, primary.id);
@@ -640,6 +641,7 @@ test(
       id: "compute-kubernetes",
       implementation: "occ/kubernetes",
     });
+    assert.deepEqual(firstRevision.selectedPlugins, []);
     assert.equal(Object.hasOwn(firstRevision, "servicePrincipalId"), false);
 
     await pollUntil(
