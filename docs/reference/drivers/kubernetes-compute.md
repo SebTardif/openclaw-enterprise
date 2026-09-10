@@ -85,7 +85,8 @@ candidate's local app-server over Kubernetes `pods/exec` into the owned
 `agent` container and uses the existing in-Pod `APP_SERVER_PORT` and
 `APP_SERVER_TOKEN`. Application-level install failures and catalog-disabled or
 unavailable plugins are recoverable only after the worker persists
-`reportPluginInstallFailure({ driverId, pluginId })`. The driver then deletes
+`reportPluginInstallFailure({ driverId, pluginId })`. Worker retries pass those
+identities back through `failedPluginIdentities`; the driver then deletes
 the exact candidate Pod by UID so the rebuilt Pod starts from a fresh private
 Codex home and excludes the persisted failed identity. Transport errors,
 timeouts, cancellation, lost failure reporting, malformed responses, ambiguous

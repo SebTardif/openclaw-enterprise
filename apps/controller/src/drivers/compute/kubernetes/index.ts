@@ -57,7 +57,6 @@ import {
   failedNativePluginKeys,
   nativePluginIdentityKey,
   selectedNativePlugins,
-  type NativePluginComputeContext,
 } from "../native-plugins.ts";
 import {
   AGENT_READINESS_ENTRYPOINT,
@@ -2766,10 +2765,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         "Selected native plugins require the bundled Kubernetes dedicated Codex runtime.",
       );
     }
-    if (
-      typeof (context as NativePluginComputeContext | undefined)?.reportPluginInstallFailure !==
-      "function"
-    ) {
+    if (typeof context?.reportPluginInstallFailure !== "function") {
       throw new ConfigurationFailure(
         "Selected native plugins require worker-owned plugin failure reporting.",
       );
@@ -2865,7 +2861,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     context: ComputeRevisionContext | undefined,
     identity: PluginIdentity,
   ): Promise<void> {
-    const report = (context as NativePluginComputeContext | undefined)?.reportPluginInstallFailure;
+    const report = context?.reportPluginInstallFailure;
     if (typeof report !== "function") {
       throw new ConfigurationFailure("Native plugin failure reporting is unavailable.");
     }

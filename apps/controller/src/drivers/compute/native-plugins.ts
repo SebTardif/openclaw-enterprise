@@ -6,11 +6,6 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import { asRecord, isNonEmptyString } from "@openclaw-enterprise/utils";
 
-export type NativePluginComputeContext = ComputeRevisionContext & {
-  readonly failedPlugins?: readonly PluginIdentity[];
-  readonly reportPluginInstallFailure?: (identity: PluginIdentity) => Promise<void>;
-};
-
 export function nativePluginIdentityKey(identity: PluginIdentity): string {
   return `${identity.driverId}\u0000${identity.pluginId}`;
 }
@@ -58,12 +53,12 @@ export function selectedNativePlugins(
 export function failedNativePluginKeys(
   context: ComputeRevisionContext | undefined,
 ): ReadonlySet<string> {
-  const failedPlugins = (context as NativePluginComputeContext | undefined)?.failedPlugins ?? [];
-  if (!Array.isArray(failedPlugins)) {
+  const failedPluginIdentities = context?.failedPluginIdentities;
+  if (!Array.isArray(failedPluginIdentities)) {
     throw new Error("Native plugin failure context is invalid.");
   }
   const keys = new Set<string>();
-  for (const identity of failedPlugins) {
+  for (const identity of failedPluginIdentities) {
     const record = asRecord(identity);
     if (
       record === undefined ||

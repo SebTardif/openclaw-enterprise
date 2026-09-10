@@ -191,6 +191,8 @@ export interface SecretEnvironmentProjection {
 
 export interface ComputeRevisionContext {
   readonly secretEnvironment: readonly SecretEnvironmentProjection[];
+  readonly failedPluginIdentities?: readonly PluginIdentity[];
+  reportPluginInstallFailure?(identity: PluginIdentity): Promise<void>;
 }
 
 export interface Configuration extends Scope {

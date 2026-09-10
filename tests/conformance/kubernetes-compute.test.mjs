@@ -883,9 +883,18 @@ test("native plugins are limited to the bundled Kubernetes dedicated Codex runti
     /bundled Kubernetes dedicated Codex runtime/,
   );
 
+  const missingFailures = createKubernetesComputeDriver(options({ runtime }));
+  await assert.rejects(
+    missingFailures.prepareRevision(revision(missingFailures)),
+    /failure context/,
+  );
+
   const missingReporter = createKubernetesComputeDriver(options({ runtime }));
   await assert.rejects(
-    missingReporter.prepareRevision(revision(missingReporter)),
+    missingReporter.prepareRevision(revision(missingReporter), {
+      secretEnvironment: [],
+      failedPluginIdentities: [],
+    }),
     /plugin failure reporting/,
   );
 });
@@ -978,7 +987,7 @@ test("native plugin preparation reports failed installs before rebuilding and pr
     revision,
     {
       secretEnvironment: [],
-      failedPlugins: [],
+      failedPluginIdentities: [],
       async reportPluginInstallFailure(identity) {
         events.push(`report:${identity.driverId}:${identity.pluginId}`);
       },
@@ -1002,6 +1011,31 @@ test("native plugin preparation reports failed installs before rebuilding and pr
     "candidate-after-report:skills/list:true",
     "candidate-after-report:hooks/list:",
     "candidate-after-report:mcpServerStatus/list:",
+  ]);
+
+  pods.push({ name: "candidate-retry", uid: "uid-retry" });
+  events.length = 0;
+  calls.length = 0;
+  await driver.prepareNativePlugins(
+    revision,
+    {
+      secretEnvironment: [],
+      failedPluginIdentities: [{ driverId: "driver-native", pluginId: "plugin-failing" }],
+      async reportPluginInstallFailure(identity) {
+        events.push(`unexpected-report:${identity.driverId}:${identity.pluginId}`);
+      },
+    },
+    namespace,
+    selectedPlugins,
+  );
+  assert.deepEqual(events, ["pod:candidate-retry"]);
+  assert.deepEqual(calls, [
+    "candidate-retry:plugin/read:remote-admitted",
+    "candidate-retry:plugin/install:remote-admitted",
+    "candidate-retry:plugin/installed:",
+    "candidate-retry:skills/list:true",
+    "candidate-retry:hooks/list:",
+    "candidate-retry:mcpServerStatus/list:",
   ]);
 });
 

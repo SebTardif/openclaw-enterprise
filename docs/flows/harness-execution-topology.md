@@ -97,7 +97,7 @@ for candidate rules and the limits of this observation.
 
 For the bundled Kubernetes dedicated Codex runtime, the same private candidate
 window also prepares selected native plugins. The deployment worker projects
-previously failed plugin identities into Compute and supplies an awaited
+previously failed plugin identities into `failedPluginIdentities` and supplies an awaited
 `reportPluginInstallFailure({ driverId, pluginId })` callback. Compute installs
 each nonfailed selected plugin through the candidate Pod's local Codex
 app-server using bounded Kubernetes `pods/exec`; `pluginName` carries the
