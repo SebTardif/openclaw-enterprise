@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     "./hosted-gateway-launch-v1": "./src/hosted-gateway-launch-v1.ts",
+    "./hosted-harness-transport-v1": "./src/hosted-harness-transport-v1.ts",
     "./lifecycle-deploy-v2": "./src/lifecycle-deploy-v2.ts",
     ".": "./src/index.ts",
     "./resources/scope": "./src/resources/scope.ts",
