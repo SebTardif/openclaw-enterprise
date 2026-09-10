@@ -202,10 +202,13 @@ revision is staged inactive until that commit. A changed active pointer causes
 
 After the pointer commit, the worker finishes required activation and retires
 the predecessor. `completeActivatedRevision()` then rechecks the exact active
-revision and claim, appends activation evidence, and completes work in a second
-transaction. This deliberately does not claim that infrastructure effects and
-database state are one atomic transaction. Interrupted finalization is retried;
-the already-active branch finishes activation and retirement safely.
+revision and claim, appends activation evidence, persists the terminal reason,
+and completes work in a second transaction. A superseded revision stores the
+internal success reason `REVISION_SUPERSEDED`, which the deployment status API
+exposes publicly as `failed` with that same reason code. This deliberately does
+not claim that infrastructure effects and database state are one atomic
+transaction. Interrupted finalization is retried; the already-active branch
+finishes activation and retirement safely.
 
 ### 7. Defer, retry, or stop and hand off the next iteration
 
@@ -228,10 +231,15 @@ provider outage does not abandon reconciliation of an authorized active runtime.
 Each new claim reauthorizes its original actor.
 
 `worker.completed` reports the target, outcome, and code; polling then continues.
-Lease loss is reported as `worker.error` with `CLAIM_LOST` rather than publishing
-stale lifecycle state. On `SIGTERM` or `SIGINT`, shutdown removes readiness,
-aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
-`worker.stopped`. Expired unfinished claims are recoverable by a later worker.
+Plugin installation failures are reported through the revision compute context
+while the worker still owns the live claim. The queue validates the reported
+Driver/Plugin tuple against the admitted revision, deduplicates it, and persists
+only the fixed public `PLUGIN_INSTALL_FAILED` error. The report is independent
+of the deployment's terminal outcome. Lease loss is reported as `worker.error`
+with `CLAIM_LOST` rather than publishing stale lifecycle state. On `SIGTERM` or
+`SIGINT`, shutdown removes readiness, aborts in-flight work, waits for the loop,
+closes PostgreSQL, and emits `worker.stopped`. Expired unfinished claims are
+recoverable by a later worker.
 
 ## Debugging and Verification
 

@@ -169,6 +169,7 @@ const RESOURCE_ID = {
   secretId: /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   agentId: /^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   revisionId: /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  deploymentId: /^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
 } as const;
 
 function formatsPlugin(ajv: Parameters<typeof ajvFormats.default>[0]) {
@@ -281,6 +282,7 @@ function operationTarget(
   const secretId = typeof params.secretId === "string" ? params.secretId : undefined;
   const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
   const revisionId = typeof params.revisionId === "string" ? params.revisionId : undefined;
+  const deploymentId = typeof params.deploymentId === "string" ? params.deploymentId : undefined;
   if (operation.operationId === "createNamespace") return { kind: "namespace", id: installationId };
   if (operation.operationId === "createConfiguration" && namespaceId)
     return { kind: "configuration", id: namespaceId, namespaceId };
@@ -297,6 +299,8 @@ function operationTarget(
     return { kind: "agent", id: namespaceId, namespaceId };
   if (operation.operationId === "getAgentRevision" && namespaceId && revisionId)
     return { kind: "agent_revision", id: revisionId, namespaceId };
+  if (operation.operationId === "getAgentDeployment" && namespaceId && deploymentId)
+    return { kind: "agent_revision", id: deploymentId, namespaceId };
   if (agentId && namespaceId) return { kind: "agent", id: agentId, namespaceId };
   if (namespaceId) return { kind: "namespace", id: namespaceId, namespaceId };
   return { kind: "installation", id: installationId };
@@ -1778,7 +1782,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           );
           return clientRevision(admitted);
         });
-        reply.status(202).send({ data: revision, meta: { requestId: request.id } });
+        reply.status(202).send({
+          data: { deploymentId: revision.id, revision },
+          meta: { requestId: request.id },
+        });
         return;
       } catch (error) {
         if (error instanceof NamespaceNotReadyError)
@@ -1976,6 +1983,17 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         data: revisions.map(clientRevision),
         meta: { requestId: request.id },
       });
+      return;
+    }
+
+    if (operation.operationId === "getAgentDeployment") {
+      const deployment = await controller.getAgentDeployment(
+        context.actorId,
+        namespaceId,
+        agentId,
+        params.deploymentId as string,
+      );
+      reply.send({ data: deployment, meta: { requestId: request.id } });
       return;
     }
 

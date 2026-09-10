@@ -168,8 +168,36 @@ export interface SecretEnvironmentProjection {
   readonly backendRef: SecretBackendRef;
 }
 
+export interface PluginIdentity {
+  readonly driverId: string;
+  readonly pluginId: string;
+}
+
+export interface PluginInstallationError extends PluginIdentity {
+  readonly code: "PLUGIN_INSTALL_FAILED";
+  readonly message: "Plugin installation failed.";
+}
+
+export type AgentDeploymentStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface AgentDeploymentTerminalError {
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface AgentDeploymentOutcome extends Scope {
+  readonly deploymentId: string;
+  readonly namespaceId: string;
+  readonly agentId: string;
+  readonly status: AgentDeploymentStatus;
+  readonly pluginErrors: readonly PluginInstallationError[];
+  readonly error: AgentDeploymentTerminalError | null;
+}
+
 export interface ComputeRevisionContext {
   readonly secretEnvironment: readonly SecretEnvironmentProjection[];
+  readonly failedPluginIdentities?: readonly PluginIdentity[];
+  reportPluginInstallFailure?(identity: PluginIdentity): Promise<void>;
 }
 
 export interface Configuration extends Scope {

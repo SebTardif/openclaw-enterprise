@@ -406,11 +406,13 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
     `/namespaces/${namespace.id}/agents/${agent.body.data.id}/deploy`,
   );
   assert.equal(deployed.status, 202, JSON.stringify(deployed.body));
-  assert.equal(deployed.body.data.configurationId, configurationId);
-  assert.equal(deployed.body.data.configurationKind, "agent");
-  assert.equal(deployed.body.data.configurationGeneration, 1);
+  const deployedRevision = deployed.body.data.revision;
+  assert.equal(deployed.body.data.deploymentId, deployedRevision.id);
+  assert.equal(deployedRevision.configurationId, configurationId);
+  assert.equal(deployedRevision.configurationKind, "agent");
+  assert.equal(deployedRevision.configurationGeneration, 1);
   assert.deepEqual(
-    deployed.body.data.configuration,
+    deployedRevision.configuration,
     admitLoggingConfiguration(initialValues, "info"),
   );
 

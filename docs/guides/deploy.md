@@ -495,13 +495,15 @@ Deploy the Agent and capture the immutable revision ID:
 
 ```bash
 REVISION_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy")"
-REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["deploymentId"])')"
 export REVISION_ID
-printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,os,sys; data=json.load(sys.stdin)["data"]; assert data["id"] == os.environ["REVISION_ID"] and data["agentId"] == os.environ["AGENT_ID"] and data["configurationId"] == os.environ["CONFIGURATION_ID"]'
+printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,os,sys; data=json.load(sys.stdin)["data"]; revision=data["revision"]; assert data["deploymentId"] == os.environ["REVISION_ID"] and revision["id"] == os.environ["REVISION_ID"] and revision["agentId"] == os.environ["AGENT_ID"] and revision["configurationId"] == os.environ["CONFIGURATION_ID"]'
 ```
 
 `scripts/occ-api` exits on non-2xx responses; deploy returns HTTP `202` with
-the AgentRevision as `data`. If `configuration.json` includes OCC
+`data.deploymentId` and the admitted AgentRevision as `data.revision`. Poll
+`GET /namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deployments/$REVISION_ID` for
+queued, running, succeeded, or failed status. If `configuration.json` includes OCC
 `secretBindings`, the caller and Agent service principal must have `operate` on
 every selected Secret before deploy. Binding changes are authorized by OCC IAM;
 Kubernetes RoleBindings only allow the API to materialize backing tenant
@@ -886,7 +888,7 @@ printf '{"name":"tui-agent","configurationId":"%s","executionMode":"embedded"}\n
 AGENT_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents" agent.json)"
 AGENT_ID="$(printf '%s' "$AGENT_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
 REVISION_RESPONSE="$(scripts/occ-api POST "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/deploy")"
-REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])')"
+REVISION_ID="$(printf '%s' "$REVISION_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["deploymentId"])')"
 export AGENT_ID REVISION_ID
 ```
 

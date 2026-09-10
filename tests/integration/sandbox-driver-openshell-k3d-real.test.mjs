@@ -1134,33 +1134,35 @@ async function prepareProductionInstallation(context) {
     `/namespaces/${namespaceId}/agents/${agent.data.id}/deploy`,
   );
   assert.equal(deployed.status, 202, JSON.stringify(deployed.error));
-  assert.equal(deployed.data.harness.mode, "dedicated");
+  const deployedRevision = deployed.data.revision;
+  assert.equal(deployed.data.deploymentId, deployedRevision.id);
+  assert.equal(deployedRevision.harness.mode, "dedicated");
   assert.equal(
-    deployed.data.configuration.plugins.entries.codex.config.appServer.sandbox,
+    deployedRevision.configuration.plugins.entries.codex.config.appServer.sandbox,
     "danger-full-access",
     "OCC must freeze OpenShell-selected Codex revisions with the inner sandbox disabled.",
   );
 
-  await waitFor(`OpenShell revision ${deployed.data.id} activation`, async () => {
+  await waitFor(`OpenShell revision ${deployedRevision.id} activation`, async () => {
     const observed = await request("GET", `/namespaces/${namespaceId}/agents/${agent.data.id}`);
     assert.equal(observed.status, 200, JSON.stringify(observed.error));
-    return observed.data.activeRevisionId === deployed.data.id ? observed.data : undefined;
+    return observed.data.activeRevisionId === deployedRevision.id ? observed.data : undefined;
   });
   await assertWorkerCompleted({
-    description: `worker completion for ${deployed.data.id}`,
+    description: `worker completion for ${deployedRevision.id}`,
     events,
     pool: observerPool,
     namespaceId,
     agentId: agent.data.id,
-    revisionId: deployed.data.id,
+    revisionId: deployedRevision.id,
   });
 
-  const sandbox = await waitForSandbox(placement, deployed.data);
-  const harnessPod = await waitForProviderHarnessPod(placement, deployed.data);
+  const sandbox = await waitForSandbox(placement, deployedRevision);
+  const harnessPod = await waitForProviderHarnessPod(placement, deployedRevision);
   process.stderr.write(
     "OpenShell integration: provider Harness ready; checking ownership and mounts.\n",
   );
-  await assertProviderOwnedHarness(placement, deployed.data, sandbox, harnessPod);
+  await assertProviderOwnedHarness(placement, deployedRevision, sandbox, harnessPod);
   assertWorkspaceMounts(harnessPod);
   await assertServicePrincipalTokenProjection(
     placement,
@@ -1188,7 +1190,7 @@ async function prepareProductionInstallation(context) {
   const agentService = await resource("service", agentServiceName, placement);
   assert.deepEqual(agentService.spec.selector, {
     "openclaw.dev/agent": agent.data.id,
-    "openclaw.dev/revision": deployed.data.id,
+    "openclaw.dev/revision": deployedRevision.id,
     "openclaw.dev/workload-role": "agent",
   });
   gatewayForward = await startGatewayPortForward(placement, gatewayServiceName);
@@ -1199,7 +1201,7 @@ async function prepareProductionInstallation(context) {
     placement,
     namespaceId,
     agent: agent.data,
-    revision: deployed.data,
+    revision: deployedRevision,
     gatewayPod,
     harnessPod,
     sandbox,
@@ -1317,24 +1319,26 @@ async function assertDuplicateReconciliationDoesNotDuplicateOpenShell(topology) 
     `/namespaces/${topology.namespaceId}/agents/${topology.agent.id}/deploy`,
   );
   assert.equal(redeployed.status, 202, JSON.stringify(redeployed.error));
-  assert.notEqual(redeployed.data.id, topology.revision.id);
-  await waitFor(`replacement OpenShell revision ${redeployed.data.id} activation`, async () => {
+  const redeployedRevision = redeployed.data.revision;
+  assert.equal(redeployed.data.deploymentId, redeployedRevision.id);
+  assert.notEqual(redeployedRevision.id, topology.revision.id);
+  await waitFor(`replacement OpenShell revision ${redeployedRevision.id} activation`, async () => {
     const observed = await topology.request(
       "GET",
       `/namespaces/${topology.namespaceId}/agents/${topology.agent.id}`,
     );
     assert.equal(observed.status, 200, JSON.stringify(observed.error));
-    return observed.data.activeRevisionId === redeployed.data.id ? observed.data : undefined;
+    return observed.data.activeRevisionId === redeployedRevision.id ? observed.data : undefined;
   });
-  const activeSandboxName = `os-${hash(redeployed.data.id, 16)}`;
+  const activeSandboxName = `os-${hash(redeployedRevision.id, 16)}`;
   const retiredSandboxName = `os-${hash(topology.revision.id, 16)}`;
   await assertWorkerCompleted({
-    description: `replacement revision ${redeployed.data.id} finalization`,
+    description: `replacement revision ${redeployedRevision.id} finalization`,
     events: topology.events,
     pool: topology.observerPool,
     namespaceId: topology.namespaceId,
     agentId: topology.agent.id,
-    revisionId: redeployed.data.id,
+    revisionId: redeployedRevision.id,
   });
   // Retirement of the previous revision must leave the provider's replacement routable.
   const activeService = await resource(
@@ -1344,7 +1348,7 @@ async function assertDuplicateReconciliationDoesNotDuplicateOpenShell(topology) 
   );
   assert.deepEqual(activeService.spec.selector, {
     "openclaw.dev/agent": topology.agent.id,
-    "openclaw.dev/revision": redeployed.data.id,
+    "openclaw.dev/revision": redeployedRevision.id,
     "openclaw.dev/workload-role": "agent",
   });
   const sandboxes = await waitFor(

@@ -18,6 +18,7 @@ import type {
   NamespaceDeleteResult,
   NamespaceEnsureResult,
   ProviderDefinition,
+  PluginIdentity,
   SandboxDriver,
   SecretBindings,
   SecretDriver,
@@ -212,6 +213,17 @@ function uniqueSecretRefs(bindings: SecretBindings): readonly SecretReference[] 
     refs.set(`${source.namespaceId}\u0000${source.id}`, source);
   }
   return [...refs.values()];
+}
+
+interface AgentRevisionWithSelectedPlugins extends AgentRevision {
+  readonly selectedPlugins?: readonly PluginIdentity[];
+}
+
+function selectedPluginIdentities(revision: Readonly<AgentRevision>): readonly PluginIdentity[] {
+  const selected = (revision as Readonly<AgentRevisionWithSelectedPlugins>).selectedPlugins;
+  return selected === undefined
+    ? []
+    : selected.map(({ driverId, pluginId }) => Object.freeze({ driverId, pluginId }));
 }
 
 export class ControllerWorker {
@@ -659,12 +671,17 @@ export class ControllerWorker {
         }
         return;
       }
+      const revisionContext = await this.revisionComputeContext(
+        claim,
+        revision,
+        secretContext.context,
+      );
       if (agent.activeRevisionId === revision.id) {
         try {
           const compute = this.compute;
           if (this.maintenanceIntervalMs !== undefined) {
             const observation = await this.withClaimHeartbeat(claim, () =>
-              compute.prepareRevision(revision, secretContext.context),
+              compute.prepareRevision(revision, revisionContext),
             );
             if (!validRevisionObservation(observation, revision)) {
               await this.finalizeRevision(claim, {
@@ -680,7 +697,7 @@ export class ControllerWorker {
           }
           if (this.shouldActivatePublishedRevision(compute)) {
             await this.withClaimHeartbeat(claim, () =>
-              this.stagedRevision("activateRevision", revision, secretContext.context),
+              this.stagedRevision("activateRevision", revision, revisionContext),
             );
           }
           const earlier = await this.state.read(async (view) =>
@@ -717,7 +734,7 @@ export class ControllerWorker {
         revision,
         previous,
         agent.activeRevisionId,
-        secretContext.context,
+        revisionContext,
       );
     } catch (error) {
       if (error instanceof WorkClaimLostError) throw error;
@@ -899,6 +916,38 @@ export class ControllerWorker {
       : { context: { secretEnvironment: Object.freeze(resolved) } };
   }
 
+  private async revisionComputeContext(
+    claim: ClaimedWork,
+    revision: Readonly<AgentRevision>,
+    context: ComputeRevisionContext,
+  ): Promise<ComputeRevisionContext> {
+    const deployment = await this.queue.findDeployment(
+      revision.namespaceId,
+      revision.agentId,
+      revision.id,
+    );
+    if (deployment === undefined) {
+      throw new Error("The original Agent revision deployment work row is unavailable.");
+    }
+    const failedPluginIdentities = Object.freeze(
+      deployment.pluginErrors.map(({ driverId, pluginId }) =>
+        Object.freeze({ driverId, pluginId }),
+      ),
+    );
+    const originalReconcileKey = `agent_revision:${revision.id}:reconcile`;
+    if (claim.idempotencyKey !== originalReconcileKey) {
+      return Object.freeze({ ...context, failedPluginIdentities });
+    }
+    const selectedPlugins = selectedPluginIdentities(revision);
+    return Object.freeze({
+      ...context,
+      failedPluginIdentities,
+      reportPluginInstallFailure: async (identity: PluginIdentity) => {
+        await this.queue.reportPluginInstallFailure(claim, identity, selectedPlugins);
+      },
+    });
+  }
+
   private async withClaimHeartbeat<T>(claim: ClaimedWork, effect: () => Promise<T>): Promise<T> {
     // Consecutive short effects can each finish before their timer fires while
     // the whole sequence outlives the lease. Renew before every external effect.
@@ -1000,7 +1049,7 @@ export class ControllerWorker {
         await this.appendRevisionDenial(unit, claim, resolved);
       }
 
-      if (resolved.outcome === "success") await queue.complete(claim);
+      if (resolved.outcome === "success") await queue.complete(claim, { code: resolved.code });
       else if (resolved.outcome === "pending") await queue.defer(claim, { code: resolved.code });
       else if (resolved.outcome === "permanent" || claim.attemptCount >= this.maxAttempts)
         await queue.fail(claim, { code: resolved.code });
@@ -1060,7 +1109,7 @@ export class ControllerWorker {
         return;
       }
       await this.appendRevisionObservation(unit, claim, result);
-      await queue.complete(claim);
+      await queue.complete(claim, { code: result.code });
       if (this.maintenanceIntervalMs !== undefined)
         await this.enqueueMaintenance(queue, claim, revision);
       completed = true;

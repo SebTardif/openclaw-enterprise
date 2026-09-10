@@ -234,9 +234,17 @@ An authorized `POST /namespaces/:namespaceId/agents/:agentId/deploy` has no
 request body. It requires a `ready` Namespace, exact-Agent `deploy`, exact
 Configuration `read`, and exact associated-account `read` when present. A
 successful `202` means the immutable revision was admitted and its work queued;
-it does not mean the workload is ready. Later Configuration edits or changes to
-an account's selected credential reference affect only future deployments. A
-snapshot freezes a Secret reference, not the value stored at that reference.
+it does not mean the workload is ready. The response returns `data.deploymentId`
+and the admitted immutable revision as `data.revision`. Poll
+`GET /namespaces/:namespaceId/agents/:agentId/deployments/:deploymentId` for the
+durable deployment status. `queued` covers unclaimed or lease-expired work,
+`running` means a live worker claim exists, `succeeded` means activation and
+predecessor retirement completed, and `failed` reports the persisted terminal
+reason. `pluginErrors` contains fixed public plugin-installation reports and is
+independent of whether the deployment ultimately succeeds or fails. Later
+Configuration edits or changes to an account's selected credential reference
+affect only future deployments. A snapshot freezes a Secret reference, not the
+value stored at that reference.
 
 The separate PostgreSQL controller worker prepares the exact Agent gateway and
 revision, activates its route, retires its predecessor, and sets

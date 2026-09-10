@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
+  AgentDeploymentOutcome,
   AgentRevision,
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -88,6 +89,7 @@ export {
 export {
   InMemoryPlatformState,
   type AgentReadRepository,
+  type AgentDeploymentReadRepository,
   type AgentRepository,
   type AgentRevisionReadRepository,
   type AgentRevisionRepository,
@@ -877,6 +879,45 @@ export class OpenClawController {
           "The AgentRevision does not belong to the exact Agent and Namespace.",
         );
       return revision;
+    });
+  }
+
+  async getAgentDeployment(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+    deploymentId: string,
+  ): Promise<Readonly<AgentDeploymentOutcome>> {
+    if (!isNonEmptyString(namespaceId))
+      throw new ScopeViolationError("The exact Namespace identity is missing.");
+    if (!isNonEmptyString(agentId))
+      throw new ScopeViolationError("The exact Agent identity is missing.");
+    if (!isNonEmptyString(deploymentId))
+      throw new ScopeViolationError("The exact deployment identity is missing.");
+    return this.read(async (state) => {
+      const namespace = await this.exactNamespace(state, namespaceId);
+      const agent = await state.agents.findAgent(namespace.id, agentId);
+      if (!agent)
+        throw new ScopeViolationError(
+          "The Agent does not belong to the exact Installation and Namespace.",
+        );
+      await this.authorize(principalId, "read", {
+        kind: "agent_revision",
+        id: deploymentId,
+        namespaceId: namespace.id,
+      });
+      const revision = await state.revisions.findRevision(namespace.id, agent.id, deploymentId);
+      if (!revision)
+        throw new ScopeViolationError(
+          "The AgentRevision does not belong to the exact Agent and Namespace.",
+        );
+      const deployment = await state.deployments.findDeployment(namespace.id, agent.id, revision.id);
+      if (deployment === undefined) {
+        throw new DependencyUnavailableError(
+          "The Agent deployment outcome is unavailable.",
+        );
+      }
+      return deployment;
     });
   }
 

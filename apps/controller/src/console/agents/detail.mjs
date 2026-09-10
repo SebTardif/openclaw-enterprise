@@ -276,7 +276,8 @@ export async function renderAgentDetail(context) {
         }
         submitted = true;
         deployStatus.textContent = "Requesting deployment…";
-        const revision = await request(`${path}/deploy`, { method: "POST" });
+        const deployment = await request(`${path}/deploy`, { method: "POST" });
+        const revision = deployment.revision;
         if (context.isCurrent()) change(revision.id, "workspace");
       } catch (error) {
         if (!context.isCurrent()) return;

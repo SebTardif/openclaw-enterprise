@@ -558,14 +558,16 @@ test(
       `/namespaces/${namespaceId}/agents/${agent.data.id}/deploy`,
     );
     assertControllerStatus(revision, 202);
-    assert.deepEqual(revision.data.serviceAccount, {
+    const revisionData = revision.data.revision;
+    assert.equal(revision.data.deploymentId, revisionData.id);
+    assert.deepEqual(revisionData.serviceAccount, {
       id: account.data.id,
       credential: issued.data.credential,
     });
-    assert.equal(revision.data.providerId, "openai");
-    assert.equal(JSON.stringify(revision.data).includes(externalAccountId), false);
-    assert.equal(JSON.stringify(revision.data).includes(workspaceId), false);
-    assert.equal(JSON.stringify(revision.data).includes(accessToken), false);
+    assert.equal(revisionData.providerId, "openai");
+    assert.equal(JSON.stringify(revisionData).includes(externalAccountId), false);
+    assert.equal(JSON.stringify(revisionData).includes(workspaceId), false);
+    assert.equal(JSON.stringify(revisionData).includes(accessToken), false);
 
     // Access-token login contacts ChatGPT before readiness; only this candidate receives HTTPS egress.
     const authenticationPolicy = await waitFor(
@@ -583,7 +585,7 @@ test(
     assert.deepEqual(authenticationPolicy.spec.podSelector.matchLabels, {
       "openclaw.dev/workload-role": "agent",
       "openclaw.dev/agent": agent.data.id,
-      "openclaw.dev/revision": revision.data.id,
+      "openclaw.dev/revision": revisionData.id,
     });
     assert.deepEqual(authenticationPolicy.spec.policyTypes, ["Egress"]);
     assert.equal(authenticationPolicy.spec.ingress, undefined);
@@ -595,13 +597,13 @@ test(
       "169.254.0.0/16",
     ]);
 
-    await waitFor(`the exact Codex revision ${revision.data.id} to activate`, async () => {
+    await waitFor(`the exact Codex revision ${revisionData.id} to activate`, async () => {
       const observation = await request(
         "GET",
         `/namespaces/${namespaceId}/agents/${agent.data.id}`,
       );
       assertControllerStatus(observation, 200);
-      return observation.data.activeRevisionId === revision.data.id ? observation.data : undefined;
+      return observation.data.activeRevisionId === revisionData.id ? observation.data : undefined;
     });
     const pods = await waitFor("separate real ready OpenClaw and Codex Pods", async () => {
       const response = JSON.parse(

@@ -622,18 +622,20 @@ test("Agent Provider API preserves nullable drafts and immutable revision associ
   await fixture.controller.handleNamespaceLifecycle(fixture.principal.id, namespace.id, "ready");
   const revision = await controller.request("POST", `${target}/deploy`);
   assert.equal(revision.status, 202, JSON.stringify(revision.body));
-  assert.equal(revision.data.providerId, "openai");
+  assert.match(revision.data.deploymentId, identifier("rev"));
+  assert.equal(revision.data.deploymentId, revision.data.revision.id);
+  assert.equal(revision.data.revision.providerId, "openai");
 
   const cleared = await controller.request("PATCH", target, {
     body: { configurationId: configuration.id, providerId: null },
   });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.data.providerId, null);
-  const prior = await controller.request("GET", `${target}/revisions/${revision.data.id}`);
+  const prior = await controller.request("GET", `${target}/revisions/${revision.data.deploymentId}`);
   assert.equal(prior.data.providerId, "openai", "draft changes cannot rewrite admitted revisions");
   const independent = await controller.request("POST", `${target}/deploy`);
   assert.equal(independent.status, 202);
-  assert.equal(independent.data.providerId, null);
+  assert.equal(independent.data.revision.providerId, null);
 
   for (const providerId of ["", " ", "unknown", 42, [], {}]) {
     const expectedStatus = providerId === "unknown" ? 404 : 400;
@@ -700,7 +702,7 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
 
   const initialRevision = await controller.request("POST", deploymentPath);
   assert.equal(initialRevision.status, 202);
-  assert.deepEqual(initialRevision.data.serviceAccount, {
+  assert.deepEqual(initialRevision.data.revision.serviceAccount, {
     id: account.id,
     credential: initialCredential,
   });
@@ -728,12 +730,12 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
   assert.equal(replaced.status, 200);
   const replacementRevision = await controller.request("POST", deploymentPath);
   assert.equal(replacementRevision.status, 202);
-  assert.deepEqual(replacementRevision.data.serviceAccount.credential, replacementCredential);
+  assert.deepEqual(replacementRevision.data.revision.serviceAccount.credential, replacementCredential);
 
   // Credential edits affect future admissions only; a historical revision keeps its original reference.
   const historical = await controller.request(
     "GET",
-    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${initialRevision.data.id}`,
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${initialRevision.data.deploymentId}`,
   );
   assert.deepEqual(historical.data.serviceAccount.credential, initialCredential);
 
@@ -1679,8 +1681,14 @@ test("two Namespaces become independently ready and deletion tombstones only its
     `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deploy`,
   );
   assert.equal(readyDeployment.status, 202);
-  assert.match(readyDeployment.data.id, identifier("rev"));
+  assert.match(readyDeployment.data.deploymentId, identifier("rev"));
+  const readyRevision = readyDeployment.data.revision;
+  assert.equal(readyDeployment.data.deploymentId, readyRevision.id);
   assert.deepEqual(Object.keys(readyDeployment.data).sort(), [
+    "deploymentId",
+    "revision",
+  ]);
+  assert.deepEqual(Object.keys(readyRevision).sort(), [
     "agentId",
     "compute",
     "configuration",
@@ -1694,24 +1702,39 @@ test("two Namespaces become independently ready and deletion tombstones only its
     "providerId",
     "revision",
   ]);
-  assert.equal(readyDeployment.data.configurationId, firstConfiguration.id);
-  assert.equal(readyDeployment.data.configurationKind, "agent");
-  assert.equal(readyDeployment.data.configurationGeneration, 1);
+  assert.equal(readyRevision.configurationId, firstConfiguration.id);
+  assert.equal(readyRevision.configurationKind, "agent");
+  assert.equal(readyRevision.configurationGeneration, 1);
   assert.deepEqual(
-    readyDeployment.data.configuration,
+    readyRevision.configuration,
     admitLoggingConfiguration({ model: "first", temperature: "0" }, "info"),
   );
-  assert.deepEqual(readyDeployment.data.harness, {
+  assert.deepEqual(readyRevision.harness, {
     id: "openclaw",
     version: "1.0.0",
     mode: "embedded",
   });
-  assert.deepEqual(readyDeployment.data.compute, {
+  assert.deepEqual(readyRevision.compute, {
     id: "compute-integration",
     implementation: "deterministic-test",
   });
-  assert.equal(readyDeployment.data.revision, 1);
-  assert.equal(Object.hasOwn(readyDeployment.data, "servicePrincipalId"), false);
+  assert.equal(readyRevision.revision, 1);
+  assert.equal(Object.hasOwn(readyRevision, "servicePrincipalId"), false);
+
+  const readyStatus = await injectedRequest(
+    fixture.app,
+    "GET",
+    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deployments/${readyDeployment.data.deploymentId}`,
+  );
+  assert.equal(readyStatus.status, 200);
+  assert.deepEqual(readyStatus.data, {
+    deploymentId: readyDeployment.data.deploymentId,
+    namespaceId: namespaceA.data.id,
+    agentId: agentA.data.id,
+    status: "queued",
+    pluginErrors: [],
+    error: null,
+  });
 
   const secondConfiguration = await createInjectedConfiguration(fixture, namespaceA.data.id, {
     model: "second",
@@ -1727,10 +1750,10 @@ test("two Namespaces become independently ready and deletion tombstones only its
   const historical = await injectedRequest(
     fixture.app,
     "GET",
-    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions/${readyDeployment.data.id}`,
+    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions/${readyDeployment.data.deploymentId}`,
   );
   assert.equal(historical.status, 200);
-  assert.deepEqual(historical.data, readyDeployment.data);
+  assert.deepEqual(historical.data, readyRevision);
 
   const nextDeployment = await injectedRequest(
     fixture.app,
@@ -1738,9 +1761,10 @@ test("two Namespaces become independently ready and deletion tombstones only its
     `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deploy`,
   );
   assert.equal(nextDeployment.status, 202);
-  assert.equal(nextDeployment.data.revision, 2);
+  const nextRevision = nextDeployment.data.revision;
+  assert.equal(nextRevision.revision, 2);
   assert.deepEqual(
-    nextDeployment.data.configuration,
+    nextRevision.configuration,
     admitLoggingConfiguration({ model: "second", temperature: "1" }, "info"),
   );
   const admittedRevisions = await injectedRequest(
@@ -1748,7 +1772,7 @@ test("two Namespaces become independently ready and deletion tombstones only its
     "GET",
     `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions`,
   );
-  assert.deepEqual(admittedRevisions.data, [readyDeployment.data, nextDeployment.data]);
+  assert.deepEqual(admittedRevisions.data, [readyRevision, nextRevision]);
   assert.deepEqual(fixture.computeCalls.ensureNamespace, [namespaceA.data.id, namespaceB.data.id]);
 
   const deleting = await injectedRequest(

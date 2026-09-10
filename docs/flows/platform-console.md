@@ -267,7 +267,9 @@ this client never infers it from a network error.
 The saved-draft detail view exposes **Deploy saved draft**. It rereads the Agent and
 Configuration, checks their loaded association and generation, then sends the existing
 bodyless `POST /namespaces/:namespaceId/agents/:agentId/deploy`. The server retains
-its existing authorization and admission checks. The returned admitted revision opens
-the workspace view; gateway startup and file availability are checked by subsequent
-workspace reads. An uncertain deployment response disables replay until the user
-refreshes and inspects the Agent and revision history.
+its existing authorization and admission checks. The response returns
+`data.deploymentId` plus the admitted revision in `data.revision`; the console
+opens that revision in the workspace view. Gateway startup and file availability
+are checked by subsequent workspace reads. An uncertain deployment response
+disables replay until the user refreshes and inspects the Agent and revision
+history.
