@@ -48,6 +48,13 @@ export class ScopeViolationError extends Error {
   }
 }
 
+export class InvalidRequestError extends Error {
+  constructor(message = "The request does not match the operation contract.") {
+    super(message);
+    this.name = "InvalidRequestError";
+  }
+}
+
 export class ResourceConflictError extends ScopeViolationError {
   constructor(message: string) {
     super(message);
