@@ -270,14 +270,19 @@ channel, browser, authority, isolation, persistence or installed conformance.
 
 ## Preserved limits and compatibility
 
-`NATIVE_MEASUREMENT_PRESERVED_V1` records the existing selected ceilings. Harness
-connect/send/reconnect are 5,000 ms, cancel 3,000 ms, subscriptions 30,000 ms;
+`NATIVE_MEASUREMENT_PRESERVED_V1` records the existing protocol and authority
+ceilings. Harness connect/send/reconnect are 5,000 ms, cancel 3,000 ms,
+subscriptions 30,000 ms;
 reconnect attempts 3, frame 262,144 bytes, input 65,536 bytes, events 128 and
 1,048,576 event bytes, attempts 64 and subscriptions 16. Native text input is
 65,536 UTF-8 bytes; capture is 262,144 bytes, completed text/body 3,200/8,192 bytes
 and notice text/body 512/2,048 bytes. There is one executable turn and no queue or
-attachment/streaming feature. The native pending deadline remains 30,000 ms and
-turn deadline 900,000 ms; expiry does not silently release uncertain ownership.
+attachment/streaming feature. The native pending deadline remains 30,000 ms.
+Execution duration comes from the original attempt's explicit admitted
+[finite-or-uncapped policy](turn-journal.md#selected-native-execution-retention),
+not this measurement inventory. A configured cap retains its original anchor;
+expiry does not silently release uncertain ownership. Uncapped execution does
+not enlarge pending, transport, authority or measurement bounds.
 
 Authority effect permits remain 5,000 ms, lookup 3,000 ms, evidence age 15,000 ms,
 clock uncertainty 2,000 ms and active recheck 5,000 ms; earlier original or

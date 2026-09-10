@@ -17,28 +17,38 @@ The upstream adapter sends the exact selected intent and original input on its o
 
 ## Currentness and uncertainty
 
-The initiation guard ends with the original callback. During acceptance, `journal/armExecution` identifies the actual pending native construction on the authenticated socket. The canonical controller transfers the original committed monotonic clock once into a retained deadline owner and issues mandatory conditional self-cleanup of only that construction. Its full control is retained canonically before the reverse reply allows native construction to proceed. The resulting `host-controlled-v1` start embeds this exact control, without a guest-clock mapping.
+The initiation guard ends with the original callback. During acceptance, `journal/armExecution` identifies the actual pending native construction on the authenticated socket. The canonical controller transfers the original committed `pre-commit-monotonic-v2` clock once into a retained stop owner and issues mandatory `host-stop-v2` conditional self-cleanup of only that construction. Its full control is retained canonically before the reverse reply allows native construction to proceed. The resulting `host-controlled-v2` start embeds this exact control, without a guest-clock mapping. Both modes retain this control: `deadlineAtMs` is `null` for uncapped selection or exactly the safe integer `anchorAtMs + maximumExecutionMs` for a finite cap.
 
-At the deadline, the retained closure sends direct `native/cancelConstruction` using its original target and control. It requires no fresh human grant, continuation check or database write. Its promise observes the cancellation request; it does not establish physical settlement or release capacity. A cancellation before arm acknowledgment keeps late acceptance gated. The deadline owner uses the original process clock; process loss remains unknown, without a daemon-survival guarantee.
+A finite cap arms a timer against the original process clock; bounded waits and monotonic rechecks preserve long configured durations. Uncapped selection arms no duration timer. At finite expiry or a protective stop request, the retained closure sends direct `native/cancelConstruction` using its original target and control. It requires no fresh human grant, continuation check or database write. Its promise observes the cancellation request; it does not establish physical settlement or release capacity. A cancellation before arm acknowledgment keeps late acceptance gated. Process loss remains unknown, without a daemon-survival guarantee.
 
 Ongoing checks obtain separate current authority calls; each returned operation guard retains the exact call's signal and deadline through submission. No serialized `AuthorityCallV1` or native identity label creates a trusted context.
 
-An uncertain native acceptance retains ownership without a second acceptance or capacity reclamation. `resolveStart` uses the controller's original canonical readback. `requestInterruption` records the exact independently authorized interruption; `resolveInterruption` exposes canonical recovery for an uncertain journal retention acknowledgment. A potentially submitted native interruption is not automatically submitted again.
+An uncertain native acceptance retains ownership without a second acceptance or capacity reclamation. When acceptance fails after stop transfer but before a ready owner is retained, the controller requests the original construction cleanup even in uncapped mode. `resolveStart` uses the controller's original canonical readback. `requestInterruption` records the exact independently authorized interruption; `resolveInterruption` exposes canonical recovery for an uncertain journal retention acknowledgment. A potentially submitted native interruption is not automatically submitted again.
 
 The `closed` promise establishes native TLS socket closure only. Native turn completion, transport loss, interruption acknowledgment and physical closure of all execution tasks/children remain distinct. Neither socket loss nor a terminal event authorizes a new execution or proves workspace release.
 
 ## Configuration and verification
 
-The selected [execution-policy successor](../../specs/24-configurable-execution-limits.md)
-defaults to uncapped duration while retaining independently authorized stop
-ownership. This V1 component still requires its finite deadline control. Do not
-substitute a large timestamp or Infinity, omit mandatory control, or claim that
-credential renewal extends the original attempt. A matching native successor
-and actual production composition are required for the new policy.
+The [Agent duration setting](agents.md#execution-duration-selection) defaults to
+uncapped and admits an explicit finite-or-null revision snapshot. The journal
+component consumes the original authority's matching selection. Both selections
+require the same retained stop control; a large timestamp, Infinity or omitted
+control cannot represent uncapped execution. The
+[implementation record](../../specs/24-configurable-execution-limits.md) separates
+these implemented components from the remaining production composition and
+native qualification.
 
-The selected SDK must contain the concrete connector and the matching public selected codec. Configure the Workload API socket, exact local/native SPIFFE IDs, assignment, native `/native` endpoint and finite bounds through the trusted host composition. No standalone server command or environment-based authority factory is provided by this module.
+The selected SDK must contain the concrete connector and matching public
+`pre-commit-monotonic-v2`, `host-stop-v2` and `host-controlled-v2` codecs, and the
+native construction gate must implement that same contract. `HostedNativeOwner`
+passes these values through the connector; it does not translate older SDK or
+native wire formats. Configure the Workload API socket, exact local/native
+SPIFFE IDs, assignment, native `/native` endpoint and finite transport/authority
+bounds through the trusted host composition. There is no production dispatcher
+that selects the saved revision policy for this component, standalone server
+command or environment-based authority factory supplied by this module.
 
-The upstream socket tests use generated identities and actual local TLS/Unix sockets. Controlled protocol responses prove Node adapter behavior only. Original dispatch-clock and journal tests separately exercise real PostgreSQL persistence. A composed real native/journal acceptance and deadline-triggered cancellation are still required before claiming a provider-backed model turn or deployed gVisor execution.
+The upstream socket tests use generated identities and actual local TLS/Unix sockets. Controlled protocol responses prove Node adapter behavior only. Original dispatch-clock and journal tests separately exercise real PostgreSQL persistence. A composed real native/journal acceptance, uncapped continuation, finite expiry and independently requested interruption with physical task/helper closure are still required before claiming a qualified provider-backed model turn or deployed gVisor execution. Source changes or a locally rebuilt SDK do not establish those outcomes.
 
 To run the journal/transport integration test, prepare the matching SDK and Codex
 plugin using the repository build procedure. Configure `OCC_TEST_DATABASE_URL`

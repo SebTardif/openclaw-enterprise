@@ -197,7 +197,15 @@ the admitted values, including any remaining inline unresolved SecretRefs, into
 and `configurationGeneration` fields pin the selected Configuration metadata.
 The revision also pins the selected OpenClaw or Codex Harness descriptor,
 execution mode, Compute identity, optional Sandbox identity, Agent service
-principal, and any selected Secret Driver identity and normalized bindings.
+principal, saved `maximumExecutionMs`, and any selected Secret Driver identity
+and normalized bindings. The execution cap is an Agent setting, separate from
+the native Configuration document. Creation omission selects `null` (uncapped);
+Agent PATCH omission preserves its saved value. The identified deployment
+command must match that value in `expectedDraft.maximumExecutionMs`, and each
+newly admitted revision records the explicit finite-or-null snapshot. A later
+draft edit does not change an existing revision or execution selection. See
+[execution duration selection](../reference/agents.md#execution-duration-selection)
+for the current configuration contract and its runtime boundary.
 Backend locators and value bytes are not stored in the revision. Subsequent nested
 Configuration edits increment its generation but affect only later explicit
 deployments; historical revisions and their admitted snapshots remain unchanged.

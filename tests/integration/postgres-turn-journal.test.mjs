@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import test from "node:test";
 import pg from "pg";
 import { runtimeCommitAckProxy } from "../fixtures/postgres-runtime-assignment-commit-ack-fault.mjs";
-import { channelEnvelopeSchemaV1 } from "openclaw/plugin-sdk/channel-inbound";
 import {
   changedIncoming,
   commonAttemptRecord,
@@ -26,6 +26,11 @@ import {
 } from "../../packages/contracts/src/turn-journal-v1.ts";
 
 const databaseUrl = process.env.OCC_TEST_DATABASE_URL;
+// Resolve the actual SDK through OCC, which declares and prepares this dependency.
+const requireOcc = createRequire(new URL("../../packages/occ/package.json", import.meta.url));
+const { channelEnvelopeSchemaV1 } = await import(
+  requireOcc.resolve("openclaw/plugin-sdk/channel-inbound")
+);
 const options = {
   skip: databaseUrl
     ? false
