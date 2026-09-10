@@ -1067,6 +1067,73 @@ test(
         },
       );
       await t.test(
+        "controller schedules a cap beyond Node timer range without early expiry or renewal",
+        async () => {
+          const f = await fixture(pool);
+          // The extra minute exceeds the entire bounded initiation window, so
+          // the first remaining delay must exceed Node's signed 32-bit timer limit.
+          f.intent.maximumExecutionMs = 2_147_483_647 + 60_000;
+          let receipt,
+            stops = 0,
+            confirmations = 0,
+            interruptions = 0;
+          const native = {
+            async accept(guard, _call, retainDeadline) {
+              await f.arm(guard, retainDeadline, async () => {
+                stops++;
+              });
+              receipt = { start: f.start, evidence: f.h.issue("consumption", f.start) };
+              return receipt;
+            },
+            async assertCurrent(owned) {
+              assert.equal(owned, receipt);
+            },
+            async confirmRetainedStart(owned, start) {
+              assert.equal(owned, receipt);
+              same(start, f.start);
+              confirmations++;
+            },
+            async inspectInterruption(owned, operation) {
+              assert.equal(owned, receipt);
+              return f.h.issue("consumption", operation);
+            },
+            async interrupt(owned, operation) {
+              assert.equal(owned, receipt);
+              same(operation, f.interruption);
+              interruptions++;
+            },
+          };
+          const controller = new SelectedExecutionController(f.h.store, native, 1);
+          assert.equal(
+            (await controller.dispatchAndConsume(f.dispatch(), f.consume(), f.h.call)).kind,
+            "initiated",
+          );
+          const originalDeadline = f.intent.dispatchClock.anchorAtMs + f.intent.maximumExecutionMs;
+          assert.equal(f.control.deadlineAtMs, originalDeadline);
+          // Observe actual timers beyond the overflow-to-1ms window. This proves
+          // scheduling at the boundary, not passage of the full 25-day duration.
+          await new Promise((resolve) => setTimeout(resolve, 75));
+          assert.equal(stops, 0);
+          assert.equal(confirmations, 1);
+          const call = f.p.call();
+          const retained = await f.h.read((j) => j.findExecution(f.execution, call), call);
+          assert.equal(retained.kind, "started");
+          assert.equal(retained.start.deadlineControl.deadlineAtMs, originalDeadline);
+          await controller.interrupt(f.interruption, f.p.call());
+          assert.equal(interruptions, 1);
+          assert.equal(stops, 0);
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int AS n FROM occ.turn_journal_reservations WHERE attempt_ref=$1",
+                [f.v.attempt.attemptRef],
+              )
+            ).rows[0].n,
+            1,
+          );
+        },
+      );
+      await t.test(
         "uncapped failed construction requests retained cleanup and keeps capacity",
         async () => {
           const f = await fixture(pool);
