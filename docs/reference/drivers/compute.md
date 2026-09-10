@@ -23,8 +23,14 @@ and [deployment](../../guides/deploy.md) for operator setup.
 - `prepareRevision(revision)` creates or reuses that Agent's gateway and
   realizes its immutable Harness topology: one combined gateway/Harness for
   `embedded` OpenClaw or a separate exact-revision Codex workload for
-  `dedicated` execution. Compute creates the workload unless the selected
-  SandboxDriver implements `provisionHarness`.
+  `dedicated` execution. When `revision.selectedPlugins` is nonempty, the
+  revision contains the exact server-resolved plugin snapshots admitted by OCC;
+  native installation is not implemented in this PR, including dedicated Codex
+  on bundled Kubernetes Compute. All Compute implementations must fail closed
+  for nonempty selections before workload preparation or plugin installation.
+  See the [native deployment gate](kubernetes-compute.md#native-plugin-deployment-gate).
+  Compute creates the workload unless the selected SandboxDriver
+  implements `provisionHarness`.
 - `retireRevision(revision)` first revokes that revision's workload access,
   then stops its owned embedded gateway or dedicated Codex workload and delegates
   provider-owned Sandbox cleanup when applicable. It preserves an Agent gateway

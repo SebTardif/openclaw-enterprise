@@ -11,6 +11,7 @@ import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   InMemoryPlatformState,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   OpenClawController,
   ScopeViolationError,
@@ -809,7 +810,7 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
       { namespaceId: namespace.id, agentId: agent.id },
       resolveApprovedDevelopmentHarness,
     ),
-    DependencyUnavailableError,
+    InvalidRequestError,
   );
   await assert.rejects(
     controller.deployAgent(
@@ -817,7 +818,7 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
       { namespaceId: namespace.id, agentId: agent.id },
       () => DEVELOPMENT_HARNESS_DESCRIPTOR,
     ),
-    ScopeViolationError,
+    InvalidRequestError,
   );
 
   // Production accepts the same explicitly approved embedded OpenClaw placement as development.
@@ -832,6 +833,14 @@ test("Harness admission rejects conflicting selections, mode mismatches, and una
     configurationId: openclawConfiguration.id,
   });
   assert.deepEqual(await controller.listRevisions(administrator, namespace.id, agent.id), []);
+  // With a valid native mode, a mismatched approved descriptor remains a scope violation.
+  await assert.rejects(
+    controller.deployAgent(administrator, { namespaceId: namespace.id, agentId: agent.id }, () => ({
+      id: "codex",
+      version: "0.152.1",
+    })),
+    ScopeViolationError,
+  );
   const embedded = await controller.deployAgent(
     administrator,
     { namespaceId: namespace.id, agentId: agent.id },

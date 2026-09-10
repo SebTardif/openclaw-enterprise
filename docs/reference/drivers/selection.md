@@ -59,10 +59,10 @@ observed the expected marketplace and release review has accepted an
 intentionally empty collection; an absent raw capture or missing marketplace
 must not be represented as a successful empty catalog.
 
-OCC retains one validated, immutable catalog snapshot for `/plugins`. Changing
-caller-owned startup options after construction cannot change that view. Missing
-or malformed catalog state returns sanitized `DEPENDENCY_UNAVAILABLE` responses
-without preventing ordinary controller startup.
+OCC retains one validated, immutable catalog snapshot for both `/plugins`
+and deployment admission. Changing caller-owned startup options after construction
+cannot change either view. Missing or malformed catalog state returns sanitized
+`DEPENDENCY_UNAVAILABLE` responses without preventing ordinary controller startup.
 
 Installed packages run unsandboxed with control-plane authority and
 access to controller credentials, database state, and Kubernetes identity.

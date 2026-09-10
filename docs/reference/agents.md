@@ -35,7 +35,8 @@ A representative creation body is:
   "name": "ticket-triage",
   "configurationId": "cfg_123e4567-e89b-42d3-a456-426614174000",
   "executionMode": "dedicated",
-  "providerId": null
+  "providerId": null,
+  "plugins": [{ "driverId": "codex", "pluginId": "calendar@openai" }]
 }
 ```
 
@@ -45,6 +46,34 @@ Agent `create` permission in that Namespace and `read` permission on the
 exact Configuration. An optional associated service account requires its own
 exact `read` permission. [Authentication](authentication.md) establishes the
 caller; [authorization](authorization.md) defines its grants.
+
+## Plugin selection
+
+Agent creation can include up to 32 selected plugin identities:
+
+```json
+{
+  "plugins": [{ "driverId": "codex", "pluginId": "calendar@openai" }]
+}
+```
+
+Omission means an empty selection. The Agent response returns the saved
+selection as `plugins`; it contains only `{ driverId, pluginId }` pairs. OCC
+does not accept plugin locators, credentials, local paths, native settings, or
+policy in an Agent request body.
+
+Nonempty selection requires Installation `administer` permission in addition to
+the ordinary Agent-create and Configuration-read checks. OCC validates the
+requested identities against the reviewed Installation plugin catalog, rejects
+duplicates and unknown IDs, and currently supports selected plugins only for
+`dedicated` Codex Agents on bundled Kubernetes Compute. Other execution modes
+or Compute implementations fail before the Agent is saved.
+
+Deployment revalidates the saved selection and writes an immutable
+`selectedPlugins` snapshot to the AgentRevision. Each snapshot entry contains
+the requested identity plus the server-resolved `remoteMarketplaceName`,
+`remotePluginId`, `version`, and `catalogCodexVersion`. Later catalog changes
+do not rewrite earlier revisions.
 
 ## Provider association
 
@@ -217,7 +246,10 @@ The revision records the source `configurationId`, `configurationKind`, and
 `configurationGeneration`, its complete admitted native `configuration`
 document, the approved Harness identity/version/mode, selected Compute identity,
 nullable `providerId`, and any associated service account's opaque credential
-reference. The account association contains no credential bytes. Native Configuration values must use
+reference. The account association contains no credential bytes. When the Agent
+has selected plugins, the revision also records the server-resolved
+`selectedPlugins` snapshot for the follow-up native installer; this PR's Compute
+Drivers fail closed for nonempty selections. Native Configuration values must use
 unresolved inline SecretRefs because the admitted document is persisted and
 returned through the API; see [secret boundaries](configuration.md#secret-boundaries).
 Nested objects and arrays are immutable.

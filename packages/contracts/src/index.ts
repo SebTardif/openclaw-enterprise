@@ -1,4 +1,5 @@
 import { immutableCopy } from "@openclaw-enterprise/utils";
+import type { AgentPluginSnapshot, PluginIdentity } from "./plugins.ts";
 
 export {
   AgentPluginSnapshotSchema,
@@ -235,6 +236,7 @@ export interface Agent extends Scope {
   readonly providerId: ProviderRef;
   readonly serviceAccountId?: string;
   readonly executionMode: HarnessExecutionMode;
+  readonly selectedPlugins: readonly PluginIdentity[];
   readonly servicePrincipalId: string;
   readonly activeRevisionId?: string;
   readonly createdAt: string;
@@ -268,6 +270,7 @@ export interface AgentRevision extends Scope {
   readonly secretDriverId?: string;
   readonly secretBindings?: SecretBindings;
   readonly serviceAccount?: ServiceAccountRevision;
+  readonly selectedPlugins: readonly AgentPluginSnapshot[];
   readonly servicePrincipalId: string;
   readonly createdAt: string;
 }
@@ -284,6 +287,7 @@ export function freezeAgentRevision(revision: AgentRevision): Readonly<AgentRevi
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    selectedPlugins: immutableCopy(revision.selectedPlugins),
   });
 }
 

@@ -105,6 +105,7 @@ function revision(driver, owner, agentId, number) {
   const loggingLevel = number === 1 ? "info" : "debug";
   return {
     id: `rev_${randomUUID()}`,
+    selectedPlugins: [],
     namespaceId: owner.id,
     agentId,
     revision: number,

@@ -49,6 +49,7 @@ import { DependencyUnavailableError, ResourceConflictError } from "@openclaw-ent
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
+import { selectedNativePlugins } from "../native-plugins.ts";
 import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
@@ -196,6 +197,11 @@ interface GatewayConfigurationSnapshot {
 
 class OwnershipFailure extends Error {}
 class ConfigurationFailure extends Error {}
+
+interface ReadyAgentPod {
+  readonly name: string;
+  readonly uid?: string;
+}
 
 type RuntimeCredentialGroup = "transport" | "model" | "slack";
 
@@ -1203,6 +1209,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     if (sandboxDriver !== undefined && embedded) {
       throw new ConfigurationFailure("SandboxDriver support is limited to dedicated Harnesses.");
     }
+    this.validateNativePluginSupport(revision);
     if (revision.serviceAccount?.credential.kind === "access_token") {
       if (embedded || this.options.runtime === undefined) {
         throw new ConfigurationFailure(
@@ -1482,7 +1489,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
         await this.lifecycle.beforeWorkloadStop(revision, { cleanup: true });
         return result;
       }
-      return { ...result, ready: this.deploymentReady(deployment) };
+      if (!this.deploymentReady(deployment)) return result;
+      return { ...result, ready: true };
     } catch (error) {
       const failures = [error];
       if (launchPrepared) {
@@ -1500,6 +1508,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+    this.validateNativePluginSupport(revision);
     if (this.options.runtime === undefined) return;
     this.verifyGatewayRoutingConfiguration(revision);
     const channels = this.enabledChannels(revision);
@@ -2529,6 +2538,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespace: string,
     labels: Readonly<Record<string, string>>,
   ): Promise<boolean> {
+    return (await this.readyAgentPod(revision, namespace, labels)) !== undefined;
+  }
+
+  private async readyAgentPod(
+    revision: AgentRevision,
+    namespace: string,
+    labels: Readonly<Record<string, string>>,
+  ): Promise<ReadyAgentPod | undefined> {
     const clients = await this.clients();
     const pods = asRecord(
       await this.request(() =>
@@ -2564,6 +2581,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     let candidates = 0;
     let candidateReady = false;
+    let readyPod: ReadyAgentPod | undefined;
     // Validate the whole observation before trusting uniqueness, including entries after a Ready Pod.
     for (const item of pods.items) {
       const pod = asRecord(item);
@@ -2628,8 +2646,35 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       candidates += 1;
       candidateReady = ready;
+      if (ready) {
+        readyPod = {
+          name: metadata.name,
+          ...(isNonEmptyString(metadata.uid) ? { uid: metadata.uid } : {}),
+        };
+      }
     }
-    return candidates === 1 && candidateReady;
+    return candidates === 1 && candidateReady ? readyPod : undefined;
+  }
+
+  private validateNativePluginSupport(revision: AgentRevision): void {
+    const selected = selectedNativePlugins(revision);
+    if (selected.length === 0) return;
+    if (
+      revision.harness.id !== "codex" ||
+      revision.harness.mode !== "dedicated" ||
+      this.options.runtime === undefined ||
+      this.sandboxDriverForRevision(revision) !== undefined
+    ) {
+      throw new ConfigurationFailure(
+        "Selected native plugins require the bundled Kubernetes dedicated Codex runtime.",
+      );
+    }
+    // TODO(plugin deployment): replace this gate when native plugin installation
+    // is implemented for bundled Kubernetes dedicated Codex runtimes.
+    // See docs/reference/drivers/kubernetes-compute.md#native-plugin-deployment-gate.
+    throw new ConfigurationFailure(
+      "Native plugin deployment is unsupported: native plugin installation is not implemented yet.",
+    );
   }
 
   private harnessRequirementsFromDeployment(

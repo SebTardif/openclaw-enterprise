@@ -43,6 +43,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     createdAt: new Date().toISOString(),
   };
   const agent = {
+    selectedPlugins: [],
     id: identifier("agt"),
     namespaceId: namespace.id,
     name: `Agent ${randomUUID()}`,
@@ -53,6 +54,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     createdAt: new Date().toISOString(),
   };
   const revision = {
+    selectedPlugins: [],
     id: identifier("rev"),
     namespaceId: namespace.id,
     agentId: agent.id,
@@ -650,6 +652,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     credential,
   };
   const accountAgent = {
+    selectedPlugins: [],
     id: identifier("agt"),
     namespaceId: accountNamespace.id,
     name: "Account agent " + randomUUID(),

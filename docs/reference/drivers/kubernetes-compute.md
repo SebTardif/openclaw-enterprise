@@ -30,12 +30,14 @@ controller.
   Kubernetes fails the Codex Pod when the configured profile is missing.
 
 The worker manages PersistentVolumeClaims and, when private gateway routing is
-enabled, HTTPRoutes through tenant-local RoleBindings. Only the controller API
-receives narrowly scoped Secret permissions for provider-issued credentials.
-The API does not need gateway Pod reads, exec, route writes, or certificate
-management for workspace-file access. Do not grant wildcard permissions,
-cluster-wide access to tenant resources, workload access to controller
-credentials, or permission to create or escalate RoleBindings.
+enabled, HTTPRoutes through tenant-local RoleBindings. Native plugin deployment
+is gated off and the worker does not receive `pods/exec` permission. Only the
+controller API receives narrowly scoped Secret permissions for provider-issued
+credentials. The API does not
+need gateway Pod reads, exec, route writes, or certificate management for
+workspace-file access. Do not grant wildcard permissions, cluster-wide access
+to tenant resources, workload access to controller credentials, or permission
+to create or escalate RoleBindings.
 
 If OpenShell sandboxing is enabled, the Compute Driver's Kubernetes access is
 also used directly by the optional `SandboxDriver.ensureNamespace` hook to
@@ -67,6 +69,23 @@ Cancellation of the observation cannot yield a successful readiness result.
 This checks Kubernetes workload readiness and label uniqueness; it does not
 attest a provider Sandbox ID or Pod UID, authenticate the guest, or fence a
 runtime generation.
+
+## Native plugin deployment gate
+
+Native plugin deployment is not implemented in this PR. A nonempty
+`AgentRevision.selectedPlugins` snapshot fails before preparation or activation
+can read or mutate Kubernetes resources. Empty selections continue through the
+ordinary runtime lifecycle. Docker, embedded OpenClaw, OpenShell, and Kubernetes
+without `runtime` also reject nonempty selections; bundled Kubernetes dedicated
+Codex is the intended implementation target for the follow-up installer PR.
+
+The gate is deliberately fail-closed and does not attempt partial installation,
+selection rewriting, or graceful plugin exclusion. A deployment rejected with
+`Native plugin deployment is unsupported` has not touched Kubernetes workload
+state for the selected plugins. Deploy an explicitly empty selection for
+ordinary runtime operation until the installer PR adds the native install path.
+Fixture tests prove rejection before IO only; no live plugin installation,
+approval, or model-tool success is claimed in this branch.
 
 Shared Kubernetes clusters are not currently supported.
 

@@ -568,6 +568,9 @@ List authorized Agents in one exact Namespace
 | `data[].id` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data[].name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].plugins` | `array<object>` | Yes | max items: 32 |
+| `data[].plugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].plugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].providerId` | `string or null` | Yes | — |
 | `data[].serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
@@ -579,7 +582,7 @@ Create a Namespace-owned Agent
 
 **Operation ID:** `createAgent`
 
-**Permissions:** Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.
+**Permissions:** Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Requires administer permission on the Installation when selected plugins are present.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
@@ -587,6 +590,7 @@ Create a Namespace-owned Agent
 | `read` | `configuration` | `requested` |
 | `read` | `service_account` | `requested` (when associated) |
 | `operate` | `secret` | `requested` (when bound) |
+| `administer` | `installation` | `requested` |
 
 #### Parameters
 
@@ -605,6 +609,9 @@ Create a Namespace-owned Agent
 | `configurationId` | `string` | Yes | pattern: `^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `executionMode` | `"embedded" or "dedicated"` | No | — |
 | `name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `plugins` | `array<object>` | No | max items: 32 |
+| `plugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `plugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `providerId` | `string or null` | No | — |
 | `serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -635,6 +642,9 @@ Create a Namespace-owned Agent
 | `data.id` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.plugins` | `array<object>` | Yes | max items: 32 |
+| `data.plugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.plugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
@@ -683,6 +693,9 @@ Get an exact Namespace-owned Agent
 | `data.id` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.plugins` | `array<object>` | Yes | max items: 32 |
+| `data.plugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.plugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
@@ -750,6 +763,9 @@ Replace an exact Namespace-owned Agent's editable draft
 | `data.id` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.plugins` | `array<object>` | Yes | max items: 32 |
+| `data.plugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.plugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data.providerId` | `string or null` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
@@ -814,6 +830,13 @@ Admit an immutable revision from the Agent's saved draft
 | `data.revision` | `integer` | Yes | minimum: 1 |
 | `data.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
 | `data.secretDriverId` | `string` | No | min length: 1 |
+| `data.selectedPlugins` | `array<object>` | Yes | max items: 32 |
+| `data.selectedPlugins[].catalogCodexVersion` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].remoteMarketplaceName` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].remotePluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].version` | `string or null` | Yes | — |
 | `data.serviceAccount` | `object` | No | — |
 | `data.serviceAccount.credential` | `object` | Yes | — |
 | `data.serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |
@@ -1080,6 +1103,13 @@ List authorized immutable revisions for one exact Agent
 | `data[].revision` | `integer` | Yes | minimum: 1 |
 | `data[].secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
 | `data[].secretDriverId` | `string` | No | min length: 1 |
+| `data[].selectedPlugins` | `array<object>` | Yes | max items: 32 |
+| `data[].selectedPlugins[].catalogCodexVersion` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].selectedPlugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].selectedPlugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].selectedPlugins[].remoteMarketplaceName` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].selectedPlugins[].remotePluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data[].selectedPlugins[].version` | `string or null` | Yes | — |
 | `data[].serviceAccount` | `object` | No | — |
 | `data[].serviceAccount.credential` | `object` | Yes | — |
 | `data[].serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |
@@ -1146,6 +1176,13 @@ Get an exact authorized immutable Agent revision
 | `data.revision` | `integer` | Yes | minimum: 1 |
 | `data.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
 | `data.secretDriverId` | `string` | No | min length: 1 |
+| `data.selectedPlugins` | `array<object>` | Yes | max items: 32 |
+| `data.selectedPlugins[].catalogCodexVersion` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].driverId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].pluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].remoteMarketplaceName` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].remotePluginId` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `data.selectedPlugins[].version` | `string or null` | Yes | — |
 | `data.serviceAccount` | `object` | No | — |
 | `data.serviceAccount.credential` | `object` | Yes | — |
 | `data.serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |

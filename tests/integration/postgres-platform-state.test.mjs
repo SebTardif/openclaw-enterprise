@@ -684,6 +684,148 @@ test(
 );
 
 test(
+  "PostgreSQL persists Agent plugin selections and revision snapshots as constrained JSONB",
+  requiresPostgres,
+  async (context) => {
+    const [{ Pool }, { PostgresPlatformState }] = await Promise.all([
+      import("pg"),
+      import("../../packages/occ/src/state/postgres-state.ts"),
+    ]);
+    const api = await startController(context);
+    const pool = new Pool({ connectionString: databaseUrl });
+    context.after(() => pool.end());
+    const state = new PostgresPlatformState(pool);
+    const installation = await state.loadInstallation();
+    assert.ok(installation, "the real OCC subprocess must bootstrap the singleton Installation");
+
+    const createdAt = new Date().toISOString();
+    const namespaceId = `ns_${randomUUID()}`;
+    const configurationId = `cfg_${randomUUID()}`;
+    const agentId = `agt_${randomUUID()}`;
+    const revisionId = `rev_${randomUUID()}`;
+    const selectedPlugins = [
+      { driverId: "codex", pluginId: "calendar@openai" },
+      { driverId: "codex", pluginId: "drive@openai" },
+    ];
+    const selectedPluginSnapshots = [
+      {
+        driverId: "codex",
+        pluginId: "calendar@openai",
+        remoteMarketplaceName: "openai",
+        remotePluginId: "calendar",
+        version: null,
+        catalogCodexVersion: "0.152.1",
+      },
+      {
+        driverId: "codex",
+        pluginId: "drive@openai",
+        remoteMarketplaceName: "openai",
+        remotePluginId: "drive",
+        version: "1.2.3",
+        catalogCodexVersion: "0.152.1",
+      },
+    ];
+
+    await state.transact(async (unit) => {
+      await unit.namespaces.createNamespace({
+        id: namespaceId,
+        name: `Plugin JSONB ${randomUUID()}`,
+        status: "ready",
+        createdAt,
+      });
+      await unit.configurations.createConfiguration({
+        id: configurationId,
+        namespaceId,
+        kind: "agent",
+        generation: 1,
+        createdAt,
+      });
+      await unit.agents.createAgent({
+        id: agentId,
+        namespaceId,
+        name: `Plugin Agent ${randomUUID()}`,
+        configurationId,
+        providerId: null,
+        executionMode: "dedicated",
+        selectedPlugins,
+        servicePrincipalId: `service-agent-${agentId}`,
+        createdAt,
+      });
+      await unit.revisions.createRevision({
+        id: revisionId,
+        namespaceId,
+        agentId,
+        revision: 1,
+        providerId: null,
+        configurationId,
+        configurationKind: "agent",
+        configurationGeneration: 1,
+        configuration: { agents: { defaults: { model: "codex/gpt-4.1" } } },
+        harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
+        compute: { id: "compute-kubernetes-local", implementation: "kubernetes-local" },
+        selectedPlugins: selectedPluginSnapshots,
+        servicePrincipalId: `service-agent-${agentId}`,
+        createdAt,
+      });
+    });
+
+    const reloaded = await state.read((view) =>
+      view.revisions.findRevision(namespaceId, agentId, revisionId),
+    );
+    assert.deepEqual(reloaded?.selectedPlugins, selectedPluginSnapshots);
+    const durable = await pool.query(
+      `SELECT
+         (SELECT selected_plugins FROM occ.agents WHERE id = $1) AS agent_plugins,
+         (SELECT selected_plugins FROM occ.agent_revisions WHERE id = $2) AS revision_plugins`,
+      [agentId, revisionId],
+    );
+    assert.deepEqual(durable.rows[0].agent_plugins, selectedPlugins);
+    assert.deepEqual(durable.rows[0].revision_plugins, selectedPluginSnapshots);
+
+    // The database rejects duplicate or non-string plugin identities before application reads.
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO occ.agents
+           (id, namespace_id, name, configuration_id, provider_id, execution_mode,
+            selected_plugins, service_principal_id, service_account_id, active_revision_id,
+            created_at)
+         VALUES ($1, $2, $3, $4, NULL, 'dedicated', $5::jsonb, $6, NULL, NULL, $7)`,
+        [
+          `agt_${randomUUID()}`,
+          namespaceId,
+          `Duplicate plugins ${randomUUID()}`,
+          configurationId,
+          JSON.stringify([selectedPlugins[0], selectedPlugins[0]]),
+          `service-agent-${randomUUID()}`,
+          createdAt,
+        ],
+      ),
+      ({ code, constraint }) => code === "23514" && constraint === "agents_selected_plugins_valid",
+    );
+
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO occ.agent_revisions
+           (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec,
+            selected_plugins, admitted_at)
+         SELECT $1, namespace_id, agent_id, revision_number + 100, provider_id,
+                admitted_spec, $2::jsonb, admitted_at
+         FROM occ.agent_revisions WHERE id = $3`,
+        [
+          `rev_${randomUUID()}`,
+          JSON.stringify([{ ...selectedPluginSnapshots[0], pluginId: null }]),
+          revisionId,
+        ],
+      ),
+      ({ code, constraint }) =>
+        code === "23514" && constraint === "agent_revisions_selected_plugins_valid",
+    );
+
+    assert.equal(api.child.exitCode, null);
+  },
+);
+
+test(
   "the PostgreSQL worker reloads exact Namespace restrictions and never dispatches revoked provisioning",
   requiresPostgres,
   async (context) => {

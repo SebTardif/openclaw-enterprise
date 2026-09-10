@@ -1,5 +1,7 @@
 import type {
+  AgentPluginSnapshot,
   HarnessExecutionMode,
+  PluginIdentity,
   SecretBindings,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
@@ -224,6 +226,7 @@ export const agents = occSchema.table(
     configurationId: text("configuration_id").notNull(),
     providerId: text("provider_id"),
     executionMode: text("execution_mode").$type<HarnessExecutionMode>().notNull(),
+    selectedPlugins: jsonb("selected_plugins").$type<readonly PluginIdentity[]>().notNull(),
     servicePrincipalId: text("service_principal_id").notNull(),
     serviceAccountId: text("service_account_id"),
     activeRevisionId: text("active_revision_id"),
@@ -243,6 +246,10 @@ export const agents = occSchema.table(
     check(
       "agents_provider_id_valid",
       sql`${table.providerId} IS NULL OR (char_length(${table.providerId}) BETWEEN 1 AND 200 AND ${table.providerId} = btrim(${table.providerId}) AND ${table.providerId} !~ '[[:cntrl:]]')`,
+    ),
+    check(
+      "agents_selected_plugins_valid",
+      sql`occ.plugin_identities_are_valid(${table.selectedPlugins})`,
     ),
     check(
       "agents_name_normalized",
@@ -341,6 +348,7 @@ export const agentRevisions = occSchema.table(
     revisionNumber: bigint("revision_number", { mode: "number" }).notNull(),
     providerId: text("provider_id"),
     admittedSpec: jsonb("admitted_spec").$type<Record<string, unknown>>().notNull(),
+    selectedPlugins: jsonb("selected_plugins").$type<readonly AgentPluginSnapshot[]>().notNull(),
     admittedAt: timestamp("admitted_at", { withTimezone: true }).notNull(),
   },
   (table): PgTableExtraConfigValue[] => [
@@ -368,6 +376,10 @@ export const agentRevisions = occSchema.table(
       sql`${table.providerId} IS NULL OR (char_length(${table.providerId}) BETWEEN 1 AND 200 AND ${table.providerId} = btrim(${table.providerId}) AND ${table.providerId} !~ '[[:cntrl:]]')`,
     ),
     check("agent_revisions_spec_object", sql`jsonb_typeof(${table.admittedSpec}) = 'object'`),
+    check(
+      "agent_revisions_selected_plugins_valid",
+      sql`occ.plugin_snapshots_are_valid(${table.selectedPlugins})`,
+    ),
     check(
       "agent_revisions_admitted_snapshot",
       sql`(${table.admittedSpec} ?& ARRAY[

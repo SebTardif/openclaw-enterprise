@@ -45,6 +45,10 @@ When overriding package versions, choose plugins compatible with the selected
 OpenClaw release and a Codex CLI accepted by the installed Codex plugin's runtime
 guard. A plugin's npm dependency version is not necessarily its exact app-server
 requirement. Run the compatibility check below against the resulting image.
+When changing `OPENAI_CODEX_VERSION`, regenerate and review the bundled Codex
+plugin catalog inventory before publishing a controller release that exposes
+catalog reads. The inventory generator must query the same pinned app-server
+version and must fail rather than publish an unexplained empty catalog.
 
 Production Kubernetes installations can use this recipe as a starting point,
 but must push the resulting image to an operator-controlled registry and

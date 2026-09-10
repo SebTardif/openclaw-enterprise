@@ -113,6 +113,7 @@ function routedRevision(driver, overrides = {}) {
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-routed",
     createdAt: tenant.createdAt,
+    selectedPlugins: [],
     ...overrides,
   };
 }
@@ -836,6 +837,68 @@ test("the canonical Kubernetes runtime isolates transport and model Agent Secret
   );
 });
 
+test("native plugin selections fail closed before preparation, activation, or maintenance IO", async () => {
+  const runtime = {
+    transportSecretPrefix: "transport",
+    gatewayStorageClassName: "local-path",
+    modelSecretPrefix: "model",
+  };
+  const plugin = {
+    driverId: "driver-native",
+    pluginId: "plugin-native",
+    remoteMarketplaceName: "openai",
+    remotePluginId: "remote-plugin",
+    version: null,
+    catalogCodexVersion: "0.153.4",
+  };
+  for (const configuredRuntime of [undefined, runtime]) {
+    for (const harness of [
+      { id: "codex", version: "1.0.0", mode: "dedicated" },
+      { id: "openclaw", version: "1.0.0", mode: "embedded" },
+    ]) {
+      {
+        const driver = createKubernetesComputeDriver(options({ runtime: configuredRuntime }));
+        // A transport sentinel observes IO only. The production lifecycle and gate run unchanged.
+        const io = [];
+        driver.apiClients = Promise.resolve(
+          new Proxy(
+            {},
+            {
+              get(_target, key) {
+                if (key === "then") return undefined;
+                io.push(String(key));
+                throw new Error("Native plugin gate reached Kubernetes IO.");
+              },
+            },
+          ),
+        );
+        const revision = routedRevision(driver, { harness, selectedPlugins: [plugin] });
+        const context = { secretEnvironment: [] };
+        const rejection =
+          configuredRuntime !== undefined && harness.id === "codex"
+            ? /Native plugin deployment is unsupported.*not implemented yet/
+            : /bundled Kubernetes dedicated Codex runtime/;
+        await assert.rejects(driver.prepareRevision(revision, context), rejection);
+        await assert.rejects(driver.activateRevision(revision, context), rejection);
+        // Maintenance/retry cannot reopen the gate.
+        await assert.rejects(driver.activateRevision(revision, context), rejection);
+        assert.deepEqual(io, []);
+      }
+    }
+  }
+});
+
+test("native plugin snapshot evidence must be explicit even during activation", async () => {
+  const driver = createKubernetesComputeDriver(options());
+  // Missing or malformed snapshots must not become the explicitly supported empty selection.
+  for (const selectedPlugins of [undefined, null, {}, [null]]) {
+    const revision = routedRevision(driver, { selectedPlugins });
+    await assert.rejects(driver.prepareRevision(revision), /selected plugin snapshot is invalid/);
+    await assert.rejects(driver.activateRevision(revision), /selected plugin snapshot is invalid/);
+  }
+  await driver.activateRevision(routedRevision(driver));
+});
+
 test("dedicated Codex localhost seccomp profile is validated and rendered only on the Agent container", () => {
   const runtime = {
     transportSecretPrefix: "transport",
@@ -1113,6 +1176,7 @@ test("native channel providers supply only owning gateway secrets and reviewed p
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-agent-a",
     createdAt: tenant.createdAt,
+    selectedPlugins: [],
   };
 
   for (const [channels, expectedSecrets] of [
@@ -1346,6 +1410,7 @@ test("embedded replacement preparation recovers past an unready active gateway w
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-embedded-recovery",
     createdAt: tenant.createdAt,
+    selectedPlugins: [],
   };
   const oldRevision = {
     ...base,
@@ -2454,6 +2519,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
     compute: { id: driver.id, implementation: driver.implementation },
     servicePrincipalId: "service-principal-agent-a",
     createdAt: tenant.createdAt,
+    selectedPlugins: [],
   };
 
   for (const provider of ["slack", "msteams"]) {

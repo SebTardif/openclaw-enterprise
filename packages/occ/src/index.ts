@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
+  AgentPluginSnapshot,
   AgentRevision,
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -22,6 +23,7 @@ import type {
   LoggingLevel,
   OpenClawConfigurationDocument,
   PermissionAction,
+  PluginIdentity,
   PluginInventory,
   ProviderDefinition,
   ProviderRef,
@@ -51,6 +53,7 @@ import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   DriverSelectionError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -65,6 +68,7 @@ import {
 } from "./providers.ts";
 import {
   InMemoryPlatformState,
+  type ConfigurationOwnership,
   type PlatformReadView,
   type PlatformOperation,
   type PlatformStateStore,
@@ -76,6 +80,7 @@ export {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   DriverSelectionError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -162,6 +167,8 @@ export interface CreateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string;
   readonly executionMode?: HarnessExecutionMode;
+  readonly plugins?: readonly PluginIdentity[];
+  readonly resolveHarness?: HarnessResolver;
 }
 
 export interface UpdateAgentInput {
@@ -171,6 +178,7 @@ export interface UpdateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string | null;
   readonly executionMode?: HarnessExecutionMode;
+  readonly resolveHarness?: HarnessResolver;
 }
 
 export interface CreateServiceAccountInput {
@@ -330,6 +338,7 @@ function frozenRevision(revision: AgentRevision): Readonly<AgentRevision> {
     ...(revision.serviceAccount === undefined
       ? {}
       : { serviceAccount: immutableCopy(revision.serviceAccount) }),
+    selectedPlugins: immutableCopy(revision.selectedPlugins),
   });
 }
 
@@ -531,6 +540,40 @@ function validPluginText(value: unknown): value is string {
   );
 }
 
+function normalizePluginSelection(value: unknown): readonly PluginIdentity[] {
+  if (!Array.isArray(value) || value.length > 32)
+    throw new InvalidRequestError("Agent plugin selection must contain at most 32 identities.");
+  const seen = new Set<string>();
+  return Object.freeze(
+    value.map((entry) => {
+      if (
+        entry === null ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        Object.keys(entry).length !== 2 ||
+        !("driverId" in entry) ||
+        !("pluginId" in entry) ||
+        !validPluginText(entry.driverId) ||
+        !validPluginText(entry.pluginId)
+      ) {
+        throw new InvalidRequestError(
+          "Agent plugin selection entries must be exact plugin identities.",
+        );
+      }
+      const identity = Object.freeze({ driverId: entry.driverId, pluginId: entry.pluginId });
+      const key = `${identity.driverId}\u0000${identity.pluginId}`;
+      if (seen.has(key))
+        throw new InvalidRequestError("Agent plugin selection entries must be unique.");
+      seen.add(key);
+      return identity;
+    }),
+  );
+}
+
+function pluginSelection(value: unknown): readonly PluginIdentity[] {
+  return normalizePluginSelection(value ?? []);
+}
+
 function pluginCatalogMap(
   catalogs: readonly PluginInventory[] | undefined,
 ): ReadonlyMap<string, Readonly<PluginInventory>> | undefined {
@@ -546,6 +589,50 @@ function pluginCatalogMap(
     mapped.set(validated.driverId, validated);
   }
   return mapped;
+}
+
+function resolvePluginSnapshots(
+  catalogs: ReadonlyMap<string, Readonly<PluginInventory>> | undefined,
+  identities: readonly PluginIdentity[],
+): readonly AgentPluginSnapshot[] {
+  if (identities.length === 0) return Object.freeze([]);
+  if (catalogs === undefined) throw new DependencyUnavailableError();
+  return Object.freeze(
+    identities.map((identity) => {
+      const catalog = catalogs.get(identity.driverId);
+      const entry = catalog?.plugins.find((plugin) => plugin.id === identity.pluginId);
+      if (catalog === undefined || entry === undefined)
+        throw new InvalidRequestError("The selected Agent plugin is not in the catalog.");
+      return Object.freeze({
+        driverId: identity.driverId,
+        pluginId: entry.id,
+        remoteMarketplaceName: entry.remoteMarketplaceName,
+        remotePluginId: entry.remotePluginId,
+        version: entry.version,
+        catalogCodexVersion: catalog.inventory.codexVersion,
+      });
+    }),
+  );
+}
+
+function pluginCapableCompute(compute: ComputeDriver): boolean {
+  return (
+    compute.implementation === "occ/kubernetes" || compute.implementation === "kubernetes-local"
+  );
+}
+
+function assertPluginRuntimeSupported(
+  identities: readonly PluginIdentity[],
+  executionMode: HarnessExecutionMode,
+  harnessId: string,
+  compute: ComputeDriver,
+): void {
+  if (identities.length === 0) return;
+  if (executionMode === "dedicated" && harnessId === "codex" && pluginCapableCompute(compute))
+    return;
+  throw new InvalidRequestError(
+    "Selected plugins require dedicated Codex on bundled Kubernetes Compute.",
+  );
 }
 
 export class OpenClawController {
@@ -1430,6 +1517,7 @@ export class OpenClawController {
     if (!validExecutionMode(executionMode))
       throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
     const providerId = this.providerId(input.providerId);
+    const selectedPlugins = pluginSelection(input.plugins);
     return this.mutate(async (state) => {
       const namespace = await this.lockNamespace(state, input.namespaceId);
       if (namespace.status !== "provisioning" && namespace.status !== "ready")
@@ -1453,6 +1541,32 @@ export class OpenClawController {
         throw new ScopeViolationError(
           "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
         );
+      if (selectedPlugins.length > 0) {
+        await this.authorize(principalId, "administer", {
+          kind: "installation",
+          id: this.installation.id,
+        });
+        let compute: ComputeDriver;
+        try {
+          compute = this.selectedDriver("compute");
+        } catch {
+          throw new DependencyUnavailableError("The selected compute Driver is unavailable.");
+        }
+        const { harness } = await this.resolveAgentConfigurationForAdmission(
+          namespace.id,
+          configuration,
+          executionMode,
+          input.resolveHarness,
+        );
+        assertPluginRuntimeSupported(selectedPlugins, executionMode, harness.id, compute);
+        try {
+          resolvePluginSnapshots(this.pluginCatalogs, selectedPlugins);
+        } catch (error) {
+          if (error instanceof DependencyUnavailableError)
+            throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+          throw error;
+        }
+      }
       if (input.serviceAccountId !== undefined) {
         await this.authorize(principalId, "read", {
           kind: "service_account",
@@ -1479,6 +1593,7 @@ export class OpenClawController {
           ? {}
           : { serviceAccountId: input.serviceAccountId }),
         executionMode,
+        selectedPlugins,
         servicePrincipalId: `service-agent-${agentId}`,
         createdAt: this.timestamp(),
       });
@@ -1524,6 +1639,29 @@ export class OpenClawController {
         throw new ScopeViolationError(
           "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
         );
+      if (agent.selectedPlugins.length > 0) {
+        let compute: ComputeDriver;
+        try {
+          compute = this.selectedDriver("compute");
+        } catch {
+          throw new DependencyUnavailableError("The selected compute Driver is unavailable.");
+        }
+        const nextExecutionMode = input.executionMode ?? agent.executionMode;
+        const { harness } = await this.resolveAgentConfigurationForAdmission(
+          namespace.id,
+          configuration,
+          nextExecutionMode,
+          input.resolveHarness,
+        );
+        assertPluginRuntimeSupported(agent.selectedPlugins, nextExecutionMode, harness.id, compute);
+        try {
+          resolvePluginSnapshots(this.pluginCatalogs, agent.selectedPlugins);
+        } catch (error) {
+          if (error instanceof DependencyUnavailableError)
+            throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+          throw error;
+        }
+      }
       if (agent.serviceAccountId !== undefined) {
         await this.authorize(principalId, "read", {
           kind: "service_account",
@@ -1686,47 +1824,38 @@ export class OpenClawController {
         )
           throw new DependencyUnavailableError("The Secret backend identity changed.");
       }
-      const configurationDriver = this.configurationDriver();
-      const configuration = this.exactConfiguration(
-        await this.driverOperation(() =>
-          configurationDriver.read({ id: metadata.id, namespaceId: namespace.id }),
-        ),
+      const {
+        configuration,
+        admittedConfiguration,
+        harness: approvedHarness,
+      } = await this.resolveAgentConfigurationForAdmission(
+        namespace.id,
         metadata,
+        lockedAgent.executionMode,
+        resolveHarness,
       );
-      const sandboxConfiguration =
-        sandbox?.configureAgent !== undefined
-          ? frozenValues(sandbox.configureAgent(frozenValues(configuration.values)))
-          : configuration.values;
-      const admittedConfiguration = frozenValues(
-        admitLoggingConfiguration(sandboxConfiguration, this.loggingLevel),
-      );
-      await configurationDriver.validate({ ...configuration, values: admittedConfiguration });
-      if (!validExecutionMode(lockedAgent.executionMode))
-        throw new ScopeViolationError("The persisted Agent Harness execution mode is invalid.");
-      const configuredHarnessId = resolveConfiguredHarnessId(admittedConfiguration);
-      const approvedHarness = resolveHarness(configuredHarnessId, lockedAgent.executionMode);
-      if (
-        approvedHarness === undefined ||
-        !isNonEmptyString(approvedHarness.id) ||
-        !isNonEmptyString(approvedHarness.version)
-      ) {
-        throw new DependencyUnavailableError("The selected Harness runtime is not approved.");
-      }
-      if (approvedHarness.id !== configuredHarnessId)
-        throw new ScopeViolationError("The approved Harness does not match the native runtime.");
-      if (
-        (approvedHarness.id === "openclaw" && lockedAgent.executionMode !== "embedded") ||
-        (approvedHarness.id === "codex" && lockedAgent.executionMode !== "dedicated") ||
-        (approvedHarness.id !== "openclaw" && approvedHarness.id !== "codex")
-      ) {
-        throw new ScopeViolationError("The selected Harness does not support this execution mode.");
-      }
       if (
         serviceAccount?.credential.kind === "access_token" &&
         (approvedHarness.id !== "codex" || lockedAgent.executionMode !== "dedicated")
       ) {
         throw new ResourceConflictError(
           "ServiceAccount access-token credentials require the dedicated Codex Harness.",
+        );
+      }
+      let selectedPlugins;
+      try {
+        selectedPlugins = resolvePluginSnapshots(this.pluginCatalogs, lockedAgent.selectedPlugins);
+      } catch (error) {
+        if (error instanceof DependencyUnavailableError)
+          throw new DependencyUnavailableError("The plugin catalog inventory is unavailable.");
+        throw error;
+      }
+      if (selectedPlugins.length > 0) {
+        assertPluginRuntimeSupported(
+          lockedAgent.selectedPlugins,
+          lockedAgent.executionMode,
+          approvedHarness.id,
+          compute,
         );
       }
       const previous = await state.revisions.listRevisions(namespace.id, lockedAgent.id);
@@ -1752,6 +1881,7 @@ export class OpenClawController {
             ? {}
             : { secretDriverId: secretDriver.id, secretBindings }),
           ...(serviceAccount === undefined ? {} : { serviceAccount }),
+          selectedPlugins,
           servicePrincipalId: lockedAgent.servicePrincipalId,
           createdAt: this.timestamp(),
         }),
@@ -2107,6 +2237,55 @@ export class OpenClawController {
       secrets.set(secret.id, secret);
     }
     return Object.freeze([...secrets.values()]);
+  }
+
+  private async resolveAgentConfigurationForAdmission(
+    namespaceId: string,
+    metadata: Readonly<ConfigurationOwnership>,
+    executionMode: HarnessExecutionMode,
+    resolveHarness: HarnessResolver | undefined,
+  ): Promise<{
+    readonly configuration: Readonly<Configuration>;
+    readonly admittedConfiguration: Readonly<OpenClawConfigurationDocument>;
+    readonly harness: HarnessDescriptor;
+  }> {
+    if (typeof resolveHarness !== "function")
+      throw new DependencyUnavailableError("The selected Harness descriptor is unavailable.");
+    if (!validExecutionMode(executionMode))
+      throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
+    const configurationDriver = this.configurationDriver();
+    const configuration = this.exactConfiguration(
+      await this.driverOperation(() => configurationDriver.read({ id: metadata.id, namespaceId })),
+      metadata,
+    );
+    const sandbox = this.sandboxDriver();
+    const sandboxConfiguration =
+      sandbox?.configureAgent !== undefined
+        ? frozenValues(sandbox.configureAgent(frozenValues(configuration.values)))
+        : configuration.values;
+    const admittedConfiguration = frozenValues(
+      admitLoggingConfiguration(sandboxConfiguration, this.loggingLevel),
+    );
+    await configurationDriver.validate({ ...configuration, values: admittedConfiguration });
+    const configuredHarnessId = resolveConfiguredHarnessId(admittedConfiguration);
+    if (
+      (configuredHarnessId === "openclaw" && executionMode !== "embedded") ||
+      (configuredHarnessId === "codex" && executionMode !== "dedicated") ||
+      (configuredHarnessId !== "openclaw" && configuredHarnessId !== "codex")
+    ) {
+      throw new InvalidRequestError("The selected Harness does not support this execution mode.");
+    }
+    const approvedHarness = resolveHarness(configuredHarnessId, executionMode);
+    if (
+      approvedHarness === undefined ||
+      !isNonEmptyString(approvedHarness.id) ||
+      !isNonEmptyString(approvedHarness.version)
+    ) {
+      throw new DependencyUnavailableError("The selected Harness runtime is not approved.");
+    }
+    if (approvedHarness.id !== configuredHarnessId)
+      throw new ScopeViolationError("The approved Harness does not match the native runtime.");
+    return { configuration, admittedConfiguration, harness: approvedHarness };
   }
 
   private validateModelBinding(

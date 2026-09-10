@@ -1976,6 +1976,29 @@
                             "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                             "type": "string"
                           },
+                          "plugins": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "driverId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["driverId", "pluginId"],
+                              "type": "object"
+                            },
+                            "maxItems": 32,
+                            "type": "array"
+                          },
                           "providerId": {
                             "anyOf": [
                               {
@@ -1999,6 +2022,7 @@
                           "configurationId",
                           "providerId",
                           "executionMode",
+                          "plugins",
                           "createdAt"
                         ],
                         "type": "object"
@@ -2069,7 +2093,7 @@
         ]
       },
       "post": {
-        "description": "Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
+        "description": "Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Requires administer permission on the Installation when selected plugins are present.",
         "operationId": "createAgent",
         "parameters": [
           {
@@ -2103,6 +2127,29 @@
                     "minLength": 1,
                     "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
                     "type": "string"
+                  },
+                  "plugins": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "driverId": {
+                          "maxLength": 512,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 512,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["driverId", "pluginId"],
+                      "type": "object"
+                    },
+                    "maxItems": 32,
+                    "type": "array"
                   },
                   "providerId": {
                     "anyOf": [
@@ -2170,6 +2217,29 @@
                           "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
                         },
+                        "plugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "driverId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["driverId", "pluginId"],
+                            "type": "object"
+                          },
+                          "maxItems": 32,
+                          "type": "array"
+                        },
                         "providerId": {
                           "anyOf": [
                             {
@@ -2193,6 +2263,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "plugins",
                         "createdAt"
                       ],
                       "type": "object"
@@ -2287,6 +2358,12 @@
             "condition": "bound_secret",
             "resourceKind": "secret",
             "scope": "requested"
+          },
+          {
+            "action": "administer",
+            "condition": "selected_plugins",
+            "resourceKind": "installation",
+            "scope": "requested"
           }
         ]
       }
@@ -2358,6 +2435,29 @@
                           "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
                         },
+                        "plugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "driverId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["driverId", "pluginId"],
+                            "type": "object"
+                          },
+                          "maxItems": 32,
+                          "type": "array"
+                        },
                         "providerId": {
                           "anyOf": [
                             {
@@ -2381,6 +2481,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "plugins",
                         "createdAt"
                       ],
                       "type": "object"
@@ -2557,6 +2658,29 @@
                           "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
                           "type": "string"
                         },
+                        "plugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "driverId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              }
+                            },
+                            "required": ["driverId", "pluginId"],
+                            "type": "object"
+                          },
+                          "maxItems": 32,
+                          "type": "array"
+                        },
                         "providerId": {
                           "anyOf": [
                             {
@@ -2580,6 +2704,7 @@
                         "configurationId",
                         "providerId",
                         "executionMode",
+                        "plugins",
                         "createdAt"
                       ],
                       "type": "object"
@@ -2819,6 +2944,65 @@
                           "type": "object"
                         },
                         "secretDriverId": { "minLength": 1, "type": "string" },
+                        "selectedPlugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "catalogCodexVersion": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "driverId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remoteMarketplaceName": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remotePluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 512,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                    "type": "string"
+                                  },
+                                  { "type": "null" }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "driverId",
+                              "pluginId",
+                              "remoteMarketplaceName",
+                              "remotePluginId",
+                              "version",
+                              "catalogCodexVersion"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 32,
+                          "type": "array"
+                        },
                         "serviceAccount": {
                           "additionalProperties": false,
                           "properties": {
@@ -2873,6 +3057,7 @@
                         "configuration",
                         "harness",
                         "compute",
+                        "selectedPlugins",
                         "createdAt"
                       ],
                       "type": "object"
@@ -3101,6 +3286,65 @@
                             "type": "object"
                           },
                           "secretDriverId": { "minLength": 1, "type": "string" },
+                          "selectedPlugins": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "catalogCodexVersion": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "driverId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "pluginId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "remoteMarketplaceName": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "remotePluginId": {
+                                  "maxLength": 512,
+                                  "minLength": 1,
+                                  "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                  "type": "string"
+                                },
+                                "version": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 512,
+                                      "minLength": 1,
+                                      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                      "type": "string"
+                                    },
+                                    { "type": "null" }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "driverId",
+                                "pluginId",
+                                "remoteMarketplaceName",
+                                "remotePluginId",
+                                "version",
+                                "catalogCodexVersion"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 32,
+                            "type": "array"
+                          },
                           "serviceAccount": {
                             "additionalProperties": false,
                             "properties": {
@@ -3155,6 +3399,7 @@
                           "configuration",
                           "harness",
                           "compute",
+                          "selectedPlugins",
                           "createdAt"
                         ],
                         "type": "object"
@@ -3375,6 +3620,65 @@
                           "type": "object"
                         },
                         "secretDriverId": { "minLength": 1, "type": "string" },
+                        "selectedPlugins": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "catalogCodexVersion": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "driverId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remoteMarketplaceName": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "remotePluginId": {
+                                "maxLength": 512,
+                                "minLength": 1,
+                                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                "type": "string"
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 512,
+                                    "minLength": 1,
+                                    "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                                    "type": "string"
+                                  },
+                                  { "type": "null" }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "driverId",
+                              "pluginId",
+                              "remoteMarketplaceName",
+                              "remotePluginId",
+                              "version",
+                              "catalogCodexVersion"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 32,
+                          "type": "array"
+                        },
                         "serviceAccount": {
                           "additionalProperties": false,
                           "properties": {
@@ -3429,6 +3733,7 @@
                         "configuration",
                         "harness",
                         "compute",
+                        "selectedPlugins",
                         "createdAt"
                       ],
                       "type": "object"

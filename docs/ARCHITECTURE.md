@@ -60,11 +60,13 @@ Installation
 - **ServiceAccount:** A Namespace-owned provider account with an opaque
   credential reference; credential values are not returned through the API.
 - **Agent:** A Namespace-owned Agent referencing one Configuration and,
-  optionally, one ServiceAccount in the same Namespace and one configured Provider.
+  optionally, one ServiceAccount in the same Namespace, one configured Provider,
+  and a selection of catalog plugins.
 - **Secret:** A Namespace-owned value stored by the selected SecretDriver and
   returned through OCC as metadata only.
 - **AgentRevision:** An immutable snapshot of the Agent's Configuration,
-  Harness, Secret references, credentials, nullable Provider reference, and selected Compute implementation.
+  Harness, Secret references, credentials, nullable Provider reference, selected
+  Compute implementation, and server-resolved plugin selection.
 
 Creating an Agent does not start a workload. Deployment creates an immutable
 revision, which the controller worker provisions asynchronously.

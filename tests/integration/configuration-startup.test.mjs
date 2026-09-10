@@ -229,6 +229,7 @@ test("production embedded and dedicated replacements preserve their active Servi
     const servicePrincipalId = `service-production-${harness.mode}-cutover`;
     const predecessor = {
       id: `rev_production-${harness.mode}-active`,
+      selectedPlugins: [],
       namespaceId,
       agentId,
       revision: 1,

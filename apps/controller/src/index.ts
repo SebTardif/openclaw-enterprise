@@ -51,6 +51,7 @@ import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
   DependencyUnavailableError,
+  InvalidRequestError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   ResourceConflictError,
@@ -136,7 +137,8 @@ interface RequiredPermission {
   readonly action: PermissionAction;
   readonly resourceKind: ResourceKind;
   readonly scope: "requested" | "installation" | "namespace" | "each_returned" | "request_body";
-  readonly condition?: "associated_service_account" | "existing_namespace" | "bound_secret";
+  readonly condition?:
+    "associated_service_account" | "existing_namespace" | "bound_secret" | "selected_plugins";
 }
 
 interface DocumentedFastifySchema extends FastifySchema {
@@ -362,6 +364,16 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
         scope: "requested",
         condition: "bound_secret",
       },
+      ...(operation.operationId === "createAgent"
+        ? [
+            {
+              action: "administer" as const,
+              resourceKind: "installation" as const,
+              scope: "requested" as const,
+              condition: "selected_plugins" as const,
+            },
+          ]
+        : []),
     ];
   }
 
@@ -425,6 +437,8 @@ function permissionDescription(
           return `Requires ${action} permission on each ${name} bound by the resulting Configuration.`;
         return `Requires ${action} permission on each bound ${name} when Secret bindings are present or selected.`;
       }
+      if (condition === "selected_plugins")
+        return `Requires ${action} permission on the ${name} when selected plugins are present.`;
       switch (scope) {
         case "installation":
           return `Requires ${action} permission for ${name} resources in the Installation.`;
@@ -461,6 +475,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     configurationId: agent.configurationId,
     providerId: agent.providerId,
     executionMode: agent.executionMode,
+    plugins: agent.selectedPlugins,
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
     createdAt: agent.createdAt,
@@ -492,6 +507,7 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
     ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
     ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
+    selectedPlugins: revision.selectedPlugins,
     createdAt: revision.createdAt,
   };
 }
@@ -563,6 +579,8 @@ function requestFailure(error: unknown): RequestFailure {
     );
   if (error instanceof NamespaceNotEmptyError)
     return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
+  if (error instanceof InvalidRequestError)
+    return failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
   if (error instanceof DependencyUnavailableError)
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   if (error instanceof ResourceConflictError)
@@ -1672,6 +1690,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...(body?.serviceAccountId === undefined
             ? {}
             : { serviceAccountId: body.serviceAccountId as string }),
+          ...(body?.plugins === undefined
+            ? {}
+            : { plugins: body.plugins as Agent["selectedPlugins"] }),
+          resolveHarness: options.resolveHarness,
         });
         await unit.audit.append(
           event(
@@ -1720,6 +1742,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...(body?.serviceAccountId === undefined
             ? {}
             : { serviceAccountId: body.serviceAccountId as string | null }),
+          resolveHarness: options.resolveHarness,
         });
         await unit.audit.append(
           event(

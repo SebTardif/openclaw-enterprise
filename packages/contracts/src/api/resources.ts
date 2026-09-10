@@ -22,7 +22,12 @@ import {
   Timestamp,
   WorkspaceFileName,
 } from "./common.ts";
-import { PluginInventoryEntrySchema, PluginInventorySchema } from "../plugins.ts";
+import {
+  AgentPluginSnapshotSchema,
+  PluginIdentitySchema,
+  PluginInventoryEntrySchema,
+  PluginInventorySchema,
+} from "../plugins.ts";
 
 export const InstallationSchema = Type.Object(
   { id: InstallationId, name: Name, createdAt: Timestamp },
@@ -54,6 +59,7 @@ export const AgentSchema = Type.Object(
     providerId: Type.Union([ProviderId, Type.Null()]),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
+    plugins: Type.Array(PluginIdentitySchema, { maxItems: 32 }),
     activeRevisionId: Type.Optional(RevisionId),
     createdAt: Timestamp,
   },
@@ -210,6 +216,7 @@ export const AgentRevisionSchema = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    selectedPlugins: Type.Array(AgentPluginSnapshotSchema, { maxItems: 32 }),
     createdAt: Timestamp,
   },
   { additionalProperties: false },
@@ -259,8 +266,10 @@ export type ConfigurationWire = Type.Static<typeof ConfigurationSchema>;
 export type SecretWire = Type.Static<typeof SecretSchema>;
 export type ServiceAccountWire = Type.Static<typeof ServiceAccountSchema>;
 export type ProviderSummaryWire = Type.Static<typeof ProviderSummarySchema>;
+export type PluginIdentityWire = Type.Static<typeof PluginIdentitySchema>;
 export type PluginInventoryEntryWire = Type.Static<typeof PluginInventoryEntrySchema>;
 export type PluginInventoryWire = Type.Static<typeof PluginInventorySchema>;
+export type AgentPluginSnapshotWire = Type.Static<typeof AgentPluginSnapshotSchema>;
 export type AgentWire = Type.Static<typeof AgentSchema>;
 export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
