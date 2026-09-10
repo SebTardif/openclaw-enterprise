@@ -10,7 +10,11 @@ import {
   type KubernetesRendererSource,
   KubernetesWorkloadProfileCapability,
 } from "../../drivers/compute/kubernetes/workload-profile-capability.ts";
-import type { KubernetesRuntimeObservationAdmission } from "../../drivers/compute/kubernetes/runtime-observations.ts";
+import type {
+  KubernetesCreateCorrelationObservationOwnerV1,
+  KubernetesRuntimeObservationAdmission,
+  KubernetesRuntimeObservationDependencies,
+} from "../../drivers/compute/kubernetes/runtime-observations.ts";
 
 import { asRecord } from "@openclaw-enterprise/utils";
 import type {
@@ -39,6 +43,9 @@ const selectedComputeContributions = new WeakMap<
     readonly bindRendererSource: (source: KubernetesRendererSource) => void;
     readonly observations: Pick<RuntimeEffectsV1, "discover" | "observe">;
     readonly bindAdmission: (admission: KubernetesRuntimeObservationAdmission) => () => void;
+    readonly createCorrelationObservationOwner: (
+      selection: DriverSelection,
+    ) => KubernetesCreateCorrelationObservationOwnerV1;
   }
 >();
 
@@ -70,6 +77,18 @@ export function connectSelectedComputeRuntimeObservations(
     throw new Error("The selected Compute has no bundled gVisor runtime observer.");
   const close = selected.bindAdmission(admission);
   return Object.freeze({ effects: selected.observations, close });
+}
+
+/** Original native construction captures this same factory-owned physical reader.
+ * The held Driver selection supplies no native read-purpose or writer custody. */
+export function createSelectedComputeCorrelationObservationOwner(
+  driver: ComputeDriver,
+  selection: DriverSelection,
+): KubernetesCreateCorrelationObservationOwnerV1 {
+  const contribution = selectedComputeContributions.get(driver);
+  if (!contribution || driver.implementation !== GVISOR_IMPLEMENTATION)
+    throw new Error("The selected Compute has no bundled gVisor runtime observer.");
+  return contribution.createCorrelationObservationOwner(selection);
 }
 
 /** Bind source receiving to this factory's actual constructor and selected
@@ -126,6 +145,7 @@ export function createComputeDriver(
   sandboxDriver?: SandboxDriver,
   driverPackage?: LoadedDriverPackage,
   workloadProfileRendererSource?: KubernetesRendererSource,
+  runtimeObservationDependencies?: KubernetesRuntimeObservationDependencies,
 ): ComputeDriver {
   if (driverPackage !== undefined) {
     return createExternalDriver(
@@ -166,6 +186,7 @@ export function createComputeDriver(
       lifecycleDrivers: [configurationDriver],
       ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
       workloadProfileRendererSource: sourceReceiver,
+      ...(runtimeObservationDependencies === undefined ? {} : { runtimeObservationDependencies }),
     },
   );
   selectedComputeContributions.set(driver, {
@@ -176,6 +197,7 @@ export function createComputeDriver(
       observe: driver.observe.bind(driver),
     }),
     bindAdmission: driver.bindRuntimeObservationAdmission.bind(driver),
+    createCorrelationObservationOwner: driver.createCorrelationObservationOwner.bind(driver),
   });
   selectedRendererOwners.set(driver, driver.getRendererOwner());
   return driver;

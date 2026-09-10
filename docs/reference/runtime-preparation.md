@@ -213,6 +213,40 @@ time without comparing clocks between the SDK host and database; that time does
 not establish causal ordering or timed-effect authority. Neither a queue token
 nor a persisted session locator is execution authority.
 
+### Historical create references and physical correlation
+
+The historical create-reference resolver selects one retained child effect or
+immutable submission, verifies its complete preparation history and returns the
+exact original create input with `expectedObject: null`. It preserves canonical
+submission and response timestamps without ordering their independent clocks.
+The correlation codec validates and freezes the associated request, record and
+provenance data. Neither function authenticates a native exchange or authorizes a
+provider operation.
+
+The Kubernetes Driver exposes a physical correlation owner through the same
+selected Driver. It compares the retained Namespace and Deployment identities,
+reads the observed assignment/create annotations and fence encoding, and returns
+physical data. Its `prepareCommit()` performs one memoized second read of both
+objects; concurrent and later calls join that same preparation. Closing the
+owner joins entered work before releasing its selected Driver hold.
+
+`createComputeDriver` accepts the trusted runtime observation dependencies as
+its sixth optional argument. `createSelectedComputeCorrelationObservationOwner`
+uses the original method captured at factory construction and rejects a copied,
+external or differently selected Driver. The installation caller does not yet
+supply those dependencies. Original native purpose and exchange recognition,
+State enrollment and retained writer/provenance authority are still required
+before production composition can use the physical reader. Matching annotations
+or a successful local comparison cannot supply those authorities.
+
+The controlled conformance suites are
+`runtime-preparation-create-reference.test.mjs`,
+`runtime-create-correlation.test.mjs`,
+`runtime-create-correlation-observation.test.mjs` and
+`compute-create-correlation-factory.test.mjs`. They exercise the real resolver,
+codec, Driver and factory with controlled history, SDK and authority inputs;
+they do not establish a live Kubernetes or native producer.
+
 ### Submission and independent response retention
 
 `PostgresPlatformState.runtimePreparationSubmissionOwnerV1` captures the selected

@@ -1,3 +1,13 @@
+import { DriverSelection } from "@openclaw-enterprise/occ/application/driver-selection";
+import type { ComputeDriver } from "@openclaw-enterprise/contracts";
+import type {
+  RuntimeCreateCorrelationOperationV1,
+  RuntimeCreateCorrelationRequestV1,
+} from "@openclaw-enterprise/occ/runtime-preparation/create-correlation";
+import {
+  resolveRuntimePreparationCreateReferenceV1,
+  type RuntimePreparationCreateCorrelationRetainedV1,
+} from "@openclaw-enterprise/occ/runtime-preparation/create-reference";
 import type { AppsV1Api, CoreV1Api, V1ObjectMeta, V1Pod } from "@kubernetes/client-node";
 import {
   parseRuntimeAuthorityV1,
@@ -20,6 +30,7 @@ import {
 } from "@openclaw-enterprise/contracts";
 import { sha256Hex } from "@openclaw-enterprise/utils";
 import { withComputeAbortSignal } from "../operation-context.ts";
+import { PREPARED_DEPLOYMENT_ANNOTATIONS } from "./prepared-deployment.ts";
 
 type Method = "discover" | "observe";
 type Input = ExactCreateEffectV1 | RuntimeObservationInputV1;
@@ -390,6 +401,35 @@ export class KubernetesRuntimeObservations implements Pick<
     this.provider = provider;
     this.dependencies = dependencies;
     this.isolationProfile = isolationProfile;
+  }
+
+  /** Captured by the original native constructor through the SAME Driver.
+   * This owns physical reads only; native owns operation/State recognition. */
+  createCorrelationObservationOwner(
+    driver: ComputeDriver,
+    selection: DriverSelection,
+  ): KubernetesCreateCorrelationObservationOwnerV1 {
+    const held = DriverSelection.prototype.acquireGuardedSelection.call(
+      selection,
+      "compute",
+      driver,
+    );
+    try {
+      held.assertCurrent();
+      requireValue(selection.selectedDriver("compute") === driver, "authority-unavailable");
+      // This association is an original constructor input, never a request field.
+      const clusterRef = this.dependencies?.clusterRef;
+      requireValue(
+        typeof clusterRef === "string" && clusterRef.length > 0,
+        "authority-unavailable",
+      );
+      const owner = new CreateCorrelationPhysicalOwner(this.provider, clusterRef, held);
+      held.assertCurrent();
+      return owner;
+    } catch (error) {
+      held.release();
+      throw error;
+    }
   }
 
   /** One listener owns this slot until disposal. A replacement cannot revive its
@@ -958,5 +998,418 @@ export class KubernetesRuntimeObservations implements Pick<
     if (call?.signal?.aborted) return new ObservationUnavailable("cancelled", "unknown");
     if (error instanceof ObservationUnavailable) return error;
     return new ObservationUnavailable("unavailable", "unknown");
+  }
+}
+
+/** Original Compute physical-observation contribution. It is not a Runtime
+ * correlation record, native enrollment or fence/provenance qualification. */
+export interface KubernetesCreateCorrelationPhysicalReadV1 {
+  readonly input: ExactCreateEffectV1;
+  readonly namespace: Readonly<ObjectIdentity>;
+  readonly deployment: Readonly<ObjectIdentity>;
+  /** Observed bytes under the original renderer encoding. These are physical
+   * data, not an exclusive-writer proof or qualified Runtime fence evidence. */
+  readonly encoding: Readonly<{
+    ownerAssignmentRef: string;
+    ownerCreateEffectRef: string;
+    fenceEpoch: number;
+  }>;
+}
+export interface KubernetesCreateCorrelationPhysicalOperationV1 {
+  /** The original native accept lease has already recognized this exact State
+   * read before entering its privately captured Compute operation. */
+  qualifyRetained(
+    retained: RuntimePreparationCreateCorrelationRetainedV1,
+  ): Promise<KubernetesCreateCorrelationPhysicalReadV1>;
+  prepareCommit(): Promise<void>;
+  assertCurrent(): undefined;
+  release(): Promise<void>;
+}
+/** Captured only by the original native constructor from the same selected
+ * Driver. begin associates the original operation; it cannot authenticate an
+ * arbitrary object or create State/native/fence authority. Native registers its
+ * operation/exchange and authenticates the request before invoking begin.
+ * Production construction also requires the original protected effect owner's
+ * writer-custody/encoding qualification for this call and destination, before
+ * provider entry. That original supplier is not implemented by this physical
+ * operation, Driver membership, State history or matching annotation values. */
+export interface KubernetesCreateCorrelationObservationOwnerV1 {
+  begin(
+    originalOperation: RuntimeCreateCorrelationOperationV1,
+    request: RuntimeCreateCorrelationRequestV1,
+    originalSourceCall: RuntimeReadCallV1,
+  ): KubernetesCreateCorrelationPhysicalOperationV1;
+  close(): Promise<void>;
+}
+
+/** Internal physical-read custody. The original native constructor alone captures
+ * this owner. None of its outputs authenticates a native operation or State read. */
+class CreateCorrelationPhysicalOwner implements KubernetesCreateCorrelationObservationOwnerV1 {
+  readonly clusterRef: string;
+  readonly selection: ReturnType<DriverSelection["acquireGuardedSelection"]>;
+  readonly #originals = new WeakMap<object, CreateCorrelationPhysicalOperation>();
+  readonly #operations = new Set<CreateCorrelationPhysicalOperation>();
+  readonly #provider: ProviderReads;
+  #closed = false;
+  #closing: Promise<void> | undefined;
+
+  constructor(
+    provider: ProviderReads,
+    clusterRef: string,
+    selection: ReturnType<DriverSelection["acquireGuardedSelection"]>,
+  ) {
+    this.clusterRef = clusterRef;
+    this.selection = selection;
+    this.#provider = Object.freeze({
+      clients: provider.clients.bind(provider),
+      request: provider.request.bind(provider),
+    });
+  }
+  assertCurrent(): undefined {
+    requireValue(!this.#closed, "authority-lost");
+    this.selection.assertCurrent();
+    requireValue(!this.#closed, "authority-lost");
+    return undefined;
+  }
+  begin(
+    originalOperation: RuntimeCreateCorrelationOperationV1,
+    request: RuntimeCreateCorrelationRequestV1,
+    originalSourceCall: RuntimeReadCallV1,
+  ): KubernetesCreateCorrelationPhysicalOperationV1 {
+    this.assertCurrent();
+    requireValue(
+      originalOperation !== null && typeof originalOperation === "object",
+      "authority-unavailable",
+    );
+    requireValue(!this.#originals.has(originalOperation), "precondition-failed");
+    const operation = new CreateCorrelationPhysicalOperation(this, this.#provider);
+    // Retain this exact private association before getters or external work.
+    // Membership here is not recognition of a native operation by Compute.
+    this.#originals.set(originalOperation, operation);
+    this.#operations.add(operation);
+    try {
+      operation.capture(request, originalSourceCall);
+      this.assertCurrent();
+      return operation;
+    } catch (error) {
+      operation.poison(error);
+      void operation.release().catch(() => {});
+      throw error;
+    }
+  }
+  close(): Promise<void> {
+    if (this.#closing) return this.#closing;
+    this.#closed = true;
+    // Publish the exact join before release can invoke abort listeners.
+    this.#closing = Promise.resolve().then(async () => {
+      let failed = false,
+        failure: unknown;
+      try {
+        // Start every local release before awaiting any hung SDK read. Each
+        // operation independently aborts its own wait and retains its late work.
+        const releases = [...this.#operations].map((operation) => operation.release());
+        for (const result of await Promise.allSettled(releases)) {
+          if (result.status === "rejected" && !failed) {
+            failed = true;
+            failure = result.reason;
+          }
+        }
+      } finally {
+        this.selection.release();
+      }
+      if (failed) throw failure;
+    });
+    void this.#closing.catch(() => {});
+    return this.#closing;
+  }
+}
+
+class CreateCorrelationPhysicalOperation implements KubernetesCreateCorrelationPhysicalOperationV1 {
+  readonly owner: CreateCorrelationPhysicalOwner;
+  readonly provider: ProviderReads;
+  readonly #pending = new Set<Promise<unknown>>();
+  readonly #lifetime = new AbortController();
+  readonly #responses: unknown[] = [];
+  #request: RuntimeCreateCorrelationRequestV1 | undefined;
+  #call: RuntimeReadCallV1 | undefined;
+  #signal: AbortSignal | undefined;
+  #deadline = 0;
+  #began = 0;
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #failed = false;
+  #failure: unknown;
+  #entered = false;
+  #released = false;
+  #release: Promise<void> | undefined;
+  #prepare: Promise<void> | undefined;
+  #retained: RuntimePreparationCreateCorrelationRetainedV1 | undefined;
+  #snapshot: KubernetesCreateCorrelationPhysicalReadV1 | undefined;
+  #clients:
+    | Promise<
+        Readonly<{
+          namespace: CoreV1Api["readNamespace"];
+          deployment: AppsV1Api["readNamespacedDeployment"];
+        }>
+      >
+    | undefined;
+
+  constructor(owner: CreateCorrelationPhysicalOwner, provider: ProviderReads) {
+    this.owner = owner;
+    this.provider = provider;
+  }
+  poison(error: unknown): void {
+    if (!this.#failed) {
+      this.#failed = true;
+      this.#failure = error;
+    }
+  }
+  capture(request: RuntimeCreateCorrelationRequestV1, call: RuntimeReadCallV1): void {
+    // Native has already authenticated this operation/request. These copies are
+    // fixed comparison operands; their fields confer no transport membership.
+    this.#request = detached(request);
+    this.#call = Object.freeze({
+      requestRef: call.requestRef,
+      recipientRef: call.recipientRef,
+      deadline: call.deadline,
+      signal: call.signal,
+      context: call.context,
+    });
+    this.#signal = AbortSignal.any([this.#call.signal, this.#lifetime.signal]);
+    this.#deadline = Date.parse(this.#call.deadline);
+    this.#began = performance.now();
+    requireValue(
+      Number.isFinite(this.#deadline) && this.#deadline > Date.now(),
+      "deadline-exceeded",
+    );
+    // Capture getters may have synchronously closed the original owner. Refuse
+    // before installing a timer that an already-published release would miss.
+    this.assertCurrent();
+    this.#timer = setTimeout(
+      () => {
+        this.poison(new ObservationUnavailable("deadline-exceeded", "unknown"));
+        this.#lifetime.abort();
+      },
+      Math.min(10_000, this.#deadline - Date.now()),
+    );
+    this.assertCurrent();
+  }
+  assertCurrent(): undefined {
+    if (this.#failed) throw this.#failure;
+    try {
+      requireValue(
+        !this.#released && this.#request && this.#call && this.#signal,
+        "authority-lost",
+      );
+      requireValue(!this.#signal.aborted, "cancelled");
+      requireValue(
+        Date.now() < this.#deadline && performance.now() - this.#began < 10_000,
+        "deadline-exceeded",
+      );
+      this.owner.assertCurrent();
+      // The original Driver fence can invoke getters. Keep the final local
+      // lifetime check after it, without another callback or provider query.
+      if (this.#failed) throw this.#failure;
+      requireValue(!this.#released && !this.#signal.aborted, "authority-lost");
+      requireValue(
+        Date.now() < this.#deadline && performance.now() - this.#began < 10_000,
+        "deadline-exceeded",
+      );
+      return undefined;
+    } catch (error) {
+      this.poison(error);
+      throw error;
+    }
+  }
+  private refused<T>(error: unknown): Promise<T> {
+    this.poison(error);
+    const result = Promise.reject<T>(error);
+    void result.catch(() => {});
+    return result;
+  }
+  private track<T>(work: () => Promise<T>): Promise<T> {
+    const promise = Promise.resolve().then(work);
+    this.#pending.add(promise);
+    void promise.then(
+      () => this.#pending.delete(promise),
+      (error: unknown) => {
+        this.poison(error);
+        this.#pending.delete(promise);
+      },
+    );
+    return promise;
+  }
+  private outward<T>(work: Promise<T>): Promise<T> {
+    const signal = this.#signal!;
+    const result = new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (accept: boolean, value: T | unknown) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        if (accept) resolve(value as T);
+        else reject(value);
+      };
+      const abort = () => {
+        const error = new ObservationUnavailable("cancelled", "unknown");
+        this.poison(error);
+        finish(false, error);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      void work.then(
+        (value) => finish(true, value),
+        (error) => finish(false, error),
+      );
+      if (signal.aborted) abort();
+    });
+    void result.catch(() => {});
+    return result;
+  }
+  private async originalRead<T>(read: () => Promise<T>): Promise<T> {
+    this.assertCurrent();
+    const value = await this.track(async () => {
+      this.assertCurrent();
+      const response = await withComputeAbortSignal(this.#signal!, () =>
+        this.provider.request(read),
+      );
+      // Retain the actual response even when it arrives after outward abort.
+      this.#responses.push(response);
+      this.assertCurrent();
+      return response;
+    });
+    this.assertCurrent();
+    return value;
+  }
+  private clients() {
+    if (this.#clients) return this.#clients;
+    // Capture the original SDK receivers once for this operation. Later client
+    // replacement cannot silently rebase its destination during preparation.
+    this.#clients = this.track(async () => {
+      this.assertCurrent();
+      const clients = await this.provider.clients();
+      this.assertCurrent();
+      const core = clients.core,
+        apps = clients.apps;
+      const namespace = core.readNamespace.bind(core);
+      const deployment = apps.readNamespacedDeployment.bind(apps);
+      this.assertCurrent();
+      return Object.freeze({ namespace, deployment });
+    });
+    return this.#clients;
+  }
+  private async physical(): Promise<KubernetesCreateCorrelationPhysicalReadV1> {
+    const request = this.#request!,
+      retained = this.#retained!;
+    const located = resolveRuntimePreparationCreateReferenceV1(
+      request.scope,
+      request.locator,
+      retained,
+    );
+    requireValue(
+      located.status === "located" && same(located.input, request.input),
+      "precondition-failed",
+    );
+    const response = located.retained.response;
+    requireValue(response, "evidence-incomplete");
+    const target = located.input.providerTarget;
+    requireValue(target.clusterRef === this.owner.clusterRef, "ownership-mismatch");
+    const clients = await this.clients();
+    this.assertCurrent();
+    const namespace = await this.originalRead(() =>
+      clients.namespace({ name: response.namespace }),
+    );
+    requireValue(
+      namespace.kind === "Namespace" && namespace.apiVersion === "v1",
+      "ownership-mismatch",
+    );
+    const namespaceIdentity = objectIdentity(namespace.metadata, response.namespace);
+    requireValue(namespaceIdentity.uid === target.kubernetesNamespaceUid, "ownership-mismatch");
+    const deployment = await this.originalRead(() =>
+      clients.deployment({ name: target.name, namespace: response.namespace }),
+    );
+    requireValue(
+      deployment.kind === "Deployment" &&
+        deployment.apiVersion === "apps/v1" &&
+        deployment.metadata?.namespace === response.namespace,
+      "ownership-mismatch",
+    );
+    const deploymentIdentity = objectIdentity(deployment.metadata, target.name);
+    requireValue(
+      deploymentIdentity.uid === response.uid &&
+        deploymentIdentity.resourceVersion === response.resourceVersion,
+      "ownership-mismatch",
+    );
+    this.assertCurrent();
+    const annotations = deployment.metadata?.annotations;
+    const assignment = annotations?.[PREPARED_DEPLOYMENT_ANNOTATIONS.assignment];
+    const create = annotations?.[PREPARED_DEPLOYMENT_ANNOTATIONS.create];
+    const fence = annotations?.[PREPARED_DEPLOYMENT_ANNOTATIONS.fence];
+    requireValue(
+      assignment === target.ownerAssignmentRef.id && create === target.ownerCreateEffectRef,
+      "ownership-mismatch",
+    );
+    requireValue(typeof fence === "string" && /^[1-9][0-9]*$/.test(fence), "evidence-incomplete");
+    const fenceEpoch = Number(fence);
+    requireValue(Number.isSafeInteger(fenceEpoch) && fenceEpoch >= 1, "evidence-incomplete");
+    this.assertCurrent();
+    // Read the actual encoding, never the requested guard or historical
+    // predicate. This snapshot has no provenance or qualified writer authority.
+    return detached({
+      input: located.input,
+      namespace: namespaceIdentity,
+      deployment: deploymentIdentity,
+      encoding: { ownerAssignmentRef: assignment, ownerCreateEffectRef: create, fenceEpoch },
+    });
+  }
+  qualifyRetained(
+    retained: RuntimePreparationCreateCorrelationRetainedV1,
+  ): Promise<KubernetesCreateCorrelationPhysicalReadV1> {
+    if (this.#entered || this.#released) {
+      const error = new ObservationUnavailable("precondition-failed");
+      return this.refused(error);
+    }
+    this.#entered = true;
+    const work = this.track(async () => {
+      this.assertCurrent();
+      // Only the native State-qualified continuation supplies this original
+      // object. Keeping its identity is correspondence, not a State brand test.
+      this.#retained = retained;
+      const snapshot = await this.physical();
+      this.assertCurrent();
+      this.#snapshot = snapshot;
+      return snapshot;
+    });
+    return this.outward(work);
+  }
+  prepareCommit(): Promise<void> {
+    if (this.#released) return this.refused(new ObservationUnavailable("authority-lost"));
+    if (this.#prepare) {
+      try {
+        this.assertCurrent();
+      } catch (error) {
+        return this.refused(error);
+      }
+      return this.#prepare;
+    }
+    const work = this.track(async () => {
+      this.assertCurrent();
+      requireValue(this.#snapshot, "evidence-incomplete");
+      const again = await this.physical();
+      requireValue(same(again, this.#snapshot), "ownership-mismatch");
+      this.assertCurrent();
+    });
+    this.#prepare = this.outward(work);
+    return this.#prepare;
+  }
+  release(): Promise<void> {
+    if (this.#release) return this.#release;
+    this.#released = true;
+    this.#release = Promise.resolve().then(async () => {
+      if (this.#timer !== undefined) clearTimeout(this.#timer);
+      this.#lifetime.abort();
+      while (this.#pending.size) await Promise.allSettled([...this.#pending]);
+      if (this.#failed) throw this.#failure;
+    });
+    void this.#release.catch(() => {});
+    return this.#release;
   }
 }

@@ -1,3 +1,4 @@
+import type { DriverSelection } from "@openclaw-enterprise/occ/application/driver-selection";
 import type { RuntimePreparationCurrentUseLeaseV1 } from "@openclaw-enterprise/occ/runtime-preparation/current-use";
 import type { WorkloadProfileOwnedOperationV2 } from "@openclaw-enterprise/occ/workload-profiles/admitted-use";
 import { deriveWorkloadProfileManifestV2 } from "@openclaw-enterprise/occ/workload-profiles/projections";
@@ -23,6 +24,7 @@ import { KubernetesRouting } from "./routing.ts";
 import { KubernetesCleanup } from "./cleanup.ts";
 import {
   KubernetesRuntimeObservations,
+  type KubernetesCreateCorrelationObservationOwnerV1,
   type KubernetesRuntimeObservationAdmission,
   type KubernetesRuntimeObservationDependencies,
 } from "./runtime-observations.ts";
@@ -691,6 +693,13 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new Error("Compute lifecycle owners cannot change after lifecycle operations begin.");
     }
     this.lifecycle = new ComputeLifecycleDispatcher(drivers);
+  }
+
+  /** Original native construction captures this SAME selected observer. */
+  createCorrelationObservationOwner(
+    selection: DriverSelection,
+  ): KubernetesCreateCorrelationObservationOwnerV1 {
+    return this.runtimeObservations.createCorrelationObservationOwner(this, selection);
   }
 
   bindRuntimeObservationAdmission(admission: KubernetesRuntimeObservationAdmission): () => void {
