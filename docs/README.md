@@ -130,6 +130,9 @@ proposal acceptance, implemented behavior, and runtime qualification are separat
 - [GitHub publication dispatch](reference/github-publication-dispatch.md): inspect
   the fixed push/draft-PR protocol and retained submission lifecycle; complete
   native, credential and publication authority remains separate.
+- [Native publication transport library](reference/native-github-publication-library.md):
+  verify fixed Git push/draft-PR requests and retain outcomes through joined
+  cancellation and retirement; executable bootstrap and production authority remain separate.
 - [GitHub read mediation](reference/github-mediation.md) and
   [native mediation identity](reference/github-mediation-identity.md): inspect the
   broker protocol and native connection boundary; production installation and

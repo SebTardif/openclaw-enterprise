@@ -521,13 +521,13 @@ pub(crate) mod test_control {
 
 // One borrowed-pattern prefix table is built per validation, then reused for
 // all objects. No copied credential buffer and no quadratic substring scans.
-struct Pattern<'a> {
+pub(crate) struct Pattern<'a> {
     bytes: &'a [u8],
     prefix: Vec<usize>,
 }
 
 impl<'a> Pattern<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Self, Refusal> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Result<Self, Refusal> {
         if bytes.is_empty() {
             return Err(Refusal::Configuration);
         }
@@ -545,7 +545,7 @@ impl<'a> Pattern<'a> {
         Ok(Self { bytes, prefix })
     }
 
-    fn matches(&self, bytes: &[u8], cancel: &AtomicBool) -> Result<bool, Refusal> {
+    pub(crate) fn matches(&self, bytes: &[u8], cancel: &AtomicBool) -> Result<bool, Refusal> {
         let mut matched = 0;
         for chunk in bytes.chunks(CHUNK) {
             current(cancel)?;
@@ -866,4 +866,342 @@ mod tests {
             Err(Refusal::Protocol)
         );
     }
+}
+
+/// Additional verification of the original publication custodian's full-object
+/// PACK. This comparison result is not a capture recognizer or authorization.
+pub(crate) struct PublicationGraph {
+    pub(crate) object_count: usize,
+    pub(crate) raw_bytes: usize,
+    pub(crate) graph_digest: String,
+}
+
+fn hex_id(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn parse_id(value: &[u8]) -> Result<[u8; 20], Refusal> {
+    if value.len() != 40 {
+        return Err(Refusal::Protocol);
+    }
+    let mut id = [0u8; 20];
+    for (index, pair) in value.chunks_exact(2).enumerate() {
+        let digit = |b| match b {
+            b'0'..=b'9' => Ok(b - b'0'),
+            b'a'..=b'f' => Ok(b - b'a' + 10),
+            _ => Err(Refusal::Protocol),
+        };
+        id[index] = digit(pair[0])? * 16 + digit(pair[1])?;
+    }
+    if id == [0; 20] {
+        return Err(Refusal::Protocol);
+    }
+    Ok(id)
+}
+
+type PublicationId = [u8; 20];
+struct PublicationNode {
+    object: Object,
+    links: Vec<(PublicationId, u8)>,
+    parents: Vec<PublicationId>,
+}
+
+fn publication_commit(
+    bytes: &[u8],
+) -> Result<(Vec<(PublicationId, u8)>, Vec<PublicationId>), Refusal> {
+    if bytes.len() > 1024 * 1024 || bytes.contains(&0) {
+        return Err(Refusal::Bounds);
+    }
+    let source = std::str::from_utf8(bytes).map_err(|_| Refusal::Protocol)?;
+    let (header, _) = source.split_once("\n\n").ok_or(Refusal::Protocol)?;
+    if header.len() > 262144 {
+        return Err(Refusal::Bounds);
+    }
+    // Commit OIDs require an exact LF delimiter; retain CR for rejection.
+    let mut lines = header.split('\n').peekable();
+    let tree = lines
+        .next()
+        .and_then(|line| line.strip_prefix("tree "))
+        .ok_or(Refusal::Protocol)?;
+    let mut links = vec![(parse_id(tree.as_bytes())?, 2)];
+    let mut parents = Vec::new();
+    while lines.peek().is_some_and(|line| line.starts_with("parent ")) {
+        let parent = parse_id(lines.next().unwrap()[7..].as_bytes())?;
+        if parents.len() == 16 || parents.contains(&parent) {
+            return Err(Refusal::Bounds);
+        }
+        parents.push(parent);
+        links.push((parent, 1));
+    }
+    for prefix in ["author ", "committer "] {
+        let line = lines
+            .next()
+            .and_then(|line| line.strip_prefix(prefix))
+            .ok_or(Refusal::Protocol)?;
+        if line.is_empty() || line.bytes().any(|b| b < 32 || b == 127) {
+            return Err(Refusal::Protocol);
+        }
+    }
+    let mut keys = std::collections::BTreeSet::new();
+    let mut signature = false;
+    for line in lines {
+        if line.starts_with(' ') {
+            if !signature
+                || line
+                    .bytes()
+                    .any(|b| b < 9 || (11..=31).contains(&b) || b == 127)
+            {
+                return Err(Refusal::Protocol);
+            }
+            continue;
+        }
+        let (key, value) = line.split_once(' ').ok_or(Refusal::Protocol)?;
+        if !keys.insert(key) {
+            return Err(Refusal::Protocol);
+        }
+        signature = key == "gpgsig";
+        match key {
+            "encoding" if value == "UTF-8" => {}
+            "gpgsig" if !value.is_empty() && value.bytes().all(|b| (32..=126).contains(&b)) => {}
+            _ => return Err(Refusal::Protocol),
+        }
+    }
+    Ok((links, parents))
+}
+
+fn publication_tree(
+    bytes: &[u8],
+    cancel: &AtomicBool,
+) -> Result<Vec<(PublicationId, u8)>, Refusal> {
+    let mut cursor = 0usize;
+    let mut links = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut previous = Vec::new();
+    while cursor < bytes.len() {
+        current(cancel)?;
+        let suffix = &bytes[cursor..];
+        let space = suffix
+            .iter()
+            .position(|b| *b == b' ')
+            .ok_or(Refusal::Protocol)?;
+        let nul = suffix
+            .iter()
+            .position(|b| *b == 0)
+            .ok_or(Refusal::Protocol)?;
+        if space > 6 || nul <= space || nul + 21 > suffix.len() {
+            return Err(Refusal::Protocol);
+        }
+        let kind = match &suffix[..space] {
+            b"40000" => 2,
+            b"100644" | b"100755" => 3,
+            _ => return Err(Refusal::Unsupported),
+        };
+        let name = &suffix[space + 1..nul];
+        if name.is_empty()
+            || name.len() > 255
+            || name
+                .iter()
+                .any(|b| !(32..=126).contains(b) || b"\\/:*?\"<>|".contains(b))
+            || name == b"."
+            || name == b".."
+            || name.ends_with(b".")
+            || name.ends_with(b" ")
+        {
+            return Err(Refusal::Protocol);
+        }
+        let folded: Vec<u8> = name.iter().map(u8::to_ascii_lowercase).collect();
+        if folded == b".git"
+            || folded.starts_with(b".git.")
+            || folded.starts_with(b".git ")
+            || !names.insert(folded)
+        {
+            return Err(Refusal::Protocol);
+        }
+        let mut ordered = name.to_vec();
+        ordered.push(if kind == 2 { b'/' } else { 0 });
+        if !previous.is_empty() && previous >= ordered {
+            return Err(Refusal::Protocol);
+        }
+        previous = ordered;
+        let id: PublicationId = suffix[nul + 1..nul + 21]
+            .try_into()
+            .map_err(|_| Refusal::Protocol)?;
+        if id == [0; 20] {
+            return Err(Refusal::Protocol);
+        }
+        links.push((id, kind));
+        if links.len() > 8192 * 32 {
+            return Err(Refusal::Bounds);
+        }
+        cursor += nul + 21;
+    }
+    Ok(links)
+}
+
+pub(crate) fn publication_graph(
+    pack: &[u8],
+    proposed: &str,
+    base: &str,
+    expected_old: &str,
+    cancel: &AtomicBool,
+    secrets: &[&[u8]],
+) -> Result<PublicationGraph, Refusal> {
+    current(cancel)?;
+    if pack.len() < 32 || pack.len() > 80 * 1024 * 1024 || &pack[..8] != b"PACK\0\0\0\x02" {
+        return Err(Refusal::Protocol);
+    }
+    let count = u32::from_be_bytes(pack[8..12].try_into().unwrap()) as usize;
+    if count == 0 || count > 8192 {
+        return Err(Refusal::Bounds);
+    }
+    let end = pack.len() - 20;
+    if sha1(&pack[..end], cancel)?.as_slice() != &pack[end..] {
+        return Err(Refusal::Protocol);
+    }
+    let patterns = secrets
+        .iter()
+        .map(|secret| Pattern::new(secret))
+        .collect::<Result<Vec<_>, _>>()?;
+    let proposed_id = parse_id(proposed.as_bytes())?;
+    let base_id = parse_id(base.as_bytes())?;
+    let mut cursor = 12usize;
+    let mut raw = 0usize;
+    let mut nodes = BTreeMap::new();
+    let mut previous = [0; 20];
+    let mut manifest = Context::new(&ring::digest::SHA256);
+    manifest.update(b"oce/repository-publication/v1/object-graph\0");
+    manifest.update(
+        format!("{{\"baseOid\":\"{base}\",\"objectFormat\":\"sha1\",\"objects\":[").as_bytes(),
+    );
+    for index in 0..count {
+        current(cancel)?;
+        let (kind, size) = entry_header(&pack[..end], &mut cursor)?;
+        if !(1..=3).contains(&kind) || size > 8 * 1024 * 1024 {
+            return Err(Refusal::Unsupported);
+        }
+        bounded_total(&mut raw, size)?;
+        let (bytes, consumed) = inflate(
+            pack.get(cursor..end).ok_or(Refusal::Protocol)?,
+            size,
+            cancel,
+        )?;
+        cursor = cursor.checked_add(consumed).ok_or(Refusal::Bounds)?;
+        for pattern in &patterns {
+            if pattern.matches(&bytes, cancel)? {
+                return Err(Refusal::Unsupported);
+            }
+        }
+        let id = object_id(kind, &bytes, cancel)?;
+        if id <= previous {
+            return Err(Refusal::Protocol);
+        }
+        previous = id;
+        let (links, parents) = match kind {
+            1 => publication_commit(&bytes)?,
+            2 => (publication_tree(&bytes, cancel)?, Vec::new()),
+            3 => (Vec::new(), Vec::new()),
+            _ => return Err(Refusal::Protocol),
+        };
+        let mut content_hash = Context::new(&ring::digest::SHA256);
+        for chunk in bytes.chunks(CHUNK) {
+            current(cancel)?;
+            content_hash.update(chunk);
+        }
+        let name = match kind {
+            1 => "commit",
+            2 => "tree",
+            _ => "blob",
+        };
+        if index != 0 {
+            manifest.update(b",");
+        }
+        manifest.update(
+            format!(
+                "{{\"bytes\":{size},\"oid\":\"{}\",\"sha256\":\"sha256:{}\",\"type\":\"{name}\"}}",
+                hex_id(&id),
+                hex_id(content_hash.finish().as_ref())
+            )
+            .as_bytes(),
+        );
+        nodes.insert(
+            id,
+            PublicationNode {
+                object: Object {
+                    kind,
+                    bytes,
+                    depth: 0,
+                },
+                links,
+                parents,
+            },
+        );
+    }
+    if cursor != end {
+        return Err(Refusal::Protocol);
+    }
+    manifest.update(format!("],\"proposedOid\":\"{proposed}\",\"version\":1}}").as_bytes());
+    let mut reached = std::collections::BTreeSet::new();
+    let mut pending = vec![(proposed_id, 1), (base_id, 1)];
+    let mut work = 0usize;
+    while let Some((id, kind)) = pending.pop() {
+        current(cancel)?;
+        work += 1;
+        if work > 8192 * 32 {
+            return Err(Refusal::Bounds);
+        }
+        let node = nodes.get(&id).ok_or(Refusal::Protocol)?;
+        if node.object.kind != kind {
+            return Err(Refusal::Protocol);
+        }
+        if !reached.insert(id) {
+            continue;
+        }
+        if pending.len() + node.links.len() > 8192 * 32 {
+            return Err(Refusal::Bounds);
+        }
+        pending.extend(node.links.iter().copied());
+    }
+    if reached.len() != count {
+        return Err(Refusal::Protocol);
+    }
+    // Server expected-old comparison does not replace this independent ancestry
+    // rule. No ref may be moved backwards or across an unrelated commit graph.
+    if expected_old != crate::publication_protocol::ZERO_OID {
+        let expected = parse_id(expected_old.as_bytes())?;
+        let mut ancestors = vec![proposed_id];
+        let mut visited = std::collections::BTreeSet::new();
+        let mut found = false;
+        while let Some(id) = ancestors.pop() {
+            current(cancel)?;
+            if id == expected {
+                found = true;
+                break;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            let node = nodes.get(&id).ok_or(Refusal::Protocol)?;
+            if node.object.kind != 1 {
+                return Err(Refusal::Protocol);
+            }
+            if ancestors.len() + node.parents.len() > 8192 * 16 {
+                return Err(Refusal::Bounds);
+            }
+            ancestors.extend(node.parents.iter().copied());
+        }
+        if !found {
+            return Err(Refusal::Unsupported);
+        }
+    }
+    current(cancel)?;
+    Ok(PublicationGraph {
+        object_count: count,
+        raw_bytes: raw,
+        graph_digest: format!("sha256:{}", hex_id(manifest.finish().as_ref())),
+    })
 }

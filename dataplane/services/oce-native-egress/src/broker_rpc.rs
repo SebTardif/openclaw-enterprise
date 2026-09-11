@@ -105,7 +105,11 @@ pub(crate) struct Channel {
     timeout: Duration,
 }
 impl Channel {
-    async fn connect_for(
+    pub(crate) fn into_stream(self) -> TlsStream<UnixStream> {
+        self.stream
+    }
+
+    pub(crate) async fn connect_for(
         config: &BrokerConfig,
         deadline: Instant,
         alpn: &[u8],
