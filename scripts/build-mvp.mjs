@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -79,8 +80,22 @@ export class CommandFailure extends Error {
 export function runCommand(
   command,
   args,
-  { cwd = repositoryRoot, env = process.env, capture = false } = {},
+  {
+    cwd = repositoryRoot,
+    env = process.env,
+    capture = false,
+    outputDirectory,
+    maxOutputBytes = 8 * 1024 * 1024,
+  } = {},
 ) {
+  if (outputDirectory !== undefined)
+    return runCommandWithOutput(command, args, {
+      cwd,
+      env,
+      capture,
+      outputDirectory,
+      maxOutputBytes,
+    });
   return new Promise((resolveCommand, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -141,6 +156,381 @@ export function runCommand(
       else resolveCommand(output);
     });
   });
+}
+
+async function openCommandOutput(directory, maxBytes) {
+  if (process.platform !== "linux") throw new Error("Command output capture requires Linux.");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 8 * 1024 * 1024)
+    throw new Error("Invalid command output byte limit.");
+  if (!isAbsolute(directory) || (await realpath(directory)) !== directory)
+    throw new Error("Command output directory must be canonical without links.");
+  const parent = await lstat(directory, { bigint: true });
+  if (
+    !parent.isDirectory() ||
+    parent.uid !== BigInt(process.getuid()) ||
+    (parent.mode & 0o7022n) !== 0n
+  )
+    throw new Error(
+      "Command output directory must be owned by the current user without unsafe mode bits.",
+    );
+  const files = [];
+  try {
+    for (const name of ["stdout", "stderr", "receipt.json"]) {
+      const path = join(directory, name);
+      const file = await open(
+        path,
+        fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_RDWR | fsConstants.O_NOFOLLOW,
+        0o600,
+      );
+      const entry = { path, file };
+      files.push(entry);
+      entry.created = await file.stat({ bigint: true });
+      await file.chmod(0o600);
+      entry.current = await file.stat({ bigint: true });
+      await unchangedFile(path, file, entry.current);
+    }
+    const currentParent = await lstat(directory, { bigint: true });
+    if (
+      (await realpath(directory)) !== directory ||
+      currentParent.dev !== parent.dev ||
+      currentParent.ino !== parent.ino ||
+      currentParent.uid !== parent.uid ||
+      currentParent.mode !== parent.mode
+    )
+      throw new Error("Command output directory changed during preparation.");
+    return {
+      directory,
+      parent: currentParent,
+      files,
+      maxBytes,
+      observedBytes: 0,
+      reservedBytes: 0,
+    };
+  } catch (error) {
+    // Attempt every close even if one cleanup fails. Never remove an old or
+    // replaced path, and preserve the preparation error as the primary cause.
+    await Promise.allSettled(
+      files.map(async (entry) => {
+        try {
+          await entry.file.close();
+        } finally {
+          await removeOwnedCommandOutput(entry);
+        }
+      }),
+    );
+    throw error;
+  }
+}
+
+async function removeOwnedCommandOutput(entry) {
+  if (!entry.created) return;
+  const current = await lstat(entry.path, { bigint: true }).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (current?.dev === entry.created.dev && current?.ino === entry.created.ino)
+    await rm(entry.path);
+}
+
+async function runCommandWithOutput(
+  command,
+  args,
+  { cwd, env, capture, outputDirectory, maxOutputBytes },
+) {
+  const output = await openCommandOutput(outputDirectory, maxOutputBytes);
+  const errors = [];
+  const note = (error) => {
+    const message = String(error?.message ?? error).slice(0, 512);
+    if (!errors.includes(message) && errors.length < 8) errors.push(message);
+  };
+  let child;
+  let interrupted = null;
+  let killTimer;
+  let captured = "";
+  let outputTooLarge = false;
+  let spawnError;
+  let terminal = { code: null, signal: null };
+  const decoder = new StringDecoder("utf8");
+  const kill = (signal) => {
+    if (child?.pid === undefined) return;
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") note(error);
+    }
+  };
+  const interrupt = (signal) => {
+    interrupted ??= signal;
+    kill(signal);
+    killTimer ??= setTimeout(() => kill("SIGKILL"), 5_000).unref();
+  };
+  const onInterrupt = () => interrupt("SIGINT");
+  const onTerminate = () => interrupt("SIGTERM");
+  const channels = output.files.slice(0, 2).map((entry, index) => ({
+    ...entry,
+    channel: index === 0 ? "stdout" : "stderr",
+    observedBytes: 0,
+    storedBytes: 0,
+    observedHash: createHash("sha256"),
+    storedHash: createHash("sha256"),
+    eof: false,
+    flushed: false,
+    closed: false,
+  }));
+  const consume = async (stream, sink) => {
+    try {
+      // Async iteration waits for each bounded file write before reading more.
+      // The raw buffers reach the sink before any UTF-8 decoding for the parser.
+      for await (const chunk of stream) {
+        sink.observedBytes += chunk.length;
+        sink.observedHash.update(chunk);
+        output.observedBytes += chunk.length;
+        if (output.observedBytes > output.maxBytes) {
+          note("Command output exceeded its complete byte limit.");
+          kill("SIGKILL");
+        }
+        const length = Math.min(chunk.length, output.maxBytes - output.reservedBytes);
+        output.reservedBytes += length;
+        if (!sink.writeFailed && length !== 0) {
+          try {
+            await unchangedFile(sink.path, sink.file, sink.current);
+            let offset = 0;
+            while (offset < length) {
+              const { bytesWritten } = await sink.file.write(
+                chunk,
+                offset,
+                length - offset,
+                sink.storedBytes,
+              );
+              if (bytesWritten === 0) throw new Error("Command output write made no progress.");
+              sink.storedHash.update(chunk.subarray(offset, offset + bytesWritten));
+              sink.storedBytes += bytesWritten;
+              offset += bytesWritten;
+            }
+            sink.current = await sink.file.stat({ bigint: true });
+            await unchangedFile(sink.path, sink.file, sink.current);
+          } catch (error) {
+            sink.writeFailed = true;
+            note(error);
+            kill("SIGKILL");
+          }
+        }
+        if (sink.channel === "stdout" && capture && !outputTooLarge) {
+          captured += decoder.write(chunk);
+          if (captured.length > 4 * 1024 * 1024) {
+            outputTooLarge = true;
+            kill("SIGKILL");
+          }
+        }
+      }
+      sink.eof = true;
+    } catch (error) {
+      note(error);
+      kill("SIGKILL");
+    }
+  };
+  try {
+    process.on("SIGINT", onInterrupt);
+    process.on("SIGTERM", onTerminate);
+    child = spawn(command, args, {
+      cwd,
+      env,
+      shell: false,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stopped = new Promise((resolveStopped) => {
+      child.once("error", (error) => {
+        spawnError = error;
+        note(error);
+      });
+      child.once("close", (code, signal) => resolveStopped({ code, signal }));
+    });
+    const drained = Promise.all(channels.map((sink) => consume(child[sink.channel], sink)));
+    terminal = await stopped;
+    if (interrupted !== null) kill("SIGKILL");
+    await drained;
+    if (capture && !outputTooLarge) captured += decoder.end();
+  } catch (error) {
+    spawnError ??= error;
+    note(error);
+  } finally {
+    clearTimeout(killTimer);
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+  }
+  const observations = [];
+  for (const sink of channels) {
+    const observedSha256 = sink.observedHash.digest("hex");
+    const storedSha256 = sink.storedHash.digest("hex");
+    let identity;
+    try {
+      await unchangedFile(sink.path, sink.file, sink.current);
+      if ((await hashFileBytes(sink.file, sink.storedBytes)) !== storedSha256)
+        throw new Error("Command output readback differs from its stored bytes.");
+      await unchangedFile(sink.path, sink.file, sink.current);
+      await sink.file.chmod(0o400);
+      await sink.file.sync();
+      sink.flushed = true;
+      const final = await sink.file.stat({ bigint: true });
+      if (
+        final.size !== BigInt(sink.storedBytes) ||
+        final.uid !== BigInt(process.getuid()) ||
+        fileMode(final) !== "0400"
+      )
+        throw new Error("Command output size, owner or mode changed.");
+      await unchangedFile(sink.path, sink.file, final);
+      identity = identityFields.map((key) => String(final[key]));
+    } catch (error) {
+      note(error);
+    } finally {
+      try {
+        await sink.file.close();
+        sink.closed = true;
+      } catch (error) {
+        note(error);
+      }
+    }
+    observations.push({
+      channel: sink.channel,
+      path: sink.channel,
+      observedBytes: sink.observedBytes,
+      storedBytes: sink.storedBytes,
+      observedSha256,
+      storedSha256,
+      eof: sink.eof,
+      flushed: sink.flushed,
+      closed: sink.closed,
+      identity: identity ?? null,
+    });
+  }
+  if (
+    capture &&
+    !outputTooLarge &&
+    observations[0].observedSha256 !== createHash("sha256").update(captured).digest("hex")
+  )
+    note("Captured compiler stdout is not lossless UTF-8.");
+  const assertClosedOutputsCurrent = async () => {
+    for (const sink of observations) {
+      const path = join(output.directory, sink.path);
+      const current = await lstat(path, { bigint: true });
+      if (
+        (await realpath(path)) !== path ||
+        !sink.identity ||
+        !identityFields.every((key, index) => String(current[key]) === sink.identity[index])
+      )
+        throw new Error("Command output changed after channel close.");
+    }
+  };
+  try {
+    await assertClosedOutputsCurrent();
+  } catch (error) {
+    note(error);
+  }
+  const complete =
+    errors.length === 0 &&
+    observations.every(
+      (sink) => sink.eof && sink.flushed && sink.closed && sink.observedBytes === sink.storedBytes,
+    );
+  const receipt = {
+    schemaVersion: 1,
+    argv: [command, ...args],
+    cwd,
+    pid: child?.pid ?? null,
+    exitCode: terminal.code,
+    signal: terminal.signal,
+    interrupted,
+    maxBytes: output.maxBytes,
+    complete,
+    channels: observations,
+    errors: [...errors],
+  };
+  const control = output.files[2];
+  let receiptPublished = false;
+  try {
+    if (
+      (await realpath(output.directory)) !== output.directory ||
+      !sameFile(output.parent, await lstat(output.directory, { bigint: true }))
+    )
+      throw new Error("Command output directory changed before receipt publication.");
+    await unchangedFile(control.path, control.file, control.current);
+    const bytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`);
+    if (bytes.length > 65_536) throw new Error("Command output receipt exceeded its byte limit.");
+    await control.file.writeFile(bytes);
+    await control.file.chmod(0o400);
+    await control.file.sync();
+    const final = await control.file.stat({ bigint: true });
+    if (
+      final.size !== BigInt(bytes.length) ||
+      final.uid !== BigInt(process.getuid()) ||
+      fileMode(final) !== "0400" ||
+      (await hashFileBytes(control.file, bytes.length)) !==
+        createHash("sha256").update(bytes).digest("hex")
+    )
+      throw new Error("Command output receipt readback failed.");
+    await unchangedFile(control.path, control.file, final);
+    control.current = final;
+    receiptPublished = true;
+  } catch (error) {
+    note(error);
+  } finally {
+    try {
+      await control.file.close();
+    } catch (error) {
+      receiptPublished = false;
+      note(error);
+    }
+  }
+  if (receiptPublished) {
+    try {
+      if (
+        (await realpath(control.path)) !== control.path ||
+        !sameFile(control.current, await lstat(control.path, { bigint: true })) ||
+        !sameFile(output.parent, await lstat(output.directory, { bigint: true }))
+      )
+        throw new Error("Command output receipt changed after close.");
+      // A failed channel already appears in the receipt. Revalidate successful
+      // channels after receipt close before allowing a successful command.
+      if (complete) await assertClosedOutputsCurrent();
+    } catch (error) {
+      receiptPublished = false;
+      note(error);
+    }
+  }
+  if (!receiptPublished) {
+    try {
+      await removeOwnedCommandOutput(control);
+    } catch (error) {
+      note(error);
+    }
+  }
+  let failure;
+  if (spawnError) failure = new CommandFailure(`Cannot run ${command}: ${spawnError.message}`);
+  else if (outputTooLarge) failure = new CommandFailure(`${command} exceeded its output limit.`);
+  else if (interrupted ?? terminal.signal)
+    failure = new CommandFailure(
+      `${command} stopped by ${interrupted ?? terminal.signal}.`,
+      1,
+      interrupted ?? terminal.signal,
+    );
+  else if (terminal.code !== 0)
+    failure = new CommandFailure(
+      `${command} exited with status ${terminal.code}.`,
+      terminal.code ?? 1,
+    );
+  else if (errors.length !== 0 || !complete || !receiptPublished)
+    failure = new CommandFailure("Command output capture was incomplete.");
+  if (failure) {
+    failure.commandOutput = {
+      ...receipt,
+      complete: complete && receiptPublished,
+      errors: [...errors],
+      receiptPublished,
+      receiptPath: control.path,
+    };
+    throw failure;
+  }
+  return captured;
 }
 
 export async function verifyFile(path, { executable = false } = {}) {
@@ -814,6 +1204,10 @@ async function buildNative(product) {
       cwd: nativeRoot,
       env: nativeEnvironment,
       capture: true,
+      ...(product.target === "native-read" &&
+      process.env.OCC_BUILD_READ_COMPILER_OUTPUT !== undefined
+        ? { outputDirectory: process.env.OCC_BUILD_READ_COMPILER_OUTPUT }
+        : {}),
     },
   );
   // Capture the compiler-selected executable before other asynchronous checks,
@@ -1136,6 +1530,8 @@ async function main(args) {
     await rm(nativeManifestPath, { force: true });
   }
   try {
+    if (process.env.OCC_BUILD_READ_COMPILER_OUTPUT !== undefined && names[0] !== "native-read")
+      throw new Error("OCC_BUILD_READ_COMPILER_OUTPUT requires the native-read target.");
     // Validate explicit image inputs before any prerequisite tool runs. A typo
     // must not start a source build or replace a tag belonging to another image.
     if (order.includes("image-controller")) imageInputs("controller");

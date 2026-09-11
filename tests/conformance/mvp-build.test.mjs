@@ -10,6 +10,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   readdir,
   realpath,
   rename,
@@ -336,6 +337,407 @@ test("spawn failures identify the missing tool", async () => {
       error.exitCode === 1 &&
       /Cannot run.*oce-build-tool.*ENOENT/.test(error.message),
   );
+});
+
+async function assertCommandOutputClosed(directory) {
+  const descriptors = await readdir("/proc/self/fd");
+  for (const descriptor of descriptors) {
+    const path = await readlink(`/proc/self/fd/${descriptor}`).catch((error) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    assert.ok(!path.startsWith(`${directory}/`), `Output descriptor remained open: ${path}`);
+  }
+}
+
+async function commandOutputReceipt(directory, expected) {
+  const receipt = JSON.parse(await readFile(join(directory, "receipt.json"), "utf8"));
+  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.complete, true);
+  assert.deepEqual(receipt.errors, []);
+  assert.deepEqual(
+    receipt.channels.map(({ channel }) => channel),
+    ["stdout", "stderr"],
+  );
+  for (const [index, channel] of receipt.channels.entries()) {
+    const bytes = expected[index];
+    assert.deepEqual(await readFile(join(directory, channel.path)), bytes);
+    assert.equal(channel.observedBytes, bytes.length);
+    assert.equal(channel.storedBytes, bytes.length);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    assert.equal(channel.observedSha256, digest);
+    assert.equal(channel.storedSha256, digest);
+    assert.equal(channel.eof, true);
+    assert.equal(channel.flushed, true);
+    assert.equal(channel.closed, true);
+    const current = await lstat(join(directory, channel.path), { bigint: true });
+    assert.deepEqual(
+      channel.identity,
+      ["dev", "ino", "size", "mode", "uid", "gid", "nlink", "mtimeNs", "ctimeNs"].map((key) =>
+        String(current[key]),
+      ),
+    );
+    assert.equal(Number(current.mode & 0o7777n), 0o400);
+    assert.equal(Number(current.uid), process.getuid());
+  }
+  assert.equal((await lstat(join(directory, "receipt.json"))).mode & 0o7777, 0o400);
+  await assertCommandOutputClosed(directory);
+  return receipt;
+}
+
+test(
+  "compiler output capture preserves separate exact streams and decoded stdout",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-output-"));
+    try {
+      const stdout = Buffer.from("first\n€ last\0\n");
+      const stderr = Buffer.from([0xff, 0x00, 0x0a, 0xc3, 0x28]);
+      const source = `const fs = require('node:fs');
+      const bytes = Buffer.from(${JSON.stringify([...stdout])});
+      fs.writeSync(1, bytes.subarray(0, 7));
+      fs.writeSync(2, Buffer.from(${JSON.stringify([...stderr])}));
+      fs.writeSync(1, bytes.subarray(7));`;
+      const captured = await runCommand(process.execPath, ["-e", source], {
+        outputDirectory: directory,
+        capture: true,
+      });
+      assert.equal(captured, stdout.toString("utf8"));
+      const receipt = await commandOutputReceipt(directory, [stdout, stderr]);
+      assert.deepEqual(receipt.argv, [process.execPath, "-e", source]);
+      assert.equal(receipt.exitCode, 0);
+      assert.equal(receipt.signal, null);
+      assert.equal(receipt.interrupted, null);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture retains complete streams and the natural failure status",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-failure-"));
+    try {
+      const stdout = Buffer.from('{"reason":"build-finished","success":false}\n');
+      const stderr = Buffer.from("compiler rejected input\n");
+      const source = `const fs = require('node:fs');
+      fs.writeSync(1, ${JSON.stringify(stdout.toString())});
+      fs.writeSync(2, ${JSON.stringify(stderr.toString())}); process.exit(23);`;
+      await assert.rejects(
+        runCommand(process.execPath, ["-e", source], {
+          outputDirectory: directory,
+          capture: true,
+        }),
+        (error) => {
+          assert.ok(error instanceof CommandFailure);
+          assert.equal(error.exitCode, 23);
+          assert.equal(error.signal, null);
+          assert.equal(error.commandOutput.complete, true);
+          assert.equal(error.commandOutput.receiptPublished, true);
+          return true;
+        },
+      );
+      const receipt = await commandOutputReceipt(directory, [stdout, stderr]);
+      assert.equal(receipt.exitCode, 23);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture refuses unsafe or existing destinations before spawning",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-refusal-"));
+    const marker = join(directory, "must-not-run");
+    const args = ["-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`];
+    try {
+      const output = join(directory, "output");
+      await mkdir(output, { mode: 0o700 });
+      await symlink(output, join(directory, "alias"));
+      for (const selected of [join(directory, "alias"), `${output}/.`, "relative-output"])
+        await assert.rejects(
+          runCommand(process.execPath, args, {
+            outputDirectory: selected,
+          }),
+          /canonical/,
+        );
+      await chmod(output, 0o770);
+      await assert.rejects(
+        runCommand(process.execPath, args, {
+          outputDirectory: output,
+        }),
+        /owned by the current user without unsafe mode/,
+      );
+      await chmod(output, 0o700);
+      await writeFile(join(output, "receipt.json"), "existing receipt");
+      await assert.rejects(
+        runCommand(process.execPath, args, {
+          outputDirectory: output,
+        }),
+        { code: "EEXIST" },
+      );
+      assert.deepEqual(await readdir(output), ["receipt.json"]);
+      assert.equal(await readFile(join(output, "receipt.json"), "utf8"), "existing receipt");
+      await rm(join(output, "receipt.json"));
+      await symlink(marker, join(output, "stdout"));
+      await assert.rejects(
+        runCommand(process.execPath, args, {
+          outputDirectory: output,
+        }),
+        { code: "EEXIST" },
+      );
+      await assert.rejects(readFile(marker), { code: "ENOENT" });
+      await assertCommandOutputClosed(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture bounds stored bytes and refuses overflow",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-overflow-"));
+    try {
+      await assert.rejects(
+        runCommand(
+          process.execPath,
+          ["-e", "require('node:fs').writeSync(1, Buffer.alloc(8192, 65))"],
+          { outputDirectory: directory, maxOutputBytes: 1024 },
+        ),
+        (error) => {
+          assert.ok(error instanceof CommandFailure);
+          assert.equal(error.commandOutput.complete, false);
+          assert.ok(error.commandOutput.errors.some((message) => /byte limit/.test(message)));
+          return true;
+        },
+      );
+      const receipt = JSON.parse(await readFile(join(directory, "receipt.json"), "utf8"));
+      assert.equal(receipt.complete, false);
+      assert.equal(
+        receipt.channels.reduce((size, channel) => size + channel.storedBytes, 0),
+        1024,
+      );
+      assert.ok(receipt.channels[0].observedBytes > receipt.channels[0].storedBytes);
+      assert.equal((await readFile(join(directory, "stdout"))).length, 1024);
+      assert.ok(receipt.channels.every(({ closed }) => closed));
+      await assertCommandOutputClosed(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture refuses lossy parser decoding while retaining raw bytes",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-utf8-"));
+    try {
+      const bytes = Buffer.from([0xff, 0x0a]);
+      await assert.rejects(
+        runCommand(
+          process.execPath,
+          ["-e", `require('node:fs').writeSync(1, Buffer.from(${JSON.stringify([...bytes])}))`],
+          { outputDirectory: directory, capture: true },
+        ),
+        (error) => {
+          assert.equal(error.exitCode, 1);
+          assert.equal(error.commandOutput.exitCode, 0);
+          assert.equal(error.commandOutput.complete, false);
+          assert.ok(
+            error.commandOutput.errors.includes("Captured compiler stdout is not lossless UTF-8."),
+          );
+          return true;
+        },
+      );
+      assert.deepEqual(await readFile(join(directory, "stdout")), bytes);
+      await assertCommandOutputClosed(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture detects a replaced sink and closes the retained descriptor",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-replaced-"));
+    try {
+      const path = join(directory, "stdout");
+      // The real child changes the path before emitting any bytes. The runner
+      // must refuse that write rather than reopen and overwrite the replacement.
+      const source = `const fs = require('node:fs');
+      fs.renameSync(${JSON.stringify(path)}, ${JSON.stringify(`${path}.original`)});
+      fs.writeFileSync(${JSON.stringify(path)}, 'replacement');
+      fs.writeSync(1, 'must not reach replacement');`;
+      await assert.rejects(
+        runCommand(process.execPath, ["-e", source], {
+          outputDirectory: directory,
+        }),
+        (error) => {
+          assert.equal(error.commandOutput.complete, false);
+          assert.ok(error.commandOutput.errors.some((message) => /changed/.test(message)));
+          assert.ok(error.commandOutput.channels.every(({ closed }) => closed));
+          assert.equal(error.commandOutput.channels[0].storedBytes, 0);
+          return true;
+        },
+      );
+      assert.equal(await readFile(path, "utf8"), "replacement");
+      assert.equal(await readFile(`${path}.original`, "utf8"), "");
+      await assertCommandOutputClosed(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output receipt failure preserves the child error and never removes a replacement",
+  {
+    skip: process.platform !== "linux",
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-receipt-"));
+    try {
+      const path = join(directory, "receipt.json");
+      const source = `const fs = require('node:fs');
+      fs.renameSync(${JSON.stringify(path)}, ${JSON.stringify(`${path}.original`)});
+      fs.writeFileSync(${JSON.stringify(path)}, 'replacement'); process.exit(23);`;
+      await assert.rejects(
+        runCommand(process.execPath, ["-e", source], {
+          outputDirectory: directory,
+        }),
+        (error) => {
+          assert.equal(error.exitCode, 23);
+          assert.equal(error.signal, null);
+          assert.equal(error.commandOutput.complete, false);
+          assert.equal(error.commandOutput.receiptPublished, false);
+          assert.ok(error.commandOutput.channels.every(({ closed }) => closed));
+          return true;
+        },
+      );
+      assert.equal(await readFile(path, "utf8"), "replacement");
+      await assertCommandOutputClosed(directory);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "compiler output capture preserves cancellation and terminates the tool group",
+  {
+    skip: process.platform !== "linux",
+    timeout: 15_000,
+  },
+  async (context) => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-compiler-cancel-"));
+    const outputDirectory = join(directory, "output");
+    await mkdir(outputDirectory, { mode: 0o700 });
+    const readyPath = join(directory, "descendant-pid");
+    const toolPath = join(directory, "tool-pid");
+    const next = join(directory, "unexpected-next-command");
+    const descendant = `const fs = require('node:fs'); process.on('SIGTERM', () => {});
+    fs.writeFileSync(${JSON.stringify(readyPath)}, String(process.pid)); setInterval(() => {}, 1000);`;
+    const tool = `const fs = require('node:fs');
+    process.on('SIGTERM', () => { fs.writeSync(2, 'shutdown\\n'); process.exit(0); });
+    fs.writeFileSync(${JSON.stringify(toolPath)}, String(process.pid));
+    fs.writeSync(1, 'before cancel\\n');
+    require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: 'ignore' });`;
+    const runner = `import { runCommand } from ${JSON.stringify(moduleUrl)};
+    import { writeFile } from 'node:fs/promises';
+    try { await runCommand(process.execPath, ['-e', ${JSON.stringify(tool)}], { outputDirectory: ${JSON.stringify(outputDirectory)}, capture: true });
+      await writeFile(${JSON.stringify(next)}, 'unexpected'); }
+    catch (error) { process.stdout.write(String(error.signal)); process.exitCode = 143; }`;
+    const parent = spawn(process.execPath, ["--input-type=module", "-e", runner], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const completion = new Promise((resolve, reject) => {
+      parent.once("error", reject);
+      parent.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    let result = "";
+    let errors = "";
+    parent.stdout.setEncoding("utf8").on("data", (chunk) => {
+      result += chunk;
+    });
+    parent.stderr.setEncoding("utf8").on("data", (chunk) => {
+      errors += chunk;
+    });
+    context.after(async () => {
+      if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
+      const pid = Number(await readFile(toolPath, "utf8").catch(() => "0"));
+      if (pid > 0) {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      await completion;
+      await rm(directory, { recursive: true, force: true });
+    });
+    const deadline = Date.now() + 5_000;
+    let descendantPid;
+    while (descendantPid === undefined) {
+      const value = await readFile(readyPath, "utf8").catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (value !== null) descendantPid = Number(value);
+      else {
+        assert.ok(parent.exitCode === null && parent.signalCode === null, errors);
+        assert.ok(Date.now() < deadline, "Compiler child did not become ready.");
+        await setTimeout(10);
+      }
+    }
+    parent.kill("SIGTERM");
+    assert.deepEqual(await completion, { code: 143, signal: null });
+    assert.equal(result, "SIGTERM");
+    assert.equal(errors, "");
+    const receipt = await commandOutputReceipt(outputDirectory, [
+      Buffer.from("before cancel\n"),
+      Buffer.from("shutdown\n"),
+    ]);
+    assert.equal(receipt.interrupted, "SIGTERM");
+    await assert.rejects(readFile(next), { code: "ENOENT" });
+    const settled = Date.now() + 2_000;
+    while (true) {
+      const state = await readFile(`/proc/${descendantPid}/stat`, "utf8").catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (state === null || /\) [ZX] /.test(state)) break;
+      assert.ok(Date.now() < settled, "Compiler descendant survived cancellation.");
+      await setTimeout(10);
+    }
+  },
+);
+
+test("compiler output CLI selection refuses other targets before prerequisites", async () => {
+  const result = await captureCli("native", { OCC_BUILD_READ_COMPILER_OUTPUT: "/not-selected" });
+  assert.equal(result.status, 1);
+  assert.equal(result.output, "");
+  assert.match(result.errors, /OCC_BUILD_READ_COMPILER_OUTPUT requires the native-read target/);
 });
 
 test("a successful subprocess must still produce its declared output", async () => {

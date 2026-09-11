@@ -68,6 +68,32 @@ DNS/TLS build dependency. The existing `native`, `build`, and `images` targets
 continue to select DNS/TLS without selecting READ. Primary native Git/gh does
 not require this optional mediated build or its package installation.
 
+For a separately selected READ build, `OCC_BUILD_READ_COMPILER_OUTPUT` optionally
+names an existing absolute, canonical Linux output directory owned by the
+current user, without special or group/world write bits. The runner exclusively
+creates `stdout`, `stderr`, and `receipt.json` there; existing files and linked
+paths fail before Cargo starts. Select a fresh directory outside the source
+inputs. This option applies only to `native-read` and only to its one Cargo
+`build` invocation. Tool discovery, version output and builder progress remain
+outside these compiler streams.
+
+The two channels retain their original bytes, with a combined 8 MiB limit and
+bounded writes that apply backpressure. The existing 4 MiB parser limit remains.
+The runner reads back each retained output descriptor, flushes and closes it,
+and leaves completed files owned by the caller with mode `0400`. The receipt
+records the literal command, working directory, PID, exit status and signal,
+cancellation, and each channel's observed/stored byte counts, SHA-256 hashes,
+EOF, flush, close and final file identity. `complete` describes stream custody;
+Cargo can fail with complete streams. Natural Cargo failure preserves both
+channels and its original failure status. A receipt publication failure rejects
+success and removes only its own matching partial receipt. Replaced files are
+never removed. Overflow, write/readback loss, changed paths and incomplete
+capture refuse staging. Captured parser stdout must have the same digest as the
+raw stdout bytes; lossy UTF-8 decoding is rejected. Protected parent directories
+and trusted same-owner/privileged writers remain required throughout capture.
+This log receipt adds no compiler success, source, install or image claim to the
+native manifest.
+
 Each native Cargo build selects JSON messages with `--message-format=json`.
 The runner requires exactly one selected executable artifact and exactly one
 successful terminal `build-finished`, as well as successful subprocess exit.
