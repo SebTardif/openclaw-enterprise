@@ -20,6 +20,7 @@ import type { LifecycleAdmissionUnitPhase } from "../../lifecycle/protective-adm
 import type {
   LifecycleAdmissionRepository,
   ProtectiveAdmissionRecordV1,
+  ProtectiveAdmissionStorageResultV1,
 } from "../../ports/repositories/lifecycle-admission.ts";
 import type { QueryRepositoryFactoryContext } from "../../ports/repository-factory.ts";
 
@@ -379,7 +380,7 @@ export function createPostgresLifecycleAdmission(context: Context): LifecycleAdm
           [namespaceId, agentId, decision.generation, input.transitionRef],
         );
       context.phase.assertProtective();
-      return immutableCopy({ kind: "provisional", retained });
+      return immutableCopy<ProtectiveAdmissionStorageResultV1>({ kind: "provisional", retained });
     },
   };
 }

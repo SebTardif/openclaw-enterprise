@@ -63,7 +63,12 @@ function secretAudit(installation, secret, action = "create") {
   };
 }
 
-export async function assertSecretRepositoryClosed(repository, secret, writable = true) {
+export async function assertSecretRepositoryClosed(
+  repository,
+  secret,
+  writable = true,
+  closedMessage = "The platform transaction is closed.",
+) {
   const { namespaceId, id } = secret;
   const operations = [() => repository.findSecret(namespaceId, id)];
   if (writable)
@@ -74,9 +79,10 @@ export async function assertSecretRepositoryClosed(repository, secret, writable 
       () => repository.deleteSecret(namespaceId, id),
     );
   for (const operation of operations)
-    await assert.rejects(operation(), {
-      name: "ScopeViolationError",
-      message: "The platform transaction is closed.",
+    await assert.rejects(operation(), (error) => {
+      assert.ok(error instanceof ScopeViolationError);
+      assert.equal(error.message, closedMessage);
+      return true;
     });
 }
 
@@ -124,7 +130,13 @@ export async function verifySecretBootstrap(store) {
       undefined,
     );
   });
-  await assertSecretRepositoryClosed(retained, secret);
+  // Aggregate mutations close at the outer lifecycle admission boundary.
+  await assertSecretRepositoryClosed(
+    retained,
+    secret,
+    true,
+    "The lifecycle transaction is closed.",
+  );
 }
 
 export async function verifySecretMetadata(store) {
@@ -362,7 +374,13 @@ export async function verifySecretLifetime(store) {
           value,
         })),
       );
-      await assertSecretRepositoryClosed(retained, secret);
+      // Aggregate mutations close at the outer lifecycle admission boundary.
+      await assertSecretRepositoryClosed(
+        retained,
+        secret,
+        true,
+        "The lifecycle transaction is closed.",
+      );
       let read;
       const secretRemains = scenario === "delete" ? !commit : commit;
       await store.read(async (s) => {

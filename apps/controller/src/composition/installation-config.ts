@@ -137,6 +137,13 @@ export async function loadInstallationConfiguration(options: {
     packageRoot,
     options.packageRoot !== undefined,
   );
+  const sshCompute = computePackage === undefined && computeSelection.id === "compute-ssh";
+  const kubernetesCompute = computePackage === undefined && !sshCompute;
+  if (sshCompute && sandboxSelection !== undefined) {
+    throw new Error(
+      "drivers.sandbox is unsupported with compute-ssh; it requires the bundled Kubernetes Compute Driver.",
+    );
+  }
   const sandboxPackage =
     sandboxSelection === undefined
       ? undefined
@@ -162,11 +169,11 @@ export async function loadInstallationConfiguration(options: {
   if (sandbox !== undefined && computePackage !== undefined) {
     throw new Error("drivers.sandbox requires the bundled Kubernetes Compute Driver.");
   }
-  if (computePackage === undefined && compute.configuration.isolationProfile !== undefined) {
+  if (kubernetesCompute && compute.configuration.isolationProfile !== undefined) {
     if (sandbox !== undefined)
       throw new Error("gVisor Alpha cannot be combined with drivers.sandbox.");
   }
-  if (options.mode === "production" && computePackage === undefined) {
+  if (options.mode === "production" && kubernetesCompute) {
     validateProductionComputeConfiguration(compute);
   }
   const installation = Object.freeze({

@@ -13,6 +13,7 @@ import { InMemoryPlatformState, OpenClawController } from "../../packages/occ/sr
 import { authenticatedHeaders, signInWithEmailPassword } from "./auth-session.mjs";
 import { createTestConfigurationDriver } from "./configuration-driver.mjs";
 import { createTestSecretDriver } from "./secret-driver.mjs";
+import { deployLiveAgentRevision } from "./live-lifecycle-deploy.mjs";
 
 export const providerFixtures = Object.freeze([
   Object.freeze({
@@ -148,7 +149,36 @@ export async function createConsoleAppFixture(t, options = {}) {
   if (providerSummaries !== undefined) appOptions.providerSummaries = providerSummaries;
   const app = createFastifyApp(appOptions);
   await app.listen({ host: "127.0.0.1", port });
-  t.after(() => app.close());
+  const cleanupBeforeAppClose = [];
+  let appClosed = false;
+
+  function registerCleanupBeforeAppClose(cleanup) {
+    cleanupBeforeAppClose.push(cleanup);
+  }
+
+  async function close() {
+    if (appClosed) return;
+    appClosed = true;
+    let cleanupError;
+    try {
+      for (const cleanup of cleanupBeforeAppClose) {
+        try {
+          await cleanup();
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+    } finally {
+      try {
+        await app.close();
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
+    if (cleanupError) throw cleanupError;
+  }
+
+  t.after(close);
 
   async function rawRequest(method, path, { headers = {}, body, timeout = 5000 } = {}) {
     const response = await fetch(`${origin}${path}`, {
@@ -275,8 +305,14 @@ export async function createConsoleAppFixture(t, options = {}) {
   }
 
   async function deployAgent(namespaceId, agentId) {
-    const revision = await request("POST", `/namespaces/${namespaceId}/agents/${agentId}/deploy`);
-    assert.equal(revision.status, 202);
+    // Admitted-history tests need real saved V2 prerequisites. The helper fails
+    // explicitly when this lightweight fixture has no account/profile owners;
+    // it must not synthesize authority or use the removed bodyless deployment.
+    const { revision } = await deployLiveAgentRevision({
+      namespaceId,
+      agentId,
+      request: (method, path, body) => request(method, path, { body }),
+    });
     return revision.data;
   }
 
@@ -337,5 +373,6 @@ export async function createConsoleAppFixture(t, options = {}) {
     seedActiveAgentRevision,
     createSecret,
     createAccountWithPolicy,
+    registerCleanupBeforeAppClose,
   };
 }

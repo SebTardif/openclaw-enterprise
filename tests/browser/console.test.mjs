@@ -9,6 +9,8 @@ import { createConsoleBrowserFixture } from "../helpers/console-browser.mjs";
 
 const browserFixture = createConsoleBrowserFixture();
 
+const routeHoldTimeoutMs = 30_000;
+
 async function artifactDirectory(t) {
   const configured = process.env.OCC_TEST_CONSOLE_ARTIFACT_DIR;
   const directory =
@@ -19,18 +21,20 @@ async function artifactDirectory(t) {
   return directory;
 }
 
-async function newPage(t) {
+async function newPage(t, fixture) {
   const artifacts = await artifactDirectory(t);
   const context = await browserFixture.newContext(t);
+  fixture.registerCleanupBeforeAppClose(() => context.close());
   return { page: await context.newPage(), artifacts };
 }
 
-async function newMobilePage(t) {
+async function newMobilePage(t, fixture) {
   const context = await browserFixture.newContext(t, {
     hasTouch: true,
     isMobile: true,
     viewport: { width: 390, height: 844 },
   });
+  fixture.registerCleanupBeforeAppClose(() => context.close());
   return { page: await context.newPage() };
 }
 
@@ -52,38 +56,85 @@ async function chooseNamespace(page, name) {
   await page.getByRole("menuitemradio", { name }).click();
 }
 
-async function holdRoute(page, pattern, continueRoute) {
-  let release;
-  let complete;
-  const releaseGate = new Promise((resolve) => {
-    release = resolve;
+function deferred() {
+  let resolve;
+  const promise = new Promise((innerResolve) => {
+    resolve = innerResolve;
   });
-  const completed = new Promise((resolve) => {
-    complete = resolve;
+  return { promise, resolve };
+}
+
+async function waitForRoutePhase(promise, description, release, signal) {
+  let timeout;
+  let onAbort;
+  const deadline = new Promise((_, reject) => {
+    function fail(reason) {
+      release();
+      const error = new Error(`${description} did not finish within ${routeHoldTimeoutMs}ms`);
+      if (reason !== undefined) error.cause = reason;
+      reject(error);
+    }
+
+    if (signal?.aborted) {
+      fail(signal.reason);
+      return;
+    }
+
+    timeout = setTimeout(() => fail(), routeHoldTimeoutMs);
+    onAbort = () => fail(signal.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
-  const captured = new Promise((resolve) => {
-    void page.route(pattern, async (route) => {
-      let response;
-      try {
-        response = await route.fetch();
-      } catch {
-        response = undefined;
-      }
-      resolve();
-      await releaseGate;
-      try {
-        await continueRoute(route, response);
-      } catch {
-        /* The page may already have aborted the obsolete read. */
-      } finally {
-        complete();
-      }
-    });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timeout);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function holdRoute(t, page, pattern, continueRoute) {
+  const releaseGate = deferred();
+  const captured = deferred();
+  const completed = deferred();
+  let released = false;
+  let releaseWatchdog;
+
+  function release() {
+    if (released) return;
+    released = true;
+    clearTimeout(releaseWatchdog);
+    releaseGate.resolve();
+  }
+
+  t.signal?.addEventListener("abort", release, { once: true });
+  await page.route(pattern, async (route) => {
+    let response;
+    try {
+      response = await route.fetch();
+    } catch {
+      response = undefined;
+    }
+    captured.resolve();
+    if (!released && releaseWatchdog === undefined) {
+      releaseWatchdog = setTimeout(release, routeHoldTimeoutMs);
+      releaseWatchdog.unref?.();
+    }
+    await releaseGate.promise;
+    try {
+      await continueRoute(route, response);
+    } catch {
+      /* The page may already have aborted the obsolete read. */
+    } finally {
+      completed.resolve();
+    }
   });
+
   return {
-    released: captured,
-    completed,
     release,
+    waitForRelease: () =>
+      waitForRoutePhase(captured.promise, `route ${pattern} capture`, release, t.signal),
+    waitForCompletion: () =>
+      waitForRoutePhase(completed.promise, `route ${pattern} completion`, release, t.signal),
   };
 }
 
@@ -105,7 +156,7 @@ test("console browser flow keeps Namespace URL state across global pages and log
   const beta = await fixture.createNamespace("Beta", { ready: true });
   await fixture.createAgent(alpha.id, "Alpha <script>alert(1)</script>");
   await fixture.createAgent(beta.id, "Beta agent");
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
   page.on("dialog", (dialog) => assert.fail(`Unexpected browser dialog: ${dialog.message()}`));
 
@@ -151,7 +202,7 @@ test("console browser flow keeps Namespace URL state across global pages and log
   );
   assert.deepEqual(writeRequests, []);
   assert.equal(
-    requests.some((request) => /\/deploy|\/agents\/agt_/.test(request.path)),
+    requests.some((request) => /\/deploy(?:\?|$)|\/agents\/agt_/.test(request.path)),
     false,
   );
 });
@@ -163,30 +214,30 @@ test("console ignores stale collection successes and errors while switching Name
   const current = await fixture.createNamespace("Current", { ready: true });
   await fixture.createAgent(slow.id, "Slow agent");
   await fixture.createAgent(current.id, "Current agent");
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const slowAgents = `**/namespaces/${slow.id}/agents`;
-  const slowSuccess = await holdRoute(page, slowAgents, (route, response) =>
+  const slowSuccess = await holdRoute(t, page, slowAgents, (route, response) =>
     response ? route.fulfill({ response }) : route.continue(),
   );
   t.after(() => slowSuccess.release());
 
   await login(page, fixture, `/console/agents?namespace=${slow.id}`);
-  await slowSuccess.released;
+  await slowSuccess.waitForRelease();
   await chooseNamespace(page, "Current");
   await page.getByText("Current agent").waitFor();
   slowSuccess.release();
-  await slowSuccess.completed;
+  await slowSuccess.waitForCompletion();
   await expectNoText(page, /Slow agent|unavailable|failed/i);
 
   await page.unroute(slowAgents);
-  const slowError = await holdRoute(page, slowAgents, (route) => route.abort("failed"));
+  const slowError = await holdRoute(t, page, slowAgents, (route) => route.abort("failed"));
   t.after(() => slowError.release());
   await chooseNamespace(page, "Slow");
-  await slowError.released;
+  await slowError.waitForRelease();
   await chooseNamespace(page, "Current");
   await page.getByText("Current agent").waitFor();
   slowError.release();
-  await slowError.completed;
+  await slowError.waitForCompletion();
   await page.waitForTimeout(100);
   await expectNoText(page, /Slow agent|unavailable|failed/i);
 });
@@ -198,7 +249,7 @@ test("mobile Namespace menu selects another Namespace without signing out", asyn
   const beta = await fixture.createNamespace("Beta", { ready: true });
   await fixture.createAgent(alpha.id, "Alpha mobile agent");
   await fixture.createAgent(beta.id, "Beta mobile agent");
-  const { page } = await newMobilePage(t);
+  const { page } = await newMobilePage(t, fixture);
 
   await login(page, fixture, `/console/agents?namespace=${alpha.id}`);
   await page.getByText("Alpha mobile agent").waitFor();
@@ -218,7 +269,7 @@ test("console clears private content after session expiry, access revocation, an
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Revoked", { ready: true });
   await fixture.createAgent(namespace.id, "Revoked agent");
-  const { page, artifacts } = await newPage(t);
+  const { page, artifacts } = await newPage(t, fixture);
   await login(page, fixture, `/console/agents?namespace=${namespace.id}`);
   await page.getByText("Revoked agent").waitFor();
 
@@ -279,7 +330,7 @@ test("shared browser contexts keep separate users, cookies and storage isolated"
       roleId: fixture.policy.roles[0].id,
     });
   });
-  const { page: first } = await newPage(t);
+  const { page: first } = await newPage(t, fixture);
   await login(first, fixture, "/console/settings");
   await first.getByText(fixture.credentials.email.toLowerCase()).waitFor();
   await first.evaluate(() => {
@@ -289,7 +340,7 @@ test("shared browser contexts keep separate users, cookies and storage isolated"
 
   // Both users access the same real application origin. The shared process must
   // not carry the first user's session or browser storage into a fresh context.
-  const { page: second } = await newPage(t);
+  const { page: second } = await newPage(t, fixture);
   assert.equal(first.context().browser(), second.context().browser());
   assert.notEqual(first.context(), second.context());
   assert.deepEqual(await second.context().storageState(), { cookies: [], origins: [] });

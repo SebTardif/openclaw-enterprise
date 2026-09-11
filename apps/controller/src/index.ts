@@ -73,6 +73,7 @@ import { AuditEventFactory, type AuditSink } from "@openclaw-enterprise/audit";
 import { AuthAccountRoleNotFoundError, type AuthPrincipalSeed } from "@openclaw-enterprise/iam";
 import {
   ErrorResponse,
+  AgentRuntimeCredentialResponse,
   SecretResponse,
   occApiRoutes,
   type AgentRevision,
@@ -1410,7 +1411,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         schema: {
           operationId: "signOut",
           summary: "Sign out of the current session",
-          description: "Revokes the current Better Auth session cookie.",
+          description: "Revokes the current user session cookie.",
           tags: ["Authentication"],
           security: [{ sessionCookie: [] }],
           response: responses({ type: "object", additionalProperties: true }),
@@ -1637,6 +1638,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   void app.register(async (routes) => {
     routes.addSchema(ErrorResponse);
     routes.addSchema(SecretResponse);
+    routes.addSchema(AgentRuntimeCredentialResponse);
     const configurationHandlers = createConfigurationOperationHandlers({
       resolveConfigurationService: () => {
         if (!controller)
@@ -1760,6 +1762,21 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             "A required platform dependency is unavailable.",
           );
         return context;
+      },
+      runRuntimeCredentialMutation: async (request, operation, context, resource, mutate) => {
+        requireBrowserIntent(request, true);
+        const currentController = controller;
+        if (!currentController)
+          throw failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+        return currentController.transact(async (unit) => {
+          const result = await mutate();
+          try {
+            await unit.audit.append(event(operation, request, resource, "mutation", context));
+          } catch {
+            throw dependencyUnavailable();
+          }
+          return result;
+        });
       },
       runAgentMutation: async (
         request,
@@ -1901,6 +1918,8 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       updateAgent: agentHandlers.updateAgent,
       listAgents: agentHandlers.listAgents,
       getAgent: agentHandlers.getAgent,
+      getAgentRuntimeCredentials: agentHandlers.getAgentRuntimeCredentials,
+      provisionAgentRuntimeCredentials: agentHandlers.provisionAgentRuntimeCredentials,
       deployAgent: agentHandlers.deployAgent,
       getAgentWorkspaceFile: perform,
       putAgentWorkspaceFile: perform,

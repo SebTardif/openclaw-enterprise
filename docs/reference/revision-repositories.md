@@ -44,7 +44,7 @@ node scripts/test-files.mjs --test-concurrency=1 -- tests/conformance/revision-r
 
 The PostgreSQL contract requires its own fresh, migrated database selected by
 `OCC_REVISION_REPOSITORY_TEST_DATABASE_URL`, using the limited application role
-from the [PostgreSQL test environment](settings.md#postgresql-test-environment).
+from the [PostgreSQL test environment](../testing/postgresql.md#postgresql-test-environment).
 It checks the empty Installation before its bootstrap rollback case, then tests
 the wired adapter and a factory using an uncommitted owner connection:
 

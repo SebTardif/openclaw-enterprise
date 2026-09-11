@@ -332,6 +332,16 @@ function fixture(settings = {}) {
       },
     },
     configurations: {
+      // The selected unit supplies the complete Agent mutation projection,
+      // including the configuration lookup used by runtime credential commands.
+      async lockConfiguration(targetNamespace, target) {
+        calls.events.push("configuration.lock");
+        return targetNamespace === namespaceId &&
+          target === configurationId &&
+          !settings.missingConfiguration
+          ? configuration
+          : undefined;
+      },
       async findConfiguration(targetNamespace, target) {
         calls.events.push("configuration.find");
         return targetNamespace === namespaceId &&

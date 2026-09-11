@@ -150,14 +150,14 @@ mounts after the gateway has prepared them. Private gateway state, claim roots,
 `CODEX_HOME`, tokens, and credentials remain outside the dedicated Harness.
 Predecessor retirement retains the current gateway and both owned claims; final
 gateway teardown deletes the exact-owned private and shared claims by UID before
-deleting the gateway. The [storage contract](../reference/drivers/kubernetes-compute.md#storage-and-credentials)
+deleting the gateway. The [storage contract](../reference/drivers/kubernetes-compute/storage-and-credentials.md#gateway-storage)
 owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 
 ## Selected journal execution component
 
 The separate [hosted native owner](../reference/hosted-native-execution.md)
 connects one original dispatch to the
-[selected turn journal](../reference/turn-journal.md#selected-native-execution-retention).
+[selected turn journal](../reference/turn-journal/execution.md#selected-native-execution-retention).
 The direct deployment path above does not install a production dispatcher or
 bind the saved revision policy to this component's actual consumption authority.
 The native gate and Node SDK must share the current successor codecs before
@@ -219,7 +219,7 @@ real-native prerequisites.
   selected topology, exact identity and model-key placement, authenticated
   dedicated transport, enforced networking, active routing and provider-backed
   turns. Select the actual runtime images, infrastructure and credentials through
-  the [test environment settings](../reference/settings.md#docker-compose-development-test-environment).
+  the [test environment settings](../testing/docker.md#docker-compose-development-test-environment).
   An HTTP fixture, readiness response or historical receipt does not establish
   those outcomes on the current source.
 - Provider-backed dedicated Codex coverage additionally selects
@@ -232,10 +232,10 @@ real-native prerequisites.
 ## Related docs
 
 - [Harness execution topology implementation specification](../../specs/.archive/07-harness-execution-topology.md)
-- [Platform design](../design.md#openclaw-gateways)
-- [Agent placement and deployment](../reference/agents.md#execution-mode)
-- [Controller worker](../reference/controller.md#agentrevision-lifecycle)
-- [Selected turn journal](../reference/turn-journal.md#selected-native-execution-retention)
+- [Platform design](../design/workloads.md#openclaw-gateways)
+- [Agent placement and deployment](../reference/agents/deployment.md#execution-mode)
+- [Controller worker](../reference/controller/reconciliation.md#agentrevision-lifecycle)
+- [Selected turn journal](../reference/turn-journal/execution.md#selected-native-execution-retention)
 - [Hosted native execution owner](../reference/hosted-native-execution.md)
 - [Docker Compute Driver](../reference/drivers/docker-compute.md)
 - [Kubernetes Compute Driver](../reference/drivers/kubernetes-compute.md)

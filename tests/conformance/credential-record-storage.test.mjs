@@ -484,6 +484,22 @@ function protocol(options = {}) {
         events.push("agent");
         return options.agent ? options.agent() : result([{ id: parameters[1] }]);
       }
+      if (statement.startsWith("INSERT INTO occ.audit_events")) {
+        // Observe the canonical State audit on the original controlled client.
+        // This supplies only a database response, never startup acceptance.
+        events.push("audit");
+        audits.push({
+          actorId: parameters[3],
+          action: parameters[4],
+          namespaceId: parameters[5],
+          resourceKind: parameters[6],
+          resourceId: parameters[7],
+          outcome: parameters[8],
+          details: JSON.parse(parameters[9]),
+        });
+        if (options.audit) await options.audit();
+        return result([], "INSERT");
+      }
       if (statement.startsWith("SELECT") && statement.includes("occ.gateway_startup_operations")) {
         events.push("history");
         if (options.history) await options.history();
@@ -713,6 +729,21 @@ function selectionLease(lease, unit) {
     },
   };
 }
+function assertAcceptanceAudit(p) {
+  assert.equal(p.audits.length, 1);
+  const { details, ...audit } = p.audits[0];
+  assert.deepEqual(audit, {
+    actorId: "controlled-actor",
+    action: "gateway-startup.accept-startup",
+    namespaceId: subject.namespaceRef,
+    resourceKind: "agent",
+    resourceId: subject.agentRef,
+    outcome: "success",
+  });
+  assert.equal(details.command.operationRef, "original-admission");
+  assert.ok(p.events.indexOf("audit") < p.events.indexOf("append"));
+  assert.ok(p.events.indexOf("append") < p.events.indexOf("commit"));
+}
 test("actual private selection reader uses one original operation and expires before later work", async () => {
   let escaped;
   const p = protocol({
@@ -725,6 +756,7 @@ test("actual private selection reader uses one original operation and expires be
     },
   });
   assert.equal((await p.run(accept())).kind, "accepted");
+  assertAcceptanceAudit(p);
   const read = p.calls.find((call) => call.statement.includes("AS credential_record"));
   assert.deepEqual(read.parameters, [
     subject.installationId,
@@ -939,6 +971,7 @@ test("actual admitted selector lease feeds the exact central reader on the same 
     },
   });
   assert.equal((await p.run(accept())).kind, "accepted");
+  assertAcceptanceAudit(p);
   assert.throws(() => activeHeld.assertCurrent());
   assert.equal(p.connects(), 1);
 });

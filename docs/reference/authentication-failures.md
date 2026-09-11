@@ -71,7 +71,7 @@ The [storage-failure regression](../../tests/integration/auth-storage-failures.t
 requires a fresh, migrated, owned loopback database named `openclaw_auth_*`.
 Set both `OCC_AUTH_FAILURE_DATABASE_URL` for `occ_app` and
 `OCC_AUTH_FAILURE_MIGRATOR_URL` for `occ_migrator`, pointing to that same database.
-Use the existing [PostgreSQL test setup](settings.md#postgresql-test-environment)
+Use the existing [PostgreSQL test setup](../testing/postgresql.md#postgresql-test-environment)
 with those separate roles, then run:
 
 ```sh

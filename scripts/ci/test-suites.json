@@ -1,0 +1,2542 @@
+{
+  "version": 1,
+  "lanes": {
+    "checks-baseline": {
+      "files": [
+        {
+          "path": "tests/conformance/audit.test.mjs"
+        },
+        {
+          "path": "tests/conformance/compute-lifecycle-hooks.test.mjs"
+        },
+        {
+          "path": "tests/conformance/configuration-occ.test.mjs"
+        },
+        {
+          "path": "tests/conformance/contracts.test.mjs"
+        },
+        {
+          "path": "tests/conformance/docker-compute.test.mjs"
+        },
+        {
+          "path": "tests/conformance/iam.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-compute.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-runtime-credentials.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-configuration.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-ownership.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-secret-driver.test.mjs"
+        },
+        {
+          "path": "tests/conformance/occ-api-security.test.mjs"
+        },
+        {
+          "path": "tests/conformance/occ-read.test.mjs"
+        },
+        {
+          "path": "tests/conformance/platform-state-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/secret-gateway-delivery.test.mjs"
+        },
+        {
+          "path": "tests/conformance/secret-occ.test.mjs"
+        },
+        {
+          "path": "tests/conformance/service-account-driver.test.mjs"
+        },
+        {
+          "path": "tests/conformance/utils.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workspace-files-configuration.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workspace-files.test.mjs"
+        },
+        {
+          "path": "tests/integration/bootstrap-output.test.mjs"
+        },
+        {
+          "path": "tests/integration/bootstrap-volume.test.mjs"
+        },
+        {
+          "path": "tests/integration/configuration-controller.test.mjs"
+        },
+        {
+          "path": "tests/integration/configuration-startup.test.mjs"
+        },
+        {
+          "path": "tests/integration/console-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/controller-lifecycle.test.mjs"
+        },
+        {
+          "path": "tests/integration/driver-plugin-installation.test.mjs"
+        },
+        {
+          "path": "tests/integration/git-hooks.test.mjs"
+        },
+        {
+          "path": "tests/integration/occ-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/production-controller-security.test.mjs"
+        },
+        {
+          "path": "tests/integration/production-healthcheck.test.mjs"
+        },
+        {
+          "path": "tests/integration/sandbox-driver-startup.test.mjs"
+        },
+        {
+          "path": "tests/integration/secret-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/runtime-credentials-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/secret-driver-startup.test.mjs"
+        },
+        {
+          "path": "tests/integration/service-api-keys.test.mjs"
+        },
+        {
+          "path": "tests/integration/startup-ipv6-loopback.test.mjs"
+        },
+        {
+          "path": "tests/integration/common-logging.test.mjs"
+        },
+        {
+          "path": "tests/integration/dev-up.test.mjs",
+          "expectedTests": [
+            "dev-up builds the missing default runtime from its verified prepared context",
+            "dev-up reuses the default runtime without requiring or inspecting a build context",
+            "dev-up rejects changed prepared artifacts before building or starting services",
+            "dev-up preserves a selected custom runtime image and skips the quickstart build",
+            "dev-up applies per-image overrides on top of the shared runtime image",
+            "dev-up rejects a public controller port rendered by real Compose",
+            "dev-up refuses an existing key destination before invoking Compose",
+            "dev-up fails closed when bootstrap exits unsuccessfully",
+            "dev-up fails closed when the worker exits before readiness",
+            "dev-up preserves a copied key when the authenticated installation check is rejected",
+            "dev-up rejects an authenticated installation response for a different Installation"
+          ]
+        },
+        {
+          "path": "tests/integration/compute-singleton-worker.test.mjs",
+          "expectedTests": [
+            "before-commit Compute Drivers must expose an activation operation",
+            "Compute Driver maintenance intervals must be positive safe integers"
+          ]
+        },
+        {
+          "path": "tests/integration/ci-runner.test.mjs"
+        },
+        {
+          "path": "tests/integration/full-integration-preflight.test.mjs"
+        },
+        {
+          "path": "tests/integration/ci-cleanup.test.mjs"
+        },
+        {
+          "path": "tests/integration/ci-prepare.test.mjs"
+        },
+        {
+          "path": "tests/integration/ci-openshell.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-agents.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-runtime-credentials.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-deploy-client.test.mjs"
+        },
+        {
+          "path": "tests/browser/console.test.mjs"
+        },
+        {
+          "path": "tests/integration/ci-logging.test.mjs"
+        },
+        {
+          "path": "tests/integration/container-release.test.mjs"
+        },
+        {
+          "path": "tests/integration/container-promote.test.mjs"
+        },
+        {
+          "path": "tests/conformance/ssh-compute.test.mjs"
+        },
+        {
+          "path": "tests/integration/ssh-compute-startup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/acceptance-companion-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/account-authority-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/account-security-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/account-security-record.test.mjs"
+        },
+        {
+          "path": "tests/conformance/admitted-configuration.test.mjs"
+        },
+        {
+          "path": "tests/conformance/admitted-undispatched-consumer-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/agent-workload-profile-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/agent-runtime-credentials.test.mjs"
+        },
+        {
+          "path": "tests/conformance/api-reference-generation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/audience-observation-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/authorization-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-administration.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-binding-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-binding-reserved-create.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-material-service-context.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-principal-resolution.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/channel-status-idempotency-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/compute-create-correlation-factory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/compute-gateway-process-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/compute-launch-operands.test.mjs"
+        },
+        {
+          "path": "tests/conformance/compute-shared-runtime.test.mjs"
+        },
+        {
+          "path": "tests/conformance/configuration-json-values.test.mjs"
+        },
+        {
+          "path": "tests/conformance/configuration-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/configuration-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/containment-admission-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/containment-controls-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/containment-evidence-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/containment-fault-request-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/contract-leaves.test.mjs"
+        },
+        {
+          "path": "tests/conformance/controller-server-github-read-startup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/core-schema-extraction.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-backend-profile-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-custody-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-owner-commit.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-owner-phase.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-postgres.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-record-projection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-record-storage.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-storage-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-workload-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/delegation-codex-context.test.mjs"
+        },
+        {
+          "path": "tests/conformance/delegation-codex-request.test.mjs"
+        },
+        {
+          "path": "tests/conformance/delegation-grant.test.mjs"
+        },
+        {
+          "path": "tests/conformance/delegation-operation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/delegation-runtime-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deploy-admission-cas-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deploy-operation-readback.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deploy-workload-profile.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deployment-candidate-normalization.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deployment-credential-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/deployment-workload-use.test.mjs"
+        },
+        {
+          "path": "tests/conformance/development-setup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/docker-planning.test.mjs"
+        },
+        {
+          "path": "tests/conformance/domain-schema-extraction.test.mjs"
+        },
+        {
+          "path": "tests/conformance/driver-package-trust.test.mjs"
+        },
+        {
+          "path": "tests/conformance/final-pod-comparison-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/fresh-installation-bootstrap-finalizer.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-agent-material-delivery.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-channel-material-client.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-channel-material-codec.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-composition.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-installed-launch.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-material-delivery-source.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-material-delivery.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-material-service-source.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-physical-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-agent-bootstrap.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-agent-subject.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-bootstrap.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-central-transaction.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-central-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-consumer.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-controller-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-installation-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-lifetime.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-material-custody.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gateway-startup-service-source.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-observation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-response-buffers.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-settlement.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-publication-permissions-https.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-mediation-native-profile.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-mediation-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-read-mediation-composition.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-read-mvp-external-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/guarded-driver-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gvisor-development-profile.test.mjs"
+        },
+        {
+          "path": "tests/conformance/gvisor-development-setup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installation-service-registration.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installed-artifact-store.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installed-renderer-behavior-binding.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installed-renderer-definition.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installed-renderer-revision-operands.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-channel-proxy-explicit-port.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-installation-process.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-lifecycle-collaborators.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-lifecycle-effects.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-prepared-deployment.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-runtime-preparation-provider.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-renderer-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-resource-builders.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-resource-diagnostics.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-resource-normalization.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-resource-plan.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-runtime-observations.test.mjs"
+        },
+        {
+          "path": "tests/conformance/kubernetes-workload-profile-capability.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-admission-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-deploy-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-observation-v1-consumers.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-observation-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-protective-admission.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-status-http-contract-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-status-projector-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-status-reader-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-status-service-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-work-preflight-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/lifecycle-work-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/local-account-security.test.mjs"
+        },
+        {
+          "path": "tests/conformance/manual-native-policy.test.mjs"
+        },
+        {
+          "path": "tests/conformance/module-boundaries.test.mjs"
+        },
+        {
+          "path": "tests/conformance/mutation-coordinator.test.mjs"
+        },
+        {
+          "path": "tests/conformance/mvp-build.test.mjs"
+        },
+        {
+          "path": "tests/conformance/namespace-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/namespace-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/native-journal-completion.test.mjs"
+        },
+        {
+          "path": "tests/conformance/native-material-wire.test.mjs"
+        },
+        {
+          "path": "tests/conformance/native-measurement-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/openshell-client-lifecycle.test.mjs"
+        },
+        {
+          "path": "tests/conformance/openshell-options-ownership.test.mjs"
+        },
+        {
+          "path": "tests/conformance/postgres-auth-binding.test.mjs"
+        },
+        {
+          "path": "tests/conformance/postgres-controller-auth-binding.test.mjs"
+        },
+        {
+          "path": "tests/conformance/postgres-isolated-runner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/preparation-job-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/prepare-upstream-sdk.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-app-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-crypto.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-repository-work-phase.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-preparation-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-publication-work-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-transactions.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-adapter-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-git-binding-v3.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-native-execution-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-origin-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-policy-state-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-policy-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-selected-execution-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-selected-execution-work-transfer-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-selection-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-state-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-work-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/retained-journal-cost-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/retirement-purge-journal-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/retirement-purge-manifest-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/revision-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/revision-workload-profile-use.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-activation-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-admission-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-assignment-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-incremental.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-binding-candidate.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-create-correlation-observation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-create-correlation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-effects-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-fault-work-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-identity-purpose-guard.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-identity-stream-lifetime.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-identity-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-initial-binding-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-initial-binding.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-peer-verifier-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-preparation-create-reference.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-preparation-effect-admission.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-preparation-submission-contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-preparation-submission-owner.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-preparation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-profile-work-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-resource-accounting-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/schema-auth-boundary-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/secret-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/secret-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/security-event-delivery-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/selected-native-deployment.test.mjs"
+        },
+        {
+          "path": "tests/conformance/service-account-repository-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/service-account-service.test.mjs"
+        },
+        {
+          "path": "tests/conformance/shared-native-scenarios-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/shared-turn-receipt.test.mjs"
+        },
+        {
+          "path": "tests/conformance/startup-config.test.mjs"
+        },
+        {
+          "path": "tests/conformance/startup-diagnostics.test.mjs"
+        },
+        {
+          "path": "tests/conformance/test-files.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-command-scope.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-command-state-lifetime.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-journal-checkpoint-composition.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-journal-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-journal-replay.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-journal-storage.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-journal-v1.contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/turn-management-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/work-authority-ports-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/work-authority-v2.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-account.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-active-admission.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-admission-storage.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-admitted-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-candidate-bindings.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-candidate-context.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-candidate-source.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-canonical.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-construction.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-credential-capture.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-manifest.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-owned-inputs.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-prepared-use.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-session-security.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-state.test.mjs"
+        },
+        {
+          "path": "tests/conformance/workload-profile-use-v2.test.mjs"
+        },
+        {
+          "path": "tests/integration/agent-service-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/agent-service.test.mjs"
+        },
+        {
+          "path": "tests/integration/allocation-companion-v1.test.mjs"
+        },
+        {
+          "path": "tests/integration/authority-currentness.test.mjs"
+        },
+        {
+          "path": "tests/integration/browser-intent-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/channel-bindings-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/configuration-http.test.mjs"
+        },
+        {
+          "path": "tests/integration/console-module-assets.test.mjs"
+        },
+        {
+          "path": "tests/integration/controller-worker-lifetime.test.mjs"
+        },
+        {
+          "path": "tests/integration/deploy-admission-cas-api.test.mjs"
+        },
+        {
+          "path": "tests/integration/deployment-service.test.mjs"
+        },
+        {
+          "path": "tests/integration/docker-lifecycle.test.mjs"
+        },
+        {
+          "path": "tests/integration/fresh-installation-bootstrap-order.test.mjs"
+        },
+        {
+          "path": "tests/integration/http-admission.test.mjs"
+        },
+        {
+          "path": "tests/integration/lifecycle-status-http-v1.test.mjs"
+        },
+        {
+          "path": "tests/integration/lifecycle-worker-guard.test.mjs"
+        },
+        {
+          "path": "tests/integration/namespace-http.test.mjs"
+        },
+        {
+          "path": "tests/integration/native-channel-account-participant.test.mjs"
+        },
+        {
+          "path": "tests/integration/occ-deploy-client.test.mjs"
+        },
+        {
+          "path": "tests/integration/operation-sampling-v1.test.mjs"
+        },
+        {
+          "path": "tests/integration/pnpm-verification.test.mjs"
+        },
+        {
+          "path": "tests/integration/protected-github-custody.test.mjs"
+        },
+        {
+          "path": "tests/integration/read-mvp-broker.test.mjs"
+        },
+        {
+          "path": "tests/integration/release-evidence.test.mjs"
+        },
+        {
+          "path": "tests/integration/route-coverage.test.mjs"
+        },
+        {
+          "path": "tests/integration/runtime-authority-service.test.mjs"
+        },
+        {
+          "path": "tests/integration/runtime-preparation-worker-boundaries.test.mjs"
+        },
+        {
+          "path": "tests/integration/secret-http.test.mjs"
+        },
+        {
+          "path": "tests/integration/security-events-contract.test.mjs"
+        },
+        {
+          "path": "tests/integration/service-account-http.test.mjs"
+        },
+        {
+          "path": "tests/integration/sign-in-quota.test.mjs"
+        },
+        {
+          "path": "tests/integration/spire-first-observation-collectors.test.mjs"
+        },
+        {
+          "path": "tests/integration/worker-current-intent.test.mjs"
+        },
+        {
+          "path": "tests/integration/worker-lease-cancellation.test.mjs"
+        },
+        {
+          "path": "tests/integration/workload-profile-admission.test.mjs"
+        },
+        {
+          "path": "tests/integration/workload-profile-candidate-mock-e2e.test.mjs"
+        },
+        {
+          "path": "tests/integration/workload-profile-operator.test.mjs"
+        },
+        {
+          "path": "tests/integration/workload-profile-request-custody.test.mjs"
+        },
+        {
+          "path": "tests/integration/workload-profile-unit-of-work.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-agent-pages.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-channel-pages.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-lifecycle-presentation.test.mjs"
+        },
+        {
+          "path": "tests/browser/console-session-lifetime.test.mjs"
+        },
+        {
+          "path": "tests/unit/retained-store-preflight.test.mjs"
+        },
+        {
+          "path": "tests/unit/same-build-recovery-preflight.test.mjs"
+        },
+        {
+          "path": "tests/runtime/direct-compute-interruption/runner.test.mjs"
+        },
+        {
+          "path": "tests/integration/runtime-service-trust-api.test.mjs"
+        }
+      ]
+    },
+    "postgres": {
+      "prepare": {
+        "postgres": true,
+        "requiresPreparedStateForFile": true
+      },
+      "files": [
+        {
+          "path": "tests/integration/postgres-auth-accounts.test.mjs",
+          "expectedTests": [
+            "fresh PostgreSQL development bootstrap writes a usable administrator service key",
+            "PostgreSQL auth account provisioning is visible to another controller without rebuilding IAM Driver",
+            "PostgreSQL auth account audit failure rolls back IAM and Better Auth account state"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-bootstrap-failures.test.mjs",
+          "expectedTests": [
+            "concurrent development bootstrap subprocesses reject the loser and reload the committed winner",
+            "production bootstrap preserves committed credentials when COMMIT acknowledgement is lost",
+            "known bootstrap failures preserve created artifacts and report safe diagnostics",
+            "development bootstrap preserves credentials when COMMIT acknowledgement is lost"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-platform-state.test.mjs",
+          "expectedTests": [
+            "PostgreSQL rejects platform writes until the singleton Installation is bootstrapped",
+            "real OCC Namespace lifecycle persists provisioning, readiness, deletion, and its tombstone",
+            "PostgreSQL platform state satisfies memory adapter ownership, immutability, and atomicity",
+            "the PostgreSQL worker reloads exact Namespace restrictions and never dispatches revoked provisioning"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-production-wireup.test.mjs",
+          "expectedTests": [
+            "production bootstrap creates a generated-password administrator that can authenticate"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-provider-ownership.test.mjs",
+          "expectedTests": [
+            "development API starts with stale Provider references and permits repair through Agent update",
+            "PostgreSQL Provider ownership persists exact Agent associations and admits only matching managed bindings"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-restart-recovery.test.mjs",
+          "expectedTests": [
+            "Namespace creation and deletion retain distinct durable work targets",
+            "durable work deduplicates exact ownership and rejects actor or owner collisions",
+            "Namespace convergence and admitted revision work share one durable queue with exact resource ownership",
+            "stale and exhausted recovery includes admitted revisions and Namespace lifecycle work",
+            "transaction-scoped queue fencing rolls back Namespace mutation, completion, and audit together",
+            "concurrent claims exclude one Namespace lifecycle and one Agent while distinct Agents progress",
+            "a restarted queue recovers expired claims, fences old tokens, and persists exhausted failures",
+            "batch stale recovery reports each expired claim once and writes one audit event per item"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-secret-state.test.mjs",
+          "expectedTests": [
+            "in-memory state persists Secret metadata and binding references without values",
+            "PostgreSQL state persists Secret metadata and enforces binding dependencies"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-service-api-keys.test.mjs",
+          "expectedTests": [
+            "PostgreSQL Better Auth keys remain hashed, scoped, and revocable across instances"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-worker-agent-revision.test.mjs",
+          "expectedTests": [
+            "maintenance retains its real lease across consecutive short predecessor retirements",
+            "the revision worker activates admitted candidates, retires predecessors, and rejects revoked, malformed, and wrong-owner effects",
+            "the revision worker rejects associated-account access revoked after admission before invoking Compute",
+            "the revision worker rejects managed ServiceAccount provider mismatches before Compute",
+            "the revision worker retries transient Provider binding read failures without activating",
+            "an older revision retry is superseded without preparing or retiring a newer active revision",
+            "real PostgreSQL preserves the failure budget while an Agent runtime converges",
+            "an overdue Agent runtime fails closed without activating its incomplete revision",
+            "one worker reconciles embedded OpenClaw and dedicated Codex but rejects unapproved pinned Harnesses",
+            "a lost retirement claim preserves the activated replacement and cannot complete stolen work"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-worker-stale-claim.test.mjs",
+          "expectedTests": [
+            "a worker that loses its claim during Compute cannot publish Namespace status, lifecycle audit, or completion"
+          ]
+        },
+        {
+          "path": "tests/integration/compute-singleton-worker-postgres.test.mjs",
+          "expectedTests": [
+            "a worker binds persisted Namespace, Agent, and service principal before provider effects",
+            "a production singleton driver activates under its claim heartbeat before CAS and retires only after CAS",
+            "failed singleton activation retries without publishing or retiring the previous revision",
+            "production Drivers without an activation preference retain after-commit Kubernetes ordering",
+            "an opted-in active runtime continuously repairs under its original authorized actor",
+            "active maintenance recovers after its convergence deadline and stops when its actor is denied"
+          ]
+        },
+        {
+          "path": "tests/integration/lifecycle-work-preflight-v1-repositories.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-channel-bindings.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-channel-status-idempotency.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-delegation.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-mutation-atomicity.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-repository-commit-outcomes.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-revision-validator-privilege.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-runtime-assignment-state.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-sign-in-quota.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-turn-execution.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-turn-journal-commit.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-worker-leases.test.mjs"
+        },
+        {
+          "path": "tests/integration/postgres-worker-reconciliation.test.mjs"
+        },
+        {
+          "path": "tests/integration/worker-finalization-outcome.test.mjs"
+        }
+      ]
+    },
+    "images-packaging": {
+      "requiredEnv": ["OCC_TEST_RUNTIME_IMAGE", "OCC_TEST_PRODUCTION_IMAGE"],
+      "prepare": {
+        "defaultEnv": {
+          "NODE_BASE_IMAGE": "node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
+        },
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["NODE_BASE_IMAGE"],
+        "nodeBaseImage": true
+      },
+      "files": [
+        {
+          "path": "tests/integration/runtime-image-startup.test.mjs",
+          "expectedTests": [
+            "runtime image gateway ignores inherited OPENCLAW_LOG_LEVEL in favor of native configuration",
+            "runtime image starts an embedded OpenClaw gateway with the Docker driver entrypoint",
+            "runtime image discovers the bundled Codex plugin from a fresh gateway home",
+            "runtime image keeps Codex auth writable with a nested generated images mount",
+            "runtime image publishes dedicated assets with the Kubernetes gateway entrypoint"
+          ]
+        },
+        {
+          "path": "tests/integration/production-image-startup.test.mjs",
+          "expectedTests": [
+            "startup connection observer checks both real source launchers",
+            "production image server startup loads bundled Kubernetes, OpenShell, and ChatGPT modules",
+            "production image worker startup loads the shared runtime graph",
+            "production image executes the Go OpenShell component",
+            "production image includes console shell and public assets"
+          ]
+        },
+        {
+          "path": "tests/integration/production-kubernetes-packaging.test.mjs",
+          "expectedTests": [
+            "production native examples satisfy the current Helm, Installation, and PVC schemas",
+            "production Helm values example renders the providerless default chart",
+            "the production Helm chart renders private least-privilege runtime and ordered bootstrap",
+            "the optional ChatGPT Provider isolates admin credentials, tenant Secrets, and provider egress to the API",
+            "the real Helm renderer rejects mutable images, broad dependencies, and shared credentials",
+            "development packaging isolates bootstrap service key output to the bootstrap service",
+            "private Envoy Gateway routing renders automatic CA and deterministic default hostnames",
+            "private Envoy Gateway routing preserves explicit hostnames and external CA trust"
+          ]
+        },
+        {
+          "path": "tests/integration/logging-packaging.test.mjs",
+          "expectedTests": [
+            "development logging override routes only OCC-owned services through the private Collector",
+            "production Helm logging Collector is opt-in and isolated from application credentials",
+            "production Helm logging rejects mutable images, broad egress, and shared application Secrets"
+          ]
+        }
+      ]
+    },
+    "k3d-fixture-configuration": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_IMAGE"
+      ],
+      "env": {
+        "OCC_TEST_KUBERNETES_CONFIGURATION": "1"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true
+      },
+      "files": [
+        {
+          "path": "tests/integration/kubernetes-compute-real.test.mjs",
+          "expectedTests": [
+            "real Kubernetes Compute Driver owns isolated Agent gateways, identities, revisions, and deletion",
+            "real Kubernetes Drivers safely use and preserve an externally managed tenant namespace",
+            "authenticated PostgreSQL OCC API and worker deploy real Agent-owned gateways and revisions"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-platform-state-kubernetes.test.mjs",
+          "expectedTests": [
+            "real OCC subprocesses retain Installation, Namespace, Agent, IAM, audit, and work after restart",
+            "real OCC creates concurrent Namespace Agents and durably associates revisions with their owner",
+            "independent PostgreSQL API and worker provision isolated Namespaces, activate admitted revisions, and tombstone deletion",
+            "PostgreSQL API and worker preserve immutable deployments, stable identities, and tenant isolation"
+          ]
+        }
+      ]
+    },
+    "docker-model": {
+      "requiredEnv": [
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_DOCKER_RUNTIME_IMAGE",
+        "NODE_BASE_IMAGE",
+        "OCC_TEST_OTEL_LOGS_JSONL"
+      ],
+      "env": {
+        "OCC_TEST_DOCKER_COMPUTE_REAL": "1",
+        "OCC_TEST_OTEL_LOGS": "1"
+      },
+      "prepare": {
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL", "NODE_BASE_IMAGE"],
+        "nodeBaseImage": true
+      },
+      "files": [
+        {
+          "path": "tests/integration/docker-compute-real.test.mjs",
+          "expectedTests": [
+            "Docker Compose development drives Docker Compute networks, containers, auth, cleanup, and real model turns"
+          ]
+        }
+      ]
+    },
+    "k3d-model": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL"
+      ],
+      "env": {
+        "OCC_TEST_HARNESS_K3D_REAL": "1",
+        "OCC_TEST_SLACK_LIVE": "0",
+        "OCC_TEST_GATEWAY_ROUTING_REAL": "0"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "immutableOptionalEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+          "OCC_TEST_KUBERNETES_RUNTIME_IMAGE",
+          "OCC_TEST_KUBERNETES_CODEX_IMAGE"
+        ]
+      },
+      "files": [
+        {
+          "path": "tests/integration/harness-topology-k3d-real.test.mjs",
+          "expectedTests": [
+            "production dedicated Codex preserves gateway conversations and retained images across Pod replacement",
+            "production service account powers embedded OpenClaw through its exact persisted provider credential",
+            "production Secret API powers embedded OpenClaw through exact Namespace-owned native bindings"
+          ]
+        }
+      ]
+    },
+    "gateway-routing": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_GATEWAY_CA_CERT_PATH",
+        "OCC_TEST_GATEWAY_CA_KEY_PATH"
+      ],
+      "env": {
+        "OCC_TEST_GATEWAY_ROUTING_REAL": "1",
+        "OCC_TEST_SLACK_LIVE": "0"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "immutableOptionalEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE"
+        ]
+      },
+      "files": [
+        {
+          "path": "tests/integration/harness-topology-k3d-routing-real.test.mjs",
+          "expectedTests": [
+            "production dedicated Codex consumes Envoy-routed workspace files through OCC"
+          ]
+        }
+      ]
+    },
+    "production-tui": {
+      "requiredEnv": [
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_PRODUCTION_CONTROLLER_IMAGE",
+        "OCC_TEST_KUBERNETES_RUNTIME_IMAGE",
+        "OCC_TEST_PRODUCTION_POSTGRES_IMAGE",
+        "OCC_TEST_PRODUCTION_NODE_IMAGE",
+        "OCC_TEST_OTEL_LOGS_JSONL"
+      ],
+      "env": {
+        "OCC_TEST_PRODUCTION_TUI_REAL": "1",
+        "OCC_TEST_OTEL_LOGS": "1"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL",
+          "NODE_BASE_IMAGE",
+          "OCC_TEST_PRODUCTION_POSTGRES_IMAGE",
+          "OCC_TEST_PRODUCTION_NODE_IMAGE"
+        ],
+        "nodeBaseImage": true,
+        "immutableEnvImages": [
+          "OCC_TEST_PRODUCTION_POSTGRES_IMAGE",
+          "OCC_TEST_PRODUCTION_NODE_IMAGE"
+        ]
+      },
+      "files": [
+        {
+          "path": "tests/integration/production-tui-k3d-real.test.mjs",
+          "expectedTests": [
+            "Helm production installation supports interactive TUI and revision cutover"
+          ]
+        }
+      ]
+    },
+    "slack": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_SLACK_PROXY_URL",
+        "OCC_TEST_SLACK_CHANNEL_ID",
+        "OCC_TEST_SLACK_SENDER_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        "SLACK_BOT_TOKEN"
+      ],
+      "env": {
+        "OCC_TEST_SLACK_LIVE": "1"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL",
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+          "OCC_TEST_SLACK_PROXY_URL",
+          "OCC_TEST_SLACK_CHANNEL_ID",
+          "OCC_TEST_SLACK_SENDER_BOT_TOKEN",
+          "SLACK_APP_TOKEN",
+          "SLACK_BOT_TOKEN"
+        ],
+        "immutableEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE"
+        ]
+      },
+      "files": [
+        {
+          "path": "tests/integration/harness-topology-k3d-slack-real.test.mjs",
+          "expectedTests": [
+            "production k3d gateway replies to a real Slack message through its approved proxy and Codex Agent"
+          ]
+        }
+      ]
+    },
+    "provider-account": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_CHATGPT_WORKSPACE_ID",
+        "OCC_TEST_CHATGPT_ADMIN_KEY_PATH"
+      ],
+      "env": {
+        "OCC_TEST_CHATGPT_SERVICE_ACCOUNT_REAL": "1"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": [
+          "OCC_TEST_OPENAI_MODEL",
+          "OCC_TEST_CHATGPT_WORKSPACE_ID",
+          "OCC_TEST_CHATGPT_ADMIN_KEY_PATH"
+        ],
+        "immutableOptionalEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE"
+        ],
+        "mode0600Env": "OCC_TEST_CHATGPT_ADMIN_KEY_PATH",
+        "mode0600Description": "ChatGPT admin key"
+      },
+      "files": [
+        {
+          "path": "tests/integration/service-account-driver-real.test.mjs",
+          "expectedTests": [
+            "a real ChatGPT-managed account powers its exact dedicated Codex Agent model turn"
+          ]
+        }
+      ]
+    },
+    "openshell": {
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_OPENSHELL_CLI",
+        "OCC_TEST_OPENSHELL_GATEWAY_IMAGE",
+        "OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE",
+        "OCC_TEST_OPENSHELL_HELM",
+        "OCC_TEST_OPENSHELL_HELM_CHART",
+        "OCC_TEST_OPENSHELL_RUNTIME_CLASS"
+      ],
+      "env": {
+        "OCC_TEST_OPENSHELL_K3D_REAL": "1"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "immutableOptionalEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+          "OCC_TEST_OPENSHELL_GATEWAY_IMAGE",
+          "OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE"
+        ]
+      },
+      "files": [
+        {
+          "path": "tests/integration/sandbox-driver-openshell-k3d-real.test.mjs",
+          "expectedTests": [
+            "OpenShell SandboxDriver provisions and enforces one provider-owned dedicated Codex Harness"
+          ]
+        }
+      ]
+    },
+    "helper-timeout": {
+      "files": [
+        {
+          "path": "tests/integration/dev-up-timeout.test.mjs",
+          "expectedTests": [
+            "dev-up waits the full helper deadline before failing a running but unready worker"
+          ]
+        }
+      ],
+      "env": {
+        "OCC_TEST_DEV_UP_REAL_TIMEOUT": "1"
+      },
+      "prepare": {}
+    },
+    "logging-collector": {
+      "env": {
+        "OCC_TEST_LOGGING_COLLECTOR": "1"
+      },
+      "requiredEnv": ["OCC_TEST_LOGGING_NODE_IMAGE"],
+      "prepare": {
+        "defaultEnv": {
+          "OCC_TEST_LOGGING_NODE_IMAGE": "node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
+        }
+      },
+      "files": [
+        {
+          "path": "tests/integration/logging-collector.test.mjs",
+          "expectedTests": [
+            "native Collector filters actual Docker forwarding, binds transport identity, and survives exporter outage",
+            "native Collector preserves Kubernetes identity after a dropped record sharing Pod metadata"
+          ]
+        },
+        {
+          "path": "tests/integration/ci-logging-collector.test.mjs",
+          "expectedTests": ["prepareLogging backend receives real OTLP/HTTP logs and writes JSONL"]
+        }
+      ]
+    },
+    "k3d-otel": {
+      "env": {
+        "OCC_TEST_HARNESS_K3D_REAL": "1",
+        "OCC_TEST_OTEL_LOGS": "1",
+        "OCC_TEST_SLACK_LIVE": "0"
+      },
+      "prepare": {
+        "postgres": true,
+        "k3d": true,
+        "requiresPreparedStateForFile": true,
+        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "immutableOptionalEnvImages": [
+          "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+          "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+          "OCC_TEST_KUBERNETES_RUNTIME_IMAGE",
+          "OCC_TEST_KUBERNETES_CODEX_IMAGE"
+        ]
+      },
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
+        "OCC_TEST_KUBERNETES_AGENT_IMAGE",
+        "OPENAI_API_KEY",
+        "OCC_TEST_OPENAI_MODEL",
+        "OCC_TEST_OTEL_LOGS_JSONL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/harness-topology-k3d-otel-real.test.mjs",
+          "expectedTests": [
+            "production embedded runtime emits actual OTLP logs during a real model turn",
+            "production dedicated runtime emits actual OTLP logs during a real model turn"
+          ]
+        }
+      ]
+    },
+    "ssh-host": {
+      "env": {
+        "OCC_TEST_SSH_REAL": "1"
+      },
+      "requiredEnv": [
+        "OCC_TEST_SSH_ADDRESS",
+        "OCC_TEST_SSH_PORT",
+        "OCC_TEST_SSH_USER",
+        "OCC_TEST_SSH_IDENTITY_FILE",
+        "OCC_TEST_SSH_KNOWN_HOSTS_FILE",
+        "OCC_TEST_SSH_NODE_PATH",
+        "OCC_TEST_SSH_OPENCLAW_PATH",
+        "OCC_TEST_SSH_RUNTIME_USER"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/ssh-compute-real.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-benchmark-test-concurrency": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "files": [
+        {
+          "path": "tests/conformance/benchmark-test-concurrency.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-development-setup-requirements": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "files": [
+        {
+          "path": "tests/conformance/development-setup-requirements.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-gateway-startup-service-context": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCE_GATEWAY_NATIVE_BINARY", "OCE_GATEWAY_NATIVE_FIXTURE"],
+      "files": [
+        {
+          "path": "tests/conformance/gateway-startup-service-context.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-github-publication-dispatch": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_PUBLICATION_TEST_GIT_PATH",
+        "OCE_PUBLICATION_TEST_GIT_SHA256",
+        "OCE_PUBLICATION_TEST_GIT_OWNER_UID",
+        "OCE_PUBLICATION_DISPATCH_TEST_BUDGET_BYTES"
+      ],
+      "files": [
+        {
+          "path": "tests/conformance/github-publication-dispatch.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-github-read-mvp-configuration": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_GITHUB_GIT_READ_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/conformance/github-read-mvp-configuration.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-github-sts-client": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCE_NATIVE_QUALIFICATION", "OCE_NATIVE_QUALIFICATION_FILE"],
+      "files": [
+        {
+          "path": "tests/conformance/github-sts-client.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-isolated-upstream-consumer-v1": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCE_TEST_OUTPUT_ROOT"],
+      "files": [
+        {
+          "path": "tests/conformance/isolated-upstream-consumer-v1.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-migration-executor": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_JOURNAL_PHASE_UPGRADE_MIGRATIONS_FOLDER"],
+      "files": [
+        {
+          "path": "tests/conformance/migration-executor.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-operational-diagnostics-v1": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_LIFECYCLE_DIAGNOSTIC_FIXTURES",
+        "OCC_TEST_LIFECYCLE_DIAGNOSTIC_FIXTURE_SHA256"
+      ],
+      "files": [
+        {
+          "path": "tests/conformance/operational-diagnostics-v1.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-repository-publication-v1-git-objects": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_PUBLICATION_TEST_GIT_PATH",
+        "OCE_PUBLICATION_TEST_GIT_SHA256",
+        "OCE_PUBLICATION_TEST_GIT_OWNER_UID",
+        "OCE_PUBLICATION_TEST_ARTIFACT_BUDGET_BYTES"
+      ],
+      "files": [
+        {
+          "path": "tests/conformance/repository-publication-v1-git-objects.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-repository-publication-v1": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_PUBLICATION_TEST_GIT_PATH",
+        "OCE_PUBLICATION_TEST_GIT_SHA256",
+        "OCE_PUBLICATION_TEST_GIT_OWNER_UID",
+        "OCE_PUBLICATION_TEST_ARTIFACT_BUDGET_BYTES"
+      ],
+      "files": [
+        {
+          "path": "tests/conformance/repository-publication-v1.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-repository-work-observer-v2": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_REPOSITORY_WORK_OBSERVER_ADAPTER_MODULE"],
+      "files": [
+        {
+          "path": "tests/conformance/repository-work-observer-v2.test.mjs"
+        }
+      ]
+    },
+    "manual-auth-storage-failures": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_AUTH_FAILURE_DATABASE_URL", "OCC_AUTH_FAILURE_MIGRATOR_URL"],
+      "files": [
+        {
+          "path": "tests/integration/auth-storage-failures.test.mjs"
+        }
+      ]
+    },
+    "manual-custody-clock": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_CUSTODY_CLOCK_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/custody-clock.test.mjs"
+        }
+      ]
+    },
+    "manual-deploy-admission-cas-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_DEPLOY_CAS_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/deploy-admission-cas-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-deploy-operation-readback-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_DEPLOY_READBACK_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/deploy-operation-readback-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-gateway-startup-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_GATEWAY_STARTUP_PG", "OCC_GATEWAY_STARTUP_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/gateway-startup-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-github-mediation-git-native": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/github-mediation-git-native.test.mjs"
+        }
+      ]
+    },
+    "manual-github-mediation-native": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/github-mediation-native.test.mjs"
+        }
+      ]
+    },
+    "manual-github-read-mvp-denials": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/github-read-mvp-denials.test.mjs"
+        }
+      ]
+    },
+    "manual-github-read-mvp-lifecycle": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY",
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_TEST_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/github-read-mvp-lifecycle.test.mjs"
+        }
+      ]
+    },
+    "manual-github-read-mvp": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/github-read-mvp.test.mjs"
+        }
+      ]
+    },
+    "manual-gvisor-identity-environment-real": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_RUN11_REAL",
+        "OCC_RUN11_RESUME_ALLOCATION",
+        "OCC_RUN11_RESUME_SHA256",
+        "OCC_RUN11_AGENT_IMAGE",
+        "OCC_RUN11_GATEWAY_IMAGE",
+        "OCC_RUN11_RUN_ID"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/gvisor-identity-environment-real.test.mjs"
+        }
+      ]
+    },
+    "manual-gvisor-kubernetes-real": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_KUBERNETES_KUBECONFIG",
+        "OCC_TEST_KUBERNETES_CONTEXT",
+        "OCC_TEST_KUBERNETES_IMAGE",
+        "OCC_TEST_GVISOR_K3D_REAL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/gvisor-kubernetes-real.test.mjs"
+        }
+      ]
+    },
+    "manual-gvisor-spire-first-observation-real": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_SPIRE_FIRST_OBSERVATION_REAL",
+        "OCC_SPIRE_FIRST_OBSERVATION_PROFILE",
+        "OCC_SPIRE_FIRST_OBSERVATION_PROFILE_SHA256"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/gvisor-spire-first-observation-real.test.mjs"
+        }
+      ]
+    },
+    "manual-hosted-gateway-image-packaging": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_HOSTED_GATEWAY_IMAGE"],
+      "files": [
+        {
+          "path": "tests/integration/hosted-gateway-image-packaging.test.mjs"
+        }
+      ]
+    },
+    "manual-hosted-native-owner": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_TEST_CODEX_PLUGIN_ROOT"],
+      "files": [
+        {
+          "path": "tests/integration/hosted-native-owner.test.mjs"
+        }
+      ]
+    },
+    "manual-node-execution-client": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_NODE_OBSERVER_TEST_BINARY", "OCC_NODE_OBSERVER_NETWORK_INPUT"],
+      "files": [
+        {
+          "path": "tests/integration/node-execution-client.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-agent-draft-selection": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_AGENT_DRAFT_SELECTION_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-agent-draft-selection.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-agent-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_AGENT_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-agent-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-channel-administration": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_CHANNEL_ADMINISTRATION_DATABASE_URL",
+        "OCC_CHANNEL_ADMINISTRATION_MIGRATION_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-channel-administration.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-channel-binding-reserved-create": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_RESERVED_CHANNEL_CREATE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-channel-binding-reserved-create.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-channel-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_PRODUCTION_WIREUP_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-channel-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-configuration-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_PRODUCTION_WIREUP_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-configuration-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-configuration-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_CONFIGURATION_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-configuration-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-credential-inventory": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_CREDENTIAL_INVENTORY_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-credential-inventory.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-deployment-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_DEPLOYMENT_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-deployment-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-fresh-bootstrap-lock-privileges": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_FRESH_BOOTSTRAP_LOCK_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-fresh-bootstrap-lock-privileges.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-isolated-lifecycle": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_ISOLATED_POSTGRES",
+        "OCC_ISOLATED_POSTGRES_CONFIG",
+        "OCC_ISOLATED_POSTGRES_EVIDENCE"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-isolated-lifecycle.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-lifecycle-admission-recovery": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_LIFECYCLE_ADMISSION_DATABASE_URL",
+        "OCC_LIFECYCLE_RECOVERY_INPUT",
+        "OCC_LIFECYCLE_ADMISSION_MIGRATOR_DATABASE_URL",
+        "OCC_LIFECYCLE_ADMISSION_WORKER_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-lifecycle-admission-recovery.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-lifecycle-protective-admission": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_LIFECYCLE_ADMISSION_DATABASE_URL",
+        "OCC_LIFECYCLE_ADMISSION_MIGRATOR_DATABASE_URL",
+        "OCC_LIFECYCLE_ADMISSION_WORKER_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-lifecycle-protective-admission.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-lifecycle-status-read": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_LIFECYCLE_READ_DATABASE_URL",
+        "OCC_LIFECYCLE_READ_MIGRATOR_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-lifecycle-status-read.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-namespace-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_PRODUCTION_WIREUP_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-namespace-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-namespace-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_NAMESPACE_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-namespace-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-provider-account-links": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_PROVIDER_ACCOUNT_LINKS_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-provider-account-links.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-repository-lease": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_REPOSITORY_LEASE_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-repository-lease.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-revision-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_REVISION_REPOSITORY_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-revision-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-runtime-admission": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_RUNTIME_ADMISSION_MIGRATOR_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-runtime-admission.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-runtime-authority": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_RUNTIME_AUTHORITY_RESTART_RECEIPT"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-runtime-authority.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-runtime-effect-gate": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_GATE_DATABASE_URL",
+        "OCC_RUNTIME_GATE_RECOVERY_INPUT",
+        "OCC_RUNTIME_GATE_WORKER_DATABASE_URL",
+        "OCC_MIGRATION_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-runtime-effect-gate.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-runtime-profile-gate": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_GATE_DATABASE_URL",
+        "OCC_WORKLOAD_PROFILE_RECEIVING_DATABASE_URL",
+        "OCC_MIGRATION_DATABASE_URL",
+        "OCC_RUNTIME_GATE_WORKER_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-runtime-profile-gate.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-secret-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_SECRET_REPOSITORY_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-secret-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-secret-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_SECRET_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-secret-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-service-account-repository": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_SERVICE_ACCOUNT_REPOSITORY_TEST_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-service-account-repository.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-service-account-service": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_SERVICE_ACCOUNT_SERVICE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-service-account-service.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-turn-journal-phase-upgrade": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_MODE",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_MIGRATIONS_FOLDER",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_JOURNAL_SHA256",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_DATABASE_NAME",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_DATABASE_URL",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_MIGRATOR_URL",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_LEGACY_SOURCE_ROOT",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_SQL",
+        "OCC_TEST_JOURNAL_PHASE_UPGRADE_SQL_SHA256"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-turn-journal-phase-upgrade.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-turn-journal-replay-schema": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_REPLAY_SCHEMA_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-turn-journal-replay-schema.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-turn-journal-status-upgrade": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_MODE",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_LEGACY_SOURCE_ROOT",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_LEGACY_CONSUMER_ACCEPTANCE",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_LEGACY_CONSUMER_ACCEPTANCE_SHA256",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_LEGACY_INVENTORY",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_MIGRATIONS_FOLDER",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_JOURNAL_SHA256",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_SQL_SHA256",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_DATABASE_NAME",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_DATABASE_URL",
+        "OCC_TEST_JOURNAL_STATUS_UPGRADE_MIGRATOR_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/postgres-turn-journal-status-upgrade.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-turn-journal": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_DATABASE_URL", "OCC_TEST_JOURNAL_STATUS_EPISODE"],
+      "files": [
+        {
+          "path": "tests/integration/postgres-turn-journal.test.mjs"
+        }
+      ]
+    },
+    "manual-read-mvp-clone-fetch": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_READ_MVP_CLIENT_FIXTURE",
+        "OCC_READ_MVP_ENDPOINT_FACTORY",
+        "OCC_READ_MVP_CLIENT_TOOLS"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/read-mvp-clone-fetch.test.mjs"
+        }
+      ]
+    },
+    "manual-read-mvp-git-origin": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_READ_MVP_GIT_ORIGIN_TEST", "OCC_READ_MVP_TEST_ROOT"],
+      "files": [
+        {
+          "path": "tests/integration/read-mvp-git-origin.test.mjs"
+        }
+      ]
+    },
+    "manual-read-mvp-native-identity": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/read-mvp-native-identity.test.mjs"
+        }
+      ]
+    },
+    "manual-read-mvp-supported-configuration": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_GITHUB_GIT_READ_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/read-mvp-supported-configuration.test.mjs"
+        }
+      ]
+    },
+    "manual-repository-work-origin-native-v2": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCE_GITHUB_MEDIATION_TEST_BINARY",
+        "OCC_GITHUB_GIT_READ_TEST_BINARY",
+        "OCE_GITHUB_MEDIATION_FIXTURE_BINARY"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/repository-work-origin-native-v2.test.mjs"
+        }
+      ]
+    },
+    "manual-repository-work-policy-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_REPOSITORY_WORK_PG_CONFIG"],
+      "files": [
+        {
+          "path": "tests/integration/repository-work-policy-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-authority-authenticated-bind": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_SERVICE_TRUST_DATABASE_URL",
+        "OCC_RUNTIME_SERVICE_TRUST_MIGRATOR_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/runtime-authority-authenticated-bind.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-authority-authenticated-observation": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_RUNTIME_OBSERVATION_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-authority-authenticated-observation.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-authority-authenticated-readback": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_SERVICE_TRUST_DATABASE_URL",
+        "OCC_RUNTIME_SERVICE_TRUST_MIGRATOR_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/runtime-authority-authenticated-readback.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-package-preparation": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_RUNTIME_PACKAGE_TOOLS", "OCC_TEST_RUNTIME_PACKAGE_TOOLS_SHA256"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-package-preparation.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-peer-verifier-native": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCE_RUNTIME_PEER_FIXTURE_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-peer-verifier-native.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-preparation-invocations-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_PREPARATION_DATABASE_URL",
+        "OCC_MIGRATION_DATABASE_URL",
+        "OCC_WORKLOAD_PROFILE_RECEIVING_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/runtime-preparation-invocations-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-preparation-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_PREPARATION_DATABASE_URL",
+        "OCC_RUNTIME_PREPARATION_MIGRATOR_DATABASE_URL",
+        "OCC_RUNTIME_PREPARATION_RESTART_RECEIPT",
+        "OCC_RUNTIME_PREPARATION_REQUIRE_DATABASE_RESTART"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/runtime-preparation-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-service-trust-git-read-v3": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_GITHUB_GIT_READ_TEST_BINARY", "OCE_GITHUB_MEDIATION_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-service-trust-git-read-v3.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-service-trust-github": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_GITHUB_MEDIATION_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-service-trust-github.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-service-trust-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_RUNTIME_SERVICE_TRUST_DATABASE_URL",
+        "OCC_RUNTIME_SERVICE_TRUST_MIGRATOR_DATABASE_URL",
+        "OCC_RUNTIME_SERVICE_TRUST_RESTART_RECEIPT",
+        "OCC_RUNTIME_AUTHORITY_TEST_BINARY",
+        "OCC_RUNTIME_SERVICE_BIND_RESTART_RECEIPT"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/runtime-service-trust-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-runtime-service-trust": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_RUNTIME_AUTHORITY_TEST_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/runtime-service-trust.test.mjs"
+        }
+      ]
+    },
+    "manual-security-event-delivery-postgres-v1": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_SECURITY_EVENT_DELIVERY_POSTGRES",
+        "OCC_LIFECYCLE_ADMISSION_DATABASE_URL",
+        "OCC_LIFECYCLE_ADMISSION_MIGRATOR_DATABASE_URL",
+        "OCC_LIFECYCLE_ADMISSION_WORKER_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/security-event-delivery-postgres-v1.test.mjs"
+        }
+      ]
+    },
+    "manual-startup-diagnostics": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_STARTUP_DIAGNOSTICS_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/startup-diagnostics.test.mjs"
+        }
+      ]
+    },
+    "manual-turn-journal-checkpoint": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_TEST_CHECKPOINT_COMPOSITION_MODULE"],
+      "files": [
+        {
+          "path": "tests/integration/turn-journal-checkpoint.test.mjs"
+        }
+      ]
+    },
+    "manual-upstream-headless-consumption": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_TEST_UPSTREAM_HEADLESS",
+        "OCC_TEST_UPSTREAM_SOURCE_DIR",
+        "OCC_TEST_UPSTREAM_DEPENDENCIES_DIR"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/upstream-headless-consumption.test.mjs"
+        }
+      ]
+    },
+    "manual-workload-profile-admission-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": [
+        "OCC_WORKLOAD_PROFILE_GUARD_DATABASE_URL",
+        "OCC_WORKLOAD_PROFILE_GUARD_MIGRATOR_DATABASE_URL"
+      ],
+      "files": [
+        {
+          "path": "tests/integration/workload-profile-admission-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-workload-profile-postgres": {
+      "description": "Separately selected integration-branch coverage; follow the test source prerequisites. Excluded from automated ci/full groups until its required environment and complete no-skip execution are prepared.",
+      "requiredEnv": ["OCC_WORKLOAD_PROFILE_DATABASE_URL"],
+      "files": [
+        {
+          "path": "tests/integration/workload-profile-postgres.test.mjs"
+        }
+      ]
+    },
+    "manual-postgres-turn-journal-replay": {
+      "description": "Retains explicit TODO cases for missing original PostgreSQL replay owners; cannot supply complete no-skip CI evidence until those prerequisites exist.",
+      "files": [
+        {
+          "path": "tests/integration/postgres-turn-journal-replay.test.mjs"
+        }
+      ]
+    },
+    "manual-conformance-mvp-build-root": {
+      "description": "Requires an explicitly selected root Linux process to create and reject a genuinely foreign-owned file. Portable build coverage remains in checks-baseline.",
+      "files": [
+        {
+          "path": "tests/conformance/mvp-build-root.test.mjs"
+        }
+      ]
+    },
+    "manual-gateway-agent-material-native": {
+      "description": "Requires a separately prepared local Go 1.26 toolchain and module cache; the genuine native fixture builds offline. These prerequisites are absent from the unchanged baseline setup.",
+      "files": [
+        {
+          "path": "tests/integration/gateway-agent-material-native.test.mjs"
+        }
+      ]
+    },
+    "manual-gateway-startup-native-client": {
+      "description": "Requires a separately prepared local Go 1.26 toolchain and module cache; the genuine native fixture builds offline. These prerequisites are absent from the unchanged baseline setup.",
+      "files": [
+        {
+          "path": "tests/integration/gateway-startup-native-client.test.mjs"
+        }
+      ]
+    },
+    "manual-openshell-native-bridge": {
+      "description": "Requires the separately built real OpenShell native binary. Explicit selection avoids an implicit Go toolchain or module download.",
+      "requiredEnv": ["OCC_RUNTIME_SECURITY_BINARY"],
+      "files": [
+        {
+          "path": "tests/integration/openshell-native-bridge.test.mjs"
+        }
+      ]
+    }
+  },
+  "groups": {
+    "ci": [
+      "checks-baseline",
+      "postgres",
+      "images-packaging",
+      "k3d-fixture-configuration",
+      "logging-collector"
+    ],
+    "full": [
+      "checks-baseline",
+      "postgres",
+      "images-packaging",
+      "k3d-fixture-configuration",
+      "docker-model",
+      "k3d-model",
+      "gateway-routing",
+      "production-tui",
+      "slack",
+      "provider-account",
+      "openshell",
+      "helper-timeout",
+      "logging-collector",
+      "k3d-otel"
+    ]
+  }
+}

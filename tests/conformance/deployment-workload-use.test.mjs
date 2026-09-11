@@ -1792,7 +1792,9 @@ test("new command admission compares all saved draft and lifecycle expectations 
   ]) {
     const control = await deploymentFixture();
     change(control);
-    await assert.rejects(control.deploy());
+    // Missing owner composition must not count as a saved-draft conflict.
+    await assert.rejects(control.deploy(), { name: "ResourceConflictError" });
+    assert.ok(control.events.includes("agent.lock:end"));
     assert.equal(control.calls.prepare.length, 0);
     assert.equal(control.calls.inserts.length, 0);
     assert.equal(control.calls.createId, 0);
@@ -2228,7 +2230,14 @@ test("invalid intent correspondence or receipt is poisoned before the mutation c
     { createdAt: "not-a-timestamp" },
   ]) {
     const control = await deploymentFixture({ intentOverrides });
-    await assert.rejects(control.deploy());
+    // Require the intended post-insertion check, not an earlier setup refusal.
+    await assert.rejects(control.deploy(), {
+      name: "ScopeViolationError",
+      message: Object.hasOwn(intentOverrides, "createdAt")
+        ? "The accepted deployment receipt is invalid."
+        : "The admitted intent differs from the retained deployment command.",
+    });
+    assert.equal(control.calls.intentWrites.length, 1);
     assert.ok(control.calls.poison.length > 0);
     assert.ok(control.calls.ioPoison.length > 0);
     assert.throws(() => control.io.assertActive());

@@ -4,7 +4,7 @@ The preparation doctor checks local dependency metadata by default. Add an
 explicit requirements file when a check also needs a particular tool or local
 protocol endpoint. Resources omitted from the file are not probed or made into
 requirements. The [development loop](../development-loop.md) describes the
-ordinary verification sequence; the [testing guide](../testing.md) owns actual
+ordinary verification sequence; the [testing guide](README.md) owns actual
 integration setup and acceptance.
 
 ```sh

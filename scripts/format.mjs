@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -17,10 +18,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const scope = [
-  "{apps,packages,scripts,tests}/**/*.{ts,mjs,json,html,css}",
+  "{apps,packages,scripts,tests}/**/*.{ts,mjs,cjs,json,html,css}",
   "*.{json,yaml,yml,md}",
   "docs/**/*.md",
   "!docs/reference/api.md",
+  ".github/**/*.yml",
 ];
 const git = (args) => execFileSync("git", args, { cwd: root, maxBuffer: 128 * 1024 * 1024 });
 const files = () =>
@@ -34,9 +36,10 @@ const dependencyInput = (path) =>
 const configurationInput = (path) => /(^|\/)(\.prettier[^/]*|prettier\.config\.[^/]+)$/.test(path);
 const inScope = (path) =>
   path !== "docs/reference/api.md" &&
-  (/^(apps|packages|scripts|tests)\/.*\.(ts|mjs|json|html|css)$/.test(path) ||
+  (/^(apps|packages|scripts|tests)\/.*\.(ts|mjs|cjs|json|html|css)$/.test(path) ||
     /^[^/]+\.(json|yaml|yml|md)$/.test(path) ||
-    /^docs\/.*\.md$/.test(path));
+    /^docs\/.*\.md$/.test(path) ||
+    /^\.github\/.*\.yml$/.test(path));
 
 // Package contents also invalidate the built-in formatter cache when its version
 // stays unchanged. Configured plugins have arbitrary dependency closures, so
@@ -112,8 +115,19 @@ function snapshot(commit, destination) {
     if (
       entry.mode === "120000" &&
       (inScope(entry.path) || configurationInput(entry.path) || dependencyInput(entry.path))
-    )
+    ) {
+      // Main's root instruction alias is the only allowed input symlink. Its
+      // exact target and canonical bytes must both belong to this same commit.
+      const canonical = entries.find(({ path }) => path === "AGENTS.md");
+      if (
+        entry.path === "CLAUDE.md" &&
+        git(["cat-file", "blob", entry.oid]).equals(Buffer.from("AGENTS.md")) &&
+        canonical?.type === "blob" &&
+        ["100644", "100755"].includes(canonical.mode)
+      )
+        continue;
       throw new Error(`Refusing outgoing formatter input symlink: ${entry.path}`);
+    }
   }
   // cat-file preserves Git bytes, including export-ignore paths, without smudge
   // filters or executing checkout hooks. Never read the dirty worktree as proof.
@@ -201,31 +215,58 @@ try {
     }
   } else {
     const paths = rawPaths[0] === "--" ? rawPaths.slice(1) : rawPaths;
+    function worktreeInput(path) {
+      let relativePath = relative(root, resolve(root, path));
+      const metadata = lstatSync(join(root, relativePath), { throwIfNoEntry: false });
+      if (
+        relativePath === "CLAUDE.md" &&
+        metadata?.isSymbolicLink() &&
+        readlinkSync(join(root, relativePath)) === "AGENTS.md" &&
+        lstatSync(join(root, "AGENTS.md"), { throwIfNoEntry: false })?.isFile()
+      ) {
+        relativePath = "AGENTS.md";
+      } else if (!metadata?.isFile()) {
+        throw new Error(`Expected an existing regular formatting input: ${path}`);
+      }
+      const actualRelativePath = relative(
+        realpathSync(root),
+        realpathSync(join(root, relativePath)),
+      );
+      if (
+        isAbsolute(actualRelativePath) ||
+        actualRelativePath === ".." ||
+        actualRelativePath.startsWith(`..${sep}`)
+      ) {
+        throw new Error(`Formatting input resolves outside this worktree: ${path}`);
+      }
+      return `./${relativePath}`;
+    }
+    // Validate before Prettier or the cache can follow an input symlink. The
+    // full glob skips the validated alias; AGENTS.md remains a normal input.
+    let instructionAlias = false;
+    for (const path of files()) {
+      if (!inScope(path) && !configurationInput(path) && !dependencyInput(path)) continue;
+      if (!lstatSync(join(root, path), { throwIfNoEntry: false })) continue;
+      const canonical = worktreeInput(path);
+      if (path === "CLAUDE.md" && canonical === "./AGENTS.md") instructionAlias = true;
+    }
     const selected = paths.length
-      ? paths.map((path) => {
-          const relativePath = relative(root, resolve(root, path));
-          if (
-            isAbsolute(relativePath) ||
-            relativePath === ".." ||
-            relativePath.startsWith(`..${sep}`) ||
-            !inScope(relativePath) ||
-            !lstatSync(join(root, relativePath)).isFile()
-          )
-            throw new Error(`Expected an existing authored file in formatting scope: ${path}`);
-          const actualRelativePath = relative(
-            realpathSync(root),
-            realpathSync(join(root, relativePath)),
-          );
-          if (
-            isAbsolute(actualRelativePath) ||
-            actualRelativePath === ".." ||
-            actualRelativePath.startsWith(`..${sep}`)
-          ) {
-            throw new Error(`Formatting input resolves outside this worktree: ${path}`);
-          }
-          return `./${relativePath}`;
-        })
-      : scope;
+      ? [
+          ...new Set(
+            paths.map((path) => {
+              const relativePath = relative(root, resolve(root, path));
+              if (
+                isAbsolute(relativePath) ||
+                relativePath === ".." ||
+                relativePath.startsWith(`..${sep}`) ||
+                !inScope(relativePath)
+              )
+                throw new Error(`Expected an existing authored file in formatting scope: ${path}`);
+              return worktreeInput(path);
+            }),
+          ),
+        ]
+      : [...scope, ...(instructionAlias ? ["!CLAUDE.md"] : [])];
     const identity = cacheIdentity(prettierRoot);
     // Each invocation owns its cache file; promote atomically after success.
     // Concurrent invocations can lose cache hits, never manufacture a pass.

@@ -134,7 +134,37 @@ async function createAgent(f, namespaceId, configurationId, name = "HTTP Agent")
   return response;
 }
 
-test("Agent service HTTP covers all seven operations and retains immutable audited revisions", async (t) => {
+async function historicalRevision(f, agent, configuration) {
+  // Seed a retained historical snapshot through the real repository. It has no
+  // workload profile, runtime admission, or lifecycle head; this is revision-read
+  // coverage and does not represent a successful current HTTP deployment.
+  const compute = createDevelopmentComputeDriver();
+  return f.state.transact(async (unit) => {
+    const owner = await unit.agents.findAgent(agent.namespaceId, agent.id);
+    assert.ok(owner);
+    return unit.revisions.createRevision({
+      id: `rev_${randomUUID()}`,
+      namespaceId: agent.namespaceId,
+      agentId: agent.id,
+      revision: 1,
+      maximumExecutionMs: owner.maximumExecutionMs,
+      providerId: owner.providerId,
+      configurationId: configuration.id,
+      configurationKind: configuration.kind,
+      configurationGeneration: configuration.generation,
+      configuration: configuration.values,
+      harness: { ...resolveApprovedHarness("openclaw", "embedded"), mode: "embedded" },
+      compute: { id: compute.id, implementation: compute.implementation },
+      servicePrincipalId: owner.servicePrincipalId,
+      createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+// TODO: Add admitted-revision and deploy-IAM coverage when this Fastify fixture has
+// genuine request custody, a saved admitted workload profile, and its required owners.
+// An invented selection cannot turn this passive fixture into V2 admission proof.
+test("Agent service HTTP preserves audited drafts and historical revision reads without lifecycle admission", async (t) => {
   const f = await fixture(t);
   const absent = `/namespaces/ns_${randomUUID()}/agents/agt_${randomUUID()}`;
   assertFailure(await f.request("GET", absent, { authenticated: false }), 401, "UNAUTHENTICATED");
@@ -158,18 +188,25 @@ test("Agent service HTTP covers all seven operations and retains immutable audit
   assert.equal(read.status, 200);
   assert.deepEqual(read.data, created.data);
 
-  const admitted = await f.request("POST", `${path}/deploy`);
-  assert.equal(admitted.status, 202, JSON.stringify(admitted.body));
-  assert.equal(admitted.data.revision, 1);
-  assert.equal(admitted.data.configurationGeneration, 1);
-  assertPublicResource(admitted.data);
-  const revisionPath = `${path}/revisions/${admitted.data.id}`;
-  const revision = await f.request("GET", revisionPath);
-  assert.equal(revision.status, 200);
-  assert.deepEqual(revision.data, admitted.data);
+  // No selected profile or admission owner exists in this composition. The route
+  // rejects the retired bodyless request without creating a revision or intent.
+  assertFailure(await f.request("POST", `${path}/deploy`), 400, "INVALID_REQUEST");
+  const emptyHistory = await f.request("GET", `${path}/revisions`);
+  assert.equal(emptyHistory.status, 200);
+  assert.deepEqual(emptyHistory.data, []);
+  assertFailure(await f.request("GET", `${path}/revisions/rev_${randomUUID()}`), 404, "NOT_FOUND");
+  assertFailure(await f.request("GET", `${path}/lifecycle`), 503, "DEPENDENCY_UNAVAILABLE");
 
-  // Editing the referenced document and replacing the saved draft cannot rewrite a
-  // previously admitted revision; the next admission must capture the replacement.
+  const historical = await historicalRevision(f, created.data, draft);
+  const revisionPath = `${path}/revisions/${historical.id}`;
+  const historicalRead = await f.request("GET", revisionPath);
+  assert.equal(historicalRead.status, 200);
+  assert.equal(historicalRead.data.id, historical.id);
+  assert.deepEqual(historicalRead.data.configuration, draft.values);
+  assertPublicResource(historicalRead.data);
+
+  // Editing the Configuration and replacing the draft cannot rewrite the
+  // historical snapshot. Neither mutation creates a new revision or intent.
   const changed = await f.request("PATCH", `/namespaces/${tenant.id}/configurations/${draft.id}`, {
     body: { values: { plugins: { entries: { knowledge: { enabled: false } } } } },
   });
@@ -183,18 +220,16 @@ test("Agent service HTTP covers all seven operations and retains immutable audit
   assert.equal(updated.data.configurationId, replacement.id);
   assert.equal(Object.hasOwn(updated.data, "serviceAccountId"), false);
   assertPublicResource(updated.data);
-  const oldRevision = await f.request("GET", revisionPath);
-  assert.equal(oldRevision.status, 200);
-  assert.deepEqual(oldRevision.data, admitted.data);
-  const second = await f.request("POST", `${path}/deploy`);
-  assert.equal(second.status, 202, JSON.stringify(second.body));
-  assert.equal(second.data.revision, 2);
-  assert.notEqual(second.data.id, admitted.data.id);
-  assert.equal(second.data.configurationId, replacement.id);
-  assert.equal(second.data.configuration.model, "replacement-model");
+  const updatedRead = await f.request("GET", path);
+  assert.equal(updatedRead.status, 200);
+  assert.deepEqual(updatedRead.data, updated.data);
+  assertFailure(await f.request("POST", `${path}/deploy`), 400, "INVALID_REQUEST");
   const revisions = await f.request("GET", `${path}/revisions`);
   assert.equal(revisions.status, 200);
-  assert.deepEqual(revisions.data, [admitted.data, second.data]);
+  assert.deepEqual(revisions.data, [historicalRead.data]);
+  const retained = await f.request("GET", revisionPath);
+  assert.equal(retained.status, 200);
+  assert.deepEqual(retained.data, historicalRead.data);
 
   const events = f.auditSink.events.filter(
     (event) =>
@@ -202,19 +237,14 @@ test("Agent service HTTP covers all seven operations and retains immutable audit
   );
   assert.deepEqual(
     events.map((event) => event.action),
-    [
-      "openclaw.agents.create",
-      "openclaw.agents.deploy",
-      "openclaw.agents.update",
-      "openclaw.agents.deploy",
-    ],
+    ["openclaw.agents.create", "openclaw.agents.update"],
   );
-  for (const [index, response] of [created, admitted, updated, second].entries()) {
+  for (const [index, response] of [created, updated].entries()) {
     assert.equal(events[index].actorId, f.principal.id);
     assert.equal(events[index].requestId, response.body.meta.requestId);
     assert.equal(events[index].outcome, "success");
     assert.deepEqual(events[index].resource, {
-      kind: index === 1 || index === 3 ? "agent_revision" : "agent",
+      kind: "agent",
       namespaceId: tenant.id,
       id: response.data.id,
     });
@@ -226,11 +256,8 @@ test("Agent service HTTP covers all seven operations and retains immutable audit
       agentId: created.data.id,
     }),
   }));
-  assert.deepEqual(
-    persisted.revisions.map((item) => item.id),
-    [admitted.data.id, second.data.id],
-  );
-  assert.equal(persisted.head.generation, 2);
+  assert.deepEqual(persisted.revisions, [historical]);
+  assert.equal(persisted.head, undefined);
 });
 
 test("Agent service HTTP rejects invalid drafts, deploy bodies, and foreign resource ownership", async (t) => {
@@ -243,8 +270,7 @@ test("Agent service HTTP rejects invalid drafts, deploy bodies, and foreign reso
   const created = await createAgent(f, tenant.id, draft.id);
   const sibling = await createAgent(f, tenant.id, draft.id, "Sibling Agent");
   const path = `/namespaces/${tenant.id}/agents/${created.data.id}`;
-  const admitted = await f.request("POST", `${path}/deploy`);
-  assert.equal(admitted.status, 202, JSON.stringify(admitted.body));
+  const historical = await historicalRevision(f, created.data, draft);
   const snapshot = () =>
     f.state.read(async (view) => ({
       agents: await view.agents.listAgents(tenant.id),
@@ -257,7 +283,7 @@ test("Agent service HTTP rejects invalid drafts, deploy bodies, and foreign reso
   const before = await snapshot();
   for (const body of [
     { configurationId: draft.id, executionMode: "invalid" },
-    { configurationId: draft.id, activeRevisionId: admitted.data.id },
+    { configurationId: draft.id, activeRevisionId: historical.id },
     { configurationId: draft.id, servicePrincipalId: "caller-selected" },
     {},
   ]) {
@@ -283,7 +309,7 @@ test("Agent service HTTP rejects invalid drafts, deploy bodies, and foreign reso
   assertFailure(
     await f.request(
       "GET",
-      `/namespaces/${tenant.id}/agents/${sibling.data.id}/revisions/${admitted.data.id}`,
+      `/namespaces/${tenant.id}/agents/${sibling.data.id}/revisions/${historical.id}`,
     ),
     404,
     "NOT_FOUND",
@@ -310,7 +336,6 @@ test("Agent service HTTP rechecks current Native IAM authority and audits denied
   for (const [method, url, body, action] of [
     ["GET", path, undefined, "read"],
     ["PATCH", path, { configurationId: draft.id }, "update"],
-    ["POST", `${path}/deploy`, undefined, "deploy"],
   ]) {
     const denied = await f.request(method, url, { body });
     assertFailure(denied, 403, "FORBIDDEN");
@@ -325,6 +350,11 @@ test("Agent service HTTP rechecks current Native IAM authority and audits denied
       id: created.data.id,
     });
   }
+  // Invalid deploy syntax is rejected before Agent authorization; this does not
+  // establish deploy-IAM denial without a genuine saved profile and V2 command.
+  const auditCount = f.auditSink.events.length;
+  assertFailure(await f.request("POST", `${path}/deploy`), 400, "INVALID_REQUEST");
+  assert.equal(f.auditSink.events.length, auditCount);
   assert.deepEqual(
     await f.state.read((view) => view.agents.findAgent(tenant.id, created.data.id)),
     before,

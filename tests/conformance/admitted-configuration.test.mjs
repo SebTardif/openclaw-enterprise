@@ -85,6 +85,13 @@ test("actual maintained admission normalization feeds the exact configuration do
   );
   assert.equal(result.projection.configurationGeneration, 3);
   assert.equal(result.projection.immutableConfigurationContent.values.logging.consoleStyle, "json");
+  assert.equal(
+    Object.hasOwn(
+      result.projection.immutableConfigurationContent.values.logging,
+      "redactSensitive",
+    ),
+    false,
+  );
   assert.equal(result.projection.immutableConfigurationContent.values.diagnostics.otel.logs, false);
   assert.equal(
     result.projection.resolvedProfileBindingParameters.storePolicyBindings[0].component,
@@ -269,6 +276,10 @@ test("unsupported native fields and unnormalized admitted logging reject", () =>
     },
     (v) => {
       v.immutableConfigurationContent.values.logging.consoleLevel = "error";
+    },
+    (v) => {
+      // Native redaction owns this retired setting; admitted snapshots must omit it.
+      v.immutableConfigurationContent.values.logging.redactSensitive = "tools";
     },
     (v) => {
       v.immutableConfigurationContent.values.diagnostics.otel.logs = true;

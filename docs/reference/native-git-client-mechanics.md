@@ -213,4 +213,4 @@ preparation-before-readiness admission or network-policy acceptance is claimed.
 Those checks belong to the corresponding integration owners. See
 [runtime preparation](runtime-preparation.md),
 [runtime authority](runtime-authority.md) and the
-[testing guide](../testing.md) for the existing platform boundaries.
+[testing guide](../testing/README.md) for the existing platform boundaries.

@@ -73,6 +73,97 @@ function fixture(t) {
 }
 const check = (report, id) => report.checks.find((entry) => entry.id === id);
 
+function aliasFixture(t, options = {}) {
+  const root = fixture(t);
+  const target = options.target ?? "typescript";
+  const version = options.version ?? "6.0.3";
+  const specifier = options.specifier ?? `npm:${target}@${version}`;
+  const manifest = JSON.parse(readFileSync(join(root, "package.json")));
+  manifest.devDependencies = { "typescript-compiler-api": specifier };
+  put(root, "package.json", manifest);
+  put(root, "node_modules/typescript-compiler-api/package.json", {
+    name: options.installedName ?? target,
+    version: options.installedVersion ?? version,
+    main: "index.js",
+  });
+  put(root, "node_modules/typescript-compiler-api/index.js", "module.exports = 1;\n");
+  const lock = readFileSync(join(root, "pnpm-lock.yaml"), "utf8").replace(
+    "  .: {}",
+    `  .:\n    devDependencies:\n      typescript-compiler-api:\n        specifier: ${options.lockSpecifier ?? specifier}\n        version: ${options.lockVersion ?? `${target}@${version}`}`,
+  );
+  put(root, "pnpm-lock.yaml", lock);
+  put(root, "node_modules/.pnpm/lock.yaml", lock);
+  return root;
+}
+
+test("exact npm aliases resolve target identities and lock versions through their alias", (t) => {
+  for (const options of [
+    {},
+    { target: "@fixture/compiler", lockVersion: "@fixture/compiler@6.0.3(peer@1.0.0)" },
+    { version: "6.0.3-rc.1+build.2" },
+  ]) {
+    const report = checkDevelopmentSetup(aliasFixture(t, options));
+    assert.equal(check(report, ".:typescript-compiler-api").status, "ok");
+    assert.equal(check(report, ".:typescript-compiler-api:lock"), undefined);
+    assert.equal(check(report, "lock-importers").status, "ok");
+    assert.equal(check(report, "installed-lockfile").status, "ok");
+    assert.equal(check(report, "dependencies"), undefined);
+  }
+});
+
+test("npm aliases reject an installed alias name or the wrong target version", (t) => {
+  const wrongName = checkDevelopmentSetup(
+    aliasFixture(t, { installedName: "typescript-compiler-api" }),
+  );
+  assert.equal(check(wrongName, ".:typescript-compiler-api").status, "incomplete");
+  assert.equal(wrongName.status, "unprepared");
+  const wrongVersion = checkDevelopmentSetup(aliasFixture(t, { installedVersion: "6.0.2" }));
+  assert.equal(check(wrongVersion, ".:typescript-compiler-api").status, "stale");
+  assert.equal(wrongVersion.status, "unprepared");
+});
+
+test("npm alias lock targets must match the exact declared name and version", (t) => {
+  for (const options of [
+    { lockVersion: "6.0.3" },
+    { lockVersion: "other-compiler@6.0.3" },
+    { lockVersion: "typescript@6.0.2" },
+    // An installed package agreeing with a stale lock must still fail the exact declaration.
+    { installedVersion: "6.0.2", lockVersion: "typescript@6.0.2" },
+  ]) {
+    const report = checkDevelopmentSetup(aliasFixture(t, options));
+    assert.equal(check(report, ".:typescript-compiler-api:lock").status, "stale");
+    assert.equal(check(report, ".:typescript-compiler-api").status, "stale");
+    assert.equal(report.status, "unprepared");
+  }
+  const report = checkDevelopmentSetup(aliasFixture(t, { lockSpecifier: "npm:typescript@6.0.2" }));
+  assert.equal(check(report, ".:typescript-compiler-api:lock").status, "stale");
+  assert.equal(check(report, "lock-importers").status, "stale");
+});
+
+test("npm alias ranges, tags and malformed exact versions are unsupported", (t) => {
+  for (const specifier of [
+    "npm:typescript@^6.0.3",
+    "npm:typescript@latest",
+    "npm:typescript",
+    "npm:typescript@06.0.3",
+    "npm:typescript@6.0.3-01",
+  ]) {
+    const report = checkDevelopmentSetup(aliasFixture(t, { specifier }));
+    assert.equal(check(report, ".:typescript-compiler-api").status, "incomplete");
+    assert.equal(report.status, "unprepared");
+  }
+});
+
+test("ordinary dependencies still require their declared package name", (t) => {
+  const root = fixture(t);
+  put(root, "packages/consumer/node_modules/pino/package.json", {
+    name: "other-logger",
+    version: "1.0.0",
+    main: "index.js",
+  });
+  assert.equal(check(checkDevelopmentSetup(root), "packages/consumer:pino").status, "incomplete");
+});
+
 test("prepared metadata resolves from a source export without changing its files", (t) => {
   const root = fixture(t);
   const before = readFileSync(join(root, "pnpm-lock.yaml"));

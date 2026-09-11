@@ -67,7 +67,7 @@ returned in the Namespace response. The worker verifies and binds that exact
 operator-prepared Kubernetes namespace without adopting another tenant's
 resources. Its external lifecycle, restricted Pod Security labels, and
 tenant-local RoleBindings must already be in place; see
-[Kubernetes namespace requirements](drivers/kubernetes-compute.md#namespaces-and-isolation).
+[Kubernetes namespace requirements](drivers/kubernetes-compute/networking-and-isolation.md#namespaces-and-isolation).
 Docker and external Compute Drivers reject this option with
 `409`; ordinary creation without the option remains supported. Creating a
 Configuration in an explicitly selected external Namespace returns
@@ -150,7 +150,7 @@ workload is ready.
   PostgreSQL database, lifecycle work remains queued and the Namespace can stay
   `provisioning` or `deleting`. Infrastructure readiness is asynchronous.
 
-## Application service and verification
+## Application service
 
 The [Namespace service](../../packages/occ/src/services/namespace/service.ts)
 implements the named
@@ -171,22 +171,7 @@ status or writing its deletion tombstone.
 Production polling, lease handling, and finalization remain with the
 [controller worker](controller.md).
 
-From a prepared checkout, run the focused application and HTTP checks:
-
-```sh
-node --test tests/conformance/namespace-service.test.mjs tests/integration/namespace-http.test.mjs
-node --test tests/integration/postgres-namespace-service.test.mjs
-```
-
-The PostgreSQL service suite requires `OCC_NAMESPACE_SERVICE_DATABASE_URL` to
-select a fresh, migrated disposable database using the non-superuser `occ_app`
-role. An absent selector skips that suite. The checks cover exact IAM scope,
-lazy bootstrap, child-resource deletion restrictions, resource/work/audit
-atomicity, and rejection of stale or foreign lifecycle evidence. Lifecycle
-checks use the existing deterministic Compute fixture; live worker and
-Kubernetes verification is separate.
-
-## Storage and verification
+## Storage ownership
 
 The [memory](../../packages/occ/src/state/memory/namespaces.ts) and
 [PostgreSQL](../../packages/occ/src/state/postgres/namespaces.ts) Namespace
@@ -197,20 +182,7 @@ rollback for Namespace changes, related resources, audit and queued work. It
 drains accepted internal repository calls before finishing the transaction and
 rejects repository calls after that lifetime ends.
 
-Run the focused storage checks from a prepared checkout:
-
-```sh
-node --test tests/conformance/namespace-repository-memory.test.mjs
-node --test tests/integration/postgres-namespace-repository.test.mjs
-```
-
-These checks exercise empty Namespace lifecycle and tombstones, resource presence,
-transaction lifetime and atomic commit/rollback across repositories. For the
-PostgreSQL command, set `OCC_TEST_DATABASE_URL` to a prepared disposable database
-using the application role. Set `OCC_PRODUCTION_WIREUP_DATABASE_URL` to a separate,
-prepared, initially empty application-role database to include bootstrap and
-rollback coverage. Each missing selector skips its corresponding database cases;
-see [PostgreSQL test settings](settings.md#postgresql-test-environment).
+For contributor setup and coverage, see [Namespace testing](../testing/namespace.md).
 
 ## Related
 
@@ -223,13 +195,8 @@ see [PostgreSQL test settings](settings.md#postgresql-test-environment).
 - [IAM](authorization.md)
 - [Controller configuration](settings.md)
 - [Implementation architecture](../ARCHITECTURE.md)
-- [Namespace command, query, and lifecycle port](../../packages/occ/src/services/namespace/port.ts)
 - [Namespace lifecycle implementation](../../packages/occ/src/services/namespace/service.ts)
-- [Namespace HTTP adapter](../../apps/controller/src/routes/namespace.ts)
-- [Namespace service conformance coverage](../../tests/conformance/namespace-service.test.mjs)
-- [Namespace HTTP coverage](../../tests/integration/namespace-http.test.mjs)
-- [Namespace PostgreSQL coverage](../../tests/integration/postgres-namespace-service.test.mjs)
-- [API isolation coverage](../../tests/conformance/occ-api-security.test.mjs)
+- [Local testing](../testing/local.md)
 
 ## Manual Notes
 

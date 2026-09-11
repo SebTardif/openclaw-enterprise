@@ -1,0 +1,329 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "OpenClaw Enterprise",
+  "theme": "mint",
+  "colors": {
+    "primary": "#e85d45"
+  },
+  "logo": {
+    "light": "/assets/lobster-mech-transparent.png",
+    "dark": "/assets/lobster-mech-transparent.png"
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Start and deploy",
+                "pages": [
+                  "README",
+                  "guides/concepts",
+                  "guides/quickstart",
+                  "guides/deploy",
+                  "guides/deploy/model-egress",
+                  "guides/deploy/build-inputs",
+                  "guides/deploy/production-installation",
+                  "guides/deploy/production-agents",
+                  "guides/deploy/workspace-routing",
+                  "guides/deploy/local-operations",
+                  "guides/deploy/service-keys",
+                  "guides/observability",
+                  "guides/deploy/runtime-services",
+                  "guides/lifecycle-recovery"
+                ]
+              },
+              {
+                "group": "Architecture",
+                "pages": [
+                  "design",
+                  "design/resources",
+                  "design/access",
+                  "design/workloads",
+                  "design/drivers",
+                  "design/safeguards",
+                  "ARCHITECTURE"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": ["local-preview", "development-loop", "integration-dev-overview"]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "groups": [
+              {
+                "group": "Features",
+                "pages": [
+                  "reference/README",
+                  "reference/agents",
+                  "reference/agents/deployment",
+                  "reference/api",
+                  "reference/authentication",
+                  "reference/authentication/service-api-keys",
+                  "reference/authorization",
+                  "reference/configuration",
+                  "reference/configuration/kubernetes",
+                  "reference/configuration/secrets",
+                  "reference/console",
+                  "reference/console/create-and-deploy",
+                  "reference/controller",
+                  "reference/controller/reconciliation",
+                  "reference/gateway-routing",
+                  "reference/harness-execution",
+                  "reference/namespaces",
+                  "reference/providers",
+                  "reference/security",
+                  "reference/security/runtime-isolation",
+                  "reference/service-accounts",
+                  "reference/settings",
+                  "reference/settings/development",
+                  "reference/settings/production",
+                  "reference/settings/operations",
+                  "reference/settings/programmatic",
+                  "reference/agents/services",
+                  "reference/authentication/sign-in-quotas",
+                  "reference/controller/worker-lifetime",
+                  "reference/controller/runtime-records",
+                  "reference/settings/runtime-services"
+                ]
+              },
+              {
+                "group": "Runtime and authority components",
+                "pages": [
+                  "reference/acceptance-companion-v1",
+                  "reference/account-authority",
+                  "reference/admitted-undispatched-journal",
+                  "reference/agent-split-dns",
+                  "reference/allocation-companion-v1",
+                  "reference/audience-observation",
+                  "reference/authentication-failures",
+                  "reference/build",
+                  "reference/channel-administration",
+                  "reference/channel-bindings",
+                  "reference/channels",
+                  "reference/compute-gateway-process",
+                  "reference/containment-admission",
+                  "reference/containment-controls-v1",
+                  "reference/containment-evidence-v1",
+                  "reference/controller-github-read-startup",
+                  "reference/credential-backend",
+                  "reference/credential-custody-v1",
+                  "reference/credential-inventory-v1",
+                  "reference/credential-storage",
+                  "reference/credential-storage/token-lifecycle",
+                  "reference/credential-workload-selection",
+                  "reference/custody-clock",
+                  "reference/delegation",
+                  "reference/direct-compute-interruption",
+                  "reference/egress",
+                  "reference/final-pod-comparison",
+                  "reference/fresh-installation-bootstrap",
+                  "reference/gateway-material-delivery",
+                  "reference/gateway-startup-agent-bootstrap",
+                  "reference/gateway-startup-material",
+                  "reference/gateway-startup-v1",
+                  "reference/github-app-provider",
+                  "reference/github-mediation",
+                  "reference/github-mediation-identity",
+                  "reference/github-publication-dispatch",
+                  "reference/hosted-gateway",
+                  "reference/hosted-native-execution",
+                  "reference/installed-renderer-artifacts",
+                  "reference/isolated-upstream-consumer-v1",
+                  "reference/kubernetes-resource-normalization",
+                  "reference/lifecycle-admission-ports",
+                  "reference/lifecycle-deploy-v2",
+                  "reference/lifecycle-handler-ports",
+                  "reference/lifecycle-protective-admission",
+                  "reference/lifecycle-status-api",
+                  "reference/lifecycle-status-projections",
+                  "reference/lifecycle-work-preflight",
+                  "reference/lifecycle-worker-guard",
+                  "reference/native-git-client-mechanics",
+                  "reference/native-github-egress",
+                  "reference/native-github-egress/mediation",
+                  "reference/native-github-publication-library",
+                  "reference/native-measurement-v1",
+                  "reference/native-measurement-v1/observations-and-budgets",
+                  "reference/native-service-peer",
+                  "reference/node-execution-observer",
+                  "reference/node-network-fence",
+                  "reference/operation-sampling-v1",
+                  "reference/operational-diagnostics",
+                  "reference/postgres-auth-binding",
+                  "reference/preparation-job",
+                  "reference/protected-github-custody",
+                  "reference/read-mvp-verification",
+                  "reference/release-evidence",
+                  "reference/release-evidence/records-and-collection",
+                  "reference/repository-credential-inventory-v2",
+                  "reference/repository-preparation",
+                  "reference/repository-publication-v1",
+                  "reference/repository-publication-work-v1",
+                  "reference/repository-work-origin-v2",
+                  "reference/repository-work-policy-v2",
+                  "reference/repository-work-selected-execution-v2",
+                  "reference/repository-work-state-v2",
+                  "reference/repository-work-state-v2/inventory",
+                  "reference/repository-work-v2",
+                  "reference/retained-journal-cost",
+                  "reference/retained-store-preflight-v1",
+                  "reference/retirement-purge-journal",
+                  "reference/retirement-purge-manifest",
+                  "reference/revision-repositories",
+                  "reference/runtime-activation-v1",
+                  "reference/runtime-authority",
+                  "reference/runtime-authority/binding",
+                  "reference/runtime-authority/contract",
+                  "reference/runtime-authority/service-trust",
+                  "reference/runtime-effects",
+                  "reference/runtime-identity",
+                  "reference/runtime-identity-currentness",
+                  "reference/runtime-peer-verification",
+                  "reference/runtime-preparation",
+                  "reference/runtime-preparation/gates",
+                  "reference/runtime-preparation/retention",
+                  "reference/runtime-preparation/submission",
+                  "reference/runtime-resource-accounting-v1",
+                  "reference/runtime-service-transport",
+                  "reference/same-build-recovery-preflight-v1",
+                  "reference/schema-auth-boundary-v1",
+                  "reference/schema-domain-modules",
+                  "reference/security-event-delivery-v1",
+                  "reference/security-events",
+                  "reference/security-events/delivery",
+                  "reference/shared-native-scenarios-v1",
+                  "reference/shared-turn-receipts",
+                  "reference/spire-registration-client",
+                  "reference/startup-diagnostics",
+                  "reference/turn-journal",
+                  "reference/turn-journal/admission",
+                  "reference/turn-journal/completion-delivery",
+                  "reference/turn-journal/execution",
+                  "reference/turn-management-v1",
+                  "reference/upstream-consumption",
+                  "reference/work-authority-ports-v2",
+                  "reference/work-authority-v2",
+                  "reference/worker-lease-cancellation",
+                  "reference/workload-identity",
+                  "reference/workload-profile-request-authentication",
+                  "reference/workload-profiles",
+                  "reference/workload-profiles/candidate-binding",
+                  "reference/workload-profiles/manifest",
+                  "reference/workload-profiles/native-construction",
+                  "reference/workload-profiles/preparation",
+                  "reference/workspace-snapshots"
+                ]
+              },
+              {
+                "group": "Drivers",
+                "pages": [
+                  "reference/drivers/compute",
+                  "reference/drivers/configuration",
+                  "reference/drivers/docker-compute",
+                  "reference/drivers/iam",
+                  "reference/drivers/kubernetes-compute",
+                  "reference/drivers/kubernetes-compute/networking-and-isolation",
+                  "reference/drivers/kubernetes-compute/storage-and-credentials",
+                  "reference/drivers/kubernetes-secret",
+                  "reference/drivers/openshell-sandbox",
+                  "reference/drivers/sandbox",
+                  "reference/drivers/selection",
+                  "reference/drivers/service-account",
+                  "reference/drivers/ssh-compute",
+                  "reference/drivers/gvisor"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Understand the code",
+            "groups": [
+              {
+                "group": "Runtime flows",
+                "pages": [
+                  "flows/common-logging",
+                  "flows/compute-driver-lifecycle-hooks",
+                  "flows/configuration-driver",
+                  "flows/configuration-driver/persistence-and-revisions",
+                  "flows/controller-worker",
+                  "flows/docker-compose-development",
+                  "flows/docker-compose-development/startup",
+                  "flows/docker-compose-development/agent-execution",
+                  "flows/driver-plugin-loading",
+                  "flows/github-actions-testing",
+                  "flows/github-actions-testing/preparation",
+                  "flows/harness-execution-topology",
+                  "flows/kubernetes-existing-namespace-placement",
+                  "flows/local-password-authentication",
+                  "flows/native-service-account-credential-delivery",
+                  "flows/platform-console",
+                  "flows/platform-console/agent-editing",
+                  "flows/platform-startup",
+                  "flows/platform-startup/history",
+                  "flows/production-startup",
+                  "flows/production-tui",
+                  "flows/production-tui/native-client",
+                  "flows/secret-storage-and-delivery",
+                  "flows/service-account-driver-credential-delivery",
+                  "flows/service-api-keys",
+                  "flows/workspace-files",
+                  "flows/pr-24-ssh-compute",
+                  "flows/operator-workflow",
+                  "flows/channel-delivery",
+                  "flows/lifecycle-status-preview",
+                  "flows/external-model-egress"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Testing",
+            "groups": [
+              {
+                "group": "Start testing",
+                "pages": [
+                  "testing/README",
+                  "testing/local",
+                  "testing/ci",
+                  "testing/development-setup",
+                  "testing/test-concurrency",
+                  "testing/controller",
+                  "testing/namespace",
+                  "testing/secret-metadata"
+                ]
+              },
+              {
+                "group": "Infrastructure",
+                "pages": [
+                  "testing/postgresql",
+                  "testing/images",
+                  "testing/docker",
+                  "testing/ssh",
+                  "testing/kubernetes",
+                  "testing/gateway-routing",
+                  "testing/production-tui",
+                  "testing/postgres-isolation",
+                  "testing/gvisor",
+                  "testing/runtime-security",
+                  "testing/node-network-fence",
+                  "testing/read-mvp-qualification"
+                ]
+              },
+              {
+                "group": "External services",
+                "pages": ["testing/slack", "testing/service-accounts", "testing/openshell"]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

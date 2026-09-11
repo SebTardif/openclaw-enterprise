@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { KubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 
 const readFixture = (name) =>
@@ -12,6 +13,19 @@ const readFixture = (name) =>
   );
 const inputs = readFixture("inputs.json");
 const observations = readFixture("observations.json");
+// Keep archived fixture bytes intact while selecting the current logging contract
+// for both the revision and its independently supplied immutable ConfigMap.
+for (const selected of [inputs.revision, inputs.successor]) {
+  selected.configuration = admitLoggingConfiguration(selected.configuration, "info");
+}
+for (const resources of [observations.resources, observations.successorResources]) {
+  for (const resource of resources) {
+    if (resource.kind !== "ConfigMap" || resource.data?.["openclaw.json"] === undefined) continue;
+    resource.data["openclaw.json"] = JSON.stringify(
+      admitLoggingConfiguration(JSON.parse(resource.data["openclaw.json"]), "info"),
+    );
+  }
+}
 const clone = (value) => structuredClone(value);
 const revisionAnnotation = "openclaw.dev/agent-revision-id";
 const apiError = (statusCode) =>

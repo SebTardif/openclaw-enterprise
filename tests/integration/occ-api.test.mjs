@@ -6,7 +6,6 @@ import { createConnection, createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AuthAccountRoleNotFoundError } from "../../apps/controller/src/auth/index.ts";
-import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../../apps/controller/src/composition/production-harness.ts";
 import { createControllerApp, createFastifyApp } from "../../apps/controller/src/index.ts";
 import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
@@ -497,6 +496,7 @@ async function createInjectedFixture(options = {}) {
     authFixture,
     auditSink,
     computeCalls,
+    platformState,
     createApp,
     async createAuthPrincipal(name) {
       const email = `${name}-${randomUUID()}@example.com`;
@@ -573,6 +573,58 @@ async function createInjectedConfiguration(fixture, namespaceId, values = {}) {
   return result.data;
 }
 
+// TODO: Add successful deployment and deploy-IAM coverage when this fixture has
+// genuine request custody, a saved admitted workload profile, and its required owners.
+async function historicalRevision(fixture, agent, configuration) {
+  // Seed retained history through the actual repository, without a workload profile,
+  // runtime admission, or lifecycle head. This does not represent a new V2 deployment.
+  return fixture.platformState.transact(async (unit) => {
+    const owner = await unit.agents.findAgent(agent.namespaceId, agent.id);
+    assert.ok(owner);
+    const account =
+      owner.serviceAccountId === undefined
+        ? undefined
+        : await unit.serviceAccounts.findServiceAccount(agent.namespaceId, owner.serviceAccountId);
+    const compute = fixture.controller.selectedDriver("compute");
+    return unit.revisions.createRevision({
+      id: `rev_${randomUUID()}`,
+      namespaceId: agent.namespaceId,
+      agentId: agent.id,
+      revision: 1,
+      maximumExecutionMs: owner.maximumExecutionMs,
+      providerId: owner.providerId,
+      configurationId: configuration.id,
+      configurationKind: configuration.kind,
+      configurationGeneration: configuration.generation,
+      configuration: configuration.values,
+      harness: { ...resolveApprovedDevelopmentHarness("openclaw", "embedded"), mode: "embedded" },
+      compute: { id: compute.id, implementation: compute.implementation },
+      ...(account === undefined
+        ? {}
+        : { serviceAccount: { id: account.id, credential: account.credential } }),
+      servicePrincipalId: owner.servicePrincipalId,
+      createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+async function assertBodylessDeployRejected(fixture, namespaceId, agentId) {
+  const snapshot = () =>
+    fixture.platformState.read(async (view) => ({
+      revisions: await view.revisions.listRevisions(namespaceId, agentId),
+      head: await view.runtimeAssignments.findRuntimeIntentHead({ namespaceId, agentId }),
+    }));
+  const before = await snapshot();
+  const response = await injectedRequest(
+    fixture.app,
+    "POST",
+    `/namespaces/${namespaceId}/agents/${agentId}/deploy`,
+  );
+  assert.equal(response.status, 400, JSON.stringify(response.body));
+  assert.equal(response.body.error.code, "INVALID_REQUEST");
+  assert.deepEqual(await snapshot(), before, "invalid deployment cannot create history or intent");
+}
+
 test("OCC Fastify serves singleton, Namespace, Configuration, and Agent resource routes", async () => {
   const controller = await configuredController();
   const installation = await bootstrap(controller);
@@ -615,19 +667,8 @@ test("OCC Fastify serves singleton, Namespace, Configuration, and Agent resource
   assert.equal(agentDetail.status, 200);
   assert.deepEqual(agentDetail.data, agent);
 
-  const deployment = await controller.request(
-    "POST",
-    `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
-  );
-  assert.equal(deployment.status, 409);
-  assert.equal(deployment.body.error.code, "NAMESPACE_NOT_READY");
-
-  const secondDeployment = await controller.request(
-    "POST",
-    `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
-  );
-  assert.equal(secondDeployment.status, 409);
-  assert.equal(secondDeployment.body.error.code, "NAMESPACE_NOT_READY");
+  // Request validation precedes Namespace readiness and deployment admission.
+  await assertBodylessDeployRejected(controller.fixture, namespace.id, agent.id);
 
   const revisions = await controller.request(
     "GET",
@@ -661,7 +702,7 @@ test("OCC Fastify serves singleton, Namespace, Configuration, and Agent resource
   assert.deepEqual(unchanged.data, installation);
 });
 
-test("Agent Provider API preserves nullable drafts and immutable revision associations", async () => {
+test("Agent Provider API preserves nullable drafts and historical revision associations", async () => {
   const fixture = await createInjectedFixture({
     providers: [
       {
@@ -707,20 +748,25 @@ test("Agent Provider API preserves nullable drafts and immutable revision associ
   assert.equal(preserved.status, 200);
   assert.equal(preserved.data.providerId, "openai");
   await fixture.controller.handleNamespaceLifecycle(fixture.principal.id, namespace.id, "ready");
-  const revision = await controller.request("POST", `${target}/deploy`);
-  assert.equal(revision.status, 202, JSON.stringify(revision.body));
-  assert.equal(revision.data.providerId, "openai");
+  await assertBodylessDeployRejected(fixture, namespace.id, selected.id);
+  const revision = await historicalRevision(fixture, selected, configuration);
 
   const cleared = await controller.request("PATCH", target, {
     body: { configurationId: configuration.id, providerId: null },
   });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.data.providerId, null);
-  const prior = await controller.request("GET", `${target}/revisions/${revision.data.id}`);
-  assert.equal(prior.data.providerId, "openai", "draft changes cannot rewrite admitted revisions");
-  const independent = await controller.request("POST", `${target}/deploy`);
-  assert.equal(independent.status, 202);
-  assert.equal(independent.data.providerId, null);
+  const prior = await controller.request("GET", `${target}/revisions/${revision.id}`);
+  assert.equal(prior.status, 200);
+  assert.equal(
+    prior.data.providerId,
+    "openai",
+    "draft changes cannot rewrite historical revisions",
+  );
+  await assertBodylessDeployRejected(fixture, namespace.id, selected.id);
+  const revisions = await controller.request("GET", `${target}/revisions`);
+  assert.equal(revisions.status, 200);
+  assert.deepEqual(revisions.data, [prior.data]);
 
   for (const providerId of ["", " ", "unknown", 42, [], {}]) {
     const expectedStatus = providerId === "unknown" ? 404 : 400;
@@ -742,7 +788,7 @@ test("Agent Provider API preserves nullable drafts and immutable revision associ
   assert.equal(replaced.data.providerId, "openai");
 });
 
-test("native ServiceAccounts bind exact credential references and freeze Agent revision snapshots", async () => {
+test("native ServiceAccounts bind exact credential references and preserve historical snapshots", async () => {
   const controller = await configuredController();
   await bootstrap(controller);
   const namespace = await createNamespace(controller, "service-account-lifecycle");
@@ -763,17 +809,14 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
   assert.equal(agentResult.status, 201);
   assert.equal(agentResult.data.serviceAccountId, account.id);
   const agent = agentResult.data;
-  const deploymentPath = `/namespaces/${namespace.id}/agents/${agent.id}/deploy`;
 
-  // A ready Namespace is insufficient: associated accounts without credentials cannot admit revisions.
+  // Namespace readiness does not make the retired bodyless deployment request valid.
   await controller.fixture.controller.handleNamespaceLifecycle(
     controller.fixture.principal.id,
     namespace.id,
     "ready",
   );
-  const missingCredential = await controller.request("POST", deploymentPath);
-  assert.equal(missingCredential.status, 409);
-  assert.equal(missingCredential.body.error.code, "RESOURCE_CONFLICT");
+  await assertBodylessDeployRejected(controller.fixture, namespace.id, agent.id);
 
   const initialCredential = {
     kind: "api_key",
@@ -785,12 +828,7 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
   assert.equal(assigned.status, 200);
   assert.deepEqual(assigned.data.credential, initialCredential);
 
-  const initialRevision = await controller.request("POST", deploymentPath);
-  assert.equal(initialRevision.status, 202);
-  assert.deepEqual(initialRevision.data.serviceAccount, {
-    id: account.id,
-    credential: initialCredential,
-  });
+  const initialRevision = await historicalRevision(controller.fixture, agent, configuration);
 
   // OAuth references are representable, but no refresh or OAuth execution exists yet.
   const oauthCredential = {
@@ -801,9 +839,11 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
     body: oauthCredential,
   });
   assert.equal(oauthUpdate.status, 200);
-  const oauthDeployment = await controller.request("POST", deploymentPath);
-  assert.equal(oauthDeployment.status, 409);
-  assert.equal(oauthDeployment.body.error.code, "RESOURCE_CONFLICT");
+  assert.deepEqual(oauthUpdate.data.credential, oauthCredential);
+  const oauthRead = await controller.request("GET", accountPath);
+  assert.equal(oauthRead.status, 200);
+  assert.deepEqual(oauthRead.data.credential, oauthCredential);
+  await assertBodylessDeployRejected(controller.fixture, namespace.id, agent.id);
 
   const replacementCredential = {
     kind: "api_key",
@@ -813,16 +853,21 @@ test("native ServiceAccounts bind exact credential references and freeze Agent r
     body: replacementCredential,
   });
   assert.equal(replaced.status, 200);
-  const replacementRevision = await controller.request("POST", deploymentPath);
-  assert.equal(replacementRevision.status, 202);
-  assert.deepEqual(replacementRevision.data.serviceAccount.credential, replacementCredential);
+  assert.deepEqual(replaced.data.credential, replacementCredential);
+  const replacementRead = await controller.request("GET", accountPath);
+  assert.equal(replacementRead.status, 200);
+  assert.deepEqual(replacementRead.data.credential, replacementCredential);
 
-  // Credential edits affect future admissions only; a historical revision keeps its original reference.
+  // Credential edits cannot rewrite the reference retained in a historical revision.
   const historical = await controller.request(
     "GET",
-    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${initialRevision.data.id}`,
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${initialRevision.id}`,
   );
-  assert.deepEqual(historical.data.serviceAccount.credential, initialCredential);
+  assert.equal(historical.status, 200);
+  assert.deepEqual(historical.data.serviceAccount, {
+    id: account.id,
+    credential: initialCredential,
+  });
 
   const boundDeletion = await controller.request("DELETE", accountPath);
   assert.equal(boundDeletion.status, 409);
@@ -1454,7 +1499,7 @@ test("OCC development subprocess requires PostgreSQL-backed startup", async (t) 
   await assertUnsafeStartupRejected(t);
 });
 
-test("bodyless OCC routes reject request payloads before IAM or domain side effects", async () => {
+test("OCC routes reject unexpected request payloads before IAM or domain side effects", async () => {
   const fixture = await createInjectedFixture();
   const installation = await injectedRequest(fixture.app, "POST", "/installation/bootstrap", {
     body: { name: "Bodyless-route installation" },
@@ -1546,9 +1591,9 @@ test("OCC isolates Namespace ownership and filters collections by exact IAM gran
   assert.deepEqual(listedA.data, [agentA]);
   assert.deepEqual(listedB.data, [agentB]);
 
+  // Use valid read/update requests: a malformed deploy body is not IAM denial proof.
   for (const [method, path, options] of [
     ["GET", `/namespaces/${namespaceB.id}/agents/${agentA.id}`],
-    ["POST", `/namespaces/${namespaceB.id}/agents/${agentA.id}/deploy`],
     [
       "PATCH",
       `/namespaces/${namespaceB.id}/agents/${agentA.id}`,
@@ -1783,13 +1828,7 @@ test("two Namespaces become independently ready and deletion tombstones only its
   assert.equal(replacedReference.status, 200);
   assert.equal(replacedReference.data.configurationId, firstConfiguration.id);
   assert.deepEqual(fixture.computeCalls.ensureNamespace, []);
-  const unavailable = await injectedRequest(
-    fixture.app,
-    "POST",
-    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deploy`,
-  );
-  assert.equal(unavailable.status, 409);
-  assert.equal(unavailable.body.error.code, "NAMESPACE_NOT_READY");
+  await assertBodylessDeployRejected(fixture, namespaceA.data.id, agentA.data.id);
 
   await fixture.controller.handleNamespaceLifecycle(
     fixture.principal.id,
@@ -1803,45 +1842,15 @@ test("two Namespaces become independently ready and deletion tombstones only its
   );
   assert.deepEqual(fixture.computeCalls.ensureNamespace, [namespaceA.data.id, namespaceB.data.id]);
 
-  const readyDeployment = await injectedRequest(
-    fixture.app,
-    "POST",
-    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deploy`,
-  );
-  assert.equal(readyDeployment.status, 202);
-  assert.match(readyDeployment.data.id, identifier("rev"));
-  assert.deepEqual(Object.keys(readyDeployment.data).sort(), [
-    "agentId",
-    "compute",
-    "configuration",
-    "configurationGeneration",
-    "configurationId",
-    "configurationKind",
-    "createdAt",
-    "harness",
-    "id",
-    "namespaceId",
-    "providerId",
-    "revision",
-  ]);
-  assert.equal(readyDeployment.data.configurationId, firstConfiguration.id);
-  assert.equal(readyDeployment.data.configurationKind, "agent");
-  assert.equal(readyDeployment.data.configurationGeneration, 1);
-  assert.deepEqual(
-    readyDeployment.data.configuration,
-    admitLoggingConfiguration({ model: "first", temperature: "0" }, "info"),
-  );
-  assert.deepEqual(readyDeployment.data.harness, {
-    id: "openclaw",
-    version: "1.0.0",
-    mode: "embedded",
-  });
-  assert.deepEqual(readyDeployment.data.compute, {
-    id: "compute-integration",
-    implementation: "deterministic-test",
-  });
-  assert.equal(readyDeployment.data.revision, 1);
-  assert.equal(Object.hasOwn(readyDeployment.data, "servicePrincipalId"), false);
+  await assertBodylessDeployRejected(fixture, namespaceA.data.id, agentA.data.id);
+  const retainedRevision = await historicalRevision(fixture, agentA.data, firstConfiguration);
+  const revisionPath = `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions/${retainedRevision.id}`;
+  const initialRead = await injectedRequest(fixture.app, "GET", revisionPath);
+  assert.equal(initialRead.status, 200);
+  assert.equal(initialRead.data.configurationId, firstConfiguration.id);
+  assert.equal(initialRead.data.configurationGeneration, 1);
+  assert.deepEqual(initialRead.data.configuration, firstConfiguration.values);
+  assert.equal(Object.hasOwn(initialRead.data, "servicePrincipalId"), false);
 
   const secondConfiguration = await createInjectedConfiguration(fixture, namespaceA.data.id, {
     model: "second",
@@ -1854,31 +1863,18 @@ test("two Namespaces become independently ready and deletion tombstones only its
     { body: { configurationId: secondConfiguration.id } },
   );
   assert.equal(nextReference.status, 200);
-  const historical = await injectedRequest(
-    fixture.app,
-    "GET",
-    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions/${readyDeployment.data.id}`,
-  );
+  // Draft replacement preserves the actual repository snapshot and creates no intent.
+  const historical = await injectedRequest(fixture.app, "GET", revisionPath);
   assert.equal(historical.status, 200);
-  assert.deepEqual(historical.data, readyDeployment.data);
-
-  const nextDeployment = await injectedRequest(
-    fixture.app,
-    "POST",
-    `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/deploy`,
-  );
-  assert.equal(nextDeployment.status, 202);
-  assert.equal(nextDeployment.data.revision, 2);
-  assert.deepEqual(
-    nextDeployment.data.configuration,
-    admitLoggingConfiguration({ model: "second", temperature: "1" }, "info"),
-  );
-  const admittedRevisions = await injectedRequest(
+  assert.deepEqual(historical.data, initialRead.data);
+  await assertBodylessDeployRejected(fixture, namespaceA.data.id, agentA.data.id);
+  const revisions = await injectedRequest(
     fixture.app,
     "GET",
     `/namespaces/${namespaceA.data.id}/agents/${agentA.data.id}/revisions`,
   );
-  assert.deepEqual(admittedRevisions.data, [readyDeployment.data, nextDeployment.data]);
+  assert.equal(revisions.status, 200);
+  assert.deepEqual(revisions.data, [initialRead.data]);
   assert.deepEqual(fixture.computeCalls.ensureNamespace, [namespaceA.data.id, namespaceB.data.id]);
 
   const deleting = await injectedRequest(

@@ -164,6 +164,14 @@ export const SecretValue = Type.String({
     "Protected Secret value. It must be nonempty UTF-8 without NUL; OCC accepts at most 65,536 UTF-8 bytes and still enforces the route request body limit.",
 });
 
+export const RuntimeCredentialValue = Type.String({
+  minLength: 1,
+  maxLength: 65536,
+  pattern: "^[^\\u0000]*$",
+  description:
+    "Protected Agent runtime credential value. OCC accepts at most 65,536 UTF-8 bytes and never returns the value.",
+});
+
 export const ServiceAccountCredentialSchema = Type.Object(
   {
     kind: Type.Union([

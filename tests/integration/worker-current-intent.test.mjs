@@ -58,6 +58,7 @@ try {
 function installed({
   legacy = false,
   active = false,
+  mode = "production",
   activationOrder = "afterCommit",
   agentId,
 } = {}) {
@@ -281,7 +282,7 @@ function installed({
   const cleanup = new WorkerRevisionCleanup({
     compute,
     effects,
-    mode: "production",
+    mode,
     maintenanceIntervalMs: 1000,
     listRevisions: async () => [revision],
     validObservation: validRevisionObservation,
@@ -316,7 +317,7 @@ function installed({
     read,
     installation: () => installation,
     compute,
-    mode: "production",
+    mode,
     resolveApprovedHarness: () => revision.harness,
     inputs: {
       async authorizeRevision() {
@@ -432,6 +433,29 @@ test("installed runner composes admitted prepare, staged activation, final audit
       "original",
       "head",
     ]);
+});
+
+test("development staged Compute activates only after publication through the installed worker owners", async () => {
+  // SSH provides staged activation in development. The worker must call it after
+  // the active-revision transaction, with the same currentness and lease guards.
+  const f = installed({ mode: "development" });
+  await f.reconciler.reconcile(f.execution);
+  const effects = f.calls.filter((call) =>
+    ["prepare", "deactivate", "activateCAS", "commit:1", "activate", "complete"].includes(call),
+  );
+  assert.deepEqual(effects, ["prepare", "activateCAS", "commit:1", "activate", "complete"]);
+  assert.equal(f.events[0].outcome, "success");
+});
+
+test("development published-revision replay repairs staged activation without republishing", async () => {
+  // A lost response after publication leaves the selected Driver responsible
+  // for idempotently activating the already-published immutable revision.
+  const f = installed({ mode: "development", active: true });
+  await f.reconciler.reconcile(f.execution);
+  assert.equal(f.calls.filter((call) => call === "activate").length, 1);
+  assert.ok(f.calls.indexOf("prepare") < f.calls.indexOf("activate"));
+  assert.ok(f.calls.indexOf("activate") < f.calls.indexOf("complete"));
+  assert.equal(f.calls.includes("activateCAS"), false);
 });
 
 for (const desiredMode of ["disabled", "stopped", "running"]) {
@@ -567,15 +591,17 @@ test("post-commit activation failure cannot produce a second completion after a 
   noSuccess(f);
 });
 
-test("maintenance observes a stopped head before reprepare, activation or enqueue", async () => {
-  const f = installed({ active: true });
-  f.work.idempotencyKey = `agent_revision:${f.revision.id}:maintenance:1`;
-  f.replaceHead({ ...f.original, desiredMode: "stopped", generation: 2 });
-  await assert.rejects(f.reconciler.reconcile(f.execution), WorkerRevisionCurrentnessLostError);
-  assert.equal(f.calls.includes("prepare"), false);
-  assert.equal(f.calls.includes("activate"), false);
-  noSuccess(f);
-});
+for (const mode of ["development", "production"]) {
+  test(`${mode} maintenance observes a stopped head before reprepare, activation or enqueue`, async () => {
+    const f = installed({ active: true, mode });
+    f.work.idempotencyKey = `agent_revision:${f.revision.id}:maintenance:1`;
+    f.replaceHead({ ...f.original, desiredMode: "stopped", generation: 2 });
+    await assert.rejects(f.reconciler.reconcile(f.execution), WorkerRevisionCurrentnessLostError);
+    assert.equal(f.calls.includes("prepare"), false);
+    assert.equal(f.calls.includes("activate"), false);
+    noSuccess(f);
+  });
+}
 
 test("cancellation during a rejecting currentness read retains claim-loss classification", async () => {
   const f = installed();

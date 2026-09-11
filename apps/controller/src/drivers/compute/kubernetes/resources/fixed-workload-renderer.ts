@@ -92,6 +92,8 @@ import {
 import {
   AGENT_TRANSPORT_TOKEN_KEY,
   GATEWAY_TOKEN_KEY,
+  GATEWAY_PASSWORD_KEY,
+  OPENCLAW_GATEWAY_PASSWORD,
   MODEL_API_KEY,
   SERVICE_ACCOUNT_WORKSPACE_KEY,
   CODEX_ACCESS_TOKEN,
@@ -341,6 +343,11 @@ export function fixedWorkloadDeployment(
       if (configuration?.usesTrustedProxyAuth !== true) {
         variables.push(
           secret("OPENCLAW_GATEWAY_TOKEN", runtime.transportSecretPrefix, GATEWAY_TOKEN_KEY),
+        );
+      }
+      if (configuration?.usesGatewayPasswordEnv === true) {
+        variables.push(
+          secret(OPENCLAW_GATEWAY_PASSWORD, runtime.transportSecretPrefix, GATEWAY_PASSWORD_KEY),
         );
       }
       variables.push(

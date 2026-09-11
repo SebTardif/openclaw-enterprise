@@ -56,4 +56,4 @@ The fixture does not replace the worker implementation or the queue error class.
 See the [controller reference](controller.md) for worker reconciliation and
 finalization, the [lifecycle worker guard](lifecycle-worker-guard.md) for the
 separate current-intent and exact-effect boundary, and the
-[testing guide](../testing.md) for infrastructure-dependent verification.
+[testing guide](../testing/README.md) for infrastructure-dependent verification.

@@ -136,7 +136,9 @@ test("security-event errors retain one constructor through root and subpath impo
 
 for (const fixture of ["producer", "consumer"]) {
   test(`independent ${fixture} compiles with supported NodeNext package entrypoints`, () => {
-    const compiler = fileURLToPath(import.meta.resolve("typescript/bin/tsc"));
+    const compiler = fileURLToPath(
+      new URL("./bin/tsc", import.meta.resolve("typescript/package.json")),
+    );
     const result = spawnSync(
       process.execPath,
       [

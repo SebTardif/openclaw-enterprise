@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import ts from "typescript";
+import ts from "typescript-compiler-api";
 import { createPostgresAuthBinding } from "../../packages/occ/src/auth-persistence/postgres-auth-binding.ts";
 import * as canonicalSchema from "../../packages/occ/src/state/postgres-schema.ts";
 

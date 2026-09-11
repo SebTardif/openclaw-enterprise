@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const virtualPath = resolve(root, "tests/conformance/runtime-preparation-submission.consumer.ts");
 
 // Compile a real consuming module against the actual canonical declarations.
 // No owner, service credential, SDK response or authority is fabricated, and
@@ -115,58 +114,35 @@ void [originalPlan, allOriginalChildren, invoke, observed, originalObservation,
   running, cleanup, readOriginal, effectOperations];
 `;
 
-test("submission declaration preserves complete preparation, authority separation and original lifecycle consumers", () => {
-  // Use the repository's real compiler configuration and resolution. A missing
-  // genuine dependency or an uncomposed required State member is an actual
-  // failure, not an excuse to replace declarations or skip their diagnostics.
-  const configPath = resolve(root, "tsconfig.base.json");
-  const config = ts.parseConfigFileTextToJson(configPath, readFileSync(configPath, "utf8"));
-  assert.equal(config.error, undefined);
-  const parsed = ts.parseJsonConfigFileContent(
-    config.config,
-    ts.sys,
-    root,
-    {
-      noEmit: true,
-      composite: false,
-      declaration: false,
-      strict: true,
-      allowImportingTsExtensions: true,
-      rewriteRelativeImportExtensions: false,
-    },
-    configPath,
-  );
-  // Inherit the workspace's declaration-library policy. This still checks the
-  // real source declarations and every expected-error boundary below; it does
-  // not add a separate, unbounded check of third-party declaration libraries.
-  assert.equal(
-    parsed.errors.length,
-    0,
-    ts.formatDiagnosticsWithColorAndContext(parsed.errors, {
-      getCurrentDirectory: () => root,
-      getCanonicalFileName: (name) => name,
-      getNewLine: () => "\n",
+test("submission declaration preserves complete preparation, authority separation and original lifecycle consumers", (t) => {
+  // Inherit the repository configuration and check the real declarations with
+  // the current compiler, including every expected-error boundary above.
+  const directory = mkdtempSync(resolve(root, "tests/.runtime-submission-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(resolve(directory, "consumer.ts"), consumer);
+  const project = resolve(directory, "tsconfig.json");
+  writeFileSync(
+    project,
+    JSON.stringify({
+      extends: "../../tsconfig.base.json",
+      compilerOptions: {
+        noEmit: true,
+        composite: false,
+        declaration: false,
+        strict: true,
+        allowImportingTsExtensions: true,
+        rewriteRelativeImportExtensions: false,
+      },
+      files: ["consumer.ts"],
+      include: [],
     }),
   );
-  const host = ts.createCompilerHost(parsed.options);
-  const read = host.readFile.bind(host);
-  const exists = host.fileExists.bind(host);
-  const source = host.getSourceFile.bind(host);
-  host.fileExists = (name) => name === virtualPath || exists(name);
-  host.readFile = (name) => (name === virtualPath ? consumer : read(name));
-  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
-    name === virtualPath
-      ? ts.createSourceFile(name, consumer, languageVersion, true)
-      : source(name, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram([virtualPath], parsed.options, host);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  assert.equal(
-    diagnostics.length,
-    0,
-    ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-      getCurrentDirectory: () => root,
-      getCanonicalFileName: (name) => name,
-      getNewLine: () => "\n",
-    }),
+  const result = spawnSync(
+    process.execPath,
+    [resolve(root, "node_modules/typescript/bin/tsc"), "--project", project, "--pretty", "false"],
+    { cwd: root, encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024 },
   );
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });

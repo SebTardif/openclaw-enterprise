@@ -3,6 +3,7 @@ import {
   type FixedWorkloadInput,
   type FixedWorkloadRenderer,
 } from "./fixed-workload-renderer.ts";
+import { OPENCLAW_GATEWAY_PASSWORD } from "./secret-projection.ts";
 import { asRecord, immutableCopy, sha256Hex } from "@openclaw-enterprise/utils";
 import type { V1Deployment, V1EnvVar, V1Volume, V1VolumeMount } from "@kubernetes/client-node";
 import type { GatewayProcessTargetV1 } from "@openclaw-enterprise/contracts/gateway-startup-v1";
@@ -17,6 +18,7 @@ import {
   type LoggingLevel,
 } from "@openclaw-enterprise/contracts";
 import {
+  ConfigurationFailure,
   manifest,
   required,
   AGENT_REVISION_ANNOTATION,
@@ -52,6 +54,7 @@ export interface GatewayConfigurationSnapshot {
   readonly revision: number;
   readonly revisionId: string;
   readonly usesTrustedProxyAuth: boolean;
+  readonly usesGatewayPasswordEnv: boolean;
   readonly annotations: Readonly<Record<string, string>>;
   readonly loggingLevel: LoggingLevel;
 }
@@ -69,12 +72,23 @@ export const GATEWAY_LISTENER_SECTION = "https";
 export const GATEWAY_MEMBERSHIP_LABEL = "openclaw-enterprise.io/gateway";
 
 export function gatewayConfiguration(revision: GatewayRevision): GatewayConfigurationSnapshot {
+  const gateway = asRecord(revision.configuration.gateway);
+  const auth = asRecord(gateway?.auth);
+  const password = auth === undefined ? undefined : auth.password;
+  const passwordReference = password === undefined ? undefined : asRecord(password);
+  const usesGatewayPasswordEnv =
+    passwordReference?.source === "env" && passwordReference.id === OPENCLAW_GATEWAY_PASSWORD;
+  if (password !== undefined && !usesGatewayPasswordEnv) {
+    throw new ConfigurationFailure(
+      "Gateway password authentication must use OPENCLAW_GATEWAY_PASSWORD.",
+    );
+  }
   return {
     name: `gateway-${sha256Hex(revision.agentId, 12)}-rev-${sha256Hex(revision.id, 12)}`,
     revision: revision.revision,
     revisionId: revision.id,
-    usesTrustedProxyAuth:
-      asRecord(asRecord(revision.configuration.gateway)?.auth)?.mode === "trusted-proxy",
+    usesTrustedProxyAuth: auth?.mode === "trusted-proxy",
+    usesGatewayPasswordEnv,
     annotations: {
       "openclaw.dev/configuration-id": revision.configurationId,
       "openclaw.dev/configuration-kind": revision.configurationKind,

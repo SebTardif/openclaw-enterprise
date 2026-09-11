@@ -139,6 +139,8 @@ export type {
 import type {
   Agent,
   AgentRevision,
+  AgentRuntimeCredentialsInput,
+  AgentRuntimeCredentialStatus,
   AuditEvent,
   AuthorizationDecision,
   AuthorizationRequest,
@@ -480,6 +482,7 @@ export class OpenClawController {
       });
     }
     this.agent = new AgentService({
+      runtimeCredentialComputeDriver: () => this.selectedDriver("compute"),
       ...(workloadProfiles === undefined ? {} : { workloadProfiles }),
       repositories: this.mutations.forRepositories(AGENT_REPOSITORIES),
       authorization: {
@@ -560,6 +563,23 @@ export class OpenClawController {
     agentId: string,
   ): Promise<Readonly<Agent>> {
     return this.agent.getAgent(principalId, namespaceId, agentId);
+  }
+
+  async getAgentRuntimeCredentialStatus(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>> {
+    return this.agent.getAgentRuntimeCredentialStatus(principalId, namespaceId, agentId);
+  }
+
+  async provisionAgentRuntimeCredentials(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+    input: AgentRuntimeCredentialsInput,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>> {
+    return this.agent.provisionAgentRuntimeCredentials(principalId, namespaceId, agentId, input);
   }
 
   // TODO: Remove ServiceAccount facade forwarders once remaining callers use the service port.

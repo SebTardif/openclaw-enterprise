@@ -85,7 +85,11 @@ function driverHasCapabilityContract(driver: Driver): boolean {
     typeof candidate.ensureNamespace === "function" &&
     typeof candidate.deleteNamespace === "function" &&
     typeof candidate.prepareRevision === "function" &&
-    typeof candidate.retireRevision === "function"
+    typeof candidate.retireRevision === "function" &&
+    (candidate.getAgentRuntimeCredentialStatus === undefined ||
+      typeof candidate.getAgentRuntimeCredentialStatus === "function") &&
+    (candidate.provisionAgentRuntimeCredentials === undefined ||
+      typeof candidate.provisionAgentRuntimeCredentials === "function")
   );
 }
 

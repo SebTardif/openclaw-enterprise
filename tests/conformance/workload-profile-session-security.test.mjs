@@ -94,6 +94,15 @@ function protocol(options = {}) {
         events.push("policy");
         return response();
       }
+      if (
+        statement ===
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('workload-profile-capacity:'||$1,0))"
+      ) {
+        // Recovery shares the source writer's capacity prefix after authorization.
+        // Acknowledge the protocol operation; this peer does not model SQL locks.
+        assert.deepEqual(parameters, [f.installationId]);
+        return response();
+      }
       if (statement.includes("FROM occ.iam_identities ")) return response([principal]);
       if (statement.includes("FROM occ.iam_roles "))
         return response([

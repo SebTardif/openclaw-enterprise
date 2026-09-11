@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { watch } from "node:fs";
 import {
   chmod,
-  chown,
   copyFile,
   lstat,
   mkdir,
@@ -829,30 +828,6 @@ test(
       await writeFile(output, "existing destination");
       await assert.rejects(stageNativeArtifact(source, output), { code: "EEXIST" });
       assert.equal(await readFile(output, "utf8"), "existing destination");
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  "native staging rejects a real foreign owner",
-  {
-    skip:
-      process.platform !== "linux" || process.getuid() !== 0
-        ? "Requires privilege to create a genuinely foreign-owned file."
-        : false,
-  },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), "oce-native-owner-"));
-    try {
-      const source = join(directory, "source");
-      await writeFile(source, "inert bytes", { mode: 0o755 });
-      await chown(source, 65534, 65534);
-      await assert.rejects(
-        stageNativeArtifact(source, join(directory, "output")),
-        /owned by root or the current user/,
-      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

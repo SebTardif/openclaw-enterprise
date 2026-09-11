@@ -226,6 +226,7 @@ async function createFixture(options = {}) {
     auth: adminAuth.auth,
     iamDriver,
     iamStateStore,
+    platformState,
     state,
     get controller() {
       return controller;
@@ -320,15 +321,70 @@ async function createAgent(fixture, namespace, name) {
   return result.payload.data;
 }
 
-async function deploy(fixture, namespace, agent) {
+async function assertBodylessDeployRejected(fixture, namespace, agent) {
+  const snapshot = () =>
+    fixture.platformState.read(async (view) => ({
+      revisions: await view.revisions.listRevisions(namespace.id, agent.id),
+      head: await view.runtimeAssignments.findRuntimeIntentHead({
+        namespaceId: namespace.id,
+        agentId: agent.id,
+      }),
+    }));
+  const before = await snapshot();
+  const auditCount = fixture.auditSink.events.length;
   const result = await request(
     fixture.app,
     `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
     { method: "POST" },
   );
-  assert.equal(result.response.status, 409);
-  assert.equal(result.payload.error.code, "NAMESPACE_NOT_READY");
-  return result;
+  // Invalid deployment input is rejected before authorization, mutations, or auditing.
+  assert.equal(result.response.status, 400);
+  assert.equal(result.payload.error.code, "INVALID_REQUEST");
+  assert.deepEqual(await snapshot(), before);
+  assert.equal(fixture.auditSink.events.length, auditCount);
+}
+
+// TODO: Qualify successful deployment and deploy-IAM coverage with genuine request
+// custody, a saved admitted workload profile, and its required owners.
+async function historicalRevision(fixture, namespace, agent) {
+  // Retained history uses the actual repository and a ready owner Namespace. It has
+  // no workload profile, runtime admission, or lifecycle head; this is read-security
+  // coverage, not a successful new V2 deployment.
+  const configuration = await fixture.controller.configuration.getConfiguration(
+    fixture.administrator.id,
+    namespace.id,
+    agent.configurationId,
+  );
+  const revision = await fixture.platformState.transact(async (unit) => {
+    const owner = await unit.agents.findAgent(namespace.id, agent.id);
+    assert.ok(owner);
+    assert.equal(owner.configurationId, configuration.id);
+    const compute = fixture.controller.selectedDriver("compute");
+    return unit.revisions.createRevision({
+      id: `rev_${randomUUID()}`,
+      namespaceId: namespace.id,
+      agentId: agent.id,
+      revision: 1,
+      maximumExecutionMs: owner.maximumExecutionMs,
+      providerId: owner.providerId,
+      configurationId: configuration.id,
+      configurationKind: configuration.kind,
+      configurationGeneration: configuration.generation,
+      configuration: configuration.values,
+      harness: { ...resolveApprovedDevelopmentHarness("openclaw", "embedded"), mode: "embedded" },
+      compute: { id: compute.id, implementation: compute.implementation },
+      servicePrincipalId: owner.servicePrincipalId,
+      createdAt: new Date().toISOString(),
+    });
+  });
+  const read = await request(
+    fixture.app,
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${revision.id}`,
+  );
+  assert.equal(read.response.status, 200);
+  assert.equal(read.payload.data.id, revision.id);
+  assert.equal(Object.hasOwn(read.payload.data, "servicePrincipalId"), false);
+  return read.payload.data;
 }
 
 async function createRevisionFixture() {
@@ -340,7 +396,7 @@ async function createRevisionFixture() {
   const siblingAgent = await createAgent(fixture, namespaceA, "Sibling revision Agent");
   const agentB = await createAgent(fixture, namespaceB, "Foreign revision Agent");
 
-  // Admit actual revisions only after the real Namespace lifecycle accepts readiness.
+  // Historical revisions belong to ready tenants, reached through the real lifecycle.
   for (const namespace of [namespaceA, namespaceB]) {
     await fixture.controller.handleNamespaceLifecycle(
       fixture.administrator.id,
@@ -353,13 +409,7 @@ async function createRevisionFixture() {
     [namespaceA, agentA],
     [namespaceB, agentB],
   ]) {
-    const deployed = await request(
-      fixture.app,
-      `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
-      { method: "POST" },
-    );
-    assert.equal(deployed.response.status, 202);
-    revisions.push(deployed.payload.data);
+    revisions.push(await historicalRevision(fixture, namespace, agent));
   }
   const [revisionA, revisionB] = revisions;
   fixture.state.roles.push({
@@ -1108,8 +1158,8 @@ test("exact Namespace ownership prevents cross-tenant access and resource traver
   const namespaceB = await createNamespace(fixture, "Tenant B");
   const agentA = await createAgent(fixture, namespaceA, "Agent A");
   const agentB = await createAgent(fixture, namespaceB, "Agent B");
-  await deploy(fixture, namespaceA, agentA);
-  await deploy(fixture, namespaceB, agentB);
+  await assertBodylessDeployRejected(fixture, namespaceA, agentA);
+  await assertBodylessDeployRejected(fixture, namespaceB, agentB);
 
   for (const [namespace, agent] of [
     [namespaceA, agentA],
@@ -1221,7 +1271,25 @@ test("mutations are attributable and authorization failures never leak credentia
   await bootstrap(fixture);
   const namespace = await createNamespace(fixture, "Audited tenant");
   const agent = await createAgent(fixture, namespace, "Audited agent");
-  await deploy(fixture, namespace, agent);
+  await assertBodylessDeployRejected(fixture, namespace, agent);
+
+  // Missing Configuration is a domain failure: it changes neither the Agent nor
+  // the audit stream. It is not a failed-deployment audit or an IAM denial.
+  const auditBeforeMissing = [...fixture.auditSink.events];
+  const missingConfiguration = await request(
+    fixture.app,
+    `/namespaces/${namespace.id}/agents/${agent.id}`,
+    {
+      method: "PATCH",
+      body: { configurationId: "cfg_00000000-0000-4000-8000-000000009999" },
+    },
+  );
+  assert.equal(missingConfiguration.response.status, 404);
+  assert.equal(missingConfiguration.payload.error.code, "NOT_FOUND");
+  const unchanged = await request(fixture.app, `/namespaces/${namespace.id}/agents/${agent.id}`);
+  assert.equal(unchanged.response.status, 200);
+  assert.deepEqual(unchanged.payload.data, agent);
+  assert.deepEqual(fixture.auditSink.events, auditBeforeMissing);
 
   assert.deepEqual(
     fixture.auditSink.events
@@ -1232,17 +1300,37 @@ test("mutations are attributable and authorization failures never leak credentia
       ["mutation", "namespace"],
       ["mutation", "configuration"],
       ["mutation", "agent"],
-      ["mutation", "agent"],
     ],
   );
-  for (const event of fixture.auditSink.events.slice(0, -1)) {
+  for (const event of fixture.auditSink.events) {
     assert.equal(event.actorId, fixture.administrator.id);
     assert.equal(event.installationId, installationId);
     assert.equal(event.outcome, "success");
   }
-  assert.equal(fixture.auditSink.events.at(-1)?.outcome, "failure");
-  assert.equal(fixture.auditSink.events.at(-1)?.reasonCode, "NAMESPACE_NOT_READY");
-  assert.equal(fixture.auditSink.events.at(-1)?.resource.id, agent.id);
+  // A valid update with its exact Native IAM grant removed produces a real denial
+  // and attributable audit evidence, without fabricating V2 deployment custody.
+  const administratorRole = fixture.state.roles.find(({ id }) => id === "role-administrator");
+  administratorRole.permissions = administratorRole.permissions.filter(
+    ({ action, resourceKind }) => action !== "update" || resourceKind !== "agent",
+  );
+  const forbidden = await request(fixture.app, `/namespaces/${namespace.id}/agents/${agent.id}`, {
+    method: "PATCH",
+    body: { configurationId: agent.configurationId },
+  });
+  assert.equal(forbidden.response.status, 403);
+  assert.equal(forbidden.payload.error.code, "FORBIDDEN");
+  const denialEvent = fixture.auditSink.events.at(-1);
+  assert.equal(denialEvent.kind, "authorization_denial");
+  assert.equal(denialEvent.action, "openclaw.agents.update");
+  assert.equal(denialEvent.actorId, fixture.administrator.id);
+  assert.equal(denialEvent.requestId, forbidden.payload.meta.requestId);
+  assert.deepEqual(denialEvent.authorization, {
+    principalId: fixture.administrator.id,
+    action: "update",
+    resource: { kind: "agent", id: agent.id, namespaceId: namespace.id },
+  });
+  assert.equal(denialEvent.resource.id, agent.id);
+  const auditBeforeOutage = [...fixture.auditSink.events];
 
   const secret = "sk-security-provider-credential-123456789";
   fixture.iamDriver.authorize = async () => {
@@ -1255,5 +1343,5 @@ test("mutations are attributable and authorization failures never leak credentia
   assert.equal(denied.payload.error.code, "DEPENDENCY_UNAVAILABLE");
   assert.doesNotMatch(JSON.stringify(denied.payload), new RegExp(secret));
   assert.doesNotMatch(JSON.stringify(fixture.auditSink.events), new RegExp(secret));
-  assert.equal(fixture.auditSink.events.at(-1)?.resource.id, agent.id);
+  assert.deepEqual(fixture.auditSink.events, auditBeforeOutage);
 });

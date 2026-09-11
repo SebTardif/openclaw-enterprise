@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { admitLoggingConfiguration } from "../../../packages/contracts/src/index.ts";
 import { KubernetesComputeDriver } from "../../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import {
   currentComputeAbortSignal,
@@ -10,6 +11,20 @@ export const inputs = JSON.parse(readFileSync(new URL("./inputs.json", import.me
 const observations = JSON.parse(
   readFileSync(new URL("./observations.json", import.meta.url), "utf8"),
 );
+
+// Preserve archived fixture bytes and traces while selecting the current logging
+// admission contract for revision inputs and supplied immutable ConfigMaps alike.
+for (const selected of [inputs.revision, inputs.successor]) {
+  selected.configuration = admitLoggingConfiguration(selected.configuration, "info");
+}
+for (const resources of [observations.resources, observations.successorResources]) {
+  for (const resource of resources) {
+    if (resource.kind !== "ConfigMap" || resource.data?.["openclaw.json"] === undefined) continue;
+    resource.data["openclaw.json"] = JSON.stringify(
+      admitLoggingConfiguration(JSON.parse(resource.data["openclaw.json"]), "info"),
+    );
+  }
+}
 
 export const scenarioNames = [
   "namespace-ensure-ready",

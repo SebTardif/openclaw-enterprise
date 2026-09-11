@@ -3,9 +3,10 @@ import { createRequire } from "node:module";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-// Reuse the workspace's existing parser. Checking never installs dependencies.
+// The JS Compiler API parses and binds names for this checker only; TypeScript 7
+// remains the workspace compiler. Checking never installs dependencies.
 const require = createRequire(import.meta.url);
-const ts = require("typescript");
+const ts = require("typescript-compiler-api");
 const defaultRoot = fileURLToPath(new URL("../", import.meta.url));
 const extensions = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const slash = (value) => value.replaceAll("\\", "/");

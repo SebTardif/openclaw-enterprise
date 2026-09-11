@@ -173,7 +173,7 @@ Pod removal after exact-revision containment. The fixture has no real runtime
 configuration, so activation deliberately leaves routing inactive; production
 activation and route cutover require the real-runtime suite. The suite preserves the
 operator-owned RuntimeClass and removes its own namespaces and RBAC.
-See [the test procedure](../../testing.md#gvisor-alpha-http-fixture).
+See [the test procedure](../../testing/gvisor.md#gvisor-alpha-http-fixture).
 
 The workload is an HTTP fixture. These checks do not establish genuine
 OpenClaw gateway, authenticated Codex transport, provider model turns, or a

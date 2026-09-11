@@ -258,21 +258,43 @@ async function createAgent(fixture, namespace, name) {
     body: { name, configurationId: configuration.payload.data.id },
   });
   assert.equal(created.response.status, 201);
-  const deployed = await request(
-    fixture.app,
-    `/namespaces/${namespace.id}/agents/${created.payload.data.id}/deploy`,
-    { method: "POST" },
-  );
-  assert.equal(deployed.response.status, 202);
-  await fixture.controller.transact((unit) =>
-    unit.agents.compareAndSetActiveRevision(
-      namespace.id,
-      created.payload.data.id,
+  // Retain an exact-owner historical active revision through the real repository.
+  // Workspace access is controlled below; this seeds no profile Use, runtime
+  // admission or intent and does not prove current V2 deployment or gateway IO.
+  const compute = fixture.controller.selectedDriver("compute");
+  const revision = await fixture.controller.transact(async (unit) => {
+    const owner = await unit.agents.findAgent(namespace.id, created.payload.data.id);
+    assert.ok(owner);
+    assert.equal(owner.executionMode, "embedded");
+    const harness = resolveApprovedDevelopmentHarness("openclaw", owner.executionMode);
+    assert.ok(harness);
+    const snapshot = configuration.payload.data;
+    const historical = await unit.revisions.createRevision({
+      id: `rev_${randomUUID()}`,
+      namespaceId: owner.namespaceId,
+      agentId: owner.id,
+      revision: 1,
+      maximumExecutionMs: owner.maximumExecutionMs,
+      providerId: owner.providerId,
+      configurationId: snapshot.id,
+      configurationKind: snapshot.kind,
+      configurationGeneration: snapshot.generation,
+      configuration: snapshot.values,
+      harness: { ...harness, mode: owner.executionMode },
+      compute: { id: compute.id, implementation: compute.implementation },
+      servicePrincipalId: owner.servicePrincipalId,
+      createdAt: new Date().toISOString(),
+    });
+    const active = await unit.agents.compareAndSetActiveRevision(
+      owner.namespaceId,
+      owner.id,
       undefined,
-      deployed.payload.data.id,
-    ),
-  );
-  return { agent: created.payload.data, revision: deployed.payload.data };
+      historical.id,
+    );
+    assert.equal(active?.activeRevisionId, historical.id);
+    return historical;
+  });
+  return { agent: created.payload.data, revision };
 }
 
 function fileAudits(fixture) {

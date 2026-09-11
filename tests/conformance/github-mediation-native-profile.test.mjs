@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import ts from "typescript";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-test("native Git startup requires an explicit literal profile and matching original owner", () => {
+test("native Git startup requires an explicit literal profile and matching original owner", (t) => {
   // These declarations only compile the actual public constructor/source types.
   // They never instantiate a native session, operation owner or authority grant.
-  const filename = fileURLToPath(new URL("./native-github-profile-types.ts", import.meta.url));
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const directory = mkdtempSync(join(root, "tests/.github-profile-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const source = `
 import { startGitHubMediationNative } from "../../apps/controller/src/admission/github-mediation-context.ts";
 import type { GitHubMediationNativeOptions, GitHubMediationNativeServiceSource } from "../../apps/controller/src/admission/github-mediation-context.ts";
@@ -40,25 +44,19 @@ const adopted: GitHubMediationNativeServiceSource<3> = metadataSource;
     strict: true,
     exactOptionalPropertyTypes: true,
     skipLibCheck: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
+    target: "ES2022",
+    module: "NodeNext",
     allowImportingTsExtensions: true,
   };
-  const host = ts.createCompilerHost(options);
-  const original = host.getSourceFile.bind(host);
-  host.getSourceFile = (path, language, onError, fresh) =>
-    path === filename
-      ? ts.createSourceFile(filename, source, language, true)
-      : original(path, language, onError, fresh);
-  const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([filename], options, host));
-  assert.deepEqual(
-    diagnostics.map((d) => ({
-      line:
-        d.file && d.start !== undefined
-          ? d.file.getLineAndCharacterOfPosition(d.start).line + 1
-          : undefined,
-      message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
-    })),
-    [],
+  writeFileSync(join(directory, "consumer.ts"), source);
+  const project = join(directory, "tsconfig.json");
+  writeFileSync(project, JSON.stringify({ compilerOptions: options, files: ["consumer.ts"] }));
+  const result = spawnSync(
+    process.execPath,
+    [join(root, "node_modules/typescript/bin/tsc"), "--project", project, "--pretty", "false"],
+    { cwd: root, encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024 },
   );
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });

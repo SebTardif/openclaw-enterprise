@@ -393,7 +393,7 @@ The orchestration tests use real Node subprocesses to verify literal arguments,
 missing commands, exit status, interruption, and required output checks. They
 do not establish a Rust build, container-image build, live DNS/TLS enforcement,
 kernel nftables behavior, or a provider-backed model turn. The corresponding
-real verification remains in the [testing guide](../testing.md).
+real verification remains in the [testing guide](../testing/README.md).
 
 A missing `node_modules/typescript/bin/tsc` means that dependencies have not been
 prepared in this checkout. An installed compiler version mismatch means the

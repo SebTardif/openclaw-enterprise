@@ -539,6 +539,7 @@ export class RepositoryWorkStateAdapterV2<
     tokens: RepositoryWorkTokenBindingV2<B>,
     transactionMilliseconds: number,
     options: WorkRepositoryProtocolOptionsV2<V> & {
+      readonly protocolVersion?: V;
       readonly maximumObservationResponsibilities?: number;
     },
   );

@@ -1,3 +1,8 @@
+import type {
+  AgentRuntimeCredentialsInput,
+  AgentRuntimeCredentialStatus,
+  ComputeDriver,
+} from "@openclaw-enterprise/contracts/drivers/compute";
 import type { Agent, AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 import type { Namespace } from "@openclaw-enterprise/contracts/resources/namespace";
 import type { Secret, SecretBindings } from "@openclaw-enterprise/contracts/resources/secret";
@@ -6,7 +11,7 @@ import type { ProviderRef } from "@openclaw-enterprise/contracts/drivers/provide
 import type { PermissionAction } from "@openclaw-enterprise/contracts/identity/authorization";
 import type { ResourceRef } from "@openclaw-enterprise/contracts/resources/scope";
 import { decodeWorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
-import { isNonEmptyString } from "@openclaw-enterprise/utils";
+import { asRecord, isNonEmptyString } from "@openclaw-enterprise/utils";
 import { selectRepositories } from "../../application/mutation-context.ts";
 import type {
   WorkloadProfileDraftUnitV2,
@@ -16,6 +21,7 @@ import type {
 import { AGENT_REPOSITORIES } from "./port.ts";
 import {
   DependencyUnavailableError,
+  NamespaceNotReadyError,
   ResourceConflictError,
   ScopeViolationError,
 } from "../../errors.ts";
@@ -193,6 +199,99 @@ export class AgentService implements AgentServicePort {
           "The Agent does not belong to the exact Installation and Namespace.",
         );
       return agent;
+    });
+  }
+
+  async getAgentRuntimeCredentialStatus(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>> {
+    if (!isNonEmptyString(namespaceId))
+      throw new ScopeViolationError("The exact Namespace identity is missing.");
+    if (!isNonEmptyString(agentId))
+      throw new ScopeViolationError("The exact Agent identity is missing.");
+    await this.options.authorization.authorize(principalId, "read", {
+      kind: "agent",
+      id: agentId,
+      namespaceId,
+    });
+    return this.options.repositories.read(async (state) => {
+      const namespace = await this.exactNamespace(state, namespaceId);
+      const agent = await state.agents.findAgent(namespace.id, agentId);
+      if (!agent)
+        throw new ScopeViolationError(
+          "The Agent does not belong to the exact Installation and Namespace.",
+        );
+      return this.runtimeCredentialOperation(async () => {
+        const driver = this.runtimeCredentialComputeDriver("status");
+        return this.runtimeCredentialStatus(
+          await driver.getAgentRuntimeCredentialStatus!({ namespace, agent }),
+        );
+      });
+    });
+  }
+
+  async provisionAgentRuntimeCredentials(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+    input: AgentRuntimeCredentialsInput,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>> {
+    const credentials = this.runtimeCredentialsInput(input);
+    if (!isNonEmptyString(namespaceId))
+      throw new ScopeViolationError("The exact Namespace identity is missing.");
+    if (!isNonEmptyString(agentId))
+      throw new ScopeViolationError("The exact Agent identity is missing.");
+    return this.options.repositories.mutate(async (state) => {
+      const namespace = await this.lockNamespace(state, namespaceId);
+      const agent = await state.agents.lockAgent(namespace.id, agentId);
+      if (!agent)
+        throw new ScopeViolationError(
+          "The Agent does not belong to the exact Installation and Namespace.",
+        );
+      await this.options.authorization.authorize(principalId, "read", {
+        kind: "agent",
+        id: agent.id,
+        namespaceId: namespace.id,
+      });
+      await this.options.authorization.authorize(principalId, "operate", {
+        kind: "agent",
+        id: agent.id,
+        namespaceId: namespace.id,
+      });
+      if (namespace.status !== "ready") throw new NamespaceNotReadyError();
+      const configuration = await state.configurations.lockConfiguration(
+        namespace.id,
+        agent.configurationId,
+      );
+      if (!configuration || configuration.kind !== "agent")
+        throw new ScopeViolationError(
+          "The Agent Configuration must belong to the exact Namespace and configure an Agent.",
+        );
+      if (agent.workloadProfileSelection !== undefined)
+        throw new ResourceConflictError(
+          "Legacy per-Agent runtime credential provisioning requires an Agent without a workload profile selection.",
+        );
+      if (agent.serviceAccountId !== undefined)
+        throw new ResourceConflictError(
+          "Legacy per-Agent runtime credential provisioning requires an Agent without a ServiceAccount.",
+        );
+      const secretBindings = configurationBindings(configuration.secretBindings);
+      if (secretBindings.OPENAI_API_KEY !== undefined)
+        throw new ResourceConflictError(
+          "Legacy per-Agent runtime credential provisioning requires an Agent without a model Secret binding.",
+        );
+      if ((await state.revisions.listRevisions(namespace.id, agent.id)).length > 0)
+        throw new ResourceConflictError(
+          "Runtime credentials can be provisioned only before the Agent has historical revisions.",
+        );
+      return this.runtimeCredentialOperation(async () => {
+        const driver = this.runtimeCredentialComputeDriver("provision");
+        return this.runtimeCredentialStatus(
+          await driver.provisionAgentRuntimeCredentials!({ namespace, agent }, credentials),
+        );
+      });
     });
   }
 
@@ -557,6 +656,92 @@ export class AgentService implements AgentServicePort {
         },
       );
     });
+  }
+
+  private validateRuntimeCredentialValue(value: unknown): asserts value is string {
+    if (
+      typeof value !== "string" ||
+      value.length === 0 ||
+      value.includes("\u0000") ||
+      /[\uD800-\uDFFF]/u.test(value) ||
+      Buffer.byteLength(value, "utf8") > 65_536
+    )
+      throw new ScopeViolationError(
+        "Agent runtime credential values must be nonempty UTF-8, without NUL, and at most 65536 bytes.",
+      );
+  }
+
+  private runtimeCredentialsInput(
+    input: AgentRuntimeCredentialsInput,
+  ): AgentRuntimeCredentialsInput {
+    const candidate = asRecord(input);
+    if (candidate === undefined)
+      throw new ScopeViolationError("Agent runtime credentials must be a JSON object.");
+    const keys = Object.keys(candidate);
+    if (!keys.every((key) => key === "modelApiKey" || key === "slack"))
+      throw new ScopeViolationError("Agent runtime credentials contain unsupported fields.");
+    if (candidate.modelApiKey !== undefined)
+      this.validateRuntimeCredentialValue(candidate.modelApiKey);
+    let slack: AgentRuntimeCredentialsInput["slack"];
+    if (candidate.slack !== undefined) {
+      const slackCandidate = asRecord(candidate.slack);
+      if (
+        slackCandidate === undefined ||
+        !["appToken", "botToken"].every((key) => Object.hasOwn(slackCandidate, key)) ||
+        !Object.keys(slackCandidate).every((key) => key === "appToken" || key === "botToken")
+      )
+        throw new ScopeViolationError("Agent Slack runtime credentials are invalid.");
+      this.validateRuntimeCredentialValue(slackCandidate.appToken);
+      this.validateRuntimeCredentialValue(slackCandidate.botToken);
+      slack = {
+        appToken: slackCandidate.appToken,
+        botToken: slackCandidate.botToken,
+      };
+    }
+    return Object.freeze({
+      ...(candidate.modelApiKey === undefined ? {} : { modelApiKey: candidate.modelApiKey }),
+      ...(slack === undefined ? {} : { slack: Object.freeze(slack) }),
+    });
+  }
+
+  private runtimeCredentialStatus(status: unknown): Readonly<AgentRuntimeCredentialStatus> {
+    const candidate = asRecord(status);
+    const transportConfigured = candidate?.transportConfigured;
+    const modelConfigured = candidate?.modelConfigured;
+    const slackConfigured = candidate?.slackConfigured;
+    if (
+      typeof transportConfigured !== "boolean" ||
+      typeof modelConfigured !== "boolean" ||
+      typeof slackConfigured !== "boolean"
+    )
+      throw new DependencyUnavailableError(
+        "The selected compute Driver returned invalid runtime credential metadata.",
+      );
+    return Object.freeze({ transportConfigured, modelConfigured, slackConfigured });
+  }
+
+  private runtimeCredentialComputeDriver(operation: "status" | "provision"): ComputeDriver {
+    const driver = this.options.runtimeCredentialComputeDriver?.(operation);
+    const method =
+      operation === "status"
+        ? driver?.getAgentRuntimeCredentialStatus
+        : driver?.provisionAgentRuntimeCredentials;
+    if (driver === undefined || typeof method !== "function")
+      throw new DependencyUnavailableError(
+        "The selected compute Driver does not support Agent runtime credentials.",
+      );
+    return driver;
+  }
+
+  /** Runtime credential driver errors can contain secret bytes; never propagate them. */
+  private async runtimeCredentialOperation<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch {
+      throw new DependencyUnavailableError(
+        "The Agent runtime credential operation failed or its outcome is unknown.",
+      );
+    }
   }
 
   private async exactNamespace(

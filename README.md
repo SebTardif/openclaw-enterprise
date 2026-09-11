@@ -2,8 +2,8 @@
 
 <img src="docs/assets/lobster-mech-transparent.png" alt="Comic-style lobster in a mech suit" width="200" />
 
-The open [control plane](docs/guides/concepts.md#control-plane-and-tenancy) for
-deploying and managing [Agents](docs/guides/concepts.md#agents-and-revisions).
+OpenClaw Enterprise (OCE) includes the [OpenClaw Control Plane (OCC)](docs/guides/concepts.md#control-plane)
+for deploying and managing [Agents](docs/guides/concepts.md#agents-and-revisions).
 
 ## Getting Started
 
@@ -22,7 +22,7 @@ printed API URL with `/console/` to sign in, browse accessible Agents, Providers
 and Namespaces, create Agents with editable Configuration JSON, and edit supported
 channel draft settings. To deploy an Agent and attach the OpenClaw terminal UI
 to a real model-backed [runtime](docs/guides/concepts.md#gateways-and-harnesses),
-continue to [development docs](docs/guides/deploy.md#development-end-to-end-tui).
+review the current admission prerequisites in [development docs](docs/guides/deploy/local-operations.md#development-end-to-end-tui).
 A model credential is required to run Agent model turns, but not to start the
 stack.
 
@@ -47,7 +47,8 @@ pnpm test
 ```
 
 PostgreSQL, Docker, and Kubernetes integration suites require additional setup;
-see [Testing](docs/testing.md) for suite coverage, credentials, setup, and commands.
+see [Testing](docs/testing/README.md) for suite coverage, credentials, setup, and commands.
+[GitHub Actions coverage](docs/testing/ci.md#github-actions) separates five PR-safe lanes from protected model and service integrations.
 
 ## Code layout
 
@@ -62,6 +63,10 @@ see [Testing](docs/testing.md) for suite coverage, credentials, setup, and comma
 | `tests/`                                      | Conformance and integration tests.                                                               |
 
 ## Documentation
+
+Run `npm run docs:install` once, then `npm run docs:dev` to preview the docs at <http://127.0.0.1:4173>.
+Use `npm run docs:build` for the full static build. See the
+[local preview instructions](docs/local-preview.md) for setup and checks.
 
 - [`integration/dev` overview](docs/integration-dev-overview.md): concise team review of branch scope, system diagrams, and remaining integration work.
 - [Concepts](docs/guides/concepts.md): tenancy, revisions, execution, [configuration and Secrets](docs/guides/concepts.md#configuration-and-secrets), and access.

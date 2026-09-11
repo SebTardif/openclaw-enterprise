@@ -38,7 +38,7 @@ scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID"
    runtime, required credentials, and deployment prerequisites in the
    [deployment guide](../guides/deploy.md).
 4. Check the prerequisites for
-   [identified deployment](../guides/deploy.md#submit-an-identified-deployment).
+   [identified deployment](../guides/deploy/production-agents.md#submit-an-identified-deployment).
    The default composition lacks complete profile-admission suppliers and remains
    unavailable. A valid command or prepared client directory does not enable it.
 5. When those suppliers are installed, prepare the complete
@@ -72,7 +72,7 @@ query, credentials or fragment. HTTPS is supported; HTTP is restricted to
 `127.0.0.1` or `[::1]` for development. Choose one current authentication source:
 the documented protected `OCC_SERVICE_KEY_FILE` or the protected
 `OCC_SESSION_COOKIE_JAR` from
-[human sign-in](../guides/deploy.md#sign-in-as-a-human-administrator).
+[human sign-in](../guides/deploy/service-keys.md#sign-in-as-a-human-administrator).
 Before `prepare`, set `OCC_AUTH_BASE_URL` to the configured authentication origin
 if it differs from `OCC_URL`; otherwise it defaults to the connection origin.
 Both must use their canonical origin form. Cookie mutations send that separately
@@ -222,7 +222,7 @@ denied access, session expiry during pending reads/saves, and dropped write
 responses. API coverage separately checks foreign Namespace detail and edit
 requests. These tests verify the management surface and its failure behavior.
 They do not prove PostgreSQL durability, live Slack/Teams interaction, runtime
-cutover, disable/stop, retention, or purge. See the [test guide](../testing.md)
+cutover, disable/stop, retention, or purge. See the [test guide](../testing/README.md)
 for the independently required environment checks.
 
 `node --test tests/integration/occ-deploy-client.test.mjs` exercises actual CLI

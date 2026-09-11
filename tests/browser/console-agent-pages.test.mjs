@@ -9,7 +9,7 @@ import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs
 async function authenticatedPage(t, fixture, namespaceId) {
   const executablePath = process.env.OCC_TEST_BROWSER_EXECUTABLE || undefined;
   const browser = await chromium.launch({ headless: true, executablePath });
-  t.after(() => browser.close());
+  fixture.registerCleanupBeforeAppClose(() => browser.close());
   const page = await browser.newPage();
   page.setDefaultTimeout(10000);
   await page.goto(`${fixture.origin}/console/agents?namespace=${namespaceId}`);

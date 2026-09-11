@@ -9,13 +9,13 @@ proposal, not supported configuration or release evidence.
 
 ## Current surfaces
 
-| Surface                                                                       | Current behavior                                                                                                                            | Boundary                                                                                                                                                      |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Native channel configuration](configuration.md#native-channel-configuration) | Kubernetes Compute recognizes enabled `slack` and `msteams` configuration and projects Agent-specific channel credentials into the gateway. | Dedicated execution and a reviewed channel egress proxy are required. Unknown enabled providers and channels in embedded mode fail closed.                    |
-| [Manual channel bindings](channel-bindings.md)                                | Authenticated administrators create, read, list, enable, and disable app, human, and exact Namespace/Agent mappings.                        | These are retained configuration records, not verified provider delivery, complete audience approval, or turn admission.                                      |
-| [Shared-turn receipt identity](shared-turn-receipts.md)                       | Internal helpers normalize event/logical-message identity and classify supplied history.                                                    | They perform no I/O and provide neither a durable receipt journal nor dispatch authority.                                                                     |
-| [Controller reconciliation](controller.md)                                    | PostgreSQL persists platform resources, audit, and Namespace/AgentRevision work.                                                            | Infrastructure reconciliation work is not a channel inbox. Stored runtime-intent/allocation primitives do not themselves wire lifecycle or channel execution. |
-| [Upstream consumption probe](upstream-consumption.md)                         | An opt-in source probe checks a pinned headless kernel seam.                                                                                | Verification-only: not a production channel adapter, packaged remote queue, or live collaboration proof.                                                      |
+| Surface                                                                               | Current behavior                                                                                                                            | Boundary                                                                                                                                                      |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Native channel configuration](configuration/secrets.md#native-channel-configuration) | Kubernetes Compute recognizes enabled `slack` and `msteams` configuration and projects Agent-specific channel credentials into the gateway. | Dedicated execution and a reviewed channel egress proxy are required. Unknown enabled providers and channels in embedded mode fail closed.                    |
+| [Manual channel bindings](channel-bindings.md)                                        | Authenticated administrators create, read, list, enable, and disable app, human, and exact Namespace/Agent mappings.                        | These are retained configuration records, not verified provider delivery, complete audience approval, or turn admission.                                      |
+| [Shared-turn receipt identity](shared-turn-receipts.md)                               | Internal helpers normalize event/logical-message identity and classify supplied history.                                                    | They perform no I/O and provide neither a durable receipt journal nor dispatch authority.                                                                     |
+| [Controller reconciliation](controller.md)                                            | PostgreSQL persists platform resources, audit, and Namespace/AgentRevision work.                                                            | Infrastructure reconciliation work is not a channel inbox. Stored runtime-intent/allocation primitives do not themselves wire lifecycle or channel execution. |
+| [Upstream consumption probe](upstream-consumption.md)                                 | An opt-in source probe checks a pinned headless kernel seam.                                                                                | Verification-only: not a production channel adapter, packaged remote queue, or live collaboration proof.                                                      |
 
 Channel app installations are distinct from the singleton Enterprise Installation.
 A provider workspace or tenant ID is not an Enterprise Namespace ID. Binding
@@ -27,7 +27,7 @@ later admission, execution, or a provider operation.
 
 ## Direct runtime and credentials
 
-Use the [native configuration contract](configuration.md#native-channel-configuration)
+Use the [native configuration contract](configuration/secrets.md#native-channel-configuration)
 for actual JSON and the
 [Kubernetes runtime settings](drivers/kubernetes-compute.md#configuration) for
 credential and proxy provisioning. The console edits draft channel settings;
@@ -61,7 +61,7 @@ Gateway runtime storage and controller PostgreSQL have different owners:
 | State                                               | Owner and supported limit                                                                                                                                                                                                                 |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Configuration, bindings, IAM/audit, controller work | The control plane and its selected state store; gateway workloads do not receive the controller database credential.                                                                                                                      |
-| Gateway databases, session state, and media         | The exact Agent's private gateway claim. The [storage contract](drivers/kubernetes-compute.md#storage-and-credentials) retains complete database directories and WAL/SHM siblings for the configured layout, not the entire runtime home. |
+| Gateway databases, session state, and media         | The exact Agent's private gateway claim. The [storage contract](drivers/kubernetes-compute/storage-and-credentials.md) retains complete database directories and WAL/SHM siblings for the configured layout, not the entire runtime home. |
 | Dedicated workspace                                 | A separate same-Agent shared workspace, with its existing directional mount permissions. It is not the gateway-private database claim.                                                                                                    |
 
 The Kubernetes claim is SQLite-compatible filesystem storage, not a switch that
@@ -75,7 +75,7 @@ old-writer fencing. Process replacement with intact storage, node or storage
 loss, and restore from a sanitized snapshot are different recovery cases. A
 snapshot must not be assumed to retain pending sends or reverse completed
 provider/tool effects. See the roadmap's
-[maintenance acceptance](../../specs/22-channel-hosting-roadmap.md#maintenance-and-recovery-acceptance)
+[maintenance acceptance](../../specs/22-channel-hosting-roadmap/m0-acceptance.md#maintenance-and-recovery-acceptance)
 before making a stronger upgrade or recovery claim.
 
 Likewise, receipt identity, successful local admission, durable turn adoption,
@@ -88,11 +88,11 @@ ambiguous delivery must not be reported as successful completion.
 ## Verify and diagnose
 
 Start with the [deployment guide](../guides/deploy.md) and
-[testing guide](../testing.md). Identify the actual gateway/plugin image,
+[testing guide](../testing/README.md). Identify the actual gateway/plugin image,
 dedicated Harness, selected Driver, enabled channel mode, protected credentials,
 network path, and persistent volumes before choosing a test.
 
-- Slack has a documented [live integration path](../testing.md#slack). That
+- Slack has a documented [live integration path](../testing/slack.md#slack). That
   bounded test is not proof of all event classes, two-human shared-context
   authorization, upgrade/rollback, or outage recovery.
 - Teams configuration exists, but the public authenticated `/api/messages`
@@ -102,7 +102,7 @@ network path, and persistent volumes before choosing a test.
 - Binding API tests verify configuration and selected-IAM behavior. They do
   not verify live sender authenticity, the complete audience, or turn execution.
 - For retained state, use the
-  [Kubernetes verification limits](drivers/kubernetes-compute.md#verification-evidence)
+  [Kubernetes verification limits](../testing/openshell.md#openshell-sandbox)
   and record the exact image and replacement path. Fixture-only checks and
   skipped live cases do not establish real gateway/model outcomes.
 

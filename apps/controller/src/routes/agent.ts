@@ -5,6 +5,7 @@ import type {
   RevisionParams,
 } from "@openclaw-enterprise/contracts/api/common";
 import type {
+  AgentRuntimeCredentialsBody,
   CreateAgentBody,
   UpdateAgentBody,
 } from "@openclaw-enterprise/contracts/api/resources";
@@ -32,6 +33,11 @@ export type AgentMutationOperation = Extract<
 export type AgentDeploymentOperation = Extract<
   AgentApiRoute,
   { readonly operationId: "deployAgent" }
+>;
+
+export type AgentRuntimeCredentialOperation = Extract<
+  AgentApiRoute,
+  { readonly operationId: "provisionAgentRuntimeCredentials" }
 >;
 
 export interface AgentMutationResource {
@@ -63,6 +69,14 @@ export interface AgentOperationHandlerOptions {
       readonly command: LifecycleDeployCommandV2;
     },
   ) => Promise<LifecycleAcceptedReceiptV1>;
+  /** Composition owns browser intent, transaction scope and the metadata-only audit. */
+  readonly runRuntimeCredentialMutation: <T>(
+    request: FastifyRequest,
+    operation: AgentRuntimeCredentialOperation,
+    context: RequestContext,
+    resource: AgentMutationResource,
+    mutate: () => Promise<T>,
+  ) => Promise<T>;
 }
 
 function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
@@ -203,6 +217,27 @@ export function createAgentOperationHandlers(
         data: clientAgent(await service.getAgent(context.actorId, namespaceId, agentId)),
         meta: { requestId: request.id },
       });
+    },
+    getAgentRuntimeCredentials: async (request, reply) => {
+      const { context, service, namespaceId, agentId } = resolveAgent(request);
+      const status = await service.getAgentRuntimeCredentialStatus(
+        context.actorId,
+        namespaceId,
+        agentId,
+      );
+      reply.send({ data: status, meta: { requestId: request.id } });
+    },
+    provisionAgentRuntimeCredentials: async (request, reply, operation) => {
+      const { context, service, namespaceId, agentId } = resolveAgent(request);
+      const body = request.body as AgentRuntimeCredentialsBody;
+      const status = await options.runRuntimeCredentialMutation(
+        request,
+        operation,
+        context,
+        { kind: "agent", id: agentId, namespaceId },
+        () => service.provisionAgentRuntimeCredentials(context.actorId, namespaceId, agentId, body),
+      );
+      reply.send({ data: status, meta: { requestId: request.id } });
     },
     deployAgent: async (request, reply, operation) => {
       const { context, namespaceId, agentId } = resolveAgent(request);

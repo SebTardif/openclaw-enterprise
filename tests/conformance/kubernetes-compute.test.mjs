@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import {
   createKubernetesComputeDriver,
   KubernetesComputeDriver,
@@ -836,6 +836,25 @@ test("the canonical Kubernetes runtime isolates transport and model Agent Secret
   );
 });
 
+test("runtime configuration cannot override admitted workload security", () => {
+  const runtime = {
+    transportSecretPrefix: "transport",
+    gatewayStorageClassName: "local-path",
+    modelSecretPrefix: "model",
+  };
+  // Security is selected and qualified with the immutable workload profile.
+  // A mutable Driver option cannot replace that admitted authority.
+  for (const [name, value] of [
+    ["codexSeccompProfile", "profiles/codex.json"],
+    ["securityContext", { seccompProfile: { type: "Unconfined" } }],
+  ]) {
+    assert.throws(
+      () => createKubernetesComputeDriver(options({ runtime: { ...runtime, [name]: value } })),
+      new RegExp(`unsupported option ${name}`, "i"),
+    );
+  }
+});
+
 test("account-owned Kubernetes Secrets reject invalid or foreign credentials before cluster access", async () => {
   const driver = createKubernetesComputeDriver(options());
   const serviceAccountId = "sa_00000000-0000-4000-8000-000000000001";
@@ -1147,7 +1166,6 @@ test("native channel providers supply only owning gateway secrets and reviewed p
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
     },
@@ -1175,7 +1193,6 @@ test("native channel providers supply only owning gateway secrets and reviewed p
           level: "info",
           consoleLevel: "info",
           consoleStyle: "json",
-          redactSensitive: "tools",
         },
         diagnostics: { otel: { logs: false } },
       },
@@ -1202,7 +1219,6 @@ test("native channel providers supply only owning gateway secrets and reviewed p
           level: "info",
           consoleLevel: "info",
           consoleStyle: "json",
-          redactSensitive: "tools",
         },
         diagnostics: { otel: { logs: false } },
       },
@@ -1229,7 +1245,6 @@ test("native channel providers supply only owning gateway secrets and reviewed p
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
     },
@@ -1285,7 +1300,6 @@ test("embedded replacement preparation recovers past an unready active gateway w
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
       gateway: {
@@ -1312,7 +1326,6 @@ test("embedded replacement preparation recovers past an unready active gateway w
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
       gateway: {
@@ -1668,7 +1681,6 @@ test("Kubernetes lifecycle hooks never run before cluster ownership and workload
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
     },
@@ -2380,7 +2392,6 @@ test("revision lifecycle rejects another driver or missing identity before clust
         level: "info",
         consoleLevel: "info",
         consoleStyle: "json",
-        redactSensitive: "tools",
       },
       diagnostics: { otel: { logs: false } },
     },

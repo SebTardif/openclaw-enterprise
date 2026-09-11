@@ -93,6 +93,10 @@ async function fixture(t, developmentEnabled) {
     kind: "agent",
     values: {},
   });
+  const alternateConfiguration = await create(`/namespaces/${namespace.id}/configurations`, {
+    kind: "agent",
+    values: { model: "alternate-draft" },
+  });
   const agent = await create(`/namespaces/${namespace.id}/agents`, {
     name: "intent-test",
     configurationId: configuration.id,
@@ -105,24 +109,25 @@ async function fixture(t, developmentEnabled) {
   };
   policy.identities.push(principal);
   policy.roles.push({
-    id: "deploy-automation",
+    id: "update-automation",
     namespaceId: namespace.id,
     permissions: [
-      { action: "deploy", resourceKind: "agent" },
+      { action: "update", resourceKind: "agent" },
       { action: "read", resourceKind: "configuration" },
       { action: "read", resourceKind: "agent" },
     ],
   });
   policy.bindings.push({
-    id: "deploy-automation",
+    id: "update-automation",
     namespaceId: namespace.id,
     subjectKind: "identity",
     subjectId: principal.id,
-    roleId: "deploy-automation",
+    roleId: "update-automation",
   });
-  const key = await credentials.auth.createServiceKey({ principal, name: "deploy-test" });
+  const key = await credentials.auth.createServiceKey({ principal, name: "update-test" });
   async function recorded() {
     return {
+      agent: await state.read((unit) => unit.agents.findAgent(namespace.id, agent.id)),
       accounts: memoryDatabase.user.length,
       keys: memoryDatabase.apikey.length,
       revisions: await state.read((unit) => unit.revisions.listRevisions(namespace.id, agent.id)),
@@ -141,6 +146,7 @@ async function fixture(t, developmentEnabled) {
     policy,
     namespace,
     configuration,
+    alternateConfiguration,
     credentials,
     options,
     get controller() {
@@ -149,11 +155,14 @@ async function fixture(t, developmentEnabled) {
   };
 }
 
+// TODO: Add successful deploy browser-intent coverage when genuine V2 request
+// custody, a saved admitted workload profile, and required owners are available.
+// Supported Agent updates exercise the shared mutation guard without inventing admission.
 for (const developmentEnabled of [false, true]) {
   test(`browser intent guards actual API mutations with development=${developmentEnabled}`, async (t) => {
     const f = await fixture(t, developmentEnabled);
     await t.test(
-      "missing, foreign, opaque and same-site origins cannot admit a deployment",
+      "missing, foreign, opaque and same-site origins cannot update an Agent",
       async () => {
         const before = await f.recorded();
         for (const headers of [
@@ -166,10 +175,12 @@ for (const developmentEnabled of [false, true]) {
           { origin: origin + "/" },
           { origin, "sec-fetch-site": "cross-site" },
         ]) {
-          const result = await f.request("POST", `${f.path}/deploy`, {
-            cookie: f.session.cookie,
-            ...headers,
-          });
+          const result = await f.request(
+            "PATCH",
+            f.path,
+            { cookie: f.session.cookie, ...headers },
+            { configurationId: f.alternateConfiguration.id },
+          );
           assert.equal(result.statusCode, 403, result.body);
           assert.equal(result.json().error.code, "FORBIDDEN");
           assert.deepEqual(await f.recorded(), before);
@@ -178,42 +189,56 @@ for (const developmentEnabled of [false, true]) {
         }
       },
     );
-    await t.test(
-      "exact-origin cookie deployment persists its revision, work and success audit",
-      async () => {
-        const before = await f.recorded();
-        const result = await f.request("POST", `${f.path}/deploy`);
-        assert.equal(result.statusCode, 202, result.body);
-        const after = await f.recorded();
-        assert.equal(after.revisions.length, before.revisions.length + 1);
-        assert.equal(after.operations.length, before.operations.length + 1);
-        assert.equal(after.operations.at(-1).resourceId, result.json().data.id);
-        assert.equal(after.successAudit.length, before.successAudit.length + 1);
-      },
-    );
+    await t.test("exact-origin cookie update persists its draft and success audit", async () => {
+      const before = await f.recorded();
+      const result = await f.request("PATCH", f.path, undefined, {
+        configurationId: f.alternateConfiguration.id,
+      });
+      assert.equal(result.statusCode, 200, result.body);
+      const after = await f.recorded();
+      assert.equal(result.json().data.configurationId, f.alternateConfiguration.id);
+      assert.equal(after.agent.configurationId, f.alternateConfiguration.id);
+      assert.notEqual(after.agent.configurationId, before.agent.configurationId);
+      assert.deepEqual(after.revisions, before.revisions);
+      assert.deepEqual(after.operations, before.operations);
+      assert.equal(after.successAudit.length, before.successAudit.length + 1);
+      assert.equal(after.successAudit.at(-1).action, "openclaw.agents.update");
+      assert.equal(after.successAudit.at(-1).resource.id, after.agent.id);
+      assert.equal(after.successAudit.at(-1).actorId, f.credentials.seed.principal.id);
+    });
     await t.test(
       "verified scoped key works without Origin, while invalid explicit keys cannot use cookies",
       async () => {
         const keyHeaders = { "x-api-key": f.key.key };
-        assert.equal((await f.request("POST", `${f.path}/deploy`, keyHeaders)).statusCode, 202);
-        assert.equal(
-          (
-            await f.request("POST", `${f.path}/deploy`, {
-              ...keyHeaders,
-              cookie: f.session.cookie,
-              origin: "http://localhost",
-            })
-          ).statusCode,
-          202,
-        );
+        for (const [headers, configurationId] of [
+          [keyHeaders, f.configuration.id],
+          [
+            { ...keyHeaders, cookie: f.session.cookie, origin: "http://localhost" },
+            f.alternateConfiguration.id,
+          ],
+        ]) {
+          const before = await f.recorded();
+          const result = await f.request("PATCH", f.path, headers, { configurationId });
+          assert.equal(result.statusCode, 200, result.body);
+          const after = await f.recorded();
+          assert.equal(result.json().data.configurationId, configurationId);
+          assert.equal(after.agent.configurationId, configurationId);
+          assert.notEqual(after.agent.configurationId, before.agent.configurationId);
+          assert.deepEqual(after.revisions, before.revisions);
+          assert.deepEqual(after.operations, before.operations);
+          assert.equal(after.successAudit.length, before.successAudit.length + 1);
+          assert.equal(after.successAudit.at(-1).action, "openclaw.agents.update");
+          assert.equal(after.successAudit.at(-1).actorId, f.key.servicePrincipalId);
+        }
         const before = await f.recorded();
         for (const key of ["", "invalid-key", f.key.key + "tampered"]) {
           for (const extra of [{}, { origin }]) {
-            const result = await f.request("POST", `${f.path}/deploy`, {
-              cookie: f.session.cookie,
-              "x-api-key": key,
-              ...extra,
-            });
+            const result = await f.request(
+              "PATCH",
+              f.path,
+              { cookie: f.session.cookie, "x-api-key": key, ...extra },
+              { configurationId: f.configuration.id },
+            );
             assert.equal(result.statusCode, 401, result.body);
             assert.deepEqual(await f.recorded(), before);
           }
@@ -276,7 +301,7 @@ for (const developmentEnabled of [false, true]) {
         );
         assert.equal(
           (await f.request("GET", f.path, headers)).json().data.configurationId,
-          f.configuration.id,
+          before.agent.configurationId,
         );
         // Positive controls use the same valid payloads and real mutation paths.
         const updated = await f.request("PATCH", f.path, undefined, updateBody);
@@ -315,32 +340,47 @@ for (const developmentEnabled of [false, true]) {
       assert.equal((await f.request("GET", f.path, {})).statusCode, 401);
       assert.equal(
         (
-          await f.request("POST", `${f.path}/deploy`, {
-            ...headers,
-            origin,
-            authorization: "Bearer invalid",
-          })
+          await f.request(
+            "PATCH",
+            f.path,
+            {
+              ...headers,
+              origin,
+              authorization: "Bearer invalid",
+            },
+            { configurationId: f.configuration.id },
+          )
         ).statusCode,
         401,
       );
       assert.equal(
         (
-          await f.request("POST", `${f.path}/deploy`, {
-            ...headers,
-            origin,
-            "x-forwarded-host": "127.0.0.1",
-          })
+          await f.request(
+            "PATCH",
+            f.path,
+            {
+              ...headers,
+              origin,
+              "x-forwarded-host": "127.0.0.1",
+            },
+            { configurationId: f.configuration.id },
+          )
         ).statusCode,
         403,
       );
       if (developmentEnabled)
         assert.equal(
           (
-            await f.request("POST", `${f.path}/deploy`, {
-              ...headers,
-              origin,
-              host: "untrusted.example.invalid",
-            })
+            await f.request(
+              "PATCH",
+              f.path,
+              {
+                ...headers,
+                origin,
+                host: "untrusted.example.invalid",
+              },
+              { configurationId: f.configuration.id },
+            )
           ).statusCode,
           403,
         );
@@ -361,8 +401,9 @@ for (const developmentEnabled of [false, true]) {
         try {
           const before = await f.recorded();
           const result = await app.inject({
-            method: "POST",
-            url: `${f.path}/deploy`,
+            method: "PATCH",
+            url: f.path,
+            payload: { configurationId: f.configuration.id },
             headers: { cookie: f.session.cookie, origin },
           });
           assert.equal(result.statusCode, 503, result.body);
