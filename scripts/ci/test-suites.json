@@ -188,6 +188,21 @@
         },
         {
           "path": "tests/integration/plugin-driver-startup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-enrollment.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-observation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-response-buffers.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-settlement.test.mjs"
         }
       ]
     },

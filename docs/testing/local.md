@@ -52,6 +52,34 @@ node --test tests/integration/secret-api.test.mjs
 node --test --test-name-pattern='part of the test name' tests/integration/secret-api.test.mjs
 ```
 
+## GitHub App token issuer protocol
+
+Run the five focused suites with Node.js 24+, matching workspace dependencies,
+and `/usr/bin/openssl`:
+
+```sh
+node --test --test-concurrency=1 tests/conformance/github-app-provider*.test.mjs
+```
+
+They execute the actual TokenIssuer and RSA material implementation through its
+curated package entry point, using disposable keys and a local HTTPS peer. The
+`local-protocol-test` endpoint requires an explicit `127.0.0.1` HTTPS origin,
+port and CA; production uses the fixed GitHub origin. Fixtures supply external
+custody/currentness inputs. Their keys and token buffers are cleaned up after use.
+
+Coverage includes exact signed read requests, rejected write/multiple-repository
+selection, broad returned-scope observation, invalid-token retention, response
+loss without replay, buffer wiping, currentness withdrawal, keyless revocation
+and original-owner settlement. The former enrollment suite retains constructor
+and keyless-cleanup coverage; the unused enrollment verifier is deferred.
+
+These tests require neither real GitHub credentials nor a cluster. Missing
+OpenSSL or a TLS listener fails explicitly. They do not establish durable custody,
+restart cleanup, real App-key compatibility or an admitted Agent read. The
+[issuer integration requirements](../reference/github-app-token-issuer.md#integration-and-verification)
+remain outstanding. No live opt-in fixture is supplied until its actual startup,
+protected credential owner and explicit test installation/repository are available.
+
 ## Authentication and authorization coverage
 
 `tests/conformance/iam.test.mjs` covers explicit identities, exact scopes, Group

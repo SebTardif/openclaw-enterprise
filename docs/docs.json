@@ -75,6 +75,7 @@
                   "reference/harness-execution",
                   "reference/namespaces",
                   "reference/providers",
+                  "reference/github-app-token-issuer",
                   "reference/security",
                   "reference/security/runtime-isolation",
                   "reference/service-accounts",
