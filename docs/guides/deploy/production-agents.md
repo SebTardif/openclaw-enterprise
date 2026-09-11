@@ -63,8 +63,10 @@ is the Kubernetes namespace created by the driver during
 
 ## Configure the Agent runtime
 
-Choose one runtime mode and write the matching Namespace-owned
-`kind: "agent"` Configuration. Use `embedded` for built-in OpenClaw:
+Choose a runtime mode supported by the selected Compute profile and write its
+Namespace-owned `kind: "agent"` Configuration. The selected gVisor profile
+requires `dedicated`; use the Codex example below. The `embedded` example is
+for other Compute profiles that support built-in OpenClaw:
 
 ```bash
 export AGENT_EXECUTION_MODE='embedded'

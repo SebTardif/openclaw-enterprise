@@ -162,6 +162,9 @@
           "path": "tests/browser/console-runtime-credentials.test.mjs"
         },
         {
+          "path": "tests/browser/console-deploy-client.test.mjs"
+        },
+        {
           "path": "tests/browser/console.test.mjs"
         },
         {
@@ -199,6 +202,9 @@
         },
         {
           "path": "tests/conformance/agent-workload-profile-selection.test.mjs"
+        },
+        {
+          "path": "tests/conformance/agent-runtime-credentials.test.mjs"
         },
         {
           "path": "tests/conformance/api-reference-generation.test.mjs"
@@ -466,6 +472,9 @@
         },
         {
           "path": "tests/conformance/installed-renderer-definition.test.mjs"
+        },
+        {
+          "path": "tests/conformance/installed-renderer-revision-operands.test.mjs"
         },
         {
           "path": "tests/conformance/kubernetes-channel-proxy-explicit-port.test.mjs"
