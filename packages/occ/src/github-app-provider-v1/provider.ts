@@ -118,10 +118,14 @@ function freezeSelection(input: GitHubAppSelectionV1): GitHubAppSelectionV1 {
   )
     throw new GitHubAppProviderErrorV1();
   const permissions = Object.freeze({ ...input.permissions });
+  const pullRequestOnly =
+    Object.keys(permissions).length === 2 &&
+    permissions.metadata === "read" &&
+    permissions.pull_requests === "write";
   if (
     permissions.metadata !== "read" ||
     (permissions.contents === undefined
-      ? Object.keys(permissions).length !== 1
+      ? Object.keys(permissions).length !== 1 && !pullRequestOnly
       : !["read", "write"].includes(permissions.contents)) ||
     Object.entries(permissions).some(
       ([name, value]) =>
