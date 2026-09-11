@@ -5,6 +5,7 @@ WORKDIR /prepare
 COPY . .
 RUN node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major !== 24 || minor < 15) throw new Error(`OpenClaw Enterprise runtime images require Node.js 24.15+; found ${process.version}.`);' \
   && node verify-context.mjs --verify-context /prepare \
+  && mkdir -p /prepare/native \
   && npm ci --offline --omit=dev --ignore-scripts --no-audit --no-fund \
     --userconfig /prepare/empty.npmrc --globalconfig /prepare/empty-global.npmrc \
     --cache /prepare/cache
@@ -17,6 +18,18 @@ ENV PATH=/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bi
 WORKDIR /app
 COPY --from=packages /prepare/node_modules ./node_modules
 COPY --from=packages /prepare/package.json /prepare/package-lock.json ./
+
+# Optional READ selection is verified before installation. The original builder
+# record describes compilation/staging, not a final-image identity or authority.
+COPY --from=packages /prepare/native/ /opt/openclaw-read-staging/
+COPY --from=packages /prepare/verify-context.mjs /opt/openclaw-read-verifier.mjs
+RUN if test -f /opt/openclaw-read-staging/read-installation.json; then \
+      node /opt/openclaw-read-verifier.mjs --verify-read-staging /opt/openclaw-read-staging \
+      && install -o 0 -g 0 -m 0555 /opt/openclaw-read-staging/oce-github-read /usr/local/bin/oce-github-read \
+      && install -D -o 0 -g 0 -m 0444 /opt/openclaw-read-staging/read-native-build.json /usr/local/share/openclaw/read-native-build.json \
+      && node /opt/openclaw-read-verifier.mjs --verify-read-installed /opt/openclaw-read-staging; \
+    else test -z "$(find /opt/openclaw-read-staging -mindepth 1 -print -quit)"; fi \
+  && rm -rf /opt/openclaw-read-staging /opt/openclaw-read-verifier.mjs
 
 RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw \
   && cp -R node_modules/@openclaw/codex node_modules/openclaw/dist/extensions/codex \

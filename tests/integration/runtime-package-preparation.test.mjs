@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
+  chown,
   copyFile,
   lstat,
   mkdir,
@@ -22,8 +23,10 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import {
   assertLocalGraph,
+  captureReadNativeArtifact,
   normalizeRuntimeManifest,
   verifyContext,
+  verifyReadNativeStaging,
 } from "../../deploy/runtime/prepare-local-packages.mjs";
 
 const preparer = fileURLToPath(
@@ -139,9 +142,16 @@ function graphFixture(registry = "https://registry.npmjs.org/") {
   return { manifest, lock, packages, archives };
 }
 
-async function preparedFixture(t, registry) {
+async function preparedFixture(t, registry, { privateReadContext = false } = {}) {
   const directory = await temporaryDirectory(t);
   const context = join(directory, "context");
+  if (privateReadContext) {
+    await mkdir(context, { mode: 0o700 });
+    const stat = await lstat(context);
+    assert.equal(stat.isDirectory(), true, "READ fixture context must be a directory.");
+    assert.equal(stat.uid, process.getuid(), "READ fixture context must have the current owner.");
+    assert.equal(stat.mode & 0o7777, 0o700, "READ fixture context must have private mode 0700.");
+  }
   const graph = graphFixture(registry);
   const contents = new Map([
     ...graph.archives,
@@ -164,7 +174,24 @@ async function preparedFixture(t, registry) {
     ["cache/receipt-fixture", Buffer.from("Cache receipt verification fixture.\n")],
   ]);
   for (const [path, bytes] of contents) {
-    await mkdir(dirname(join(context, path)), { recursive: true });
+    if (privateReadContext) {
+      const parent = dirname(join(context, path));
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      const stat = await lstat(parent);
+      assert.equal(stat.isDirectory(), true, "READ fixture payload parent must be a directory.");
+      assert.equal(
+        stat.uid,
+        process.getuid(),
+        "READ fixture payload parent must have the current owner.",
+      );
+      assert.equal(
+        stat.mode & 0o7777,
+        0o700,
+        "READ fixture payload parent must have private mode 0700.",
+      );
+    } else {
+      await mkdir(dirname(join(context, path)), { recursive: true });
+    }
     await writeFile(join(context, path), bytes);
   }
   const receipt = {
@@ -774,3 +801,804 @@ test(
     await assert.rejects(lstat(join(fixture.output, "package.json")), { code: "ENOENT" });
   },
 );
+
+// READ tests exercise actual filesystem capture/copy/verification with inert
+// bytes and explicit schema-2 component records. They never execute the bytes,
+// a compiler, npm, Docker, native listener, or credential source.
+async function readArtifactFixture(t) {
+  const directory = await temporaryDirectory(t);
+  const input = join(directory, "read-input");
+  const output = join(directory, "read-output");
+  await mkdir(input, { mode: 0o700 });
+  await mkdir(output, { mode: 0o700 });
+  for (const [label, path] of [
+    ["input", input],
+    ["output", output],
+  ]) {
+    const stat = await lstat(path);
+    assert.equal(stat.isDirectory(), true, `READ fixture ${label} must be a directory.`);
+    assert.equal(stat.uid, process.getuid(), `READ fixture ${label} must have the current owner.`);
+    assert.equal(stat.mode & 0o7777, 0o700, `READ fixture ${label} must have private mode 0700.`);
+  }
+  const artifactPath = join(input, "oce-github-read");
+  const manifestPath = join(input, "native-products.json");
+  const bytes = Buffer.from("Inert READ artifact bytes; no executable behavior asserted.\n");
+  await writeFile(artifactPath, bytes, { mode: 0o555 });
+  const source = Buffer.from("Original component source bytes.\n");
+  const cargoManifest = Buffer.from('[package]\nname="oce-native-egress"\nversion="0.0.0"\n');
+  const sourceFiles = [
+    {
+      path: "dataplane/services/oce-native-egress/Cargo.toml",
+      size: cargoManifest.length,
+      sha256: digest(cargoManifest),
+    },
+    {
+      path: "dataplane/services/oce-native-egress/src/bin/oce-github-read.rs",
+      size: source.length,
+      sha256: digest(source),
+    },
+  ];
+  const compiler = {
+    schemaVersion: 2,
+    rustToolchain: "1.88.0",
+    rustTarget: "x86_64-unknown-linux-gnu",
+    imagePlatform: "linux/amd64",
+    hostGlibcVersion: "component-only",
+    sourceInputs: { sha256: digest(JSON.stringify(sourceFiles)), files: sourceFiles },
+    tools: {
+      rustc: { size: 1, sha256: digest("component-rustc"), version: "component rustc" },
+      cargo: { size: 1, sha256: digest("component-cargo"), version: "component cargo" },
+    },
+    products: [
+      {
+        package: "oce-native-egress",
+        binary: "oce-github-read",
+        path: ".build/mvp/native/oce-github-read",
+        staged: {
+          sha256: digest(bytes),
+          size: bytes.length,
+          uid: process.getuid(),
+          gid: process.getgid(),
+          mode: "0555",
+        },
+        compilerArtifact: {
+          buildTarget: "native-read",
+          packageVersion: "0.0.0",
+          manifestPath: sourceFiles[0].path,
+          manifestSha256: sourceFiles[0].sha256,
+          sourcePath: sourceFiles[1].path,
+          sourceSha256: sourceFiles[1].sha256,
+          rustTarget: "x86_64-unknown-linux-gnu",
+          kind: ["bin"],
+          crateTypes: ["bin"],
+          test: false,
+          fresh: false,
+          buildFinished: true,
+          messagesSha256: digest("Component Cargo message bytes; not a compiler run."),
+          executablePath: "dataplane/target/x86_64-unknown-linux-gnu/release/oce-github-read",
+          artifact: {
+            sha256: digest(bytes),
+            size: bytes.length,
+            uid: process.getuid(),
+            gid: process.getgid(),
+            mode: "0755",
+          },
+        },
+        dependencies: [],
+        installationRequirements: {
+          path: "/usr/local/bin/oce-github-read",
+          uid: 0,
+          gid: 0,
+          mode: "0555",
+        },
+      },
+    ],
+  };
+  const manifest = jsonBytes(compiler);
+  await writeFile(manifestPath, manifest, { mode: 0o444 });
+  const selection = {
+    schemaVersion: 1,
+    binary: "oce-github-read",
+    package: "oce-native-egress",
+    rustToolchain: compiler.rustToolchain,
+    rustTarget: compiler.rustTarget,
+    imagePlatform: compiler.imagePlatform,
+    compilerManifest: { path: manifestPath, sha256: digest(manifest), size: manifest.length },
+    artifact: { path: artifactPath, sha256: digest(bytes), size: bytes.length },
+  };
+  return { directory, input, output, artifactPath, manifestPath, bytes, compiler, selection };
+}
+
+async function changeReadCompiler(fixture, mutate) {
+  mutate(fixture.compiler);
+  const bytes = jsonBytes(fixture.compiler);
+  await chmod(fixture.manifestPath, 0o644);
+  await writeFile(fixture.manifestPath, bytes);
+  await chmod(fixture.manifestPath, 0o444);
+  fixture.selection.compilerManifest = {
+    path: fixture.manifestPath,
+    sha256: digest(bytes),
+    size: bytes.length,
+  };
+}
+
+test("READ captures actual retained files, stages exact bytes and verifies modes without execution", async (t) => {
+  const f = await readArtifactFixture(t);
+  const originalManifest = await readFile(f.manifestPath);
+  const captured = await captureReadNativeArtifact(f.selection);
+  try {
+    await captured.assertCurrent();
+    const stage = await captured.stage(f.output);
+    assert.deepEqual(await readFile(join(f.output, "oce-github-read")), f.bytes);
+    assert.deepEqual(await readFile(join(f.output, "read-native-build.json")), originalManifest);
+    assert.equal((await lstat(join(f.output, "oce-github-read"))).mode & 0o7777, 0o555);
+    assert.equal((await lstat(join(f.output, "read-native-build.json"))).mode & 0o7777, 0o444);
+    assert.equal(stage.receipt.originalCapture.artifact.uid, process.getuid());
+    assert.deepEqual(stage.receipt.installationRequirements, {
+      path: "/usr/local/bin/oce-github-read",
+      uid: 0,
+      gid: 0,
+      mode: "0555",
+      compilerManifestPath: "/usr/local/share/openclaw/read-native-build.json",
+      compilerManifestMode: "0444",
+    });
+    assert.equal(stage.receipt.qualification.installation, "declared-not-executed");
+    assert.equal(stage.receipt.qualification.finalImage, null);
+    assert.deepEqual(await verifyReadNativeStaging(f.output), stage.receipt);
+    assert.throws(() => captured.stage(f.output), /staged once/);
+  } finally {
+    await captured.close();
+  }
+  await assert.rejects(captured.assertCurrent(), /closed/);
+  await captured.close();
+  assert.deepEqual(await readFile(f.artifactPath), f.bytes);
+  assert.deepEqual(await readFile(f.manifestPath), originalManifest);
+});
+
+for (const [name, mutate] of [
+  [
+    "wrong product",
+    (f) => {
+      f.compiler.products[0].binary = "oce-github-mediation";
+    },
+  ],
+  [
+    "duplicate product",
+    (f) => {
+      f.compiler.products.push(structuredClone(f.compiler.products[0]));
+    },
+  ],
+  [
+    "wrong package",
+    (f) => {
+      f.compiler.products[0].package = "other-package";
+    },
+  ],
+  [
+    "wrong platform",
+    (f) => {
+      f.compiler.imagePlatform = "linux/arm64";
+    },
+  ],
+  [
+    "wrong target",
+    (f) => {
+      f.compiler.rustTarget = "aarch64-unknown-linux-gnu";
+    },
+  ],
+  [
+    "wrong source inventory hash",
+    (f) => {
+      f.compiler.sourceInputs.sha256 = "0".repeat(64);
+    },
+  ],
+  [
+    "missing original tool record",
+    (f) => {
+      delete f.compiler.tools.rustc;
+    },
+  ],
+  [
+    "mismatched staged digest",
+    (f) => {
+      f.compiler.products[0].staged.sha256 = "0".repeat(64);
+    },
+  ],
+  [
+    "mismatched staged size",
+    (f) => {
+      f.compiler.products[0].staged.size += 1;
+    },
+  ],
+  [
+    "wrong declared install mode",
+    (f) => {
+      f.compiler.products[0].installationRequirements.mode = "0777";
+    },
+  ],
+  [
+    "oversized immutable-consumer record",
+    (f) => {
+      f.compiler.padding = "x".repeat(65536);
+    },
+  ],
+  [
+    "oversized immutable-consumer container",
+    (f) => {
+      f.compiler.extra = Array(1025).fill(0);
+    },
+  ],
+  [
+    "missing compiler-artifact association",
+    (f) => {
+      delete f.compiler.products[0].compilerArtifact;
+    },
+  ],
+  [
+    "test-profile compiler artifact",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.test = true;
+    },
+  ],
+  [
+    "nonexclusive bin target kind",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.kind.push("example");
+    },
+  ],
+  [
+    "unbound compiler entrypoint",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.sourceSha256 = "0".repeat(64);
+    },
+  ],
+  [
+    "invalid compiler messages digest",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.messagesSha256 = "invalid";
+    },
+  ],
+  [
+    "unsuccessful build-finished record",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.buildFinished = false;
+    },
+  ],
+  [
+    "nonboolean freshness",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.fresh = "fresh";
+    },
+  ],
+  [
+    "different compiler output bytes",
+    (f) => {
+      f.compiler.products[0].compilerArtifact.artifact.sha256 = "0".repeat(64);
+    },
+  ],
+  [
+    "unbound local dependency",
+    (f) => {
+      f.compiler.products[0].dependencies.push({
+        package: "fixture-dependency",
+        version: "0.0.0",
+        source: null,
+        manifestPath: "dataplane/crates/fixture-dependency/Cargo.toml",
+        manifestSha256: "0".repeat(64),
+      });
+    },
+  ],
+  [
+    "own-package dependency substitute",
+    (f) => {
+      f.compiler.products[0].dependencies.push({
+        package: "oce-native-egress",
+        version: "0.0.0",
+        source: "registry+https://example.invalid/index",
+      });
+    },
+  ],
+  [
+    "host-path dependency source",
+    (f) => {
+      f.compiler.products[0].dependencies.push({
+        package: "fixture-dependency",
+        version: "0.0.0",
+        source: "/private/local/source",
+      });
+    },
+  ],
+]) {
+  test(`READ refuses ${name} from exact captured compiler records before staging`, async (t) => {
+    const f = await readArtifactFixture(t);
+    await changeReadCompiler(f, () => mutate(f));
+    await assert.rejects(captureReadNativeArtifact(f.selection));
+    assert.deepEqual(await readdir(f.output), []);
+    assert.deepEqual(await readFile(f.artifactPath), f.bytes);
+  });
+}
+
+for (const [name, mutate, expected] of [
+  [
+    "wrong manifest digest",
+    async (f) => {
+      f.selection.compilerManifest.sha256 = "0".repeat(64);
+    },
+    /digest mismatch/,
+  ],
+  [
+    "wrong executable digest",
+    async (f) => {
+      f.selection.artifact.sha256 = "0".repeat(64);
+    },
+    /equal|mismatch/,
+  ],
+  [
+    "writable executable",
+    async (f) => {
+      await chmod(f.artifactPath, 0o755);
+    },
+    /mode must be 0555/,
+  ],
+  [
+    "special mode bits",
+    async (f) => {
+      await chmod(f.artifactPath, 0o4555);
+    },
+    /Unsafe READ input owner or mode/,
+  ],
+  [
+    "nonregular executable",
+    async (f) => {
+      await rm(f.artifactPath);
+      await mkdir(f.artifactPath);
+    },
+    /regular inode/,
+  ],
+  [
+    "symlink executable",
+    async (f) => {
+      const original = join(f.directory, "original-read");
+      await rename(f.artifactPath, original);
+      await symlink(original, f.artifactPath);
+    },
+    /regular inode/,
+  ],
+  [
+    "symlink ancestor",
+    async (f) => {
+      const original = join(f.directory, "original-input");
+      await rename(f.input, original);
+      await symlink(original, f.input);
+    },
+    /ENOTDIR|ELOOP/,
+  ],
+]) {
+  test(`READ refuses ${name} without opening or running an unsupported endpoint`, async (t) => {
+    const f = await readArtifactFixture(t);
+    await mutate(f);
+    await assert.rejects(captureReadNativeArtifact(f.selection), expected);
+    assert.deepEqual(await readdir(f.output), []);
+  });
+}
+
+test(
+  "READ refuses a foreign executable owner when the test has real chown permission",
+  {
+    skip:
+      process.getuid() !== 0
+        ? "Actual foreign-owner inode case requires root chown; no ownership mock."
+        : false,
+  },
+  async (t) => {
+    const f = await readArtifactFixture(t);
+    await chown(f.artifactPath, 65534, 65534);
+    await assert.rejects(captureReadNativeArtifact(f.selection), /Unsafe READ input owner or mode/);
+    assert.deepEqual(await readdir(f.output), []);
+  },
+);
+
+for (const [name, mutate] of [
+  [
+    "same-byte inode replacement",
+    async (f) => {
+      await rename(f.artifactPath, join(f.input, "held-original"));
+      await writeFile(f.artifactPath, f.bytes, { mode: 0o555 });
+    },
+  ],
+  [
+    "growth after capture",
+    async (f) => {
+      await chmod(f.artifactPath, 0o755);
+      await writeFile(f.artifactPath, Buffer.concat([f.bytes, Buffer.from("growth")]));
+      await chmod(f.artifactPath, 0o555);
+    },
+  ],
+]) {
+  test(`READ refuses ${name} against the still-held original file before copy`, async (t) => {
+    const f = await readArtifactFixture(t);
+    const captured = await captureReadNativeArtifact(f.selection);
+    try {
+      await captured.assertCurrent();
+      await mutate(f);
+      await assert.rejects(captured.stage(f.output), /identity changed/);
+      assert.deepEqual(await readdir(f.output), []);
+    } finally {
+      await captured.close();
+    }
+  });
+}
+
+test("READ staging never overwrites an existing output inode", async (t) => {
+  const f = await readArtifactFixture(t);
+  const output = join(f.output, "oce-github-read");
+  await writeFile(output, "existing unrelated file");
+  const captured = await captureReadNativeArtifact(f.selection);
+  try {
+    await assert.rejects(captured.stage(f.output), { code: "EEXIST" });
+  } finally {
+    await captured.close();
+  }
+  assert.equal(await readFile(output, "utf8"), "existing unrelated file");
+});
+
+test("READ pre-entry cancellation preserves refusal and creates no staged files", async (t) => {
+  const f = await readArtifactFixture(t);
+  const controller = new AbortController();
+  const failure = new Error("Selected READ capture cancelled.");
+  controller.abort(failure);
+  await assert.rejects(
+    captureReadNativeArtifact(f.selection, { signal: controller.signal }),
+    (error) => error === failure,
+  );
+  assert.deepEqual(await readdir(f.output), []);
+});
+
+test("READ close joins a queued staging operation and prevents its file entry", async (t) => {
+  const f = await readArtifactFixture(t);
+  const captured = await captureReadNativeArtifact(f.selection);
+  const stage = captured.stage(f.output);
+  const close = captured.close();
+  const result = await Promise.allSettled([stage, close]);
+  assert.equal(result[0].status, "rejected");
+  assert.equal(result[1].status, "fulfilled");
+  assert.deepEqual(await readdir(f.output), []);
+  await assert.rejects(captured.assertCurrent(), /closed/);
+});
+
+for (const [name, mutate, expected] of [
+  [
+    "staged mode change",
+    async (f) => {
+      await chmod(join(f.output, "oce-github-read"), 0o755);
+    },
+    /mode must be 0555/,
+  ],
+  [
+    "staged byte change",
+    async (f) => {
+      const path = join(f.output, "oce-github-read");
+      const bytes = Buffer.from(f.bytes);
+      bytes[0] ^= 1;
+      await chmod(path, 0o755);
+      await writeFile(path, bytes);
+      await chmod(path, 0o555);
+    },
+    /digest mismatch/,
+  ],
+  [
+    "staged symlink",
+    async (f) => {
+      const path = join(f.output, "oce-github-read");
+      await rm(path);
+      await symlink(f.artifactPath, path);
+    },
+    /regular inode/,
+  ],
+]) {
+  test(`READ verification refuses ${name} after original staging has closed`, async (t) => {
+    const f = await readArtifactFixture(t);
+    const captured = await captureReadNativeArtifact(f.selection);
+    try {
+      await captured.stage(f.output);
+    } finally {
+      await captured.close();
+    }
+    await mutate(f);
+    await assert.rejects(verifyReadNativeStaging(f.output), expected);
+  });
+}
+
+test("READ selected context verifies native records, exact input selection and modes", async (t) => {
+  const f = await readArtifactFixture(t);
+  const context = await preparedFixture(t, undefined, { privateReadContext: true });
+  const nativeDirectory = join(context.context, "native");
+  await mkdir(nativeDirectory, { mode: 0o700 });
+  const nativeStat = await lstat(nativeDirectory);
+  assert.equal(nativeStat.isDirectory(), true, "READ fixture native staging must be a directory.");
+  assert.equal(
+    nativeStat.uid,
+    process.getuid(),
+    "READ fixture native staging must have the current owner.",
+  );
+  assert.equal(
+    nativeStat.mode & 0o7777,
+    0o700,
+    "READ fixture native staging must have private mode 0700.",
+  );
+  const captured = await captureReadNativeArtifact(f.selection);
+  let stage;
+  try {
+    stage = await captured.stage(nativeDirectory);
+  } finally {
+    await captured.close();
+  }
+  const inputBytes = jsonBytes({ readNative: f.selection });
+  await writeFile(join(context.context, "inputs.json"), inputBytes);
+  Object.assign(
+    context.receipt.files.find((entry) => entry.path === "inputs.json"),
+    {
+      bytes: inputBytes.length,
+      sha256: digest(inputBytes),
+    },
+  );
+  context.receipt.readNative = stage.receipt;
+  context.receipt.files.push(
+    ...stage.files.map((entry) => ({ ...entry, path: `native/${entry.path}` })),
+  );
+  await saveReceipt(context);
+  assert.deepEqual(await verifyContext(context.context), context.receipt);
+  delete context.receipt.readNative;
+  await saveReceipt(context);
+  await assert.rejects(verifyContext(context.context), /Unselected READ artifact/);
+});
+
+test("READ selected preparation refuses missing compiler record before tooling or output", async (t) => {
+  const f = await inputFixture(t);
+  const read = await readArtifactFixture(t);
+  f.input.readNative = read.selection;
+  await rm(read.manifestPath);
+  assertPreparationFailure(await runPreparation(f), /ENOENT/);
+  await assert.rejects(lstat(f.output), { code: "ENOENT" });
+});
+
+test("READ Docker recipe installs exact root-owned paths before USER without a READ command", async () => {
+  const recipe = await readFile(
+    new URL("../../deploy/runtime/Dockerfile", import.meta.url),
+    "utf8",
+  );
+  const install = recipe.indexOf(
+    "install -o 0 -g 0 -m 0555 /opt/openclaw-read-staging/oce-github-read /usr/local/bin/oce-github-read",
+  );
+  const verify = recipe.indexOf("--verify-read-installed /opt/openclaw-read-staging");
+  assert.ok(install > 0 && verify > install && recipe.indexOf("USER node") > verify);
+  assert.match(recipe, /install -D -o 0 -g 0 -m 0444 .*read-native-build\.json/);
+  assert.match(recipe, /npm ci --offline --omit=dev --ignore-scripts/);
+  assert.doesNotMatch(
+    recipe,
+    /(?:CMD|ENTRYPOINT).*oce-github-read|oce-github-read --version|serve-git-read-v3/,
+  );
+});
+
+// RPK-01: replace the actual immutable input bytes AND their selected size/hash.
+// This avoids mistaking a digest mismatch for a received-JSON grammar refusal.
+async function replaceReadCompilerBytes(fixture, bytes) {
+  await chmod(fixture.manifestPath, 0o644);
+  await writeFile(fixture.manifestPath, bytes);
+  await chmod(fixture.manifestPath, 0o444);
+  fixture.selection.compilerManifest = {
+    path: fixture.manifestPath,
+    sha256: digest(bytes),
+    size: bytes.length,
+  };
+}
+const compilerMember = (text, member) => `{${member},${text.slice(1)}`;
+const compilerExtra = (text, raw) => compilerMember(text, `"extra":${raw}`);
+
+for (const [name, received, code] of [
+  ["duplicate raw ASCII key", (text) => compilerMember(text, '"schemaVersion":2'), "duplicate-key"],
+  [
+    "duplicate escape-equivalent ASCII key",
+    (text) => compilerMember(text, '"\\u0073chemaVersion":2'),
+    "duplicate-key",
+  ],
+  [
+    "overlong invalid UTF-8",
+    (text) =>
+      Buffer.concat([
+        Buffer.from('{"extra":"'),
+        Buffer.from([0xc0, 0xaf]),
+        Buffer.from(`",${text.slice(1)}`),
+      ]),
+    "invalid-utf8",
+  ],
+  [
+    "incomplete UTF-8 scalar",
+    (text) =>
+      Buffer.concat([
+        Buffer.from('{"extra":"'),
+        Buffer.from([0xe2, 0x82]),
+        Buffer.from(`",${text.slice(1)}`),
+      ]),
+    "invalid-utf8",
+  ],
+  [
+    "preserved leading UTF-8 BOM",
+    (text) => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text)]),
+    "invalid-json",
+  ],
+  ["lone high surrogate escape", (text) => compilerExtra(text, '"\\ud800"'), "invalid-unicode"],
+  ["lone low surrogate escape", (text) => compilerExtra(text, '"\\udfff"'), "invalid-unicode"],
+  ["literal non-ASCII key", (text) => compilerMember(text, '"é":0'), "non-ascii-key"],
+  ["escaped non-ASCII key", (text) => compilerMember(text, '"\\u00e9":0'), "non-ascii-key"],
+  ["negative zero lexeme", (text) => compilerExtra(text, "-0"), "invalid-number"],
+  ["negative integer lexeme", (text) => compilerExtra(text, "-1"), "invalid-number"],
+  ["integral fraction lexeme", (text) => compilerExtra(text, "1.0"), "invalid-number"],
+  ["lowercase exponent lexeme", (text) => compilerExtra(text, "1e0"), "invalid-number"],
+  ["uppercase exponent lexeme", (text) => compilerExtra(text, "1E0"), "invalid-number"],
+  ["unsafe integer lexeme", (text) => compilerExtra(text, "9007199254740992"), "invalid-number"],
+  ["leading-zero integer lexeme", (text) => compilerExtra(text, "01"), "invalid-number"],
+  ["positive-sign integer lexeme", (text) => compilerExtra(text, "+1"), "invalid-number"],
+  ["trailing non-whitespace token", (text) => `${text} true`, "invalid-json"],
+  ["unescaped string control", (text) => compilerExtra(text, '"\u0001"'), "invalid-json"],
+  [
+    "empty array at container depth 33",
+    (text) => compilerExtra(text, "[".repeat(32) + "]".repeat(32)),
+    "depth-limit",
+  ],
+  [
+    "empty object at container depth 33",
+    (text) => compilerExtra(text, '{"x":'.repeat(31) + "{}" + "}".repeat(31)),
+    "depth-limit",
+  ],
+  [
+    "more than 8192 value nodes with individually bounded containers",
+    (text) =>
+      compilerExtra(text, JSON.stringify(Array.from({ length: 8 }, () => Array(1024).fill(0)))),
+    "node-limit",
+  ],
+  [
+    "1025 array entries",
+    (text) => compilerExtra(text, JSON.stringify(Array(1025).fill(0))),
+    "container-limit",
+  ],
+  [
+    "1025 object entries",
+    (text) =>
+      compilerExtra(
+        text,
+        JSON.stringify(
+          Object.fromEntries(Array.from({ length: 1025 }, (_, index) => [`k${index}`, 0])),
+        ),
+      ),
+    "container-limit",
+  ],
+]) {
+  test(`READ raw compiler boundary refuses ${name} before binding or staging`, async (t) => {
+    const f = await readArtifactFixture(t);
+    const bytes = Buffer.from(received(JSON.stringify(f.compiler)));
+    assert.ok(bytes.length < 65536, "This case isolates grammar/structure, not the byte ceiling.");
+    await replaceReadCompilerBytes(f, bytes);
+    assert.equal(f.selection.compilerManifest.size, bytes.length);
+    assert.equal(f.selection.compilerManifest.sha256, digest(bytes));
+    await assert.rejects(captureReadNativeArtifact(f.selection), {
+      message: `Invalid READ compiler JSON: ${code}`,
+    });
+    // These observations run outside the rejected operation and its matcher.
+    assert.deepEqual(await readdir(f.output), []);
+    assert.deepEqual(await readFile(f.manifestPath), bytes);
+    assert.equal((await lstat(f.manifestPath)).mode & 0o7777, 0o444);
+    assert.deepEqual(await readFile(f.artifactPath), f.bytes);
+  });
+}
+
+for (const [name, received] of [
+  [
+    "null, scalar Unicode, escaped ASCII keys and maximum safe integer",
+    (text) =>
+      compilerMember(
+        text,
+        '"nullable":null,"unicode":"é😀\\ud83d\\ude00","\\u0065scaped":true,"maximum":9007199254740991',
+      ),
+  ],
+  [
+    "empty array at container depth 32",
+    (text) => compilerExtra(text, "[".repeat(31) + "]".repeat(31)),
+  ],
+  [
+    "empty object at container depth 32",
+    (text) => compilerExtra(text, '{"x":'.repeat(30) + "{}" + "}".repeat(30)),
+  ],
+  ["1024 array entries", (text) => compilerExtra(text, JSON.stringify(Array(1024).fill(0)))],
+  [
+    "1024 object entries",
+    (text) =>
+      compilerExtra(
+        text,
+        JSON.stringify(
+          Object.fromEntries(Array.from({ length: 1024 }, (_, index) => [`k${index}`, 0])),
+        ),
+      ),
+  ],
+  [
+    "seven 1024-entry arrays within the value-node bound",
+    (text) =>
+      compilerExtra(text, JSON.stringify(Array.from({ length: 7 }, () => Array(1024).fill(0)))),
+  ],
+  [
+    "exactly 65536 received bytes including the final newline",
+    (text) => text + " ".repeat(65535 - Buffer.byteLength(text, "utf8")),
+  ],
+]) {
+  test(`READ raw compiler boundary preserves ${name} and exact selected file bytes`, async (t) => {
+    const f = await readArtifactFixture(t);
+    // Final LF is part of the original builder selection, never a self-digest
+    // or a canonicalized substitute for the immutable received file.
+    const bytes = Buffer.from(`${received(JSON.stringify(f.compiler))}\n`);
+    assert.ok(bytes.length <= 65536);
+    assert.equal(bytes.at(-1), 0x0a);
+    assert.notEqual(digest(bytes), digest(bytes.subarray(0, bytes.length - 1)));
+    await replaceReadCompilerBytes(f, bytes);
+    const captured = await captureReadNativeArtifact(f.selection);
+    try {
+      await captured.assertCurrent();
+      const stage = await captured.stage(f.output);
+      const staged = await readFile(join(f.output, "read-native-build.json"));
+      assert.deepEqual(staged, bytes);
+      assert.equal(digest(staged), f.selection.compilerManifest.sha256);
+      assert.equal(stage.receipt.selection.compilerManifest.size, bytes.length);
+      assert.equal(stage.receipt.selection.compilerManifest.sha256, digest(bytes));
+      assert.deepEqual(await verifyReadNativeStaging(f.output), stage.receipt);
+    } finally {
+      await captured.close();
+    }
+    await assert.rejects(captured.assertCurrent(), /closed/);
+    assert.deepEqual(await readFile(f.manifestPath), bytes);
+    assert.deepEqual(await readFile(f.artifactPath), f.bytes);
+  });
+}
+
+test("READ raw compiler byte ceiling refuses 65537 selected bytes without staging", async (t) => {
+  const f = await readArtifactFixture(t);
+  const text = JSON.stringify(f.compiler);
+  const bytes = Buffer.from(`${text}${" ".repeat(65536 - Buffer.byteLength(text, "utf8"))}\n`);
+  assert.equal(bytes.length, 65537);
+  await replaceReadCompilerBytes(f, bytes);
+  // The existing finite descriptor-capture bound refuses this before a content
+  // read; do not mistake the later lexical decoder for the only size gate.
+  await assert.rejects(captureReadNativeArtifact(f.selection), { code: "ERR_ASSERTION" });
+  assert.deepEqual(await readdir(f.output), []);
+  assert.deepEqual(await readFile(f.manifestPath), bytes);
+  assert.deepEqual(await readFile(f.artifactPath), f.bytes);
+});
+
+// RPK-02: a non-READ context still checks the original canonical regular-file
+// gate before its newly introduced inputs.json JSON read.
+test("non-READ verification refuses inputs.json directory before content read", async (t) => {
+  const f = await preparedFixture(t);
+  const receiptBefore = await readFile(join(f.context, "preparation.json"));
+  const inputs = join(f.context, "inputs.json");
+  await rm(inputs);
+  await mkdir(inputs);
+  await assert.rejects(verifyContext(f.context), { message: "Expected a regular file." });
+  assert.equal((await lstat(inputs)).isDirectory(), true);
+  assert.deepEqual(await readdir(inputs), []);
+  assert.deepEqual(await readFile(join(f.context, "preparation.json")), receiptBefore);
+});
+
+test("non-READ verification rejects inputs.json symlink before decoding its invalid target", async (t) => {
+  const f = await preparedFixture(t);
+  const receiptBefore = await readFile(join(f.context, "preparation.json"));
+  const inputs = join(f.context, "inputs.json");
+  const outside = join(f.directory, "unselected-not-json");
+  const sentinel = Buffer.from("This must not be opened and decoded as inputs JSON.\n");
+  await writeFile(outside, sentinel);
+  await rm(inputs);
+  await symlink(outside, inputs);
+  // Reading before the gate produces a SyntaxError instead of this exact
+  // original regular-file refusal; no caller-positive replacement is involved.
+  await assert.rejects(verifyContext(f.context), { message: "Expected a regular file." });
+  assert.equal((await lstat(inputs)).isSymbolicLink(), true);
+  assert.deepEqual(await readFile(outside), sentinel);
+  assert.deepEqual(await readFile(join(f.context, "preparation.json")), receiptBefore);
+});
