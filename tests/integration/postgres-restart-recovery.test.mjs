@@ -371,7 +371,7 @@ test(
   "deployment status follows the original reconcile row and preserves plugin failures",
   requiresPostgres,
   async (context) => {
-    const { pool, queue } = await dependencies(context);
+    const { pool, queue, WorkClaimLostError } = await dependencies(context);
     const { namespaceId, agents } = await createResources(pool);
     const pluginId = "p".repeat(512);
     const pluginIdentity = { driverId: "codex", pluginId };
@@ -417,7 +417,38 @@ test(
         name === "ScopeViolationError" && /does not belong to the admitted revision/.test(message),
     );
 
-    await queue.complete(claim, { code: "REVISION_SUPERSEDED" });
+    await pool.query(
+      `UPDATE occ.controller_work
+       SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE idempotency_key = $1 AND claim_token = $2::uuid`,
+      [idempotencyKey, claim.claimToken],
+    );
+    await assert.rejects(
+      queue.reportPluginInstallFailure(claim, pluginIdentity, [pluginIdentity]),
+      WorkClaimLostError,
+    );
+    assert.deepEqual(
+      await queue.findDeployment(namespaceId, agents[0], revisionId),
+      {
+        deploymentId: revisionId,
+        namespaceId,
+        agentId: agents[0],
+        status: "queued",
+        pluginErrors,
+        error: null,
+      },
+      "a stale report token must not mutate the durable plugin errors",
+    );
+    await queue.recoverStale();
+    const recovered = await claimExpected(queue, idempotencyKey);
+    assert.notEqual(recovered.claimToken, claim.claimToken);
+    assert.deepEqual(
+      await queue.reportPluginInstallFailure(recovered, pluginIdentity, [pluginIdentity]),
+      pluginErrors,
+      "the recovered claim must preserve the prior plugin report",
+    );
+
+    await queue.complete(recovered, { code: "REVISION_SUPERSEDED" });
     assert.deepEqual(await queue.findDeployment(namespaceId, agents[0], revisionId), {
       deploymentId: revisionId,
       namespaceId,
