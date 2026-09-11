@@ -1,5 +1,11 @@
 import { isNonEmptyString, isPositiveSafeInteger } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
+import type {
+  AgentDeploymentOutcome,
+  AgentDeploymentStatus,
+  PluginIdentity,
+  PluginInstallationError,
+} from "@openclaw-enterprise/contracts";
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
 
 export interface PostgresQueryClient {
@@ -24,6 +30,8 @@ export interface ControllerWork {
   readonly claimToken?: string;
   readonly leaseExpiresAt?: Date;
   readonly completedAt?: Date;
+  readonly terminalReasonCode?: string;
+  readonly pluginErrors: readonly PluginInstallationError[];
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -54,6 +62,7 @@ export interface ClaimRequest {
 }
 
 export interface WorkResult {
+  readonly code?: string;
   readonly details?: Readonly<Record<string, unknown>>;
 }
 
@@ -99,6 +108,8 @@ interface WorkRow {
   readonly claim_token: string | null;
   readonly lease_expires_at: Date | string | null;
   readonly completed_at: Date | string | null;
+  readonly terminal_reason_code: string | null;
+  readonly plugin_errors: unknown;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
@@ -111,6 +122,11 @@ const DEFAULT_RECOVERY_LIMIT = 100;
 const MAX_RECOVERY_LIMIT = 1_000;
 const CLAIM_RACE_CODES = new Set(["23505", "40001", "40P01"]);
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_IDENTIFIER = /^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).{1,512}$/u;
+const PLUGIN_INSTALL_FAILED = Object.freeze({
+  code: "PLUGIN_INSTALL_FAILED" as const,
+  message: "Plugin installation failed." as const,
+});
 
 export class WorkClaimLostError extends Error {
   constructor() {
@@ -141,6 +157,110 @@ function asDate(value: Date | string): Date {
   return date;
 }
 
+function pluginIdentityKey(identity: PluginIdentity): string {
+  return `${identity.driverId}\u0000${identity.pluginId}`;
+}
+
+function validatePluginIdentity(
+  identity: PluginIdentity,
+  name = "Plugin identity",
+): PluginIdentity {
+  if (
+    typeof identity.driverId !== "string" ||
+    !SAFE_IDENTIFIER.test(identity.driverId) ||
+    typeof identity.pluginId !== "string" ||
+    !SAFE_IDENTIFIER.test(identity.pluginId)
+  ) {
+    throw new ScopeViolationError(`${name} is invalid.`);
+  }
+  return Object.freeze({ driverId: identity.driverId, pluginId: identity.pluginId });
+}
+
+function validateAdmittedPluginIdentity(
+  identity: PluginIdentity,
+  admitted: readonly PluginIdentity[],
+): PluginIdentity {
+  const validated = validatePluginIdentity(identity);
+  const admittedKeys = new Set(
+    admitted.map((entry) => pluginIdentityKey(validatePluginIdentity(entry))),
+  );
+  if (!admittedKeys.has(pluginIdentityKey(validated))) {
+    throw new ScopeViolationError("The reported plugin does not belong to the admitted revision.");
+  }
+  return validated;
+}
+
+function pluginErrors(value: unknown): readonly PluginInstallationError[] {
+  if (!Array.isArray(value)) {
+    throw new ScopeViolationError("The controller work plugin report is invalid.");
+  }
+  const seen = new Set<string>();
+  return Object.freeze(
+    value.map((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        throw new ScopeViolationError("The controller work plugin report is invalid.");
+      }
+      const candidate = entry as Partial<PluginInstallationError>;
+      if (
+        candidate.code !== PLUGIN_INSTALL_FAILED.code ||
+        candidate.message !== PLUGIN_INSTALL_FAILED.message ||
+        typeof candidate.driverId !== "string" ||
+        typeof candidate.pluginId !== "string"
+      ) {
+        throw new ScopeViolationError("The controller work plugin report is invalid.");
+      }
+      const identity = validatePluginIdentity({
+        driverId: candidate.driverId,
+        pluginId: candidate.pluginId,
+      });
+      const key = pluginIdentityKey(identity);
+      if (seen.has(key)) {
+        throw new ScopeViolationError("The controller work plugin report contains duplicates.");
+      }
+      seen.add(key);
+      return Object.freeze({ ...identity, ...PLUGIN_INSTALL_FAILED });
+    }),
+  );
+}
+
+function terminalErrorMessage(code: string): string {
+  if (code === "REVISION_SUPERSEDED") return "Agent revision was superseded before activation.";
+  if (code === "CONVERGENCE_DEADLINE_EXCEEDED") return "Deployment did not converge in time.";
+  if (code === "MAX_ATTEMPTS_EXHAUSTED") return "Deployment exhausted its retry budget.";
+  if (code === "PLUGIN_INSTALL_FAILED") return "Plugin installation failed.";
+  return "Deployment failed.";
+}
+
+function publicDeploymentStatus(work: ControllerWork, now = new Date()): AgentDeploymentStatus {
+  if (work.state === "succeeded") {
+    return work.terminalReasonCode === "REVISION_SUPERSEDED" ? "failed" : "succeeded";
+  }
+  if (work.state === "failed_permanent") return "failed";
+  if (work.state === "claimed" && work.leaseExpiresAt !== undefined && work.leaseExpiresAt > now)
+    return "running";
+  return "queued";
+}
+
+export function deploymentOutcomeFromWork(
+  work: ControllerWork,
+  now = new Date(),
+): AgentDeploymentOutcome {
+  if (work.agentId === undefined || work.revisionId === undefined) {
+    throw new ScopeViolationError("Deployment status requires Agent revision work.");
+  }
+  const status = publicDeploymentStatus(work, now);
+  const failed = status === "failed";
+  const code = work.terminalReasonCode ?? "UNKNOWN_FAILURE";
+  return Object.freeze({
+    deploymentId: work.revisionId,
+    namespaceId: work.namespaceId,
+    agentId: work.agentId,
+    status,
+    pluginErrors: work.pluginErrors,
+    error: failed ? { code, message: terminalErrorMessage(code) } : null,
+  });
+}
+
 function asRow(value: unknown): WorkRow {
   if (typeof value !== "object" || value === null) {
     throw new ScopeViolationError("PostgreSQL returned an invalid controller work row.");
@@ -163,6 +283,10 @@ function asWork(value: unknown): ControllerWork {
     ...(row.claim_token === null ? {} : { claimToken: row.claim_token }),
     ...(row.lease_expires_at === null ? {} : { leaseExpiresAt: asDate(row.lease_expires_at) }),
     ...(row.completed_at === null ? {} : { completedAt: asDate(row.completed_at) }),
+    ...(row.terminal_reason_code === null
+      ? {}
+      : { terminalReasonCode: safeFailureCode(row.terminal_reason_code) }),
+    pluginErrors: pluginErrors(row.plugin_errors),
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),
   });
@@ -413,14 +537,69 @@ export class PostgresWorkQueue {
     return count;
   }
 
-  async complete(claim: WorkClaim, _result: WorkResult = {}): Promise<void> {
+  async findDeployment(
+    namespaceId: string,
+    agentId: string,
+    deploymentId: string,
+  ): Promise<AgentDeploymentOutcome | undefined> {
+    const found = await this.client.query(
+      `SELECT *
+       FROM occ.controller_work
+       WHERE namespace_id = $1
+         AND agent_id = $2
+         AND revision_id = $3
+         AND idempotency_key = $4`,
+      [namespaceId, agentId, deploymentId, `agent_revision:${deploymentId}:reconcile`],
+    );
+    return found.rows[0] === undefined
+      ? undefined
+      : deploymentOutcomeFromWork(asWork(found.rows[0]));
+  }
+
+  async reportPluginInstallFailure(
+    claim: WorkClaim,
+    identity: PluginIdentity,
+    admittedPlugins: readonly PluginIdentity[],
+  ): Promise<readonly PluginInstallationError[]> {
     validateClaim(claim);
+    const reported = validateAdmittedPluginIdentity(identity, admittedPlugins);
+    const persisted = await this.client.query(
+      `UPDATE occ.controller_work
+       SET plugin_errors = CASE
+             WHEN EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements(plugin_errors) AS entry
+               WHERE entry->>'driverId' = $3::text AND entry->>'pluginId' = $4::text
+             ) THEN plugin_errors
+             ELSE plugin_errors || jsonb_build_array(jsonb_build_object(
+               'driverId', $3::text,
+               'pluginId', $4::text,
+               'code', 'PLUGIN_INSTALL_FAILED',
+               'message', 'Plugin installation failed.'
+             ))
+           END,
+           updated_at = clock_timestamp()
+       WHERE idempotency_key = $1
+         AND state = 'claimed'
+         AND claim_token = $2::uuid
+         AND lease_expires_at > clock_timestamp()
+       RETURNING plugin_errors`,
+      [claim.idempotencyKey, claim.claimToken, reported.driverId, reported.pluginId],
+    );
+    if (persisted.rows.length === 0) throw new WorkClaimLostError();
+    return pluginErrors((persisted.rows[0] as { plugin_errors?: unknown }).plugin_errors);
+  }
+
+  async complete(claim: WorkClaim, result: WorkResult = {}): Promise<void> {
+    validateClaim(claim);
+    const reasonCode = safeFailureCode(result.code ?? "RECONCILE_SUCCEEDED");
     const completed = await this.client.query(
       `WITH transitioned AS (
          UPDATE occ.controller_work
          SET state = 'succeeded',
              claim_token = NULL,
              lease_expires_at = NULL,
+             terminal_reason_code = $4::text,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
          WHERE idempotency_key = $1
@@ -429,7 +608,7 @@ export class PostgresWorkQueue {
            AND lease_expires_at > clock_timestamp()
          RETURNING *
        ), ${INSERT_EVIDENCE_SQL}`,
-      [claim.idempotencyKey, claim.claimToken, "success", "RECONCILE_SUCCEEDED"],
+      [claim.idempotencyKey, claim.claimToken, "success", reasonCode],
     );
     if (completed.rows.length === 0) throw new WorkClaimLostError();
   }
@@ -489,6 +668,10 @@ export class PostgresWorkQueue {
              END,
              claim_token = NULL,
              lease_expires_at = NULL,
+             terminal_reason_code = CASE
+               WHEN attempt_count >= $5::integer THEN $4::text
+               ELSE NULL
+             END,
              completed_at = CASE
                WHEN attempt_count >= $5::integer THEN clock_timestamp()
                ELSE NULL
@@ -522,6 +705,7 @@ export class PostgresWorkQueue {
          SET state = 'failed_permanent',
              claim_token = NULL,
              lease_expires_at = NULL,
+             terminal_reason_code = $4::text,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
          WHERE idempotency_key = $1
@@ -566,6 +750,10 @@ export class PostgresWorkQueue {
              END,
              claim_token = NULL,
              lease_expires_at = NULL,
+             terminal_reason_code = CASE
+               WHEN work.attempt_count >= $2::integer THEN $4::text
+               ELSE NULL
+             END,
              completed_at = CASE
                WHEN work.attempt_count >= $2::integer THEN clock_timestamp()
                ELSE NULL
@@ -599,6 +787,7 @@ export class PostgresWorkQueue {
        ), transitioned AS (
          UPDATE occ.controller_work AS work
          SET state = 'failed_permanent',
+             terminal_reason_code = $4::text,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
          FROM candidates

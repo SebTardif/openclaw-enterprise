@@ -80,7 +80,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
     });
   }
 
-  async function revision(owner, number, harness) {
+  async function revision(owner, number, harness, plugins) {
     const serviceAccount =
       owner.serviceAccountId === undefined
         ? undefined
@@ -114,6 +114,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
       configurationGeneration: 1,
       harness: approvedHarness,
       compute: { id: compute.id, implementation: compute.implementation },
+      ...(plugins === undefined ? {} : { plugins }),
       ...(serviceAccount === undefined
         ? {}
         : {
@@ -250,6 +251,110 @@ test(
       view.agents.findAgent(fixture.namespace.id, owner.id),
     );
     assert.equal(active.activeRevisionId, current.id);
+  },
+);
+
+test(
+  "plugin installation reports fail deployments permanently before activation",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("plugin-install-failure");
+    const pluginId = "codex-plugin:google-calendar@openai-curated-remote";
+    const plugins = {
+      driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
+      plugins: { [pluginId]: { enabled: true, approvalMode: "always" } },
+    };
+    const candidate = await fixture.revision(owner, 1, undefined, plugins);
+    const effects = [];
+
+    await fixture.start({
+      ...fixture.compute,
+      async prepareRevision(revision, computeContext) {
+        effects.push({
+          action: "prepare",
+          revisionId: revision.id,
+          failedBefore: computeContext.failedPluginIdentities,
+        });
+        await assert.rejects(
+          computeContext.reportPluginInstallFailure({
+            driverId: "codex-plugin",
+            pluginId: "codex-plugin:not-admitted@openai-curated-remote",
+          }),
+          ({ name, message }) =>
+            name === "ScopeViolationError" &&
+            /does not belong to the admitted revision/.test(message),
+        );
+        await computeContext.reportPluginInstallFailure({ driverId: "codex-plugin", pluginId });
+        await computeContext.reportPluginInstallFailure({ driverId: "codex-plugin", pluginId });
+        effects.push({
+          action: "reported",
+          revisionId: revision.id,
+          failedAfter: computeContext.failedPluginIdentities,
+        });
+        throw new Error("native plugin install failed");
+      },
+      async activateRevision() {
+        effects.push({ action: "activate" });
+        throw new Error("plugin failures must stop before activation");
+      },
+    });
+
+    const failed = await fixture.work(candidate, "failed_permanent");
+    assert.equal(failed.attempt_count, 1);
+    assert.deepEqual(effects, [
+      { action: "prepare", revisionId: candidate.id, failedBefore: [] },
+      {
+        action: "reported",
+        revisionId: candidate.id,
+        failedAfter: [{ driverId: "codex-plugin", pluginId }],
+      },
+    ]);
+
+    const work = await fixture.observerPool.query(
+      `SELECT terminal_reason_code, plugin_errors
+       FROM occ.controller_work
+       WHERE idempotency_key = $1`,
+      [candidate.idempotencyKey],
+    );
+    assert.deepEqual(work.rows, [
+      {
+        terminal_reason_code: "PLUGIN_INSTALL_FAILED",
+        plugin_errors: [
+          {
+            driverId: "codex-plugin",
+            pluginId,
+            code: "PLUGIN_INSTALL_FAILED",
+            message: "Plugin installation failed.",
+          },
+        ],
+      },
+    ]);
+    const deployment = await new fixture.PostgresWorkQueue(fixture.observerPool).findDeployment(
+      fixture.namespace.id,
+      owner.id,
+      candidate.id,
+    );
+    assert.deepEqual(deployment, {
+      deploymentId: candidate.id,
+      namespaceId: fixture.namespace.id,
+      agentId: owner.id,
+      status: "failed",
+      error: { code: "PLUGIN_INSTALL_FAILED", message: "Plugin installation failed." },
+      pluginErrors: [
+        {
+          driverId: "codex-plugin",
+          pluginId,
+          code: "PLUGIN_INSTALL_FAILED",
+          message: "Plugin installation failed.",
+        },
+      ],
+    });
+    const active = await fixture.observerPool.query(
+      "SELECT active_revision_id FROM occ.agents WHERE namespace_id = $1 AND id = $2",
+      [fixture.namespace.id, owner.id],
+    );
+    assert.equal(active.rows[0].active_revision_id, null);
   },
 );
 

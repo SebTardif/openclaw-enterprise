@@ -1454,11 +1454,13 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     `/namespaces/${namespaceId}/agents/${agent.data.id}/deploy`,
   );
   assert.equal(deployed.status, 202, JSON.stringify(deployed.error));
-  assert.deepEqual(deployed.data.harness, { id: harnessId, version: "1.0.0", mode });
+  const deployedRevision = deployed.data.revision;
+  assert.equal(deployed.data.deploymentId, deployedRevision.id);
+  assert.deepEqual(deployedRevision.harness, { id: harnessId, version: "1.0.0", mode });
   if (createdAccount === undefined) {
-    assert.equal(Object.hasOwn(deployed.data, "serviceAccount"), false);
+    assert.equal(Object.hasOwn(deployedRevision, "serviceAccount"), false);
   } else {
-    assert.deepEqual(deployed.data.serviceAccount, {
+    assert.deepEqual(deployedRevision.serviceAccount, {
       id: createdAccount.data.id,
       credential: expectedCredential,
     });
@@ -1466,7 +1468,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
   for (const [description, response] of [
     ...(persistedAccount === undefined ? [] : [["account", persistedAccount]]),
     ["Agent", agent],
-    ["AgentRevision", deployed],
+    ["AgentRevision", deployedRevision],
   ]) {
     assert.equal(
       JSON.stringify(response).includes(process.env.OPENAI_API_KEY),
@@ -1493,11 +1495,11 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
       );
       return pod;
     });
-    await waitFor(`worker to defer incomplete embedded revision ${deployed.data.id}`, () =>
+    await waitFor(`worker to defer incomplete embedded revision ${deployedRevision.id}`, () =>
       events.find(
         (event) =>
           event.event === "worker.completed" &&
-          event.revisionId === deployed.data.id &&
+          event.revisionId === deployedRevision.id &&
           event.outcome === "pending" &&
           event.code === "REVISION_INCOMPLETE",
       ),
@@ -1506,7 +1508,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     assert.equal(blockedAgent.status, 200);
     assert.notEqual(
       blockedAgent.data.activeRevisionId,
-      deployed.data.id,
+      deployedRevision.id,
       "the missing exact Agent model Secret must prevent revision activation",
     );
 
@@ -1519,25 +1521,25 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     );
   }
 
-  await waitFor(`production ${mode} AgentRevision ${deployed.data.id} activation`, async () => {
+  await waitFor(`production ${mode} AgentRevision ${deployedRevision.id} activation`, async () => {
     const observation = await request("GET", `/namespaces/${namespaceId}/agents/${agent.data.id}`);
     assert.equal(observation.status, 200);
-    return observation.data.activeRevisionId === deployed.data.id ? observation.data : undefined;
+    return observation.data.activeRevisionId === deployedRevision.id ? observation.data : undefined;
   });
-  await waitFor(`production worker completion of ${deployed.data.id}`, () =>
+  await waitFor(`production worker completion of ${deployedRevision.id}`, () =>
     events.find(
       (event) =>
         event.event === "worker.completed" &&
-        event.revisionId === deployed.data.id &&
+        event.revisionId === deployedRevision.id &&
         event.outcome === "success",
     ),
   );
   const observedRevision = await request(
     "GET",
-    `/namespaces/${namespaceId}/agents/${agent.data.id}/revisions/${deployed.data.id}`,
+    `/namespaces/${namespaceId}/agents/${agent.data.id}/revisions/${deployedRevision.id}`,
   );
   assert.equal(observedRevision.status, 200, JSON.stringify(observedRevision.error));
-  assert.deepEqual(observedRevision.data.serviceAccount, deployed.data.serviceAccount);
+  assert.deepEqual(observedRevision.data.serviceAccount, deployedRevision.serviceAccount);
   if (secretApi !== undefined) {
     assert.deepEqual(observedRevision.data.secretBindings, secretApi.configuration.secretBindings);
   }
@@ -1629,7 +1631,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     agent: agent.data,
     ...(persistedAccount === undefined ? {} : { account: persistedAccount.data }),
     persistedAgent,
-    revision: deployed.data,
+    revision,
     gatewayServiceName,
     agentServiceName,
     gatewayPod,
@@ -2650,27 +2652,29 @@ async function deployEmbeddedAgentAndWait(topology, agentId, description, option
     `${description} deploy response must not leak secret material`,
   );
   assert.equal(deployed.status, 202, JSON.stringify(deployed.error));
-  await waitFor(`${description} revision ${deployed.data.id} activation`, async () => {
+  const revision = deployed.data.revision;
+  assert.equal(deployed.data.deploymentId, revision.id);
+  await waitFor(`${description} revision ${revision.id} activation`, async () => {
     const observation = await topology.request(
       "GET",
       `/namespaces/${topology.agent.namespaceId}/agents/${agentId}`,
     );
     assert.equal(observation.status, 200);
-    return observation.data.activeRevisionId === deployed.data.id ? observation.data : undefined;
+    return observation.data.activeRevisionId === deployedRevision.id ? observation.data : undefined;
   });
-  await waitFor(`worker completion of ${description} ${deployed.data.id}`, () =>
+  await waitFor(`worker completion of ${description} ${revision.id}`, () =>
     topology.events.find(
       (event) =>
         event.event === "worker.completed" &&
-        event.revisionId === deployed.data.id &&
+        event.revisionId === revision.id &&
         event.outcome === "success",
     ),
   );
   return {
-    revision: deployed.data,
+    revision,
     gatewayPod: await waitForReadyGatewayPod(
       { ...topology, agent: { ...topology.agent, id: agentId } },
-      deployed.data.id,
+      revision.id,
       options.previousUid,
     ),
   };
@@ -3440,14 +3444,16 @@ async function assertNativeReferenceNegativeControl(context, topology) {
     202,
     `native-ref deploy was rejected before native OpenClaw resolution (${deniedRevision.error?.code ?? "unknown"})`,
   );
+  const deniedRevisionData = deniedRevision.data.revision;
+  assert.equal(deniedRevision.data.deploymentId, deniedRevisionData.id);
   const outcome = await waitFor(
-    `invalid native-ref revision ${deniedRevision.data.id} to reach native OpenClaw`,
+    `invalid native-ref revision ${deniedRevisionData.id} to reach native OpenClaw`,
     async () => {
       const gateway = (await resources("pods", topology.placement)).find(
         (pod) =>
           pod.metadata.labels?.["openclaw.dev/workload-role"] === "gateway" &&
           pod.metadata.labels?.["openclaw.dev/agent"] === topology.agent.id &&
-          gatewayConsumesRevision(pod, topology.agent.id, deniedRevision.data.id),
+          gatewayConsumesRevision(pod, topology.agent.id, deniedRevisionData.id),
       );
       if (gateway !== undefined) {
         const ready = gateway.status.conditions?.some(
@@ -3470,8 +3476,7 @@ async function assertNativeReferenceNegativeControl(context, topology) {
         }
       }
       const completion = topology.events.find(
-        (event) =>
-          event.event === "worker.completed" && event.revisionId === deniedRevision.data.id,
+        (event) => event.event === "worker.completed" && event.revisionId === deniedRevisionData.id,
       );
       if (completion?.outcome === "permanent") return { kind: "worker", completion };
       return undefined;
@@ -3560,28 +3565,32 @@ async function assertNativeReferenceNegativeControl(context, topology) {
     `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}/deploy`,
   );
   assert.equal(recovered.status, 202, JSON.stringify(recovered.error));
-  await waitFor(`restored native-ref revision ${recovered.data.id} activation`, async () => {
+  const recoveredRevision = recovered.data.revision;
+  assert.equal(recovered.data.deploymentId, recoveredRevision.id);
+  await waitFor(`restored native-ref revision ${recoveredRevision.id} activation`, async () => {
     const observation = await topology.request(
       "GET",
       `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}`,
     );
     assert.equal(observation.status, 200);
-    return observation.data.activeRevisionId === recovered.data.id ? observation.data : undefined;
+    return observation.data.activeRevisionId === recoveredRevision.id
+      ? observation.data
+      : undefined;
   });
-  await waitFor(`worker completion of restored revision ${recovered.data.id}`, () =>
+  await waitFor(`worker completion of restored revision ${recoveredRevision.id}`, () =>
     topology.events.find(
       (event) =>
         event.event === "worker.completed" &&
-        event.revisionId === recovered.data.id &&
+        event.revisionId === recoveredRevision.id &&
         event.outcome === "success",
     ),
   );
   topology.gatewayPod = await waitForReadyGatewayPod(
     topology,
-    recovered.data.id,
+    recoveredRevision.id,
     topology.gatewayPod.metadata.uid,
   );
-  topology.revision = recovered.data;
+  topology.revision = recoveredRevision;
   await assertActualModelTurn(topology);
 }
 
@@ -3745,22 +3754,24 @@ async function assertDedicatedSharedWorkspaceRuntime(context, topology, claim, p
     `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}/deploy`,
   );
   assert.equal(secondRevision.status, 202, JSON.stringify(secondRevision.error));
-  assert.notEqual(secondRevision.data.id, topology.revision.id);
-  await waitFor(`second dedicated revision ${secondRevision.data.id} activation`, async () => {
+  const secondRevisionData = secondRevision.data.revision;
+  assert.equal(secondRevision.data.deploymentId, secondRevisionData.id);
+  assert.notEqual(secondRevisionData.id, topology.revision.id);
+  await waitFor(`second dedicated revision ${secondRevisionData.id} activation`, async () => {
     const observation = await topology.request(
       "GET",
       `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}`,
     );
     assert.equal(observation.status, 200);
-    return observation.data.activeRevisionId === secondRevision.data.id
+    return observation.data.activeRevisionId === secondRevisionData.id
       ? observation.data
       : undefined;
   });
-  await waitFor(`worker completion of second dedicated revision ${secondRevision.data.id}`, () =>
+  await waitFor(`worker completion of second dedicated revision ${secondRevisionData.id}`, () =>
     topology.events.find(
       (event) =>
         event.event === "worker.completed" &&
-        event.revisionId === secondRevision.data.id &&
+        event.revisionId === secondRevisionData.id &&
         event.outcome === "success",
     ),
   );
@@ -3782,7 +3793,7 @@ async function assertDedicatedSharedWorkspaceRuntime(context, topology, claim, p
   );
   const nextHarness = await waitForReadyAgentPod(
     topology,
-    secondRevision.data.id,
+    secondRevisionData.id,
     restartedHarness.metadata.uid,
   );
   assert.equal(

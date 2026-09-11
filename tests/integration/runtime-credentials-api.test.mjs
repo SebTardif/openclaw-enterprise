@@ -436,11 +436,12 @@ test("runtime credential API rejects unsupported initial provisioning states and
   assert.equal(modelSecretRejected.status, 409);
   assert.equal(modelSecretRejected.body.error.code, "RESOURCE_CONFLICT");
 
-  const revision = await fixture.request(
+  const deployment = await fixture.request(
     "POST",
     `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
   );
-  assert.equal(revision.status, 202);
+  assert.equal(deployment.status, 202);
+  assert.equal(deployment.data.deploymentId, deployment.data.revision.id);
   const deployedRejected = await fixture.request("POST", path, {
     body: { modelApiKey: `historical-revision-conflict-${randomUUID()}` },
   });

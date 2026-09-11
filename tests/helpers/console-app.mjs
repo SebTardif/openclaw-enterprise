@@ -305,7 +305,8 @@ export async function createConsoleAppFixture(t, options = {}) {
   async function deployAgent(namespaceId, agentId) {
     const revision = await request("POST", `/namespaces/${namespaceId}/agents/${agentId}/deploy`);
     assert.equal(revision.status, 202);
-    return revision.data;
+    assert.equal(revision.data.deploymentId, revision.data.revision.id);
+    return revision.data.revision;
   }
 
   async function activateRevision(namespaceId, agentId, revisionId, expectedRevisionId) {

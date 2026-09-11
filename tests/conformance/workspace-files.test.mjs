@@ -254,10 +254,11 @@ async function createAgent(fixture, namespace, name) {
       namespace.id,
       created.payload.data.id,
       undefined,
-      deployed.payload.data.id,
+      deployed.payload.data.revision.id,
     ),
   );
-  return { agent: created.payload.data, revision: deployed.payload.data };
+  assert.equal(deployed.payload.data.deploymentId, deployed.payload.data.revision.id);
+  return { agent: created.payload.data, revision: deployed.payload.data.revision };
 }
 
 function fileAudits(fixture) {

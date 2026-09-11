@@ -224,7 +224,8 @@ test(
       `/namespaces/${namespace.data.id}/agents/${first.data.id}/deploy`,
     );
     assert.equal(deployment.status, 202);
-    const revision = deployment.data;
+    const revision = deployment.data.revision;
+    assert.equal(deployment.data.deploymentId, revision.id);
     assert.equal(revision.namespaceId, namespace.data.id);
     assert.equal(revision.agentId, first.data.id);
     assert.equal(revision.revision, 1);
@@ -375,7 +376,8 @@ test(
       `/namespaces/${retained.data.id}/agents/${agent.id}/deploy`,
     );
     assert.equal(deployment.status, 202);
-    const revision = deployment.data;
+    const revision = deployment.data.revision;
+    assert.equal(deployment.data.deploymentId, revision.id);
     assert.deepEqual(revision.harness, { id: "openclaw", version: "1.0.0", mode: "embedded" });
     assert.deepEqual(revision.compute, {
       id: "compute-kubernetes",
@@ -613,7 +615,8 @@ test(
       `/namespaces/${namespaceA}/agents/${primary.id}/deploy`,
     );
     assert.equal(firstDeployment.status, 202);
-    const firstRevision = firstDeployment.data;
+    const firstRevision = firstDeployment.data.revision;
+    assert.equal(firstDeployment.data.deploymentId, firstRevision.id);
     assert.deepEqual(Object.keys(firstRevision).sort(), [
       "agentId",
       "compute",
@@ -673,7 +676,8 @@ test(
     for (const deployment of [secondDeployment, siblingDeployment, foreignDeployment]) {
       assert.equal(deployment.status, 202);
     }
-    const secondRevision = secondDeployment.data;
+    const secondRevision = secondDeployment.data.revision;
+    assert.equal(secondDeployment.data.deploymentId, secondRevision.id);
     assert.equal(secondRevision.revision, 2);
     assert.notEqual(secondRevision.id, firstRevision.id);
     assert.equal(secondRevision.configurationId, primaryConfiguration.id);
@@ -682,8 +686,8 @@ test(
 
     for (const [namespaceId, agent, revision] of [
       [namespaceA, primary, secondRevision],
-      [namespaceA, sibling, siblingDeployment.data],
-      [namespaceB, foreign, foreignDeployment.data],
+      [namespaceA, sibling, siblingDeployment.data.revision],
+      [namespaceB, foreign, foreignDeployment.data.revision],
     ]) {
       await pollUntil(
         `Agent ${agent.id} to activate revision ${revision.id}`,

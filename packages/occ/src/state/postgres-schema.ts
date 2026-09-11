@@ -670,6 +670,18 @@ export const controllerWork = occSchema.table(
     claimToken: uuid("claim_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    terminalReasonCode: text("terminal_reason_code"),
+    pluginErrors: jsonb("plugin_errors")
+      .$type<
+        readonly {
+          readonly driverId: string;
+          readonly pluginId: string;
+          readonly code: "PLUGIN_INSTALL_FAILED";
+          readonly message: "Plugin installation failed.";
+        }[]
+      >()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -724,10 +736,20 @@ export const controllerWork = occSchema.table(
       "controller_work_completion_state",
       sql`(
         (${table.state} IN ('succeeded', 'failed_permanent')
-          AND ${table.completedAt} IS NOT NULL)
+          AND ${table.completedAt} IS NOT NULL
+          AND ${table.terminalReasonCode} IS NOT NULL)
         OR (${table.state} NOT IN ('succeeded', 'failed_permanent')
-          AND ${table.completedAt} IS NULL)
+          AND ${table.completedAt} IS NULL
+          AND ${table.terminalReasonCode} IS NULL)
       )`,
+    ),
+    check(
+      "controller_work_terminal_reason_code_valid",
+      sql`${table.terminalReasonCode} IS NULL OR ${table.terminalReasonCode} ~ '^[A-Z0-9_]{1,64}$'`,
+    ),
+    check(
+      "controller_work_plugin_errors_valid",
+      sql`occ.controller_work_plugin_errors_are_valid(${table.pluginErrors})`,
     ),
     index("controller_work_ready")
       .on(table.availableAt, table.createdAt, table.idempotencyKey)

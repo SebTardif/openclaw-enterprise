@@ -82,6 +82,9 @@
           "path": "tests/integration/controller-lifecycle.test.mjs"
         },
         {
+          "path": "tests/integration/deployment-outcome.test.mjs"
+        },
+        {
           "path": "tests/integration/driver-plugin-installation.test.mjs"
         },
         {

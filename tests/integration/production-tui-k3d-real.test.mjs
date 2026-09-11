@@ -803,12 +803,14 @@ test(
       let finalRevision;
       for (const round of [1, 2]) {
         // Each bodyless deployment freezes a new immutable revision of the same Agent.
-        const revision = await api(
+        const deployment = await api(
           "POST",
           `/namespaces/${namespace.id}/agents/${agent.id}/deploy`,
           undefined,
           202,
         );
+        const revision = deployment.revision;
+        assert.equal(deployment.deploymentId, revision.id);
         const configMap = `gateway-${agentHash}-rev-${hash(revision.id)}`;
         await waitFor(
           `Agent active revision ${round}`,

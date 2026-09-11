@@ -45,6 +45,7 @@ Each operation lists its supported status codes.
 | [Installation](#installation) | 2 operations |
 | [Namespaces](#namespaces) | 4 operations |
 | [Agents](#agents) | 9 operations |
+| [Agent deployments](#agent-deployments) | 1 operation |
 | [Agent revisions](#agent-revisions) | 2 operations |
 | [Configurations](#configurations) | 4 operations |
 | [Secrets](#secrets) | 4 operations |
@@ -892,37 +893,39 @@ Admit an immutable revision from the Agent's saved draft
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `data` | `object` | Yes | — |
-| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.compute` | `object` | Yes | — |
-| `data.compute.id` | `string` | Yes | min length: 1 |
-| `data.compute.implementation` | `string` | Yes | min length: 1 |
-| `data.configuration` | `object<string, SafeJsonValue>` | Yes | A native OpenClaw configuration document. |
-| `data.configurationGeneration` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
-| `data.configurationId` | `string` | Yes | pattern: `^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.configurationKind` | `"agent"` | Yes | — |
-| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
-| `data.harness` | `object` | Yes | — |
-| `data.harness.id` | `string` | Yes | min length: 1 |
-| `data.harness.mode` | `"embedded" or "dedicated"` | Yes | — |
-| `data.harness.version` | `string` | Yes | min length: 1 |
-| `data.id` | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.plugins` | `object` | No | — |
-| `data.plugins.driver` | `PluginDriverIdentity` | Yes | — |
-| `data.plugins.driver.id` | `string` | Yes | min length: 1 |
-| `data.plugins.driver.implementation` | `string` | Yes | min length: 1 |
-| `data.plugins.plugins` | `PluginDesiredState` | Yes | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
-| `data.providerId` | `string or null` | Yes | — |
-| `data.revision` | `integer` | Yes | minimum: 1 |
-| `data.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
-| `data.secretDriverId` | `string` | No | min length: 1 |
-| `data.serviceAccount` | `object` | No | — |
-| `data.serviceAccount.credential` | `object` | Yes | — |
-| `data.serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |
-| `data.serviceAccount.credential.secretRef` | `object` | Yes | — |
-| `data.serviceAccount.credential.secretRef.key` | `string` | Yes | max length: 253; pattern: `^(?![.]{1,2}$)[-._a-zA-Z0-9]+$` |
-| `data.serviceAccount.credential.secretRef.name` | `string` | Yes | max length: 253; pattern: `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:[.][a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$` |
-| `data.serviceAccount.id` | `string` | Yes | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.deploymentId` | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.revision` | `object` | Yes | — |
+| `data.revision.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.revision.compute` | `object` | Yes | — |
+| `data.revision.compute.id` | `string` | Yes | min length: 1 |
+| `data.revision.compute.implementation` | `string` | Yes | min length: 1 |
+| `data.revision.configuration` | `object<string, SafeJsonValue>` | Yes | A native OpenClaw configuration document. |
+| `data.revision.configurationGeneration` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.revision.configurationId` | `string` | Yes | pattern: `^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.revision.configurationKind` | `"agent"` | Yes | — |
+| `data.revision.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.revision.harness` | `object` | Yes | — |
+| `data.revision.harness.id` | `string` | Yes | min length: 1 |
+| `data.revision.harness.mode` | `"embedded" or "dedicated"` | Yes | — |
+| `data.revision.harness.version` | `string` | Yes | min length: 1 |
+| `data.revision.id` | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.revision.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.revision.plugins` | `object` | No | — |
+| `data.revision.plugins.driver` | `PluginDriverIdentity` | Yes | — |
+| `data.revision.plugins.driver.id` | `string` | Yes | min length: 1 |
+| `data.revision.plugins.driver.implementation` | `string` | Yes | min length: 1 |
+| `data.revision.plugins.plugins` | `PluginDesiredState` | Yes | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
+| `data.revision.providerId` | `string or null` | Yes | — |
+| `data.revision.revision` | `integer` | Yes | minimum: 1 |
+| `data.revision.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
+| `data.revision.secretDriverId` | `string` | No | min length: 1 |
+| `data.revision.serviceAccount` | `object` | No | — |
+| `data.revision.serviceAccount.credential` | `object` | Yes | — |
+| `data.revision.serviceAccount.credential.kind` | `"api_key" or "access_token"` | Yes | — |
+| `data.revision.serviceAccount.credential.secretRef` | `object` | Yes | — |
+| `data.revision.serviceAccount.credential.secretRef.key` | `string` | Yes | max length: 253; pattern: `^(?![.]{1,2}$)[-._a-zA-Z0-9]+$` |
+| `data.revision.serviceAccount.credential.secretRef.name` | `string` | Yes | max length: 253; pattern: `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:[.][a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$` |
+| `data.revision.serviceAccount.id` | `string` | Yes | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
@@ -1129,6 +1132,66 @@ Create or replace an allowed workspace file for one active Agent
 | `data` | `object` | Yes | — |
 | `data.name` | `"AGENTS.md" or "SOUL.md" or "IDENTITY.md" or "USER.md"` | Yes | — |
 | `data.size` | `integer` | No | minimum: 0; maximum: 16384 |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+<span id="agent-deployments"></span>
+
+### Agent deployments
+
+| Operation | Summary |
+| --- | --- |
+| [`GET /namespaces/{namespaceId}/agents/{agentId}/deployments/{deploymentId}`](#get-namespacesnamespaceidagentsagentiddeploymentsdeploymentid) | Get the durable status for one admitted Agent revision deployment |
+
+#### `GET /namespaces/{namespaceId}/agents/{agentId}/deployments/{deploymentId}`
+
+<span id="get-namespacesnamespaceidagentsagentiddeploymentsdeploymentid"></span>
+
+Get the durable status for one admitted Agent revision deployment
+
+**Operation ID:** `getAgentDeployment`
+
+**Permissions:** Requires read permission on the requested AgentRevision.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `agent_revision` | `requested` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `deploymentId` | path | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.deploymentId` | `string` | Yes | pattern: `^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.error` | `object or null` | Yes | — |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.pluginErrors` | `array<object>` | Yes | max items: 32 |
+| `data.pluginErrors[].code` | `"PLUGIN_INSTALL_FAILED"` | Yes | — |
+| `data.pluginErrors[].driverId` | `string` | Yes | min length: 1; max length: 512 |
+| `data.pluginErrors[].message` | `"Plugin installation failed."` | Yes | — |
+| `data.pluginErrors[].pluginId` | `string` | Yes | min length: 1; max length: 512 |
+| `data.status` | `"queued" or "running" or "succeeded" or "failed"` | Yes | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 

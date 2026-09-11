@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentDeploymentOutcome,
   AgentRevision,
   AuditEvent,
   HarnessExecutionMode,
@@ -99,6 +100,14 @@ export interface AgentRevisionReadRepository {
 
 export interface AgentRevisionRepository extends AgentRevisionReadRepository {
   createRevision(revision: AgentRevision): Promise<Readonly<AgentRevision>>;
+}
+
+export interface AgentDeploymentReadRepository {
+  findDeployment(
+    namespaceId: string,
+    agentId: string,
+    deploymentId: string,
+  ): Promise<Readonly<AgentDeploymentOutcome> | undefined>;
 }
 
 export interface ConfigurationOwnership {
@@ -313,6 +322,7 @@ export interface PlatformReadView {
   readonly serviceAccounts: ServiceAccountReadRepository;
   readonly agents: AgentReadRepository;
   readonly revisions: AgentRevisionReadRepository;
+  readonly deployments: AgentDeploymentReadRepository;
   readonly operations: PlatformOperationReadRepository;
 }
 
@@ -1061,6 +1071,21 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     },
   };
 
+  const deployments: AgentDeploymentReadRepository = {
+    findDeployment: async (namespaceId, agentId, deploymentId) => {
+      const revision = await revisions.findRevision(namespaceId, agentId, deploymentId);
+      if (revision === undefined) return undefined;
+      return immutableCopy({
+        deploymentId,
+        namespaceId,
+        agentId,
+        status: "succeeded",
+        pluginErrors: [],
+        error: null,
+      });
+    },
+  };
+
   return {
     installations,
     namespaces,
@@ -1069,6 +1094,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     serviceAccounts,
     agents,
     revisions,
+    deployments,
     audit: {
       async append(event) {
         if (event.installationId !== snapshot.installation?.id)

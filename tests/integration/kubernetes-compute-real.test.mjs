@@ -1683,12 +1683,14 @@ test(
     async function deploy(namespaceId, agentId) {
       const result = await request("POST", `/namespaces/${namespaceId}/agents/${agentId}/deploy`);
       assert.equal(result.status, 202, JSON.stringify(result.error));
-      assert.deepEqual(result.data.compute, {
+      const revision = result.data.revision;
+      assert.equal(result.data.deploymentId, revision.id);
+      assert.deepEqual(revision.compute, {
         id: driver.id,
         implementation: driver.implementation,
       });
-      assert.equal(Object.hasOwn(result.data, "servicePrincipalId"), false);
-      return result.data;
+      assert.equal(Object.hasOwn(revision, "servicePrincipalId"), false);
+      return revision;
     }
 
     async function waitForActive(namespaceId, agentId, revisionId) {

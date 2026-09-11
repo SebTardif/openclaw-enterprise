@@ -10,6 +10,7 @@ import {
   CreateSecretBody,
   CreateServiceAccountBody,
   CreateServiceAccountCredentialBody,
+  DeploymentParams,
   EmptyQuery,
   NamedResourceBody,
   NamespaceParams,
@@ -25,6 +26,8 @@ import {
 } from "./common.ts";
 import {
   AgentListResponse,
+  AgentDeployResponse,
+  AgentDeploymentResponse,
   AgentRuntimeCredentialResponse,
   AgentResponse,
   AgentRevisionListResponse,
@@ -527,7 +530,23 @@ export const occApiRoutes = [
     schema: {
       querystring: EmptyQuery,
       params: AgentParams,
-      response: { 202: AgentRevisionResponse, ...mutationErrors },
+      response: { 202: AgentDeployResponse, ...mutationErrors },
+    },
+  },
+  {
+    operationId: "getAgentDeployment",
+    method: "GET",
+    path: "/namespaces/:namespaceId/agents/:agentId/deployments/:deploymentId",
+    action: "openclaw.agent_revisions.read",
+    iamAction: "read",
+    resourceKind: "agent_revision",
+    authorizationTarget: "requested_revision",
+    summary: "Get the durable status for one admitted Agent revision deployment",
+    tags: ["Agent deployments"],
+    schema: {
+      querystring: EmptyQuery,
+      params: DeploymentParams,
+      response: { 200: AgentDeploymentResponse, ...readErrors },
     },
   },
   {

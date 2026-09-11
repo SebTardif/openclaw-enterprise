@@ -816,22 +816,24 @@ async function createAgentJourney({ request, namespaceId, mode, label }) {
     executionMode: mode,
   });
   assert.equal(agent.status, 201, JSON.stringify(agent.error));
-  const revision = await request(
+  const deployment = await request(
     "POST",
     `/namespaces/${namespaceId}/agents/${agent.data.id}/deploy`,
   );
-  assert.equal(revision.status, 202, JSON.stringify(revision.error));
+  assert.equal(deployment.status, 202, JSON.stringify(deployment.error));
+  const revision = deployment.data.revision;
+  assert.equal(deployment.data.deploymentId, revision.id);
   assert.match(
-    revision.data.compute.implementation,
+    revision.compute.implementation,
     /docker/i,
     "admitted revisions must select the Docker Compute Driver",
   );
-  await waitFor(`Agent ${agent.data.id} to activate ${revision.data.id}`, async () => {
+  await waitFor(`Agent ${agent.data.id} to activate ${revision.id}`, async () => {
     const current = await request("GET", `/namespaces/${namespaceId}/agents/${agent.data.id}`);
     assert.equal(current.status, 200, JSON.stringify(current.error));
-    return current.data.activeRevisionId === revision.data.id ? current.data : undefined;
+    return current.data.activeRevisionId === revision.id ? current.data : undefined;
   });
-  return { agent: agent.data, revision: revision.data };
+  return { agent: agent.data, revision };
 }
 
 test(

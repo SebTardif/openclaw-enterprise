@@ -6,6 +6,7 @@ import {
   ConfigurationId,
   ConfigurationKindSchema,
   ConfigurationValues,
+  DeploymentParams,
   HarnessExecutionModeSchema,
   InstallationId,
   KubernetesNamespaceName,
@@ -275,6 +276,60 @@ export const AgentRevisionResponse = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginInstallationErrorSchema = Type.Object(
+  {
+    driverId: Type.String({ minLength: 1, maxLength: 512 }),
+    pluginId: Type.String({ minLength: 1, maxLength: 512 }),
+    code: Type.Literal("PLUGIN_INSTALL_FAILED"),
+    message: Type.Literal("Plugin installation failed."),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentDeploymentErrorSchema = Type.Object(
+  {
+    code: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Z0-9_]+$" }),
+    message: Type.String({ minLength: 1, maxLength: 200 }),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentDeploymentStatusSchema = Type.Object(
+  {
+    deploymentId: DeploymentParams.properties.deploymentId,
+    namespaceId: NamespaceId,
+    agentId: AgentId,
+    status: Type.Union([
+      Type.Literal("queued"),
+      Type.Literal("running"),
+      Type.Literal("succeeded"),
+      Type.Literal("failed"),
+    ]),
+    pluginErrors: Type.Array(PluginInstallationErrorSchema, { maxItems: 32 }),
+    error: Type.Union([AgentDeploymentErrorSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentDeploymentResponse = Type.Object(
+  { data: AgentDeploymentStatusSchema, meta: Meta },
+  { additionalProperties: false },
+);
+
+export const AgentDeployResponse = Type.Object(
+  {
+    data: Type.Object(
+      {
+        deploymentId: DeploymentParams.properties.deploymentId,
+        revision: AgentRevisionSchema,
+      },
+      { additionalProperties: false },
+    ),
+    meta: Meta,
+  },
+  { additionalProperties: false },
+);
+
 export const AgentRevisionListResponse = Type.Object(
   { data: Type.Array(AgentRevisionSchema), meta: Meta },
   { additionalProperties: false },
@@ -319,6 +374,7 @@ export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
 >;
 export type AgentRevisionWire = Type.Static<typeof AgentRevisionSchema>;
+export type AgentDeploymentStatusWire = Type.Static<typeof AgentDeploymentStatusSchema>;
 export type InstallationResponse = Type.Static<typeof InstallationResponse>;
 export type NamespaceResponse = Type.Static<typeof NamespaceResponse>;
 export type NamespaceListResponse = Type.Static<typeof NamespaceListResponse>;
@@ -331,6 +387,8 @@ export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCred
 export type AgentListResponse = Type.Static<typeof AgentListResponse>;
 export type ProviderListResponse = Type.Static<typeof ProviderListResponse>;
 export type AgentRevisionResponse = Type.Static<typeof AgentRevisionResponse>;
+export type AgentDeployResponse = Type.Static<typeof AgentDeployResponse>;
+export type AgentDeploymentResponse = Type.Static<typeof AgentDeploymentResponse>;
 export type AgentRevisionListResponse = Type.Static<typeof AgentRevisionListResponse>;
 export type WorkspaceFileResponse = Type.Static<typeof WorkspaceFileResponse>;
 export type WorkspaceFileUpdateResponse = Type.Static<typeof WorkspaceFileUpdateResponse>;

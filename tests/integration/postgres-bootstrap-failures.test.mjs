@@ -501,7 +501,9 @@ test(
       apiKey,
     );
     assert.equal(revision.status, 202, JSON.stringify(revision.body));
-    assert.equal(admittedLoggingLevel(revision.body.data.configuration), "warn");
+    const deployedRevision = revision.body.data.revision;
+    assert.equal(revision.body.data.deploymentId, deployedRevision.id);
+    assert.equal(admittedLoggingLevel(deployedRevision.configuration), "warn");
     if (loserCreatedServiceKey) {
       const loserOutput = JSON.parse(
         await readFile(environments[loserIndex].OCC_BOOTSTRAP_SERVICE_KEY_FILE, "utf8"),

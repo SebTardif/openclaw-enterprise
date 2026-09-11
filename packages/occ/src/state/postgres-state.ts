@@ -32,6 +32,7 @@ import {
 } from "../errors.ts";
 import type {
   AgentRepository,
+  AgentDeploymentReadRepository,
   AgentRevisionRepository,
   ConfigurationOwnership,
   ConfigurationRepository,
@@ -1632,6 +1633,11 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
     };
 
+    const deployments: AgentDeploymentReadRepository = {
+      findDeployment: async (namespaceId, agentId, deploymentId) =>
+        new PostgresWorkQueue(client).findDeployment(namespaceId, agentId, deploymentId),
+    };
+
     return {
       installations,
       namespaces,
@@ -1640,6 +1646,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       serviceAccounts,
       agents,
       revisions,
+      deployments,
       audit: {
         append: async (event) => {
           await this.requireInstallation(context, event.installationId);

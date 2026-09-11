@@ -406,13 +406,12 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
     `/namespaces/${namespace.id}/agents/${agent.body.data.id}/deploy`,
   );
   assert.equal(deployed.status, 202, JSON.stringify(deployed.body));
-  assert.equal(deployed.body.data.configurationId, configurationId);
-  assert.equal(deployed.body.data.configurationKind, "agent");
-  assert.equal(deployed.body.data.configurationGeneration, 1);
-  assert.deepEqual(
-    deployed.body.data.configuration,
-    admitLoggingConfiguration(initialValues, "info"),
-  );
+  const revision = deployed.body.data.revision;
+  assert.equal(deployed.body.data.deploymentId, revision.id);
+  assert.equal(revision.configurationId, configurationId);
+  assert.equal(revision.configurationKind, "agent");
+  assert.equal(revision.configurationGeneration, 1);
+  assert.deepEqual(revision.configuration, admitLoggingConfiguration(initialValues, "info"));
 
   // Admission recursively detaches the model reference and every plugin array element.
   initialValues.models.providers.openai.apiKey.id = "MUTATED_AFTER_ADMISSION";

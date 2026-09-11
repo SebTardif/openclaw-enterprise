@@ -1246,19 +1246,21 @@ export async function createPluginDriverRealFixture(
       `/namespaces/${createdNamespace.data.id}/agents/${agent.id}/deploy`,
     );
     assert.equal(deployed.status, 202, JSON.stringify(deployed.error));
-    await waitFor(`revision ${deployed.data.id} activation`, async () => {
+    const revision = deployed.data.revision;
+    assert.equal(deployed.data.deploymentId, revision.id);
+    await waitFor(`revision ${revision.id} activation`, async () => {
       const observed = await request(
         "GET",
         `/namespaces/${createdNamespace.data.id}/agents/${agent.id}`,
       );
       assert.equal(observed.status, 200, JSON.stringify(observed.error));
-      return observed.data.activeRevisionId === deployed.data.id ? observed.data : undefined;
+      return observed.data.activeRevisionId === revision.id ? observed.data : undefined;
     });
-    await waitForPluginProofWorkerSuccess(waitFor, events, deployed.data.id, {
-      description: `worker completion of ${deployed.data.id}`,
-      diagnostics: () => sanitizedPluginProofWorkerEvents(events, deployed.data.id),
+    await waitForPluginProofWorkerSuccess(waitFor, events, revision.id, {
+      description: `worker completion of ${revision.id}`,
+      diagnostics: () => sanitizedPluginProofWorkerEvents(events, revision.id),
     });
-    return { revision: deployed.data, gatewayToken };
+    return { revision, gatewayToken };
   }
 
   async function gatewayPod(agent) {
