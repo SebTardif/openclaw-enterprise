@@ -303,9 +303,33 @@ test("production embedded and dedicated replacements preserve their active Servi
       assert.equal(received, claim);
       return claim;
     });
+    const deploymentLookup = t.mock.method(
+      worker.queue,
+      "findDeployment",
+      async (receivedNamespaceId, receivedAgentId, receivedDeploymentId) => {
+        assert.equal(receivedNamespaceId, namespaceId);
+        assert.equal(receivedAgentId, agentId);
+        assert.equal(receivedDeploymentId, candidate.id);
+        return {
+          deploymentId: candidate.id,
+          namespaceId,
+          agentId,
+          status: "running",
+          pluginErrors: [],
+          error: null,
+        };
+      },
+    );
+    const pluginFreeContext = Object.freeze({ secretEnvironment: [] });
 
     // Preparation must leave each mode's currently serving selector untouched before CAS.
-    const observation = await worker.observeRevision(claim, candidate, predecessor, predecessor.id);
+    const observation = await worker.observeRevision(
+      claim,
+      candidate,
+      predecessor,
+      predecessor.id,
+      pluginFreeContext,
+    );
     assert.deepEqual(service.spec.selector, activeSelector);
     assert.deepEqual(serviceWrites, []);
     assert.equal(observation.expectedActiveRevisionId, predecessor.id);
@@ -381,12 +405,19 @@ test("production embedded and dedicated replacements preserve their active Servi
         inactiveSelector,
       ).spec.selector;
     }
-    const initial = await worker.observeRevision(claim, candidate, undefined, undefined);
+    const initial = await worker.observeRevision(
+      claim,
+      candidate,
+      undefined,
+      undefined,
+      pluginFreeContext,
+    );
     assert.equal(initial.outcome, "success");
     assert.equal(initial.code, "REVISION_ACTIVATED");
     assert.equal(Object.hasOwn(initial, "expectedActiveRevisionId"), false);
     assert.deepEqual(serviceWrites, embedded ? [] : [inactiveSelector]);
     assert.deepEqual(service.spec.selector, inactiveSelector);
+    deploymentLookup.mock.restore();
     heartbeat.mock.restore();
   }
 });
