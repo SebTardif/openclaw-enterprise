@@ -359,6 +359,85 @@ test(
 );
 
 test(
+  "plugin installation reports during ready preparation stop activation and preserve the predecessor",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("plugin-report-ready");
+    const pluginId = "codex-plugin:google-calendar@openai-curated-remote";
+    const plugins = {
+      driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
+      plugins: { [pluginId]: { enabled: true, approvalMode: "always" } },
+    };
+    const first = await fixture.revision(owner, 1);
+    const effects = [];
+
+    await fixture.start({
+      ...fixture.compute,
+      async prepareRevision(revision, computeContext) {
+        effects.push({ action: "prepare", revisionId: revision.id });
+        const observation = await fixture.compute.prepareRevision(revision, computeContext);
+        if (revision.revision === 2) {
+          await computeContext.reportPluginInstallFailure({ driverId: "codex-plugin", pluginId });
+          effects.push({
+            action: "reported",
+            revisionId: revision.id,
+            failedPlugins: computeContext.failedPluginIdentities,
+          });
+        }
+        return observation;
+      },
+      async activateRevision(revision, context) {
+        effects.push({ action: "activate", revisionId: revision.id });
+        return fixture.compute.activateRevision?.(revision, context);
+      },
+      async retireRevision(revision) {
+        effects.push({ action: "retire", revisionId: revision.id });
+        return fixture.compute.retireRevision(revision);
+      },
+    });
+
+    await fixture.work(first, "succeeded");
+    const second = await fixture.revision(owner, 2, undefined, plugins);
+    const failed = await fixture.work(second, "failed_permanent");
+    assert.equal(failed.attempt_count, 1);
+
+    const active = await fixture.observerPool.query(
+      "SELECT active_revision_id FROM occ.agents WHERE namespace_id = $1 AND id = $2",
+      [fixture.namespace.id, owner.id],
+    );
+    assert.equal(active.rows[0].active_revision_id, first.id);
+    assert.deepEqual(
+      effects.filter(({ revisionId }) => [first.id, second.id].includes(revisionId)),
+      [
+        { action: "prepare", revisionId: first.id },
+        { action: "activate", revisionId: first.id },
+        { action: "prepare", revisionId: second.id },
+        {
+          action: "reported",
+          revisionId: second.id,
+          failedPlugins: [{ driverId: "codex-plugin", pluginId }],
+        },
+      ],
+    );
+    const deployment = await new fixture.PostgresWorkQueue(fixture.observerPool).findDeployment(
+      fixture.namespace.id,
+      owner.id,
+      second.id,
+    );
+    assert.equal(deployment?.status, "failed");
+    assert.deepEqual(deployment?.pluginErrors, [
+      {
+        driverId: "codex-plugin",
+        pluginId,
+        code: "PLUGIN_INSTALL_FAILED",
+        message: "Plugin installation failed.",
+      },
+    ]);
+  },
+);
+
+test(
   "development workers run supplied after-commit activation hooks and retry incomplete finalization",
   requiresPostgres,
   async (context) => {

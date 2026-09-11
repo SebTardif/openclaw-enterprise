@@ -233,6 +233,11 @@ function failedPluginIdentities(
   );
 }
 
+function activationComputeContext(context: ComputeRevisionContext): ComputeRevisionContext {
+  const { reportPluginInstallFailure: _reportPluginInstallFailure, ...activationContext } = context;
+  return Object.freeze(activationContext);
+}
+
 export class ControllerWorker {
   private readonly state: PostgresPlatformState;
   private readonly queue: PostgresWorkQueue;
@@ -710,10 +715,16 @@ export class ControllerWorker {
               await this.finalizeActiveRevision(claim, revision, "REVISION_INCOMPLETE");
               return;
             }
+            const pluginFailure = await this.pluginInstallFailureResult(revision);
+            if (pluginFailure !== undefined) {
+              await this.finalizeActiveRevision(claim, revision, "PLUGIN_INSTALL_FAILED");
+              return;
+            }
           }
+          const activationContext = activationComputeContext(computeContext);
           if (this.shouldActivatePublishedRevision(compute)) {
             await this.withClaimHeartbeat(claim, () =>
-              this.stagedRevision("activateRevision", revision, computeContext),
+              this.stagedRevision("activateRevision", revision, activationContext),
             );
           }
           const earlier = await this.state.read(async (view) =>
@@ -872,8 +883,11 @@ export class ControllerWorker {
       if (!validRevisionObservation(observation, revision))
         return { outcome: "permanent", code: "INVALID_DRIVER_OBSERVATION" };
       if (!observation.ready) return { outcome: "pending", code: "REVISION_INCOMPLETE" };
+      const pluginFailure = await this.pluginInstallFailureResult(revision);
+      if (pluginFailure !== undefined) return pluginFailure;
+      const activationContext = activationComputeContext(context);
       if (this.compute.activationOrder === "beforeCommit") {
-        await this.stagedRevision("activateRevision", revision, context);
+        await this.stagedRevision("activateRevision", revision, activationContext);
       } else if (
         this.mode === "production" &&
         revision.harness.mode === "dedicated" &&
@@ -885,7 +899,7 @@ export class ControllerWorker {
         outcome: "success",
         code: "REVISION_ACTIVATED",
         revision,
-        context,
+        context: activationContext,
         ...(previous === undefined ? {} : { previous }),
         ...(expectedActiveRevisionId === undefined ? {} : { expectedActiveRevisionId }),
       };

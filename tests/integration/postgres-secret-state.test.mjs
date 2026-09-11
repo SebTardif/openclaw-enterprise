@@ -479,6 +479,7 @@ test(
     await pool.query(
       `UPDATE occ.controller_work AS work
        SET state = 'succeeded',
+           terminal_reason_code = 'RECONCILE_SUCCEEDED',
            completed_at = clock_timestamp(),
            updated_at = clock_timestamp()
        FROM occ.agent_revisions AS revision,

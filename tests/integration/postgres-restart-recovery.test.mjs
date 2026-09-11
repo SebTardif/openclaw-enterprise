@@ -77,7 +77,7 @@ async function createResources(pool, agentCount = 1) {
   }
 }
 
-async function createQueueRevision(pool, namespaceId, agentId, revisionNumber = 1) {
+async function createQueueRevision(pool, namespaceId, agentId, revisionNumber = 1, plugins) {
   const revisionId = `rev_${randomUUID()}`;
   const configuration = await pool.query(
     `SELECT configuration_id FROM occ.agents WHERE namespace_id = $1 AND id = $2`,
@@ -91,6 +91,7 @@ async function createQueueRevision(pool, namespaceId, agentId, revisionNumber = 
     configuration_generation: 1,
     harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
     compute: { id: "compute-queue", implementation: "deterministic-queue" },
+    ...(plugins === undefined ? {} : { plugins }),
   };
   await pool.query(
     `INSERT INTO occ.agent_revisions
@@ -363,6 +364,111 @@ test(
     assert.equal(recoveredNamespace.idempotencyKey, namespaceKey);
     assert.notEqual(recoveredNamespace.claimToken, staleNamespace.claimToken);
     await queue.complete(recoveredNamespace);
+  },
+);
+
+test(
+  "deployment status follows the original reconcile row and preserves plugin failures",
+  requiresPostgres,
+  async (context) => {
+    const { pool, queue } = await dependencies(context);
+    const { namespaceId, agents } = await createResources(pool);
+    const pluginId = "p".repeat(512);
+    const pluginIdentity = { driverId: "codex", pluginId };
+    const revisionId = await createQueueRevision(pool, namespaceId, agents[0]);
+    const idempotencyKey = `agent_revision:${revisionId}:reconcile`;
+    await queue.enqueue(revisionWork(namespaceId, idempotencyKey, agents[0], revisionId));
+
+    assert.deepEqual(await queue.findDeployment(namespaceId, agents[0], revisionId), {
+      deploymentId: revisionId,
+      namespaceId,
+      agentId: agents[0],
+      status: "queued",
+      pluginErrors: [],
+      error: null,
+    });
+
+    const claim = await claimExpected(queue, idempotencyKey);
+    assert.equal(
+      (await queue.findDeployment(namespaceId, agents[0], revisionId)).status,
+      "running",
+    );
+    const pluginErrors = await queue.reportPluginInstallFailure(claim, pluginIdentity, [
+      pluginIdentity,
+    ]);
+    assert.deepEqual(pluginErrors, [
+      {
+        driverId: "codex",
+        pluginId,
+        code: "PLUGIN_INSTALL_FAILED",
+        message: "Plugin installation failed.",
+      },
+    ]);
+    assert.deepEqual(
+      await queue.reportPluginInstallFailure(claim, pluginIdentity, [pluginIdentity]),
+      pluginErrors,
+      "duplicate plugin failure reports remain idempotent on the durable row",
+    );
+    await assert.rejects(
+      queue.reportPluginInstallFailure(claim, { driverId: "codex", pluginId: "calendar" }, [
+        pluginIdentity,
+      ]),
+      ({ name, message }) =>
+        name === "ScopeViolationError" && /does not belong to the admitted revision/.test(message),
+    );
+
+    await queue.complete(claim, { code: "REVISION_SUPERSEDED" });
+    assert.deepEqual(await queue.findDeployment(namespaceId, agents[0], revisionId), {
+      deploymentId: revisionId,
+      namespaceId,
+      agentId: agents[0],
+      status: "failed",
+      pluginErrors,
+      error: {
+        code: "REVISION_SUPERSEDED",
+        message: "Agent revision was superseded before activation.",
+      },
+    });
+  },
+);
+
+test(
+  "deployment plugin error constraints reject non-string identity values",
+  requiresPostgres,
+  async (context) => {
+    const { pool, queue } = await dependencies(context);
+    const { namespaceId, agents } = await createResources(pool);
+    const revisionId = await createQueueRevision(pool, namespaceId, agents[0]);
+    const idempotencyKey = `agent_revision:${revisionId}:reconcile`;
+    await queue.enqueue(revisionWork(namespaceId, idempotencyKey, agents[0], revisionId));
+
+    for (const [field, value] of [
+      ["driverId", null],
+      ["driverId", 123],
+      ["driverId", true],
+      ["pluginId", null],
+      ["pluginId", 123],
+      ["pluginId", true],
+    ]) {
+      const invalid = {
+        driverId: "codex",
+        pluginId: "slack",
+        code: "PLUGIN_INSTALL_FAILED",
+        message: "Plugin installation failed.",
+        [field]: value,
+      };
+      await assert.rejects(
+        pool.query(
+          `UPDATE occ.controller_work
+           SET plugin_errors = $2::jsonb
+           WHERE idempotency_key = $1`,
+          [idempotencyKey, JSON.stringify([invalid])],
+        ),
+        ({ code, constraint }) =>
+          code === "23514" && constraint === "controller_work_plugin_errors_valid",
+        `${field}=${String(value)} must fail the PostgreSQL JSONB identity constraint`,
+      );
+    }
   },
 );
 

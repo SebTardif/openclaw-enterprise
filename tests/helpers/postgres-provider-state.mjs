@@ -123,6 +123,7 @@ export async function cleanupNamespaces(pool, namespaceIds) {
     await client.query(
       `UPDATE occ.controller_work
        SET state = 'failed_permanent',
+           terminal_reason_code = 'TEST_CLEANUP',
            completed_at = clock_timestamp(),
            claim_token = NULL,
            lease_expires_at = NULL,
@@ -156,6 +157,7 @@ export async function cleanupProviderFixtures(pool, namespaceId, cleanup) {
       `UPDATE occ.controller_work
        SET state = 'failed_permanent',
            claim_token = NULL,
+           terminal_reason_code = 'TEST_CLEANUP',
            lease_expires_at = NULL,
            completed_at = clock_timestamp(),
            updated_at = clock_timestamp()

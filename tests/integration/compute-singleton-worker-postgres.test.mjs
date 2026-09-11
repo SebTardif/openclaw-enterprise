@@ -372,7 +372,8 @@ test(
 
     await fixture.observerPool.query(
       `UPDATE occ.controller_work
-       SET state = 'succeeded', completed_at = clock_timestamp(), updated_at = clock_timestamp()
+       SET state = 'succeeded', terminal_reason_code = 'RECONCILE_SUCCEEDED',
+           completed_at = clock_timestamp(), updated_at = clock_timestamp()
        WHERE namespace_id = $1 AND state = 'queued'
          AND idempotency_key LIKE $2`,
       [fixture.namespace.id, `agent_revision:${candidate.id}:maintenance:%`],

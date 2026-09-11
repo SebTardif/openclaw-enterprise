@@ -434,7 +434,7 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
   const historical = await request(
     context.app,
     "GET",
-    `/namespaces/${namespace.id}/agents/${agent.body.data.id}/revisions/${deployed.body.data.id}`,
+    `/namespaces/${namespace.id}/agents/${agent.body.data.id}/revisions/${deployed.body.data.deploymentId}`,
   );
   assert.equal(historical.status, 200);
   assert.equal(historical.body.data.configurationGeneration, 1);

@@ -215,6 +215,13 @@
           ]
         },
         {
+          "path": "tests/integration/postgres-deployment-status-api.test.mjs",
+          "expectedTests": [
+            "PostgreSQL Fastify deployment status polls the original reconcile work row",
+            "PostgreSQL Fastify deployment status serializes persisted plugin install failures"
+          ]
+        },
+        {
           "path": "tests/integration/postgres-platform-state.test.mjs",
           "expectedTests": [
             "PostgreSQL rejects platform writes until the singleton Installation is bootstrapped",
@@ -243,6 +250,8 @@
             "durable work deduplicates exact ownership and rejects actor or owner collisions",
             "Namespace convergence and admitted revision work share one durable queue with exact resource ownership",
             "stale and exhausted recovery includes admitted revisions and Namespace lifecycle work",
+            "deployment status follows the original reconcile row and preserves plugin failures",
+            "deployment plugin error constraints reject non-string identity values",
             "transaction-scoped queue fencing rolls back Namespace mutation, completion, and audit together",
             "concurrent claims exclude one Namespace lifecycle and one Agent while distinct Agents progress",
             "a restarted queue recovers expired claims, fences old tokens, and persists exhausted failures",
@@ -266,6 +275,9 @@
           "path": "tests/integration/postgres-worker-agent-revision.test.mjs",
           "expectedTests": [
             "maintenance retains its real lease across consecutive short predecessor retirements",
+            "plugin installation reports fail deployments permanently before activation",
+            "plugin installation reports during ready preparation stop activation and preserve the predecessor",
+            "development workers run supplied after-commit activation hooks and retry incomplete finalization",
             "the revision worker activates admitted candidates, retires predecessors, and rejects revoked, malformed, and wrong-owner effects",
             "the revision worker rejects associated-account access revoked after admission before invoking Compute",
             "the revision worker rejects managed ServiceAccount provider mismatches before Compute",
@@ -297,13 +309,18 @@
       ]
     },
     "images-packaging": {
-      "requiredEnv": ["OCC_TEST_RUNTIME_IMAGE", "OCC_TEST_PRODUCTION_IMAGE"],
+      "requiredEnv": [
+        "OCC_TEST_RUNTIME_IMAGE",
+        "OCC_TEST_PRODUCTION_IMAGE"
+      ],
       "prepare": {
         "defaultEnv": {
           "NODE_BASE_IMAGE": "docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
         },
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["NODE_BASE_IMAGE"],
+        "requireEnv": [
+          "NODE_BASE_IMAGE"
+        ],
         "nodeBaseImage": true
       },
       "files": [
@@ -397,7 +414,11 @@
       },
       "prepare": {
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL", "NODE_BASE_IMAGE"],
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL",
+          "NODE_BASE_IMAGE"
+        ],
         "nodeBaseImage": true
       },
       "files": [
@@ -428,7 +449,10 @@
         "k3d": true,
         "codexSeccomp": true,
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL"
+        ],
         "immutableOptionalEnvImages": [
           "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
           "OCC_TEST_KUBERNETES_AGENT_IMAGE",
@@ -467,7 +491,10 @@
         "k3d": true,
         "codexSeccomp": true,
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL"
+        ],
         "immutableOptionalEnvImages": [
           "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
           "OCC_TEST_KUBERNETES_AGENT_IMAGE"
@@ -632,7 +659,10 @@
         "postgres": true,
         "k3d": true,
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL"
+        ],
         "immutableOptionalEnvImages": [
           "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
           "OCC_TEST_KUBERNETES_AGENT_IMAGE",
@@ -667,7 +697,9 @@
       "env": {
         "OCC_TEST_LOGGING_COLLECTOR": "1"
       },
-      "requiredEnv": ["OCC_TEST_LOGGING_NODE_IMAGE"],
+      "requiredEnv": [
+        "OCC_TEST_LOGGING_NODE_IMAGE"
+      ],
       "prepare": {
         "defaultEnv": {
           "OCC_TEST_LOGGING_NODE_IMAGE": "docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
@@ -683,7 +715,9 @@
         },
         {
           "path": "tests/integration/ci-logging-collector.test.mjs",
-          "expectedTests": ["prepareLogging backend receives real OTLP/HTTP logs and writes JSONL"]
+          "expectedTests": [
+            "prepareLogging backend receives real OTLP/HTTP logs and writes JSONL"
+          ]
         }
       ]
     },
@@ -698,7 +732,10 @@
         "k3d": true,
         "codexSeccomp": true,
         "requiresPreparedStateForFile": true,
-        "requireEnv": ["OPENAI_API_KEY", "OCC_TEST_OPENAI_MODEL"],
+        "requireEnv": [
+          "OPENAI_API_KEY",
+          "OCC_TEST_OPENAI_MODEL"
+        ],
         "immutableOptionalEnvImages": [
           "OCC_TEST_KUBERNETES_GATEWAY_IMAGE",
           "OCC_TEST_KUBERNETES_AGENT_IMAGE",
