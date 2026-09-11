@@ -92,6 +92,7 @@
     "./github-mediation-v2/publication-native-ports": "./src/github-mediation-v2/publication-native-ports.ts",
     "./github-mediation-v2/publication-wire": "./src/github-mediation-v2/publication-wire.ts",
     "./ports/repository-publication-dispatch-v1": "./src/ports/repository-publication-dispatch-v1.ts",
+    "./ports/repository-publication-native-v1": "./src/ports/repository-publication-native-v1.ts",
     "./repository-publication-v1/contract": "./src/repository-publication-v1/contract.ts"
   },
   "types": "./src/index.ts",
