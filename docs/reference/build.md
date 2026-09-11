@@ -37,6 +37,7 @@ node scripts/build-mvp.mjs check-types
 | `check-native` | Checks the exact Rust version in `dataplane/rust-toolchain.toml`, Cargo metadata, and the selected workspace members and their local path dependencies.                                                         |
 | `native-dns`   | `check-native`, then a release build of the `oce-dnsgate` OCE adapter in package `ds-dnsgate`. Copies the verified executable to `.build/mvp/native/oce-dnsgate`.                                               |
 | `native-tls`   | `check-native`, then a release build of the `oce-egress` OCE adapter in package `ds-tlsproxy`. Copies the verified executable to `.build/mvp/native/oce-egress`.                                                |
+| `native-read`  | `check-native`, then a separately selected release build of `oce-github-read` in package `oce-native-egress`. Captures the compiler-reported executable and stages it at `.build/mvp/native/oce-github-read`.   |
 | `native`       | Both native product binaries. Each shared prerequisite runs once per invocation.                                                                                                                                |
 | `build`        | `check-types` and `native`. This is the `pnpm build:mvp` target.                                                                                                                                                |
 
@@ -59,6 +60,26 @@ by name, so benchmark and auxiliary binaries are not build outputs.
 The stock DNS/TLS service entrypoints are not selected or used as a fallback
 when an OCE adapter is missing.
 
+Select `node scripts/build-mvp.mjs native-read` only when building the optional
+mediated GitHub READ executable. Its required bin source is
+`dataplane/services/oce-native-egress/src/bin/oce-github-read.rs`; an absent or
+different bin declaration/source fails before compilation. This target has no
+DNS/TLS build dependency. The existing `native`, `build`, and `images` targets
+continue to select DNS/TLS without selecting READ. Primary native Git/gh does
+not require this optional mediated build or its package installation.
+
+Each native Cargo build selects JSON messages with `--message-format=json`.
+The runner requires exactly one selected executable artifact and exactly one
+successful terminal `build-finished`, as well as successful subprocess exit.
+It matches the inspected Cargo package ID and manifest, binary name, exact
+`kind` and `crate_types` of `["bin"]`, entrypoint source, and executable under
+the selected GNU target's release directory. `profile.test` must be `false`;
+`target.test` instead describes Cargo's test-target capability and is not that
+selector. An executable pathname alone is insufficient. Duplicate, failed,
+incomplete, malformed, mismatched and excess messages refuse staging. Capture
+is limited to 4 MiB of JSON and 8,192 records. A reported fresh artifact is
+permitted and recorded as cached, rather than claimed to be freshly compiled.
+
 The selected Cargo members are `ds-contracts`, `policy-core`,
 `ds-policy-snapshot`, `ds-telemetry`, `ds-admission-shm`, `ds-nft`, `ds-dnsgate`,
 `ds-tlsproxy`, `oce-native-egress`, and `oce-network-fence`. The final four live
@@ -80,9 +101,11 @@ symlink traversal, a nonempty regular file owned by root or the current build
 user, executable access, and no group/world write or special mode bits. The
 source may have owner write permission, as ordinary Cargo outputs do. Each
 artifact is limited to 128 MiB. The runner opens it without following symlinks,
-checks execution access through that descriptor, and streams bounded chunks
-from the same descriptor into an exclusively created output. It hashes those
-bytes, sets the staged file to `0555`, and reads back the staged descriptor to
+checks execution access through that descriptor, and captures its bounded
+hash. The same descriptor remains open through subsequent source validation
+and staging; replacement or mutation between those steps refuses. It streams
+bounded chunks into an exclusively created output and requires their hash to
+match the capture, sets the staged file to `0555`, and reads back the staged descriptor to
 check its hash. File identity, size, owner, mode and change timestamps must
 remain consistent through capture; changed or replaced paths fail. Failed
 staging removes the partial output it created. Ordinary declaration and build
@@ -105,10 +128,41 @@ with `schemaVersion: 2`. It records:
 - Each product's package, binary and staged relative `path`; its `staged`
   object records the observed SHA-256, size, UID, GID and mode. These describe
   the file in the build workspace.
+- Each product's `compilerArtifact` records `buildTarget`, inspected
+  `packageVersion`, relative `manifestPath` and `sourcePath` with their SHA-256
+  digests, `rustTarget`, `kind`, `crateTypes`, `test: false`, `fresh`,
+  `buildFinished: true`, and `messagesSha256` for the complete captured Cargo
+  stdout bytes. `executablePath` is relative to the source root. Its `artifact`
+  object records SHA-256, size, UID, GID and mode from the retained compiler
+  output descriptor. The captured and staged hash/size must agree; source
+  output modes may include owner write while the staged mode is `0555`.
+- Each product's `dependencies` lists the other package identities actually
+  reported by compiler-artifact messages in that invocation, matched to the
+  inspected Cargo graph: `package`, `version`, and Cargo `source`. Local
+  dependencies also have relative `manifestPath` and `manifestSha256` bound to
+  the captured source inventory. This is reported build provenance, not a
+  complete measurement of dependency cache bytes or build-script inputs.
 - Each product's `installationRequirements` declares its
-  `/usr/local/bin/<binary>` path, UID/GID `0:0` and mode `0555`, matching the
-  selected egress Dockerfile. These are required image installation values;
+  `/usr/local/bin/<binary>` path, UID/GID `0:0` and mode `0555`. The selected
+  package installation must enforce these requirements. They are declarations;
   they are not observations from an installed image.
+
+For `native-read`, schema 2 contains exactly the READ product built in that
+invocation: package `oce-native-egress`, binary `oce-github-read`, staged path
+`.build/mvp/native/oce-github-read`, `compilerArtifact.buildTarget: native-read`,
+and declared install path `/usr/local/bin/oce-github-read`, UID/GID `0:0`, mode
+`0555`. The manifest is replaced, not merged with a previous DNS/TLS manifest.
+The separately selected package consumer must verify the actual staged bytes
+against this selected manifest and its original build receipt. Copied
+provenance or a local Docker image ID does not establish an immutable final
+image, installed ownership/mode, or permission to launch the READ process.
+READ manifests use compact JSON and must fit the installed consumer's existing
+65,536-byte UTF-8/canonical limit, 32 container levels, 1,024 entries per
+container, and 8,192 value nodes. Unsupported numbers or Unicode also refuse.
+An oversized inventory or result fails publication with the full inventory
+preserved in memory; the builder never truncates it to obtain a successful
+manifest. Complete fit is checked against the actual generated manifest after
+the selected build; source-only inspection does not establish that outcome.
 
 The runner captures selected local inputs before checking/building, then
 compares bytes and file identities around compilation and before manifest
@@ -125,9 +179,9 @@ exclude privileged writers or provide an immutable filesystem snapshot. This
 manifest binds the selected local inputs and observed outputs, not a hermetic
 build closure: Cargo caches, ambient configuration/environment outside the
 selected paths, C/linker tools, system libraries, and files read or generated by
-dependency build scripts are not completely inventoried. A successful source
-check or manifest does not qualify the native GitHub listener as an executable
-or establish image/runtime acceptance.
+dependency build scripts are not completely inventoried. A successful build
+or manifest does not establish image/runtime acceptance or qualify a READ
+startup profile, current authority, or provider lifetime.
 
 The host glibc field records build provenance; it is not a measurement of the
 binary's minimum supported glibc. Execute the real product inside the selected

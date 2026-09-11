@@ -26,11 +26,15 @@ import {
   CommandFailure,
   assertBuildInputsUnchanged,
   captureBuildInputs,
+  captureCargoArtifact,
+  captureNativeArtifact,
   executionOrder,
   goBuildCacheScope,
   runCommand,
+  selectCargoArtifact,
   stageNativeArtifact,
   verifyFile,
+  verifyStagedNativeArtifact,
   writeNativeManifest,
 } from "../../scripts/build-mvp.mjs";
 
@@ -63,6 +67,239 @@ test("the build plan excludes image and live targets and shares native prerequis
   ]);
   assert.throws(() => executionOrder("install"), /Unknown build target/);
 });
+
+test("the mediated READ product has an explicit optional build target", () => {
+  assert.deepEqual(executionOrder("native-read"), ["check-native", "native-read"]);
+  for (const target of ["native-dns", "native-tls", "native", "build", "images"])
+    assert.ok(
+      !executionOrder(target).includes("native-read"),
+      `${target} must not select mediated READ`,
+    );
+});
+
+function cargoArtifactRecords(directory) {
+  const packageRoot = join(directory, "dataplane", "services", "oce-native-egress");
+  const expected = {
+    packageId: `path+file://${packageRoot}#0.0.0`,
+    manifestPath: join(packageRoot, "Cargo.toml"),
+    binary: "oce-github-read",
+    sourcePath: join(packageRoot, "src", "bin", "oce-github-read.rs"),
+    executable: join(
+      directory,
+      "dataplane",
+      "target",
+      "x86_64-unknown-linux-gnu",
+      "release",
+      "oce-github-read",
+    ),
+  };
+  // These are Cargo-protocol inputs to the real parser, not a replacement
+  // compiler or evidence that any native source was compiled successfully.
+  const artifact = {
+    reason: "compiler-artifact",
+    package_id: expected.packageId,
+    manifest_path: expected.manifestPath,
+    target: {
+      name: expected.binary,
+      kind: ["bin"],
+      crate_types: ["bin"],
+      src_path: expected.sourcePath,
+      edition: "2021",
+      doc: true,
+      doctest: false,
+      test: true,
+    },
+    profile: {
+      opt_level: "3",
+      debuginfo: 0,
+      debug_assertions: false,
+      overflow_checks: false,
+      test: false,
+    },
+    features: [],
+    filenames: [expected.executable],
+    executable: expected.executable,
+    fresh: false,
+  };
+  return { expected, artifact, finished: { reason: "build-finished", success: true } };
+}
+const cargoMessages = (...records) =>
+  `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
+
+test("Cargo artifact selection binds the exact non-test binary and complete invocation", () => {
+  const { expected, artifact, finished } = cargoArtifactRecords(
+    join(tmpdir(), "cargo-parser-input"),
+  );
+  const dependency = {
+    ...artifact,
+    package_id: "registry+https://github.com/rust-lang/crates.io-index#example@1.0.0",
+    executable: null,
+    target: { ...artifact.target, name: "example", kind: ["lib"], crate_types: ["lib"] },
+  };
+  for (const fresh of [false, true]) {
+    const messages = cargoMessages(dependency, { ...artifact, fresh }, finished);
+    const selected = selectCargoArtifact(messages, expected);
+    assert.equal(selected.executable, expected.executable);
+    assert.equal(selected.fresh, fresh);
+    assert.equal(selected.messagesSha256, createHash("sha256").update(messages).digest("hex"));
+    assert.deepEqual(
+      new Set(selected.reportedPackages),
+      new Set([expected.packageId, dependency.package_id]),
+    );
+  }
+  // target.test describes whether Cargo permits a test target; profile.test
+  // identifies whether this compiler artifact was actually built with --test.
+  assert.equal(artifact.target.test, true);
+  assert.equal(artifact.profile.test, false);
+});
+
+test("Cargo artifact selection refuses wrong package, target, source, profile and executable association", () => {
+  const { expected, artifact, finished } = cargoArtifactRecords(
+    join(tmpdir(), "cargo-parser-refusal"),
+  );
+  const wrongArtifacts = [
+    { ...artifact, package_id: "another-package" },
+    { ...artifact, manifest_path: `${expected.manifestPath}.other` },
+    { ...artifact, target: { ...artifact.target, name: "oce-egress" } },
+    { ...artifact, target: { ...artifact.target, kind: ["example"] } },
+    { ...artifact, target: { ...artifact.target, crate_types: ["lib"] } },
+    { ...artifact, target: { ...artifact.target, src_path: join(tmpdir(), "other.rs") } },
+    { ...artifact, profile: { ...artifact.profile, test: true } },
+    {
+      ...artifact,
+      executable: expected.executable.replace(
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+      ),
+    },
+    { ...artifact, executable: null },
+    { ...artifact, filenames: [] },
+    { ...artifact, fresh: undefined },
+  ];
+  for (const wrong of wrongArtifacts)
+    assert.throws(
+      () => selectCargoArtifact(cargoMessages(wrong, finished), expected),
+      /does not match/,
+    );
+});
+
+test("Cargo artifact selection refuses duplicate, failed, incomplete and unbounded output", () => {
+  const { expected, artifact, finished } = cargoArtifactRecords(
+    join(tmpdir(), "cargo-parser-lifecycle"),
+  );
+  for (const messages of [
+    "",
+    cargoMessages(artifact),
+    cargoMessages(finished),
+    cargoMessages(artifact, { ...finished, success: false }),
+    cargoMessages(artifact, artifact, finished),
+    cargoMessages(artifact, finished, finished),
+    cargoMessages(artifact, finished, { reason: "compiler-message" }),
+    cargoMessages({ reason: "compiler-message", message: { level: "error" } }, artifact, finished),
+    cargoMessages({ reason: "unsupported" }, artifact, finished),
+    cargoMessages(null),
+    '{"reason":',
+    " ".repeat(4 * 1024 * 1024 + 1),
+    `${cargoMessages({ reason: "build-script-executed" }).repeat(8193)}`,
+  ])
+    assert.throws(() => selectCargoArtifact(messages, expected), /Cargo/);
+});
+
+test(
+  "Cargo-selected executable capture retains the same inode through staging and refuses replacement",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-cargo-capture-"));
+    try {
+      const { expected, artifact, finished } = cargoArtifactRecords(directory);
+      await mkdir(join(directory, "dataplane", "target", "x86_64-unknown-linux-gnu", "release"), {
+        recursive: true,
+      });
+      const bytes = Buffer.from("inert compiler artifact payload\n");
+      await writeFile(expected.executable, bytes, { mode: 0o755 });
+      const messages = cargoMessages(artifact, finished);
+      const captured = await captureCargoArtifact(messages, expected);
+      const output = join(directory, "output");
+      try {
+        const staged = await captured.artifact.stage(output);
+        assert.equal(captured.artifact.observation.sha256, staged.observation.sha256);
+        assert.equal(captured.artifact.observation.size, bytes.length);
+        assert.deepEqual(await readFile(output), bytes);
+        assert.equal(staged.observation.mode, "0555");
+        assert.throws(() => captured.artifact.stage(join(directory, "second-output")), /only once/);
+      } finally {
+        await captured.artifact.close();
+      }
+      await assert.rejects(lstat(join(directory, "second-output")), { code: "ENOENT" });
+
+      const retained = await captureCargoArtifact(messages, expected);
+      try {
+        const replacement = join(directory, "replacement");
+        await writeFile(replacement, bytes, { mode: 0o755 });
+        await rename(replacement, expected.executable);
+        await assert.rejects(
+          retained.artifact.stage(join(directory, "replaced-output")),
+          /changed/,
+        );
+        await assert.rejects(lstat(join(directory, "replaced-output")), { code: "ENOENT" });
+      } finally {
+        await retained.artifact.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "retained native captures reject changed source and close after failed staging",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-retained-artifact-"));
+    try {
+      const source = join(directory, "source");
+      const output = join(directory, "output");
+      await writeFile(source, "first bytes", { mode: 0o755 });
+      const before = (await readdir("/proc/self/fd")).length;
+      const captured = await captureNativeArtifact(source);
+      await writeFile(source, "other bytes");
+      try {
+        await assert.rejects(captured.stage(output), /changed/);
+      } finally {
+        await captured.close();
+      }
+      assert.throws(() => captured.stage(output), /only once/);
+      assert.equal((await readdir("/proc/self/fd")).length, before);
+      await assert.rejects(lstat(output), { code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "final native manifest verification refuses a changed staged executable",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-staged-readback-"));
+    try {
+      const source = join(directory, "source");
+      const output = join(directory, "output");
+      await writeFile(source, "inert artifact bytes", { mode: 0o755 });
+      const staged = await stageNativeArtifact(source, output);
+      await verifyStagedNativeArtifact(output, staged);
+      await chmod(output, 0o755);
+      await writeFile(output, "other artifact bytes");
+      await chmod(output, 0o555);
+      await assert.rejects(
+        verifyStagedNativeArtifact(output, staged),
+        /does not match its staged observation/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("the runner passes literal argv without shell interpretation", async () => {
   const args = ["space separated", "$(must-not-run)", "; exit 27", "`must-not-run`"];
@@ -352,6 +589,37 @@ test("manifest publication replaces complete JSON and removes stale output on se
   }
 });
 
+test("READ manifest publication preserves source inventory within the installed decoder bounds", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-read-manifest-bounds-"));
+  try {
+    const path = join(directory, "native-manifest.json");
+    // Writer-boundary controls only: these objects are not compiler receipts
+    // and are never supplied to native compilation or package acceptance.
+    const manifest = {
+      schemaVersion: 2,
+      products: [{ binary: "oce-github-read" }],
+      sourceInputs: { files: [] },
+    };
+    await writeNativeManifest(path, manifest);
+    assert.equal(await readFile(path, "utf8"), `${JSON.stringify(manifest)}\n`);
+    let deep = {};
+    for (let level = 0; level < 33; level++) deep = { child: deep };
+    for (const oversized of [
+      { ...manifest, note: "x".repeat(65536) },
+      { ...manifest, sourceInputs: { files: Array(1025).fill({}) } },
+      { ...manifest, nodes: Array.from({ length: 1024 }, () => Array(8).fill(0)) },
+      { ...manifest, deep },
+      { ...manifest, products: [...manifest.products, { binary: "oce-egress" }] },
+    ]) {
+      await assert.rejects(writeNativeManifest(path, oversized), /manifest/);
+      await assert.rejects(lstat(path), { code: "ENOENT" });
+    }
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("build input capture has finite size and traversal limits", async () => {
   const directory = await mkdtemp(join(tmpdir(), "oce-native-input-limits-"));
   try {
@@ -366,25 +634,30 @@ test("build input capture has finite size and traversal limits", async () => {
   }
 });
 
-test("a failed native CLI invocation removes its previous manifest before prerequisites", async () => {
+test("failed native and optional READ CLI invocations reset manifests without deleting old artifacts", async () => {
   const directory = await mkdtemp(join(tmpdir(), "oce-native-cli-"));
   try {
     await mkdir(join(directory, "scripts"));
-    await mkdir(join(directory, ".build", "mvp"), { recursive: true });
+    await mkdir(join(directory, ".build", "mvp", "native"), { recursive: true });
     const copiedScript = join(directory, "scripts", "build-mvp.mjs");
     const manifest = join(directory, ".build", "mvp", "native-manifest.json");
     await copyFile(script, copiedScript);
-    await writeFile(manifest, "previous success");
+    const oldArtifact = join(directory, ".build", "mvp", "native", "oce-github-read");
+    await writeFile(oldArtifact, "previous artifact");
     // The real entrypoint must refuse absent source prerequisites. No compiler
     // is installed or substituted in this disposable source export.
-    await assert.rejects(
-      runCommand(process.execPath, [copiedScript, "native"], {
-        env: { ...process.env, PATH: "" },
-        capture: true,
-      }),
-      (error) => error instanceof CommandFailure && error.exitCode === 1,
-    );
-    await assert.rejects(lstat(manifest), { code: "ENOENT" });
+    for (const target of ["native", "native-read"]) {
+      await writeFile(manifest, "previous success");
+      await assert.rejects(
+        runCommand(process.execPath, [copiedScript, target], {
+          env: { ...process.env, PATH: "" },
+          capture: true,
+        }),
+        (error) => error instanceof CommandFailure && error.exitCode === 1,
+      );
+      await assert.rejects(lstat(manifest), { code: "ENOENT" });
+      assert.equal(await readFile(oldArtifact, "utf8"), "previous artifact");
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

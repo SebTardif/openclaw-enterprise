@@ -46,8 +46,24 @@ const nativePackagePaths = nativeMembers.map((name) =>
   ),
 );
 const nativeProducts = [
-  { package: "ds-dnsgate", binary: "oce-dnsgate" },
-  { package: "ds-tlsproxy", binary: "oce-egress" },
+  {
+    package: "ds-dnsgate",
+    binary: "oce-dnsgate",
+    target: "native-dns",
+    sourcePath: "dataplane/services/ds-dnsgate/src/bin/oce-dnsgate.rs",
+  },
+  {
+    package: "ds-tlsproxy",
+    binary: "oce-egress",
+    target: "native-tls",
+    sourcePath: "dataplane/services/ds-tlsproxy/src/oce_egress_main.rs",
+  },
+  {
+    package: "oce-native-egress",
+    binary: "oce-github-read",
+    target: "native-read",
+    sourcePath: "dataplane/services/oce-native-egress/src/bin/oce-github-read.rs",
+  },
 ];
 
 export class CommandFailure extends Error {
@@ -231,14 +247,13 @@ async function captureBuildFile(path, maxBytes) {
   }
 }
 
-export async function stageNativeArtifact(source, output, { maxBytes = maxNativeBytes } = {}) {
-  if (process.platform !== "linux") throw new Error("Native artifact staging requires Linux.");
+async function stageCapturedNativeArtifact(source, output, { file, before }, capturedSha256) {
   if (
     !isAbsolute(output) ||
     join(await realpath(dirname(output)), relative(dirname(output), output)) !== output
   )
     throw new Error("Native staging output must have a canonical parent directory.");
-  const { file, before } = await openBuildInput(source, maxBytes, true);
+  await unchangedFile(source, file, before);
   let staged;
   let created;
   let complete = false;
@@ -251,6 +266,8 @@ export async function stageNativeArtifact(source, output, { maxBytes = maxNative
     );
     created = await staged.stat({ bigint: true });
     const sha256 = await hashFileBytes(file, Number(before.size), staged);
+    if (sha256 !== capturedSha256)
+      throw new Error("Captured native artifact bytes changed before staging.");
     await staged.chmod(0o555);
     await staged.sync();
     const observed = await staged.stat({ bigint: true });
@@ -277,7 +294,6 @@ export async function stageNativeArtifact(source, output, { maxBytes = maxNative
     try {
       await staged?.close();
     } finally {
-      await file.close();
       if (!complete && created) {
         const current = await lstat(output, { bigint: true }).catch((error) => {
           if (error.code !== "ENOENT") throw error;
@@ -286,6 +302,142 @@ export async function stageNativeArtifact(source, output, { maxBytes = maxNative
       }
     }
   }
+}
+
+export async function captureNativeArtifact(source, { maxBytes = maxNativeBytes } = {}) {
+  if (process.platform !== "linux") throw new Error("Native artifact staging requires Linux.");
+  const captured = await openBuildInput(source, maxBytes, true);
+  const { file, before } = captured;
+  let sha256;
+  try {
+    sha256 = await hashFileBytes(file, Number(before.size));
+    await unchangedFile(source, file, before);
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
+  let staging;
+  let closing;
+  return Object.freeze({
+    observation: Object.freeze({
+      sha256,
+      size: Number(before.size),
+      uid: Number(before.uid),
+      gid: Number(before.gid),
+      mode: fileMode(before),
+    }),
+    stage(output) {
+      if (staging || closing)
+        throw new Error("A captured native artifact can be staged only once before close.");
+      staging = stageCapturedNativeArtifact(source, output, captured, sha256);
+      return staging;
+    },
+    close() {
+      // Closing during staging joins the in-flight operation before releasing
+      // its descriptor. Neither failure nor cancellation abandons this handle.
+      closing ??= (async () => {
+        await staging?.catch(() => {});
+        await file.close();
+      })();
+      return closing;
+    },
+  });
+}
+
+export async function stageNativeArtifact(source, output, options) {
+  const captured = await captureNativeArtifact(source, options);
+  try {
+    return await captured.stage(output);
+  } finally {
+    await captured.close();
+  }
+}
+
+export async function verifyStagedNativeArtifact(path, staged) {
+  const observed = await captureBuildFile(path, maxNativeBytes);
+  if (observed.sha256 !== staged.observation.sha256 || observed.size !== staged.observation.size)
+    throw new Error("Native artifact does not match its staged observation.");
+  assertBuildInputsUnchanged(staged.identity, observed.identity);
+}
+
+const exactBin = (value) => Array.isArray(value) && value.length === 1 && value[0] === "bin";
+
+export function selectCargoArtifact(output, expected) {
+  if (typeof output !== "string" || Buffer.byteLength(output) > 4 * 1024 * 1024)
+    throw new Error("Cargo artifact messages exceed their byte limit.");
+  const lines = output.split("\n").filter((line) => line.trim() !== "");
+  if (lines.length > 8192) throw new Error("Cargo artifact messages exceed their record limit.");
+  let selected;
+  let finished = false;
+  const reportedPackages = new Set();
+  for (const line of lines) {
+    if (finished) throw new Error("Cargo emitted output after build-finished.");
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      throw new Error("Cargo emitted an invalid JSON message.");
+    }
+    if (!message || Array.isArray(message) || typeof message.reason !== "string")
+      throw new Error("Cargo emitted an invalid artifact message.");
+    switch (message.reason) {
+      case "build-finished":
+        if (message.success !== true)
+          throw new Error("Cargo did not report a successful build-finished.");
+        finished = true;
+        break;
+      case "compiler-artifact": {
+        if (typeof message.package_id !== "string")
+          throw new Error("Cargo artifact has no package identity.");
+        reportedPackages.add(message.package_id);
+        const namedProduct =
+          message.package_id === expected.packageId && message.target?.name === expected.binary;
+        if (message.executable == null && !namedProduct) break;
+        if (selected)
+          throw new Error("Cargo emitted duplicate or unexpected executable artifacts.");
+        if (
+          message.package_id !== expected.packageId ||
+          message.manifest_path !== expected.manifestPath ||
+          message.target?.name !== expected.binary ||
+          !exactBin(message.target.kind) ||
+          !exactBin(message.target.crate_types) ||
+          message.target.src_path !== expected.sourcePath ||
+          message.profile?.test !== false ||
+          typeof message.fresh !== "boolean" ||
+          message.executable !== expected.executable ||
+          !Array.isArray(message.filenames) ||
+          !message.filenames.includes(expected.executable)
+        )
+          throw new Error(
+            "Cargo executable artifact does not match the selected package, binary, source and target.",
+          );
+        selected = message;
+        break;
+      }
+      case "compiler-message":
+        if (message.message?.level === "error" || message.message?.level === "failure-note")
+          throw new Error("Cargo reported a compiler failure.");
+        break;
+      case "build-script-executed":
+        break;
+      default:
+        throw new Error(`Unsupported Cargo build message: ${message.reason}`);
+    }
+  }
+  if (!finished || !selected)
+    throw new Error("Cargo did not finish with exactly one selected executable artifact.");
+  return {
+    executable: selected.executable,
+    fresh: selected.fresh,
+    reportedPackages: [...reportedPackages].sort(),
+    messagesSha256: createHash("sha256").update(output).digest("hex"),
+  };
+}
+
+export async function captureCargoArtifact(output, expected) {
+  const selected = selectCargoArtifact(output, expected);
+  const artifact = await captureNativeArtifact(selected.executable);
+  return { ...selected, artifact };
 }
 
 // Inventory the selected files themselves, independent of Git tracking state.
@@ -351,14 +503,44 @@ export function assertBuildInputsUnchanged(before, after) {
     );
 }
 
+function checkReadManifestShape(manifest) {
+  // The installed READ consumer uses the existing workload-profile JSON
+  // decoder in operator-envelope mode. Publication must fit those bounds.
+  let nodes = 0;
+  const visit = (value, depth = 0) => {
+    if (++nodes > 8192) throw new Error("READ manifest exceeds the consumer node limit.");
+    if (typeof value === "string" && Buffer.from(value).toString("utf8") !== value)
+      throw new Error("READ manifest contains invalid Unicode.");
+    if (
+      typeof value === "number" &&
+      (!Number.isSafeInteger(value) || value < 0 || Object.is(value, -0))
+    )
+      throw new Error("READ manifest contains an unsupported number.");
+    if (value !== null && typeof value === "object") {
+      const entries = Object.entries(value);
+      if (depth >= 32 || entries.length > 1024)
+        throw new Error("READ manifest exceeds the consumer depth/container limit.");
+      for (const [key, child] of entries) {
+        if (!/^[\x00-\x7f]*$/.test(key)) throw new Error("READ manifest contains a non-ASCII key.");
+        visit(child, depth + 1);
+      }
+    }
+  };
+  visit(manifest);
+}
+
 export async function writeNativeManifest(path, manifest) {
   let temporary;
   try {
     await rm(path, { force: true });
     temporary = await mkdtemp(join(dirname(path), ".native-manifest-"));
-    const content = `${JSON.stringify(manifest, null, 2)}\n`;
-    if (Buffer.byteLength(content) > 4 * 1024 * 1024)
+    const read = manifest.products?.some((product) => product.binary === "oce-github-read");
+    if (read && manifest.products.length !== 1)
+      throw new Error("A selected READ manifest must contain only its READ product.");
+    const content = `${JSON.stringify(manifest, null, read ? 0 : 2)}\n`;
+    if (Buffer.byteLength(content) > (read ? 65_536 : 4 * 1024 * 1024))
       throw new Error("Native manifest exceeds its byte limit.");
+    if (read) checkReadManifestShape(manifest);
     const file = join(temporary, "manifest.json");
     await writeFile(file, content, { flag: "wx", mode: 0o644 });
     await rename(file, path);
@@ -402,6 +584,7 @@ let nativeCargo;
 let nativeInputs;
 let nativeTools;
 let nativeToolVersions;
+let nativeMetadata;
 
 async function captureNativeInputs() {
   const paths = [
@@ -518,6 +701,14 @@ async function checkNative() {
         `The ${member.name} manifest must reside in its selected dataplane directory.`,
       );
     for (const target of member.targets) {
+      // An unselected optional READ bin is not a DNS/TLS prerequisite. Its
+      // exact entrypoint is checked by nativeProductSelection when selected.
+      if (
+        member.name === nativeProducts[2].package &&
+        target.name === nativeProducts[2].binary &&
+        exactBin(target.kind)
+      )
+        continue;
       if (!(await realpath(target.src_path)).startsWith(`${expected}${sep}`)) {
         throw new Error(
           `The ${member.name} package has an entrypoint outside its selected directory.`,
@@ -535,32 +726,83 @@ async function checkNative() {
       }
     }
   }
-  for (const product of nativeProducts) {
-    if (
-      !members
-        .find((member) => member.name === product.package)
-        ?.targets.some((target) => target.name === product.binary && target.kind.includes("bin"))
-    ) {
-      throw new Error(
-        `The selected ${product.package} package lacks the qualified ${product.binary} OCE adapter; prepare its reviewed source before building. Stock service entrypoints are not a fallback.`,
-      );
-    }
-  }
+  if (metadata.target_directory !== join(nativeRoot, "target"))
+    throw new Error("Cargo selected a different native target directory.");
   await verifyNativeInputs();
+  nativeMetadata = metadata;
+}
+
+async function nativeProductSelection(product) {
+  const member = nativeMetadata.packages.find(
+    ({ id, name }) => name === product.package && nativeMetadata.workspace_members.includes(id),
+  );
+  const targets = member?.targets.filter(({ name }) => name === product.binary) ?? [];
+  const sourcePath = join(repositoryRoot, product.sourcePath);
+  if (
+    targets.length !== 1 ||
+    !exactBin(targets[0].kind) ||
+    !exactBin(targets[0].crate_types) ||
+    targets[0].src_path !== sourcePath ||
+    (await realpath(sourcePath)) !== sourcePath
+  )
+    throw new Error(
+      `The selected ${product.package} package lacks the qualified ${product.binary} binary and source. Stock entrypoints are not a fallback.`,
+    );
+  return {
+    packageId: member.id,
+    packageVersion: member.version,
+    manifestPath: member.manifest_path,
+    binary: product.binary,
+    sourcePath,
+    executable: join(nativeRoot, "target", hostPlatform().rust, "release", product.binary),
+  };
+}
+
+function reportedNativeDependencies(ids, selectedId) {
+  return ids
+    .filter((id) => id !== selectedId)
+    .map((id) => {
+      const dependency = nativeMetadata.packages.find((entry) => entry.id === id);
+      if (!dependency)
+        throw new Error("Cargo reported an artifact outside its inspected package graph.");
+      const manifestPath =
+        dependency.source === null
+          ? relative(repositoryRoot, dependency.manifest_path).split(sep).join("/")
+          : null;
+      const manifestInput =
+        manifestPath === null
+          ? null
+          : nativeInputs.manifest.files.find(({ path }) => path === manifestPath);
+      if (manifestPath !== null && !manifestInput)
+        throw new Error("Cargo reported local dependency source outside the captured inputs.");
+      return {
+        package: dependency.name,
+        version: dependency.version,
+        source: dependency.source,
+        ...(manifestInput ? { manifestPath, manifestSha256: manifestInput.sha256 } : {}),
+      };
+    })
+    .sort((left, right) => {
+      const a = JSON.stringify(left);
+      const b = JSON.stringify(right);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
 }
 
 async function buildNative(product) {
+  const selection = await nativeProductSelection(product);
   const output = join(outputRoot, "native", product.binary);
   await mkdir(dirname(output), { recursive: true });
   await rm(output, { force: true });
   await verifyNativeInputs();
-  await runCommand(
+  const messages = await runCommand(
     nativeCargo,
     [
       "build",
       "--locked",
       "--offline",
       "--release",
+      "--message-format=json",
       "--target",
       hostPlatform().rust,
       "--package",
@@ -571,23 +813,57 @@ async function buildNative(product) {
     {
       cwd: nativeRoot,
       env: nativeEnvironment,
+      capture: true,
     },
   );
-  await verifyNativeInputs();
-  const artifact = join(nativeRoot, "target", hostPlatform().rust, "release", product.binary);
-  const staged = await stageNativeArtifact(artifact, output);
-  stagedNativeIdentities.push(staged.identity);
-  builtNativeProducts.push({
-    ...product,
-    path: `.build/mvp/native/${product.binary}`,
-    staged: staged.observation,
-    installationRequirements: {
-      path: `/usr/local/bin/${product.binary}`,
-      uid: 0,
-      gid: 0,
-      mode: "0555",
-    },
-  });
+  // Capture the compiler-selected executable before other asynchronous checks,
+  // then retain that descriptor through source validation and staging.
+  const captured = await captureCargoArtifact(messages, selection);
+  try {
+    await verifyNativeInputs();
+    const sourceInput = nativeInputs.manifest.files.find(({ path }) => path === product.sourcePath);
+    if (!sourceInput)
+      throw new Error("The compiler entrypoint is absent from the captured source inputs.");
+    const manifestPath = relative(repositoryRoot, selection.manifestPath).split(sep).join("/");
+    const manifestInput = nativeInputs.manifest.files.find(({ path }) => path === manifestPath);
+    if (!manifestInput)
+      throw new Error("The compiler package manifest is absent from the captured source inputs.");
+    const dependencies = reportedNativeDependencies(captured.reportedPackages, selection.packageId);
+    const staged = await captured.artifact.stage(output);
+    stagedNativeIdentities.push(staged.identity);
+    builtNativeProducts.push({
+      package: product.package,
+      binary: product.binary,
+      path: `.build/mvp/native/${product.binary}`,
+      staged: staged.observation,
+      compilerArtifact: {
+        buildTarget: product.target,
+        packageVersion: selection.packageVersion,
+        manifestPath,
+        manifestSha256: manifestInput.sha256,
+        sourcePath: product.sourcePath,
+        sourceSha256: sourceInput.sha256,
+        rustTarget: hostPlatform().rust,
+        kind: ["bin"],
+        crateTypes: ["bin"],
+        test: false,
+        fresh: captured.fresh,
+        buildFinished: true,
+        messagesSha256: captured.messagesSha256,
+        executablePath: relative(repositoryRoot, captured.executable).split(sep).join("/"),
+        artifact: captured.artifact.observation,
+      },
+      dependencies,
+      installationRequirements: {
+        path: `/usr/local/bin/${product.binary}`,
+        uid: 0,
+        gid: 0,
+        mode: "0555",
+      },
+    });
+  } finally {
+    await captured.artifact.close();
+  }
 }
 
 async function checkTypes() {
@@ -771,6 +1047,12 @@ const targets = {
     description: "Build only the oce-egress adapter binary, offline, for this Linux host.",
     run: () => buildNative(nativeProducts[1]),
   },
+  "native-read": {
+    deps: ["check-native"],
+    description:
+      "Build only the separately selected oce-github-read mediated binary, offline, for this Linux host.",
+    run: () => buildNative(nativeProducts[2]),
+  },
   native: {
     deps: ["native-dns", "native-tls"],
     description: "Build both native product binaries.",
@@ -847,8 +1129,12 @@ async function main(args) {
     );
     return;
   }
-  const nativeBuild = order.includes("native-dns") || order.includes("native-tls");
-  if (nativeBuild) await rm(nativeManifestPath, { force: true });
+  const nativeBuild = nativeProducts.some(({ target }) => order.includes(target));
+  if (nativeBuild) {
+    builtNativeProducts.length = 0;
+    stagedNativeIdentities.length = 0;
+    await rm(nativeManifestPath, { force: true });
+  }
   try {
     // Validate explicit image inputs before any prerequisite tool runs. A typo
     // must not start a source build or replace a tag belonging to another image.
@@ -868,12 +1154,10 @@ async function main(args) {
     if (builtNativeProducts.length !== 0) {
       await verifyNativeInputs();
       for (const [index, product] of builtNativeProducts.entries()) {
-        const observed = await captureBuildFile(join(repositoryRoot, product.path), maxNativeBytes);
-        if (observed.sha256 !== product.staged.sha256 || observed.size !== product.staged.size)
-          throw new Error(
-            `Staged native artifact changed before manifest publication: ${product.binary}`,
-          );
-        assertBuildInputsUnchanged(stagedNativeIdentities[index], observed.identity);
+        await verifyStagedNativeArtifact(join(repositoryRoot, product.path), {
+          observation: product.staged,
+          identity: stagedNativeIdentities[index],
+        });
       }
       await writeNativeManifest(nativeManifestPath, {
         schemaVersion: 2,
