@@ -3,8 +3,8 @@
 This page explains how to verify the selected clone/fetch READ components with
 publication disabled. It distinguishes actual component behavior, controlled
 local composition, and deployed internal access. The receiving results below
-record selected fixture and component coverage; three clone/fetch opt-ins remain
-unselected.
+record selected fixture and component coverage at the original checkpoint, with
+later READ-04 outcomes noted separately below.
 
 Receiving checkpoint: **2026-09-10**, source commit
 `1c1e3e8741df7e7a8f3ec25d52a4e0553ae0a919`. These results describe that exact
@@ -127,6 +127,15 @@ supply positive internal admission. The recorded cases do not establish the full
 internal flow, S2 acceptance, live Codex execution, live GitHub qualification or
 publication readiness. This documentation update records existing results and
 adds no test execution.
+
+### Later READ-04 fault and cancellation outcomes
+
+A later selection passed **one upstream-failure case** and **one cancellation
+case** against the actual external-Git fixture. These are bounded fixture
+outcomes; the accepting clone/fetch opt-in remains **UNSELECTED**. The table and
+three unselected cases above retain their original checkpoint status. These two
+passes do not select the five [later qualification scenarios](#later-qualification-preparation):
+all five remain **UNRUN**, and their unselected inputs remain **UNBOUND**.
 
 ## Accepting a result
 
