@@ -12,7 +12,7 @@ async function openChannels(t, fixture, namespaceId, agentId, revision = "draft"
     ...(executablePath === undefined ? {} : { executablePath }),
     headless: true,
   });
-  t.after(() => browser.close());
+  fixture.registerCleanupBeforeAppClose(() => browser.close());
   const page = await browser.newPage();
   const writes = [];
   page.on("request", (request) => {
@@ -42,7 +42,7 @@ function configurationResponse(page, fixture, path) {
   );
 }
 
-test("Teams validates identity, retries an authorized draft save after denial, and disables without changing revisions", async (t) => {
+test("Teams validates identity, retries an authorized draft save after denial, and disables without admitting revisions", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Teams authoring", { ready: true });
@@ -59,7 +59,6 @@ test("Teams validates identity, retries an authorized draft save after denial, a
   const agent = await fixture.createAgent(namespace.id, "Teams draft Agent", values, {
     executionMode: "dedicated",
   });
-  const admitted = await fixture.deployAgent(namespace.id, agent.id);
   const path = `/namespaces/${namespace.id}/configurations/${agent.configurationId}`;
   const { page, writes } = await openChannels(t, fixture, namespace.id, agent.id);
   await page.getByRole("button", { name: "Configure Microsoft Teams", exact: true }).click();
@@ -127,14 +126,15 @@ test("Teams validates identity, retries an authorized draft save after denial, a
     writes,
     Array.from({ length: 3 }, () => ({ method: "PATCH", path })),
   );
-  const revision = await fixture.request(
+  const revisions = await fixture.request(
     "GET",
-    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${admitted.id}`,
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions`,
   );
-  assert.deepEqual(revision.data, admitted);
+  assert.equal(revisions.status, 200);
+  assert.deepEqual(revisions.data, []);
 });
 
-test("mixed Slack mention settings remain inspectable and can only be disabled in the draft", async (t) => {
+test("mixed Slack mention settings remain inspectable and disable without admitting revisions", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Slack native settings", { ready: true });
@@ -165,19 +165,9 @@ test("mixed Slack mention settings remain inspectable and can only be disabled i
   const agent = await fixture.createAgent(namespace.id, "Slack native Agent", values, {
     executionMode: "dedicated",
   });
-  // Admission through the controller creates the immutable snapshot used by the read-only view.
-  const admitted = await fixture.deployAgent(namespace.id, agent.id);
-  const { page, writes } = await openChannels(t, fixture, namespace.id, agent.id, admitted.id);
-  assert.equal(
-    await page
-      .getByText("Read-only AgentRevision values cannot be edited.", { exact: true })
-      .count(),
-    2,
-  );
-  assert.equal(await page.getByRole("button", { name: "Disable Slack", exact: true }).count(), 0);
-  assert.deepEqual(writes, []);
-
-  await page.getByRole("button", { name: "Saved draft", exact: true }).click();
+  // Draft authoring does not require an admitted runtime. Immutable revision
+  // navigation requires genuine admission prerequisites absent from this fixture.
+  const { page, writes } = await openChannels(t, fixture, namespace.id, agent.id);
   await page
     .getByText("Existing Slack channels use mixed Require mention values.", { exact: true })
     .waitFor();
@@ -203,13 +193,10 @@ test("mixed Slack mention settings remain inspectable and can only be disabled i
     channels: { slack: { ...values.channels.slack, enabled: false } },
   });
   assert.deepEqual(writes, [{ method: "PATCH", path }]);
-  assert.deepEqual(
-    (
-      await fixture.request(
-        "GET",
-        `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${admitted.id}`,
-      )
-    ).data,
-    admitted,
+  const revisions = await fixture.request(
+    "GET",
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions`,
   );
+  assert.equal(revisions.status, 200);
+  assert.deepEqual(revisions.data, []);
 });

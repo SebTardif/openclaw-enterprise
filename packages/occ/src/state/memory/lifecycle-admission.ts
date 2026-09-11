@@ -18,6 +18,7 @@ import type { LifecycleAdmissionUnitPhase } from "../../lifecycle/protective-adm
 import type {
   LifecycleAdmissionRepository,
   PendingAuditExportV1,
+  ProtectiveAdmissionStorageResultV1,
   RuntimeCleanupResponsibilityV1,
   StoredPlatformWork,
 } from "../../ports/repositories/lifecycle-admission.ts";
@@ -174,7 +175,10 @@ export function createMemoryLifecycleAdmission(context: Context): LifecycleAdmis
       snapshot.runtimeHeads.set(key, input.transitionRef);
       if (!retainedProtectiveRecordMatches(record))
         throw new ScopeViolationError("The protective admission is incomplete.");
-      return immutableCopy({ kind: "provisional", retained: record });
+      return immutableCopy<ProtectiveAdmissionStorageResultV1>({
+        kind: "provisional",
+        retained: record,
+      });
     },
   };
 }

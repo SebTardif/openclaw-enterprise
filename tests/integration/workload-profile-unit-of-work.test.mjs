@@ -107,6 +107,20 @@ test("caught and unawaited invalid preparation poisons the actual owner", async 
   }
 });
 
+test("owner observes a rejected preparation when its caller discards the returned promise", async () => {
+  const f = await fixture();
+  await assert.rejects(
+    f.state.transact(async (unit) => {
+      // Deliberately attach no caller rejection handler: the real owner must
+      // observe its outward promise as well as the underlying repository work.
+      void unit.workloadProfiles.prepareOperation({ ...f.request, extra: true }, f.actor);
+    }),
+    InvalidProfileOperationError,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(await f.read(), undefined);
+});
+
 test("outer callback failure discards a completed preparation", async () => {
   const f = await fixture();
   const failure = new Error("outer callback failure");
@@ -149,6 +163,25 @@ test("chained late preparation cannot escape the draining owner", async () => {
           f.actor,
         ),
       );
+      void next.catch(() => {});
+    }),
+    ScopeViolationError,
+  );
+  await first;
+  await assert.rejects(next, ScopeViolationError);
+  assert.equal(await f.read(), undefined);
+});
+
+test("chained unrelated work cannot escape profile isolation while the owner drains", async () => {
+  const f = await fixture();
+  let next;
+  let first;
+  await assert.rejects(
+    f.state.transact(async (unit) => {
+      first = unit.workloadProfiles.prepareOperation(f.request, f.actor);
+      // Use the actual outward repository; the lifecycle wrapper rejects this
+      // call before storage, but the original profile owner must still roll back.
+      next = first.then(() => unit.namespaces.lockNamespace(f.namespace.id));
       void next.catch(() => {});
     }),
     ScopeViolationError,

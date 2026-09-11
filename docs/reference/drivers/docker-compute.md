@@ -6,8 +6,9 @@ initializer before starting the OCC API and worker. The API uses filesystem
 Configuration; the worker uses this driver to create real
 Docker networks and runtime containers for Namespaces and AgentRevisions.
 
-This driver is a development runtime. Production continues to use the
-Kubernetes Compute Driver selected through trusted Installation configuration.
+This driver is a development runtime. Production can select bundled
+[Kubernetes](kubernetes-compute.md), [SSH](ssh-compute.md), or an installed
+Compute Driver through trusted Installation configuration.
 
 ## Requirements
 
@@ -110,16 +111,9 @@ inside the container. The Docker driver does not mount host workspaces,
 personal OpenClaw/Codex homes, SSH-agent sockets, cloud credentials, or
 controller credentials into workload containers.
 
-## Verification evidence
+## Inspect owned resources
 
-Use the Compose integration when changing this driver or development startup.
-It must exercise the authenticated API, durable PostgreSQL state, worker queue,
-Docker network/container provisioning, both Harness topologies, cleanup, and a
-real provider response containing a fresh nonce. The E2E call may reach the
-gateway through its Namespace network address or the driver-published loopback
-host port.
-
-Owned resources can be observed through Docker labels:
+Inspect the driver's resources through Docker labels:
 
 ```bash
 docker compose ps

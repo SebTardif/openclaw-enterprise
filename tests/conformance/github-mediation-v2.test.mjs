@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import ts from "typescript";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   decodeGitHubMediationRequest as decode,
   encodeGitHubMediationMetadata as encode,
@@ -79,10 +81,12 @@ const gitUpload = Object.freeze({
   request_sha256: "sha256:792994a0d426f5dd513a227dfb83ac91381eba7d8e40c1e47916f3bde4435f62",
 });
 
-test("literal Git profile types cannot receive a metadata owner through union widening", () => {
+test("literal Git profile types cannot receive a metadata owner through union widening", (t) => {
   // Compile-only declarations test the real public types. No authority owner or
   // positive preparation is instantiated or executed by this virtual source.
-  const filename = fileURLToPath(new URL("./github-mediation-profile-types.ts", import.meta.url));
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const directory = mkdtempSync(join(root, "tests/.github-profile-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const source = `
 import { GitHubMediationService } from "../../packages/occ/src/github-mediation-v2/service.ts";
 import type { GitHubMediationLimits, GitHubMediationOperationOwner, GitHubMediationTransportOwner } from "../../packages/occ/src/github-mediation-v2/ports.ts";
@@ -107,21 +111,21 @@ const widenedOwner: GitHubMediationOperationOwner<object, object, 2 | 3> = metad
     noEmit: true,
     strict: true,
     skipLibCheck: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
+    target: "ES2022",
+    module: "NodeNext",
     allowImportingTsExtensions: true,
   };
-  const host = ts.createCompilerHost(options);
-  const original = host.getSourceFile.bind(host);
-  host.getSourceFile = (path, language, onError, fresh) =>
-    path === filename
-      ? ts.createSourceFile(filename, source, language, true)
-      : original(path, language, onError, fresh);
-  const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([filename], options, host));
-  assert.deepEqual(
-    diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")),
-    [],
+  writeFileSync(join(directory, "consumer.ts"), source);
+  const project = join(directory, "tsconfig.json");
+  writeFileSync(project, JSON.stringify({ compilerOptions: options, files: ["consumer.ts"] }));
+  const result = spawnSync(
+    process.execPath,
+    [join(root, "node_modules/typescript/bin/tsc"), "--project", project, "--pretty", "false"],
+    { cwd: root, encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024 },
   );
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test("Git discovery and upload-pack match independent exact-body digest vectors", () => {

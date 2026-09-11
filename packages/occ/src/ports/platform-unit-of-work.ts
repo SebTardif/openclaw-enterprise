@@ -225,7 +225,10 @@ export function bindPlatformUnitOfWork(
   });
   const profiled = profilePhase === undefined ? unit : profilePhase.bind(unit);
   const lifecycle = lifecyclePhase === undefined ? profiled : lifecyclePhase.bind(profiled);
-  const credential = credentialPhase === undefined ? lifecycle : credentialPhase.bind(lifecycle);
+  const profileFailures =
+    profilePhase === undefined ? lifecycle : profilePhase.bindAdmissionFailures(lifecycle);
+  const credential =
+    credentialPhase === undefined ? profileFailures : credentialPhase.bind(profileFailures);
   if (turn !== undefined) {
     if (rejectIsolated !== undefined)
       throw new ScopeViolationError("Turn isolation cannot mix owners.");
@@ -599,6 +602,61 @@ export class WorkloadProfileUnitPhase {
         "Profile preparation requires an isolated ordered transaction.",
       );
     });
+  }
+
+  /** Outer admission wrappers may reject before this profile phase observes
+   * the call. Preserve its original isolation failure through owner draining. */
+  bindAdmissionFailures(unit: PlatformUnitOfWork): PlatformUnitOfWork {
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(unit).map(([name, repository]) => [
+          name,
+          Object.freeze(
+            Object.fromEntries(
+              Object.entries(repository).map(([method, invoke]) => [
+                method,
+                (...args: unknown[]) => {
+                  const result = (async () => {
+                    try {
+                      if (typeof invoke !== "function")
+                        throw new ScopeViolationError(
+                          "The profile transaction repository method is unavailable.",
+                        );
+                      return await Reflect.apply(invoke, repository, args);
+                    } catch (error) {
+                      const profileMutation =
+                        name === "workloadProfiles" &&
+                        (method === "prepareOperation" ||
+                          method === "accept" ||
+                          method === "withdraw");
+                      const otherOperation =
+                        name !== "workloadProfiles" &&
+                        !(
+                          name === "installations" &&
+                          method !== "createInstallation" &&
+                          !this.mutationPolicy
+                        );
+                      const isolated =
+                        this.preparationStarted ||
+                        (this.guardedPolicy && (!this.mutationPolicy || !this.policyComplete));
+                      if (!profileMutation && !(otherOperation && isolated)) throw error;
+                      // Enroll only the rejection; nesting the original operation
+                      // in its own serial guard would wait on itself.
+                      return this.guard.run(async () => {
+                        throw error;
+                      });
+                    }
+                  })();
+                  // The owner observes failures even when the caller does not await.
+                  void result.catch(() => {});
+                  return result;
+                },
+              ]),
+            ),
+          ),
+        ]),
+      ),
+    ) as unknown as PlatformUnitOfWork;
   }
 
   bind(unit: PlatformUnitOfWork): PlatformUnitOfWork {

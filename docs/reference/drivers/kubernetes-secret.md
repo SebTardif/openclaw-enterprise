@@ -69,18 +69,21 @@ OCC-owned metadata.
 
 ## Create a Namespace-owned Secret
 
-Create the Secret after the OpenClaw Namespace is ready. An Agent does not need
-to exist yet. Keep the value in a protected file or secret manager output; do
+Create the Secret in a ready Namespace before assigning it to an Agent. Keep the value in a protected file or secret manager output; do
 not put it in a shell command, URL, log line, or example JSON checked into
-source.
+source. Cookie-authenticated writes require the exact configured public origin;
+set `OCC_ORIGIN` from `OCC_AUTH_BASE_URL` as described in
+[browser intent](../authentication.md#browser-intent-for-protected-mutations).
 
 ```bash
+: "${OCC_ORIGIN:?set the configured public origin}"
 umask 077
 SECRET_VALUE_FILE=/secure/operator/agent-model-key
 
 node - "$SECRET_VALUE_FILE" <<'JS' | \
   curl -fsS "http://127.0.0.1:3000/namespaces/$NAMESPACE_ID/secrets" \
     -b "$OCC_SESSION_COOKIE_JAR" \
+    -H "Origin: $OCC_ORIGIN" \
     -H 'Content-Type: application/json' \
     --data-binary @-
 const { readFileSync } = require("node:fs");
@@ -90,7 +93,7 @@ process.stdout.write(JSON.stringify({ name: "model-api-key", value }));
 JS
 ```
 
-A successful create returns HTTP `201` with metadata only:
+Creation returns HTTP `201` with metadata only:
 
 ```json
 {
@@ -115,7 +118,7 @@ never returned by OCC.
 ## Bind a Secret to gateway environment
 
 Add the returned reference to `secretBindings` on the Agent's Configuration. The
-[Configuration reference](../configuration.md#secret-bindings) owns the binding
+[Configuration reference](../configuration/secrets.md#secret-bindings) owns the binding
 shape and full native OpenClaw example. OCC validates binding sources, env
 delivery, and reserved environment destinations; the selected SecretDriver only
 resolves and validates the stored backend identity:
@@ -166,7 +169,11 @@ Dedicated Codex model credentials do not use this binding path: the separate
 Codex workload keeps its existing Agent-specific model Secret or provider-issued
 account token path, and the dedicated gateway does not receive the model
 credential. The combined embedded OpenClaw gateway may use a Secret binding for
-its own Agent-specific `OPENAI_API_KEY`.
+its own Agent-specific `OPENAI_API_KEY` at the rendering boundary. Current V2
+admission requires an applicable ServiceAccount, while model-binding validation
+rejects an `OPENAI_API_KEY` binding whenever a ServiceAccount is selected. This
+Secret API model scenario remains unavailable pending contract reconciliation
+and the missing [profile admission suppliers](../workload-profiles.md).
 
 ## Update and redeploy
 
@@ -199,7 +206,8 @@ Delete only unreferenced Secrets:
 curl -fsS \
   "http://127.0.0.1:3000/namespaces/$NAMESPACE_ID/secrets/$SECRET_ID" \
   -X DELETE \
-  -b "$OCC_SESSION_COOKIE_JAR"
+  -b "$OCC_SESSION_COOKIE_JAR" \
+  -H "Origin: $OCC_ORIGIN"
 ```
 
 Successful deletion returns HTTP `204`. OCC denies deletion while the Secret is
@@ -234,41 +242,8 @@ metadata cleanup after OCC verifies the stored backend identity.
   Deploy or restart each consuming Agent and verify the new process or revision
   became active.
 
-## Metadata repository checks
-
-OCC persists Secret ownership and backend references through the
-[memory repository](../../../packages/occ/src/state/memory/secrets.ts) and
-[PostgreSQL repository](../../../packages/occ/src/state/postgres/secrets.ts).
-Their factories borrow the existing transaction snapshot or guarded database
-client and retain the original metadata validation, reference checks, and
-transaction lifetime. Configuration bindings, active revisions, and pending
-revision work continue to prevent metadata deletion.
-
-Run the focused metadata storage checks from the repository root:
-
-```sh
-node scripts/test-files.mjs -- tests/conformance/secret-repository-memory.test.mjs
-node scripts/test-files.mjs -- tests/integration/postgres-secret-repository.test.mjs
-```
-
-The PostgreSQL command requires `OCC_SECRET_REPOSITORY_TEST_DATABASE_URL` pointing
-to a separately prepared disposable database through the limited application
-role. Follow the [PostgreSQL test environment](../settings.md#postgresql-test-environment)
-requirements. The suite checks that Installation and controller work are empty
-before its bootstrap rollback case, then runs its queue-reference cases before
-other fixtures append pending work. It may leave its own committed metadata;
-allocate fresh database state before repeating it. Use a different database for
-ordinary regression suites. An absent selector skips the live database cases.
-These checks cover metadata ownership, references, transaction closure, and
-resource/work/audit rollback. Kubernetes value storage and gateway delivery
-require their existing separate runtime verification.
-
-## Verification status
-
-The approved implementation must pass API, PostgreSQL, and real Kubernetes
-runtime coverage before this guide is proof of production behavior. Until that
-manager-owned proof is reported, treat route/schema checks and documentation
-formatting as documentation verification only.
+[Secret metadata testing](../../testing/secret-metadata.md) covers repository ownership,
+transaction lifetime, deletion protections and atomic rollback.
 
 ## Related
 
@@ -276,5 +251,5 @@ formatting as documentation verification only.
 - [Settings](../settings.md)
 - [Production Kubernetes deployment](../../guides/deploy.md)
 - [Kubernetes Compute Driver](kubernetes-compute.md)
-- [Platform design](../../design.md#secret-access)
+- [Platform design](../../design/safeguards.md#secret-access)
 - [SecretDriver storage and delivery spec](../../../specs/.archive/14-secret-driver.md)

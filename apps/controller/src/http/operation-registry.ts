@@ -107,6 +107,13 @@ export function requiredPermissions(
     return [{ ...permission, scope: "namespace" }];
   }
 
+  if (operation.operationId === "provisionAgentRuntimeCredentials") {
+    return [
+      { ...permission, scope: "requested" },
+      { action: "read", resourceKind: "agent", scope: "requested" },
+    ];
+  }
+
   if (
     operation.operationId === "createAgent" ||
     operation.operationId === "updateAgent" ||
@@ -276,6 +283,8 @@ const operationBodyExpectations = {
   updateAgent: "required",
   listAgents: "none",
   getAgent: "none",
+  getAgentRuntimeCredentials: "none",
+  provisionAgentRuntimeCredentials: "required",
   deployAgent: "required",
   getAgentWorkspaceFile: "none",
   putAgentWorkspaceFile: "required",

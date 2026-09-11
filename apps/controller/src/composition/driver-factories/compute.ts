@@ -30,6 +30,7 @@ import {
   type KubernetesComputeDriverOptions,
 } from "../../drivers/compute/kubernetes/index.ts";
 import { currentComputeAbortSignal } from "../../drivers/compute/operation-context.ts";
+import { SshComputeDriver, type SshComputeDriverOptions } from "../../drivers/compute/ssh/index.ts";
 import { createExternalDriver, type LoadedDriverPackage } from "../driver-packages/loader.ts";
 import {
   selected,
@@ -112,6 +113,9 @@ export function selectComputeDriver(
   selection: ConfigurationRecord,
   driverPackage?: LoadedDriverPackage,
 ): SelectedDriverConfiguration {
+  if (driverPackage === undefined && selection.id === "compute-ssh") {
+    return selected(selection, "compute", "occ/ssh", SshComputeDriver);
+  }
   return selected(
     selection,
     "compute",
@@ -157,6 +161,15 @@ export function createComputeDriver(
       undefined,
       currentComputeAbortSignal,
     ) as ComputeDriver;
+  }
+  if (selection.implementation === "occ/ssh") {
+    if (sandboxDriver !== undefined)
+      throw new Error("drivers.sandbox requires the bundled Kubernetes Compute Driver.");
+    return new SshComputeDriver(selection.configuration as unknown as SshComputeDriverOptions, {
+      id: selection.id,
+      implementation: selection.implementation,
+      lifecycleDrivers: [configurationDriver],
+    });
   }
   // The original capability captures this receiver at construction. Only this
   // factory retains its one-time binder; composition cannot replace a Driver's

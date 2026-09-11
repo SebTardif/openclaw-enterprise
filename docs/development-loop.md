@@ -2,7 +2,7 @@
 
 Choose checks from the behavior and interfaces changed. Keep feedback focused
 while editing, then collect the required evidence before handoff and integration.
-The [testing guide](testing.md) owns suite setup and infrastructure requirements.
+The [testing guide](testing/README.md) owns suite setup and infrastructure requirements.
 
 ## Prepare once, verify without changing the environment
 

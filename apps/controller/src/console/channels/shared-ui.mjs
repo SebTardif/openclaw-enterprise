@@ -179,7 +179,11 @@ function renderCard(section, state, provider) {
   );
   if (state.readOnly)
     card.append(
-      element("p", { className: "hint" }, "Read-only AgentRevision values cannot be edited."),
+      element(
+        "p",
+        { className: "hint" },
+        state.copy.readOnlyCardMessage ?? "Read-only AgentRevision values cannot be edited.",
+      ),
     );
   else if (disabledByMode)
     card.append(
@@ -264,7 +268,11 @@ function openDrawer(section, state, provider) {
     dialog.close();
     dialog.remove();
   });
-  const submit = element("button", { type: "submit", className: "primary" }, "Save configuration");
+  const submit = element(
+    "button",
+    { type: "submit", className: "primary" },
+    state.copy.saveLabel ?? "Save configuration",
+  );
   body.append(
     element(
       "div",
@@ -282,13 +290,18 @@ function openDrawer(section, state, provider) {
     element(
       "p",
       { className: "notice", role: "status" },
-      "Saved draft. Changes affect future deployments using this Configuration. Credentials must be provisioned by your operator.",
+      state.copy.drawerNotice ??
+        "Saved draft. Changes affect future deployments using this Configuration. Use the Credentials tab for supported OpenAI and Slack credentials before first deploy. Microsoft Teams credentials remain operator-managed.",
     ),
     enabled,
   );
   provider.appendFields(body, config);
   body.append(
-    element("p", { className: "muted" }, "This Configuration may be shared by other Agents."),
+    element(
+      "p",
+      { className: "muted" },
+      state.copy.drawerFootnote ?? "This Configuration may be shared by other Agents.",
+    ),
     feedback,
     element("div", { className: "form-actions" }, cancel, submit),
   );
@@ -328,7 +341,10 @@ function openDrawer(section, state, provider) {
   dialog.querySelector("input, button")?.focus();
 }
 
-export function renderChannelSection({ values, executionMode, readOnly, onSave }, providers) {
+export function renderChannelSection(
+  { values, executionMode, readOnly, onSave, copy = {} },
+  providers,
+) {
   const section = element("section", { className: "channels-section" });
   const state = {
     values,
@@ -336,6 +352,7 @@ export function renderChannelSection({ values, executionMode, readOnly, onSave }
     readOnly,
     onSave,
     section,
+    copy,
     pending: false,
     outcomeUnknown: false,
     error: element("div", { "aria-live": "polite" }),
@@ -354,8 +371,10 @@ export function renderChannelSection({ values, executionMode, readOnly, onSave }
             "p",
             { className: "muted" },
             readOnly
-              ? "Live connection status unavailable. These are the viewed AgentRevision’s immutable channel settings."
-              : "Live connection status unavailable. Save and Disable update only the shared Configuration draft. They do not stop or disable a running Agent or change admitted revisions.",
+              ? (copy.readOnlyDescription ??
+                  "Live connection status unavailable. These are the viewed AgentRevision’s immutable channel settings.")
+              : (copy.editableDescription ??
+                  "Live connection status unavailable. Save and Disable update only the shared Configuration draft. They do not stop or disable a running Agent or change admitted revisions."),
           ),
         ),
       ),

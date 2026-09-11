@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 // Real TypeScript checks against the actual source and its actual imports. These
-// in-memory fixtures create no runtime participant, transaction, permit or effect.
+// compile-only fixtures create no runtime participant, transaction, permit or effect.
 // Original suppliers author their own examples; these are author structural tests.
 const source = fileURLToPath(
   new URL("../../packages/occ/src/lifecycle/work-authority-ports-v2.ts", import.meta.url),
@@ -567,42 +569,63 @@ test("the callable module exposes no runtime factory or effect path", async () =
 });
 
 test("actual callable declarations preserve the structural distinctions", async (t) => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const directory = mkdtempSync(join(root, "tests/.work-authority-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const fixtures = new Map(
-    cases.map((item, index) => [
-      fileURLToPath(new URL(`./__work_authority_structural_${index}.ts`, import.meta.url)),
-      prelude + item.code,
-    ]),
+    cases.map((item, index) => [join(directory, `consumer-${index}.ts`), prelude + item.code]),
   );
-  const options = {
-    strict: true,
-    noEmit: true,
-    allowImportingTsExtensions: true,
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    skipLibCheck: true,
-    types: ["node"],
-  };
-  const host = ts.createCompilerHost(options);
-  const originalGetSourceFile = host.getSourceFile.bind(host);
-  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
-    fixtures.has(name)
-      ? ts.createSourceFile(name, fixtures.get(name), languageVersion, true)
-      : originalGetSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
-  const program = ts.createProgram([source, ...fixtures.keys()], options, host);
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  const format = (items) =>
-    ts.formatDiagnostics(items, {
-      getCanonicalFileName: (name) => name,
-      getCurrentDirectory: () => process.cwd(),
-      getNewLine: () => "\n",
+  for (const [file, content] of fixtures) writeFileSync(file, content);
+  const project = join(directory, "tsconfig.json");
+  writeFileSync(
+    project,
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        allowImportingTsExtensions: true,
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        skipLibCheck: true,
+        types: ["node"],
+      },
+      files: [source, ...fixtures.keys()],
+    }),
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(root, "node_modules/typescript/bin/tsc"),
+      "--project",
+      project,
+      "--pretty",
+      "false",
+      "--noErrorTruncation",
+    ],
+    { cwd: root, encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  // Exit 1 reports the deliberately rejected consumers. A compiler crash or
+  // configuration error must not count as a successful negative type check.
+  assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+  assert.equal(result.stderr, "");
+  const diagnostics = result.stdout
+    .trim()
+    .split(/\n(?=\S)/)
+    .map((message) => {
+      const match = /^(.+)\(\d+,\d+\): error TS(\d+):/.exec(message);
+      assert.ok(match, `Unexpected compiler output: ${message}`);
+      return { file: resolve(root, match[1]), code: Number(match[2]), message };
     });
-  const outside = diagnostics.filter((item) => !item.file || !fixtures.has(item.file.fileName));
+  const format = (items) => items.map((item) => item.message).join("\n");
+  const outside = diagnostics.filter((item) => !fixtures.has(item.file));
   assert.equal(outside.length, 0, format(outside));
   for (const [index, file] of [...fixtures.keys()].entries()) {
     const item = cases[index];
     await t.test(item.name, () => {
-      const actual = diagnostics.filter((diagnostic) => diagnostic.file?.fileName === file);
+      const actual = diagnostics.filter((diagnostic) => diagnostic.file === file);
       if (item.reject) {
         assert.ok(actual.length > 0, `Expected a real type refusal: ${item.name}`);
         assert.ok(

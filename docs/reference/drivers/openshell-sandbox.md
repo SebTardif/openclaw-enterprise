@@ -11,6 +11,10 @@ OpenShell support is limited to dedicated Codex Harness revisions. Embedded
 OpenClaw Agents fail closed when OpenShell is selected because embedded mode
 would require OpenShell to own the Agent gateway workload too.
 
+The default controller composition does not supply complete
+[workload-profile admission](../workload-profiles.md). Selecting this Driver
+does not supply the missing admission contributors or qualify a live runtime.
+
 ## Ownership model
 
 The Kubernetes Compute Driver remains the orchestration owner:
@@ -112,9 +116,7 @@ drivers:
 ```
 
 The OpenShell gateway must be installed separately before this driver's
-`ensureNamespace` runs. The bundled driver does not install the gateway; the
-real integration test uses an operator-owned Helm wrapper to install it before
-delegating to the driver.
+`ensureNamespace` runs. The bundled driver does not install the gateway.
 
 `gateway.networkPolicyResources` accepts namespace-scoped Kubernetes resource
 objects for provider networking. They are applied into the OpenClaw Namespace
@@ -331,16 +333,14 @@ depends on upstream/provider behavior matching this contract:
 - OpenShell must preserve the Harness's exact audience-bound, short-lived
   projected ServiceAccount token and read-only mount. Its gateway bootstrap
   token is not a substitute. Stock OpenShell `v0.0.113` and `v0.0.116` do not support
-  projected volumes in gateway driver configuration; the real k3d integration
-  uses a test-only, operator-owned Sandbox Pod-template patch until upstream
-  projected-volume support exists.
+  projected volumes in gateway driver configuration. Local verification bridges
+  do not establish production support; see [OpenShell testing](../../testing/openshell.md).
 - OpenShell must preserve all approved Agent workspace PVC subpath mounts
   without falling back to its default workspace claim or mounting the PVC root.
 - OpenShell must support exact environment entries backed by Kubernetes
   `secretKeyRef`, including the startup app-server token Secret. Stock
   OpenShell `v0.0.113` and `v0.0.116` cannot receive those entries through the current gateway
-  API; the real k3d integration uses a test-only credential bridge until
-  upstream secret support exists.
+  API. Local credential bridges do not establish production support.
 - OpenShell gateway authentication must be bound to the trusted caller and the
   requested Sandbox or Pod identity.
 
@@ -348,60 +348,7 @@ If any of these conditions are unavailable, OpenShell-selected deployments must
 fail closed instead of launching an unsandboxed or incorrectly credentialed
 Harness.
 
-## Verification evidence
-
-The [options ownership conformance test](../../../tests/conformance/openshell-options-ownership.test.mjs)
-invokes the actual driver through its supported injected gateway client. It
-checks outgoing launch configuration, stable provisioning and cleanup identity
-after caller mutations, frozen input acceptance, and invalid configuration
-rejection. This test does not execute the native adapter or an upstream gateway.
-
-The [client lifetime conformance test](../../../tests/conformance/openshell-client-lifecycle.test.mjs)
-exercises the actual driver's ownership methods with controlled clients at the
-existing native-client import and injected-client boundaries. A test-local
-native Kubernetes SDK subclass controls only public effect methods to cover
-preparation and cleanup races. These controls exercise driver behavior; they do
-not qualify the Go adapter, subprocess deadlines, native protocol, or a cluster.
-
-The lifetime suite requires Node's `--experimental-test-module-mocks` flag. With
-matching installed workspace dependencies, run the focused files with:
-
-```sh
-node --experimental-test-module-mocks scripts/test-files.mjs --test-concurrency=1 --test-reporter=tap -- tests/conformance/openshell-client-lifecycle.test.mjs tests/conformance/openshell-options-ownership.test.mjs tests/integration/sandbox-driver-startup.test.mjs
-```
-
-The `test` and `test:conformance` scripts supply that flag. The focused
-invocation above supplies it explicitly.
-
-The [native OpenShell package tests](../../../components/runtime-security/openshell/)
-use actual local gRPC servers and TLS certificates to exercise the generated
-wire encoding, create/readback correspondence, ambiguous statuses, cancellation,
-transport authentication, certificate rejection, and sanitized failures. Run
-`go -C components/runtime-security test -race ./openshell/...` with Go 1.26 or
-newer. These exercise the provider protocol, without running an upstream gateway
-or a Kubernetes provider.
-
-The [controller process integration](../../../tests/integration/openshell-native-bridge.test.mjs)
-executes the compiled Go binary and checks the controller's framing, errors and
-cancellation boundary. Build the native executable first. The earlier JavaScript
-protocol suite is superseded; its results are historical only.
-
-[Sandbox startup integration](../../../tests/integration/sandbox-driver-startup.test.mjs),
-[controller lifecycle integration](../../../tests/integration/controller-lifecycle.test.mjs),
-and [PostgreSQL integration](../../../tests/integration/postgres-platform-state.test.mjs)
-cover selection, revision lifecycle, and persistence.
-
-[Real OpenShell integration](../../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs)
-is opt-in through `OCC_TEST_OPENSHELL_K3D_REAL=1` and is skipped without the
-explicit prerequisites.
-
-That test requires a disposable k3d setup, PostgreSQL, OpenShell CLI or Helm
-inputs, real OpenClaw and Codex images, an approved OpenShell RuntimeClass or
-equivalent admission setup, and a real provider credential. It verifies a real
-gateway model turn, provider-owned Harness creation, exact projected workload
-identity, approved mounts and privileges, denied secret exposure, allowed and
-denied tool egress, duplicate reconciliation convergence, cleanup, and
-embedded-mode fail-closed behavior.
+## Troubleshooting
 
 Common fail-closed errors include:
 
@@ -415,6 +362,7 @@ Common fail-closed errors include:
 
 - [Development and production deployment](../../guides/deploy.md)
 
+- [OpenShell testing](../../testing/openshell.md)
 - [SandboxDriver contract](sandbox.md)
 - [ComputeDriver contract](compute.md)
 - [Kubernetes ComputeDriver](kubernetes-compute.md)

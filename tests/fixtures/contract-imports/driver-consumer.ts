@@ -6,7 +6,7 @@ import type { SecretDriver } from "@openclaw-enterprise/contracts/drivers/secret
 import type { IAMDriver } from "@openclaw-enterprise/contracts/drivers/iam";
 import type { SandboxDriver } from "@openclaw-enterprise/contracts/drivers/sandbox";
 import type { ServiceAccountDriver } from "@openclaw-enterprise/contracts/drivers/service-account";
-import type { NativeIAMDriver } from "@openclaw-enterprise/iam";
+import type { NativeIAMDriver } from "../../../packages/iam/src/index.ts";
 import type { KubernetesComputeDriver } from "../../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import type { DockerComputeDriver } from "../../../apps/controller/src/drivers/compute/docker/index.ts";
 import type { KubernetesConfigurationDriver } from "../../../apps/controller/src/drivers/configuration/kubernetes/index.ts";

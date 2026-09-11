@@ -80,7 +80,7 @@ it requires the original lifecycle worker capability and installed fault-work
 compatibility. The dispatcher retains pending responsibility while provider
 fencing is unavailable; it never sends that work to running preparation or
 declares physical stop from a queue result. See [canonical closed gate and fault
-retention](runtime-preparation.md#canonical-closed-gate-and-fault-retention).
+retention](runtime-preparation/gates.md#canonical-closed-gate-and-fault-retention).
 
 Installed deploy work has identity `agent_revision:<revisionId>:reconcile`. That revision-keyed identity cannot represent repeated material lifecycle commands on the same retained revision. The current child-work schema also requires a revision and its admission association. Nullable protective intent, resume and the new handler therefore cannot be silently translated into installed work. The pure correspondence helper reports unsupported transitions rather than constructing an enqueue operation. A real versioned queue codec, constraints, dispatcher and handler must be integrated together before any new capability can enqueue work.
 

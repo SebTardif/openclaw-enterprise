@@ -1,3 +1,8 @@
+import type {
+  AgentRuntimeCredentialsInput,
+  AgentRuntimeCredentialStatus,
+  ComputeDriver,
+} from "@openclaw-enterprise/contracts/drivers/compute";
 import type { Agent, AgentRevision } from "@openclaw-enterprise/contracts/resources/agent";
 import type { HarnessExecutionMode } from "@openclaw-enterprise/contracts/resources/agent";
 import type { ProviderDefinition } from "@openclaw-enterprise/contracts/drivers/provider";
@@ -20,7 +25,8 @@ export const AGENT_REPOSITORIES = {
   mutate: {
     namespaces: ["lockNamespace"],
     agents: ["createAgent", "lockAgent", "updateConfiguration"],
-    configurations: ["findConfiguration"],
+    configurations: ["findConfiguration", "lockConfiguration"],
+    revisions: ["listRevisions"],
     serviceAccounts: ["findServiceAccount"],
     secrets: ["lockSecret"],
   },
@@ -59,11 +65,22 @@ export interface ActiveAgentRevisionSelection {
 }
 
 export interface AgentCommands {
+  provisionAgentRuntimeCredentials(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+    input: AgentRuntimeCredentialsInput,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>>;
   createAgent(principalId: string, input: CreateAgentInput): Promise<Readonly<Agent>>;
   updateAgent(principalId: string, input: UpdateAgentInput): Promise<Readonly<Agent>>;
 }
 
 export interface AgentQueries {
+  getAgentRuntimeCredentialStatus(
+    principalId: string,
+    namespaceId: string,
+    agentId: string,
+  ): Promise<Readonly<AgentRuntimeCredentialStatus>>;
   listAgents(principalId: string, namespaceId: string): Promise<readonly Readonly<Agent>[]>;
   getAgent(principalId: string, namespaceId: string, agentId: string): Promise<Readonly<Agent>>;
   listRevisions(
@@ -95,6 +112,7 @@ export interface AgentServiceOptions {
   readonly repositories: AgentRepositories;
   readonly authorization: Pick<ExactAuthorization, "authorize" | "canRead">;
   readonly providers: ReadonlyMap<string, ProviderDefinition>;
+  readonly runtimeCredentialComputeDriver?: (operation: "status" | "provision") => ComputeDriver;
   readonly assertSecretDriverOwner: (expectedId: string) => void;
   readonly createId: () => string;
   readonly now: () => string;

@@ -113,6 +113,7 @@ test("channel binding administration uses authenticated exact-scope controller r
       configurationId,
       providerId: null,
       executionMode: "embedded",
+      maximumExecutionMs: null,
       createdAt,
     });
   });

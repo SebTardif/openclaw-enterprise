@@ -1,6 +1,9 @@
 import { element, button } from "../dom.mjs";
 import { renderChannels } from "../channels.mjs";
+import { renderWorkspaceFiles } from "./workspace.mjs";
 import { displayDate, shortId, namespacePath, link, message } from "./list.mjs";
+import { createRuntimeCredentialsPanel } from "./credentials.mjs";
+import { createDeploymentPanel } from "./deploy.mjs";
 
 function errorPanel(error, context, retry) {
   if (error.status === 401) {
@@ -44,7 +47,14 @@ export async function renderAgentDetail(context) {
   if (!context.isCurrent()) return;
   context.setTitle(agent.name);
   const selected = url.searchParams.get("revision") ?? agent.activeRevisionId ?? "draft";
-  const selectedTab = url.searchParams.get("tab") === "channels" ? "channels" : "configuration";
+  const tab = url.searchParams.get("tab");
+  const tabsForSelection = [
+    "configuration",
+    "channels",
+    ...(selected === "draft" ? ["credentials"] : []),
+    "workspace",
+  ];
+  const selectedTab = tabsForSelection.includes(tab) ? tab : "configuration";
   const target = (revision = selected, tab = selectedTab) =>
     `agents/${agentId}?revision=${encodeURIComponent(revision)}&tab=${tab}`;
   const change = (revision, tab) => context.navigate(target(revision, tab));
@@ -70,6 +80,8 @@ export async function renderAgentDetail(context) {
   for (const [id, label] of [
     ["configuration", "Configuration"],
     ["channels", "Channels"],
+    ...(selected === "draft" ? [["credentials", "Credentials"]] : []),
+    ["workspace", "Workspace files"],
   ])
     tabs.append(
       button(label, () => change(selected, id), {
@@ -87,6 +99,16 @@ export async function renderAgentDetail(context) {
       "The API supplies no serving observation. Selecting or admitting a revision does not confirm runtime health, completed cutover, or shutdown. An operator must verify the installed runtime separately.",
     ),
   );
+  if (selectedTab === "workspace") {
+    view.replaceChildren(
+      header,
+      identity,
+      serving,
+      tabs,
+      renderWorkspaceFiles(context, agent, path),
+    );
+    return;
+  }
   view.replaceChildren(header, identity, serving, selector, tabs, content);
   const results = await Promise.allSettled([
     request(`${path}/revisions`),
@@ -188,6 +210,27 @@ export async function renderAgentDetail(context) {
   const draft = selected === "draft";
   const values = draft ? snapshot.values : snapshot.configuration;
   const executionMode = draft ? agent.executionMode : snapshot.harness.mode;
+  const operatorCredentials =
+    agent.serviceAccountId !== undefined ||
+    agent.workloadProfileSelection !== undefined ||
+    snapshot.secretBindings?.OPENAI_API_KEY !== undefined;
+  const credentials = draft
+    ? createRuntimeCredentialsPanel({
+        context,
+        path,
+        values,
+        revisionsLoaded: revisionResult.status === "fulfilled",
+        revisionCount: revisions.length,
+        unsupportedReason: operatorCredentials
+          ? "This Agent uses a ServiceAccount, a model Secret binding, or a selected workload profile. Configure its credentials through that operator-managed source. This initial-credential form cannot provision or qualify those credentials."
+          : null,
+      })
+    : null;
+  if (draft) {
+    const deployment = createDeploymentPanel({ context, path, agent, configuration: snapshot });
+    selector.append(deployment.section);
+    if (credentials) void credentials.loadStatus();
+  }
   if (!draft) selector.append(element("p", { className: "resource-id" }, snapshot.id));
   selector.append(
     element(
@@ -233,7 +276,10 @@ export async function renderAgentDetail(context) {
           mutationStarted = true;
           await request(
             `${namespacePath(namespaceId)}/configurations/${encodeURIComponent(snapshot.id)}`,
-            { method: "PATCH", body: { values: updatedValues } },
+            {
+              method: "PATCH",
+              body: { values: updatedValues },
+            },
           );
           if (context.isCurrent()) change("draft", "channels");
         } catch (error) {
@@ -255,6 +301,8 @@ export async function renderAgentDetail(context) {
       },
     });
     content.append(channels);
+  } else if (selectedTab === "credentials" && credentials) {
+    content.append(credentials.section);
   } else {
     const details = [
       ["Execution mode", executionMode === "dedicated" ? "Dedicated" : "Embedded"],

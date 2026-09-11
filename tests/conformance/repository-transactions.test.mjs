@@ -36,7 +36,7 @@ async function initialized(options) {
 
 test("independent factory producer and consumer compile through supported package exports", async () => {
   await promisify(execFile)(process.execPath, [
-    fileURLToPath(import.meta.resolve("typescript/bin/tsc")),
+    fileURLToPath(new URL("./bin/tsc", import.meta.resolve("typescript/package.json"))),
     "--project",
     fileURLToPath(new URL("../fixtures/repository-factories/tsconfig.json", import.meta.url)),
     "--pretty",

@@ -18,7 +18,9 @@ WORKDIR /app
 COPY --from=packages /prepare/node_modules ./node_modules
 COPY --from=packages /prepare/package.json /prepare/package-lock.json ./
 
-RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw \
+RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw /home/node/.codex/generated_images \
+  && chown node:node /home/node/.codex /home/node/.codex/generated_images \
+  && chmod 700 /home/node/.codex /home/node/.codex/generated_images \
   && cp -R node_modules/@openclaw/codex node_modules/openclaw/dist/extensions/codex \
   && cp -R node_modules/@openclaw/slack node_modules/openclaw/dist/extensions/slack \
   && cp -R node_modules/@openclaw/msteams node_modules/openclaw/dist/extensions/msteams \
@@ -31,6 +33,8 @@ RUN mkdir -p node_modules/openclaw/dist/extensions ./plugin-skills /etc/openclaw
   && test -d /app/skills \
   && test ! -L /app/skills \
   && test -d /app/plugin-skills/slack \
+  && test "$(stat -c '%U:%G:%a' /home/node/.codex)" = "node:node:700" \
+  && test "$(stat -c '%U:%G:%a' /home/node/.codex/generated_images)" = "node:node:700" \
   && node /app/openclaw.mjs --version \
   && test "$(codex --version)" = "codex-cli 0.153.0" \
   && test -f /app/dist/extensions/codex/openclaw.plugin.json \

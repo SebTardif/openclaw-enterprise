@@ -2,7 +2,7 @@
 
 This flow describes the current source. The
 [channel reference](../reference/channels.md) owns supported limits,
-[native configuration](../reference/configuration.md#native-channel-configuration)
+[native configuration](../reference/configuration/secrets.md#native-channel-configuration)
 owns configuration syntax, and
 [manual bindings](../reference/channel-bindings.md) owns administrative mapping.
 The independent intake and broker in the
@@ -112,7 +112,7 @@ do not establish a tested drain, compatible termination grace, storage fencing,
 or rollback protocol. The maintenance acceptance still requires real proof of
 shutdown and recovery; these source observations do not demonstrate a runtime
 failure or satisfy that gate. See the
-[maintenance proposal](../../specs/22-channel-hosting-roadmap.md#maintenance-and-recovery-acceptance).
+[maintenance proposal](../../specs/22-channel-hosting-roadmap/m0-acceptance.md#maintenance-and-recovery-acceptance).
 
 Use the [deployment guide](../guides/deploy.md),
 [channel verification boundaries](../reference/channels.md#verify-and-diagnose),

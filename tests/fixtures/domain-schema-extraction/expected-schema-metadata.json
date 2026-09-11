@@ -2,6 +2,7 @@
   "schema": "occ",
   "exports": [
     "account",
+    "accountSecurityRecords",
     "agentLifecycleAdmissions",
     "agentRevisionRuntimeAdmissions",
     "agentRevisions",
@@ -21,6 +22,10 @@
     "credentialInventoryRecords",
     "credentialInventoryRevocationClaims",
     "credentialInventorySnapshots",
+    "delegationOperationHistory",
+    "delegationOperations",
+    "delegationRootHistory",
+    "delegationRoots",
     "gatewayStartupHeads",
     "gatewayStartupOperations",
     "iamAccessBindings",
@@ -37,9 +42,12 @@
     "runtimeAuthorityOperations",
     "runtimeCleanupResponsibilities",
     "runtimeCleanupResponsibilityAllocations",
+    "runtimeEffectGates",
     "runtimePreparationOperations",
     "runtimeServiceTrustRecords",
     "secrets",
+    "securityEventCapacityV1",
+    "securityEventRecordsV1",
     "serviceAccountDriverBindings",
     "serviceAccounts",
     "session",
@@ -52,14 +60,22 @@
     "turnJournalKeys",
     "turnJournalOperations",
     "turnJournalOwners",
+    "turnJournalReplayHeads",
+    "turnJournalReplayLineage",
     "turnJournalReservations",
+    "turnJournalRetiredIdentities",
+    "turnJournalRetirementObservations",
+    "turnJournalRetirementPublications",
     "user",
     "verification",
+    "workloadProfileAdmissionHistory",
+    "workloadProfileAdmissions",
     "workloadProfileCapacity",
+    "workloadProfileInvalidations",
     "workloadProfileOperations"
   ],
-  "tableCount": 55,
-  "completeMetadataSha256": "88c5f8efab51b83938abb61c2cde00822193e307d016568327f4d2cd21680cd2",
+  "tableCount": 71,
+  "completeMetadataSha256": "2375d3e5c5815f918e2d1739cc23ae95ad11f0cdd3d7accf74edd8efb0de7282",
   "tables": {
     "serviceAccountDriverBindings": {
       "schema": "occ",
@@ -1666,6 +1682,25 @@
           "generatedIdentity": null
         },
         {
+          "property": "maximumExecutionMs",
+          "name": "maximum_execution_ms",
+          "sqlType": "bigint",
+          "dataType": "number",
+          "columnType": "PgBigInt53",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "agents_maximum_execution_ms_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
           "property": "executionMode",
           "name": "execution_mode",
           "sqlType": "text",
@@ -1742,6 +1777,25 @@
           "generatedIdentity": null
         },
         {
+          "property": "workloadProfileSelection",
+          "name": "workload_profile_selection",
+          "sqlType": "jsonb",
+          "dataType": "json",
+          "columnType": "PgJsonb",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "agents_workload_profile_selection_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
           "property": "createdAt",
           "name": "created_at",
           "sqlType": "timestamp with time zone",
@@ -1795,6 +1849,13 @@
           }
         },
         {
+          "name": "agents_maximum_execution_ms",
+          "value": {
+            "sql": "\"occ\".\"agents\".\"maximum_execution_ms\" IS NULL OR \"occ\".\"agents\".\"maximum_execution_ms\" BETWEEN 1 AND 9007199254740991",
+            "params": []
+          }
+        },
+        {
           "name": "agents_name_length",
           "value": {
             "sql": "char_length(\"occ\".\"agents\".\"name\") BETWEEN 1 AND 200",
@@ -1812,6 +1873,13 @@
           "name": "agents_provider_id_valid",
           "value": {
             "sql": "\"occ\".\"agents\".\"provider_id\" IS NULL OR (char_length(\"occ\".\"agents\".\"provider_id\") BETWEEN 1 AND 200 AND \"occ\".\"agents\".\"provider_id\" = btrim(\"occ\".\"agents\".\"provider_id\") AND \"occ\".\"agents\".\"provider_id\" !~ '[[:cntrl:]]')",
+            "params": []
+          }
+        },
+        {
+          "name": "agents_workload_profile_selection",
+          "value": {
+            "sql": "\"occ\".\"agents\".\"workload_profile_selection\" IS NULL OR occ.workload_profile_selection_valid_v1(\"occ\".\"agents\".\"workload_profile_selection\")",
             "params": []
           }
         }
@@ -2052,11 +2120,25 @@
         {
           "name": "agent_revisions_admitted_snapshot",
           "value": {
-            "sql": "(\"occ\".\"agent_revisions\".\"admitted_spec\" ?& ARRAY[\n          'configuration_id', 'configuration_kind', 'configuration_generation',\n          'draft_spec', 'harness', 'compute'\n        ])\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"\n          - 'configuration_id' - 'configuration_kind' - 'configuration_generation'\n          - 'draft_spec' - 'harness' - 'compute' - 'sandbox_driver_id'\n          - 'secret_driver_id' - 'secret_bindings' - 'service_account') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_id') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_id') ~ $1\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_kind') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_kind') = 'agent'\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_generation') = 'number'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_generation')::numeric\n          BETWEEN 1 AND 9007199254740991\n        AND mod((\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_generation')::numeric, 1) = 0\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'draft_spec') = 'object'\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') = 'object'\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') ?& ARRAY['id', 'version', 'mode'])\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') - 'id' - 'version' - 'mode') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,id}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,id}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,version}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,version}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,mode}') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,mode}') IN ('embedded', 'dedicated')\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') = 'object'\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') ?& ARRAY['id', 'implementation'])\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') - 'id' - 'implementation') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{compute,id}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{compute,id}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{compute,implementation}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{compute,implementation}'), '') <> ''\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'sandbox_driver_id')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'sandbox_driver_id') = 'string'\n            AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\"->>'sandbox_driver_id'), '') <> ''\n          )\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'secret_driver_id')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'secret_driver_id') = 'string'\n            AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\"->>'secret_driver_id'), '') <> ''\n          )\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'secret_bindings')\n          OR occ.secret_bindings_are_valid(\"occ\".\"agent_revisions\".\"admitted_spec\"->'secret_bindings', \"occ\".\"agent_revisions\".\"namespace_id\")\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'service_account')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') ?& ARRAY['id', 'credential'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') - 'id' - 'credential') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,id}') = 'string'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,id}') ~ $2\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') ?& ARRAY['kind', 'secretRef'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') - 'kind' - 'secretRef') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,kind}') = 'string'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,kind}')\n              IN ('api_key', 'access_token')\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') ?& ARRAY['name', 'key'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') - 'name' - 'key') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef,name}') = 'string'\n            AND char_length(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,name}') BETWEEN 1 AND 253\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,name}') ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef,key}') = 'string'\n            AND char_length(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') BETWEEN 1 AND 253\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') ~ '^[-._a-zA-Z0-9]+$'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') NOT IN ('.', '..')\n          )\n        )",
+            "sql": "(\"occ\".\"agent_revisions\".\"admitted_spec\" ?& ARRAY[\n          'configuration_id', 'configuration_kind', 'configuration_generation',\n          'draft_spec', 'harness', 'compute'\n        ])\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"\n          - 'configuration_id' - 'configuration_kind' - 'configuration_generation'\n          - 'draft_spec' - 'harness' - 'compute' - 'sandbox_driver_id'\n          - 'secret_driver_id' - 'secret_bindings' - 'service_account' - 'credential_workload_selection' - 'workload_profile_use' - 'maximum_execution_ms') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_id') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_id') ~ $1\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_kind') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_kind') = 'agent'\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'configuration_generation') = 'number'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_generation')::numeric\n          BETWEEN 1 AND 9007199254740991\n        AND mod((\"occ\".\"agent_revisions\".\"admitted_spec\"->>'configuration_generation')::numeric, 1) = 0\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'draft_spec') = 'object'\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') = 'object'\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') ?& ARRAY['id', 'version', 'mode'])\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'harness') - 'id' - 'version' - 'mode') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,id}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,id}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,version}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,version}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{harness,mode}') = 'string'\n        AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{harness,mode}') IN ('embedded', 'dedicated')\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') = 'object'\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') ?& ARRAY['id', 'implementation'])\n        AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'compute') - 'id' - 'implementation') = '{}'::jsonb\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{compute,id}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{compute,id}'), '') <> ''\n        AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{compute,implementation}') = 'string'\n        AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{compute,implementation}'), '') <> ''\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'sandbox_driver_id')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'sandbox_driver_id') = 'string'\n            AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\"->>'sandbox_driver_id'), '') <> ''\n          )\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'secret_driver_id')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'secret_driver_id') = 'string'\n            AND COALESCE(btrim(\"occ\".\"agent_revisions\".\"admitted_spec\"->>'secret_driver_id'), '') <> ''\n          )\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'secret_bindings')\n          OR occ.secret_bindings_are_valid(\"occ\".\"agent_revisions\".\"admitted_spec\"->'secret_bindings', \"occ\".\"agent_revisions\".\"namespace_id\")\n        )\n        AND (\n          NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'service_account')\n          OR (\n            jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') ?& ARRAY['id', 'credential'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\"->'service_account') - 'id' - 'credential') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,id}') = 'string'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,id}') ~ $2\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') ?& ARRAY['kind', 'secretRef'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential}') - 'kind' - 'secretRef') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,kind}') = 'string'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,kind}')\n              IN ('api_key', 'access_token')\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') = 'object'\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') ?& ARRAY['name', 'key'])\n            AND ((\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef}') - 'name' - 'key') = '{}'::jsonb\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef,name}') = 'string'\n            AND char_length(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,name}') BETWEEN 1 AND 253\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,name}') ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'\n            AND jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\" #> '{service_account,credential,secretRef,key}') = 'string'\n            AND char_length(\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') BETWEEN 1 AND 253\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') ~ '^[-._a-zA-Z0-9]+$'\n            AND (\"occ\".\"agent_revisions\".\"admitted_spec\" #>> '{service_account,credential,secretRef,key}') NOT IN ('.', '..')\n          )\n        )",
             "params": [
               "^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
               "^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             ]
+          }
+        },
+        {
+          "name": "agent_revisions_credential_selection",
+          "value": {
+            "sql": "NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'credential_workload_selection') OR occ.revision_credential_selection_valid_v1(\"occ\".\"agent_revisions\".\"admitted_spec\"->'credential_workload_selection',\"occ\".\"agent_revisions\".\"namespace_id\",\"occ\".\"agent_revisions\".\"agent_id\",\"occ\".\"agent_revisions\".\"id\")",
+            "params": []
+          }
+        },
+        {
+          "name": "agent_revisions_execution_limit",
+          "value": {
+            "sql": "(\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'maximum_execution_ms') AND CASE\n        WHEN \"occ\".\"agent_revisions\".\"admitted_spec\"->'maximum_execution_ms' = 'null'::jsonb THEN true\n        WHEN jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\"->'maximum_execution_ms') = 'number' THEN\n          (\"occ\".\"agent_revisions\".\"admitted_spec\"->>'maximum_execution_ms')::numeric BETWEEN 1 AND 9007199254740991\n          AND mod((\"occ\".\"agent_revisions\".\"admitted_spec\"->>'maximum_execution_ms')::numeric, 1) = 0\n        ELSE false END",
+            "params": []
           }
         },
         {
@@ -2086,9 +2168,42 @@
             "sql": "jsonb_typeof(\"occ\".\"agent_revisions\".\"admitted_spec\") = 'object'",
             "params": []
           }
+        },
+        {
+          "name": "agent_revisions_workload_profile_use",
+          "value": {
+            "sql": "NOT (\"occ\".\"agent_revisions\".\"admitted_spec\" ? 'workload_profile_use') OR occ.revision_workload_profile_use_valid_v2(\"occ\".\"agent_revisions\".\"admitted_spec\"->'workload_profile_use',\"occ\".\"agent_revisions\".\"namespace_id\")",
+            "params": []
+          }
         }
       ],
-      "indexes": [],
+      "indexes": [
+        {
+          "columns": [
+            {
+              "indexConfig": {
+                "nulls": "last",
+                "order": "asc"
+              },
+              "keyAsName": false,
+              "name": "namespace_id",
+              "type": "PgText"
+            },
+            {
+              "sql": "(\"occ\".\"agent_revisions\".\"admitted_spec\"#>>'{workload_profile_use,admissionRef}')",
+              "params": []
+            }
+          ],
+          "method": "btree",
+          "name": "runtime_revision_profile_use",
+          "only": false,
+          "unique": false,
+          "where": {
+            "sql": "\"occ\".\"agent_revisions\".\"admitted_spec\"->'workload_profile_use' IS NOT NULL",
+            "params": []
+          }
+        }
+      ],
       "foreignKeys": [
         {
           "name": "agent_revisions_agent_owner",
@@ -3317,6 +3432,44 @@
           "generatedIdentity": null
         },
         {
+          "property": "profileWork",
+          "name": "profile_work",
+          "sqlType": "jsonb",
+          "dataType": "json",
+          "columnType": "PgJsonb",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "controller_work_profile_work_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
+          "property": "faultWork",
+          "name": "fault_work",
+          "sqlType": "jsonb",
+          "dataType": "json",
+          "columnType": "PgJsonb",
+          "notNull": false,
+          "primary": false,
+          "hasDefault": false,
+          "default": null,
+          "defaultFn": null,
+          "onUpdateFn": null,
+          "isUnique": false,
+          "uniqueName": "controller_work_fault_work_unique",
+          "uniqueType": null,
+          "enumValues": null,
+          "generated": null,
+          "generatedIdentity": null
+        },
+        {
           "property": "legacyRuntimeTransitionRef",
           "name": "legacy_runtime_transition_ref",
           "sqlType": "text",
@@ -3555,7 +3708,7 @@
         {
           "name": "controller_work_namespace_target_valid",
           "value": {
-            "sql": "(\"occ\".\"controller_work\".\"work_schema_version\" = 0 AND \"occ\".\"controller_work\".\"handler\" IS NULL AND (\n          (\"occ\".\"controller_work\".\"agent_id\" IS NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IN ('ready', 'deleted'))\n          OR (\"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL)))\n        OR (\"occ\".\"controller_work\".\"work_schema_version\" = 1 AND \"occ\".\"controller_work\".\"handler\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"handler\" = 'ReconcileAgentLifecycleV1'\n          AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL)",
+            "sql": "(\"occ\".\"controller_work\".\"work_schema_version\" = 0 AND \"occ\".\"controller_work\".\"handler\" IS NULL AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL AND (\n          (\"occ\".\"controller_work\".\"agent_id\" IS NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IN ('ready', 'deleted'))\n          OR (\"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL)))\n        OR (\"occ\".\"controller_work\".\"work_schema_version\" IN (1,2,3) AND \"occ\".\"controller_work\".\"handler\" IS NOT NULL\n          AND ((\"occ\".\"controller_work\".\"work_schema_version\"=1 AND \"occ\".\"controller_work\".\"handler\"='ReconcileAgentLifecycleV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL)\n            OR (\"occ\".\"controller_work\".\"work_schema_version\"=2 AND \"occ\".\"controller_work\".\"handler\"='ReconcileRuntimeFaultV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NOT NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL)\n            OR (\"occ\".\"controller_work\".\"work_schema_version\"=3 AND \"occ\".\"controller_work\".\"handler\"='ReconcileRuntimeProfileV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NOT NULL))\n          AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL)",
             "params": []
           }
         },
@@ -3569,7 +3722,7 @@
         {
           "name": "controller_work_runtime_pair_valid",
           "value": {
-            "sql": "(\"occ\".\"controller_work\".\"work_schema_version\" = 0 AND \"occ\".\"controller_work\".\"handler\" IS NULL AND (\n          (\"occ\".\"controller_work\".\"runtime_transition_ref\" IS NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NULL)\n          OR (\"occ\".\"controller_work\".\"runtime_transition_ref\" IS NOT NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL\n            AND \"occ\".\"controller_work\".\"runtime_transition_ref\" ~ $1\n            AND \"occ\".\"controller_work\".\"lifecycle_generation\" BETWEEN 1 AND 9007199254740991)))\n        OR (\"occ\".\"controller_work\".\"work_schema_version\" = 1 AND \"occ\".\"controller_work\".\"handler\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"handler\" = 'ReconcileAgentLifecycleV1'\n          AND \"occ\".\"controller_work\".\"runtime_transition_ref\" IS NOT NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL\n          AND \"occ\".\"controller_work\".\"runtime_transition_ref\" ~ $2\n          AND \"occ\".\"controller_work\".\"lifecycle_generation\" BETWEEN 1 AND 9007199254740991)",
+            "sql": "(\"occ\".\"controller_work\".\"work_schema_version\" = 0 AND \"occ\".\"controller_work\".\"handler\" IS NULL AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL AND (\n          (\"occ\".\"controller_work\".\"runtime_transition_ref\" IS NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NULL)\n          OR (\"occ\".\"controller_work\".\"runtime_transition_ref\" IS NOT NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL AND \"occ\".\"controller_work\".\"revision_id\" IS NOT NULL\n            AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL\n            AND \"occ\".\"controller_work\".\"runtime_transition_ref\" ~ $1\n            AND \"occ\".\"controller_work\".\"lifecycle_generation\" BETWEEN 1 AND 9007199254740991)))\n        OR (\"occ\".\"controller_work\".\"work_schema_version\" IN (1,2,3) AND \"occ\".\"controller_work\".\"handler\" IS NOT NULL\n          AND ((\"occ\".\"controller_work\".\"work_schema_version\"=1 AND \"occ\".\"controller_work\".\"handler\"='ReconcileAgentLifecycleV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL)\n            OR (\"occ\".\"controller_work\".\"work_schema_version\"=2 AND \"occ\".\"controller_work\".\"handler\"='ReconcileRuntimeFaultV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NOT NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NULL)\n            OR (\"occ\".\"controller_work\".\"work_schema_version\"=3 AND \"occ\".\"controller_work\".\"handler\"='ReconcileRuntimeProfileV1' AND \"occ\".\"controller_work\".\"fault_work\" IS NULL AND \"occ\".\"controller_work\".\"profile_work\" IS NOT NULL))\n          AND \"occ\".\"controller_work\".\"runtime_transition_ref\" IS NOT NULL AND \"occ\".\"controller_work\".\"lifecycle_generation\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"agent_id\" IS NOT NULL\n          AND \"occ\".\"controller_work\".\"namespace_target\" IS NULL\n          AND \"occ\".\"controller_work\".\"runtime_transition_ref\" ~ $2\n          AND \"occ\".\"controller_work\".\"lifecycle_generation\" BETWEEN 1 AND 9007199254740991)",
             "params": [
               "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
               "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -4183,6 +4336,54 @@
       "onDelete": "restrict"
     },
     {
+      "source": "delegationRoots",
+      "name": "delegation_roots_namespace_id_agent_id_agents_namespace_id_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "delegation_roots"
+      },
+      "columns": ["namespace_id", "agent_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "gatewayStartupHeads",
+      "name": "gateway_startup_heads_agent_owner",
+      "table": {
+        "schema": "occ",
+        "name": "gateway_startup_heads"
+      },
+      "columns": ["namespace_ref", "agent_ref"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "gatewayStartupOperations",
+      "name": "gateway_startup_operations_agent_owner",
+      "table": {
+        "schema": "occ",
+        "name": "gateway_startup_operations"
+      },
+      "columns": ["namespace_ref", "agent_ref"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "source": "gatewayStartupOperations",
       "name": "gateway_startup_operations_audit_event_id_audit_events_id_fk",
       "table": {
@@ -4407,6 +4608,54 @@
       "onDelete": "restrict"
     },
     {
+      "source": "runtimeCleanupResponsibilities",
+      "name": "runtime_cleanup_responsibilities_fault_audit_id_audit_events_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_cleanup_responsibilities"
+      },
+      "columns": ["fault_audit_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "audit_events"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "runtimeEffectGates",
+      "name": "runtime_effect_gates_agent_owner",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_effect_gates"
+      },
+      "columns": ["namespace_id", "agent_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "runtimeEffectGates",
+      "name": "runtime_effect_gates_revision_owner",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_effect_gates"
+      },
+      "columns": ["namespace_id", "agent_id", "revision_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agent_revisions"
+      },
+      "foreignColumns": ["namespace_id", "agent_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "source": "runtimeServiceTrustRecords",
       "name": "runtime_service_trust_agent",
       "table": {
@@ -4531,6 +4780,70 @@
         "name": "channel_installations"
       },
       "foreignColumns": ["installation_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "turnJournalReplayHeads",
+      "name": "turn_journal_replay_heads_agent",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_heads"
+      },
+      "columns": ["namespace_id", "agent_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "turnJournalReplayHeads",
+      "name": "turn_journal_replay_heads_channel",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_heads"
+      },
+      "columns": ["installation_id", "channel_installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "channel_installations"
+      },
+      "foreignColumns": ["installation_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "turnJournalReplayLineage",
+      "name": "turn_journal_replay_lineage_agent",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_lineage"
+      },
+      "columns": ["namespace_id", "agent_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "source": "turnJournalRetirementPublications",
+      "name": "turn_journal_retirement_publications_agent",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_retirement_publications"
+      },
+      "columns": ["namespace_id", "agent_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "agents"
+      },
+      "foreignColumns": ["namespace_id", "id"],
       "onUpdate": "restrict",
       "onDelete": "restrict"
     }

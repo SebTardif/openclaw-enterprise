@@ -163,7 +163,7 @@ node --test tests/integration/postgres-repository-lease.test.mjs
 The suite requires `OCC_REPOSITORY_LEASE_TEST_DATABASE_URL` selecting its own empty,
 migrated loopback database named `openclaw_inventory_*`, with the restricted
 `occ_app` role. It never resets a database and has no general connection fallback.
-Database preparation follows the existing [test settings](settings.md#postgresql-test-environment).
+Database preparation follows the existing [test settings](../testing/postgresql.md#postgresql-test-environment).
 
 The suite exercises the actual inventory queries/transitions and original
 `PostgresPlatformState` transaction against PostgreSQL. Storage observations and

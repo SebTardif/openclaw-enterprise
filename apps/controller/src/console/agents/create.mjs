@@ -1,4 +1,5 @@
 import { element, button } from "../dom.mjs";
+import { renderChannels } from "../channels.mjs";
 import { link, message, namespacePath } from "./list.mjs";
 
 function field(label, input, hint) {
@@ -76,6 +77,7 @@ function configurationTemplate(mode) {
 export function renderCreateAgent(context) {
   const { view, request, namespaceId } = context;
   context.setTitle("Create Agent");
+  const formId = "create-agent-form";
   const name = element("input", {
     id: "agent-name",
     name: "name",
@@ -104,13 +106,21 @@ export function renderCreateAgent(context) {
     template = JSON.stringify(configurationTemplate(mode.value), null, 2);
     configuration.value = template;
     configuration.setCustomValidity("");
+    feedback.textContent = "";
+    renderChannelEditor();
   });
   mode.addEventListener("change", () => {
     const untouched = configuration.value === template;
     template = JSON.stringify(configurationTemplate(mode.value), null, 2);
     if (untouched) configuration.value = template;
+    feedback.textContent = "";
+    renderChannelEditor();
   });
-  configuration.addEventListener("input", () => configuration.setCustomValidity(""));
+  configuration.addEventListener("input", () => {
+    configuration.setCustomValidity("");
+    feedback.textContent = "";
+    renderChannelEditor();
+  });
 
   const provider = element(
     "select",
@@ -135,10 +145,21 @@ export function renderCreateAgent(context) {
   let savedConfiguration;
   const feedback = element("p", { className: "error", role: "alert" });
   const savedStatus = element("p", { className: "hint", role: "status" });
-  const submit = element("button", { type: "submit", className: "primary" }, "Create Agent");
+  const submit = element(
+    "button",
+    { type: "submit", form: formId, className: "primary" },
+    "Create Agent",
+  );
+  const actions = element(
+    "div",
+    { className: "form-actions" },
+    button("Cancel", () => context.navigate("agents")),
+    submit,
+  );
+  const channelEditor = element("div", { className: "create-channels" });
   const form = element(
     "form",
-    { className: "agent-form agent-card" },
+    { id: formId, className: "agent-form agent-card" },
     field("Agent name", name, "Unique within this Namespace."),
     field(
       "Execution mode",
@@ -152,21 +173,97 @@ export function renderCreateAgent(context) {
     field(
       "Configuration JSON",
       configuration,
-      "Starter template applied. Edit the sample model and settings before saving. Your operator must provision the referenced credentials.",
+      "Starter template applied. Edit the sample model and settings before saving. After creation, use the Agent Credentials tab for OpenAI and Slack credentials. Microsoft Teams credentials remain operator-managed.",
     ),
     reset,
-    savedStatus,
-    feedback,
-    element(
-      "div",
-      { className: "form-actions" },
-      button("Cancel", () => context.navigate("agents")),
-      submit,
-    ),
   );
+  function parseConfiguration(reportInvalid = false) {
+    try {
+      const values = JSON.parse(configuration.value);
+      if (values === null || Array.isArray(values) || typeof values !== "object") throw new Error();
+      return values;
+    } catch {
+      if (reportInvalid) {
+        configuration.setCustomValidity("Enter a valid JSON object.");
+        configuration.reportValidity();
+      }
+      return undefined;
+    }
+  }
+  function hasEnabledChannel(values) {
+    const channels = values?.channels;
+    if (channels === null || typeof channels !== "object" || Array.isArray(channels)) return false;
+    return ["slack", "msteams"].some((id) => {
+      const config = channels[id];
+      return (
+        config !== null &&
+        typeof config === "object" &&
+        !Array.isArray(config) &&
+        config.enabled !== false
+      );
+    });
+  }
+  function renderChannelEditor() {
+    const values = parseConfiguration();
+    if (values === undefined) {
+      channelEditor.replaceChildren(
+        element(
+          "section",
+          { className: "channels-section" },
+          element("div", { className: "channel-heading" }, element("h2", {}, "Channels")),
+          element(
+            "p",
+            { className: "error" },
+            "Enter a valid Configuration JSON object before configuring channels.",
+          ),
+        ),
+      );
+      return;
+    }
+    const channels = renderChannels({
+      values,
+      executionMode: mode.value,
+      readOnly: Boolean(savedConfiguration),
+      copy: {
+        editableDescription:
+          "Stage Slack and Microsoft Teams settings into this Configuration JSON. They are saved when you create the Agent.",
+        drawerNotice:
+          "Channel settings apply to this form’s Configuration JSON. After creation, use the Agent Credentials tab for Slack credentials. Microsoft Teams credentials remain operator-managed.",
+        drawerFootnote: "These settings are not persisted until you create the Agent.",
+        saveLabel: "Apply channel settings",
+        readOnlyDescription:
+          "This saved initial Configuration is fixed for this create form. Retrying Agent creation will reuse these channel settings.",
+        readOnlyCardMessage: "This saved initial Configuration cannot be edited from this form.",
+      },
+      onSave: async (updatedValues) => {
+        if (!context.isCurrent() || pending || outcomeUnknown) {
+          throw new Error("This view has changed. Reopen Agent creation before applying channels.");
+        }
+        configuration.value = JSON.stringify(updatedValues, null, 2);
+        configuration.setCustomValidity("");
+        setTimeout(() => {
+          if (context.isCurrent()) renderChannelEditor();
+        }, 0);
+      },
+    });
+    const modeWarning =
+      mode.value === "embedded" && hasEnabledChannel(values)
+        ? element(
+            "p",
+            { className: "error" },
+            "Channels require Dedicated execution. Select Dedicated or disable configured channels before creating the Agent.",
+          )
+        : null;
+    channelEditor.replaceChildren(...[channels, modeWarning].filter(Boolean));
+    updateControls();
+  }
   const updateControls = () => {
-    for (const node of form.querySelectorAll("button, input, select, textarea"))
-      node.disabled = pending;
+    for (const root of [form, actions]) {
+      for (const node of root.querySelectorAll("button, input, select, textarea"))
+        node.disabled = pending;
+    }
+    channelEditor.toggleAttribute("inert", pending);
+    channelEditor.setAttribute("aria-busy", pending ? "true" : "false");
     provider.disabled = pending || !providersLoaded;
     account.disabled = pending || !accountsLoaded;
     reset.disabled = pending || Boolean(savedConfiguration);
@@ -174,6 +271,7 @@ export function renderCreateAgent(context) {
     configuration.readOnly = Boolean(savedConfiguration);
     submit.disabled = pending || outcomeUnknown;
   };
+  renderChannelEditor();
   for (const [path, control, status, label] of [
     ["/providers", provider, providerStatus, "Providers"],
     [`${namespacePath(namespaceId)}/service-accounts`, account, accountStatus, "Service accounts"],
@@ -216,13 +314,11 @@ export function renderCreateAgent(context) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pending || outcomeUnknown || !form.reportValidity()) return;
-    let values;
-    try {
-      values = JSON.parse(configuration.value);
-      if (values === null || Array.isArray(values) || typeof values !== "object") throw new Error();
-    } catch {
-      configuration.setCustomValidity("Enter a valid JSON object.");
-      configuration.reportValidity();
+    const values = parseConfiguration(true);
+    if (values === undefined) return;
+    if (mode.value === "embedded" && hasEnabledChannel(values)) {
+      feedback.textContent =
+        "Channels require Dedicated execution. Select Dedicated or disable configured channels before creating the Agent.";
       return;
     }
     const body = {
@@ -242,6 +338,7 @@ export function renderCreateAgent(context) {
         });
         if (!context.isCurrent()) return;
         savedStatus.textContent = `Configuration saved: ${savedConfiguration.id}. Its JSON and execution mode are now fixed for this form; retrying Agent creation will reuse it.`;
+        renderChannelEditor();
       }
       const created = await request(`${namespacePath(namespaceId)}/agents`, {
         method: "POST",
@@ -275,5 +372,19 @@ export function renderCreateAgent(context) {
       "Save a Configuration and an Agent in this Namespace. Creation does not deploy it or create an AgentRevision.",
     ),
     form,
+    channelEditor,
+    element(
+      "section",
+      { className: "agent-card" },
+      element("h2", {}, "Workspace files"),
+      element(
+        "p",
+        { className: "muted" },
+        "After deployment, open Workspace files on the Agent to read or create AGENTS.md, SOUL.md, IDENTITY.md, and USER.md. File access requires an active revision and a reachable gateway; initial files cannot be saved during Agent creation.",
+      ),
+    ),
+    savedStatus,
+    feedback,
+    actions,
   );
 }

@@ -38,24 +38,36 @@
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "docker:test": "node --test tests/integration/docker-compute-real.test.mjs",
-    "test": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --experimental-test-module-mocks --test tests/conformance/*.test.mjs tests/integration/*.test.mjs tests/unit/retained-store-preflight.test.mjs tests/unit/same-build-recovery-preflight.test.mjs tests/runtime/direct-compute-interruption/runner.test.mjs",
+    "test": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --experimental-test-module-mocks --experimental-vm-modules --test tests/conformance/*.test.mjs tests/integration/*.test.mjs tests/unit/retained-store-preflight.test.mjs tests/unit/same-build-recovery-preflight.test.mjs tests/runtime/direct-compute-interruption/runner.test.mjs",
     "test:conformance": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --experimental-test-module-mocks --test tests/conformance/*.test.mjs tests/unit/retained-store-preflight.test.mjs tests/unit/same-build-recovery-preflight.test.mjs tests/runtime/direct-compute-interruption/runner.test.mjs",
-    "test:integration": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --test tests/integration/*.test.mjs",
+    "test:integration": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --experimental-vm-modules --test tests/integration/*.test.mjs",
     "test:console-browser": "node --test tests/browser/*.test.mjs",
     "test:postgres": "node scripts/verify-workspace-boundary.mjs && node scripts/verify-module-boundaries.mjs && node --test --test-concurrency=1 tests/integration/postgres-*.test.mjs",
     "build:native": "go -C components/runtime-security build -o ./bin/oce-runtime-security ./cmd/oce-runtime-security",
-    "test:native": "go -C components/runtime-security test -race ./... && go -C components/runtime-security vet ./..."
+    "test:native": "go -C components/runtime-security test -race ./... && go -C components/runtime-security vet ./...",
+    "docs:build": "node scripts/docs-site/build.mjs && scripts/docs-site/node_modules/.bin/pagefind --site dist/docs",
+    "docs:dev": "npm run docs:build && node scripts/docs-site/serve.mjs",
+    "docs:check-length": "node scripts/docs-site/word-count.mjs",
+    "docs:check": "node scripts/docs-site/word-count.mjs && node --test tests/docs/*.test.mjs",
+    "docs:install": "pnpm --dir scripts/docs-site --ignore-workspace install --frozen-lockfile --ignore-scripts"
   },
   "devDependencies": {
+    "@kubernetes/client-node": "2.0.0",
     "@openclaw-enterprise/contracts": "workspace:*",
     "@openclaw-enterprise/occ": "workspace:*",
-    "@types/node": "24.13.3",
+    "@openclaw-enterprise/utils": "workspace:*",
+    "@types/node": "26.4.1",
     "@types/pg": "8.21.0",
     "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "fastify": "5.12.1",
+    "openclaw": "link:.build/upstream-sdk/openclaw",
     "pg": "8.23.0",
+    "pino": "10.3.1",
     "playwright": "1.62.1",
     "prettier": "3.9.4",
     "typebox": "1.3.6",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2",
+    "typescript-compiler-api": "npm:typescript@6.0.3"
   }
 }

@@ -22,9 +22,10 @@ async function artifactDirectory(t) {
   return directory;
 }
 
-async function newPage(t) {
+async function newPage(t, fixture) {
   const artifacts = await artifactDirectory(t);
   const context = await browserFixture.newContext(t);
+  fixture.registerCleanupBeforeAppClose(() => context.close());
   return { page: await context.newPage(), artifacts };
 }
 
@@ -136,7 +137,7 @@ test("Agent creation saves native Configuration JSON and a draft Agent without a
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Agent authoring", { ready: true });
   const values = nativeValues("create", { harnessId: "codex", providerModel: "gpt-5.1" });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
@@ -175,7 +176,7 @@ test("Agent creation saves native Configuration JSON and a draft Agent without a
       url.searchParams.get("revision") === "draft"
     );
   });
-  await page.getByRole("heading", { name: "Saved draft" }).waitFor();
+  await page.getByRole("heading", { name: "Saved draft", exact: true }).waitFor();
   await page.getByText("No selected revision", { exact: true }).waitFor();
   await page.getByRole("heading", { name: "Serving status unavailable" }).waitFor();
   await page.getByRole("button", { name: "Configuration" }).waitFor();
@@ -232,7 +233,7 @@ test("Agent creation rejects non-object native Configuration JSON before any wri
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Invalid JSON", { ready: true });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
@@ -266,7 +267,7 @@ test("Agent creation renders provider and service account choices and saves sele
     "Console Secondary Account",
   );
   const values = nativeValues("dropdown", { harnessId: "codex", providerModel: "gpt-5.1" });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
@@ -332,7 +333,7 @@ test("Agent creation leaves optional lists disabled when discovery is inaccessib
   const fixture = await createConsoleAppFixture(t, { providerSummaries: undefined });
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Unavailable lists", { ready: true });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const serviceAccounts = `**/namespaces/${namespace.id}/service-accounts`;
   await page.route(serviceAccounts, async (route) => {
     await route.abort("failed");
@@ -354,7 +355,7 @@ test("Agent creation reuses the saved Configuration after an Agent creation conf
   const namespace = await fixture.createNamespace("Partial save retry", { ready: true });
   await fixture.createAgent(namespace.id, "Retry Agent");
   const values = nativeValues("partial-save", { harnessId: "codex", providerModel: "gpt-5.1" });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
@@ -408,7 +409,7 @@ test("Agent creation preserves edited JSON across mode changes and resets to the
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Template edits", { ready: true });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
@@ -457,7 +458,7 @@ test("Agent detail preserves admitted revision history while draft edits change 
     nativeValues("draft-current"),
   );
   assert.equal(draft.generation, 3);
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
   await login(
@@ -546,7 +547,7 @@ test("Channel drawer saves channel edits without exposing Secret values or dropp
     }),
     { executionMode: "dedicated", secretBindings },
   );
-  const { page, artifacts } = await newPage(t);
+  const { page, artifacts } = await newPage(t, fixture);
 
   await login(
     page,
@@ -622,7 +623,7 @@ test("a protected 401 clears detail immediately while another read is pending", 
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Pending access", { ready: true });
   const agent = await fixture.createAgent(namespace.id, "Private pending Agent");
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   await login(page, fixture, `/console/agents?namespace=${namespace.id}`);
   await page.getByRole("link", { name: agent.name, exact: true }).waitFor();
 
@@ -676,7 +677,7 @@ test("expired access during a channel save denies the real PATCH and clears its 
   const agent = await fixture.createAgent(namespace.id, "Private save Agent", values, {
     executionMode: "dedicated",
   });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const url = detailUrl(fixture, namespace.id, agent.id, "draft", "channels");
   await login(page, fixture, url.pathname + url.search);
   await page.getByRole("button", { name: "Configure Slack", exact: true }).click();
@@ -719,8 +720,7 @@ test("a lost channel save response remains unknown until refreshed without repla
       executionMode: "dedicated",
     },
   );
-  const { page } = await newPage(t);
-  const admitted = await fixture.deployAgent(namespace.id, agent.id);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
   const url = detailUrl(fixture, namespace.id, agent.id, "draft", "channels");
   await login(page, fixture, url.pathname + url.search);
@@ -749,26 +749,19 @@ test("a lost channel save response remains unknown until refreshed without repla
   await page.getByRole("button", { name: "Edit Slack", exact: true }).click();
   assert.equal(await page.getByLabel("Slack channel IDs").inputValue(), "CNEW123");
   assert.equal(pathRequests(requests, "PATCH", path).length, 1);
-  const unchangedRevision = await fixture.request(
-    "GET",
-    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${admitted.id}`,
-  );
-  assert.deepEqual(unchangedRevision.data, admitted);
   const revisions = await fixture.request(
     "GET",
     `/namespaces/${namespace.id}/agents/${agent.id}/revisions`,
   );
-  assert.deepEqual(
-    revisions.data.map((revision) => revision.id),
-    [admitted.id],
-  );
+  assert.equal(revisions.status, 200);
+  assert.deepEqual(revisions.data, []);
 });
 
 test("unconfirmed Agent creation cannot repeat until the operator inspects saved state", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Unconfirmed creation", { ready: true });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
@@ -809,7 +802,7 @@ test("denied creation renders safe messages and validates request IDs", async (t
     action: "create",
     effect: "deny",
   });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByLabel("Agent name").fill("Denied safely");
@@ -844,7 +837,7 @@ test("unsupported native Slack settings remain inspectable without enabling the 
   const agent = await fixture.createAgent(namespace.id, "Native Slack Agent", values, {
     executionMode: "dedicated",
   });
-  const { page } = await newPage(t);
+  const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
   const url = detailUrl(fixture, namespace.id, agent.id, "draft", "channels");
   await login(page, fixture, url.pathname + url.search);

@@ -249,7 +249,7 @@ function nativeConfiguration(
     uniqueStrings(tools.allow, 3, ["read", "write", "edit"]);
     literal(object(tools.fs, ["workspaceOnly"]).workspaceOnly, [true]);
   }
-  object(value.logging, ["level", "consoleLevel", "consoleStyle", "redactSensitive"]);
+  object(value.logging, ["level", "consoleLevel", "consoleStyle"]);
   const diagnostics = object(value.diagnostics, ["otel"]);
   object(diagnostics.otel, ["logs"]);
   const values = frozenValues(value);

@@ -14,6 +14,18 @@ const groups = ["dependencies", "devDependencies", "optionalDependencies"];
 const setupAction =
   "Worktree setup owner: prepare dependencies separately with pinned pnpm and the frozen lockfile; rerun this check directly with Node.";
 
+function npmAlias(specifier) {
+  if (!specifier.startsWith("npm:")) return undefined;
+  const number = "(?:0|[1-9][0-9]*)";
+  const prerelease = `(?:${number}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
+  const exactVersion = `${number}\\.${number}\\.${number}(?:-${prerelease}(?:\\.${prerelease})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?`;
+  const match = new RegExp(
+    `^npm:((?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*)@(${exactVersion})$`,
+  ).exec(specifier);
+  if (!match) throw new Error("Expected an npm alias with an exact version");
+  return { name: match[1], version: match[2] };
+}
+
 // Accept only the generated importer subset used by this workspace. Unknown
 // layouts fail explicitly instead of silently checking part of the graph.
 function importers(text) {
@@ -174,7 +186,8 @@ export function checkDevelopmentSetup(root) {
         for (const [name, specifier] of Object.entries(manifest[group] ?? {})) {
           expected[path][group][name] = specifier;
           const id = `${path}:${name}`;
-          if (lock[path]?.[group]?.[name]?.specifier !== specifier)
+          const lockEntry = lock[path]?.[group]?.[name];
+          if (lockEntry?.specifier !== specifier)
             add(
               `${id}:lock`,
               "stale",
@@ -182,9 +195,23 @@ export function checkDevelopmentSetup(root) {
               "Change owner: update and review the lockfile separately before preparing dependencies.",
             );
           try {
+            const alias = npmAlias(specifier);
+            const lockVersion = lockEntry?.version?.split("(")[0];
+            if (
+              alias &&
+              lockEntry?.specifier === specifier &&
+              lockVersion !== `${alias.name}@${alias.version}`
+            )
+              add(
+                `${id}:lock`,
+                "stale",
+                "Lockfile alias target differs from the exact manifest declaration.",
+                "Change owner: update and review the lockfile separately before preparing dependencies.",
+              );
             const actual = realpathSync(join(root, path, "node_modules", name));
             const installed = json(join(actual, "package.json"));
-            if (installed.name !== name) throw new Error("Package identity mismatch");
+            if (installed.name !== (alias?.name ?? name))
+              throw new Error("Package identity mismatch");
             let intended;
             if (specifier.startsWith("workspace:"))
               intended = names.has(name) ? join(root, names.get(name)) : undefined;
@@ -206,12 +233,16 @@ export function checkDevelopmentSetup(root) {
                 continue;
               }
             } else {
-              const version = lock[path]?.[group]?.[name]?.version?.split("(")[0];
-              if (!version || installed.version !== version) {
+              const version = alias ? `${alias.name}@${installed.version}` : installed.version;
+              if (
+                !lockVersion ||
+                version !== lockVersion ||
+                (alias && installed.version !== alias.version)
+              ) {
                 add(
                   id,
                   "stale",
-                  "Installed package version differs from the current lockfile.",
+                  "Installed package version differs from the current lockfile or exact alias declaration.",
                   setupAction,
                 );
                 continue;

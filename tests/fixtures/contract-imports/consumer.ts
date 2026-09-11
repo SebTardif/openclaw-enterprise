@@ -11,7 +11,7 @@ import type { ServiceAccount } from "@openclaw-enterprise/contracts/resources/se
 import type { Identity } from "@openclaw-enterprise/contracts/identity/identity";
 import type { AuthorizationRequest } from "@openclaw-enterprise/contracts/identity/authorization";
 import type { AuditEvent } from "@openclaw-enterprise/contracts/identity/audit";
-import type { AuditEventFactory } from "@openclaw-enterprise/audit";
+import type { AuditEventFactory } from "../../../packages/audit/src/index.ts";
 import { produceRevision } from "./producer.ts";
 
 type Implements<Contract, Implementation extends Contract> = Implementation;

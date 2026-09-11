@@ -25,16 +25,20 @@ test("neutral runtime exports preserve the original executable scripts exactly",
   }
 });
 
-test("Docker and Kubernetes harness consume the neutral runtime module", async () => {
+test("Docker and Kubernetes fixed renderer consume the neutral runtime module", async () => {
   const computeRoot = new URL("../../apps/controller/src/drivers/compute/", import.meta.url);
   for (const [path, runtimePath] of [
     ["docker/index.ts", "../runtime/runtime-entrypoints.ts"],
-    ["kubernetes/resources/harness.ts", "../../runtime/runtime-entrypoints.ts"],
+    ["kubernetes/resources/fixed-workload-renderer.ts", "../../runtime/runtime-entrypoints.ts"],
   ]) {
     const source = await readFile(new URL(path, computeRoot), "utf8");
     assert.ok(source.includes('from "' + runtimePath + '";'), path);
     assert.doesNotMatch(source, /from "(?:\.\/|\.\.\/kubernetes\/)runtime-entrypoints\.ts";/);
   }
+  // The harness facade delegates to the fixed renderer, which owns the shared scripts.
+  const harness = await readFile(new URL("kubernetes/resources/harness.ts", computeRoot), "utf8");
+  assert.match(harness, /export\s*\{[^}]*\}\s*from "\.\/fixed-workload-renderer\.ts";/);
+  assert.doesNotMatch(harness, /runtime-entrypoints\.ts/);
   const kubernetesIndex = await readFile(new URL("kubernetes/index.ts", computeRoot), "utf8");
   assert.doesNotMatch(kubernetesIndex, /runtime-entrypoints\.ts/);
 });

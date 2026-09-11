@@ -136,5 +136,5 @@ producers, bounded authority/provider calls, cleanup responsibility and a curren
 operator allocation. Missing prerequisites stay blocked or unrun. Any bridge to
 an evidence bundle must preserve these measured-versus-prepared distinctions and
 original source clocks. See the [runtime effect contract](runtime-effects.md) for
-the accepting-boundary semantics and the [testing guide](../testing.md) for actual
+the accepting-boundary semantics and the [testing guide](../testing/README.md) for actual
 runtime environment requirements.

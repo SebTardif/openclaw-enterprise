@@ -18,7 +18,7 @@ remain unavailable.
 
 ## Start with the existing deployment contract
 
-The [deployment guide](deploy.md#submit-an-identified-deployment) uses the
+The [deployment guide](deploy/production-agents.md#submit-an-identified-deployment) uses the
 [identified V2 command](../reference/lifecycle-deploy-v2.md). Before the first
 submission, retain one lowercase UUID-v4 `operationRef` and the complete command
 in a protected file. The body requires `schemaVersion: 2`,

@@ -4,6 +4,7 @@ import type {
   KubernetesObject,
   V1ConfigMap,
   V1ObjectMeta,
+  V1Secret,
   V1ServiceAccount,
 } from "@kubernetes/client-node";
 import { asRecord, numericErrorStatus, sha256Hex } from "@openclaw-enterprise/utils";
@@ -30,6 +31,7 @@ export interface ManagedKubernetesObject<Kind extends ReadableResourceKind = Man
   extends
     KubernetesObject,
     Pick<V1ConfigMap, "binaryData" | "data" | "immutable">,
+    Pick<V1Secret, "type">,
     Pick<V1ServiceAccount, "automountServiceAccountToken"> {
   readonly apiVersion: string;
   readonly kind: Kind;

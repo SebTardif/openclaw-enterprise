@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
-updated: 2026-09-01
-last_updated_session: codex/01a05f89-ff1c-7643-a77f-7e1e3aed9e5f
+updated: 2026-09-08
+last_updated_session: codex/01a082e5-f8cf-7400-8080-b1bec07d2f2c
 ---
 
 # Platform console request flow
@@ -12,7 +12,7 @@ Opening `/console/` loads the controller's static browser client, resolves a
 cookie session, and reads authorized resources. This trace follows the Agents
 page through Namespace selection, Agent creation, detail revision selection, and
 saved channel draft edits, then covers the Provider branch and logout. It stops
-at rendered state or a submitted API mutation; deployment, rollback, deletion,
+at rendered state or a submitted API mutation; rollback, deletion,
 and live gateway health remain outside the console flow. The
 [console reference](../reference/console.md) owns user-visible behavior; the API
 and IAM retain resource authority.
@@ -142,41 +142,11 @@ the Configuration ID and locks its JSON and execution mode; an explicit Agent re
 Configuration. No write retries automatically, and creation alone does not admit
 a revision or start runtime work.
 
-### 4. Render draft, revision, or channels
+### 4–6. Edit the Agent and access runtime files
 
-`apps/controller/src/console/agents/detail.mjs:renderAgentDetail`
+[Console Agent editing and runtime requests](platform-console/agent-editing.md) traces draft/revision rendering, channel changes, credential provisioning, and workspace reads/writes. Each request returns through the response-ordering checks below.
 
-The detail page reads the Agent, revision list, and either the saved draft
-Configuration or the selected AgentRevision. `revision=draft` reads the current
-Configuration referenced by the Agent. `revision=<id>` reads that immutable
-snapshot. The Selected revision badge is derived from `activeRevisionId`; the
-newest revision and the viewed snapshot can both differ from that pointer.
-Serving status stays explicitly unavailable because these API responses provide
-no serving observation. Revision snapshots
-are read-only and do not expose rollback, edit, deploy, or live-health controls.
-Agent deletion is unavailable because the API has no Agent delete operation.
-
-`apps/controller/src/console/channels.mjs:renderChannels` renders supported
-Slack and Microsoft Teams channel settings for the saved draft only. Slack uses
-fixed unresolved `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` environment references;
-Teams uses fixed unresolved `MSTEAMS_APP_PASSWORD`. The editor requires
-dedicated execution for enabled channels and may refuse native documents that it
-cannot round-trip, including non-Socket Slack settings, non-standard credential
-references, mixed Slack mention settings, and unsupported plugin shapes.
-
-Saving channels first rereads the Agent and Configuration, then checks that the
-Agent still references the same Configuration generation. The subsequent PATCH
-sends `{ values: updatedValues }` and omits `secretBindings`, so the backend
-retains existing bindings. This client-side generation check detects common
-stale-editor cases but is not atomic lost-update protection; the API accepts the
-last valid writer.
-An interrupted or unavailable PATCH reply keeps the result unknown and blocks
-another channel write until Refresh. Draft channel disablement changes only
-Configuration values; it does not stop a running Agent. The
-[operator workflow](operator-workflow.md) records the executable management
-commands and the lifecycle procedures still unavailable in this API.
-
-### 5. Commit only the current response, or clear the view
+### 7. Commit only the current response, or clear the view
 
 `apps/controller/src/console/console.mjs:loadPage`, `logout`
 
@@ -196,6 +166,26 @@ login. An unconfirmed logout stays blocked with Retry. The
 [authentication flow](local-password-authentication.md) owns server revocation;
 this client never infers it from a network error.
 
+## Deploy the saved draft
+
+The saved-draft detail view gates **Deploy saved draft** on an applicable saved
+ServiceAccount and exact workload-profile selection. It requires persistent browser
+storage with strict IndexedDB durability, then reads the current Agent,
+Configuration and lifecycle head through their authorized APIs. It compares the
+viewed inputs and retains one exact identified V2 command before one POST. If
+storage or required reads are unavailable, submission remains unavailable and the
+operator follows the CLI handoff.
+
+The accepted-operation receipt is admission evidence, not a serving revision or
+workspace-health result. An uncertain response or interrupted reservation retains
+the original command and blocks another submission. **Read original deployment**
+reads its exact operation with current authorization. Preparing another command
+requires confirmed original acceptance and compare-and-delete of only the active
+local pointer; command history remains. The server's atomic saved-draft and
+lifecycle comparisons remain authoritative. See the
+[console deployment contract](../reference/console/create-and-deploy.md#deploy-a-saved-draft)
+for durable storage and recovery behavior.
+
 ## Debugging and Verification
 
 - Use the displayed request ID to associate API failures with controller logs.
@@ -208,7 +198,7 @@ this client never infers it from a network error.
   runtime dispatch, worker lease handling, or Compute Driver effects.
 - API tests cover safe discovery, permission boundaries, empty versus missing
   wiring, static MIME/allowlisting, and unchanged API JSON errors. See
-  [Testing](../testing.md) for commands and the image smoke boundary.
+  [Testing](../testing/README.md) for commands and the image smoke boundary.
 
 ## Related docs
 

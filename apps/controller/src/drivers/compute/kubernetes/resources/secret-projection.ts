@@ -16,6 +16,10 @@ export const AGENT_TRANSPORT_TOKEN_KEY = "app-server-token";
 
 export const GATEWAY_TOKEN_KEY = "gateway-token";
 
+export const GATEWAY_PASSWORD_KEY = "gateway-password";
+
+export const OPENCLAW_GATEWAY_PASSWORD = "OPENCLAW_GATEWAY_PASSWORD";
+
 export const MODEL_API_KEY = "OPENAI_API_KEY";
 
 export const SERVICE_ACCOUNT_TOKEN_KEY = "token";

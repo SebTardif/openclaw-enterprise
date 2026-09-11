@@ -13,7 +13,7 @@ import {
   rename,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -157,6 +157,10 @@ async function formattingFixture(t) {
   await writeFile(join(root, ".prettierrc.json"), '{ "printWidth": 100 }\n');
   await writeFile(join(root, ".prettierignore"), "node_modules/\n");
   await mkdir(join(root, "apps"));
+  await mkdir(join(root, ".github/workflows"), { recursive: true });
+  await mkdir(join(root, ".github/actions/example"), { recursive: true });
+  await writeFile(join(root, ".github/workflows/check.yml"), "name: Checks\n");
+  await writeFile(join(root, ".github/actions/example/action.yml"), "name: Example\n");
   await mkdir(join(root, "docs/reference"), { recursive: true });
   await writeFile(join(root, "apps/example.mjs"), "const answer = 42;\n");
   await writeFile(join(root, "docs/guide.md"), "# Guide\n");
@@ -167,6 +171,13 @@ async function formattingFixture(t) {
     join(root, "node_modules/prettier"),
     "dir",
   );
+  await mkdir(join(root, "bin"));
+  const packageManagerPath = join(root, "bin/pnpm");
+  await writeFile(
+    packageManagerPath,
+    '#!/bin/sh\nprintf "%s\\n" "$@" > "$PACKAGE_MANAGER_INVOCATION_LOG"\nexit 97\n',
+  );
+  await chmod(packageManagerPath, 0o755);
   return root;
 }
 
@@ -187,6 +198,11 @@ function pushCheck(root, commits) {
   return spawnSync(join(root, ".git/hooks/pre-push"), [], {
     cwd: root,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${join(root, "bin")}${delimiter}${process.env.PATH ?? ""}`,
+      PACKAGE_MANAGER_INVOCATION_LOG: join(root, "pnpm-invocation.log"),
+    },
     input: commits
       .map((oid, i) => `refs/heads/test${i} ${oid} refs/heads/test${i} ${"0".repeat(40)}\n`)
       .join(""),
@@ -232,6 +248,15 @@ test("native hook checks every outgoing tip independently of dirty worktree and 
   await writeFile(join(root, "docs/guide.md"), "#   Bad heading\n");
   await writeFile(join(root, "apps/page.html"), "<div    class = 'test'><p>content</p></div>\n");
   await writeFile(join(root, "apps/style.css"), "div{color:red}\n");
+  await writeFile(join(root, "apps/example.cjs"), "module.exports={value:42};\n");
+  await writeFile(
+    join(root, ".github/workflows/check.yml"),
+    "name: Checks\non: [ push,pull_request ]\n",
+  );
+  await writeFile(
+    join(root, ".github/actions/example/action.yml"),
+    "name: Example\nruns: {using: composite,steps: []}\n",
+  );
   // Archive attributes cannot hide committed files from the formatter snapshot.
   await writeFile(join(root, ".gitattributes"), "docs/guide.md export-ignore\n");
   const bad = commit(root);
@@ -242,6 +267,9 @@ test("native hook checks every outgoing tip independently of dirty worktree and 
   assert.match(result.stderr, /docs\/guide.md/);
   assert.match(result.stderr, /apps\/page.html/);
   assert.match(result.stderr, /apps\/style.css/);
+  assert.match(result.stderr, /apps\/example.cjs/);
+  assert.match(result.stderr, /\.github\/workflows\/check.yml/);
+  assert.match(result.stderr, /\.github\/actions\/example\/action.yml/);
   // A dirty file must neither rescue a bad committed tip nor reject a good tip.
   await writeFile(join(root, "docs/guide.md"), "#   Another bad heading\n");
   result = pushCheck(root, [good]);
@@ -258,6 +286,7 @@ test("native hook checks every outgoing tip independently of dirty worktree and 
   result = pushCheck(root, [good]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /installed Prettier executable is unavailable/);
+  await assert.rejects(stat(join(root, "pnpm-invocation.log")), { code: "ENOENT" });
 });
 
 async function configuredPluginFixture(t, configuration) {
@@ -340,4 +369,114 @@ test("focused writes reject file paths whose parent symlink escapes the worktree
   assert.equal(result.status, 1);
   assert.match(result.stderr, /outside this worktree/);
   assert.equal(await readFile(join(outside, "escaped.mjs"), "utf8"), content);
+});
+
+test("root instruction alias checks canonical worktree and outgoing bytes", async (t) => {
+  const root = await formattingFixture(t);
+  await writeFile(join(root, "AGENTS.md"), "# Instructions\n");
+  await symlink("AGENTS.md", join(root, "CLAUDE.md"));
+  let result = format(root, "--write");
+  assert.equal(result.status, 0, result.stderr);
+  result = format(root, "--check");
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stderr, /symlink|symbolic link/i);
+  result = format(root, "--check", "CLAUDE.md");
+  assert.equal(result.status, 0, result.stderr);
+  const good = commit(root);
+  assert.equal(installHooks(root).status, 0);
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 0, result.stderr);
+
+  // Both full and alias-focused checks must actually inspect canonical bytes.
+  await writeFile(join(root, "AGENTS.md"), "#   Bad instructions\n");
+  for (const paths of [[], ["CLAUDE.md"]]) {
+    result = format(root, "--check", ...paths);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /AGENTS\.md/);
+  }
+  const bad = commit(root);
+  assert.equal(format(root, "--write", "CLAUDE.md").status, 0);
+  assert.equal(await readFile(join(root, "AGENTS.md"), "utf8"), "# Bad instructions\n");
+  // A dirty canonical repair cannot rescue the committed alias target.
+  result = pushCheck(root, [bad]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /AGENTS\.md/);
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 0, result.stderr);
+  // A dirty unsafe alias must not invalidate the safe alias in a good tip.
+  await rm(join(root, "CLAUDE.md"));
+  await symlink("../AGENTS.md", join(root, "CLAUDE.md"));
+  result = pushCheck(root, [good]);
+  assert.equal(result.status, 0, result.stderr);
+  await assert.rejects(stat(join(root, "pnpm-invocation.log")), { code: "ENOENT" });
+});
+
+test("outgoing instruction alias must have the exact target and a regular canonical blob", async (t) => {
+  const root = await formattingFixture(t);
+  await writeFile(join(root, "AGENTS.md"), "# Instructions\n");
+  await symlink("AGENTS.md", join(root, "CLAUDE.md"));
+  assert.equal(format(root, "--write").status, 0);
+  const good = commit(root);
+  assert.equal(installHooks(root).status, 0);
+  for (const target of ["../AGENTS.md", "/tmp/outside.md", "docs/guide.md"]) {
+    await rm(join(root, "CLAUDE.md"));
+    await symlink(target, join(root, "CLAUDE.md"));
+    const bad = commit(root);
+    // Restore the safe worktree alias; only the outgoing Git blob is evidence.
+    await rm(join(root, "CLAUDE.md"));
+    await symlink("AGENTS.md", join(root, "CLAUDE.md"));
+    const result = pushCheck(root, [bad]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing outgoing formatter input symlink: CLAUDE\.md/);
+    git(root, ["reset", "--hard", good]);
+  }
+  for (const canonical of ["symlink", "missing"]) {
+    await rm(join(root, "AGENTS.md"));
+    if (canonical === "symlink") await symlink("docs/guide.md", join(root, "AGENTS.md"));
+    const bad = commit(root);
+    git(root, ["reset", "--hard", good]);
+    const result = pushCheck(root, [bad]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Refusing outgoing formatter input symlink: (AGENTS|CLAUDE)\.md/);
+  }
+  await symlink("guide.md", join(root, "docs/CLAUDE.md"));
+  const result = pushCheck(root, [commit(root)]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Refusing outgoing formatter input symlink: docs\/CLAUDE\.md/);
+  await assert.rejects(stat(join(root, "pnpm-invocation.log")), { code: "ENOENT" });
+});
+
+test("worktree instruction aliases reject escapes, chains, missing targets and nested aliases", async (t) => {
+  const root = await formattingFixture(t);
+  const outside = await mkdtemp(join(tmpdir(), "formatter-instructions-outside-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const outsideFile = join(outside, "AGENTS.md");
+  const content = "#   Outside instructions\n";
+  await writeFile(outsideFile, content);
+  await writeFile(join(root, "AGENTS.md"), "# Instructions\n");
+  for (const target of [outsideFile, "../AGENTS.md", "docs/guide.md"]) {
+    await symlink(target, join(root, "CLAUDE.md"));
+    for (const paths of [[], ["CLAUDE.md"]]) {
+      const result = format(root, "--write", ...paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /regular formatting input: CLAUDE\.md/);
+    }
+    await rm(join(root, "CLAUDE.md"));
+  }
+  await symlink("AGENTS.md", join(root, "CLAUDE.md"));
+  await rm(join(root, "AGENTS.md"));
+  // Even a chain that remains inside the worktree is outside the exception.
+  for (const target of [outsideFile, "docs/guide.md", undefined]) {
+    if (target) await symlink(target, join(root, "AGENTS.md"));
+    for (const paths of [[], ["CLAUDE.md"]]) {
+      const result = format(root, "--write", ...paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /regular formatting input: (AGENTS|CLAUDE)\.md/);
+    }
+    if (target) await rm(join(root, "AGENTS.md"));
+  }
+  await rm(join(root, "CLAUDE.md"));
+  await symlink("guide.md", join(root, "docs/CLAUDE.md"));
+  assert.equal(format(root, "--write").status, 1);
+  assert.equal(await readFile(outsideFile, "utf8"), content);
 });

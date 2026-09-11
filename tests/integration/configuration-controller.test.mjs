@@ -356,7 +356,9 @@ test("Configuration authorization failures target the exact Configuration resour
   assert.equal(context.auditSink.events.at(-1).resource.id, created.body.data.id);
 });
 
-test("Configuration deletion rejects an Agent reference and deployments retain immutable snapshots", async () => {
+// TODO: Add successful V2 snapshot admission coverage when this fixture has genuine
+// request custody, a saved admitted workload profile, and its required owners.
+test("Configuration deletion rejects an Agent reference and historical revisions retain immutable snapshots", async () => {
   const computeDriver = {
     id: "compute-configuration-integration",
     capability: "compute",
@@ -397,27 +399,56 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
   assert.equal(referenced.status, 409);
   assert.equal(referenced.body.error.code, "RESOURCE_CONFLICT");
 
-  // Admission requires a ready Namespace; revision snapshots remain immutable independently.
-  await context.controller.transact((state) =>
-    state.namespaces.transitionNamespaceStatus(namespace.id, "provisioning", "ready"),
-  );
-  const deployed = await request(
+  // The retired bodyless deploy request cannot create a revision or runtime intent.
+  const rejected = await request(
     context.app,
     "POST",
     `/namespaces/${namespace.id}/agents/${agent.body.data.id}/deploy`,
   );
-  assert.equal(deployed.status, 202, JSON.stringify(deployed.body));
-  assert.equal(deployed.body.data.configurationId, configurationId);
-  assert.equal(deployed.body.data.configurationKind, "agent");
-  assert.equal(deployed.body.data.configurationGeneration, 1);
+  assert.equal(rejected.status, 400, JSON.stringify(rejected.body));
+  assert.equal(rejected.body.error.code, "INVALID_REQUEST");
   assert.deepEqual(
-    deployed.body.data.configuration,
+    await context.controller.transact((state) =>
+      state.revisions.listRevisions(namespace.id, agent.body.data.id),
+    ),
+    [],
+  );
+
+  // Seed retained history through the real repository with the exact Agent owner.
+  // It has no profile, runtime admission, or lifecycle head and proves no current deployment.
+  const snapshotValues = structuredClone(admitLoggingConfiguration(initialValues, "info"));
+  const retainedRevision = await context.controller.transact(async (state) => {
+    await state.namespaces.transitionNamespaceStatus(namespace.id, "provisioning", "ready");
+    const owner = await state.agents.findAgent(namespace.id, agent.body.data.id);
+    assert.ok(owner);
+    return state.revisions.createRevision({
+      id: `rev_${randomUUID()}`,
+      namespaceId: namespace.id,
+      agentId: owner.id,
+      revision: 1,
+      maximumExecutionMs: owner.maximumExecutionMs,
+      providerId: owner.providerId,
+      configurationId,
+      configurationKind: created.body.data.kind,
+      configurationGeneration: created.body.data.generation,
+      configuration: snapshotValues,
+      harness: { ...resolveApprovedDevelopmentHarness("openclaw", "embedded"), mode: "embedded" },
+      compute: { id: computeDriver.id, implementation: computeDriver.implementation },
+      servicePrincipalId: owner.servicePrincipalId,
+      createdAt: new Date().toISOString(),
+    });
+  });
+  assert.equal(retainedRevision.configurationId, configurationId);
+  assert.equal(retainedRevision.configurationKind, "agent");
+  assert.equal(retainedRevision.configurationGeneration, 1);
+  assert.deepEqual(
+    retainedRevision.configuration,
     admitLoggingConfiguration(initialValues, "info"),
   );
 
-  // Admission recursively detaches the model reference and every plugin array element.
-  initialValues.models.providers.openai.apiKey.id = "MUTATED_AFTER_ADMISSION";
-  initialValues.plugins.entries.knowledge.config.thresholds[0] = 99;
+  // Repository persistence detaches nested SecretRefs and plugin array elements.
+  snapshotValues.models.providers.openai.apiKey.id = "MUTATED_AFTER_PERSISTENCE";
+  snapshotValues.plugins.entries.knowledge.config.thresholds[0] = 99;
   const expectedHistorical = createOpenClawConfiguration();
 
   const updated = await request(context.app, "PATCH", `${collection}/${configurationId}`, {
@@ -436,7 +467,7 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
   const historical = await request(
     context.app,
     "GET",
-    `/namespaces/${namespace.id}/agents/${agent.body.data.id}/revisions/${deployed.body.data.id}`,
+    `/namespaces/${namespace.id}/agents/${agent.body.data.id}/revisions/${retainedRevision.id}`,
   );
   assert.equal(historical.status, 200);
   assert.equal(historical.body.data.configurationGeneration, 1);
@@ -444,6 +475,15 @@ test("Configuration deletion rejects an Agent reference and deployments retain i
     historical.body.data.configuration,
     admitLoggingConfiguration(expectedHistorical, "info"),
   );
+  const persisted = await context.controller.transact(async (state) => ({
+    revisions: await state.revisions.listRevisions(namespace.id, agent.body.data.id),
+    head: await state.runtimeAssignments.findRuntimeIntentHead({
+      namespaceId: namespace.id,
+      agentId: agent.body.data.id,
+    }),
+  }));
+  assert.deepEqual(persisted.revisions, [retainedRevision]);
+  assert.equal(persisted.head, undefined);
 });
 
 test("Configuration operations fail closed when no ConfigurationDriver is selected", async () => {

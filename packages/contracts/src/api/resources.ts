@@ -1,6 +1,10 @@
 import { Type } from "typebox";
 export {
   CreateAgentBody,
+  AgentRuntimeCredentialsBody,
+  AgentRuntimeCredentialStatusSchema,
+  AgentRuntimeCredentialResponse,
+  type AgentRuntimeCredentialStatusWire,
   UpdateAgentBody,
   AgentSchema,
   AgentResponse,

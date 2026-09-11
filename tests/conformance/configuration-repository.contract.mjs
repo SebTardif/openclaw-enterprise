@@ -33,6 +33,7 @@ export async function assertConfigurationRepositoryClosed(
   repository,
   configuration,
   writable = true,
+  closedMessage = "The platform transaction is closed.",
 ) {
   const { namespaceId, id, generation } = configuration;
   const operations = [() => repository.findConfiguration(namespaceId, id)];
@@ -44,9 +45,10 @@ export async function assertConfigurationRepositoryClosed(
       () => repository.deleteConfiguration(namespaceId, id),
     );
   for (const operation of operations)
-    await assert.rejects(operation(), {
-      name: "ScopeViolationError",
-      message: "The platform transaction is closed.",
+    await assert.rejects(operation(), (error) => {
+      assert.ok(error instanceof ScopeViolationError);
+      assert.equal(error.message, closedMessage);
+      return true;
     });
 }
 
@@ -96,7 +98,13 @@ export async function verifyConfigurationRepositoryBootstrap(store) {
       undefined,
     );
   });
-  await assertConfigurationRepositoryClosed(retained, configuration);
+  // Aggregate mutations close at the outer lifecycle admission boundary.
+  await assertConfigurationRepositoryClosed(
+    retained,
+    configuration,
+    true,
+    "The lifecycle transaction is closed.",
+  );
 }
 
 export async function verifyConfigurationRepositoryOwnership(store) {
@@ -403,7 +411,13 @@ export async function verifyConfigurationRepositoryLifetime(store) {
       { status: "fulfilled", value: { ...bound, generation: 2 } },
       { status: "fulfilled", value: agent },
     ]);
-    await assertConfigurationRepositoryClosed(retained, configuration);
+    // Aggregate mutations close at the outer lifecycle admission boundary.
+    await assertConfigurationRepositoryClosed(
+      retained,
+      configuration,
+      true,
+      "The lifecycle transaction is closed.",
+    );
     let read;
     await store.read(async (s) => {
       read = s.configurations;

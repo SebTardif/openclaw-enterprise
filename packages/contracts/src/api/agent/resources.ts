@@ -16,6 +16,7 @@ import {
   NamespaceId,
   ProviderId,
   RevisionId,
+  RuntimeCredentialValue,
   SecretBindings,
   ServiceAccountCredentialSchema,
   ServiceAccountId,
@@ -51,6 +52,22 @@ export const UpdateAgentBody = Type.Object(
   { additionalProperties: false },
 );
 
+export const AgentRuntimeCredentialsBody = Type.Object(
+  {
+    modelApiKey: Type.Optional(RuntimeCredentialValue),
+    slack: Type.Optional(
+      Type.Object(
+        {
+          appToken: RuntimeCredentialValue,
+          botToken: RuntimeCredentialValue,
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export const AgentSchema = Type.Object(
   {
     id: AgentId,
@@ -66,6 +83,20 @@ export const AgentSchema = Type.Object(
     createdAt: Timestamp,
   },
   { additionalProperties: false },
+);
+
+export const AgentRuntimeCredentialStatusSchema = Type.Object(
+  {
+    transportConfigured: Type.Boolean(),
+    modelConfigured: Type.Boolean(),
+    slackConfigured: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentRuntimeCredentialResponse = Type.Object(
+  { data: AgentRuntimeCredentialStatusSchema, meta: Meta },
+  { $id: "AgentRuntimeCredentialResponse", additionalProperties: false },
 );
 
 export const AgentResponse = Type.Object(
@@ -143,3 +174,9 @@ export type AgentResponse = Type.Static<typeof AgentResponse>;
 export type AgentListResponse = Type.Static<typeof AgentListResponse>;
 export type AgentRevisionResponse = Type.Static<typeof AgentRevisionResponse>;
 export type AgentRevisionListResponse = Type.Static<typeof AgentRevisionListResponse>;
+
+export type AgentRuntimeCredentialsBody = Type.Static<typeof AgentRuntimeCredentialsBody>;
+export type AgentRuntimeCredentialStatusWire = Type.Static<
+  typeof AgentRuntimeCredentialStatusSchema
+>;
+export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCredentialResponse>;

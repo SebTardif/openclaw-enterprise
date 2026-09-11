@@ -96,4 +96,4 @@ ownership, whole-Agent reservation, canonical execution-attempt ownership,
 retention rules and runtime fencing. There is no database, live channel,
 model, runtime, or cancellation coverage in this helper's tests. See the
 [platform design](../design.md) for the surrounding architecture and the
-[testing guide](../testing.md) for integration verification.
+[testing guide](../testing/README.md) for integration verification.

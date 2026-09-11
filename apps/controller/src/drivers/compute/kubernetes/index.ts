@@ -11,7 +11,12 @@ import {
   KubernetesWorkloadProfileCapability,
   type KubernetesRendererSource,
 } from "./workload-profile-capability.ts";
-import { KubernetesOwnership, OwnershipFailure, verifyNamespaceOwnership } from "./ownership.ts";
+import {
+  KubernetesOwnership,
+  OwnershipFailure,
+  verifyNamespaceOwnership,
+  verifyOwnership,
+} from "./ownership.ts";
 export { kubernetesNamespaceName, resolveKubernetesNamespace } from "./ownership.ts";
 import type {
   KubernetesRecord,
@@ -73,9 +78,17 @@ import type { SharedWorkspaceRole } from "./resources/storage.ts";
 import { CHANNEL_REQUIREMENTS } from "./resources/channel-policy.ts";
 import type { ChannelRequirements } from "./resources/channel-policy.ts";
 import { channelProxy } from "./resources/channel-policy.ts";
-import { SERVICE_ACCOUNT_TOKEN_KEY } from "./resources/secret-projection.ts";
+import {
+  AGENT_TRANSPORT_TOKEN_KEY,
+  GATEWAY_TOKEN_KEY,
+  GATEWAY_PASSWORD_KEY,
+  MODEL_API_KEY,
+  SERVICE_ACCOUNT_TOKEN_KEY,
+} from "./resources/secret-projection.ts";
 import { SERVICE_ACCOUNT_WORKSPACE_KEY } from "./resources/secret-projection.ts";
 import { asRecord, immutableCopy, numericErrorStatus, sha256Hex } from "@openclaw-enterprise/utils";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { DependencyUnavailableError, ResourceConflictError } from "@openclaw-enterprise/occ";
 import { isAbsolute } from "node:path";
 import type {
   AppsV1Api,
@@ -90,6 +103,7 @@ import type {
 import type {
   AgentRevision,
   ComputeDriver,
+  ComputeAgentBinding,
   ComputeReadiness,
   ComputeRevisionContext,
   Driver,
@@ -113,6 +127,20 @@ import type {
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
+
+export interface AgentRuntimeCredentialsInput {
+  readonly modelApiKey?: string;
+  readonly slack?: {
+    readonly appToken: string;
+    readonly botToken: string;
+  };
+}
+
+export interface AgentRuntimeCredentialStatus {
+  readonly transportConfigured: boolean;
+  readonly modelConfigured: boolean;
+  readonly slackConfigured: boolean;
+}
 
 interface KubernetesApiClients {
   readonly core: CoreV1Api;
@@ -168,6 +196,29 @@ export interface KubernetesComputeDriverOptions {
   };
   readonly gatewayRouting?: KubernetesGatewayRoutingOptions;
 }
+
+type RuntimeCredentialGroup = "transport" | "model" | "slack";
+
+interface RuntimeCredentialSecretSpec {
+  readonly group: RuntimeCredentialGroup;
+  readonly name: string;
+  readonly keys: readonly string[];
+}
+
+interface RuntimeCredentialContext {
+  readonly namespaceId: string;
+  readonly namespace: string;
+  readonly agentId: string;
+  readonly suffix: string;
+  readonly ownership: Ownership;
+  readonly specs: {
+    readonly transport: RuntimeCredentialSecretSpec;
+    readonly model: RuntimeCredentialSecretSpec;
+    readonly slack?: RuntimeCredentialSecretSpec;
+  };
+}
+
+const MAX_RUNTIME_CREDENTIAL_BYTES = 65_536;
 
 const APPLY_CONTENT_TYPE = "application/apply-patch+yaml";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -268,6 +319,12 @@ function validateKubernetesResourceName(value: string, description: string): voi
   ) {
     throw new ConfigurationFailure(`${description} must be a DNS-safe Kubernetes resource name.`);
   }
+}
+
+function labelsToSelector(labels: Readonly<Record<string, string>>): string {
+  return Object.entries(labels)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(",");
 }
 
 export class KubernetesComputeDriver implements ComputeDriver {
@@ -509,6 +566,20 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     if (options.runtime !== undefined) {
       const { transportSecretPrefix, modelSecretPrefix, channels } = options.runtime;
+      const runtimeProperties = asRecord(
+        KubernetesComputeDriver.configurationSchema.properties.runtime.properties,
+      );
+      if (runtimeProperties === undefined) {
+        throw new ConfigurationFailure("Kubernetes runtime configuration schema is invalid.");
+      }
+      const runtimeKeys = new Set(Object.keys(runtimeProperties));
+      for (const key of Object.keys(options.runtime)) {
+        if (!runtimeKeys.has(key)) {
+          throw new ConfigurationFailure(
+            `The Kubernetes runtime configuration contains unsupported option ${key}.`,
+          );
+        }
+      }
       required(transportSecretPrefix, "Agent transport Secret name prefix");
       required(modelSecretPrefix, "Agent model Secret name prefix");
       required(options.runtime.gatewayStorageClassName, "SQLite-compatible gateway storage class");
@@ -931,6 +1002,96 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const routing = this.options.gatewayRouting;
     if (routing === undefined) return undefined;
     return `wss://${this.gatewayRoutingHostname(routing)}${this.gatewayRoutePath(revision)}`;
+  }
+
+  async getAgentRuntimeCredentialStatus(
+    binding: ComputeAgentBinding,
+  ): Promise<AgentRuntimeCredentialStatus> {
+    return this.withRuntimeCredentialErrors(async () => {
+      const context = await this.runtimeCredentialContext(binding);
+      const observed = await this.readRuntimeCredentialSecrets(context);
+      return this.runtimeCredentialStatus(observed);
+    });
+  }
+
+  async provisionAgentRuntimeCredentials(
+    binding: ComputeAgentBinding,
+    input: AgentRuntimeCredentialsInput,
+  ): Promise<AgentRuntimeCredentialStatus> {
+    return this.withRuntimeCredentialErrors(async () => {
+      const credentials = this.validRuntimeCredentialInput(input);
+      const context = await this.runtimeCredentialContext(binding, credentials.slack !== undefined);
+      const observed = await this.readRuntimeCredentialSecrets(context);
+      const status = this.runtimeCredentialStatus(observed);
+      if (status.modelConfigured === false && credentials.modelApiKey === undefined) {
+        throw new DependencyUnavailableError("The Agent model credential is not configured.");
+      }
+      if (status.modelConfigured && credentials.modelApiKey !== undefined) {
+        this.requireExactRuntimeCredentialBytes(
+          observed.model,
+          MODEL_API_KEY,
+          credentials.modelApiKey,
+        );
+      }
+      if (context.specs.slack !== undefined && status.slackConfigured && credentials.slack) {
+        this.requireExactRuntimeCredentialBytes(
+          observed.slack,
+          "SLACK_APP_TOKEN",
+          credentials.slack.appToken,
+        );
+        this.requireExactRuntimeCredentialBytes(
+          observed.slack,
+          "SLACK_BOT_TOKEN",
+          credentials.slack.botToken,
+        );
+      }
+
+      await this.assertNoAgentRuntimeDeployments(context);
+
+      const writes: Array<{
+        readonly spec: RuntimeCredentialSecretSpec;
+        readonly values: Readonly<Record<string, string>>;
+      }> = [];
+      if (!status.transportConfigured) {
+        writes.push({
+          spec: context.specs.transport,
+          values: {
+            [AGENT_TRANSPORT_TOKEN_KEY]: this.generateRuntimeCredentialToken(),
+            [GATEWAY_TOKEN_KEY]: this.generateRuntimeCredentialToken(),
+            [GATEWAY_PASSWORD_KEY]: this.generateRuntimeCredentialToken(),
+          },
+        });
+      }
+      if (!status.modelConfigured && credentials.modelApiKey !== undefined) {
+        writes.push({
+          spec: context.specs.model,
+          values: { [MODEL_API_KEY]: credentials.modelApiKey },
+        });
+      }
+      if (
+        context.specs.slack !== undefined &&
+        !status.slackConfigured &&
+        credentials.slack !== undefined
+      ) {
+        writes.push({
+          spec: context.specs.slack,
+          values: {
+            SLACK_APP_TOKEN: credentials.slack.appToken,
+            SLACK_BOT_TOKEN: credentials.slack.botToken,
+          },
+        });
+      }
+
+      for (const write of writes) {
+        await this.createRuntimeCredentialSecret(context, write.spec, write.values);
+      }
+
+      return {
+        transportConfigured: true,
+        modelConfigured: true,
+        slackConfigured: status.slackConfigured || credentials.slack !== undefined,
+      };
+    });
   }
 
   async storeServiceAccountCredential(input: {
@@ -1839,6 +2000,315 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespaceId: string,
   ): Promise<{ readonly name: string; readonly external: boolean }> {
     return this.ownership.resolveNamespace(namespaceId);
+  }
+
+  private validRuntimeCredentialInput(
+    input: AgentRuntimeCredentialsInput,
+  ): AgentRuntimeCredentialsInput {
+    const value = asRecord(input) ?? {};
+    const modelApiKey =
+      value.modelApiKey === undefined
+        ? undefined
+        : this.runtimeCredentialValue(value.modelApiKey, "Agent model credential");
+    const slackRecord = value.slack === undefined ? undefined : asRecord(value.slack);
+    if (value.slack !== undefined && slackRecord === undefined) {
+      throw new DependencyUnavailableError("The Agent Slack credentials are incomplete.");
+    }
+    const slack =
+      slackRecord === undefined
+        ? undefined
+        : {
+            appToken: this.runtimeCredentialValue(
+              slackRecord.appToken,
+              "Agent Slack app credential",
+            ),
+            botToken: this.runtimeCredentialValue(
+              slackRecord.botToken,
+              "Agent Slack bot credential",
+            ),
+          };
+    return { ...(modelApiKey === undefined ? {} : { modelApiKey }), ...(slack ? { slack } : {}) };
+  }
+
+  private runtimeCredentialValue(value: unknown, description: string): string {
+    const credential = required(value, description);
+    if (
+      credential.includes("\0") ||
+      Buffer.byteLength(credential, "utf8") > MAX_RUNTIME_CREDENTIAL_BYTES
+    ) {
+      throw new DependencyUnavailableError(`${description} is invalid.`);
+    }
+    return credential;
+  }
+
+  private async runtimeCredentialContext(
+    binding: ComputeAgentBinding,
+    requireSlack = false,
+  ): Promise<RuntimeCredentialContext> {
+    const runtime = this.options.runtime;
+    if (runtime === undefined) {
+      throw new DependencyUnavailableError("The Agent runtime credentials are not configured.");
+    }
+    if (requireSlack && runtime.channels === undefined) {
+      throw new DependencyUnavailableError("The Agent Slack credential storage is not configured.");
+    }
+    const namespaceId = required(binding.namespace?.id, "Runtime credential Namespace ID");
+    const agentId = required(binding.agent?.id, "Runtime credential Agent ID");
+    if (binding.agent.namespaceId !== namespaceId) {
+      throw new ResourceConflictError("The Agent runtime credential binding is invalid.");
+    }
+    const { name: namespace, external } = await this.resolveNamespace(namespaceId);
+    const observed = await this.get("Namespace", namespace);
+    if (observed === undefined || observed.status?.phase !== "Active") {
+      throw new DependencyUnavailableError(
+        "The Agent runtime credential Kubernetes namespace is unavailable.",
+      );
+    }
+    this.verifyNamespaceOwnership(observed, { namespaceId }, external);
+    const suffix = sha256Hex(agentId, 12);
+    const ownership = { namespaceId, agentId };
+    const secret = (
+      group: RuntimeCredentialGroup,
+      prefix: string,
+      keys: readonly string[],
+    ): RuntimeCredentialSecretSpec => {
+      const name = `${prefix}-${suffix}`;
+      validateKubernetesResourceName(name, "Agent runtime credential Secret name");
+      return { group, name, keys };
+    };
+    return {
+      namespaceId,
+      namespace,
+      agentId,
+      suffix,
+      ownership,
+      specs: {
+        transport: secret("transport", runtime.transportSecretPrefix, [
+          AGENT_TRANSPORT_TOKEN_KEY,
+          GATEWAY_TOKEN_KEY,
+          GATEWAY_PASSWORD_KEY,
+        ]),
+        model: secret("model", runtime.modelSecretPrefix, [MODEL_API_KEY]),
+        ...(runtime.channels === undefined
+          ? {}
+          : {
+              slack: secret("slack", runtime.channels.secretPrefix, [
+                "SLACK_APP_TOKEN",
+                "SLACK_BOT_TOKEN",
+              ]),
+            }),
+      },
+    };
+  }
+
+  private async readRuntimeCredentialSecrets(
+    context: RuntimeCredentialContext,
+  ): Promise<
+    Readonly<Partial<Record<RuntimeCredentialGroup, ManagedKubernetesObject<"Secret"> | undefined>>>
+  > {
+    const entries = [
+      context.specs.transport,
+      context.specs.model,
+      ...(context.specs.slack === undefined ? [] : [context.specs.slack]),
+    ] as const;
+    const observed: Partial<Record<RuntimeCredentialGroup, ManagedKubernetesObject<"Secret">>> = {};
+    for (const spec of entries) {
+      const secret = await this.getOwned("Secret", spec.name, context.namespace, context.ownership);
+      if (secret !== undefined) {
+        this.requireCompleteRuntimeCredentialSecret(secret, spec);
+        observed[spec.group] = secret;
+      }
+    }
+    return Object.freeze(observed);
+  }
+
+  private runtimeCredentialStatus(
+    observed: Readonly<
+      Partial<Record<RuntimeCredentialGroup, ManagedKubernetesObject<"Secret"> | undefined>>
+    >,
+  ): AgentRuntimeCredentialStatus {
+    return {
+      transportConfigured: observed.transport !== undefined,
+      modelConfigured: observed.model !== undefined,
+      slackConfigured: observed.slack !== undefined,
+    };
+  }
+
+  private requireCompleteRuntimeCredentialSecret(
+    secret: ManagedKubernetesObject<"Secret">,
+    spec: RuntimeCredentialSecretSpec,
+  ): void {
+    if (secret.type !== "Opaque" || secret.immutable === true) {
+      throw new ResourceConflictError("The Agent runtime credential Secret is invalid.");
+    }
+    const data = asRecord(secret.data);
+    if (data === undefined) {
+      throw new ResourceConflictError("The Agent runtime credential Secret is incomplete.");
+    }
+    const expected = [...spec.keys].sort();
+    const actual = Object.keys(data).sort();
+    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+      throw new ResourceConflictError("The Agent runtime credential Secret is incomplete.");
+    }
+    for (const key of expected) {
+      const encoded = data[key];
+      if (typeof encoded !== "string") {
+        throw new ResourceConflictError("The Agent runtime credential Secret is incomplete.");
+      }
+      this.decodedRuntimeCredentialBytes(encoded);
+    }
+  }
+
+  private requireExactRuntimeCredentialBytes(
+    secret: ManagedKubernetesObject<"Secret"> | undefined,
+    key: string,
+    expected: string,
+  ): void {
+    const encoded = asRecord(secret?.data)?.[key];
+    if (typeof encoded !== "string") {
+      throw new ResourceConflictError("The Agent runtime credential Secret is incomplete.");
+    }
+    const observed = this.decodedRuntimeCredentialBytes(encoded);
+    const wanted = Buffer.from(expected, "utf8");
+    if (observed.length !== wanted.length || !timingSafeEqual(observed, wanted)) {
+      throw new ResourceConflictError("The Agent runtime credential Secret does not match.");
+    }
+  }
+
+  private decodedRuntimeCredentialBytes(encoded: string): Buffer {
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      throw new ResourceConflictError("The Agent runtime credential Secret is invalid.");
+    }
+    const decoded = Buffer.from(encoded, "base64");
+    if (
+      decoded.length === 0 ||
+      decoded.length > MAX_RUNTIME_CREDENTIAL_BYTES ||
+      decoded.toString("base64") !== encoded
+    ) {
+      throw new ResourceConflictError("The Agent runtime credential Secret is invalid.");
+    }
+    return decoded;
+  }
+
+  private async assertNoAgentRuntimeDeployments(context: RuntimeCredentialContext): Promise<void> {
+    const clients = await this.clients();
+    const observed = await this.request(() =>
+      clients.apps.listNamespacedDeployment({
+        namespace: context.namespace,
+        labelSelector: labelsToSelector({
+          "openclaw.dev/namespace": context.namespaceId,
+          "openclaw.dev/agent": context.agentId,
+        }),
+        timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
+      }),
+    );
+    if (!Array.isArray(observed?.items)) {
+      throw new DependencyUnavailableError("The Agent runtime workload preflight failed.");
+    }
+    for (const item of observed.items) {
+      const deployment = this.listedRuntimeCredentialDeployment(item, context.namespace);
+      verifyOwnership(deployment, context.ownership);
+    }
+    if (observed.items.length > 0) {
+      throw new ResourceConflictError("The Agent runtime has already been deployed.");
+    }
+  }
+
+  private listedRuntimeCredentialDeployment(
+    item: unknown,
+    namespace: string,
+  ): ManagedKubernetesObject<"Deployment"> {
+    const record = asRecord(item);
+    const metadata = asRecord(record?.metadata);
+    const name = metadata?.name;
+    if (
+      record === undefined ||
+      metadata === undefined ||
+      record.apiVersion !== "apps/v1" ||
+      record.kind !== "Deployment" ||
+      typeof name !== "string" ||
+      name.length === 0 ||
+      metadata.namespace !== namespace
+    ) {
+      throw new ResourceConflictError("The Agent runtime workload preflight conflicted.");
+    }
+    const spec = asRecord(record.spec);
+    const status = asRecord(record.status);
+    const labels = this.runtimeCredentialStringMetadata(metadata.labels);
+    const annotations = this.runtimeCredentialStringMetadata(metadata.annotations);
+    return {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: {
+        name,
+        namespace,
+        ...(labels === undefined ? {} : { labels }),
+        ...(annotations === undefined ? {} : { annotations }),
+      },
+      ...(spec === undefined ? {} : { spec }),
+      ...(status === undefined ? {} : { status }),
+    };
+  }
+
+  private runtimeCredentialStringMetadata(value: unknown): Record<string, string> | undefined {
+    const record = asRecord(value);
+    if (record === undefined) return undefined;
+    const result: Record<string, string> = {};
+    for (const [key, item] of Object.entries(record)) {
+      if (typeof item !== "string") {
+        throw new ResourceConflictError("The Agent runtime workload preflight conflicted.");
+      }
+      result[key] = item;
+    }
+    return result;
+  }
+
+  private async createRuntimeCredentialSecret(
+    context: RuntimeCredentialContext,
+    spec: RuntimeCredentialSecretSpec,
+    values: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    const clients = await this.clients();
+    await this.request(
+      () =>
+        clients.core.createNamespacedSecret({
+          namespace: context.namespace,
+          body: {
+            ...this.manifest("v1", "Secret", spec.name, context.ownership, context.namespace),
+            type: "Opaque",
+            stringData: values,
+          },
+        }),
+      { mutating: true },
+    );
+  }
+
+  private generateRuntimeCredentialToken(): string {
+    return randomBytes(32).toString("base64url");
+  }
+
+  private async withRuntimeCredentialErrors<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof ResourceConflictError || error instanceof DependencyUnavailableError) {
+        throw error;
+      }
+      const status = numericErrorStatus(error);
+      if (status === 409 || error instanceof OwnershipFailure) {
+        throw new ResourceConflictError(
+          "The Agent runtime credentials conflict with existing Kubernetes resources.",
+        );
+      }
+      if (status === 401 || status === 403) {
+        throw new DependencyUnavailableError(
+          "The Kubernetes runtime credential backend is not authorized.",
+        );
+      }
+      throw new DependencyUnavailableError(
+        "The Kubernetes runtime credential backend operation failed or its outcome is unknown.",
+      );
+    }
   }
 
   private verifyAdoptableNamespace(

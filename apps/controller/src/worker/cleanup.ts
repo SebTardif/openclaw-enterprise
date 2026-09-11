@@ -72,7 +72,10 @@ export class WorkerRevisionCleanup {
     currentness: WorkerRevisionCurrentness,
   ): Promise<void> {
     const { compute, effects, mode } = this.options;
-    if (mode === "production" && compute.activationOrder !== "beforeCommit") {
+    if (
+      compute.activationOrder !== "beforeCommit" &&
+      (mode === "production" || typeof compute.activateRevision === "function")
+    ) {
       await effects.runRevision(execution, currentness, () =>
         this.stage("activateRevision", activated, result.context),
       );
@@ -100,7 +103,7 @@ export class WorkerRevisionCleanup {
         return { outcome: "pending", code: "REVISION_INCOMPLETE" };
       }
     }
-    if (mode === "production") {
+    if (mode === "production" || typeof compute.activateRevision === "function") {
       await effects.runRevision(execution, currentness, () =>
         this.stage("activateRevision", revision, context),
       );

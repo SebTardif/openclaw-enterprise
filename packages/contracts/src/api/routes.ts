@@ -328,6 +328,8 @@ export const occApiRoutes = [
   agentApiRoutes[2],
   agentApiRoutes[3],
   agentApiRoutes[4],
+  agentApiRoutes[5],
+  agentApiRoutes[6],
   {
     operationId: "getAgentWorkspaceFile",
     method: "GET",
@@ -361,8 +363,8 @@ export const occApiRoutes = [
       response: { 200: WorkspaceFileUpdateResponse, ...createErrors },
     },
   },
-  agentApiRoutes[5],
-  agentApiRoutes[6],
+  agentApiRoutes[7],
+  agentApiRoutes[8],
   ...lifecycleApiRoutes,
 ] as const;
 

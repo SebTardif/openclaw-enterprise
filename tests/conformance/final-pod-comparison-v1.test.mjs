@@ -874,8 +874,15 @@ boundary("B12-isolation: exact public leaf import and declared support only", ()
     `${root}packages/occ/src/containment/final-pod-comparison-v1.ts`,
   );
   const files = readdirSync(`${root}packages/occ/src/containment`).filter((f) => f.endsWith(".ts"));
-  assert.deepEqual(files.sort(), ["final-pod-comparison-v1.ts", "final-pod-fields-v1.ts"]);
-  for (const f of files) {
+  assert.deepEqual(files.sort(), [
+    "evidence-evaluator-v1.ts",
+    "fault-request-adapter-v1.ts",
+    "final-pod-comparison-v1.ts",
+    "final-pod-fields-v1.ts",
+  ]);
+  // Evidence evaluation and fault requests are separate public leaves. The comparator
+  // and its sole support module must retain their narrower dependency boundary.
+  for (const f of ["final-pod-comparison-v1.ts", "final-pod-fields-v1.ts"]) {
     const source = readFileSync(`${root}packages/occ/src/containment/${f}`, "utf8");
     for (const match of source.matchAll(/from\s+["']([^"']+)["']/g))
       assert.ok(

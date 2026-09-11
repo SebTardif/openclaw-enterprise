@@ -1,25 +1,19 @@
 ---
 created: 2026-08-28
-updated: 2026-09-01
-last_updated_session: codex/01a05f95-dd80-7011-990f-d1c46b5bb3cc
+updated: 2026-09-08
+last_updated_session: codex/01a07d92-d866-7731-afe5-abab67d8966c
 ---
 
 # Controller Worker Flow
 
 ## Overview
 
-The controller worker turns accepted OCC operations into infrastructure changes.
-The HTTP API commits resource state and work in PostgreSQL; a separate worker
-process claims the work, rechecks the original actor's current authorization,
-invokes the selected Compute Driver, and persists the observed result while it
-still owns the claim. This trace starts at worker initialization and follows one
-accepted Namespace or AgentRevision operation through completion, deferral,
-retry, or permanent failure.
-
-The [controller reference](../reference/controller.md) owns the reconciliation
-contract. The [deployment guide](../guides/deploy.md) owns process setup for
-both development and production. Driver-specific runtime creation continues in
-the adjacent flows linked below.
+The worker claims PostgreSQL work committed by the HTTP API, rechecks the
+original actor's authorization, invokes Compute, and persists results under its
+live claim. This trace follows Namespace and AgentRevision work through
+completion, deferral, retry, or permanent failure. The
+[controller reference](../reference/controller.md) owns the contract and the
+[deployment guide](../guides/deploy.md) owns process setup.
 
 ## Entry Points
 
@@ -89,10 +83,8 @@ supplied pool-close capability. Startup errors remain with the start caller;
 shutdown still cleans up. A stopped instance cannot restart. The ordinary
 entrypoint already awaits startup sequentially.
 
-The worker has no HTTP listener, Better Auth session service, or provider-admin
-client. Compose and Helm keep it separate from the API process. See the
-[development](docker-compose-development.md) and
-[production](production-startup.md) startup flows for their input boundaries.
+The worker has no HTTP listener, session service, or provider-admin client;
+Compose and Helm run it separately from the API.
 
 ### 2. Commit API admission and the durable work record
 
@@ -102,10 +94,8 @@ client. Compose and Helm keep it separate from the API process. See the
 
 The API authenticates and authorizes the caller before invoking controller
 operations such as `createNamespace`, `deleteNamespace`, or `deployAgent`.
-Within the PostgreSQL transaction, `operations.append` verifies exact ownership
-and maps the accepted operation to `PostgresWorkQueue.enqueue`. The state,
-admission audit, and queue entry commit together; a rollback does not leave
-orphan work for the worker.
+`operations.append` verifies exact ownership and calls `PostgresWorkQueue.enqueue`
+within the transaction. State, admission audit, and work commit or roll back together.
 
 For HTTP deployment, the caller retains one identified V2 command before
 submission. The API validates that command and preserves its `operationRef` and
@@ -120,8 +110,8 @@ resolved through a fresh exact scoped read of that locator, retained revision,
 original work, and success audit. Work completion and later head advancement do
 not erase the committed admission. Missing proof remains unavailable.
 
-The queue record freezes the original actor, Namespace owner, lifecycle target,
-and, for revision work, exact Agent and immutable AgentRevision. Its idempotency
+The queue freezes actor, Namespace owner, lifecycle target, and exact Agent and
+immutable AgentRevision for revision work. Its idempotency
 key identifies the operation. Reusing that key with a different actor, owner, or
 target is rejected. The API returns accepted lifecycle state without waiting for
 Compute; the next owner is the independent worker.
@@ -152,10 +142,9 @@ and lease deadline, and increments the attempt count. Another live claim for
 the same Agent, or the Namespace for Namespace work, prevents concurrent
 ownership of that target.
 
-No available item leads to a bounded idle delay. After processing or during idle
-polling, `health()` queries pending work, refreshes the private readiness marker
-through `onHealthy`, and emits `worker.health`. The marker therefore records a
-successful real queue-health observation, not merely a running process.
+An empty queue causes a bounded idle delay. After processing or while idle,
+`health()` queries pending work, refreshes readiness through `onHealthy`, and emits
+`worker.health`. Readiness requires a successful queue-health query.
 
 ### 4. Reload ownership and reauthorize before infrastructure effects
 
@@ -224,13 +213,10 @@ Namespace effects and exact legacy retirement retain their existing leased
 path. These observations do not prove an already-started external effect stopped
 or authorize replay of an uncertain operation.
 
-Compute owns infrastructure dispatch, including delegation to a configured
-Sandbox Driver. For example, the
+Compute owns infrastructure dispatch and delegation to Sandbox; the worker
+cannot create sandbox resources independently. See the
 [Kubernetes implementation](../../apps/controller/src/drivers/compute/kubernetes/index.ts)
-uses its selected Sandbox Driver for Namespace setup, Harness provisioning, and
-cleanup. The worker does not independently create sandbox resources or bypass
-Compute ownership. Docker dispatch continues in the
-[Docker Compose development flow](docker-compose-development.md).
+and [Docker execution flow](docker-compose-development.md).
 
 The bundled [OpenShell Sandbox Driver](../reference/drivers/openshell-sandbox.md)
 invokes the Go `oce-runtime-security` executable through a bounded subprocess
@@ -261,8 +247,8 @@ deletion keep their existing outcomes.
 
 Revision activation crosses a separate infrastructure boundary. Once preparation
 is ready, a Driver selecting `activationOrder: beforeCommit` activates before
-the database pointer changes. Otherwise production activation runs after the
-claim-protected compare-and-set of `Agent.activeRevisionId`; the first dedicated
+the database pointer changes. Otherwise an implemented activation stage runs in both development and
+production after the claim-protected compare-and-set of `Agent.activeRevisionId`; the first dedicated
 revision is staged inactive until that commit. A changed active pointer causes
 `ACTIVE_REVISION_CHANGED` and retry instead of overwriting a concurrent result.
 
@@ -288,7 +274,7 @@ attempt consumed by the claim. Real dependency failures retain that attempt and
 retry within the configured budget. Permanent failures, exhausted attempts, and
 the convergence deadline produce terminal failure instead. See the
 [controller reference](../reference/controller.md) for the supported outcomes
-and the [settings reference](../reference/settings.md#controller-worker-environment)
+and the [settings reference](../reference/settings/operations.md#controller-worker-environment)
 for their timing controls.
 
 If Compute declares a maintenance interval, successful activation schedules
@@ -322,13 +308,12 @@ aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
   `worker.error`. `ACTOR_REVOKED` and `AUTHORIZATION_DENIED` require checking
   current IAM state; `DEPENDENCY_UNAVAILABLE` identifies retryable dispatch
   failure; `CLAIM_LOST` means the worker no longer owns publication.
-- [PostgreSQL worker revision tests](../../tests/integration/postgres-worker-agent-revision.test.mjs)
-  and [stale-claim tests](../../tests/integration/postgres-worker-stale-claim.test.mjs)
-  exercise durable dispatch and claim ownership with their explicit PostgreSQL
-  prerequisites. They do not replace a real deployed Harness/model-turn check.
-- [Sandbox startup tests](../../tests/integration/sandbox-driver-startup.test.mjs)
-  check composition boundaries; real Sandbox infrastructure verification belongs
-  to [the explicit k3d integration](../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs).
+- [Revision](../../tests/integration/postgres-worker-agent-revision.test.mjs) and
+  [stale-claim](../../tests/integration/postgres-worker-stale-claim.test.mjs) tests
+  require PostgreSQL; neither proves real model execution.
+- [Sandbox startup](../../tests/integration/sandbox-driver-startup.test.mjs) tests
+  verify composition; [k3d integration](../../tests/integration/sandbox-driver-openshell-k3d-real.test.mjs)
+  verifies real infrastructure.
 
 ## Related docs
 
@@ -338,7 +323,6 @@ aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
 - [Deployment guide: development and production](../guides/deploy.md)
 - [Controller settings](../reference/settings.md)
 - [IAM authorization](../reference/authorization.md)
-- [Docker development flow](docker-compose-development.md)
 - [Production startup flow](production-startup.md)
 - [Docker Compose development flow](docker-compose-development.md)
 - [Harness execution topology](harness-execution-topology.md)
@@ -350,6 +334,8 @@ aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-08 07:53: Include optional development activation and retry in the post-commit handoff. (01a07d92-d866-7731-afe5-abab67d8966c - 4d83087229961f3665b923d2581c0b71b988cc9c)
 
 - 2026-09-01 19:09: Preserve providerless API-key execution and document Provider metadata checks before workload effects. (01a05d97-f2b0-71d0-bfc3-01ee7d6d58f9 - b079c4b755ef336a9c65bb4eb737e3aedbfdaa7d) (01a05f95-dd80-7011-990f-d1c46b5bb3cc - aa366c49c44834d59f74994c5fd37fb8096f169f)
 - 2026-08-28 17:56: Converted the worker overview into a source-ordered execution trace covering startup, admission, lease ownership, current authorization, Compute and Sandbox delegation, activation, and retry. (01a036f4-cf1d-7cc1-bbc1-000879038ac8 - 4270aa29b7015562049f46c6027962fd85b584a9)

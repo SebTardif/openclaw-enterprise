@@ -135,6 +135,10 @@ package root. They must load from a fresh runtime home without downloading or
 installing packages at gateway startup. Slack's packaged skills are retained for
 runtime asset publication.
 
+The image creates `/home/node/.codex` and its `generated_images` child with
+owner `node:node` and mode `0700`. Mounting generated images separately therefore
+preserves the parent directory's ownership for Codex authentication state.
+
 ## Verify the local image
 
 ```bash
@@ -156,7 +160,9 @@ Codex/Slack/Teams discovery and loading, the installed Codex client's real
 app-server initialization and version guard, runtime logging, and skill
 publication into `/home/node/openclaw-runtime-assets`. These checks run without
 external network access or provider credentials, with channel connections
-disabled.
+disabled. A separate offline authentication check uses a synthetic key and a
+writable container root with a nested generated-images tmpfs; it verifies that
+Codex can write a private `0600` authentication file as UID `1000`.
 
 Retain the prepared-context receipt, actual installed package and native
 executable identities, platform, image ID and test results together. A successful

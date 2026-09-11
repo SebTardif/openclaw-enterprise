@@ -71,7 +71,7 @@ The test runs the real production bootstrap and checks that every malformed,
 missing and semantically invalid kubeconfig reaches the Kubernetes validation
 boundary after the database, Installation, IAM and auth prerequisites. Without that
 URL the database-backed case explicitly skips. See the existing
-[PostgreSQL test settings](settings.md#postgresql-test-environment) for role and
+[PostgreSQL test settings](../testing/postgresql.md#postgresql-test-environment) for role and
 schema requirements.
 
 These tests use harmless fixture markers. They verify source launchers and the

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { KubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { clone, controlledClient } from "../fixtures/kubernetes-lifecycle-collaborators/client.mjs";
 import { ComputeLifecycleDispatcher } from "../../apps/controller/src/drivers/compute/lifecycle-hooks.ts";
@@ -357,12 +358,28 @@ const lifecycleInputs = JSON.parse(
     "utf8",
   ),
 );
+// Exercise launch custody with the actual current logging admission contract.
+for (const selected of [lifecycleInputs.revision, lifecycleInputs.successor]) {
+  selected.configuration = admitLoggingConfiguration(selected.configuration, "info");
+}
 const lifecycleObservations = JSON.parse(
   readFileSync(
     new URL("../fixtures/kubernetes-lifecycle-collaborators/observations.json", import.meta.url),
     "utf8",
   ),
 );
+// Match the current admitted document in the detached SDK observations as well.
+for (const resources of [
+  lifecycleObservations.resources,
+  lifecycleObservations.successorResources,
+]) {
+  for (const resource of resources) {
+    if (resource.kind !== "ConfigMap" || resource.data?.["openclaw.json"] === undefined) continue;
+    resource.data["openclaw.json"] = JSON.stringify(
+      admitLoggingConfiguration(JSON.parse(resource.data["openclaw.json"]), "info"),
+    );
+  }
+}
 function delegatedDriver() {
   let starts = 0;
   let stops = 0;

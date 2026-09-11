@@ -235,6 +235,119 @@ test("reports unresolved dynamic and local paths, while ignoring comments and em
   assert.ok(!JSON.stringify(report.violations).includes("does-not-exist.ts"));
 });
 
+test("binds shadowed loader, URL, helper and path names to their actual lexical declarations", async (t) => {
+  const { write, check } = await workspace(t);
+  const from = "apps/controller/src/shadowed.ts";
+  await write(
+    from,
+    `
+    import { createRequire } from "node:module";
+    import { fileURLToPath } from "node:url";
+    const load = createRequire(import.meta.url);
+    load("@openclaw-enterprise/contracts/resources/scope");
+    const page = "./outer-path-does-not-exist.mjs";
+    async function knownPath() {
+      const page = "./console/pages/detail.mjs" as const;
+      return import((page!));
+    }
+    export function unknownPath(page: string) { return import(page); }
+    export function unknownURL(URL: any) {
+      return import(new URL("./console/pages/detail.mjs", import.meta.url).href);
+    }
+    export function unknownHelper(fileURLToPath: any) {
+      return import(fileURLToPath("file:///unknown-helper.mjs"));
+    }
+    export function ordinaryCall(load: any, require: any) {
+      load("./ordinary-call-does-not-exist.mjs");
+      require("./ordinary-call-does-not-exist.mjs");
+    }
+  `,
+  );
+  const report = await check();
+  assert.deepEqual(
+    report.violations.map(({ rule, specifier }) => ({ rule, specifier })),
+    [
+      { rule: "unresolved-dynamic-import", specifier: "page" },
+      {
+        rule: "unresolved-dynamic-import",
+        specifier: 'new URL("./console/pages/detail.mjs", import.meta.url).href',
+      },
+      {
+        rule: "unresolved-dynamic-import",
+        specifier: 'fileURLToPath("file:///unknown-helper.mjs")',
+      },
+    ],
+  );
+  assert.ok(
+    report.edges.some(
+      (edge) =>
+        edge.from === from &&
+        edge.kind === "dynamic-import" &&
+        edge.to === "apps/controller/src/console/pages/detail.mjs",
+    ),
+  );
+  assert.ok(
+    report.edges.some(
+      (edge) =>
+        edge.from === from &&
+        edge.kind === "require" &&
+        edge.to === "packages/contracts/src/resources/scope.ts",
+    ),
+  );
+});
+
+test("preserves TypeScript module syntax and declaration-file type edges", async (t) => {
+  const { write, check } = await workspace(t);
+  const module = "apps/controller/src/typed.mts";
+  const declaration = "apps/controller/src/typed.d.ts";
+  await write(
+    module,
+    `
+    import type { Scope } from "@openclaw-enterprise/contracts/scope";
+    export type { Scope as PublicScope } from "@openclaw-enterprise/contracts/scope";
+    export type QueriedScope = import("@openclaw-enterprise/contracts/scope").Scope;
+    import { type Scope as RuntimeScope } from "@openclaw-enterprise/contracts/scope";
+  `,
+  );
+  await write(
+    declaration,
+    'export { installationScope } from "@openclaw-enterprise/contracts/scope";',
+  );
+  const report = await check();
+  assert.equal(report.ok, true, JSON.stringify(report.violations));
+  assert.deepEqual(
+    report.edges
+      .filter((edge) => edge.from === module)
+      .map(({ kind, typeOnly, bindings }) => ({ kind, typeOnly, bindings })),
+    [
+      { kind: "import", typeOnly: true, bindings: ["type:Scope"] },
+      { kind: "export", typeOnly: true, bindings: ["type:Scope"] },
+      { kind: "import-type", typeOnly: true, bindings: ["*"] },
+      { kind: "import", typeOnly: false, bindings: ["type:Scope"] },
+    ],
+  );
+  assert.equal(report.edges.find((edge) => edge.from === declaration).typeOnly, true);
+});
+
+test("rejects malformed source while retaining dependencies from the parsed file", async (t) => {
+  const { write, check } = await workspace(t);
+  const from = "apps/controller/src/malformed.ts";
+  await write(
+    from,
+    'import "../../../packages/contracts/src/resources/scope.ts";\nexport const broken = ;\n',
+  );
+  const report = await check();
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.violations.map((item) => item.rule).sort(), [
+    "cross-package-source",
+    "source-syntax",
+  ]);
+  const syntax = report.violations.find((item) => item.rule === "source-syntax");
+  assert.equal(syntax.from, from);
+  assert.equal(syntax.line, 2);
+  assert.ok(syntax.message.length > 0);
+});
+
 test("distinguishes runtime cycles from cycles requiring erased type edges", async (t) => {
   const { write, check } = await workspace(t);
   await write(

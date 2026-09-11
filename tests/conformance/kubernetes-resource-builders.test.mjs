@@ -63,10 +63,19 @@ for (const scenario of scenarios()) {
       context: scenario.context,
     });
     const actual = render(scenario);
-    assert.deepEqual(actual, baseline[scenario.name]);
+    // These recorded scenarios do not select password authentication. Retain the
+    // archived resource baseline and assert the new explicit metadata separately.
+    const expected = {
+      ...baseline[scenario.name],
+      configuration: {
+        ...baseline[scenario.name].configuration,
+        usesGatewayPasswordEnv: false,
+      },
+    };
+    assert.deepEqual(actual, expected);
     assert.deepEqual(
       render(scenario, directBuilders(scenario.options)),
-      baseline[scenario.name],
+      expected,
       "direct leaves preserve the same pre-extraction baseline",
     );
     assert.deepEqual(

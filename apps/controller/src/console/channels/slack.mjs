@@ -194,7 +194,7 @@ export const slack = {
   id: "slack",
   name: "Slack",
   description: "Socket Mode with selected channels and user allowlists.",
-  setup: "Operator projection must provide SLACK_APP_TOKEN and SLACK_BOT_TOKEN to the gateway.",
+  setup: "Use the Agent Credentials tab after creation for SLACK_APP_TOKEN and SLACK_BOT_TOKEN.",
   plugin: "slack",
   support: supportSlack,
   updatedValues: updatedSlack,

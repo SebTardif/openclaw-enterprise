@@ -73,6 +73,8 @@ export type {
   NamespaceDeleteResult,
   ComputeReadiness,
   ComputeAgentBinding,
+  AgentRuntimeCredentialsInput,
+  AgentRuntimeCredentialStatus,
   ComputeDriver,
 } from "./drivers/compute.ts";
 export type { ConfigurationDriver } from "./drivers/configuration.ts";

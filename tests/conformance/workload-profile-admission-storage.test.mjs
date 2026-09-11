@@ -555,6 +555,12 @@ function centralProtocol(options = {}) {
         );
       }
       if (options.gateway) {
+        if (statement.startsWith("INSERT INTO occ.audit_events")) {
+          // State owns audit production on the original checkout. This controlled
+          // peer supplies only its database reply, not an audit producer.
+          events.push("gateway-audit");
+          return result([], "INSERT");
+        }
         if (statement.startsWith("SELECT") && statement.includes("occ.gateway_startup_operations"))
           return result();
         if (statement.startsWith("SELECT") && statement.includes("occ.gateway_startup_heads"))
@@ -737,7 +743,6 @@ function centralProtocol(options = {}) {
         namespaceRef: f.namespaceId,
         agentRef: binding[1].agentId,
       };
-      let allocations = 0;
       const lease = () => ({
         assertCurrent() {},
         async release() {
@@ -836,15 +841,6 @@ function centralProtocol(options = {}) {
           async requireCurrent() {
             return lease();
           },
-        },
-        audit: {
-          async append(_event, _attribution, _unit, io) {
-            io.assertActive();
-            events.push("gateway-audit");
-          },
-        },
-        allocate(kind) {
-          return `${kind}-${++allocations}`;
         },
       };
       const owner = createGatewayStartupOwnerV2(state.bindGatewayStartupOwnersV2(source));
@@ -1125,7 +1121,9 @@ test("actual Gateway storage lease survives the original resolver clearing its a
   );
   assert.ok(f.events.filter((x) => x === "gateway-storage-current").length > 1);
   assert.equal(f.events.filter((x) => x === "gateway-storage-release").length, 1);
+  assert.equal(f.events.filter((x) => x === "gateway-audit").length, 1);
   assert.equal(f.events.filter((x) => x === "COMMIT").length, 1);
+  assert.ok(f.events.indexOf("gateway-audit") < f.events.indexOf("COMMIT"));
   assert.ok(f.events.indexOf("COMMIT") < f.events.indexOf("gateway-storage-release"));
   assert.throws(() => f.io.assertActive());
 });

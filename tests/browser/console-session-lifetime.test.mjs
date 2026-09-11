@@ -5,15 +5,16 @@ import { chromium } from "playwright";
 
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
 
-async function browserPage(t) {
+async function browserPage(t, fixture) {
   const browser = await chromium.launch({
     headless: true,
     ...(process.env.OCC_TEST_BROWSER_EXECUTABLE
       ? { executablePath: process.env.OCC_TEST_BROWSER_EXECUTABLE }
       : {}),
   });
-  t.after(() => browser.close());
-  const page = await browser.newPage();
+  fixture.registerCleanupBeforeAppClose(() => browser.close());
+  const context = await browser.newContext();
+  const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -33,7 +34,7 @@ test("session client expires the current view through an actual protected respon
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Session scope", { ready: true });
   await fixture.createAgent(namespace.id, "Private session agent");
-  const page = await browserPage(t);
+  const page = await browserPage(t, fixture);
   const authenticatedReads = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -74,7 +75,7 @@ test("navigation invalidates an obsolete real collection response", async (t) =>
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Navigation scope", { ready: true });
   await fixture.createAgent(namespace.id, "Current navigation agent");
-  const page = await browserPage(t);
+  const page = await browserPage(t, fixture);
   await login(page, fixture, `/console/agents?namespace=${namespace.id}`);
   await page.getByText("Current navigation agent", { exact: true }).waitFor();
   let release;
@@ -135,7 +136,7 @@ test("login navigation admits exact internal return pages and rejects external o
       const namespace = await fixture.createNamespace("Return scope", { ready: true });
       const destination =
         path === "/console/providers" ? `${path}?namespace=${namespace.id}` : path;
-      const page = await browserPage(t);
+      const page = await browserPage(t, fixture);
       await login(page, fixture, `/console/login?return=${encodeURIComponent(destination)}`);
       // The initial shell is rendered before Namespace discovery completes.
       await page.waitForURL(
@@ -146,3 +147,47 @@ test("login navigation admits exact internal return pages and rejects external o
     });
   }
 });
+
+test(
+  "real logout clears private UI in another tab sharing the session",
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await createConsoleAppFixture(t);
+    await fixture.bootstrap();
+    const namespace = await fixture.createNamespace("Shared tab session", { ready: true });
+    await fixture.createAgent(namespace.id, "Shared private agent");
+    const first = await browserPage(t, fixture);
+    const location = `/console/agents?namespace=${namespace.id}`;
+    await login(first, fixture, location);
+    await first.getByText("Shared private agent", { exact: true }).waitFor();
+
+    // Both tabs share the real Better Auth cookie. The second tab must clear its
+    // existing view when the first signs out, before another protected read.
+    const second = await first.context().newPage();
+    second.setDefaultTimeout(10_000);
+    await second.goto(fixture.origin + location);
+    await second.getByText("Shared private agent", { exact: true }).waitFor();
+    const signedOut = first.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/sign-out" &&
+        response.request().method() === "POST",
+    );
+    await first.getByRole("button", { name: /OpenClaw Enterprise/ }).click();
+    await first.getByRole("menuitem", { name: "Logout" }).click();
+    assert.equal((await signedOut).status(), 200);
+    await second
+      .getByText(
+        "Your session changed in another tab. Sign in or refresh to check current access.",
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(await second.getByText("Shared private agent", { exact: true }).count(), 0);
+    assert.equal(await second.getByRole("navigation").count(), 0);
+    await second.getByRole("button", { name: "Login", exact: true }).waitFor();
+
+    // Refresh uses the actual signed-out session and cannot restore private data.
+    await second.reload();
+    await second.getByRole("button", { name: "Login", exact: true }).waitFor();
+    assert.equal(await second.getByText("Shared private agent", { exact: true }).count(), 0);
+  },
+);

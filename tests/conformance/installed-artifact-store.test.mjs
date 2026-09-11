@@ -190,6 +190,14 @@ function barrier() {
     release: () => release(),
   };
 }
+async function waitForAcquisitionGate(gate, pending) {
+  // Surface acquisition failures before the controlled I/O boundary instead of
+  // waiting forever for a gate that the failed acquisition cannot reach.
+  await Promise.race([
+    gate.entered,
+    pending.then(() => assert.fail("Artifact acquisition settled before entering the I/O gate.")),
+  ]);
+}
 async function turn() {
   await new Promise((resolve) => setImmediate(resolve));
 }
@@ -378,7 +386,6 @@ for (const late of ["success", "rejection"])
     const abort = new AbortController();
     const before = opened - closed;
     const pending = store.acquire(abort.signal);
-    const refused = assert.rejects(pending);
     void pending.then(
       () => {
         settled = true;
@@ -388,7 +395,8 @@ for (const late of ["success", "rejection"])
       },
     );
     try {
-      await gate.entered;
+      await waitForAcquisitionGate(gate, pending);
+      const refused = assert.rejects(pending);
       abort.abort();
       const closing = store.close();
       assert.equal(store.close(), closing);
@@ -479,7 +487,6 @@ test("cancellation also joins an entered original close before publishing refusa
   const abort = new AbortController();
   const before = opened - closed;
   const pending = store.acquire(abort.signal);
-  const refused = assert.rejects(pending);
   void pending.then(
     () => {
       settled = true;
@@ -489,7 +496,8 @@ test("cancellation also joins an entered original close before publishing refusa
     },
   );
   try {
-    await gate.entered;
+    await waitForAcquisitionGate(gate, pending);
+    const refused = assert.rejects(pending);
     abort.abort();
     await turn();
     assert.equal(entered, 1);
@@ -817,7 +825,6 @@ for (const late of ["success", "rejection"])
     };
     const store = new ProtectedInstalledArtifactStore(f.selection);
     const pending = store.acquire(abort.signal);
-    const refused = assert.rejects(pending);
     void pending.then(
       () => {
         settled = true;
@@ -827,7 +834,8 @@ for (const late of ["success", "rejection"])
       },
     );
     try {
-      await gate.entered;
+      await waitForAcquisitionGate(gate, pending);
+      const refused = assert.rejects(pending);
       abort.abort();
       const closing = store.close();
       await turn();

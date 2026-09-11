@@ -11,6 +11,17 @@ let session = null;
 let namespaces = [];
 let namespaceId = null;
 let loggingOut = false;
+const sessionChanges = (() => {
+  try {
+    return new BroadcastChannel("oce-console-session-changes");
+  } catch {
+    return null;
+  }
+})();
+sessionChanges?.addEventListener("message", () => {
+  if (!loggingOut)
+    showLogin("Your session changed in another tab. Sign in or refresh to check current access.");
+});
 const navigation = createNavigation({
   getNamespaceId: () => namespaceId,
   isLoggingOut: () => loggingOut,
@@ -84,11 +95,13 @@ function showLogin(message = "", returnPath = null) {
     feedback.textContent = "";
     const active = lifetime.capture();
     try {
+      sessionChanges?.postMessage("changing");
       await request("/api/auth/sign-in/email", {
         method: "POST",
         body: { email: username.value, password: password.value },
       });
       if (!lifetime.isCurrent(active)) return;
+      sessionChanges?.postMessage("changed");
       password.value = "";
       history.replaceState(null, "", destination ?? "/console/agents");
       await loadPage();
@@ -217,7 +230,9 @@ async function loadPage() {
     }
     const agentContext = {
       view: shell.view,
+      accountId: session.user.id,
       namespaceId,
+      signal: lifetime.signal,
       request,
       navigate,
       pageUrl,
@@ -301,6 +316,7 @@ async function loadPage() {
 
 async function logout() {
   loggingOut = true;
+  sessionChanges?.postMessage("changing");
   const active = resetReads();
   clearPrivate();
   publicPanel("Signing out…", "Confirming that your session has ended.");
@@ -317,6 +333,7 @@ async function logout() {
   }
   if (!lifetime.isCurrent(active)) return;
   if (confirmed) {
+    sessionChanges?.postMessage("changed");
     loggingOut = false;
     navigation.resetHistory();
     showLogin();

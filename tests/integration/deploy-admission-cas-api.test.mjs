@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { InMemoryPlatformState } from "../../packages/occ/src/index.ts";
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
 
-test("generation-bearing HTTP admission stays closed while bodyless deploy preserves its receipt", async (t) => {
+// TODO: Add successful V2 admission, CAS, and exact-command replay coverage when
+// this Fastify fixture has genuine request custody, a saved admitted workload
+// profile, and its required owners. Schema rejection does not prove deploy IAM.
+test("HTTP deploy rejects legacy and incomplete V2 commands without creating revisions or runtime intent", async (t) => {
   const state = new InMemoryPlatformState();
   const f = await createConsoleAppFixture(t, { state });
   await f.bootstrap();
-  const namespace = await f.createNamespace("CAS compatibility", { ready: true });
-  const agent = await f.createAgent(namespace.id, "CAS compatibility Agent");
+  const namespace = await f.createNamespace("Closed deployment admission", { ready: true });
+  const agent = await f.createAgent(namespace.id, "Unadmitted Agent");
   const scope = { namespaceId: namespace.id, agentId: agent.id };
   const path = `/namespaces/${namespace.id}/agents/${agent.id}/deploy`;
   const snapshot = () =>
@@ -17,28 +21,34 @@ test("generation-bearing HTTP admission stays closed while bodyless deploy prese
       head: await view.runtimeAssignments.findRuntimeIntentHead(scope),
     }));
   const before = await snapshot();
-  // Internal CAS does not enable a new HTTP protocol or manufacture the absent
-  // current-account, semantic-role, selected-profile, and cutover authorities.
+  assert.deepEqual(before.revisions, []);
+  assert.equal(before.head, undefined);
+  // A generation alone is not a V2 command. An operation identity also cannot
+  // replace the required saved draft and its genuinely admitted profile.
   for (const body of [
     { expectedLifecycleGeneration: null },
     { expectedLifecycleGeneration: 1 },
     { expectedLifecycleGeneration: 0 },
     { expectedLifecycleGeneration: null, role: "administrator" },
     {},
+    {
+      schemaVersion: 2,
+      operationRef: randomUUID(),
+      expectedLifecycleGeneration: null,
+      revisionSource: "saved-draft",
+    },
   ]) {
     const response = await f.request("POST", path, { body });
     assert.equal(response.status, 400);
     assert.equal(response.body.error.code, "INVALID_REQUEST");
     assert.deepEqual(await snapshot(), before);
   }
-  const a = await f.request("POST", path);
-  const b = await f.request("POST", path);
-  assert.equal(a.status, 202);
-  assert.equal(b.status, 202);
-  assert.notEqual(a.data.id, b.data.id);
-  assert.equal(a.data.revision, 1);
-  assert.equal(b.data.revision, 2);
-  assert.equal(a.data.operation, undefined);
-  assert.equal(a.data.lifecycleGeneration, undefined);
-  assert.equal((await snapshot()).head.generation, 2);
+  // Repeating the retired bodyless request must not mint revisions or advance
+  // runtime intent. These are repeated syntax failures, not operation replay.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await f.request("POST", path);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "INVALID_REQUEST");
+    assert.deepEqual(await snapshot(), before);
+  }
 });
