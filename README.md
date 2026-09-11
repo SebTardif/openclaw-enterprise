@@ -42,16 +42,29 @@ image versions and build options.
 
 ## Develop
 
-Requires Node.js 24 or newer and the pnpm version pinned in
-[`package.json`](package.json).
+Use [mise](https://mise.jdx.dev/getting-started.html) 2026.4 or newer to install
+the pinned cross-platform development toolchain and both dependency trees:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm check:workspace
-pnpm format:check
-pnpm typecheck
-pnpm openapi:check
-pnpm test
+mise trust
+mise install
+mise run setup
+```
+
+This installs Node.js, the pnpm version owned by [`package.json`](package.json),
+Python, `yq`, Helm, `kubectl`, k3d, and `actionlint` in mise's user-owned data
+directory. The setup task installs the root workspace and independent documentation
+site from their frozen lockfiles. Docker or Podman and basic host commands such as
+Bash, `curl`, Git, and `tar` remain host prerequisites; see
+[local tooling](docs/testing/local.md#install-the-development-toolchain) for the
+boundary and non-mise setup.
+
+```sh
+mise exec -- pnpm check:workspace
+mise exec -- pnpm format:check
+mise exec -- pnpm typecheck
+mise exec -- pnpm openapi:check
+mise exec -- pnpm test
 ```
 
 PostgreSQL, Docker/Podman, and Kubernetes integration suites require additional setup;

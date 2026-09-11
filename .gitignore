@@ -28,5 +28,9 @@ __pycache__/
 *.pyc
 .vscode/settings.json
 
+# Developer-specific mise overrides stay outside the shared toolchain.
+mise.local.toml
+mise.local.lock
+
 # Keep the testing guide visible when a global ignore matches its name.
 !/docs/testing.md

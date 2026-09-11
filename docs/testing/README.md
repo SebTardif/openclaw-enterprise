@@ -59,14 +59,17 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 
 ## Requirements and credentials
 
-Use Node.js 24 or newer and the pnpm version pinned in
-[`package.json`](../../package.json), with dependencies installed from the lockfile:
+Use the repository's [mise toolchain](local.md#install-the-development-toolchain)
+to select the versions used by local and CI verification and install dependencies
+from both frozen lockfiles:
 
 ```sh
-pnpm install --frozen-lockfile
+mise run setup
 ```
 
-The tests import TypeScript source directly; a separate build is not required.
+The tests import TypeScript source directly; a separate build is not required. A
+manual setup may instead use Node.js 24 or newer and the pnpm version pinned in
+[`package.json`](../../package.json), then run `pnpm install --frozen-lockfile`.
 Some local integrations also execute Git, `tar`, and pnpm.
 
 Supply real keys through your authorized credential manager or an existing

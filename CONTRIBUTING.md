@@ -19,13 +19,18 @@ production database, cluster, or credential for tests without explicit approval.
 
 ## Set up a development checkout
 
-Use Node.js 24 or newer and the exact pnpm version in
-[`package.json`](package.json). In a trusted checkout, explicitly prepare
-dependencies with:
+Review the checked-in [`mise.toml`](mise.toml), then install the pinned toolchain
+and both dependency trees in a trusted checkout:
 
 ```sh
-pnpm install --frozen-lockfile
+mise trust
+mise install
+mise run setup
 ```
+
+See [local tooling](docs/testing/local.md#install-the-development-toolchain) for
+the managed versions, host prerequisites, troubleshooting, and the manual
+Node.js/pnpm alternative.
 
 Installation runs the repository's `prepare` script, which installs the managed
 pre-push hook in the shared Git hooks directory. It refuses to replace an

@@ -8,7 +8,9 @@ does not install the controller workspace.
 
 ## Start the preview
 
-Use Node.js 24 or newer and the pnpm version pinned in `package.json`. From the
+The complete [mise setup](testing/local.md#install-the-development-toolchain)
+includes the documentation dependencies. For a docs-only checkout, use Node.js
+24 or newer and the pnpm version pinned in `package.json`, then run from the
 Enterprise repository root:
 
 ```sh

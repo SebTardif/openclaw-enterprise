@@ -3,6 +3,38 @@
 Run conformance, API, and browser checks against local source. Start with the
 [shared requirements](README.md#requirements-and-credentials).
 
+## Install the development toolchain
+
+Install [mise](https://mise.jdx.dev/installing-mise.html) 2026.4 or newer, review
+[`mise.toml`](../../mise.toml), and prepare the checkout:
+
+```sh
+mise trust
+mise install
+mise run setup
+```
+
+`mise install` downloads the exact Node.js, Python, `yq`, Helm, `kubectl`, k3d,
+and `actionlint` releases selected in `mise.toml`; it reads the exact pnpm release
+from `package.json`. `mise run setup` installs the active pnpm workspace and the
+independent documentation package with frozen lockfiles. Re-running it is safe:
+mise skips the task while its manifests, lockfiles, configuration, and installed
+dependency metadata remain current. Use `mise run --force setup` to repair a
+missing or damaged dependency tree.
+
+The managed tools are selected automatically inside `mise run` and `mise exec`.
+Shell activation is optional; without it, prefix direct commands with
+`mise exec --`, for example `mise exec -- pnpm typecheck`.
+
+Mise does not provision a container daemon or alter system services. Install and
+start either Docker Engine with Docker Compose or Podman with `podman-compose` for
+the relevant integration suites. Bash, `curl`, Git, and `tar` also remain host
+commands. The Kubernetes CLIs installed by mise do not select or create a cluster;
+the suite guides still require an explicit disposable context and their documented
+credentials. If a managed command is missing, run `mise install`; if mise rejects
+the configuration, upgrade it to the minimum version declared at the top of
+`mise.toml` and trust the reviewed file again.
+
 ## Local checks
 
 With infrastructure selectors unset:
@@ -121,9 +153,12 @@ controller image; it does not claim a live production deployment.
 
 ## Repository and tooling configuration
 
-The active workspace requires Node.js 24 or newer and pins pnpm `11.15.1` in
+The active workspace requires Node.js 24 or newer, pins the local and CI Node.js
+release in [`mise.toml`](../../mise.toml), and pins pnpm `11.15.1` in
 [`package.json`](../../package.json). Repository-wide settings are defined in:
 
+- [`mise.toml`](../../mise.toml): portable development tools and frozen dependency
+  installation.
 - [`pnpm-workspace.yaml`](../../pnpm-workspace.yaml): one controller application
   and five platform packages.
 - [`tsconfig.base.json`](../../tsconfig.base.json): strict TypeScript,
