@@ -9,6 +9,12 @@ import Fastify, {
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import swagger from "@fastify/swagger";
 import ajvFormats from "ajv-formats";
+import {
+  PluginDriverIdentitySchema,
+  PluginToolPolicySchema,
+  PluginDesiredSelectionSchema,
+  PluginDesiredStateSchema,
+} from "@openclaw-enterprise/contracts/api/resources";
 import { JsonValue } from "@openclaw-enterprise/contracts/api/common";
 import { OCC_AUTH_COOKIE_PREFIX, OCC_SERVICE_KEY_HEADER } from "../auth/index.ts";
 
@@ -52,6 +58,10 @@ export function createHttpTransport(options: {
 
   app.removeContentTypeParser("text/plain");
   app.addSchema(JsonValue);
+  app.addSchema(PluginDriverIdentitySchema);
+  app.addSchema(PluginToolPolicySchema);
+  app.addSchema(PluginDesiredSelectionSchema);
+  app.addSchema(PluginDesiredStateSchema);
   void app.register(swagger, {
     convertConstToEnum: false,
     openapi: {

@@ -142,3 +142,5 @@ export * from "./credential-storage-v1.ts";
 
 export * from "./configuration-errors.ts";
 export * from "./turn-management-v1.ts";
+
+export * from "./plugins.ts";

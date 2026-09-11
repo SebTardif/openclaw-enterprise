@@ -1,3 +1,4 @@
+import { normalizePluginDesiredState } from "@openclaw-enterprise/contracts";
 import type { FastifyRequest } from "fastify";
 import type {
   AgentParams,
@@ -87,6 +88,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     configurationId: agent.configurationId,
     providerId: agent.providerId,
     executionMode: agent.executionMode,
+    ...(agent.plugins === undefined ? {} : { plugins: agent.plugins }),
     maximumExecutionMs: agent.maximumExecutionMs,
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
@@ -113,6 +115,7 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     configuration: revision.configuration,
     harness: revision.harness,
     compute: revision.compute,
+    ...(revision.plugins === undefined ? {} : { plugins: revision.plugins }),
     ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
     ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
     ...(revision.serviceAccount === undefined ? {} : { serviceAccount: revision.serviceAccount }),
@@ -149,6 +152,9 @@ export function createAgentOperationHandlers(
     createAgent: async (request, reply, operation) => {
       const { context, service, namespaceId } = resolve(request);
       const body = request.body as CreateAgentBody;
+      const plugins = normalizePluginDesiredState(body.plugins, () => {
+        throw failure(400, "INVALID_REQUEST", "Agent plugin selections are invalid.");
+      });
       const agent = await options.runAgentMutation(
         request,
         operation,
@@ -157,6 +163,7 @@ export function createAgentOperationHandlers(
           service.createAgent(context.actorId, {
             namespaceId,
             name: body.name,
+            ...(plugins === undefined ? {} : { plugins }),
             configurationId: body.configurationId,
             ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
             ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),
@@ -175,6 +182,9 @@ export function createAgentOperationHandlers(
     updateAgent: async (request, reply, operation) => {
       const { context, service, namespaceId, agentId } = resolveAgent(request);
       const body = request.body as UpdateAgentBody;
+      const plugins = normalizePluginDesiredState(body.plugins, () => {
+        throw failure(400, "INVALID_REQUEST", "Agent plugin selections are invalid.");
+      });
       const selection =
         body.workloadProfileSelection === undefined
           ? undefined
@@ -186,6 +196,7 @@ export function createAgentOperationHandlers(
       const input: UpdateAgentInput = Object.freeze({
         namespaceId,
         agentId,
+        ...(plugins === undefined ? {} : { plugins }),
         configurationId: body.configurationId,
         ...(body.providerId === undefined ? {} : { providerId: body.providerId }),
         ...(body.executionMode === undefined ? {} : { executionMode: body.executionMode }),

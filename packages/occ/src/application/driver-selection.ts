@@ -1,3 +1,4 @@
+import type { PluginDriver } from "@openclaw-enterprise/contracts";
 import { isDriverCapability } from "@openclaw-enterprise/contracts/drivers/base";
 import type { Driver, DriverCapability } from "@openclaw-enterprise/contracts/drivers/base";
 import type {
@@ -40,6 +41,7 @@ type DriverByCapability = {
   secret: SecretDriver;
   sandbox: SandboxDriver;
   compute: ComputeDriver;
+  plugin: PluginDriver;
 };
 export type DriverFor<Capability extends DriverCapability> = DriverByCapability[Capability];
 
@@ -71,6 +73,7 @@ function driverHasCapabilityContract(driver: Driver): boolean {
     return ["create", "createCredential", "delete"].every(
       (operation) => typeof candidate[operation] === "function",
     );
+  if (driver.capability === "plugin") return typeof candidate.listCatalog === "function";
   if (driver.capability === "sandbox")
     return (
       sandboxFacets(candidate.facets) &&

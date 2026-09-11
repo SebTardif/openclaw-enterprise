@@ -1,3 +1,4 @@
+import type { PluginDesiredState, PluginRevisionState } from "../plugins.ts";
 import { immutableCopy } from "@openclaw-enterprise/utils";
 import type { ProviderRef } from "../drivers/provider.ts";
 import type { ConfigurationKind, OpenClawConfigurationDocument } from "./configuration.ts";
@@ -18,6 +19,7 @@ export interface Agent extends Scope {
   readonly providerId: ProviderRef;
   readonly serviceAccountId?: string;
   readonly executionMode: HarnessExecutionMode;
+  readonly plugins?: PluginDesiredState;
   readonly maximumExecutionMs: number | null;
   readonly servicePrincipalId: string;
   readonly activeRevisionId?: string;
@@ -54,6 +56,7 @@ export interface AgentRevision extends Scope {
   readonly sandboxDriverId?: string;
   readonly secretDriverId?: string;
   readonly secretBindings?: SecretBindings;
+  readonly plugins?: PluginRevisionState;
   readonly serviceAccount?: ServiceAccountRevision;
   readonly servicePrincipalId: string;
   readonly workloadProfileUse?: WorkloadProfileUseV2;
@@ -67,6 +70,7 @@ export function freezeAgentRevision(revision: AgentRevision): Readonly<AgentRevi
     ...(revision.secretBindings === undefined
       ? {}
       : { secretBindings: immutableCopy(revision.secretBindings) }),
+    ...(revision.plugins === undefined ? {} : { plugins: immutableCopy(revision.plugins) }),
     harness: Object.freeze({ ...revision.harness }),
     compute: Object.freeze({ ...revision.compute }),
     ...(revision.serviceAccount === undefined

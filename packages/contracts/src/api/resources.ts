@@ -56,6 +56,8 @@ import {
   ServiceAccountId,
   Timestamp,
   WorkspaceFileName,
+  PluginApprovalModeSchema,
+  PluginApprovalsReviewerSchema,
 } from "./common.ts";
 
 export const InstallationSchema = Type.Object(
@@ -112,3 +114,52 @@ export type InstallationResponse = Type.Static<typeof InstallationResponse>;
 export type ProviderListResponse = Type.Static<typeof ProviderListResponse>;
 export type WorkspaceFileResponse = Type.Static<typeof WorkspaceFileResponse>;
 export type WorkspaceFileUpdateResponse = Type.Static<typeof WorkspaceFileUpdateResponse>;
+
+export const PluginDriverIdentitySchema = Type.Object(
+  { id: Type.String({ minLength: 1 }), implementation: Type.String({ minLength: 1 }) },
+  { additionalProperties: false, $id: "PluginDriverIdentity" },
+);
+
+export const PluginToolPolicySchema = Type.Object(
+  {
+    enabled: Type.Optional(Type.Boolean()),
+    approvalMode: Type.Optional(PluginApprovalModeSchema),
+  },
+  { additionalProperties: false, minProperties: 1, $id: "PluginToolPolicy" },
+);
+
+const PluginIdPattern = "^[A-Za-z0-9._~:@-]{1,253}$";
+const PluginToolPolicyMapSchema = Type.Unsafe({
+  type: "object",
+  description:
+    "Plugin tool policy map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$.",
+  propertyNames: { pattern: PluginIdPattern },
+  additionalProperties: false,
+  patternProperties: {
+    [PluginIdPattern]: Type.Ref("PluginToolPolicy"),
+  },
+});
+
+export const PluginDesiredSelectionSchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+    approvalMode: PluginApprovalModeSchema,
+    approvalsReviewer: Type.Optional(PluginApprovalsReviewerSchema),
+    destructiveActions: Type.Optional(PluginApprovalModeSchema),
+    writes: Type.Optional(PluginApprovalModeSchema),
+    tools: Type.Optional(PluginToolPolicyMapSchema),
+  },
+  { additionalProperties: false, $id: "PluginDesiredSelection" },
+);
+
+export const PluginDesiredStateSchema = Type.Unsafe({
+  $id: "PluginDesiredState",
+  type: "object",
+  description:
+    "Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$.",
+  propertyNames: { pattern: PluginIdPattern },
+  additionalProperties: false,
+  patternProperties: {
+    [PluginIdPattern]: Type.Ref("PluginDesiredSelection"),
+  },
+});

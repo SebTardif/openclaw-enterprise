@@ -1,3 +1,4 @@
+import { normalizePluginDesiredState } from "@openclaw-enterprise/contracts";
 import { createMemoryWorkloadProfileAdmissionBackendV2 } from "./memory/workload-profile-admission.ts";
 import {
   createMemoryTurnJournal,
@@ -723,6 +724,9 @@ function repositories(
           : [],
       ),
     createAgent: async (agent) => {
+      normalizePluginDesiredState(agent.plugins, (message) => {
+        throw new ScopeViolationError(message);
+      });
       agent = immutableCopy(agent);
       assertMaximumExecutionMs(agent.maximumExecutionMs);
       const selection =
@@ -788,7 +792,11 @@ function repositories(
       providerId,
       workloadProfileSelection,
       maximumExecutionMs,
+      plugins,
     ) => {
+      plugins = normalizePluginDesiredState(plugins, (message) => {
+        throw new ScopeViolationError(message);
+      });
       if (maximumExecutionMs !== undefined) assertMaximumExecutionMs(maximumExecutionMs);
       const selection =
         workloadProfileSelection === undefined
@@ -823,6 +831,7 @@ function repositories(
         ...withoutAssociation,
         configurationId,
         providerId: nextProviderId,
+        ...(plugins === undefined ? {} : { plugins }),
         executionMode: executionMode ?? current.executionMode,
         maximumExecutionMs:
           maximumExecutionMs === undefined ? current.maximumExecutionMs : maximumExecutionMs,

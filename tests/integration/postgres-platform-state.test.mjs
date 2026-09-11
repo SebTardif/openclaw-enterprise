@@ -687,6 +687,271 @@ test(
 );
 
 test(
+  "PostgreSQL persists Agent plugin drafts atomically and refuses unbound deployment",
+  requiresPostgres,
+  async (context) => {
+    const [
+      { Pool },
+      { OCCPluginDriver },
+      { PostgresPlatformState },
+      { createTestConfigurationDriver },
+    ] = await Promise.all([
+      import("pg"),
+      import("../../apps/controller/src/drivers/plugin/index.ts"),
+      import("../../packages/occ/src/state/postgres-state.ts"),
+      import("../helpers/configuration-driver.mjs"),
+    ]);
+    const pool = new Pool({ connectionString: databaseUrl });
+    context.after(() => pool.end());
+    await startController(context);
+
+    const bootstrapState = new PostgresPlatformState(pool);
+    const installation = await bootstrapState.loadInstallation();
+    assert.ok(installation, "the real OCC subprocess must bootstrap the singleton Installation");
+    const actor = await pool.query(
+      `SELECT identity.id
+       FROM occ.iam_identities AS identity
+       JOIN occ."user" AS auth_user ON auth_user.id = identity.subject
+       WHERE auth_user.email = $1`,
+      [adminEmail],
+    );
+    assert.equal(actor.rowCount, 1);
+    const principalId = actor.rows[0].id;
+
+    const { controller, state, resolveHarness } = await createDurableController(pool);
+    const configurationDriver = createTestConfigurationDriver({
+      id: `configuration-plugin-${randomUUID()}`,
+    });
+    const pluginDriver = new OCCPluginDriver();
+    controller.registerDriver(configurationDriver);
+    controller.selectDriver("configuration", configurationDriver.id);
+    controller.registerDriver(pluginDriver);
+    controller.selectDriver("plugin", pluginDriver.id);
+
+    const namespace = await controller.createNamespace(principalId, {
+      name: `postgres-plugin-${randomUUID()}`,
+    });
+    const configuration = await controller.createConfiguration(principalId, {
+      namespaceId: namespace.id,
+      kind: "agent",
+      values: {},
+    });
+    const replacementConfiguration = await controller.createConfiguration(principalId, {
+      namespaceId: namespace.id,
+      kind: "agent",
+      values: { runtime: { revision: "replacement" } },
+    });
+    const initialPlugins = {
+      "occ-plugin:diffs": { enabled: true, approvalMode: "always" },
+    };
+    const malformedCreateAgentId = `agt_${randomUUID()}`;
+    await assert.rejects(
+      state.transact((unit) =>
+        unit.agents.createAgent({
+          id: malformedCreateAgentId,
+          namespaceId: namespace.id,
+          name: `postgres-plugin-malformed-agent-${randomUUID()}`,
+          configurationId: configuration.id,
+          providerId: null,
+          executionMode: "embedded",
+          maximumExecutionMs: null,
+          servicePrincipalId: `service-agent-${malformedCreateAgentId}`,
+          plugins: {
+            "occ-plugin:diffs": { enabled: true, approvalMode: "sometimes" },
+          },
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+      { name: "ScopeViolationError" },
+    );
+    const malformedCreateRow = await pool.query("SELECT plugins FROM occ.agents WHERE id = $1", [
+      malformedCreateAgentId,
+    ]);
+    assert.equal(malformedCreateRow.rowCount, 0);
+
+    const agent = await controller.createAgent(principalId, {
+      namespaceId: namespace.id,
+      name: `postgres-plugin-agent-${randomUUID()}`,
+      configurationId: configuration.id,
+      plugins: initialPlugins,
+    });
+
+    const storedSelection = await pool.query("SELECT plugins FROM occ.agents WHERE id = $1", [
+      agent.id,
+    ]);
+    assert.deepEqual(storedSelection.rows[0].plugins, initialPlugins);
+    const stateBeforeFailure = await state.read((view) =>
+      view.agents.findAgent(namespace.id, agent.id),
+    );
+    const auditBeforeFailure = await pool.query(
+      "SELECT count(*)::integer AS count FROM occ.audit_events",
+    );
+    const stagedAuditId = `aud_${randomUUID()}`;
+
+    await assert.rejects(
+      controller.transact(async (unit) => {
+        await unit.audit.append({
+          schemaVersion: 1,
+          id: stagedAuditId,
+          installationId: installation.id,
+          namespaceId: namespace.id,
+          occurredAt: new Date().toISOString(),
+          source: "occ",
+          kind: "mutation",
+          actorId: principalId,
+          actor: { principalId },
+          action: "openclaw.agents.update",
+          resource: { kind: "agent", id: agent.id, namespaceId: namespace.id },
+          outcome: "success",
+        });
+        await unit.agents.updateConfiguration(
+          namespace.id,
+          agent.id,
+          configuration.id,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { "occ-plugin:diffs": { enabled: true, approvalMode: "sometimes" } },
+        );
+      }),
+      { name: "ScopeViolationError" },
+    );
+
+    const [stateAfterFailure, auditAfterFailure, stagedAudit] = await Promise.all([
+      state.read((view) => view.agents.findAgent(namespace.id, agent.id)),
+      pool.query("SELECT count(*)::integer AS count FROM occ.audit_events"),
+      pool.query("SELECT count(*)::integer AS count FROM occ.audit_events WHERE id = $1", [
+        stagedAuditId,
+      ]),
+    ]);
+    assert.deepEqual(stateAfterFailure.plugins, stateBeforeFailure.plugins);
+    assert.equal(auditAfterFailure.rows[0].count, auditBeforeFailure.rows[0].count);
+    assert.equal(stagedAudit.rows[0].count, 0);
+
+    for (const invalidShape of [[], true, "plugins"]) {
+      await assert.rejects(
+        pool.query("UPDATE occ.agents SET plugins = $2::jsonb WHERE id = $1", [
+          agent.id,
+          JSON.stringify(invalidShape),
+        ]),
+        { code: "23514", constraint: "agents_plugins_object" },
+      );
+    }
+    assert.deepEqual(
+      (await pool.query("SELECT plugins FROM occ.agents WHERE id = $1", [agent.id])).rows[0]
+        .plugins,
+      initialPlugins,
+    );
+
+    await controller.handleNamespaceLifecycle(principalId, namespace.id, "ready");
+    const admissionCounts = `SELECT
+      (SELECT count(*)::integer FROM occ.agent_revisions WHERE agent_id = $1) AS revisions,
+      (SELECT count(*)::integer FROM occ.controller_work WHERE namespace_id = $2) AS work,
+      (SELECT count(*)::integer FROM occ.audit_events WHERE resource_id = $1) AS audits`;
+    const beforeAdmission = await pool.query(admissionCounts, [agent.id, namespace.id]);
+    assert.equal(beforeAdmission.rows[0].revisions, 0);
+    let admissionAuditCalls = 0;
+    await assert.rejects(
+      controller.deployAgent(
+        principalId,
+        { namespaceId: namespace.id, agentId: agent.id },
+        resolveHarness,
+        {
+          transitionRef: randomUUID(),
+          requestId: `req_plugin_${randomUUID()}`,
+          createAuditEvent() {
+            admissionAuditCalls += 1;
+            assert.fail("Unbound plugin drafts must not reach successful admission audit.");
+          },
+        },
+      ),
+      { name: "NotImplementedError", operation: "agent_plugins.immutable_profile" },
+    );
+    assert.equal(admissionAuditCalls, 0);
+    assert.deepEqual(
+      (await pool.query(admissionCounts, [agent.id, namespace.id])).rows,
+      beforeAdmission.rows,
+    );
+    const refusedDraft = await state.read((view) => view.agents.findAgent(namespace.id, agent.id));
+    assert.deepEqual(refusedDraft.plugins, initialPlugins);
+    assert.equal(refusedDraft.activeRevisionId, undefined);
+
+    const omittedPlugins = await controller.updateAgent(principalId, {
+      namespaceId: namespace.id,
+      agentId: agent.id,
+      configurationId: replacementConfiguration.id,
+    });
+    assert.deepEqual(omittedPlugins.plugins, initialPlugins);
+    const replacementPlugins = {
+      "codex-plugin:third-plugin@openai-curated-remote": {
+        enabled: true,
+        approvalMode: "auto",
+        approvalsReviewer: "auto_review",
+      },
+    };
+    const replacedPlugins = await controller.updateAgent(principalId, {
+      namespaceId: namespace.id,
+      agentId: agent.id,
+      configurationId: replacementConfiguration.id,
+      plugins: replacementPlugins,
+    });
+    assert.deepEqual(replacedPlugins.plugins, replacementPlugins);
+    assert.deepEqual(
+      (await pool.query("SELECT plugins FROM occ.agents WHERE id = $1", [agent.id])).rows[0]
+        .plugins,
+      replacementPlugins,
+    );
+    const clearedPlugins = await controller.updateAgent(principalId, {
+      namespaceId: namespace.id,
+      agentId: agent.id,
+      configurationId: replacementConfiguration.id,
+      plugins: {},
+    });
+    assert.deepEqual(clearedPlugins.plugins, {});
+
+    const reopened = new PostgresPlatformState(pool);
+    const reloadedAgent = await reopened.read((view) =>
+      view.agents.findAgent(namespace.id, agent.id),
+    );
+    assert.deepEqual(reloadedAgent.plugins, {});
+    assert.equal(reloadedAgent.configurationId, replacementConfiguration.id);
+    assert.equal(reloadedAgent.activeRevisionId, undefined);
+    const persistedDraft = await pool.query("SELECT plugins FROM occ.agents WHERE id = $1", [
+      agent.id,
+    ]);
+    assert.deepEqual(persistedDraft.rows, [{ plugins: {} }]);
+    const revisions = await pool.query(
+      "SELECT count(*)::integer AS count FROM occ.agent_revisions WHERE agent_id = $1",
+      [agent.id],
+    );
+    assert.equal(revisions.rows[0].count, 0);
+    // Retain this unique Agent-scoped denial in the disposable fixture. occ_app
+    // intentionally cannot remove restrictions, so exercise denial after draft CRUD.
+    const restrictionId = `restriction-plugin-update-${randomUUID()}`;
+    await pool.query(
+      `INSERT INTO occ.iam_restrictions
+       (id, namespace_id, action, resource_kind, resource_id, effect)
+       VALUES ($1, $2, 'update', 'agent', $3, 'deny')`,
+      [restrictionId, namespace.id, agent.id],
+    );
+    await assert.rejects(
+      controller.updateAgent(principalId, {
+        namespaceId: namespace.id,
+        agentId: agent.id,
+        configurationId: configuration.id,
+        plugins: initialPlugins,
+      }),
+      { name: "AuthorizationDeniedError" },
+    );
+    const deniedDraft = await state.read((view) => view.agents.findAgent(namespace.id, agent.id));
+    assert.deepEqual(deniedDraft.plugins, {});
+    assert.equal(deniedDraft.configurationId, replacementConfiguration.id);
+  },
+);
+
+test(
   "the PostgreSQL worker reloads exact Namespace restrictions and never dispatches revoked provisioning",
   requiresPostgres,
   async (context) => {

@@ -9,6 +9,7 @@ import {
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
+  NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
 } from "@openclaw-enterprise/occ";
@@ -134,6 +135,7 @@ export function requestFailure(error: unknown): RequestFailure {
       "NAMESPACE_NOT_READY",
       "The requested Namespace is not ready for deployment.",
     );
+  if (error instanceof NotImplementedError) return failure(501, "NOT_IMPLEMENTED", error.message);
   if (error instanceof NamespaceNotEmptyError)
     return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
   if (

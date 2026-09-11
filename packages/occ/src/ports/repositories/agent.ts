@@ -1,3 +1,4 @@
+import type { PluginDesiredState } from "@openclaw-enterprise/contracts";
 import type { WorkloadProfileSelectionV1 } from "@openclaw-enterprise/contracts/workload-profile-v1";
 import type { Agent, HarnessExecutionMode } from "@openclaw-enterprise/contracts/resources/agent";
 
@@ -18,6 +19,7 @@ export interface AgentRepository extends AgentReadRepository {
     providerId?: string | null,
     workloadProfileSelection?: WorkloadProfileSelectionV1,
     maximumExecutionMs?: number | null,
+    plugins?: PluginDesiredState,
   ): Promise<Readonly<Agent> | undefined>;
   compareAndSetActiveRevision(
     namespaceId: string,

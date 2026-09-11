@@ -170,6 +170,7 @@ import {
   AuthorizationDeniedError,
   DependencyUnavailableError,
   NamespaceNotReadyError,
+  NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
 } from "./errors.ts";
@@ -205,6 +206,7 @@ export {
   DriverSelectionError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
+  NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
 } from "./errors.ts";

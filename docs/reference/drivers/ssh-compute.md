@@ -12,7 +12,7 @@ Provision Linux with systemd, util-linux `flock`, `getent`, the shadow account
 management tools (`useradd`, `userdel`, `groupadd`, `groupdel`), a root SSH
 account, Node.js 24, and a readable OpenClaw entrypoint. The controller processes
 need the system `ssh` executable and protected identity and known-hosts files;
-the controller image's `node:24-bookworm` base ships the OpenSSH client.
+the controller image's `docker.io/library/node:24-bookworm` base ships the OpenSSH client.
 The Driver never installs or upgrades host software and has no `sudo` fallback.
 API and worker production preflight both verify configured hosts, so both
 processes need these SSH inputs. Hosts receive no controller credentials,
@@ -55,6 +55,12 @@ OCC Secret bindings are unsupported. Select Configuration storage appropriate to
 the control plane; SSH does not provision Kubernetes namespaces for bundled
 ConfigMap or Secret storage. SSH selection does not add a raw-host control-plane
 installer or alter the existing production API security requirements.
+
+SSH Compute currently rejects AgentRevisions with any nonempty requested plugin
+map before applying host effects. Agent create/update can still save structurally
+valid plugin selections, but deployment to SSH cannot start until the requested
+plugin map is empty. Use Kubernetes Compute for the bundled PluginDriver proof
+paths.
 
 | Setting                                  | Contract                                                                                                                                               |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -5,6 +5,7 @@ import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   DependencyUnavailableError,
   NamespaceNotReadyError,
+  NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
 } from "../../errors.ts";
@@ -71,6 +72,13 @@ export function createDeploymentCandidateNormalizerV2(
     if (!lockedAgent || !isNonEmptyString(lockedAgent.servicePrincipalId))
       throw new ScopeViolationError(
         "The Agent or its service principal does not belong to the exact Namespace.",
+      );
+    // TODO: admit plugin material only when the immutable workload-profile schema
+    // binds the original plugin artifacts and startup inputs. Draft data is not authority.
+    if (lockedAgent.plugins !== undefined && Object.keys(lockedAgent.plugins).length !== 0)
+      throw new NotImplementedError(
+        "agent_plugins.immutable_profile",
+        "Plugin deployment requires an immutable workload-profile binding.",
       );
     if (command !== undefined) {
       const expected = command.expectedDraft;

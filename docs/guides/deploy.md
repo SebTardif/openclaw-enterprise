@@ -110,6 +110,16 @@ paths are not approval for the separately admitted native runtime profile.
 
 For native administration, use [workload identity and runtime history readback](deploy/runtime-services.md).
 
+Trusted Installation YAML can select a
+[PluginDriver](../reference/drivers/plugin.md) for Agent plugin resolution. Agent
+create/update stores structurally valid plugin maps; the configured Driver
+provides catalog membership and policy validation. Nonempty plugin deployments
+remain unavailable until the selected plugins have genuine immutable admission
+binding. Selecting a catalog or Kubernetes Compute does not satisfy that
+requirement; SSH Compute also rejects nonempty plugin maps. See
+[Agent plugins](../reference/agent-plugins.md) for component behavior and
+[testing](../testing/README.md) for fixture prerequisites.
+
 ## Related
 
 - [Service API keys, rotation, and bootstrap recovery](deploy/service-keys.md)

@@ -88,6 +88,9 @@ function composeLoggingConfiguration(environment = {}) {
       cwd: repository,
       env: {
         PATH: process.env.PATH,
+        // Interpolation only for `docker compose config`; these are not SDK artifacts or build authority.
+        OCC_BUILD_UPSTREAM_SDK_CONTEXT: "./tests/fixtures",
+        OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "0".repeat(64),
         OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:4318/v1/logs",
         ...environment,
       },
@@ -297,7 +300,7 @@ test(
         "mutable Collector image",
         {
           ...loggingValues,
-          "logging.collector.image": "otel/opentelemetry-collector-contrib:0.159.0",
+          "logging.collector.image": "docker.io/otel/opentelemetry-collector-contrib:0.159.0",
         },
       ],
       [

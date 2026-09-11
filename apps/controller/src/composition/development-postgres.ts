@@ -314,6 +314,12 @@ export async function composePostgresDevelopment(
     }
     if (serviceAccountDriverFactory !== undefined)
       initializeServiceAccountDriver(serviceAccountDriverFactory, controller, state);
+    if (drivers?.pluginDriver !== undefined) {
+      controller.registerDriver(drivers.pluginDriver);
+      if (controller.selectDriver("plugin", drivers.pluginDriver.id) !== drivers.pluginDriver) {
+        throw new Error("The configured Plugin Driver was not selected correctly.");
+      }
+    }
     await controller.validateProviderConfiguration();
 
     let workspaceFilesAccess = config.workspaceFilesAccess;

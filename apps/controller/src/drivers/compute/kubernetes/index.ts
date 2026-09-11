@@ -126,6 +126,7 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
+import { pluginRuntimeSpecForRevision } from "../plugin-runtime.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
 
 export interface AgentRuntimeCredentialsInput {
@@ -797,6 +798,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   acquireCurrentLaunchOperands(
     revision: Readonly<AgentRevision>,
   ): ReturnType<ComputeLifecycleDispatcher["acquireCurrentLaunchOperands"]> {
+    this.assertNoUnboundPluginRuntime(revision);
     const dispatcher = this.lifecycle;
     this.#assertLaunchDispatcher(dispatcher);
     const operands = acquireCurrentDispatcherLaunch.call(dispatcher, revision);
@@ -1005,6 +1007,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   ) {
     input.assertCurrent();
     const revision = input.revision;
+    this.assertNoUnboundPluginRuntime(revision);
     const request = input.child.request;
     if (
       request.kind !== "create" ||
@@ -1404,6 +1407,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     revision: AgentRevision,
     context?: ComputeRevisionContext,
   ): Promise<ComputeReadiness> {
+    this.assertNoUnboundPluginRuntime(revision);
     this.assertLegacyGatewayPreparation();
     return this.withIsolationContainment(revision, () =>
       this.prepareIsolatedRevision(revision, context),
@@ -1741,10 +1745,28 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
+    this.assertNoUnboundPluginRuntime(revision);
     this.assertLegacyGatewayPreparation();
     return this.withIsolationContainment(revision, () =>
       this.activateIsolatedRevision(revision, context),
     );
+  }
+
+  private assertNoUnboundPluginRuntime(revision: Readonly<AgentRevision>): void {
+    try {
+      // Startup-time catalog resolution is not part of the selected immutable
+      // renderer/material binding. Retained revisions must refuse it here too.
+      if (pluginRuntimeSpecForRevision(revision) !== undefined) {
+        throw new ConfigurationFailure(
+          "Kubernetes workload profiles do not bind plugin runtime artifacts.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof ConfigurationFailure) throw error;
+      throw new ConfigurationFailure(
+        error instanceof Error ? error.message : "AgentRevision plugin selections are invalid.",
+      );
+    }
   }
 
   private assertLegacyGatewayPreparation(): void {

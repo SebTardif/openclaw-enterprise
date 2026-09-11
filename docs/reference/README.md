@@ -39,6 +39,7 @@ automatically by Agent execution.
 | [Workload identity](workload-identity.md)               | Local SPIFFE Workload API source, credential refresh, diagnostics, and verification limits. |
 | [Providers](providers.md)                               | Provider configuration, related Drivers, client ownership, and Agent references.            |
 | [Service accounts](service-accounts.md)                 | Account associations, credential references, issuance, and revocation boundaries.           |
+| [Agent plugins](agent-plugins.md)                       | Curated drafts, configured catalogs, component startup policy, and admission limits.        |
 | [Harness execution](harness-execution.md)               | Runtime selection, topology, and admitted execution constraints.                            |
 | [Controller reconciliation](controller.md)              | Durable lifecycle work, authorization refresh, claims, retries, and recovery.               |
 | [Security](security.md)                                 | Kubernetes workload and credential boundaries and enforcement limitations.                  |
@@ -108,8 +109,9 @@ must satisfy. It is part of the reference, not another document lifecycle.
   capability selection, and compatibility boundaries.
 - [ComputeDriver](drivers/compute.md), [SandboxDriver](drivers/sandbox.md),
   [ConfigurationDriver](drivers/configuration.md), [IAMDriver](drivers/iam.md),
-  [SecretDriver](drivers/kubernetes-secret.md), and
-  [ServiceAccountDriver](drivers/service-account.md): capability contracts.
+  [SecretDriver](drivers/kubernetes-secret.md),
+  [ServiceAccountDriver](drivers/service-account.md), and
+  [PluginDriver](drivers/plugin.md): capability contracts.
 - [Docker Compute](drivers/docker-compute.md),
   [Kubernetes Compute](drivers/kubernetes-compute.md),
   [SSH Compute](drivers/ssh-compute.md), and

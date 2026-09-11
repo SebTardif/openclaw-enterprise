@@ -19,6 +19,10 @@ checks do not establish complete production runtime acceptance.
 Use the [feature and Driver index](reference/README.md) for supported behavior,
 configuration, and limits. The [HTTP API](reference/api.md) describes request and
 response schemas. The [console guide](reference/console.md) covers browser tasks.
+[Agent plugins](reference/agent-plugins.md) and
+[PluginDriver](reference/drivers/plugin.md) cover curated plugin drafts, configured
+catalogs, and component startup policy. Nonempty plugin deployments remain
+unavailable until genuine immutable admission binding is implemented.
 
 ## Architecture
 
@@ -34,6 +38,9 @@ lists runtime traces for authentication, configuration, Drivers, and Agent execu
 See also the [operator workflow](flows/operator-workflow.md),
 [channel delivery](flows/channel-delivery.md), and
 [lifecycle recovery guide](guides/lifecycle-recovery.md) for current admission and recovery boundaries.
+The [Agent plugin flow](flows/agent-plugins.md) traces the plugin component from
+desired state through startup and runtime configuration; its catalog operations
+do not supply immutable deployment admission.
 
 ## Contribute
 

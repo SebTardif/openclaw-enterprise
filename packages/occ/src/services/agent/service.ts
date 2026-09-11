@@ -1,3 +1,4 @@
+import { normalizePluginDesiredState } from "@openclaw-enterprise/contracts";
 import type {
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -415,6 +416,9 @@ export class AgentService implements AgentServicePort {
     const executionMode = input.executionMode ?? "embedded";
     if (!validExecutionMode(executionMode))
       throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
+    const plugins = normalizePluginDesiredState(input.plugins, (message) => {
+      throw new ScopeViolationError(message);
+    });
     const providerId = this.providerId(input.providerId);
     return this.options.repositories.mutate(async (state) => {
       const namespace = await this.lockNamespace(state, input.namespaceId);
@@ -465,6 +469,7 @@ export class AgentService implements AgentServicePort {
           ? {}
           : { serviceAccountId: input.serviceAccountId }),
         executionMode,
+        ...(plugins === undefined ? {} : { plugins }),
         maximumExecutionMs:
           input.maximumExecutionMs === undefined ? null : input.maximumExecutionMs,
         servicePrincipalId: `service-agent-${agentId}`,
@@ -475,6 +480,9 @@ export class AgentService implements AgentServicePort {
   }
 
   async updateAgent(principalId: string, input: UpdateAgentInput): Promise<Readonly<Agent>> {
+    const plugins = normalizePluginDesiredState(input.plugins, (message) => {
+      throw new ScopeViolationError(message);
+    });
     const selectingProfile = Object.hasOwn(input, "workloadProfileSelection");
     if (selectingProfile) {
       const selected = decodeWorkloadProfileSelectionV1(input.workloadProfileSelection);
@@ -493,6 +501,7 @@ export class AgentService implements AgentServicePort {
         ...(input.maximumExecutionMs === undefined
           ? {}
           : { maximumExecutionMs: input.maximumExecutionMs }),
+        ...(plugins === undefined ? {} : { plugins }),
         workloadProfileSelection: selected.value,
       });
     }
@@ -613,6 +622,7 @@ export class AgentService implements AgentServicePort {
           input.providerId === undefined ? undefined : providerId,
           selectingProfile ? input.workloadProfileSelection! : undefined,
           input.maximumExecutionMs,
+          plugins,
         );
         owned?.io.assertActive();
         checkSelection?.();

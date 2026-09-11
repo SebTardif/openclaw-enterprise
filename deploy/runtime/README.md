@@ -14,7 +14,7 @@ original archives and records the metadata and file-mode changes needed for
 installation; it does not rebuild the SDK.
 
 The image retains the pinned Node base
-`node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584`,
+`docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584`,
 requires Node 24.15 or later, and installs native Codex **0.153.0**. The Codex
 plugin and native CLI are separate packages with separate identities.
 

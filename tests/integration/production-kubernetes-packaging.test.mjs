@@ -89,6 +89,9 @@ async function composeConfiguration() {
       cwd: repository,
       env: {
         PATH: process.env.PATH,
+        // Interpolation only for `docker compose config`; these are not SDK artifacts or build authority.
+        OCC_BUILD_UPSTREAM_SDK_CONTEXT: "./tests/fixtures",
+        OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "0".repeat(64),
       },
       maxBuffer: 2_000_000,
     },
@@ -457,7 +460,7 @@ test(
   tooling,
   async () => {
     for (const [description, override] of [
-      ["mutable controller", { "images.controller": "controller:latest" }],
+      ["mutable controller", { "images.controller": "registry.example/controller:latest" }],
       ["missing Better Auth secret", { "auth.secretName": "" }],
       ["missing bootstrap admin email", { "bootstrap.adminEmail": "" }],
       ["missing bootstrap password claim", { "bootstrap.password.claimName": "" }],

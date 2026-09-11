@@ -1,9 +1,11 @@
+import { OCCPluginDriver, CodexPluginDriver } from "../drivers/plugin/index.ts";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   ComputeDriver,
   ConfigurationDriver,
   IAMDriver,
+  PluginDriver,
   SandboxDriver,
   SecretDriver,
 } from "@openclaw-enterprise/contracts";
@@ -12,6 +14,9 @@ import type { KubernetesRendererSource } from "../drivers/compute/kubernetes/wor
 import type { NativeIAMStateStore } from "@openclaw-enterprise/iam";
 import {
   parseInstallationConfiguration,
+  selected,
+  object,
+  closed,
   runtimeAuthoritySourcesConfiguration,
   selectedDriverConfigurations,
   type InstallationStartupConfiguration,
@@ -63,6 +68,7 @@ export interface InstallationRuntimeDrivers {
   readonly configurationDriver: ConfigurationDriver;
   readonly secretDriver: SecretDriver;
   readonly sandboxDriver?: SandboxDriver;
+  readonly pluginDriver?: PluginDriver;
   readonly createIAMDriver: (state: NativeIAMStateStore) => IAMDriver;
 }
 
@@ -103,6 +109,33 @@ export async function loadInstallationConfiguration(options: {
     return undefined;
   }
   const { cluster, drivers } = parseInstallationConfiguration(configuration);
+  const pluginSelection =
+    drivers.plugin === undefined ? undefined : object(drivers.plugin, "drivers.plugin");
+  if (pluginSelection !== undefined) {
+    closed(pluginSelection, ["id", "configuration"], "drivers.plugin");
+    if (pluginSelection.id !== "occ-plugin" && pluginSelection.id !== "codex-plugin") {
+      throw new Error("drivers.plugin.id must select occ-plugin or codex-plugin.");
+    }
+  }
+  const PluginImplementation =
+    pluginSelection?.id === "codex-plugin" ? CodexPluginDriver : OCCPluginDriver;
+  const plugin =
+    pluginSelection === undefined
+      ? undefined
+      : selected(
+          pluginSelection,
+          "plugin",
+          pluginSelection.id === "codex-plugin" ? "occ/codex-plugin" : "occ/openclaw-plugin",
+          PluginImplementation,
+        );
+  const pluginDriver =
+    plugin === undefined
+      ? undefined
+      : new PluginImplementation(plugin.configuration, {
+          id: plugin.id,
+          implementation: plugin.implementation,
+        });
+
   const serviceAccount = selectedServiceAccountConfiguration(drivers.service_account);
   const providers = providerConfiguration(configuration.provider, serviceAccount);
   const runtimeAuthoritySources = runtimeAuthoritySourcesConfiguration(
@@ -187,6 +220,7 @@ export async function loadInstallationConfiguration(options: {
       compute,
       secret,
       ...(sandbox === undefined ? {} : { sandbox }),
+      ...(plugin === undefined ? {} : { plugin }),
       ...(serviceAccount === undefined ? {} : { service_account: serviceAccount }),
     }),
   });
@@ -230,5 +264,6 @@ export async function loadInstallationConfiguration(options: {
     secretDriver,
     ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
     createIAMDriver,
+    ...(pluginDriver === undefined ? {} : { pluginDriver }),
   });
 }

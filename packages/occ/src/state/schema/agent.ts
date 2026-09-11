@@ -1,4 +1,4 @@
-import type { HarnessExecutionMode } from "@openclaw-enterprise/contracts";
+import type { PluginDesiredState, HarnessExecutionMode } from "@openclaw-enterprise/contracts";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -44,6 +44,7 @@ export function createAgentTables(
       providerId: text("provider_id"),
       maximumExecutionMs: bigint("maximum_execution_ms", { mode: "number" }),
       executionMode: text("execution_mode").$type<HarnessExecutionMode>().notNull(),
+      plugins: jsonb("plugins").$type<PluginDesiredState>(),
       servicePrincipalId: text("service_principal_id").notNull(),
       serviceAccountId: text("service_account_id"),
       activeRevisionId: text("active_revision_id"),
@@ -64,6 +65,10 @@ export function createAgentTables(
         check(
           "agents_maximum_execution_ms",
           sql`${table.maximumExecutionMs} IS NULL OR ${table.maximumExecutionMs} BETWEEN 1 AND 9007199254740991`,
+        ),
+        check(
+          "agents_plugins_object",
+          sql`${table.plugins} IS NULL OR jsonb_typeof(${table.plugins}) = 'object'`,
         ),
         check("agents_id_format", sql`${table.id} ~ ${identifierPatterns.agent}`),
         check("agents_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),

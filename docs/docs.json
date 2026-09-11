@@ -61,6 +61,7 @@
                 "group": "Features",
                 "pages": [
                   "reference/README",
+                  "reference/agent-plugins",
                   "reference/agents",
                   "reference/agents/deployment",
                   "reference/api",
@@ -104,6 +105,7 @@
                   "reference/audience-observation",
                   "reference/authentication-failures",
                   "reference/build",
+                  "reference/build/native-read",
                   "reference/channel-administration",
                   "reference/channel-bindings",
                   "reference/channels",
@@ -233,6 +235,7 @@
                   "reference/drivers/kubernetes-compute/storage-and-credentials",
                   "reference/drivers/kubernetes-secret",
                   "reference/drivers/openshell-sandbox",
+                  "reference/drivers/plugin",
                   "reference/drivers/sandbox",
                   "reference/drivers/selection",
                   "reference/drivers/service-account",
@@ -249,6 +252,7 @@
                 "group": "Runtime flows",
                 "pages": [
                   "flows/common-logging",
+                  "flows/agent-plugins",
                   "flows/compute-driver-lifecycle-hooks",
                   "flows/configuration-driver",
                   "flows/configuration-driver/persistence-and-revisions",
@@ -318,7 +322,12 @@
               },
               {
                 "group": "External services",
-                "pages": ["testing/slack", "testing/service-accounts", "testing/openshell"]
+                "pages": [
+                  "testing/slack",
+                  "testing/service-accounts",
+                  "testing/plugins",
+                  "testing/openshell"
+                ]
               }
             ]
           }

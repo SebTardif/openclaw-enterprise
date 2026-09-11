@@ -7,6 +7,7 @@ export const DRIVER_CAPABILITIES = Object.freeze([
   "service_account",
   "secret",
   "sandbox",
+  "plugin",
 ] as const);
 
 export type DriverCapability = (typeof DRIVER_CAPABILITIES)[number];

@@ -408,7 +408,7 @@ export function createPostgresRuntimeCreateEncodingMembershipV1(
     recoverPossibleEffects(
       value: RuntimeCreateEncodingSelectionV1,
     ): Promise<RuntimeCreateEncodingRecoveryV1> {
-      return guard.run(async () => {
+      return guard.run(async (): Promise<RuntimeCreateEncodingRecoveryV1> => {
         const selected = await lock(value, "shared");
         const parameters = [
           installationId,
@@ -431,7 +431,7 @@ export function createPostgresRuntimeCreateEncodingMembershipV1(
             parameters,
           )
         ).map((row) => decodeBody(row) as RuntimeCreateEncodingRetainedOutcomeV1);
-        return immutableCopy({
+        return immutableCopy<RuntimeCreateEncodingRecoveryV1>({
           kind: "inert-encoding-recovery",
           possibleEffects: records,
           outcomes,

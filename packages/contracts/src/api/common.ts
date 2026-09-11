@@ -205,6 +205,18 @@ export const UpdateWorkspaceFileBody = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginApprovalModeSchema = Type.Union([
+  Type.Literal("always"),
+  Type.Literal("never"),
+  Type.Literal("prompt"),
+  Type.Literal("auto"),
+]);
+
+export const PluginApprovalsReviewerSchema = Type.Union([
+  Type.Literal("user"),
+  Type.Literal("auto_review"),
+]);
+
 export const ERROR_DETAIL_CODES = Object.freeze([
   "REQUIRED",
   "UNKNOWN_FIELD",
@@ -228,6 +240,7 @@ export const ERROR_CODES = Object.freeze([
   "PAYLOAD_TOO_LARGE",
   "UNSUPPORTED_MEDIA_TYPE",
   "UNKNOWN_OUTCOME",
+  "NOT_IMPLEMENTED",
   "INTERNAL_ERROR",
   "DEPENDENCY_UNAVAILABLE",
 ] as const);
@@ -268,6 +281,7 @@ export const ErrorResponse = Type.Object(
           Type.Literal("PAYLOAD_TOO_LARGE"),
           Type.Literal("UNSUPPORTED_MEDIA_TYPE"),
           Type.Literal("UNKNOWN_OUTCOME"),
+          Type.Literal("NOT_IMPLEMENTED"),
           Type.Literal("INTERNAL_ERROR"),
           Type.Literal("DEPENDENCY_UNAVAILABLE"),
         ]),

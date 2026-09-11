@@ -407,6 +407,13 @@
       "when": 1788864165478,
       "tag": "0057_runtime_service_github_git_read_v3",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788864165479,
+      "tag": "0058_agent_plugin_drafts",
+      "breakpoints": true
     }
   ]
 }

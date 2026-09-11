@@ -9,6 +9,7 @@ import { createDeploymentCandidateNormalizerV2 } from "../../packages/occ/src/se
 import {
   DependencyUnavailableError,
   NamespaceNotReadyError,
+  NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
 } from "../../packages/occ/src/errors.ts";
@@ -1245,4 +1246,37 @@ test("deployment normalization preserves the original nullable ProviderRef with 
       assert.equal(f.named(name).length, 1, `${path}: ${name}`);
     assert.equal(f.inserts.length, path === "service" ? 1 : 0);
   }
+});
+
+test("deployment normalization refuses plugin drafts before material acquisition without an immutable binding", async () => {
+  for (const enabled of [true, false]) {
+    for (const protocol of ["v1", "v2"]) {
+      const f = fixture();
+      f.agent.plugins = { "occ-plugin:diffs": { enabled, approvalMode: "always" } };
+      await assert.rejects(protocol === "v2" ? normalizeV2(f) : deployV1(f), (error) => {
+        assert.ok(error instanceof NotImplementedError);
+        assert.equal(error.operation, "agent_plugins.immutable_profile");
+        return true;
+      });
+      for (const name of [
+        "configuration.lock",
+        "configuration.read",
+        "secret.resolve",
+        "account.provider",
+        "sandbox.configure",
+      ])
+        assert.equal(f.named(name).length, 0, name);
+      noCandidate(f);
+    }
+  }
+});
+
+test("deployment normalization preserves the existing candidate for empty plugin drafts", async () => {
+  const baseline = await normalizeV2(fixture());
+  const f = fixture();
+  f.agent.plugins = {};
+  const selected = await normalizeV2(f);
+  assert.deepEqual(plain(selected.candidate), plain(baseline.candidate));
+  assert.equal(Object.hasOwn(selected.candidate, "plugins"), false);
+  assert.equal(f.inserts.length, 0);
 });

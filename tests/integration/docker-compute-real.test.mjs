@@ -870,7 +870,7 @@ test(
     const env = {
       ...process.env,
       COMPOSE_PROJECT_NAME: project,
-      NODE_BASE_IMAGE: process.env.NODE_BASE_IMAGE ?? "node:24-bookworm",
+      NODE_BASE_IMAGE: process.env.NODE_BASE_IMAGE ?? "docker.io/library/node:24-bookworm",
       GO_BASE_IMAGE: nonempty(
         process.env.GO_BASE_IMAGE,
         "GO_BASE_IMAGE for the native controller build",

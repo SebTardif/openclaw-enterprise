@@ -29,6 +29,7 @@ export interface InstallationStartupConfiguration {
     readonly compute: SelectedDriverConfiguration;
     readonly secret: SelectedDriverConfiguration;
     readonly sandbox?: SelectedDriverConfiguration;
+    readonly plugin?: SelectedDriverConfiguration;
     readonly service_account?: { readonly id: string };
   };
 }
@@ -93,7 +94,7 @@ export function safe(value: unknown, path: string): void {
 
 export function selected(
   value: unknown,
-  capability: "configuration" | "iam" | "compute" | "secret" | "sandbox",
+  capability: "configuration" | "iam" | "compute" | "secret" | "sandbox" | "plugin",
   implementation: string,
   driver: DriverImplementation,
 ): SelectedDriverConfiguration {
@@ -151,7 +152,7 @@ export function parseInstallationConfiguration(configuration: ConfigurationRecor
   const drivers = object(configuration.drivers, "drivers");
   closed(
     drivers,
-    ["configuration", "iam", "compute", "secret", "sandbox", "service_account"],
+    ["configuration", "iam", "compute", "secret", "sandbox", "plugin", "service_account"],
     "drivers",
   );
 

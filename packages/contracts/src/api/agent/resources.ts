@@ -35,6 +35,7 @@ export const CreateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    plugins: Type.Optional(Type.Ref("PluginDesiredState")),
     maximumExecutionMs: Type.Optional(MaximumExecutionMs),
   },
   { additionalProperties: false },
@@ -46,6 +47,7 @@ export const UpdateAgentBody = Type.Object(
     providerId: Type.Optional(Type.Union([ProviderId, Type.Null()])),
     serviceAccountId: Type.Optional(Type.Union([ServiceAccountId, Type.Null()])),
     executionMode: Type.Optional(HarnessExecutionModeSchema),
+    plugins: Type.Optional(Type.Ref("PluginDesiredState")),
     maximumExecutionMs: Type.Optional(MaximumExecutionMs),
     workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
   },
@@ -77,6 +79,7 @@ export const AgentSchema = Type.Object(
     providerId: Type.Union([ProviderId, Type.Null()]),
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
+    plugins: Type.Optional(Type.Ref("PluginDesiredState")),
     maximumExecutionMs: MaximumExecutionMs,
     activeRevisionId: Type.Optional(RevisionId),
     workloadProfileSelection: Type.Optional(WorkloadProfileSelectionSchemaV1),
@@ -136,6 +139,12 @@ export const AgentRevisionSchema = Type.Object(
     workloadProfileUse: Type.Optional(WorkloadProfileUseSchemaV2),
     secretDriverId: Type.Optional(Type.String({ minLength: 1 })),
     secretBindings: Type.Optional(SecretBindings),
+    plugins: Type.Optional(
+      Type.Object(
+        { driver: Type.Ref("PluginDriverIdentity"), plugins: Type.Ref("PluginDesiredState") },
+        { additionalProperties: false },
+      ),
+    ),
     serviceAccount: Type.Optional(
       Type.Object(
         {

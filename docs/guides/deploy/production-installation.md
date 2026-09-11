@@ -141,6 +141,11 @@ Edit the protected YAML copies before provisioning anything:
   selectors, the service-principal token settings, the runtime Secret prefixes,
   and `runtime.gatewayStorageClassName`. Keep
   `drivers.compute.configuration.images.requireImmutableDigest: true`.
+  For Agent plugin catalog resolution, select one compatible bundled
+  `drivers.plugin` and any required Codex catalog-reader configuration; see the
+  [PluginDriver reference](../../reference/drivers/plugin.md#selection-and-catalogs).
+  Catalog configuration does not admit a nonempty plugin deployment: genuine
+  immutable plugin binding remains required.
   Runtime security comes from the immutable admitted workload profile. The mutable
   `runtime.codexSeccompProfile` override is unsupported; a node compatibility
   experiment cannot select production authority. See the

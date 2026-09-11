@@ -15,6 +15,9 @@ import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import {
   AGENT_READINESS_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
+  PLUGIN_AGENT_RUNTIME_ENTRYPOINT,
+  PLUGIN_AGENT_READINESS_ENTRYPOINT,
+  PLUGIN_RUNTIME_HELPERS,
 } from "../runtime/runtime-entrypoints.ts";
 import {
   dockerRequest,
@@ -61,6 +64,13 @@ import {
   CONFIGURATION_HASH_LABEL,
   HARNESS_VERSION_LABEL,
 } from "./revisions.ts";
+import {
+  PLUGIN_RUNTIME_READY_MARKER,
+  PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
+  type PluginRuntimeSpec,
+  pluginRuntimeEnvironment,
+  pluginRuntimeSpecForRevision,
+} from "../plugin-runtime.ts";
 
 export interface DockerComputeDriverOptions {
   readonly images: {
@@ -74,7 +84,7 @@ const DRIVER_ID = "compute-docker-development";
 const DRIVER_IMPLEMENTATION = "docker-local";
 const STARTUP_TIMEOUT_MS = 120_000;
 
-const GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
+export const GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
 const { mkdirSync, writeFileSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 
@@ -95,6 +105,40 @@ mkdirSync("/home/node/workspace", { recursive: true });
 writeFileSync(process.env.OPENCLAW_CONFIG_PATH, process.env.OPENCLAW_CONFIG_JSON, { mode: 0o600 });
 delete process.env.OPENCLAW_CONFIG_JSON;
 delete process.env.OPENCLAW_LOG_LEVEL;
+const child = spawn(
+  "node",
+  ["/app/openclaw.mjs", "gateway", "--port", process.env.OPENCLAW_GATEWAY_PORT],
+  { stdio: "inherit" },
+);
+forwardTermination(child);
+child.on("exit", (code, signal) => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1)));
+`;
+
+export const PLUGIN_GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+
+${PLUGIN_RUNTIME_HELPERS}
+
+function forwardTermination(child) {
+  let terminating = false;
+  const forward = (signal) => {
+    if (terminating) return;
+    terminating = true;
+    child.kill(signal);
+    setTimeout(() => child.kill("SIGKILL"), 8_000).unref();
+  };
+  process.on("SIGTERM", () => forward("SIGTERM"));
+  process.on("SIGINT", () => forward("SIGINT"));
+}
+
+mkdirSync("/home/node/.openclaw", { recursive: true });
+mkdirSync("/home/node/workspace", { recursive: true });
+writeFileSync(process.env.OPENCLAW_CONFIG_PATH, process.env.OPENCLAW_CONFIG_JSON, { mode: 0o600 });
+delete process.env.OPENCLAW_CONFIG_JSON;
+delete process.env.OPENCLAW_LOG_LEVEL;
+const pluginRuntime = readGatewayPluginRuntime();
+if (pluginRuntime !== undefined) installOpenClawPlugins(pluginRuntime);
 const child = spawn(
   "node",
   ["/app/openclaw.mjs", "gateway", "--port", process.env.OPENCLAW_GATEWAY_PORT],
@@ -237,6 +281,7 @@ export class DockerComputeDriver implements ComputeDriver {
 
     const loggingLevel = admittedLoggingLevel(revision.configuration);
     const prepared = immutableCopy(revision);
+    const pluginRuntime = this.pluginRuntimeForRevision(prepared);
     let launchPrepared = false;
     let agentCreated: string | undefined;
     let gatewayCreated: string | undefined;
@@ -245,25 +290,45 @@ export class DockerComputeDriver implements ComputeDriver {
       launchPrepared = true;
       const provider = this.providerEnvironment();
       if (prepared.harness.mode === "embedded") {
-        const gateway = await this.reconcileGateway(prepared, network, {
-          ...provider,
-          ...launch.environment,
-        });
+        const gateway = await this.reconcileGateway(
+          prepared,
+          network,
+          {
+            ...provider,
+            ...launch.environment,
+            ...this.pluginRuntimeEnvironmentForWorkload(pluginRuntime, "gateway", true),
+          },
+          pluginRuntime,
+        );
         gatewayCreated = gateway.created ? gateway.containerName : undefined;
         return { ...result, ready: gateway.ready };
       }
 
       const appServerToken = randomBytes(32).toString("hex");
-      const agent = await this.reconcileAgent(prepared, network, appServerToken, loggingLevel, {
-        ...provider,
-        ...launch.environment,
-      });
+      const agent = await this.reconcileAgent(
+        prepared,
+        network,
+        appServerToken,
+        loggingLevel,
+        {
+          ...provider,
+          ...launch.environment,
+          ...this.pluginRuntimeEnvironmentForWorkload(pluginRuntime, "agent", false),
+        },
+        pluginRuntime,
+      );
       agentCreated = agent.created ? agent.containerName : undefined;
       if (!agent.ready) return result;
-      const gateway = await this.reconcileGateway(prepared, network, {
-        APP_SERVER_URL: `ws://${agent.containerName}:${AGENT_TRANSPORT_PORT}`,
-        APP_SERVER_TOKEN: appServerToken,
-      });
+      const gateway = await this.reconcileGateway(
+        prepared,
+        network,
+        {
+          APP_SERVER_URL: `ws://${agent.containerName}:${AGENT_TRANSPORT_PORT}`,
+          APP_SERVER_TOKEN: appServerToken,
+          ...this.pluginRuntimeEnvironmentForWorkload(pluginRuntime, "gateway", false),
+        },
+        pluginRuntime,
+      );
       gatewayCreated = gateway.created ? gateway.containerName : undefined;
       return { ...result, ready: gateway.ready };
     } catch (error) {
@@ -327,6 +392,7 @@ export class DockerComputeDriver implements ComputeDriver {
     revision: Readonly<AgentRevision>,
     network: string,
     environment: Readonly<Record<string, string>>,
+    pluginRuntime: PluginRuntimeSpec | undefined,
   ): Promise<{
     readonly containerName: string;
     readonly created: boolean;
@@ -364,7 +430,10 @@ export class DockerComputeDriver implements ComputeDriver {
           ? undefined
           : randomBytes(32).toString("hex"),
       ),
-      command: GATEWAY_RUNTIME_ENTRYPOINT,
+      command:
+        pluginRuntime === undefined
+          ? GATEWAY_RUNTIME_ENTRYPOINT
+          : PLUGIN_GATEWAY_RUNTIME_ENTRYPOINT,
       healthcheckScript: `fetch("http://127.0.0.1:${GATEWAY_PORT}/readyz").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));`,
       exposedPort: GATEWAY_PORT,
       labels: {
@@ -387,6 +456,7 @@ export class DockerComputeDriver implements ComputeDriver {
     appServerToken: string,
     loggingLevel: LoggingLevel,
     environment: Readonly<Record<string, string>>,
+    pluginRuntime: PluginRuntimeSpec | undefined,
   ): Promise<{
     readonly containerName: string;
     readonly created: boolean;
@@ -411,8 +481,12 @@ export class DockerComputeDriver implements ComputeDriver {
       ownership,
       role: "agent",
       environment: agentEnvironment(environment, appServerToken, loggingLevel),
-      command: AGENT_RUNTIME_ENTRYPOINT,
-      healthcheckScript: AGENT_READINESS_ENTRYPOINT,
+      command:
+        pluginRuntime === undefined ? AGENT_RUNTIME_ENTRYPOINT : PLUGIN_AGENT_RUNTIME_ENTRYPOINT,
+      healthcheckScript:
+        pluginRuntime === undefined
+          ? AGENT_READINESS_ENTRYPOINT
+          : PLUGIN_AGENT_READINESS_ENTRYPOINT,
       exposedPort: AGENT_TRANSPORT_PORT,
       labels: {
         [REVISION_LABEL]: revision.id,
@@ -448,6 +522,50 @@ export class DockerComputeDriver implements ComputeDriver {
 
   private providerEnvironment(): Readonly<Record<string, string>> {
     return providerEnvironment(process.env.OPENAI_API_KEY);
+  }
+
+  private pluginRuntimeForRevision(
+    revision: Readonly<AgentRevision>,
+  ): PluginRuntimeSpec | undefined {
+    try {
+      return pluginRuntimeSpecForRevision(revision);
+    } catch (error) {
+      throw new ConfigurationFailure(
+        error instanceof Error
+          ? error.message
+          : "AgentRevision plugin runtime artifacts are invalid.",
+      );
+    }
+  }
+
+  private pluginRuntimeEnvironmentForWorkload(
+    runtime: PluginRuntimeSpec | undefined,
+    role: "agent" | "gateway",
+    embedded: boolean,
+  ): Readonly<Record<string, string>> {
+    if (runtime === undefined) return {};
+    const applies =
+      (runtime.kind === "openclaw" && role === "gateway" && embedded) ||
+      (runtime.kind === "codex" && role === "agent" && !embedded) ||
+      (runtime.kind === "codex" &&
+        role === "gateway" &&
+        !embedded &&
+        Object.keys(runtime.selections).length > 0);
+    if (!applies) return {};
+    try {
+      return {
+        ...pluginRuntimeEnvironment(runtime),
+        ...(runtime.kind === "codex" && role === "agent"
+          ? { [PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT]: PLUGIN_RUNTIME_READY_MARKER }
+          : {}),
+      };
+    } catch (error) {
+      throw new ConfigurationFailure(
+        error instanceof Error
+          ? error.message
+          : "AgentRevision plugin runtime artifacts are invalid.",
+      );
+    }
   }
 
   private ownershipMetadata(ownership: Ownership): Record<string, string> {

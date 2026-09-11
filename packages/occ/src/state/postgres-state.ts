@@ -1,3 +1,4 @@
+import { normalizePluginDesiredState } from "@openclaw-enterprise/contracts";
 import {
   RepositoryWorkSelectedExecutionContextsV2,
   type RepositoryWorkSelectedExecutionBackendLeaseV2,
@@ -873,6 +874,9 @@ function installationFromRow(row: PostgresRow): Readonly<Installation> {
 }
 
 function agentFromRow(row: PostgresRow): Readonly<Agent> {
+  const plugins = normalizePluginDesiredState(row.plugins ?? undefined, () => {
+    throw new DependencyUnavailableError("Persisted Agent plugin selections are invalid.");
+  });
   const selection =
     row.workload_profile_selection == null
       ? undefined
@@ -889,6 +893,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    ...(plugins === undefined ? {} : { plugins }),
     maximumExecutionMs: row.maximum_execution_ms === null ? null : Number(row.maximum_execution_ms),
     ...(selection === undefined ? {} : { workloadProfileSelection: selection.value }),
     servicePrincipalId: text(row, "service_principal_id"),
@@ -7534,7 +7539,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                     a.provider_id, a.service_principal_id, a.service_account_id,
-                    a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms
+                    a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms, a.plugins
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
              WHERE a.namespace_id = $1 AND a.id = $2${lock ? " FOR UPDATE OF a" : ""}`,
@@ -7554,7 +7559,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                       a.provider_id, a.service_principal_id, a.service_account_id,
-                      a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms
+                      a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms, a.plugins
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
                WHERE a.namespace_id = $1 ORDER BY a.created_at, a.id`,
@@ -7565,6 +7570,9 @@ export class PostgresPlatformState implements PlatformStateStore {
         return Object.freeze(found.map((row) => agentFromRow(row)));
       },
       createAgent: async (agent) => {
+        normalizePluginDesiredState(agent.plugins, (message) => {
+          throw new ScopeViolationError(message);
+        });
         agent = immutableCopy(agent);
         const selection =
           agent.workloadProfileSelection === undefined
@@ -7589,8 +7597,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at, workload_profile_selection, maximum_execution_ms)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+             service_principal_id, service_account_id, active_revision_id, created_at, workload_profile_selection, maximum_execution_ms, plugins)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb)`,
           [
             agent.id,
             agent.namespaceId,
@@ -7604,6 +7612,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             agent.createdAt,
             selection === undefined ? null : JSON.stringify(selection.value),
             agent.maximumExecutionMs,
+            agent.plugins === undefined ? null : JSON.stringify(agent.plugins),
           ],
         );
         await client.query(
@@ -7622,7 +7631,11 @@ export class PostgresPlatformState implements PlatformStateStore {
         providerId,
         workloadProfileSelection,
         maximumExecutionMs,
+        plugins,
       ) => {
+        plugins = normalizePluginDesiredState(plugins, (message) => {
+          throw new ScopeViolationError(message);
+        });
         const selection =
           workloadProfileSelection === undefined
             ? undefined
@@ -7641,13 +7654,14 @@ export class PostgresPlatformState implements PlatformStateStore {
                    service_account_id = CASE WHEN $5::boolean THEN $6::text ELSE a.service_account_id END,
                    provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END,
                    workload_profile_selection = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.workload_profile_selection END,
-                   maximum_execution_ms = CASE WHEN $11::boolean THEN $12::bigint ELSE a.maximum_execution_ms END
+                   maximum_execution_ms = CASE WHEN $11::boolean THEN $12::bigint ELSE a.maximum_execution_ms END,
+                   plugins = CASE WHEN $13::boolean THEN $14::jsonb ELSE a.plugins END
                FROM occ.namespaces AS n
                WHERE a.namespace_id = $1 AND a.id = $2
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms, a.plugins`,
               [
                 namespaceId,
                 agentId,
@@ -7661,6 +7675,8 @@ export class PostgresPlatformState implements PlatformStateStore {
                 selection === undefined ? null : JSON.stringify(selection.value),
                 maximumExecutionMs !== undefined,
                 maximumExecutionMs ?? null,
+                plugins !== undefined,
+                plugins === undefined ? null : JSON.stringify(plugins),
               ],
             )
           ).rows,
@@ -7683,7 +7699,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
                           a.provider_id, a.service_principal_id, a.service_account_id,
-                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms`,
+                          a.active_revision_id, a.created_at, a.workload_profile_selection, a.maximum_execution_ms, a.plugins`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
           ).rows,
