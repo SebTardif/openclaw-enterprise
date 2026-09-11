@@ -277,6 +277,7 @@
             "maintenance retains its real lease across consecutive short predecessor retirements",
             "plugin installation reports fail deployments permanently before activation",
             "plugin installation reports during ready preparation stop activation and preserve the predecessor",
+            "reported plugin installation failures survive claim loss and prevent later activation",
             "development workers run supplied after-commit activation hooks and retry incomplete finalization",
             "the revision worker activates admitted candidates, retires predecessors, and rejects revoked, malformed, and wrong-owner effects",
             "the revision worker rejects associated-account access revoked after admission before invoking Compute",

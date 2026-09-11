@@ -4,6 +4,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   authorizedPrincipal,
+  cleanupNamespaces,
   cleanupProviderFixtures,
   createAccessTokenServiceAccount,
   createProviderWorkerDrivers,
@@ -43,6 +44,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
   context.after(async () => {
     if (worker === undefined) await workerPool.end();
     else await worker.stop();
+    await cleanupNamespaces(observerPool, [namespace.id]);
     await observerPool.end();
   });
 
@@ -434,6 +436,149 @@ test(
         message: "Plugin installation failed.",
       },
     ]);
+  },
+);
+
+test(
+  "reported plugin installation failures survive claim loss and prevent later activation",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context, { leaseDurationMs: 200 });
+    const { Pool } = await import("pg");
+    const { currentComputeAbortSignal } =
+      await import("../../apps/controller/src/drivers/compute/operation-context.ts");
+    const pluginId = "codex-plugin:google-calendar@openai-curated-remote";
+    const plugin = { driverId: "codex-plugin", pluginId };
+    const plugins = {
+      driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
+      plugins: { [pluginId]: { enabled: true, approvalMode: "always" } },
+    };
+    const owner = await fixture.agent("plugin-claim-loss");
+    const predecessor = await fixture.revision(owner, 1);
+    const events = [];
+    const activated = [];
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async activateRevision(revision, activationContext) {
+          if (revision.agentId === owner.id) activated.push(revision.id);
+          return fixture.compute.activateRevision?.(revision, activationContext);
+        },
+      },
+      (event) => events.push(event),
+    );
+    await fixture.work(predecessor, "succeeded");
+    assert.deepEqual(activated, [predecessor.id]);
+
+    await fixture.stop();
+    events.length = 0;
+    const candidate = await fixture.revision(owner, 2, undefined, plugins);
+    let firstCandidatePrepareCalls = 0;
+    const firstCrashWorkerPool = new Pool({ connectionString: databaseUrl, max: 1 });
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async prepareRevision(revision, computeContext) {
+          if (revision.id !== candidate.id) {
+            return fixture.compute.prepareRevision(revision, computeContext);
+          }
+          firstCandidatePrepareCalls += 1;
+          assert.equal(typeof computeContext.reportPluginInstallFailure, "function");
+          assert.deepEqual(computeContext.failedPluginIdentities, []);
+          await computeContext.reportPluginInstallFailure(plugin);
+          assert.deepEqual(computeContext.failedPluginIdentities, [plugin]);
+          // Stop the worker after persisting the plugin failure but before finalization.
+          // Recovery must complete from the durable row without preparing the candidate again.
+          setImmediate(() => {
+            void fixture.stop();
+          });
+          await delay(60_000, undefined, { signal: currentComputeAbortSignal() });
+          assert.fail("the worker stop should abort the in-flight compute operation");
+        },
+        async activateRevision(revision, activationContext) {
+          if (revision.agentId === owner.id) activated.push(revision.id);
+          return fixture.compute.activateRevision?.(revision, activationContext);
+        },
+      },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      firstCrashWorkerPool,
+    );
+
+    await waitFor(
+      "the first worker to persist the plugin failure",
+      async () => {
+        const row = await fixture.observerPool.query(
+          `SELECT state, jsonb_array_length(plugin_errors)::integer AS plugin_error_count
+           FROM occ.controller_work
+           WHERE idempotency_key = $1`,
+          [candidate.idempotencyKey],
+        );
+        return row.rows[0]?.plugin_error_count === 1 ? row.rows[0] : undefined;
+      },
+      60_000,
+    );
+    await waitFor("the first worker to stop after claim loss", () =>
+      events.some(({ event }) => event === "worker.stopped") ? true : undefined,
+    );
+    await delay(250);
+
+    const secondWorkerPool = new Pool({ connectionString: databaseUrl, max: 1 });
+    let secondCandidatePrepareCalls = 0;
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async prepareRevision(revision, computeContext) {
+          if (revision.id === candidate.id) secondCandidatePrepareCalls += 1;
+          return fixture.compute.prepareRevision(revision, computeContext);
+        },
+        async activateRevision(revision, activationContext) {
+          if (revision.agentId === owner.id) activated.push(revision.id);
+          return fixture.compute.activateRevision?.(revision, activationContext);
+        },
+      },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      secondWorkerPool,
+    );
+
+    await fixture.work(candidate, "failed_permanent");
+    assert.equal(firstCandidatePrepareCalls, 1);
+    assert.equal(secondCandidatePrepareCalls, 0);
+    assert.deepEqual(activated, [predecessor.id]);
+
+    const work = await fixture.observerPool.query(
+      `SELECT state, attempt_count, terminal_reason_code, plugin_errors
+       FROM occ.controller_work
+       WHERE idempotency_key = $1`,
+      [candidate.idempotencyKey],
+    );
+    assert.equal(work.rows[0].state, "failed_permanent");
+    assert.ok(work.rows[0].attempt_count >= 2);
+    assert.equal(work.rows[0].terminal_reason_code, "PLUGIN_INSTALL_FAILED");
+    assert.deepEqual(work.rows[0].plugin_errors, [
+      {
+        ...plugin,
+        code: "PLUGIN_INSTALL_FAILED",
+        message: "Plugin installation failed.",
+      },
+    ]);
+    const active = await fixture.observerPool.query(
+      "SELECT active_revision_id FROM occ.agents WHERE namespace_id = $1 AND id = $2",
+      [fixture.namespace.id, owner.id],
+    );
+    assert.equal(active.rows[0].active_revision_id, predecessor.id);
+    assert.ok(
+      events.some(
+        ({ event, code, outcome, revisionId }) =>
+          event === "worker.completed" &&
+          code === "PLUGIN_INSTALL_FAILED" &&
+          outcome === "permanent" &&
+          revisionId === candidate.id,
+      ),
+    );
   },
 );
 
