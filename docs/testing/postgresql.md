@@ -104,3 +104,12 @@ The PostgreSQL transaction owner retains checked-out client transport errors unt
 release and discards a failed connection. Lost COMMIT acknowledgements report
 `PostgresCommitOutcomeUnknownError`; callers must inspect retained state before
 retrying an effect. A socket failure does not prove rollback.
+
+## Transaction outcome protocol
+
+`tests/conformance/postgres-transaction-commit.test.mjs` exercises the actual outer
+transaction owner with a transport protocol fixture. It covers definite server
+rejection, ambiguous SQLSTATEs, exact COMMIT/ROLLBACK command acknowledgment,
+and cleanup errors. The fixture supplies no database or persistence proof.
+Unknown acknowledgment always remains possibly committed, even when a later
+ROLLBACK responds. An independent exact readback is required before reconciliation.

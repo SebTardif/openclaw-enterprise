@@ -405,11 +405,11 @@ function commitOutcomeUnknown(error: unknown): boolean {
     error instanceof Error && "code" in error && typeof error.code === "string"
       ? error.code
       : undefined;
-  return (
-    code === undefined ||
-    !/^[0-9A-Z]{5}$/.test(code) ||
-    code.startsWith("08") ||
-    code.startsWith("57")
+  // Only server responses that establish transaction rejection prove no commit.
+  // 40003 and arbitrary SQLSTATEs retain the possibly committed outcome.
+  return !(
+    code !== undefined &&
+    (/^23[0-9A-Z]{3}$/.test(code) || code === "40001" || code === "40P01" || code === "25P02")
   );
 }
 
@@ -809,6 +809,9 @@ export class PostgresPlatformState implements PlatformStateStore {
     client.on?.("error", onTransportError);
     let started = false;
     let committing = false;
+    let acknowledged = false;
+    let failed = false;
+    let discard = false;
     let unit: PlatformUnitOfWork | undefined;
     try {
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
@@ -823,25 +826,54 @@ export class PostgresPlatformState implements PlatformStateStore {
       const result = await work(unit, context);
       if (transportError) throw transportError;
       committing = true;
-      await client.query("COMMIT");
+      let completion: unknown;
+      try {
+        completion = await client.query("COMMIT");
+      } catch (error) {
+        if (commitOutcomeUnknown(error)) throw new PostgresCommitOutcomeUnknownError();
+        committing = false;
+        throw error;
+      }
+      // Inspect acknowledgment separately: a throwing projection is not a server
+      // rejection, even if its exception happens to contain a SQLSTATE.
+      const command = (completion as { command?: unknown } | null)?.command;
+      if (command === "ROLLBACK") {
+        committing = false;
+        started = false;
+        throw new DependencyUnavailableError("The platform transaction was rolled back.");
+      }
+      if (command !== "COMMIT") throw new PostgresCommitOutcomeUnknownError();
+      acknowledged = true;
       committing = false;
       started = false;
       return result;
     } catch (error) {
+      failed = true;
+      discard = committing || transportError !== undefined;
       if (started) {
         try {
           await client.query("ROLLBACK");
         } catch {
-          // The failed client is still returned to the pool below.
+          discard = true;
         }
       }
-      throw committing && commitOutcomeUnknown(error)
-        ? new PostgresCommitOutcomeUnknownError()
-        : databaseError(error);
+      throw committing ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release(transportError !== undefined);
-      client.removeListener?.("error", onTransportError);
+      let cleanupFailed = false;
+      try {
+        client.release(discard || transportError !== undefined);
+      } catch {
+        cleanupFailed = true;
+      }
+      try {
+        client.removeListener?.("error", onTransportError);
+      } catch {
+        cleanupFailed = true;
+      }
+      // Preserve the original failure. A failure after acknowledged COMMIT can
+      // never be reported as definite rollback or authorize an automatic replay.
+      if (!failed && cleanupFailed && acknowledged) throw new PostgresCommitOutcomeUnknownError();
     }
   }
 
