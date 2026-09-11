@@ -43,6 +43,11 @@ behavioral rules such as cross-resource ownership, lifecycle ordering, and failu
 effects. Contributors updating routes or schemas should follow the
 [API generation checks](../testing/local.md#repository-and-tooling-configuration).
 
+## Inactive components
+
+- [Trusted repository publication](repository-publication-v1.md): exact Git
+  candidate custody and publication application ports; no available publisher.
+
 ## Drivers
 
 The term **contract** names obligations that callers and Driver implementations

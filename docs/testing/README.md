@@ -33,6 +33,9 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 | Real runtime or host execution | [SSH](ssh.md), [Kubernetes](kubernetes.md), [Production TUI](production-tui.md), and [OpenShell](openshell.md) |
 | External provider integrations | [Slack](slack.md), [ChatGPT service accounts](service-accounts.md), and [Agent plugins](plugins.md)            |
 
+- [Repository publication components](repository-publication.md): pinned local
+  Git object custody and application controls, with no upstream publication.
+
 ## Requirements and credentials
 
 Use Node.js 24 or newer and the pnpm version pinned in

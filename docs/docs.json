@@ -57,6 +57,7 @@
                 "group": "Features",
                 "pages": [
                   "reference/README",
+                  "reference/repository-publication-v1",
                   "reference/agent-plugins",
                   "reference/agents",
                   "reference/agents/deployment",
@@ -149,7 +150,12 @@
             "groups": [
               {
                 "group": "Start testing",
-                "pages": ["testing/README", "testing/local", "testing/ci"]
+                "pages": [
+                  "testing/README",
+                  "testing/local",
+                  "testing/ci",
+                  "testing/repository-publication"
+                ]
               },
               {
                 "group": "Infrastructure",
