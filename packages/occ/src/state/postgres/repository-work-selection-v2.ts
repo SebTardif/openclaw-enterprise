@@ -1,3 +1,4 @@
+import type { RepositoryWorkSelectedExecutionContextsV2 } from "./repository-work-selected-execution-context-v2.ts";
 import { ScopeViolationError } from "../../errors.ts";
 import {
   sameRepositoryWorkInventoryV2 as same,
@@ -49,6 +50,7 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
   createPhase: () => RepositoryWorkExecutionV2["phase"],
   work: RepositoryWorkStateParticipantV2,
   options: RepositoryWorkSelectionConstructionV2<N, A, V>,
+  selectedContexts?: RepositoryWorkSelectedExecutionContextsV2,
 ): RepositoryWorkSelectionBindingV2<N, A, V> {
   const version = options.protocolVersion,
     maximum = options.maximumAssignments;
@@ -97,6 +99,8 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
     stopNative?: () => void;
     hold?: Hold | undefined;
     workHold?: Borrowed | undefined;
+    selectedContext?: RepositoryWorkTransactionContextV2 | undefined;
+    releaseTransfer?: (() => void) | undefined;
     handoff: boolean;
     closed: boolean;
     failed: boolean;
@@ -630,7 +634,12 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
       prepared = false,
       stopped = false;
     let rawCheck: (() => undefined) | undefined, rawPrepare: (() => Promise<void>) | undefined;
+    const retainedLeases = new WeakSet<object>();
     let stop!: () => void, resolve!: () => void, reject!: (error: unknown) => void;
+    let finishRetired!: () => void;
+    const retired = new Promise<void>((resolve) => {
+      finishRetired = resolve;
+    });
     const stoppedPromise = new Promise<void>((r) => {
       stop = r;
     });
@@ -753,12 +762,16 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
                         entry,
                         new ScopeViolationError("Invalid or nested source enrollment."),
                       );
+                    // Early cleanup enrollment and the returned lease may be the
+                    // same object. Capture its methods exactly once per readset.
+                    if (retainedLeases.has(raw)) return undefined;
                     const release = raw.release;
                     if (typeof release !== "function") fail();
                     releases.push(() => Promise.resolve(Reflect.apply(release, raw, [])));
                     const check = raw.assertCurrent,
                       prepare = raw.prepareCommit;
                     if (typeof check !== "function" || typeof prepare !== "function") fail();
+                    retainedLeases.add(raw);
                     const previousCheck = rawCheck,
                       previousPrepare = rawPrepare;
                     rawCheck = () => {
@@ -787,6 +800,23 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
                 releases.push(async () => {
                   membership.active = false;
                 });
+                if (selectedContexts) {
+                  const dispose = selectedContexts.enrollContext(
+                    backend,
+                    execution,
+                    context,
+                    call,
+                    stopRead,
+                    retired,
+                  );
+                  releases.push(async () => {
+                    dispose();
+                  });
+                  entry.selectedContext = context;
+                  releases.push(async () => {
+                    if (entry.selectedContext === context) entry.selectedContext = undefined;
+                  });
+                }
                 const held = await retainUse(context, entry.admission, entry.session, call);
                 context.retain(held);
                 fence();
@@ -914,6 +944,7 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
               entry.failure = error;
             }
           }
+        finishRetired();
       }
     })();
     const hold: Hold = {
@@ -939,6 +970,8 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
     if (!entry.closed || entry.selections !== 0 || entry.workHold || entry.inventories.size) return;
     if (!entry.admissionRelease)
       entry.admissionRelease = (async () => {
+        entry.releaseTransfer?.();
+        entry.releaseTransfer = undefined;
         await drain(entry);
         while (entry.sourcePending.size) await Promise.allSettled([...entry.sourcePending]);
         try {
@@ -1111,6 +1144,9 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
       },
       assertCurrent(handle) {
         const e = member(handle);
+        // A prepared handoff retains lifetime without outward authority. A
+        // caller asking about this gap must not poison the later original use.
+        if (e.handoff && !e.workHold) fail();
         sourceFence(e, e.call);
         if (e.workHold) e.workHold.assertCurrent();
         else if (e.hold?.active && !e.handoff) e.hold.assertCurrent();
@@ -1206,8 +1242,15 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
                   e.workHold = undefined;
                   e.handoff = false;
                 }
+                e.releaseTransfer?.();
+                e.releaseTransfer = undefined;
                 if (e.joinPending === joinPending) e.joinPending = undefined;
-                await releaseAdmission(e);
+                if (selectedContexts) {
+                  // Admission cleanup joins the outer Work retirement, which
+                  // includes this lease. Its promise remains owned by
+                  // e.admissionRelease and joined by external release/close.
+                  void releaseAdmission(e);
+                } else await releaseAdmission(e);
               },
             };
             e.workHold = borrowed;
@@ -1378,6 +1421,49 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
         await enqueue(e, async () => {
           sourceFence(e, call);
           if (e.workHold || e.handoff) fail();
+          if (selectedContexts) {
+            const context = e.selectedContext;
+            if (!context || !e.hold?.active || e.hold.call !== call || !e.originalObjects) fail();
+            // Register exact originals while the old selector is still current.
+            // The private source arms its lifetime before this readset retires.
+            e.releaseTransfer = selectedContexts.prepareWorkTransfer(
+              context,
+              call,
+              e.originalObjects,
+              async (workContext) => {
+                original(e, call);
+                const membership: ContextMembership = {
+                  entry: e,
+                  call,
+                  active: true,
+                  checking: false,
+                };
+                contexts.set(workContext, membership);
+                // Cleanup enrollment precedes the async native acquisition.
+                workContext.retain(
+                  Object.freeze({
+                    assertCurrent(): undefined {
+                      original(e, call);
+                      return undefined;
+                    },
+                    async prepareCommit() {
+                      original(e, call);
+                    },
+                    async release() {
+                      membership.active = false;
+                      contexts.delete(workContext);
+                      e.releaseTransfer?.();
+                      e.releaseTransfer = undefined;
+                    },
+                  }),
+                );
+                // This is only the retained source prefix. The actual Work
+                // constructor completes its readset inside captured prepareUse.
+                const held = await retainUse(workContext, e.admission, e.session, call);
+                workContext.retain(held);
+              },
+            );
+          }
           e.handoff = true;
           await e.hold?.release();
           e.hold = undefined;

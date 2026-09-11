@@ -1,7 +1,12 @@
+import {
+  RepositoryWorkSelectedExecutionContextsV2,
+  type RepositoryWorkSelectedExecutionBackendLeaseV2,
+} from "./postgres/repository-work-selected-execution-context-v2.ts";
+import type { RepositoryWorkScopeV2 } from "../ports/repository-work-v2.ts";
 import { createPostgresRepositoryWorkSelectedExecutionAdmissionV2 } from "./postgres/repository-work-selected-execution-v2.ts";
 import type {
   RepositoryWorkSelectedExecutionAdmissionConstructionV2,
-  RepositoryWorkSelectedExecutionAdmissionCoreV2,
+  RepositoryWorkSelectedExecutionUseCoreV2,
 } from "../ports/repository-work-selected-execution-v2.ts";
 import {
   createPostgresPreparationSubmissionOwnerV1,
@@ -38,6 +43,7 @@ import {
   type RepositoryWorkStateBindingV2,
   type RepositoryWorkExecutionV2,
   type RepositoryWorkEnterV2,
+  type RepositoryWorkBackendV2,
 } from "./postgres/repository-work-v2.ts";
 import { createPostgresCredentialInventoryV1 } from "../credential-inventory-v1/postgres.ts";
 import { readRuntimePreparationSubmissionV1 } from "./postgres/runtime-preparation-submission.ts";
@@ -1175,6 +1181,7 @@ export class PostgresPlatformState implements PlatformStateStore {
   >();
   readonly #repositoryWorkExecution = new AsyncLocalStorage<RepositoryWorkExecutionV2>();
   readonly #repositoryWorkBindings = new WeakSet<object>();
+  readonly #selectedExecutionContexts = new RepositoryWorkSelectedExecutionContextsV2();
   readonly #repositoryPolicyAccounts = new WeakMap<
     RepositoryWorkPolicyAccountUnitV2,
     RepositoryWorkPolicySessionControlV2
@@ -5718,6 +5725,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     const binding = createPostgresRepositoryWorkBindingV2(
       this.repositoryWorkEnterV2(),
       () => new CredentialInventoryOwnerPhaseV1(),
+      this.#selectedExecutionContexts,
     );
     this.#repositoryWorkBindings.add(binding);
     return binding;
@@ -5725,11 +5733,12 @@ export class PostgresPlatformState implements PlatformStateStore {
 
   /** Original READ admission component. The selected IAM driver and native
    * source are fixed construction operands; SQL and private unit enrollment
-   * remain with this State. Later use/observer/inventory are separate joins. */
+   * remain with this State. Its private host also lends the original selector
+   * transaction; observer and inventory are separate original joins. */
   repositoryWorkSelectedExecutionAdmissionV2<N, E, V extends 2 | 3>(
     selection: DriverSelection,
     options: RepositoryWorkSelectedExecutionAdmissionConstructionV2<N, E, V>,
-  ): RepositoryWorkSelectedExecutionAdmissionCoreV2<N, V> {
+  ): RepositoryWorkSelectedExecutionUseCoreV2<N, V> {
     if (
       Object.getPrototypeOf(selection) !== DriverSelection.prototype ||
       selection.selectedDriver !== DriverSelection.prototype.selectedDriver ||
@@ -5861,6 +5870,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       },
       () => new CredentialInventoryOwnerPhaseV1(),
       options,
+      this.#selectedExecutionContexts.forSelection(selection),
     );
   }
 
@@ -5877,7 +5887,114 @@ export class PostgresPlatformState implements PlatformStateStore {
       () => new CredentialInventoryOwnerPhaseV1(),
       work.participant,
       options,
+      this.#selectedExecutionContexts,
     );
+  }
+
+  /** Borrow the real current selector transaction. The private context token,
+   * original driver selection and query phase never leave this State owner. */
+  private repositoryWorkSelectedUseBackendV2(
+    context: TransactionContext,
+    scope: RepositoryWorkScopeV2,
+    execution: RepositoryWorkExecutionV2,
+    selection: DriverSelection,
+  ): RepositoryWorkSelectedExecutionBackendLeaseV2 {
+    const driver = selection.selectedDriver("iam");
+    const selected = selection.acquireGuardedSelection("iam", driver);
+    const token = Object.freeze({});
+    const assertOperation = () => {
+      if (this.#repositoryWorkExecution.getStore() !== execution)
+        throw new ScopeViolationError("The original selected-use execution is unavailable.");
+      context.lifetime.assertActive();
+      execution.phase.assertOperationActive();
+      selected.assertCurrent();
+    };
+    const query: PostgresClient["query"] = async (statement, parameters) => {
+      assertOperation();
+      const result = await context.credentialQuery(statement, parameters);
+      assertOperation();
+      return result;
+    };
+    const enrolled = {
+      context,
+      query,
+      installationId: scope.installationId,
+      execution,
+      locked: false,
+      active: true,
+    };
+    this.#repositoryPolicyContexts.set(token, enrolled);
+    try {
+      const iam = bindNativeIAMTransaction(driver, this, token);
+      const current: NativeIAMTransactionView = Object.freeze({
+        lookupIdentity: (input: Parameters<NativeIAMTransactionView["lookupIdentity"]>[0]) =>
+          this.#repositoryPolicyExecution.run(execution, () => iam.lookupIdentity(input)),
+        authorize: (request: Parameters<NativeIAMTransactionView["authorize"]>[0]) =>
+          this.#repositoryPolicyExecution.run(execution, () => iam.authorize(request)),
+        assertCurrent() {
+          selected.assertCurrent();
+          iam.assertCurrent();
+          context.assertOwnerActive();
+        },
+      });
+      const release = async () => {
+        enrolled.active = false;
+        this.#repositoryPolicyContexts.delete(token);
+        selected.release();
+      };
+      return Object.freeze({
+        backend: {
+          context: {
+            scope: { installationId: scope.installationId, namespaceId: scope.namespaceId },
+            transaction: { assertActive: assertOperation },
+            query: { query },
+          },
+          joinAccepted: (pending: Promise<unknown>) =>
+            context.joinRepositoryWorkCompletion(pending),
+          iam: current,
+          lockIAM: async () => {
+            if (enrolled.locked)
+              throw new ScopeViolationError("Selected-use IAM is already locked.");
+            await query("SELECT occ.lock_workload_profile_iam()");
+            enrolled.locked = true;
+          },
+          readRuntimeAllocation: async (assignmentRef: string) => {
+            const result = await query(
+              "SELECT * FROM occ.runtime_assignment_allocations WHERE namespace_id=$1 AND agent_id=$2 AND assignment_ref=$3 FOR SHARE",
+              [scope.namespaceId, scope.agentId, assignmentRef],
+            );
+            if (result.rows.length > 1)
+              throw new ScopeViolationError("Runtime allocation is ambiguous.");
+            return result.rows.length === 0
+              ? undefined
+              : runtimeAllocationFromRow(rows(result.rows)[0]!);
+          },
+          appendAudit: (actorId: string, operationRef: string, kind: string) =>
+            this.appendAudit(
+              context,
+              {
+                id: `aud_${randomUUID()}`,
+                occurredAt: new Date().toISOString(),
+                installationId: scope.installationId,
+                namespaceId: scope.namespaceId,
+                kind: "mutation",
+                actorId,
+                action: `work.repository.${kind}`,
+                resource: { kind: "agent", id: scope.agentId, namespaceId: scope.namespaceId },
+                outcome: "success",
+                details: { operationRef, commitRef: execution.commitRef },
+              },
+              query,
+            ),
+        },
+        release,
+      });
+    } catch (error) {
+      enrolled.active = false;
+      this.#repositoryPolicyContexts.delete(token);
+      selected.release();
+      throw error;
+    }
   }
 
   private repositoryWorkEnterV2(): RepositoryWorkEnterV2 {
@@ -5913,7 +6030,7 @@ export class PostgresPlatformState implements PlatformStateStore {
               transaction: { assertActive: assertOperation },
               query: { query },
             };
-            return body({
+            const backend: RepositoryWorkBackendV2 = {
               context: repositoryContext,
               joinAccepted: (pending) => {
                 // The original captured transaction owns completion even when
@@ -5967,7 +6084,19 @@ export class PostgresPlatformState implements PlatformStateStore {
                   },
                   query,
                 ),
-            });
+            };
+            const unregister = this.#selectedExecutionContexts.registerBackend(
+              backend,
+              scope,
+              execution,
+              (selection) =>
+                this.repositoryWorkSelectedUseBackendV2(context, scope, execution, selection),
+            );
+            try {
+              return await body(backend);
+            } finally {
+              unregister();
+            }
           },
           bounds,
           false,

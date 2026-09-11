@@ -20,6 +20,7 @@ import {
 import { transitionRepositoryInventoryV2 } from "../../credential-inventory-v1/repository-lease-transactions-v2.ts";
 import { ScopeViolationError } from "../../errors.ts";
 import { createPostgresRepositoryWorkPolicyV2 } from "./repository-work-policy-v2.ts";
+import type { RepositoryWorkSelectedExecutionContextsV2 } from "./repository-work-selected-execution-context-v2.ts";
 import { readRepositoryWorkInventoryCurrentV2 } from "./repository-work-current-inventory-v2.ts";
 import {
   canonicalRepositoryWorkV2,
@@ -589,6 +590,7 @@ interface Enrollment {
 export function createPostgresRepositoryWorkBindingV2(
   enter: RepositoryWorkEnterV2,
   createPhase: () => import("../../ports/platform-unit-of-work.ts").CredentialInventoryOwnerPhaseV1,
+  selectedContexts?: RepositoryWorkSelectedExecutionContextsV2,
 ): RepositoryWorkStateBindingV2 {
   const members = new WeakMap<object, Enrollment>();
   const committed = new WeakMap<
@@ -915,6 +917,11 @@ export function createPostgresRepositoryWorkBindingV2(
         let value: Awaited<ReturnType<typeof body>> | undefined;
         let acknowledgedAt: string | undefined;
         let failed = false;
+        let disposeSelectedContext: (() => void) | undefined;
+        let finishSelectedRetired!: () => void;
+        const selectedRetired = new Promise<void>((resolve) => {
+          finishSelectedRetired = resolve;
+        });
         const phase = createPhase();
         const commitRef = randomUUID();
         const fixedScope = scope({
@@ -1387,6 +1394,32 @@ export function createPostgresRepositoryWorkBindingV2(
                     }
                   | undefined;
                 await phase.runAcceptance(async () => {
+                  if (selectedContexts) {
+                    disposeSelectedContext = selectedContexts.enrollWorkContext(
+                      backend,
+                      execution,
+                      context,
+                      original,
+                      call,
+                      () => {
+                        phase.poison(
+                          new ScopeViolationError("The original selected Work use was retired."),
+                        );
+                        execution.close();
+                      },
+                      selectedRetired,
+                      () => {
+                        assertEntry(current);
+                        if (current.stage !== "policy") reject(current);
+                      },
+                    );
+                    // Retain only the native/source/preparation prefix here.
+                    // Live A/policy/Work currentness remains absent until prepareUse.
+                    await tracked(
+                      current,
+                      selectedContexts.acquireWorkTransfer(context, original, call),
+                    );
+                  }
                   source = await Reflect.apply(acquireWork, workSource, [context, original, call]);
                   retain(current, source);
                   const actorId = ref(source.actorId);
@@ -1493,7 +1526,13 @@ export function createPostgresRepositoryWorkBindingV2(
                   // original acceptance/terminal owner, including cancellation.
                   await tracked(
                     current,
-                    Promise.resolve().then(() => Reflect.apply(prepareUse, source, [])),
+                    Promise.resolve().then(async () => {
+                      // Custody cleanup is captured and the real I/N/A locks
+                      // are held. Complete the same selected use only here.
+                      if (selectedContexts)
+                        await selectedContexts.completeWorkTransfer(context, original, call);
+                      await Reflect.apply(prepareUse, source, []);
+                    }),
                   );
                   while (current.pending.size) await Promise.allSettled([...current.pending]);
                   fence(current);
@@ -1905,6 +1944,7 @@ export function createPostgresRepositoryWorkBindingV2(
             while (entry.pending.size) await Promise.all([...entry.pending]);
             entry.active = false;
             members.delete(entry.context);
+            disposeSelectedContext?.();
             for (const release of [...entry.releases].reverse()) {
               try {
                 await release();
@@ -1913,6 +1953,9 @@ export function createPostgresRepositoryWorkBindingV2(
               }
             }
           }
+          // Inner leases above never await this outer retirement: it includes
+          // their own cleanup. Original admission shutdown may join it safely.
+          finishSelectedRetired();
         }
         if (failed || !acknowledgedAt)
           return execution.disposition !== "not-sent" && !execution.establishedNoCommit

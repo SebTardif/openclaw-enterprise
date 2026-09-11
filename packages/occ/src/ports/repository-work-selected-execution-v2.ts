@@ -101,3 +101,15 @@ export interface RepositoryWorkSelectedExecutionAdmissionConstructionV2<N, E, V 
   readonly native: RepositoryWorkNativeSessionSourceV2<N, V>;
   readonly executions: RepositoryWorkNativeSelectedExecutionSourceV2<N, E, V>;
 }
+
+/** The next independently implemented component preserves the five admission
+ * methods and adds only an original same-transaction use lease. Observer and
+ * inventory enrollment remain separate original producers. */
+export type RepositoryWorkSelectedExecutionUseCoreV2<
+  N,
+  V extends 2 | 3 = 2,
+> = RepositoryWorkSelectedExecutionAdmissionCoreV2<N, V> &
+  Pick<
+    RepositoryWorkSelectedExecutionAdmissionSourceV2<N, RepositoryWorkSelectedAdmissionV2<V>, V>,
+    "retainUse"
+  >;

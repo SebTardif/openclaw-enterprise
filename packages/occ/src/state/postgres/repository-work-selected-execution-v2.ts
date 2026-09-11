@@ -1,3 +1,7 @@
+import type {
+  RepositoryWorkSelectedExecutionUseHostV2,
+  RepositoryWorkSelectedExecutionBorrowV2,
+} from "./repository-work-selected-execution-context-v2.ts";
 import { randomUUID } from "node:crypto";
 import { types } from "node:util";
 import type { NativeIAMTransactionView } from "@openclaw-enterprise/iam";
@@ -41,7 +45,7 @@ import type {
   RepositoryWorkNativeSelectedExecutionDataV2,
   RepositoryWorkNativeSelectedExecutionLeaseV2,
   RepositoryWorkSelectedExecutionAdmissionConstructionV2,
-  RepositoryWorkSelectedExecutionAdmissionCoreV2,
+  RepositoryWorkSelectedExecutionUseCoreV2,
   RepositoryWorkSelectedAdmissionV2,
 } from "../../ports/repository-work-selected-execution-v2.ts";
 import { runtimeAllocationTarget } from "../../runtime-authority/repository.ts";
@@ -110,14 +114,16 @@ function scopeOf(data: RepositoryWorkNativeSelectedExecutionDataV2): RepositoryW
   });
 }
 
-/** This component owns actual A, its first logical Work admission, and bounded
- * locked observations. It does not implement the later use/observer/inventory
- * interface and cannot be passed as a complete source by structural omission. */
+/** This component owns actual A, first logical Work admission and bounded
+ * locked observations. The fixed private use host transfers A into the same
+ * selector transaction; observer/inventory remain separate original producers.
+ * The component cannot be passed as a complete source by structural omission. */
 export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V extends 2 | 3>(
   enter: RepositoryWorkSelectedExecutionEnterV2,
   createPhase: () => RepositoryWorkExecutionV2["phase"],
   options: RepositoryWorkSelectedExecutionAdmissionConstructionV2<N, E, V>,
-): RepositoryWorkSelectedExecutionAdmissionCoreV2<N, V> {
+  useHost?: RepositoryWorkSelectedExecutionUseHostV2,
+): RepositoryWorkSelectedExecutionUseCoreV2<N, V> {
   const version = options.protocolVersion,
     maximum = options.maximumAdmissions;
   if (![2, 3].includes(version) || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 128)
@@ -132,6 +138,14 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
   type Data = RepositoryWorkSelectedExecutionDataV2<V>;
   type Captured = { check(): undefined; prepare(): Promise<void>; release(): Promise<void> };
   type Hold = { check(): undefined; release(): Promise<void>; value: Data };
+  type BorrowedUse = {
+    borrow: RepositoryWorkSelectedExecutionBorrowV2;
+    lease: RepositoryWorkHeldLeaseV2;
+    ready: boolean;
+    prefixReady: boolean;
+    closing: boolean;
+  };
+  type WorkHandoff = { prior: BorrowedUse; call: AuthorityCallV1; retired: boolean };
   type Entry = {
     session: N;
     raw: RepositoryWorkNativeSelectedExecutionLeaseV2<E>;
@@ -157,9 +171,11 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     handle?: RepositoryWorkSelectedAdmissionV2<V>;
     selection?: Data;
     hold?: Hold | undefined;
+    use?: BorrowedUse | undefined;
     tx?: Tx | undefined;
     release?: Promise<void>;
     nativeStop?: (() => void) | undefined;
+    handoff?: WorkHandoff | undefined;
   };
   type Tx = {
     entry: Entry;
@@ -470,7 +486,7 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     // E lease fences that bound; it cannot be compared or converted to UTC.
     // UTC Work/policy/call bounds are independently fenced by this owner.
   }
-  async function prefix(tx: Tx) {
+  async function prefixSource(tx: Tx) {
     const e = tx.entry,
       d = e.data,
       scope = scopeOf(d);
@@ -508,6 +524,9 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
       !same(runtimeAllocationTarget(allocation), runtime.target)
     )
       fail();
+  }
+  async function prefixParents(tx: Tx) {
+    const scope = scopeOf(tx.entry.data);
     for (const [sql, args, id] of [
       [
         "SELECT id FROM occ.installation WHERE id=$1 FOR NO KEY UPDATE",
@@ -528,6 +547,10 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
       const found = await query(tx, sql, args);
       if (found.length !== 1 || !same(found[0], { id })) fail();
     }
+  }
+  async function prefixJournal(tx: Tx) {
+    const d = tx.entry.data,
+      scope = scopeOf(d);
     await journal(tx);
     const decision = await tx.backend.iam.authorize({
       principalId: d.requesterPrincipalId,
@@ -536,6 +559,11 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     });
     fence(tx);
     if (!decision.allowed) fail();
+  }
+  async function prefix(tx: Tx) {
+    await prefixSource(tx);
+    await prefixParents(tx);
+    await prefixJournal(tx);
   }
   function operation(
     e: Entry,
@@ -1086,11 +1114,302 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
       },
     };
   }
+  /** Transfer the already admitted private A into its original selected
+   * transaction. This method never enters another SQL transaction. */
+  function retainUse(
+    context: RepositoryWorkTransactionContextV2,
+    admission: RepositoryWorkSelectedAdmissionV2<V>,
+    session: N,
+    call: AuthorityCallV1,
+  ): Promise<RepositoryWorkHeldLeaseV2> {
+    const e = members.get(admission);
+    if (e?.tx?.checking)
+      return poison(
+        e,
+        new ScopeViolationError("Currentness cannot enter selected-use acquisition."),
+      );
+    if (!e || !participant || !useHost || e.session !== session || e.closed || e.busy) fail();
+    const handoff = e.handoff;
+    if (
+      handoff
+        ? !handoff.retired || handoff.call !== call || e.use || e.hold
+        : e.use !== undefined || !e.hold
+    )
+      fail();
+    // Full prior readset is still live while the original selector recognizes
+    // its context. The private host independently recognizes the same context.
+    sync(e, participant.assertOriginal(context, admission, session, call));
+    const borrow = useHost.acquire(context, scopeOf(e.data), call);
+    const releaseBorrow = method(borrow, "release");
+    const enroll = method(context, "retain");
+    const enrollCompletion = method(context, "joinAccepted");
+    let tx: Tx | undefined,
+      cleanup: Promise<void> | undefined,
+      lateCompletion: Promise<void> | undefined;
+    let finishTransfer!: () => void;
+    const transferSettled = new Promise<void>((resolve) => {
+      finishTransfer = resolve;
+    });
+    const lease: RepositoryWorkHeldLeaseV2 = Object.freeze({
+      assertCurrent(): undefined {
+        // During original source/custody acquisition this INNER lease fences
+        // only its retained prefix. A has no hold and remains unavailable.
+        if (!use.prefixReady || use.closing || e.use !== use || !tx || e.tx !== tx) fail();
+        return fence(tx);
+      },
+      async prepareCommit() {
+        if (!use.ready) fail();
+        lease.assertCurrent();
+        if (!tx) fail();
+        for (const held of tx.held) {
+          await held.prepare();
+          lease.assertCurrent();
+        }
+      },
+      release() {
+        return (cleanup ??= (async () => {
+          use.closing = true;
+          use.ready = false;
+          use.prefixReady = false;
+          await transferSettled;
+          if (lateCompletion) await Promise.allSettled([lateCompletion]);
+          // This cleanup is called after the outer SQL terminal. It must not
+          // await borrow.retired, which includes this very cleanup.
+          await drain(e);
+          if (tx) {
+            tx.active = false;
+            contexts.delete(tx.context);
+            for (const held of [...tx.held].reverse()) {
+              try {
+                await held.release();
+              } catch (error) {
+                if (!e.failed) {
+                  e.failed = true;
+                  e.failure = error;
+                }
+              }
+            }
+            if (e.tx === tx) e.tx = undefined;
+          }
+          try {
+            await releaseBorrow();
+          } catch (error) {
+            if (!e.failed) {
+              e.failed = true;
+              e.failure = error;
+            }
+          }
+          if (e.use === use) {
+            e.use = undefined;
+            e.hold = undefined;
+          }
+          if (e.handoff?.prior === use && !e.failed) e.handoff.retired = true;
+          if (e.failed) throw e.failure;
+        })());
+      },
+    });
+    const use: BorrowedUse = { borrow, lease, ready: false, prefixReady: false, closing: false };
+    // The exact context captures cleanup before the first asynchronous transfer.
+    try {
+      sync(e, enroll(lease));
+    } catch (error) {
+      finishTransfer();
+      void lease.release().catch(() => {});
+      throw error;
+    }
+    const finishUse = async (): Promise<RepositoryWorkHeldLeaseV2> => {
+      if (!tx) fail();
+      const selected = await select(tx, false);
+      // The selector has retained the original operation objects. Re-reading
+      // the same rows compares facts; it must not replace their identities.
+      if (!e.selection || !same(selected, e.selection)) fail();
+      tx.accepting = false;
+      fence(tx);
+      if (use.closing || e.closed) fail();
+      e.hold = {
+        value: e.selection,
+        check: () => lease.assertCurrent(),
+        release: () => lease.release(),
+      };
+      if (handoff) {
+        if (e.handoff !== handoff) fail();
+        e.handoff = undefined;
+      } else
+        borrow.armHandoff(() => {
+          if (
+            e.closed ||
+            e.busy ||
+            e.handoff ||
+            e.use !== use ||
+            !use.ready ||
+            use.closing ||
+            !e.hold
+          )
+            fail();
+          lease.assertCurrent();
+          // This marker preserves original A/native lifetime but has no check
+          // method and conveys no permission until the real Work preparation completes.
+          e.handoff = { prior: use, call, retired: false };
+        });
+      use.ready = true;
+      use.prefixReady = true;
+      e.busy = false;
+      lease.assertCurrent();
+      return lease;
+    };
+    const failTransfer = (error: unknown): never => {
+      let original = error;
+      try {
+        borrow.execution.phase.assertActive();
+      } catch (prior) {
+        original = prior;
+      }
+      if (!e.failed) {
+        e.failed = true;
+        e.failure = original;
+      }
+      borrow.execution.phase.poison(e.failure);
+      throw e.failure;
+    };
+    e.use = use;
+    e.busy = true;
+    const transfer = (async () => {
+      try {
+        if (handoff ? borrow.kind !== "work" : borrow.kind !== "selector") fail();
+        const prior = e.hold;
+        if (!handoff && !prior) fail();
+        if (prior) await prior.release();
+        e.hold = undefined;
+        if (e.closed || use.closing || call.signal.aborted) fail();
+        const backend = borrow.backend,
+          execution = borrow.execution;
+        const inner: RepositoryWorkTransactionContextV2 = Object.freeze({
+          installationId: scopeOf(e.data).installationId,
+          assertActive(): undefined {
+            if (!tx || !tx.active || !tx.accepting || tx.checking) fail();
+            backend.context.transaction.assertActive();
+            return undefined;
+          },
+          retain(raw: RepositoryWorkHeldLeaseV2): undefined {
+            if (!tx) fail();
+            retain(tx, raw);
+            return undefined;
+          },
+          joinAccepted(pending: Promise<unknown>): undefined {
+            if (this !== inner || !tx?.active) fail();
+            return join(e, pending);
+          },
+        });
+        tx = {
+          entry: e,
+          backend,
+          execution,
+          context: inner,
+          call,
+          requestRef: call.requestRef,
+          signal: call.signal,
+          active: true,
+          accepting: true,
+          checking: false,
+          held: [],
+          pending: new Set(),
+          finalChecks: [],
+          stop: () => borrow.requestRetirement(),
+        };
+        e.tx = tx;
+        contexts.set(inner, tx);
+        // The outer original acceptance already owns operation permission. Do
+        // not create a second phase or nest runAcceptance/runOperation here.
+        if (handoff) {
+          await prefixSource(tx);
+          tx.accepting = false;
+          use.prefixReady = true;
+          borrow.armWorkCompletion(() => {
+            if (
+              lateCompletion ||
+              !use.prefixReady ||
+              use.ready ||
+              use.closing ||
+              e.use !== use ||
+              !tx ||
+              e.tx !== tx ||
+              e.handoff !== handoff
+            )
+              fail();
+            // Register completion before its first query. No caller-supplied
+            // proof selects this path; the actual Work preparation phase owns it.
+            lateCompletion = Promise.resolve()
+              .then(async () => {
+                if (!tx || use.closing || e.closed) fail();
+                e.busy = true;
+                // Original Work already holds custody and I/N/A. Do not acquire
+                // parents again or create another acceptance/SQL transaction.
+                await prefixJournal(tx);
+                await finishUse();
+              })
+              .catch(failTransfer)
+              .finally(() => {
+                e.busy = false;
+              });
+            e.tasks.add(lateCompletion);
+            const completion = lateCompletion;
+            void completion.then(
+              () => e.tasks.delete(completion),
+              () => e.tasks.delete(completion),
+            );
+            try {
+              sync(e, enrollCompletion(completion));
+            } catch (error) {
+              if (!e.failed) {
+                e.failed = true;
+                e.failure = error;
+              }
+              borrow.execution.phase.poison(e.failure);
+              borrow.requestRetirement();
+            }
+            return completion;
+          });
+          lease.assertCurrent();
+          return lease;
+        }
+        await prefix(tx);
+        return await finishUse();
+      } catch (error) {
+        return failTransfer(error);
+      } finally {
+        e.busy = false;
+        finishTransfer();
+      }
+    })();
+    e.tasks.add(transfer);
+    void transfer.then(
+      () => e.tasks.delete(transfer),
+      () => e.tasks.delete(transfer),
+    );
+    // The entered transfer remains in the original outer phase even if the
+    // caller cancels or its synchronous currentness callback poisons the phase.
+    try {
+      sync(e, enrollCompletion(transfer));
+    } catch (error) {
+      if (!e.failed) {
+        e.failed = true;
+        e.failure = error;
+      }
+      borrow.execution.phase.poison(e.failure);
+      borrow.requestRetirement();
+    }
+    return transfer;
+  }
   async function retire(e: Entry) {
     return (e.release ??= (async () => {
       e.closed = true;
       e.tx?.stop();
-      await e.hold?.release().catch(() => {});
+      const use = e.use;
+      if (use) {
+        use.borrow.requestRetirement();
+        await use.borrow.retired;
+        await use.lease.release().catch(() => {});
+      } else await e.hold?.release().catch(() => {});
       e.hold = undefined;
       while (e.tasks.size) await Promise.allSettled([...e.tasks]);
       await drain(e);
@@ -1118,7 +1437,8 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     e.native = observed;
     sourceFence(e, call);
   }
-  const owner: RepositoryWorkSelectedExecutionAdmissionCoreV2<N, V> = {
+  const owner: RepositoryWorkSelectedExecutionUseCoreV2<N, V> = {
+    retainUse,
     bindState(value) {
       if (participant) fail();
       // Capture actual recognizers once for the subsequent original use join.
@@ -1230,7 +1550,12 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     },
     async inspect(admission, session, call) {
       const e = members.get(admission);
-      if (!e || e.session !== session || e.busy || e.closed) fail();
+      if (!e || e.session !== session || e.busy || e.closed || e.handoff) fail();
+      if (e.use) {
+        if (e.tx?.call !== call || !e.hold || !e.selection) fail();
+        e.hold.check();
+        return e.selection;
+      }
       e.busy = true;
       try {
         await e.hold?.release();
@@ -1249,7 +1574,15 @@ export function createPostgresRepositoryWorkSelectedExecutionAdmissionV2<N, E, V
     },
     assertCurrent(admission, session, call) {
       const e = members.get(admission);
-      if (!e || e.session !== session || e.busy || e.closed || !e.hold || e.tx?.call !== call)
+      if (
+        !e ||
+        e.session !== session ||
+        e.busy ||
+        e.closed ||
+        e.handoff ||
+        !e.hold ||
+        e.tx?.call !== call
+      )
         fail();
       return e.hold.check();
     },
