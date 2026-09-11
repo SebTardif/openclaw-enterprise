@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { readFileSync } from "node:fs";
 import {
   chmod,
@@ -1759,4 +1761,304 @@ test("observed lifetime binds actual start delay to the fixed deadline and rejec
       () => validateObservedLifetime(...args),
       (error) => error.code === "OBSERVED_LIFETIME_INVALID",
     );
+});
+
+// Exercise the actual fixture child manager without registering its real-cluster
+// test. Only the OS-child boundary is substituted for deterministic races.
+function consumerChildManager(overrides = {}) {
+  return runInNewContext(
+    consumerBlock("class Failure extends Error", "const safeCode =") +
+      consumerBlock("const safeCode =", "function same(a, b)") +
+      consumerBlock("const CHILD_OPERATIONS =", "function liveCounts(record, phase)") +
+      consumerBlock("async function runObservation(profile", "\ntest(\n") +
+      "({ processes, recordAt, childDiagnostics, childFailure, runObservation })",
+    {
+      spawn,
+      readFileSync,
+      process,
+      Buffer,
+      parseFrame,
+      setTimeout,
+      clearTimeout,
+      createLocalResourceCustody,
+      ENV: Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }),
+      ...overrides,
+    },
+  );
+}
+function fakeConsumerChild() {
+  const child = new EventEmitter();
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+  return child;
+}
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+// Real local child close, streams and process-group absence exercise the full
+// consumer manager; these are process/diagnostic tests, not Workload API tests.
+test("consumer child diagnostics retain strict stderr and partial-record refusal", async () => {
+  for (const scenario of [
+    { name: "stderr", interactive: false, out: "{}\n", err: secret, pending: 0 },
+    { name: "pending-stdout", interactive: true, out: "{}", err: "", pending: 2 },
+    { name: "pending-stdout-and-stderr", interactive: true, out: "{}", err: secret, pending: 2 },
+  ]) {
+    const api = consumerChildManager();
+    const children = api.processes();
+    const code = `process.stdout.write(${JSON.stringify(scenario.out)});process.stderr.write(${JSON.stringify(scenario.err)});`;
+    const state = children.launch(process.execPath, ["-e", code], Date.now() + 5000, {
+      interactive: scenario.interactive,
+      operation: "observer-exec",
+    });
+    await state.done;
+    assert.equal(state.failure, "CHILD_OUTPUT_INVALID", scenario.name);
+    let error;
+    try {
+      await api.recordAt(state, 0, Date.now() + 1000);
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(error.code, "CHILD_OUTPUT_INVALID");
+    const diagnostic = plain(api.childDiagnostics.get(error));
+    assert.equal(diagnostic.outputCondition, scenario.name);
+    assert.equal(diagnostic.stdoutBytes, Buffer.byteLength(scenario.out));
+    assert.equal(diagnostic.stderrBytes, Buffer.byteLength(scenario.err));
+    assert.equal(diagnostic.pendingStdoutBytes, scenario.pending);
+    assert.equal(diagnostic.operation, "observer-exec");
+    assert.equal(diagnostic.childOrdinal, 1);
+    assert.equal(diagnostic.closeObserved, true);
+    assert.equal(diagnostic.exitCode, 0);
+    assert.equal(diagnostic.signal, null);
+    assert.equal(diagnostic.processGroupAbsent, true);
+    assert.equal(JSON.stringify(diagnostic).includes(secret), false);
+    assert.equal(children.active.size, 0);
+    assert.equal(await children.settle(Date.now() + 1000), true);
+  }
+});
+
+test("consumer valid records and empty output retain their existing acceptance", async () => {
+  const api = consumerChildManager();
+  const children = api.processes();
+  assert.equal((await children.command(process.execPath, ["-e", ""], Date.now() + 5000)).length, 0);
+  const state = children.launch(
+    process.execPath,
+    ["-e", 'process.stdout.write("{}\\n")'],
+    Date.now() + 5000,
+    { interactive: true, operation: "observer-exec" },
+  );
+  await state.done;
+  assert.equal(state.failure, null);
+  assert.deepEqual(plain(await api.recordAt(state, 0, Date.now() + 1000)), {});
+  assert.equal(state.outputDiagnostic().outputCondition, "neither");
+  assert.equal(state.outputDiagnostic().parsedRecordCount, 1);
+  assert.equal(children.active.size, 0);
+});
+
+test("consumer concurrent command failures keep their own immutable diagnostics", async () => {
+  const a = fakeConsumerChild(),
+    b = fakeConsumerChild();
+  const queue = [a, b];
+  const api = consumerChildManager({ spawn: () => queue.shift() });
+  const children = api.processes();
+  const first = children
+    .command("unused", [], Date.now() + 5000, { operation: "continuity-agent-get" })
+    .catch((error) => error);
+  const second = children
+    .command("unused", [], Date.now() + 5000, { operation: "continuity-server-get" })
+    .catch((error) => error);
+  b.stderr.write("bb");
+  b.emit("close", 0, null);
+  a.stderr.write("a");
+  a.emit("close", 0, null);
+  const ea = await first,
+    eb = await second;
+  assert.equal(ea.code, "CHILD_OUTPUT_INVALID");
+  assert.equal(eb.code, "CHILD_OUTPUT_INVALID");
+  const da = api.childDiagnostics.get(ea),
+    db = api.childDiagnostics.get(eb);
+  assert.equal(da.childOrdinal, 1);
+  assert.equal(db.childOrdinal, 2);
+  assert.equal(da.operation, "continuity-agent-get");
+  assert.equal(db.operation, "continuity-server-get");
+  assert.equal(da.stderrBytes, 1);
+  assert.equal(db.stderrBytes, 2);
+  assert.equal(Object.isFrozen(da), true);
+  assert.equal(Object.isFrozen(db), true);
+  assert.deepEqual(
+    Object.keys(plain(da)).sort(),
+    [
+      "schemaVersion",
+      "childOrdinal",
+      "childOrdinalCapped",
+      "operation",
+      "interactive",
+      "stdoutBytes",
+      "stderrBytes",
+      "pendingStdoutBytes",
+      "parsedRecordCount",
+      "outputCondition",
+      "exitCode",
+      "signal",
+      "closeObserved",
+      "processGroupAbsent",
+    ].sort(),
+  );
+  assert.equal(children.active.size, 0);
+});
+
+test("consumer earlier output, parser and input failures retain precedence", async () => {
+  for (const [failure, drive] of [
+    ["CHILD_OUTPUT_LIMIT", (child) => child.stdout.write("12345")],
+    ["OBSERVER_OUTPUT_INVALID", (child) => child.stdout.write("!\n")],
+    ["CHILD_INPUT_FAILED", (child) => child.stdin.emit("error", new Error(secret))],
+    ["CHILD_FAILED", (child) => child.emit("error", new Error(secret))],
+  ]) {
+    const child = fakeConsumerChild();
+    const api = consumerChildManager({ spawn: () => child });
+    const children = api.processes();
+    const state = children.launch("unused", [], Date.now() + 5000, {
+      interactive: true,
+      maxBytes: 4,
+      operation: "observer-exec",
+    });
+    drive(child);
+    child.stderr.write("x");
+    child.emit("close", 1, "SIGKILL");
+    await state.done;
+    let error;
+    try {
+      await api.recordAt(state, 0, Date.now() + 1000);
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(error.code, failure);
+    assert.equal(api.childDiagnostics.get(error).stderrBytes, 1);
+    assert.equal(JSON.stringify(api.childDiagnostics.get(error)).includes(secret), false);
+    assert.equal(children.active.size, 0);
+  }
+});
+
+test("consumer nonzero exit keeps COMMAND_FAILED and diagnostics cannot replace it", async () => {
+  const child = fakeConsumerChild();
+  const api = consumerChildManager({ spawn: () => child });
+  const children = api.processes();
+  const result = children.command("unused", [], Date.now() + 5000).catch((error) => error);
+  child.emit("close", 7, null);
+  const error = await result;
+  assert.equal(error.code, "COMMAND_FAILED");
+  assert.equal(api.childDiagnostics.get(error).exitCode, 7);
+  assert.equal(api.childDiagnostics.get(error).outputCondition, "neither");
+  const original = api.childFailure(
+    {
+      outputDiagnostic() {
+        throw new Error(secret);
+      },
+    },
+    "COMMAND_FAILED",
+  );
+  assert.equal(original.code, "COMMAND_FAILED");
+  assert.equal(api.childDiagnostics.has(original), false);
+  assert.equal(children.active.size, 0);
+});
+
+test("consumer timeout with unclosed child keeps held custody and no fabricated close", async () => {
+  const child = fakeConsumerChild(),
+    timers = new Map();
+  let nextTimer = 0;
+  const api = consumerChildManager({
+    spawn: () => child,
+    setTimeout: (callback) => {
+      timers.set(++nextTimer, callback);
+      return nextTimer;
+    },
+    clearTimeout: (id) => timers.delete(id),
+  });
+  const children = api.processes();
+  const result = children.command("unused", [], Date.now() + 5000).catch((error) => error);
+  timers.get(1)(); // Original command deadline, then its fixed settlement timer.
+  timers.get(2)();
+  const error = await result;
+  assert.equal(error.code, "CHILD_SETTLEMENT_UNKNOWN");
+  assert.equal(api.childDiagnostics.get(error).closeObserved, false);
+  assert.equal(api.childDiagnostics.get(error).processGroupAbsent, null);
+  assert.equal(api.childDiagnostics.get(error).exitCode, null);
+  assert.equal(children.active.size, 1);
+  assert.equal(await children.settle(Date.now()), false);
+});
+
+test("consumer diagnostic labels reject arbitrary values before a child starts", () => {
+  let calls = 0;
+  const api = consumerChildManager({
+    spawn: () => {
+      calls++;
+      return fakeConsumerChild();
+    },
+  });
+  assert.throws(
+    () => api.processes().launch("unused", [], Date.now() + 5000, { operation: secret }),
+    /CHILD_OPERATION_INVALID/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("consumer failure evidence preserves exact child and always reaches final settlement", async () => {
+  for (const failFailureReceipt of [false, true]) {
+    const child = fakeConsumerChild();
+    let starts = 0;
+    const api = consumerChildManager({
+      spawn: () => {
+        starts++;
+        queueMicrotask(() => {
+          child.stderr.write(secret);
+          child.emit("close", 0, null);
+        });
+        return child;
+      },
+    });
+    const events = [];
+    // Substitute only the first external kubeconfig command with stderr refusal.
+    // No internal profile admission, Kubernetes effect or identity is simulated.
+    const selected = {
+      cluster: {
+        dockerConfigDirectory: "unused",
+        dockerConfigSHA256: "unused",
+        kubeconfigPath: "unused",
+        context: "unused",
+        kubectlPath: "unused",
+      },
+      management: {},
+      deadlineEpochMs: Date.now() + 800000,
+    };
+    await assert.rejects(
+      api.runObservation(
+        selected,
+        async (event, data) => {
+          events.push({ event, data: plain(data) });
+          if (failFailureReceipt && event === "observation-failed") throw new Error(secret);
+        },
+        1000,
+      ),
+      (error) =>
+        error.code === (failFailureReceipt ? "EVIDENCE_WRITE_FAILED" : "CHILD_OUTPUT_INVALID"),
+    );
+    assert.equal(starts, 1);
+    const failure = events.find((event) => event.event === "observation-failed").data;
+    assert.equal(failure.reasonCode, "CHILD_OUTPUT_INVALID");
+    assert.equal(failure.childDiagnostic.childOrdinal, 1);
+    assert.equal(failure.childDiagnostic.stderrBytes, Buffer.byteLength(secret));
+    assert.equal(failure.childDiagnostic.closeObserved, true);
+    assert.equal(JSON.stringify(events).includes(secret), false);
+    const final = events.find((event) => event.event === "final-disposition").data;
+    assert.equal(final.failure, "CHILD_OUTPUT_INVALID");
+    assert.equal(final.ownedHelpersSettled, true);
+    assert.deepEqual(final.heldHelpers, []);
+    assert.deepEqual(final.counts, {
+      executed: 0,
+      observed: 0,
+      failed: 0,
+      unqualified: 0,
+      unentered: 2,
+    });
+  }
 });

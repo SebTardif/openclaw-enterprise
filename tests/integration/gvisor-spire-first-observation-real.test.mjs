@@ -213,23 +213,66 @@ async function receipts(directory, filesystemOwnerUID) {
   };
 }
 
+// Diagnostics retain only source-authored labels and existing bounded counters.
+// The WeakMap binds a snapshot to the exact thrown failure, even when children
+// fail concurrently. It never makes child output admissible or proves identity.
+const CHILD_OPERATIONS = new Set([
+  "command",
+  "runtime-node-get",
+  "runtime-docker-inspect",
+  "continuity-node-get",
+  "continuity-agent-get",
+  "continuity-server-get",
+  "observer-exec",
+]);
+const CHILD_SIGNALS = new Set([
+  "SIGTERM",
+  "SIGKILL",
+  "SIGINT",
+  "SIGHUP",
+  "SIGABRT",
+  "SIGSEGV",
+  "SIGPIPE",
+  "SIGBUS",
+  "SIGILL",
+  "SIGFPE",
+  "SIGQUIT",
+  "SIGTRAP",
+  "SIGSYS",
+  "SIGXCPU",
+  "SIGXFSZ",
+]);
+const childDiagnostics = new WeakMap();
+function childFailure(state, code) {
+  const error = new Failure(code);
+  try {
+    childDiagnostics.set(error, state.outputDiagnostic());
+  } catch {
+    // A diagnostic failure must not replace the original refusal or settlement.
+  }
+  return error;
+}
+
 // Every child has bounded output and a deadline. A close event, rather than a
 // signal attempt, is the local process settlement observation.
 function processes() {
   const active = new Set();
-  let totalBytes = 0;
+  let totalBytes = 0,
+    ordinal = 0;
   function launch(
     executable,
     args,
     deadline,
-    { input, interactive = false, maxBytes = 16384 } = {},
+    { input, interactive = false, maxBytes = 16384, operation = "command" } = {},
   ) {
+    need(CHILD_OPERATIONS.has(operation), "CHILD_OPERATION_INVALID");
     need(Date.now() < deadline, "DEADLINE_EXPIRED");
     const child = spawn(executable, args, {
       env: ENV,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
+    const childOrdinal = ++ordinal;
     const state = {
       child,
       closed: false,
@@ -299,6 +342,30 @@ function processes() {
     );
     let pending = Buffer.alloc(0),
       stderrBytes = 0;
+    state.outputDiagnostic = () => {
+      let outputCondition = "neither";
+      if (pending.length && stderrBytes) outputCondition = "pending-stdout-and-stderr";
+      else if (pending.length) outputCondition = "pending-stdout";
+      else if (stderrBytes) outputCondition = "stderr";
+      let signal = state.signal ?? null;
+      if (signal !== null && !CHILD_SIGNALS.has(signal)) signal = "other";
+      return Object.freeze({
+        schemaVersion: 1,
+        childOrdinal: Math.min(childOrdinal, 65535),
+        childOrdinalCapped: childOrdinal > 65535,
+        operation,
+        interactive,
+        stdoutBytes: state.bytes,
+        stderrBytes,
+        pendingStdoutBytes: pending.length,
+        parsedRecordCount: state.records.length,
+        outputCondition,
+        exitCode: Number.isInteger(state.code) ? state.code : null,
+        signal,
+        closeObserved: state.closed,
+        processGroupAbsent: state.processGroupAbsent ?? null,
+      });
+    };
     child.stdout.on("data", (chunk) => {
       state.bytes += chunk.length;
       totalBytes += chunk.length;
@@ -383,7 +450,8 @@ function processes() {
   }
   async function command(executable, args, deadline, options) {
     const s = await launch(executable, args, deadline, options).done;
-    need(s.closed && !s.failure && s.code === 0 && !s.signal, s.failure ?? "COMMAND_FAILED");
+    if (!(s.closed && !s.failure && s.code === 0 && !s.signal))
+      throw childFailure(s, s.failure ?? "COMMAND_FAILED");
     return Buffer.concat(s.stdout);
   }
   return {
@@ -410,7 +478,8 @@ async function pause(ms, deadline) {
 async function recordAt(state, index, deadline) {
   while (state.records.length <= index && !state.closed && !state.failure)
     await pause(25, deadline);
-  need(!state.failure && state.records.length > index, state.failure ?? "OBSERVER_RECORD_MISSING");
+  if (state.failure || state.records.length <= index)
+    throw childFailure(state, state.failure ?? "OBSERVER_RECORD_MISSING");
   return state.records[index];
 }
 function liveCounts(record, phase) {
@@ -559,8 +628,12 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
   ];
   const kube = async (args, options) =>
     children.command(p.cluster.kubectlPath, kargs(args), commandDeadline(), options);
-  const get = async (kind, name, namespace) =>
-    json(await kube(["get", kind, name, ...(namespace ? ["-n", namespace] : []), "-o", "json"]));
+  const get = async (kind, name, namespace, operation = "command") =>
+    json(
+      await kube(["get", kind, name, ...(namespace ? ["-n", namespace] : []), "-o", "json"], {
+        operation,
+      }),
+    );
   const namedPod = async (name, namespace) => {
     const bytes = await kube([
       "get",
@@ -675,6 +748,7 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
           '{"id":{{json .Id}},"startedAt":{{json .State.StartedAt}},"running":{{json .State.Running}}}',
         ]),
         commandDeadline(),
+        { operation: "runtime-docker-inspect" },
       ),
     );
     need(
@@ -688,7 +762,7 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
   };
   const runtimeBoundary = async () => {
     need(nodeUID && dockerNodeIdentity, "ORIGINAL_NODE_IDENTITY_UNOBSERVED");
-    const node = await get("node", p.cluster.nodeName);
+    const node = await get("node", p.cluster.nodeName, undefined, "runtime-node-get");
     need(
       node.metadata.uid === nodeUID && same(await dockerNode(), dockerNodeIdentity),
       "ORIGINAL_NODE_IDENTITY_CHANGED",
@@ -696,14 +770,19 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
   };
   const continuity = async () => {
     await runtimeBoundary();
-    const node = await get("node", p.cluster.nodeName);
+    const node = await get("node", p.cluster.nodeName, undefined, "continuity-node-get");
     need(
       node.metadata.uid === nodeUID &&
         node.status.conditions.some((c) => c.type === "Ready" && c.status === "True"),
       "NODE_CHANGED",
     );
     for (const role of ["agent", "server"]) {
-      const pod = await get("pod", m[`${role}Pod`], m.namespace);
+      const pod = await get(
+        "pod",
+        m[`${role}Pod`],
+        m.namespace,
+        role === "agent" ? "continuity-agent-get" : "continuity-server-get",
+      );
       podIdentity(pod, m[`${role}Pod`], p.artifacts.managementImage, managementUIDs[role]);
     }
   };
@@ -1199,7 +1278,7 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
           w.spiffeID,
         ]),
         caseDeadline,
-        { interactive: true },
+        { interactive: true, operation: "observer-exec" },
       );
       owned.observer = observer;
       const denied = await recordAt(observer, 0, Math.min(start + 15000, caseDeadline));
@@ -1372,7 +1451,11 @@ async function runObservation(profile, emit, filesystemOwnerUID) {
     for (const name of ["a", "b"])
       if (outcomes[name] === "entered")
         outcomes[name] = /AMBIGUOUS|UNQUALIFIED/.test(failure) ? "unqualified" : "failed";
-    await emit("observation-failed", { reasonCode: failure, outcomes });
+    await emit("observation-failed", {
+      reasonCode: failure,
+      outcomes,
+      childDiagnostic: childDiagnostics.get(error) ?? null,
+    });
   } finally {
     // Settlement is unconditional and has its own fixed reservation. Never
     // remove management resources or retry an ambiguous mutation blindly.

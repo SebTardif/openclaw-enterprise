@@ -254,6 +254,16 @@ children establish only those mechanisms. Unit-check and offline-build results
 must be reported separately from the explicitly unrun live integration until
 an actual allocated environment produces receipts.
 
+When a fixture child fails, `observation-failed` includes a bounded
+`childDiagnostic` when available. It identifies the source-authored operation
+and child ordinal, byte counts for stdout/stderr and any incomplete record,
+parsed-record count, and observed exit/stream-close/process-group state. It
+contains no raw output, command arguments, environment or credentials. Any
+stderr or incomplete interactive record still fails the observation; the
+diagnostic distinguishes those causes without relaxing the output contract.
+A missing diagnostic does not replace the original failure or imply settlement.
+These process diagnostics do not establish Workload API contact or identity.
+
 Every exit path after an effect requires settlement of owned streams, sockets,
 children, Pods and registrations. The preparation owner separately settles
 management and cluster resources. A timeout, attempted deletion or absent
