@@ -55,7 +55,9 @@ import {
 type PostgresRow = Record<string, unknown>;
 
 export interface PostgresClient extends PostgresQueryClient {
-  release(): void;
+  release(discard?: boolean): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  removeListener?(event: "error", listener: (error: Error) => void): unknown;
 }
 
 export interface PostgresPool {
@@ -797,6 +799,14 @@ export class PostgresPlatformState implements PlatformStateStore {
       throw databaseError(error);
     }
 
+    // Checked-out pg clients emit transport errors independently of query rejection.
+    // The transaction owner retains the event through release; repository callers
+    // still receive the original query failure or the exact unknown-COMMIT outcome.
+    let transportError: Error | undefined;
+    const onTransportError = (error: Error) => {
+      transportError = error;
+    };
+    client.on?.("error", onTransportError);
     let started = false;
     let committing = false;
     let unit: PlatformUnitOfWork | undefined;
@@ -811,6 +821,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       unit = this.repositories(context);
       this.contexts.set(unit, context);
       const result = await work(unit, context);
+      if (transportError) throw transportError;
       committing = true;
       await client.query("COMMIT");
       committing = false;
@@ -829,7 +840,8 @@ export class PostgresPlatformState implements PlatformStateStore {
         : databaseError(error);
     } finally {
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release();
+      client.release(transportError !== undefined);
+      client.removeListener?.("error", onTransportError);
     }
   }
 
