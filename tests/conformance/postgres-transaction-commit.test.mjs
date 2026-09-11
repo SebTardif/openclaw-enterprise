@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import pg from "pg";
+import { commitAckProxy } from "../fixtures/postgres-commit-ack-proxy.mjs";
 import {
   PostgresPlatformState,
   PostgresCommitOutcomeUnknownError,
@@ -191,4 +193,39 @@ test("cleanup failure cannot replace an earlier callback failure", async () => {
     (error) => error === failure,
   );
   assert.deepEqual(p.calls, ["BEGIN", "ROLLBACK"]);
+});
+
+test("commit fault URL routes the actual pg client through the proxy", async () => {
+  const original =
+    "postgresql://fixture:fixture@127.0.0.1:1/example?host=127.0.0.1&port=55432&user=override&password=override&application_name=commit-fixture&sslmode=disable";
+  const before = new pg.Client({ connectionString: original });
+  const proxy = await commitAckProxy(original);
+  try {
+    const routed = new URL(proxy.url);
+    const client = new pg.Client({ connectionString: proxy.url });
+    assert.equal(client.host, "127.0.0.1");
+    assert.equal(client.port, Number(routed.port));
+    assert.equal(routed.searchParams.has("host"), false);
+    assert.equal(routed.searchParams.has("port"), false);
+    assert.equal(client.user, before.user);
+    assert.equal(client.password, before.password);
+    assert.equal(client.database, before.database);
+    assert.equal(client.ssl, before.ssl);
+    assert.equal(routed.searchParams.get("application_name"), "commit-fixture");
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("commit fault rejects an effective remote override and preserves TLS intent", async () => {
+  await assert.rejects(
+    commitAckProxy(
+      "postgresql://fixture:fixture@127.0.0.1/example?host=remote.invalid&sslmode=disable",
+    ),
+    /loopback/,
+  );
+  await assert.rejects(
+    commitAckProxy("postgresql://fixture:fixture@127.0.0.1/example?ssl=true"),
+    /non-TLS/,
+  );
 });

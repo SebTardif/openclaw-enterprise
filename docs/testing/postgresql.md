@@ -113,3 +113,10 @@ rejection, ambiguous SQLSTATEs, exact COMMIT/ROLLBACK command acknowledgment,
 and cleanup errors. The fixture supplies no database or persistence proof.
 Unknown acknowledgment always remains possibly committed, even when a later
 ROLLBACK responds. An independent exact readback is required before reconciliation.
+
+The COMMIT fault fixture follows the installed PostgreSQL driver's effective
+host and port, including URL query overrides, and routes the test connection
+through its loopback proxy. It rejects nonloopback targets and TLS connections
+before mutation: inspecting encrypted protocol completion is unsupported, and
+TLS intent is never silently downgraded. Use the ordinary disposable non-TLS
+loopback setup above for this test.

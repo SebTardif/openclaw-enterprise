@@ -1,14 +1,22 @@
 import net from "node:net";
 import { once } from "node:events";
+import pg from "pg";
 
 // A protocol transport fault, not a pg.Client monkeypatch. The server's real
 // COMMIT completion is consumed here and never delivered to the application.
 export async function commitAckProxy(databaseUrl) {
   const target = new URL(databaseUrl);
-  if (!["127.0.0.1", "localhost", "[::1]"].includes(target.hostname))
+  // Resolve query-string and environment precedence with the same installed
+  // driver as the caller. URL authority alone is not the effective destination.
+  const effective = new pg.Client({ connectionString: databaseUrl });
+  const upstreamHost = effective.host.replace(/^\[|\]$/g, "");
+  const upstreamPort = effective.port;
+  if (!["127.0.0.1", "localhost", "::1"].includes(upstreamHost))
     throw new Error("The commit fault requires a disposable loopback PostgreSQL database.");
-  const upstreamHost = target.hostname.replace(/^\[|\]$/g, "");
-  const upstreamPort = Number(target.port || 5432);
+  // This fixture inspects PostgreSQL frames, so it cannot observe encrypted
+  // COMMIT completion. Reject TLS intent rather than silently downgrading it.
+  if (effective.ssl)
+    throw new Error("The commit fault requires an explicitly non-TLS PostgreSQL connection.");
   let armed = false;
   let observed = false;
   const sockets = new Set();
@@ -77,7 +85,8 @@ export async function commitAckProxy(databaseUrl) {
   const proxyUrl = new URL(target);
   proxyUrl.hostname = "127.0.0.1";
   proxyUrl.port = String(server.address().port);
-  proxyUrl.searchParams.set("sslmode", "disable");
+  proxyUrl.searchParams.delete("host");
+  proxyUrl.searchParams.delete("port");
   return {
     url: proxyUrl.toString(),
     arm() {
