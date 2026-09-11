@@ -79,8 +79,9 @@ Gateway/Harness connectivity and file/config exchange must not depend on
 same-namespace DNS, a shared PVC, or shared Kubernetes Secret references.
 Realization must preserve the exact owner and admitted revision across target
 boundaries. The [runtime trust boundary](access.md#runtime-trust-across-targets)
-applies even when both targets share a cluster. Detailed file ownership and
-transfer mechanisms remain outside this placement design.
+applies even when both targets share a cluster. [Runtime files and durable state](files.md)
+defines file ownership, deployment-bound managed inputs, and exchange failure
+semantics without selecting a transfer protocol.
 
 ## Agent deployment
 

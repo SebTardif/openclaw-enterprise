@@ -59,6 +59,11 @@ both targets; partial failure cannot authorize traffic to an inactive revision
 or orphan resources by treating success in one target as overall success.
 OCC does not select a fallback target or compute implementation.
 
+Preparation also materializes the revision's selected inputs and verifies both
+consumers before activation, following [file and state ownership](files.md).
+Concrete storage and transfer stay behind the selected Driver boundaries;
+OpenShell materialization does not become a separate platform authority.
+
 ## SandboxDriver
 
 `SandboxDriver` enforces the exact `SandboxPolicy` admitted for one

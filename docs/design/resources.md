@@ -94,6 +94,12 @@ revisions.
 | `SandboxPolicy`  | Namespace                 | Workload containment requirements for an Agent deployment. The selected `SandboxDriver` must support and enforce the exact admitted policy.                                                                                                                                                                          |
 | `Restriction`    | Installation or Namespace | Platform-wide guardrail enforced by every relevant authority and integration. It can narrow an otherwise allowed operation, but it cannot grant or expand permission.                                                                                                                                                |
 
+Configuration-owned managed-file defaults are copied independently into each
+Agent at creation. Later edits belong to that Agent, and deployment snapshots
+its exact desired files without changing an active revision. This target adds
+no file-bundle resource; [runtime file ownership](files.md#managed-input-lifecycle)
+defines copying, authorization, and application semantics.
+
 Identities, groups, roles, permissions, and access bindings are IAM resources,
 not additional deployment primitives. Workloads, Kubernetes objects, Drivers,
 external provider objects, and local model sources are not platform resources.

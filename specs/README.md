@@ -15,6 +15,11 @@ procedures belong in [quickstart](../docs/guides/quickstart.md) and
 
 ## Lifecycle
 
+The proposed [runtime file and state ownership delivery](28-runtime-file-state-ownership.md)
+records incremental work for M1.1/M1.2 and pre-Agent files. Its architectural
+authority is the [runtime-files design chapter](../docs/design/files.md), not
+current feature support.
+
 New implementation specifications identify the current reference pages they will
 change. Use `Proposed`, `Accepted`, `Implementing`, `Completed`, `Superseded`, or
 `Rejected` to distinguish discussion, approval, delivery, and historical outcome.
