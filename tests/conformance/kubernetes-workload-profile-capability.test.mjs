@@ -730,6 +730,10 @@ function sourceFixture() {
       events.push("revision");
       return change(baseRecord());
     },
+    async acquirePreparedRevision() {
+      events.push("prepared-revision");
+      return change(baseRecord());
+    },
   };
   const request = {
     scope: {
@@ -924,6 +928,7 @@ test("renderer source revision compares the complete actual constructor output",
       },
     );
     if (altered) await assert.rejects(call, { code: "unsupported-capability" });
+    else if (!withOperands) await assert.rejects(call, { code: "unavailable" });
     else {
       const lease = await call;
       lease.assertCurrent();
@@ -1020,4 +1025,43 @@ test("production-shaped renderer enrollment names missing originals without acce
         isDeepStrictEqual(error.prerequisites, ["runtime", "identity", "credentials", "storage"]),
     );
   assert.deepEqual(f.events, before, "missing complete owners prevent partial work");
+});
+
+test("fixed prepared capability never falls back to the static source method", async () => {
+  const f = fixture();
+  let comparisons = 0;
+  const before = [...f.events];
+  let refusal;
+  await assert.rejects(
+    f.partial.verifyPreparedHarnessLocked([f.request, f.manifest, f.use, f.unit, f.io], () => {
+      comparisons++;
+    }),
+    (error) => {
+      refusal = error;
+      return error.code === "unavailable";
+    },
+  );
+  assert.deepEqual(
+    f.events,
+    [...before, ["poison", refusal]],
+    "only the original operation is poisoned; no supplier effects run",
+  );
+  assert.equal(f.events.at(-1)[1], refusal, "the original refusal object is retained");
+  assert.equal(count(f, "poison"), 1);
+  assert.equal(count(f, "enroll"), 0);
+  assert.equal(comparisons, 0);
+  // A refused acquisition poisons its original operation. The static positive
+  // control uses a fresh independent invocation, never the refused unit or IO.
+  const independent = fixture();
+  assert.notEqual(independent.unit, f.unit);
+  assert.notEqual(independent.io, f.io);
+  const held = await independent.acquire();
+  try {
+    assert.equal(count(independent, "enroll"), 1);
+    held.assertCurrent();
+  } finally {
+    await held.release();
+  }
+  assert.equal(count(independent, "release"), 1);
+  assert.deepEqual(f.events, [...before, ["poison", refusal]]);
 });

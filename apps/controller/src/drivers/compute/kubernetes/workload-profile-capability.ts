@@ -65,7 +65,14 @@ export interface KubernetesRendererSource {
     definition: SelectedKubernetesRendererDefinition,
     ...input: DefinitionArguments
   ): Promise<InstalledKubernetesRendererLease>;
+  /** Static admission: captured logical construction, no completed launch or physical target. */
   acquireRevision(
+    selected: ComputeDriver,
+    definition: SelectedKubernetesRendererDefinition,
+    ...input: RevisionArguments
+  ): Promise<InstalledKubernetesRendererLease>;
+  /** Only the fixed prepared-Harness verifier enters this separate method. */
+  acquirePreparedRevision?(
     selected: ComputeDriver,
     definition: SelectedKubernetesRendererDefinition,
     ...input: RevisionArguments
@@ -264,6 +271,7 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
   readonly #definition: SelectedKubernetesRendererDefinition;
   readonly #acquireRevision: KubernetesRendererSource["acquireRevision"] | undefined;
   readonly #acquireDefinition: KubernetesRendererSource["acquireDefinition"] | undefined;
+  readonly #acquirePreparedRevision: KubernetesRendererSource["acquirePreparedRevision"];
   constructor(
     selected: ComputeDriver,
     renderer: FixedWorkloadRenderer,
@@ -277,6 +285,7 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
       normalizeResources: normalizeKubernetesResourcePlan,
     });
     this.#acquireRevision = source?.acquireRevision?.bind(source);
+    this.#acquirePreparedRevision = source?.acquirePreparedRevision?.bind(source);
     this.#acquireDefinition = source?.acquireDefinition?.bind(source);
     Object.freeze(this);
   }
@@ -301,13 +310,13 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
     );
   }
 
-  /** Same original source acquisition; comparison consumes its actual operands
-   * without invoking any launch hook in the current SQL transaction. */
+  /** The fixed prepared path selects the separately captured original method;
+   * static revision admission cannot select it through request or unit fields. */
   async verifyPreparedHarnessLocked(
     input: RevisionArguments,
     compare: (lease: InstalledKubernetesRendererLease) => void,
   ): Promise<GatewayStartupOwnerLeaseV1> {
-    const acquire = this.#acquireRevision;
+    const acquire = this.#acquirePreparedRevision;
     if (!acquire) unavailable();
     const [request, manifest, use, unit, io] = input;
     const snapshot = immutableCopy({ request, manifest, use });
@@ -325,6 +334,7 @@ export class KubernetesWorkloadProfileCapability implements WorkloadProfileRende
         ),
       (lease) => {
         qualifyResources(this.#definition, snapshot.manifest, lease);
+        if (!lease.harnessOperands) unavailable();
         compare(lease);
       },
     );

@@ -166,7 +166,16 @@ export function createComputeDriver(
     if (rendererSource !== undefined) throw new WorkloadProfileSelectionError("unavailable");
     const acquireDefinition = source.acquireDefinition.bind(source);
     const acquireRevision = source.acquireRevision.bind(source);
-    rendererSource = Object.freeze({ acquireDefinition, acquireRevision });
+    const preparedRevisionMethod = source.acquirePreparedRevision;
+    const acquirePreparedRevision =
+      typeof preparedRevisionMethod === "function"
+        ? preparedRevisionMethod.bind(source)
+        : undefined;
+    rendererSource = Object.freeze({
+      acquireDefinition,
+      acquireRevision,
+      ...(acquirePreparedRevision === undefined ? {} : { acquirePreparedRevision }),
+    });
   };
   if (workloadProfileRendererSource !== undefined)
     bindRendererSource(workloadProfileRendererSource);
@@ -178,6 +187,13 @@ export function createComputeDriver(
     acquireRevision(...args: Parameters<KubernetesRendererSource["acquireRevision"]>) {
       if (!rendererSource) throw new WorkloadProfileSelectionError("unavailable");
       return rendererSource.acquireRevision(...args);
+    },
+    acquirePreparedRevision(
+      ...args: Parameters<NonNullable<KubernetesRendererSource["acquirePreparedRevision"]>>
+    ) {
+      const acquire = rendererSource?.acquirePreparedRevision;
+      if (!acquire) throw new WorkloadProfileSelectionError("unavailable");
+      return acquire(...args);
     },
   });
   const driver = new KubernetesComputeDriver(

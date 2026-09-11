@@ -31,14 +31,24 @@ type Projection = Pick<Manifest, "artifactSet" | "launchConfiguration">;
 export interface KubernetesInstalledRendererDefinitionOwner {
   acquireDefinition(...args: DefinitionArguments): Promise<InstalledRendererDefinition>;
   acquireRevision(...args: RevisionArguments): Promise<InstalledRendererRevision>;
+  acquirePreparedRevision?(...args: RevisionArguments): Promise<InstalledRendererPreparedRevision>;
 }
 export interface InstalledRendererDefinition extends InstalledKubernetesRendererLease {
   readonly definition: SelectedKubernetesRendererDefinition;
   readonly projection: Projection;
 }
 export interface InstalledRendererRevision extends InstalledRendererDefinition {
-  /** Original target/material construction operands, never fabricated at
-   * definition acceptance. The custodian authenticates their original owner. */
+  /** Original captured candidate/material and logical placement. These template
+   * operands require neither a created Namespace UID nor a completed launch. */
+  readonly inputs: {
+    readonly gateway: Parameters<Construction["gatewayTemplate"]>;
+    readonly harness: Parameters<Construction["harnessTemplate"]>[0];
+  };
+  readonly outputs: Readonly<Record<"gateway" | "harness", V1Deployment>>;
+}
+export interface InstalledRendererPreparedRevision extends InstalledRendererDefinition {
+  /** Actual original target/material and completed-launch custody, qualified
+   * separately from static admission by the fixed prepared-Harness path. */
   readonly inputs: {
     readonly gateway: Parameters<Construction["gatewayDeployment"]>;
     readonly harness: Parameters<Construction["harnessTemplate"]>[0];
@@ -78,6 +88,7 @@ export function createSelectedKubernetesRendererSource(
   const enrollRevision = units.revision.bind(units);
   const resolveDefinition = installed?.acquireDefinition?.bind(installed);
   const resolveRevision = installed?.acquireRevision?.bind(installed);
+  const resolvePreparedRevision = installed?.acquirePreparedRevision?.bind(installed);
   const original = definitionOriginal.call(owner);
 
   async function acquire(
@@ -87,7 +98,7 @@ export function createSelectedKubernetesRendererSource(
     io: DefinitionArguments[4],
     enroll: () => WorkloadProfileOwnedLeaseV2,
     resolve: (() => Promise<InstalledRendererDefinition>) | undefined,
-    revision: boolean,
+    phase: "definition" | "revision" | "prepared",
   ): Promise<InstalledKubernetesRendererLease> {
     // Enrollment precedes diagnostics and all independent-source operations.
     const enrollment = enroll();
@@ -125,20 +136,32 @@ export function createSelectedKubernetesRendererSource(
           manifest.launchConfiguration.resourceEnvelope.podAndRuntimeAccounting.envelope,
           mapping,
         );
-        if (revision) {
-          const prepared = record as InstalledRendererRevision;
-          const inputs = immutableCopy(prepared.inputs);
-          const outputs = immutableCopy(prepared.outputs);
-          const actual = {
-            gateway: held.gatewayDeployment(...inputs.gateway),
-            harness: held.harnessTemplate(inputs.harness),
-          };
+        if (phase !== "definition") {
+          const revision = record as InstalledRendererRevision | InstalledRendererPreparedRevision;
+          const outputs = immutableCopy(revision.outputs);
+          let actual: Readonly<Record<"gateway" | "harness", V1Deployment>>;
+          if (phase === "prepared") {
+            const inputs = immutableCopy((revision as InstalledRendererPreparedRevision).inputs);
+            actual = {
+              gateway: held.gatewayDeployment(...inputs.gateway),
+              harness: held.harnessTemplate(inputs.harness),
+            };
+            harnessOperands = revision.harnessOperands;
+          } else {
+            const inputs = immutableCopy((revision as InstalledRendererRevision).inputs);
+            if (inputs.gateway[1] !== manifest.launchConfiguration.gateway.runtimeClass)
+              throw new WorkloadProfileSelectionError("unsupported-capability");
+            actual = {
+              gateway: held.gatewayTemplate(...inputs.gateway),
+              harness: held.harnessTemplate(inputs.harness),
+            };
+          }
           if (!isDeepStrictEqual(immutableCopy(actual), outputs))
             throw new WorkloadProfileSelectionError("unsupported-capability");
           // Custody belongs to the original source and dispatcher. Preserve the
           // exact operand object; cloning its launch would lose that membership.
           // Absence stays unavailable to the prepared verifier, never an empty launch.
-          harnessOperands = prepared.harnessOperands;
+          // Static acquisition never forwards a launch, even if a peer adds one.
         }
         accounting = mapping;
       });
@@ -210,7 +233,7 @@ export function createSelectedKubernetesRendererSource(
         io,
         () => enrollDefinition(unit, io),
         resolveDefinition && (() => resolveDefinition(selected, definition, request, unit, io)),
-        false,
+        "definition",
       );
     },
     acquireRevision(selected, definition, request, manifest, use, unit, io) {
@@ -222,7 +245,19 @@ export function createSelectedKubernetesRendererSource(
         () => enrollRevision(request, unit, io),
         resolveRevision &&
           (() => resolveRevision(selected, definition, request, manifest, use, unit, io)),
-        true,
+        "revision",
+      );
+    },
+    acquirePreparedRevision(selected, definition, request, manifest, use, unit, io) {
+      return acquire(
+        selected,
+        definition,
+        manifest,
+        io,
+        () => enrollRevision(request, unit, io),
+        resolvePreparedRevision &&
+          (() => resolvePreparedRevision(selected, definition, request, manifest, use, unit, io)),
+        "prepared",
       );
     },
   });

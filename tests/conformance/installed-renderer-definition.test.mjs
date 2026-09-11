@@ -403,6 +403,8 @@ function fixture() {
       return lastOperands;
     },
   };
+  // Separate fixed supplier entrypoints; both use the same declared test owner.
+  suppliers.acquirePreparedRevisionOperands = suppliers.acquireRevisionOperands;
   const consumer = new InstalledKubernetesRendererDefinitionOwner(store, suppliers);
   const args = () => [driver, original, request, unit, io];
   const revisionArgs = () => [driver, original, v.request, v.manifest, v.use, revisionUnit, io];
@@ -439,7 +441,8 @@ function fixture() {
       ioActive = false;
     },
     definition: () => consumer.acquireDefinition(...args()),
-    revision: () => consumer.acquireRevision(...revisionArgs()),
+    revision: () => consumer.acquirePreparedRevision(...revisionArgs()),
+    staticRevision: () => consumer.acquireRevision(...revisionArgs()),
     get lastArtifacts() {
       return lastArtifacts;
     },
@@ -453,7 +456,7 @@ function fixture() {
   return f;
 }
 
-function constructionOperands(f) {
+function constructionOperands(f, prepared = true) {
   const held = f.owner.acquire(f.selection);
   const templateInput = (role) => ({
     name: `renderer-${role}`,
@@ -467,6 +470,19 @@ function constructionOperands(f) {
   try {
     const gateway = templateInput("gateway");
     const harness = templateInput("harness");
+    if (!prepared) {
+      const inputs = {
+        gateway: [gateway, f.v.manifest.launchConfiguration.gateway.runtimeClass],
+        harness,
+      };
+      return {
+        inputs,
+        outputs: {
+          gateway: held.gatewayTemplate(...inputs.gateway),
+          harness: held.harnessTemplate(harness),
+        },
+      };
+    }
     const pod = held.gatewayTemplate(gateway, "selected-gateway-runsc").spec.template.spec;
     const stores = f.v.plan.gateway.values.envelope.gateway.value.storage.value;
     const plan = {
@@ -861,9 +877,9 @@ test("outer original constructors accept exact supplied outputs and reject a cha
       f.controls.operands = { outputs };
     }
     const source = outerSource(f);
-    if (changed) await assert.rejects(source.acquireRevision(...f.revisionArgs()));
+    if (changed) await assert.rejects(source.acquirePreparedRevision(...f.revisionArgs()));
     else {
-      const held = await source.acquireRevision(...f.revisionArgs());
+      const held = await source.acquirePreparedRevision(...f.revisionArgs());
       assert.equal(held.harnessOperands.launch, operands.harnessOperands.launch);
       assert.equal(held.assertCurrent(), undefined);
       await held.release();
@@ -1029,4 +1045,126 @@ test("source release is captured before a throwing currentness getter", async ()
   await assert.rejects(consumer.acquireDefinition(...f.args()));
   assert.equal(released, 1);
   assert.deepEqual(f.releaseCounts, { artifact: 1, behavior: 0, revision: 0 });
+});
+
+function capturedStaticRevision(f) {
+  f.operands = {
+    revision: {
+      ...structuredClone(f.v.revision),
+      id: f.v.request.revisionId,
+      agentId: f.v.request.agentId,
+      namespaceId: f.v.request.namespaceId,
+      configurationId: f.v.request.configurationRef,
+      configurationGeneration: f.v.request.configurationVersion,
+      compute: {
+        ...f.v.revision.compute,
+        id: f.driver.id,
+        implementation: f.driver.implementation,
+      },
+    },
+    ...constructionOperands(f, false),
+  };
+  return f.operands;
+}
+
+test("fresh captured revision uses logical templates before any launch or physical allocation", async () => {
+  const f = fixture();
+  const operands = capturedStaticRevision(f);
+  assert.throws(() => f.driver.acquireCurrentLaunchOperands(operands.revision));
+  const source = outerSource(f);
+  const held = await source.acquireRevision(...f.revisionArgs());
+  try {
+    assert.equal(held.assertCurrent(), undefined);
+    assert.equal(held.harnessOperands, undefined);
+    assert.equal(typeof operands.inputs.gateway[1], "string");
+    assert.equal(operands.outputs.gateway.metadata.uid, undefined);
+    assert.equal(operands.outputs.gateway.metadata.resourceVersion, undefined);
+    assert.equal(f.hooks(), 0);
+    assert.equal(f.driver.apiClients, undefined);
+    assert.equal(f.events.filter((e) => e === "revision-acquire").length, 1);
+  } finally {
+    await held.release();
+  }
+  assert.deepEqual(f.releaseCounts, { artifact: 1, behavior: 1, revision: 1 });
+});
+
+test("static candidate identity mismatch refuses without starting a hook", async () => {
+  const f = fixture();
+  const operands = capturedStaticRevision(f);
+  f.controls.operands = { revision: { ...operands.revision, id: "different-captured-revision" } };
+  await assert.rejects(f.staticRevision());
+  assert.equal(f.hooks(), 0);
+  assert.equal(f.driver.apiClients, undefined);
+  assert.deepEqual(f.releaseCounts, { artifact: 1, behavior: 1, revision: 1 });
+});
+
+test("static logical output is compared completely by the actual held constructors", async () => {
+  const f = fixture();
+  const operands = capturedStaticRevision(f);
+  const outputs = structuredClone(operands.outputs);
+  outputs.harness.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true;
+  f.controls.operands = { outputs };
+  await assert.rejects(outerSource(f).acquireRevision(...f.revisionArgs()), {
+    code: "unsupported-capability",
+  });
+  assert.equal(f.hooks(), 0);
+  assert.equal(f.driver.apiClients, undefined);
+  assert.deepEqual(f.releaseCounts, { artifact: 1, behavior: 1, revision: 1 });
+});
+
+test("missing prepared supplier does not obstruct static admission and never falls back to it", async () => {
+  const f = fixture();
+  capturedStaticRevision(f);
+  let staticCalls = 0;
+  const consumer = new InstalledKubernetesRendererDefinitionOwner(f.store, {
+    acquireBehavior: f.suppliers.acquireBehavior,
+    acquireRevisionOperands(input) {
+      staticCalls++;
+      return f.suppliers.acquireRevisionOperands(input);
+    },
+  });
+  const held = await consumer.acquireRevision(...f.revisionArgs());
+  await held.release();
+  const before = [...f.events];
+  await assert.rejects(consumer.acquirePreparedRevision(...f.revisionArgs()));
+  assert.equal(staticCalls, 1);
+  assert.deepEqual(f.events, before);
+  assert.equal(f.hooks(), 0);
+  assert.equal(f.driver.apiClients, undefined);
+});
+
+test("prepared entry before completed launch refuses without invoking lifecycle hooks", async () => {
+  const f = fixture();
+  capturedStaticRevision(f);
+  await assert.rejects(f.revision());
+  assert.equal(f.hooks(), 0);
+  assert.equal(f.driver.apiClients, undefined);
+  assert.deepEqual(f.releaseCounts, { artifact: 1, behavior: 1, revision: 1 });
+});
+
+test("prepared supplier is captured once and request phase data cannot invoke it", async () => {
+  const f = fixture();
+  capturedStaticRevision(f);
+  let reads = 0,
+    preparedCalls = 0;
+  const suppliers = {
+    acquireBehavior: f.suppliers.acquireBehavior,
+    acquireRevisionOperands: f.suppliers.acquireRevisionOperands,
+    get acquirePreparedRevisionOperands() {
+      reads++;
+      return async () => {
+        preparedCalls++;
+        throw new Error("prepared-only original supplier");
+      };
+    },
+  };
+  const consumer = new InstalledKubernetesRendererDefinitionOwner(f.store, suppliers);
+  assert.equal(reads, 1);
+  f.v.request.phase = "prepared";
+  const held = await consumer.acquireRevision(...f.revisionArgs());
+  await held.release();
+  assert.equal(reads, 1);
+  assert.equal(preparedCalls, 0);
+  assert.equal(f.hooks(), 0);
+  assert.equal(f.driver.apiClients, undefined);
 });

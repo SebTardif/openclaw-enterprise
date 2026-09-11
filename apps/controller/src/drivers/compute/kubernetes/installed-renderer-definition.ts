@@ -13,12 +13,16 @@ import {
 import type {
   InstalledRendererDefinition,
   InstalledRendererRevision,
+  InstalledRendererPreparedRevision,
   KubernetesInstalledRendererDefinitionOwner,
 } from "./renderer-source.ts";
 import type { KubernetesRendererSource } from "./workload-profile-capability.ts";
 
 export type DefinitionArgs = Parameters<KubernetesRendererSource["acquireDefinition"]>;
 export type RevisionArgs = Parameters<KubernetesRendererSource["acquireRevision"]>;
+export type PreparedRevisionArgs = Parameters<
+  NonNullable<KubernetesRendererSource["acquirePreparedRevision"]>
+>;
 
 /** This trusted producer owns executable/environment/module behavior for the
  * independently acquired definition bytes and image contents. A projection
@@ -29,16 +33,22 @@ export interface InstalledBehaviorLease extends Pick<
   "projection" | "accounting" | "assertCurrent" | "release"
 > {}
 
-/** The original revision/material/placement owners supply actual constructor
- * inputs and outputs under the same request/unit. The full image-set digest
- * covers application, init and helper images; this consumer does not replace
- * that producer's definition with a hash of the two application references. */
+/** The original revision/material/placement owners supply captured candidate
+ * and logical template operands under the same request/unit before launch. */
 export interface InstalledRevisionOperandsLease extends Pick<
   InstalledRendererRevision,
   "inputs" | "outputs" | "assertCurrent" | "release"
 > {
   readonly revision: Readonly<AgentRevision>;
-  readonly harnessOperands: NonNullable<InstalledRendererRevision["harnessOperands"]>;
+}
+/** Prepared acquisition additionally holds the actual target, completed launch
+ * and complete application/init/helper image set from the original producers. */
+export interface InstalledPreparedRevisionOperandsLease extends Pick<
+  InstalledRendererPreparedRevision,
+  "inputs" | "outputs" | "assertCurrent" | "release"
+> {
+  readonly revision: Readonly<AgentRevision>;
+  readonly harnessOperands: NonNullable<InstalledRendererPreparedRevision["harnessOperands"]>;
 }
 
 export interface TrustedInstalledRendererSuppliers {
@@ -58,6 +68,13 @@ export interface TrustedInstalledRendererSuppliers {
       original: Readonly<RevisionArgs>;
     }>,
   ): Promise<InstalledRevisionOperandsLease>;
+  acquirePreparedRevisionOperands?(
+    input: Readonly<{
+      artifacts: InstalledArtifactLease;
+      behavior: InstalledBehaviorLease;
+      original: Readonly<PreparedRevisionArgs>;
+    }>,
+  ): Promise<InstalledPreparedRevisionOperandsLease>;
 }
 
 const originalAcquire = ProtectedInstalledArtifactStore.prototype.acquire;
@@ -86,6 +103,7 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
   readonly #store: ProtectedInstalledArtifactStore;
   readonly #behavior: TrustedInstalledRendererSuppliers["acquireBehavior"] | undefined;
   readonly #revision: TrustedInstalledRendererSuppliers["acquireRevisionOperands"] | undefined;
+  readonly #preparedRevision: TrustedInstalledRendererSuppliers["acquirePreparedRevisionOperands"];
 
   constructor(
     store: ProtectedInstalledArtifactStore,
@@ -94,6 +112,7 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
     this.#store = store;
     this.#behavior = suppliers?.acquireBehavior?.bind(suppliers);
     this.#revision = suppliers?.acquireRevisionOperands?.bind(suppliers);
+    this.#preparedRevision = suppliers?.acquirePreparedRevisionOperands?.bind(suppliers);
     Object.freeze(this);
   }
 
@@ -105,10 +124,19 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
     return this.#acquire(undefined, args) as Promise<InstalledRendererRevision>;
   }
 
+  async acquirePreparedRevision(
+    ...args: PreparedRevisionArgs
+  ): Promise<InstalledRendererPreparedRevision> {
+    return this.#acquire(undefined, args, true) as Promise<InstalledRendererPreparedRevision>;
+  }
+
   async #acquire(
     definitionArgs: DefinitionArgs | undefined,
     revisionArgs: RevisionArgs | undefined,
-  ): Promise<InstalledRendererDefinition | InstalledRendererRevision> {
+    prepared = false,
+  ): Promise<
+    InstalledRendererDefinition | InstalledRendererRevision | InstalledRendererPreparedRevision
+  > {
     const args = definitionArgs ?? revisionArgs!;
     const selected = args[0];
     const suppliedDefinition = args[1];
@@ -124,8 +152,13 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
     const installed = originalDefinition.call(owner);
     if (!corresponding(suppliedDefinition, installed)) unavailable();
     if (!this.#behavior) throw new WorkloadProfilePrerequisiteErrorV2(["renderer.behavior-source"]);
-    if (revisionArgs && !this.#revision)
-      throw new WorkloadProfilePrerequisiteErrorV2(["renderer.revision-operands-source"]);
+    const acquireOperands = prepared ? this.#preparedRevision : this.#revision;
+    if (revisionArgs && !acquireOperands)
+      throw new WorkloadProfilePrerequisiteErrorV2([
+        prepared
+          ? "renderer.prepared-revision-operands-source"
+          : "renderer.revision-operands-source",
+      ]);
 
     // Startup owner units have no signal. Their original IO and supplier leases
     // enforce currentness; a local signal only owns this artifact acquisition.
@@ -284,12 +317,14 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
       );
       active();
       let revisionResult:
-        Pick<InstalledRendererRevision, "inputs" | "outputs" | "harnessOperands"> | undefined;
+        | Pick<InstalledRendererRevision, "inputs" | "outputs">
+        | Pick<InstalledRendererPreparedRevision, "inputs" | "outputs" | "harnessOperands">
+        | undefined;
       if (revisionArgs) {
         // Freeze the tuple, retaining the actual original operands by identity.
         const original = Object.freeze([...revisionArgs]) as Readonly<RevisionArgs>;
         const operands = own(
-          await this.#revision!(Object.freeze({ artifacts, behavior, original })),
+          await acquireOperands!(Object.freeze({ artifacts, behavior, original })),
         );
         active();
         const revision = operands.revision;
@@ -300,36 +335,49 @@ export class InstalledKubernetesRendererDefinitionOwner implements KubernetesIns
           revision.namespaceId !== request.namespaceId
         )
           unavailable();
-        const launch = own(originalLaunch.call(selected as KubernetesComputeDriver, revision));
-        active();
-        const supplied = operands.harnessOperands;
-        const suppliedLaunch = supplied.launch;
-        const imageSetDigest = supplied.imageSetDigest;
-        if (
-          suppliedLaunch !== launch.launch ||
-          typeof imageSetDigest !== "string" ||
-          !digest.test(imageSetDigest)
-        )
-          unavailable();
-        const inputs = immutableCopy(operands.inputs);
-        const outputs = immutableCopy(operands.outputs);
         checks.push(() => {
           if (
             revision.id !== request.revisionId ||
             revision.agentId !== request.agentId ||
-            revision.namespaceId !== request.namespaceId ||
-            supplied.launch !== suppliedLaunch ||
-            supplied.imageSetDigest !== imageSetDigest ||
-            suppliedLaunch !== launch.launch
+            revision.namespaceId !== request.namespaceId
           )
             unavailable();
           return undefined;
         });
-        revisionResult = {
-          inputs,
-          outputs,
-          harnessOperands: supplied,
-        };
+        if (prepared) {
+          const originalOperands = operands as InstalledPreparedRevisionOperandsLease;
+          const launch = own(originalLaunch.call(selected as KubernetesComputeDriver, revision));
+          active();
+          const supplied = originalOperands.harnessOperands;
+          const suppliedLaunch = supplied.launch;
+          const imageSetDigest = supplied.imageSetDigest;
+          if (
+            suppliedLaunch !== launch.launch ||
+            typeof imageSetDigest !== "string" ||
+            !digest.test(imageSetDigest)
+          )
+            unavailable();
+          checks.push(() => {
+            if (
+              supplied.launch !== suppliedLaunch ||
+              supplied.imageSetDigest !== imageSetDigest ||
+              suppliedLaunch !== launch.launch
+            )
+              unavailable();
+            return undefined;
+          });
+          revisionResult = {
+            inputs: immutableCopy(originalOperands.inputs),
+            outputs: immutableCopy(originalOperands.outputs),
+            harnessOperands: supplied,
+          };
+        } else {
+          const originalOperands = operands as InstalledRevisionOperandsLease;
+          revisionResult = {
+            inputs: immutableCopy(originalOperands.inputs),
+            outputs: immutableCopy(originalOperands.outputs),
+          };
+        }
       }
       active();
       const result = Object.freeze({

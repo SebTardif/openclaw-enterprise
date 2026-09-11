@@ -107,6 +107,7 @@ export function createWorkloadProfileOwnedInputsV2(
   const storageMethod = storage?.create;
   const definitionMethod = installed?.acquireDefinition;
   const revisionMethod = installed?.acquireRevision;
+  const preparedRevisionMethod = installed?.acquirePreparedRevision;
   const source = credentials?.source;
   const captureMethod = source?.acquireCapturedLocked;
   const policy = credentials?.policy;
@@ -126,6 +127,10 @@ export function createWorkloadProfileOwnedInputsV2(
   const installedRenderer = Object.freeze({
     acquireDefinition: definitionMethod.bind(installed),
     acquireRevision: revisionMethod.bind(installed),
+    // Prepared support is optional here; its fixed caller owns the prerequisite.
+    ...(typeof preparedRevisionMethod === "function"
+      ? { acquirePreparedRevision: preparedRevisionMethod.bind(installed) }
+      : {}),
   });
   const credentialSource = Object.freeze({ acquireCapturedLocked: captureMethod.bind(source) });
   const capturedPolicy = Object.freeze({ assertCandidate: policyMethod.bind(policy) });
