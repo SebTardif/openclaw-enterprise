@@ -751,7 +751,12 @@ export class PostgresWorkQueue {
              claim_token = NULL,
              lease_expires_at = NULL,
              terminal_reason_code = CASE
-               WHEN work.attempt_count >= $2::integer THEN $4::text
+               WHEN work.attempt_count >= $2::integer
+                 THEN CASE
+                   WHEN jsonb_array_length(work.plugin_errors) > 0
+                     THEN 'PLUGIN_INSTALL_FAILED'
+                   ELSE $4::text
+                 END
                ELSE NULL
              END,
              completed_at = CASE
@@ -787,7 +792,11 @@ export class PostgresWorkQueue {
        ), transitioned AS (
          UPDATE occ.controller_work AS work
          SET state = 'failed_permanent',
-             terminal_reason_code = $4::text,
+             terminal_reason_code = CASE
+               WHEN jsonb_array_length(work.plugin_errors) > 0
+                 THEN 'PLUGIN_INSTALL_FAILED'
+               ELSE $4::text
+             END,
              completed_at = clock_timestamp(),
              updated_at = clock_timestamp()
          FROM candidates

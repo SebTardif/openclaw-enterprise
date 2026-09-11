@@ -179,6 +179,11 @@ export interface SecretEnvironmentProjection {
 export interface ComputeRevisionContext {
   readonly secretEnvironment: readonly SecretEnvironmentProjection[];
   readonly failedPluginIdentities?: readonly PluginIdentity[];
+  /**
+   * Available only while preparing a revision. Reporting persists a known plugin
+   * installation failure on the deployment row before this callback resolves.
+   * Any reported failure blocks candidate activation.
+   */
   reportPluginInstallFailure?(identity: PluginIdentity): Promise<void>;
 }
 

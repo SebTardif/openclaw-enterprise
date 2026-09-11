@@ -371,10 +371,14 @@ test(
   "deployment status follows the original reconcile row and preserves plugin failures",
   requiresPostgres,
   async (context) => {
-    const { pool, queue, WorkClaimLostError } = await dependencies(context);
+    const { pool, queue, PostgresWorkQueue, WorkClaimLostError } = await dependencies(context);
     const { namespaceId, agents } = await createResources(pool);
     const pluginId = "p".repeat(512);
     const pluginIdentity = { driverId: "codex", pluginId };
+    const pluginInstallFailed = {
+      code: "PLUGIN_INSTALL_FAILED",
+      message: "Plugin installation failed.",
+    };
     const revisionId = await createQueueRevision(pool, namespaceId, agents[0]);
     const idempotencyKey = `agent_revision:${revisionId}:reconcile`;
     await queue.enqueue(revisionWork(namespaceId, idempotencyKey, agents[0], revisionId));
@@ -460,6 +464,78 @@ test(
         message: "Agent revision was superseded before activation.",
       },
     });
+
+    const terminalAttempts = 1000;
+    const finalAttemptQueue = new PostgresWorkQueue(pool, {
+      maxAttempts: terminalAttempts,
+      random: () => 0,
+    });
+    const staleTerminalRevisionId = await createQueueRevision(pool, namespaceId, agents[0], 2);
+    const staleTerminalKey = `agent_revision:${staleTerminalRevisionId}:reconcile`;
+    await queue.enqueue(
+      revisionWork(namespaceId, staleTerminalKey, agents[0], staleTerminalRevisionId),
+    );
+    const staleTerminalClaim = await claimExpected(queue, staleTerminalKey);
+    const staleTerminalErrors = await queue.reportPluginInstallFailure(
+      staleTerminalClaim,
+      pluginIdentity,
+      [pluginIdentity],
+    );
+    await pool.query(
+      `UPDATE occ.controller_work
+       SET attempt_count = $3::integer,
+           lease_expires_at = timestamp '1960-01-01 00:00:00+00'
+       WHERE idempotency_key = $1 AND claim_token = $2::uuid`,
+      [staleTerminalKey, staleTerminalClaim.claimToken, terminalAttempts],
+    );
+
+    await finalAttemptQueue.recoverStale({ limit: 1 });
+    assert.deepEqual(
+      await queue.findDeployment(namespaceId, agents[0], staleTerminalRevisionId),
+      {
+        deploymentId: staleTerminalRevisionId,
+        namespaceId,
+        agentId: agents[0],
+        status: "failed",
+        pluginErrors: staleTerminalErrors,
+        error: pluginInstallFailed,
+      },
+      "final stale-claim recovery must keep the plugin installation failure as the deployment reason",
+    );
+
+    const queuedTerminalRevisionId = await createQueueRevision(pool, namespaceId, agents[0], 3);
+    const queuedTerminalKey = `agent_revision:${queuedTerminalRevisionId}:reconcile`;
+    await queue.enqueue(
+      revisionWork(namespaceId, queuedTerminalKey, agents[0], queuedTerminalRevisionId),
+    );
+    const queuedTerminalClaim = await claimExpected(queue, queuedTerminalKey);
+    const queuedTerminalErrors = await queue.reportPluginInstallFailure(
+      queuedTerminalClaim,
+      pluginIdentity,
+      [pluginIdentity],
+    );
+    await queue.retry(queuedTerminalClaim, { code: "TRANSIENT_PLUGIN_INSTALL_FAILURE" });
+    await pool.query(
+      `UPDATE occ.controller_work
+       SET attempt_count = $2::integer,
+           available_at = timestamp '1960-01-01 00:00:00+00'
+       WHERE idempotency_key = $1`,
+      [queuedTerminalKey, terminalAttempts],
+    );
+
+    await finalAttemptQueue.recoverStale({ limit: 1 });
+    assert.deepEqual(
+      await queue.findDeployment(namespaceId, agents[0], queuedTerminalRevisionId),
+      {
+        deploymentId: queuedTerminalRevisionId,
+        namespaceId,
+        agentId: agents[0],
+        status: "failed",
+        pluginErrors: queuedTerminalErrors,
+        error: pluginInstallFailed,
+      },
+      "final queued-exhaustion recovery must keep the plugin installation failure as the deployment reason",
+    );
   },
 );
 
