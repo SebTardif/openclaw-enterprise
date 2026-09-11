@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { watch } from "node:fs";
+import {
+  chmod,
+  chown,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +24,14 @@ import { setTimeout } from "node:timers/promises";
 import test from "node:test";
 import {
   CommandFailure,
+  assertBuildInputsUnchanged,
+  captureBuildInputs,
   executionOrder,
   goBuildCacheScope,
   runCommand,
+  stageNativeArtifact,
   verifyFile,
+  writeNativeManifest,
 } from "../../scripts/build-mvp.mjs";
 
 const script = fileURLToPath(new URL("../../scripts/build-mvp.mjs", import.meta.url));
@@ -92,6 +112,279 @@ test("a successful subprocess must still produce its declared output", async () 
     await writeFile(artifact, "built output");
     await verifyFile(artifact);
     await assert.rejects(verifyFile(directory), /nonempty regular file/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test(
+  "native staging binds real bytes and observed ownership to a nonwritable executable",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-native-stage-"));
+    try {
+      const source = join(directory, "source");
+      const bytes = Buffer.from("inert artifact bytes\0with a second line\n");
+      await writeFile(source, bytes);
+      for (const mode of [0o755, 0o555]) {
+        await chmod(source, mode);
+        const output = join(directory, `staged-${mode}`);
+        const { observation } = await stageNativeArtifact(source, output);
+        const actual = await lstat(output);
+        assert.deepEqual(await readFile(output), bytes);
+        assert.deepEqual(observation, {
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          size: bytes.length,
+          uid: actual.uid,
+          gid: actual.gid,
+          mode: "0555",
+        });
+        assert.equal(actual.mode & 0o7777, 0o555);
+        assert.equal(actual.uid, process.getuid());
+        assert.notEqual(actual.ino, (await lstat(source)).ino);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "native staging refuses missing, empty, nonregular, aliased, oversized and unsafe inputs",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-native-refusal-"));
+    try {
+      const source = join(directory, "source");
+      const output = join(directory, "output");
+      await assert.rejects(stageNativeArtifact(source, output), { code: "ENOENT" });
+      await writeFile(source, "", { mode: 0o755 });
+      await assert.rejects(stageNativeArtifact(source, output), /nonempty regular build input/);
+      await assert.rejects(stageNativeArtifact(directory, output), /regular build input/);
+      await assert.rejects(stageNativeArtifact("/dev/null", output), /regular build input/);
+      await writeFile(source, "artifact");
+      for (const mode of [0o775, 0o777, 0o4755]) {
+        await chmod(source, mode);
+        await assert.rejects(stageNativeArtifact(source, output), /unsafe write or special mode/);
+      }
+      await chmod(source, 0o644);
+      await assert.rejects(stageNativeArtifact(source, output), { code: "EACCES" });
+      // Ordinary declarations remain valid without executable or artifact modes.
+      await chmod(source, 0o666);
+      await verifyFile(source);
+      await chmod(source, 0o755);
+      await symlink(source, join(directory, "alias"));
+      await assert.rejects(stageNativeArtifact(join(directory, "alias"), output), /canonical/);
+      await assert.rejects(stageNativeArtifact(`${directory}/./source`, output), /canonical/);
+      await symlink(directory, join(directory, "parent-alias"));
+      await assert.rejects(
+        stageNativeArtifact(source, join(directory, "parent-alias", "output")),
+        /canonical parent/,
+      );
+      await assert.rejects(stageNativeArtifact(source, output, { maxBytes: 3 }), /byte limit/);
+      await assert.rejects(
+        stageNativeArtifact(source, output, { maxBytes: Infinity }),
+        /byte limit/,
+      );
+      await assert.rejects(lstat(output), { code: "ENOENT" });
+      await writeFile(output, "existing destination");
+      await assert.rejects(stageNativeArtifact(source, output), { code: "EEXIST" });
+      assert.equal(await readFile(output, "utf8"), "existing destination");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "native staging rejects a real foreign owner",
+  {
+    skip:
+      process.platform !== "linux" || process.getuid() !== 0
+        ? "Requires privilege to create a genuinely foreign-owned file."
+        : false,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-native-owner-"));
+    try {
+      const source = join(directory, "source");
+      await writeFile(source, "inert bytes", { mode: 0o755 });
+      await chown(source, 65534, 65534);
+      await assert.rejects(
+        stageNativeArtifact(source, join(directory, "output")),
+        /owned by root or the current user/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "native staging detects source replacement, rewrites and permission changes during copying",
+  { skip: process.platform !== "linux", timeout: 10_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-native-race-"));
+    try {
+      for (const mutation of ["replace", "rewrite", "chmod"]) {
+        const source = join(directory, "source");
+        const replacement = join(directory, "replacement");
+        const output = join(directory, "output");
+        const bytes = Buffer.alloc(2 * 1024 * 1024, 42);
+        await writeFile(source, bytes);
+        await chmod(source, 0o755);
+        await writeFile(replacement, bytes, { mode: 0o755 });
+        let observer;
+        // Creation of the real destination occurs after the source descriptor's
+        // initial validation. Mutate the actual file while its bounded copy runs.
+        const changed = new Promise((resolveChanged, reject) => {
+          observer = watch(directory, (event, name) => {
+            if (event !== "rename" || name !== "output") return;
+            observer.close();
+            const change =
+              mutation === "replace"
+                ? rename(replacement, source)
+                : mutation === "rewrite"
+                  ? writeFile(source, Buffer.alloc(bytes.length, 43))
+                  : chmod(source, 0o775);
+            change.then(resolveChanged, reject);
+          });
+          observer.once("error", reject);
+        });
+        try {
+          const result = stageNativeArtifact(source, output).then(
+            () => ({ error: null }),
+            (error) => ({ error }),
+          );
+          await changed;
+          assert.match(
+            (await result).error?.message ?? "unexpected successful staging",
+            /changed|truncated|grew/,
+          );
+          await assert.rejects(lstat(output), { code: "ENOENT" });
+        } finally {
+          observer.close();
+        }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "native staging closes descriptors after validation and destination failures",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "oce-native-fds-"));
+    try {
+      const source = join(directory, "source");
+      const output = join(directory, "output");
+      await writeFile(source, "inert bytes", { mode: 0o755 });
+      await writeFile(output, "existing");
+      const before = (await readdir("/proc/self/fd")).length;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await assert.rejects(stageNativeArtifact(directory, output), /regular build input/);
+        await assert.rejects(stageNativeArtifact(source, output), { code: "EEXIST" });
+      }
+      assert.equal((await readdir("/proc/self/fd")).length, before);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test("build input provenance captures local payloads and refuses changes even when bytes are restored", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-native-inputs-"));
+  try {
+    await mkdir(join(directory, "package", "include"), { recursive: true });
+    await writeFile(join(directory, "Cargo.lock"), "selected dependency bytes\n");
+    await writeFile(join(directory, "package", "include", "local.h"), "local header bytes\n");
+    const paths = ["package", "Cargo.lock"];
+    const before = await captureBuildInputs(directory, paths);
+    assert.deepEqual(
+      before.manifest.files.map(({ path }) => path),
+      ["Cargo.lock", "package/include/local.h"],
+    );
+    assertBuildInputsUnchanged(before, await captureBuildInputs(directory, paths));
+    await writeFile(join(directory, "Cargo.lock"), "different dependency bytes\n");
+    const changed = await captureBuildInputs(directory, paths);
+    assert.notEqual(changed.manifest.sha256, before.manifest.sha256);
+    assert.throws(() => assertBuildInputsUnchanged(before, changed), /inputs changed/);
+    await writeFile(join(directory, "Cargo.lock"), "selected dependency bytes\n");
+    const restored = await captureBuildInputs(directory, paths);
+    assert.equal(restored.manifest.sha256, before.manifest.sha256);
+    assert.throws(() => assertBuildInputsUnchanged(before, restored), /inputs changed/);
+    // There is deliberately no Git repository: tracking state never filters
+    // the actual package payload, including empty and previously absent files.
+    await writeFile(join(directory, "package", "untracked.rs"), "");
+    const added = await captureBuildInputs(directory, paths);
+    assert.ok(
+      added.manifest.files.some(({ path, size }) => path === "package/untracked.rs" && size === 0),
+    );
+    assert.notEqual(added.manifest.sha256, before.manifest.sha256);
+    await symlink(join(directory, "Cargo.lock"), join(directory, "package", "alias"));
+    await assert.rejects(captureBuildInputs(directory, paths), /regular build source/);
+    await assert.rejects(captureBuildInputs(directory, ["../outside"]), /canonical relative paths/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("manifest publication replaces complete JSON and removes stale output on serialization failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-native-manifest-"));
+  try {
+    const path = join(directory, "native-manifest.json");
+    const manifest = {
+      schemaVersion: 2,
+      sourceInputs: { sha256: "a".repeat(64), files: [] },
+      products: [],
+    };
+    await writeFile(path, "stale or partial output");
+    await writeNativeManifest(path, manifest);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), manifest);
+    const circular = {};
+    circular.self = circular;
+    await assert.rejects(writeNativeManifest(path, circular), /circular/i);
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("build input capture has finite size and traversal limits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-native-input-limits-"));
+  try {
+    await writeFile(join(directory, "large.rs"), Buffer.alloc(8 * 1024 * 1024 + 1));
+    await assert.rejects(captureBuildInputs(directory, ["large.rs"]), /byte limit/);
+    const deep = join(directory, ...Array(34).fill("nested"));
+    await mkdir(deep, { recursive: true });
+    await assert.rejects(captureBuildInputs(directory, ["nested"]), /entry\/depth limit/);
+    await assert.rejects(captureBuildInputs(directory, ["absent.rs"]), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a failed native CLI invocation removes its previous manifest before prerequisites", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "oce-native-cli-"));
+  try {
+    await mkdir(join(directory, "scripts"));
+    await mkdir(join(directory, ".build", "mvp"), { recursive: true });
+    const copiedScript = join(directory, "scripts", "build-mvp.mjs");
+    const manifest = join(directory, ".build", "mvp", "native-manifest.json");
+    await copyFile(script, copiedScript);
+    await writeFile(manifest, "previous success");
+    // The real entrypoint must refuse absent source prerequisites. No compiler
+    // is installed or substituted in this disposable source export.
+    await assert.rejects(
+      runCommand(process.execPath, [copiedScript, "native"], {
+        env: { ...process.env, PATH: "" },
+        capture: true,
+      }),
+      (error) => error instanceof CommandFailure && error.exitCode === 1,
+    );
+    await assert.rejects(lstat(manifest), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -190,29 +483,39 @@ test("the CLI rejects unsupported targets without invoking build tools", async (
 });
 
 async function captureCli(target, environment) {
-  const child = spawn(process.execPath, [script, target], {
-    env: {
-      ...process.env,
-      PATH: "",
-      OCC_BUILD_UPSTREAM_SDK_CONTEXT: "",
-      OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "",
-      ...environment,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  let errors = "";
-  child.stdout.setEncoding("utf8").on("data", (chunk) => {
-    output += chunk;
-  });
-  child.stderr.setEncoding("utf8").on("data", (chunk) => {
-    errors += chunk;
-  });
-  const status = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => resolve(code));
-  });
-  return { status, output, errors };
+  const directory = await mkdtemp(join(tmpdir(), "oce-build-cli-"));
+  try {
+    await mkdir(join(directory, "scripts"));
+    const isolatedScript = join(directory, "scripts", "build-mvp.mjs");
+    // Negative CLI cases may remove an earlier manifest before refusing their
+    // inputs. Keep that real behavior inside this test's disposable export.
+    await copyFile(script, isolatedScript);
+    const child = spawn(process.execPath, [isolatedScript, target], {
+      env: {
+        ...process.env,
+        PATH: "",
+        OCC_BUILD_UPSTREAM_SDK_CONTEXT: "",
+        OCC_BUILD_UPSTREAM_SDK_MANIFEST_SHA256: "",
+        ...environment,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let errors = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      errors += chunk;
+    });
+    const status = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => resolve(code));
+    });
+    return { status, output, errors };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 test("invalid image inputs fail before prerequisite commands run", async () => {

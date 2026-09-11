@@ -3,16 +3,19 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants, realpathSync, statSync } from "node:fs";
 import {
   access,
-  copyFile,
   lstat,
   mkdir,
+  mkdtemp,
+  open,
+  opendir,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -20,6 +23,7 @@ const nativeRoot = join(repositoryRoot, "dataplane");
 const outputRoot = join(repositoryRoot, ".build/mvp");
 const nativeManifestPath = join(outputRoot, "native-manifest.json");
 const builtNativeProducts = [];
+const stagedNativeIdentities = [];
 const nativeMembers = [
   "ds-contracts",
   "policy-core",
@@ -32,6 +36,15 @@ const nativeMembers = [
   "oce-native-egress",
   "oce-network-fence",
 ];
+const nativePackagePaths = nativeMembers.map((name) =>
+  join(
+    "dataplane",
+    ["ds-dnsgate", "ds-tlsproxy", "oce-native-egress", "oce-network-fence"].includes(name)
+      ? "services"
+      : "crates",
+    name,
+  ),
+);
 const nativeProducts = [
   { package: "ds-dnsgate", binary: "oce-dnsgate" },
   { package: "ds-tlsproxy", binary: "oce-egress" },
@@ -123,6 +136,240 @@ export async function verifyFile(path, { executable = false } = {}) {
   if (executable) await access(path, fsConstants.X_OK);
 }
 
+const maxNativeBytes = 128 * 1024 * 1024;
+const identityFields = ["dev", "ino", "size", "mode", "uid", "gid", "nlink", "mtimeNs", "ctimeNs"];
+const sameFile = (before, after) => identityFields.every((key) => before[key] === after[key]);
+const fileMode = (info) => (info.mode & 0o7777n).toString(8).padStart(4, "0");
+
+async function unchangedFile(path, file, before) {
+  if (
+    (await realpath(path)) !== path ||
+    !sameFile(before, await file.stat({ bigint: true })) ||
+    !sameFile(before, await lstat(path, { bigint: true }))
+  )
+    throw new Error(`Build input changed during capture: ${path}`);
+}
+
+async function openBuildInput(path, maxBytes, executable = false) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > maxNativeBytes)
+    throw new Error("Invalid build input byte limit.");
+  if (!isAbsolute(path) || (await realpath(path)) !== path)
+    throw new Error(`Build input must be canonical and must not traverse links: ${path}`);
+  // NONBLOCK prevents a replaced FIFO from hanging before its type is checked.
+  const file = await open(
+    path,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+  );
+  try {
+    const before = await file.stat({ bigint: true });
+    if (!before.isFile() || (executable && before.size === 0n))
+      throw new Error(`Expected a ${executable ? "nonempty " : ""}regular build input: ${path}`);
+    if (before.size > BigInt(maxBytes))
+      throw new Error(`Build input exceeds its byte limit: ${path}`);
+    if (executable) {
+      if (before.uid !== 0n && before.uid !== BigInt(process.getuid()))
+        throw new Error(`Native artifact must be owned by root or the current user: ${path}`);
+      if ((before.mode & 0o7022n) !== 0n)
+        throw new Error(`Native artifact has unsafe write or special mode bits: ${path}`);
+      // Linux procfs resolves this access check to the open file, even if its
+      // original pathname is replaced. No artifact is executed by this check.
+      await access(`/proc/self/fd/${file.fd}`, fsConstants.X_OK);
+    }
+    await unchangedFile(path, file, before);
+    return { file, before };
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
+}
+
+async function hashFileBytes(file, size, destination) {
+  const hash = createHash("sha256");
+  const buffer = Buffer.alloc(64 * 1024);
+  let position = 0;
+  while (position < size) {
+    const { bytesRead } = await file.read(
+      buffer,
+      0,
+      Math.min(buffer.length, size - position),
+      position,
+    );
+    if (bytesRead === 0) throw new Error("Build input was truncated during capture.");
+    hash.update(buffer.subarray(0, bytesRead));
+    if (destination) {
+      let offset = 0;
+      while (offset < bytesRead) {
+        const { bytesWritten } = await destination.write(
+          buffer,
+          offset,
+          bytesRead - offset,
+          position + offset,
+        );
+        if (bytesWritten === 0) throw new Error("Native artifact staging made no progress.");
+        offset += bytesWritten;
+      }
+    }
+    position += bytesRead;
+  }
+  if ((await file.read(buffer, 0, 1, position)).bytesRead !== 0)
+    throw new Error("Build input grew during capture.");
+  return hash.digest("hex");
+}
+
+async function captureBuildFile(path, maxBytes) {
+  const { file, before } = await openBuildInput(path, maxBytes);
+  try {
+    const sha256 = await hashFileBytes(file, Number(before.size));
+    await unchangedFile(path, file, before);
+    return {
+      sha256,
+      size: Number(before.size),
+      identity: identityFields.map((key) => String(before[key])),
+    };
+  } finally {
+    await file.close();
+  }
+}
+
+export async function stageNativeArtifact(source, output, { maxBytes = maxNativeBytes } = {}) {
+  if (process.platform !== "linux") throw new Error("Native artifact staging requires Linux.");
+  if (
+    !isAbsolute(output) ||
+    join(await realpath(dirname(output)), relative(dirname(output), output)) !== output
+  )
+    throw new Error("Native staging output must have a canonical parent directory.");
+  const { file, before } = await openBuildInput(source, maxBytes, true);
+  let staged;
+  let created;
+  let complete = false;
+  try {
+    // Exclusive creation never follows or replaces an existing destination.
+    staged = await open(
+      output,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_RDWR,
+      0o600,
+    );
+    created = await staged.stat({ bigint: true });
+    const sha256 = await hashFileBytes(file, Number(before.size), staged);
+    await staged.chmod(0o555);
+    await staged.sync();
+    const observed = await staged.stat({ bigint: true });
+    if (
+      observed.size !== before.size ||
+      fileMode(observed) !== "0555" ||
+      (await hashFileBytes(staged, Number(observed.size))) !== sha256
+    )
+      throw new Error("Staged native artifact does not match the captured bytes and mode.");
+    await unchangedFile(source, file, before);
+    await unchangedFile(output, staged, observed);
+    complete = true;
+    return {
+      observation: {
+        sha256,
+        size: Number(observed.size),
+        uid: Number(observed.uid),
+        gid: Number(observed.gid),
+        mode: fileMode(observed),
+      },
+      identity: identityFields.map((key) => String(observed[key])),
+    };
+  } finally {
+    try {
+      await staged?.close();
+    } finally {
+      await file.close();
+      if (!complete && created) {
+        const current = await lstat(output, { bigint: true }).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        if (current?.dev === created.dev && current?.ino === created.ino) await rm(output);
+      }
+    }
+  }
+}
+
+// Inventory the selected files themselves, independent of Git tracking state.
+// Keep identity observations private to the in-process before/after comparison.
+export async function captureBuildInputs(root, paths) {
+  root = await realpath(root);
+  const files = [];
+  const identities = [];
+  let bytes = 0;
+  let entries = 0;
+  const visit = async (path, depth) => {
+    if (++entries > 8192 || depth > 32)
+      throw new Error("Build source inventory exceeds its entry/depth limit.");
+    const absolute = join(root, path);
+    const before = await lstat(absolute, { bigint: true });
+    if (before.isDirectory()) {
+      if ((await realpath(absolute)) !== absolute)
+        throw new Error(`Noncanonical build source directory: ${path}`);
+      const names = [];
+      for await (const entry of await opendir(absolute)) {
+        if (names.length + entries >= 8192)
+          throw new Error("Build source inventory exceeds its entry limit.");
+        names.push(entry.name);
+      }
+      for (const name of names.sort()) await visit(join(path, name), depth + 1);
+      if (!sameFile(before, await lstat(absolute, { bigint: true })))
+        throw new Error(`Build source directory changed: ${path}`);
+      identities.push([path, identityFields.map((key) => String(before[key]))]);
+    } else {
+      if (!before.isFile()) throw new Error(`Expected a regular build source: ${path}`);
+      if (bytes + Number(before.size) > 64 * 1024 * 1024)
+        throw new Error("Build source inventory exceeds its 64 MiB limit.");
+      const captured = await captureBuildFile(absolute, 8 * 1024 * 1024);
+      bytes += captured.size;
+      if (bytes > 64 * 1024 * 1024)
+        throw new Error("Build source inventory exceeds its 64 MiB limit.");
+      files.push({ path: path.split(sep).join("/"), size: captured.size, sha256: captured.sha256 });
+      identities.push([path, captured.identity]);
+    }
+  };
+  for (const path of [...new Set(paths)].sort()) {
+    if (
+      !path ||
+      isAbsolute(path) ||
+      path === ".." ||
+      path.startsWith(`..${sep}`) ||
+      relative(root, join(root, path)) !== path
+    )
+      throw new Error("Build source selections must be canonical relative paths.");
+    await visit(path, 0);
+  }
+  files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  return {
+    manifest: { sha256: createHash("sha256").update(JSON.stringify(files)).digest("hex"), files },
+    identities,
+  };
+}
+
+export function assertBuildInputsUnchanged(before, after) {
+  if (JSON.stringify(before) !== JSON.stringify(after))
+    throw new Error(
+      "Selected native build inputs changed; discard the outputs and rebuild from stable inputs.",
+    );
+}
+
+export async function writeNativeManifest(path, manifest) {
+  let temporary;
+  try {
+    await rm(path, { force: true });
+    temporary = await mkdtemp(join(dirname(path), ".native-manifest-"));
+    const content = `${JSON.stringify(manifest, null, 2)}\n`;
+    if (Buffer.byteLength(content) > 4 * 1024 * 1024)
+      throw new Error("Native manifest exceeds its byte limit.");
+    const file = join(temporary, "manifest.json");
+    await writeFile(file, content, { flag: "wx", mode: 0o644 });
+    await rename(file, path);
+  } catch (error) {
+    await rm(path, { force: true });
+    throw error;
+  } finally {
+    if (temporary) await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 function requiredEnvironment(name, pattern, description) {
   const value = process.env[name];
   if (typeof value !== "string" || !pattern.test(value)) {
@@ -152,11 +399,52 @@ function hostPlatform() {
 
 let nativeEnvironment;
 let nativeCargo;
+let nativeInputs;
+let nativeTools;
+let nativeToolVersions;
+
+async function captureNativeInputs() {
+  const paths = [
+    "scripts/build-mvp.mjs",
+    "dataplane/Cargo.toml",
+    "dataplane/Cargo.lock",
+    "dataplane/rust-toolchain.toml",
+    ...nativePackagePaths,
+  ];
+  for (const path of [
+    ".cargo/config",
+    ".cargo/config.toml",
+    "dataplane/.cargo/config",
+    "dataplane/.cargo/config.toml",
+  ]) {
+    if (
+      await lstat(join(repositoryRoot, path)).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      })
+    )
+      paths.push(path);
+  }
+  return captureBuildInputs(repositoryRoot, paths);
+}
+
+async function captureNativeTools() {
+  return {
+    rustc: await captureBuildFile(nativeEnvironment.RUSTC, maxNativeBytes),
+    cargo: await captureBuildFile(nativeCargo, maxNativeBytes),
+  };
+}
+
+async function verifyNativeInputs() {
+  assertBuildInputsUnchanged(nativeInputs, await captureNativeInputs());
+  assertBuildInputsUnchanged(nativeTools, await captureNativeTools());
+}
+
 async function checkNative() {
   hostPlatform();
   for (const name of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]) {
     await verifyFile(join(nativeRoot, name));
   }
+  nativeInputs = await captureNativeInputs();
   const pin = await readFile(join(nativeRoot, "rust-toolchain.toml"), "utf8");
   const channel = /^channel\s*=\s*"(\d+\.\d+\.\d+)"\s*$/m.exec(pin)?.[1];
   if (channel === undefined)
@@ -180,9 +468,14 @@ async function checkNative() {
   await verifyFile(rustc, { executable: true });
   await verifyFile(nativeCargo, { executable: true });
   nativeEnvironment.RUSTC = rustc;
-  const compiler = await runCommand(rustc, ["--version"], options);
+  nativeTools = await captureNativeTools();
+  const compiler = await runCommand(rustc, ["--version", "--verbose"], options);
   if (!compiler.startsWith(`rustc ${channel} `))
     throw new Error(`Install the pinned Rust ${channel} toolchain before building.`);
+  nativeToolVersions = {
+    rustc: compiler.trim(),
+    cargo: (await runCommand(nativeCargo, ["--version"], options)).trim(),
+  };
   const metadata = JSON.parse(
     await runCommand(
       nativeCargo,
@@ -210,15 +503,7 @@ async function checkNative() {
   const nativeDirectory = await realpath(nativeRoot);
   if ((await realpath(metadata.workspace_root)) !== nativeDirectory)
     throw new Error("Cargo selected a different workspace root.");
-  const memberDirectories = nativeMembers.map((name) =>
-    join(
-      nativeDirectory,
-      ["ds-dnsgate", "ds-tlsproxy", "oce-native-egress", "oce-network-fence"].includes(name)
-        ? "services"
-        : "crates",
-      name,
-    ),
-  );
+  const memberDirectories = nativePackagePaths.map((path) => join(repositoryRoot, path));
   // Inspect the resolved graph as well as declared path edges: a Cargo patch
   // can replace a registry dependency with local source outside the workspace.
   for (const dependency of metadata.packages.filter(({ source }) => source === null)) {
@@ -261,12 +546,14 @@ async function checkNative() {
       );
     }
   }
+  await verifyNativeInputs();
 }
 
 async function buildNative(product) {
   const output = join(outputRoot, "native", product.binary);
   await mkdir(dirname(output), { recursive: true });
   await rm(output, { force: true });
+  await verifyNativeInputs();
   await runCommand(
     nativeCargo,
     [
@@ -286,16 +573,20 @@ async function buildNative(product) {
       env: nativeEnvironment,
     },
   );
+  await verifyNativeInputs();
   const artifact = join(nativeRoot, "target", hostPlatform().rust, "release", product.binary);
-  await verifyFile(artifact, { executable: true });
-  await copyFile(artifact, output);
-  await verifyFile(output, { executable: true });
+  const staged = await stageNativeArtifact(artifact, output);
+  stagedNativeIdentities.push(staged.identity);
   builtNativeProducts.push({
     ...product,
     path: `.build/mvp/native/${product.binary}`,
-    sha256: createHash("sha256")
-      .update(await readFile(output))
-      .digest("hex"),
+    staged: staged.observation,
+    installationRequirements: {
+      path: `/usr/local/bin/${product.binary}`,
+      uid: 0,
+      gid: 0,
+      mode: "0555",
+    },
   });
 }
 
@@ -556,42 +847,55 @@ async function main(args) {
     );
     return;
   }
-  // Validate explicit image inputs before any prerequisite tool runs. A typo
-  // must not start a source build or replace a tag belonging to another image.
-  if (order.includes("image-controller")) imageInputs("controller");
-  if (order.includes("image-egress")) imageInputs("egress");
-  if (
-    order.includes("image-controller") &&
-    order.includes("image-egress") &&
-    process.env.OCC_BUILD_CONTROLLER_TAG === process.env.OCC_BUILD_EGRESS_TAG
-  ) {
-    throw new Error("Controller and egress output tags must be distinct.");
-  }
-  if (order.includes("native-dns") || order.includes("native-tls")) {
-    await rm(nativeManifestPath, { force: true });
-  }
-  for (const name of order) {
-    process.stdout.write(`[build-mvp] ${name}\n`);
-    await targets[name].run?.();
-  }
-  if (builtNativeProducts.length !== 0) {
-    await writeFile(
-      nativeManifestPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          rustToolchain: nativeEnvironment.RUSTUP_TOOLCHAIN,
-          rustTarget: hostPlatform().rust,
-          imagePlatform: hostPlatform().image,
-          // Host provenance is not the binary's minimum libc requirement. The
-          // selected image must execute the real binary to qualify that ABI.
-          hostGlibcVersion: process.report.getReport().header.glibcVersionRuntime ?? null,
-          products: builtNativeProducts,
-        },
-        null,
-        2,
-      )}\n`,
-    );
+  const nativeBuild = order.includes("native-dns") || order.includes("native-tls");
+  if (nativeBuild) await rm(nativeManifestPath, { force: true });
+  try {
+    // Validate explicit image inputs before any prerequisite tool runs. A typo
+    // must not start a source build or replace a tag belonging to another image.
+    if (order.includes("image-controller")) imageInputs("controller");
+    if (order.includes("image-egress")) imageInputs("egress");
+    if (
+      order.includes("image-controller") &&
+      order.includes("image-egress") &&
+      process.env.OCC_BUILD_CONTROLLER_TAG === process.env.OCC_BUILD_EGRESS_TAG
+    ) {
+      throw new Error("Controller and egress output tags must be distinct.");
+    }
+    for (const name of order) {
+      process.stdout.write(`[build-mvp] ${name}\n`);
+      await targets[name].run?.();
+    }
+    if (builtNativeProducts.length !== 0) {
+      await verifyNativeInputs();
+      for (const [index, product] of builtNativeProducts.entries()) {
+        const observed = await captureBuildFile(join(repositoryRoot, product.path), maxNativeBytes);
+        if (observed.sha256 !== product.staged.sha256 || observed.size !== product.staged.size)
+          throw new Error(
+            `Staged native artifact changed before manifest publication: ${product.binary}`,
+          );
+        assertBuildInputsUnchanged(stagedNativeIdentities[index], observed.identity);
+      }
+      await writeNativeManifest(nativeManifestPath, {
+        schemaVersion: 2,
+        rustToolchain: nativeEnvironment.RUSTUP_TOOLCHAIN,
+        rustTarget: hostPlatform().rust,
+        imagePlatform: hostPlatform().image,
+        // Host provenance is not the binary's minimum libc requirement. The
+        // selected image must execute the real binary to qualify that ABI.
+        hostGlibcVersion: process.report.getReport().header.glibcVersionRuntime ?? null,
+        sourceInputs: nativeInputs.manifest,
+        tools: Object.fromEntries(
+          Object.entries(nativeTools).map(([name, { sha256, size }]) => [
+            name,
+            { sha256, size, version: nativeToolVersions[name] },
+          ]),
+        ),
+        products: builtNativeProducts,
+      });
+    }
+  } catch (error) {
+    if (nativeBuild) await rm(nativeManifestPath, { force: true });
+    throw error;
   }
 }
 
