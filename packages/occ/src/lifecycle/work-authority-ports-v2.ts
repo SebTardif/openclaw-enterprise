@@ -123,6 +123,7 @@ export type WorkServiceOperationV2 =
   | "work.model.generate"
   | "work.repository-token.issue"
   | "work.repository.use"
+  | "work.repository.publish"
   | "work.delivery.submit"
   | "work.delivery.observe";
 /** Closed repository-use comparison data. The constructor selects the protocol;
@@ -645,3 +646,41 @@ export interface WorkDeliveryObservationPortV2<
     providerEvidence: P["providerEvidence"],
   ): Promise<WorkStagingResultV2<WorkDeliveryObservationV2, P["stagedReceipt"]>>;
 }
+
+/** Shared comparison emitted from a genuinely admitted service-owned Work.
+ * State owns known admission COMMIT and privately recognizes the original
+ * execution/requester association. Parsing this record never admits Work.
+ * Read and publication consumers may share this association, not permissions. */
+export interface WorkAdmittedExecutionV2 {
+  readonly admissionOriginal: WorkOriginalOperationV2;
+  readonly work: VersionedWorkRefV2;
+  readonly owner: ServicePrincipal;
+  readonly requesterPrincipalId: string;
+  readonly invocationRef: WorkInvocationRefV2;
+  readonly execution: WorkExecutionAssociationV2;
+  readonly lineage: WorkLineageV2;
+  readonly workBeganAt: WorkInstantV2;
+  readonly originalHorizon: WorkInstantV2;
+  readonly cancellationScopeRef: string;
+  readonly authority: Readonly<{
+    ref: string;
+    revision: string;
+    notBefore: WorkInstantV2;
+    notAfter: WorkInstantV2;
+  }>;
+}
+
+/** This platform permission is distinct from provider credential permissions.
+ * Repository-read V2/V3 and token-issue grants cannot admit this operation. */
+export type WorkPublicationIntentV1 = WorkOriginalOperationV2 &
+  Readonly<{
+    operation: "work.repository.publish";
+    permission: "repository:publish";
+    actions: readonly ["push", "create-draft-pr"];
+    work: VersionedWorkRefV2;
+    execution: WorkExecutionAssociationV2;
+    requesterPrincipalId: string;
+    authorityRef: string;
+    authorityRevision: string;
+    executionBindingDigest: WorkDigestV2;
+  }>;
