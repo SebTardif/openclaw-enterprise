@@ -1,6 +1,7 @@
 {
   "exports": [
     "account",
+    "accountSecurityRecords",
     "agentLifecycleAdmissions",
     "agentRevisionRuntimeAdmissions",
     "agentRevisions",
@@ -20,6 +21,12 @@
     "credentialInventoryRecords",
     "credentialInventoryRevocationClaims",
     "credentialInventorySnapshots",
+    "delegationOperationHistory",
+    "delegationOperations",
+    "delegationRootHistory",
+    "delegationRoots",
+    "gatewayStartupHeads",
+    "gatewayStartupOperations",
     "iamAccessBindings",
     "iamGroupMemberships",
     "iamGroups",
@@ -34,9 +41,12 @@
     "runtimeAuthorityOperations",
     "runtimeCleanupResponsibilities",
     "runtimeCleanupResponsibilityAllocations",
+    "runtimeEffectGates",
     "runtimePreparationOperations",
     "runtimeServiceTrustRecords",
     "secrets",
+    "securityEventCapacityV1",
+    "securityEventRecordsV1",
     "serviceAccountDriverBindings",
     "serviceAccounts",
     "session",
@@ -49,10 +59,18 @@
     "turnJournalKeys",
     "turnJournalOperations",
     "turnJournalOwners",
+    "turnJournalReplayHeads",
+    "turnJournalReplayLineage",
     "turnJournalReservations",
+    "turnJournalRetiredIdentities",
+    "turnJournalRetirementObservations",
+    "turnJournalRetirementPublications",
     "user",
     "verification",
+    "workloadProfileAdmissionHistory",
+    "workloadProfileAdmissions",
     "workloadProfileCapacity",
+    "workloadProfileInvalidations",
     "workloadProfileOperations"
   ],
   "schema": "occ",
@@ -948,6 +966,21 @@
   },
   "inboundForeignKeys": [
     {
+      "name": "account_security_records_installation_fk",
+      "table": {
+        "schema": "occ",
+        "name": "account_security_records"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "name": "lifecycle_admissions_installation_owner",
       "table": {
         "schema": "occ",
@@ -1188,6 +1221,51 @@
       "onDelete": "restrict"
     },
     {
+      "name": "delegation_roots_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "delegation_roots"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "gateway_startup_heads_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "gateway_startup_heads"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "gateway_startup_operations_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "gateway_startup_operations"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "name": "iam_access_bindings_namespace_id_namespaces_id_fk",
       "table": {
         "schema": "occ",
@@ -1308,6 +1386,21 @@
       "onDelete": "restrict"
     },
     {
+      "name": "runtime_effect_gates_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "runtime_effect_gates"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "name": "runtime_service_trust_records_installation_id_installation_id_fk",
       "table": {
         "schema": "occ",
@@ -1332,6 +1425,36 @@
       "foreignTable": {
         "schema": "occ",
         "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "security_event_capacity_v1_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "security_event_capacity_v1"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "security_event_records_v1_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "security_event_records_v1"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
       },
       "foreignColumns": ["id"],
       "onUpdate": "restrict",
@@ -1488,6 +1611,66 @@
       "onDelete": "restrict"
     },
     {
+      "name": "turn_journal_replay_heads_agent_installation",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_heads"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_replay_heads_agent_namespace",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_heads"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_replay_lineage_agent_installation",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_lineage"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_replay_lineage_agent_namespace",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_replay_lineage"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
       "name": "turn_journal_reservations_installation_id_installation_id_fk",
       "table": {
         "schema": "occ",
@@ -1497,6 +1680,66 @@
       "foreignTable": {
         "schema": "occ",
         "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_retirement_publications_agent_installation",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_retirement_publications"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "turn_journal_retirement_publications_agent_namespace",
+      "table": {
+        "schema": "occ",
+        "name": "turn_journal_retirement_publications"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "workload_profile_admissions_installation_id_installation_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "workload_profile_admissions"
+      },
+      "columns": ["installation_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "installation"
+      },
+      "foreignColumns": ["id"],
+      "onUpdate": "restrict",
+      "onDelete": "restrict"
+    },
+    {
+      "name": "workload_profile_admissions_namespace_id_namespaces_id_fk",
+      "table": {
+        "schema": "occ",
+        "name": "workload_profile_admissions"
+      },
+      "columns": ["namespace_id"],
+      "foreignTable": {
+        "schema": "occ",
+        "name": "namespaces"
       },
       "foreignColumns": ["id"],
       "onUpdate": "restrict",
