@@ -263,6 +263,13 @@ stderr or incomplete interactive record still fails the observation; the
 diagnostic distinguishes those causes without relaxing the output contract.
 A missing diagnostic does not replace the original failure or imply settlement.
 These process diagnostics do not establish Workload API contact or identity.
+For observer-exec failures, diagnostic version 2 additionally projects at most
+four already-parsed records into closed event/reason/outcome categories, bounded
+to 2048 encoded bytes. Unknown shapes or reasons remain unavailable; record
+bodies, identity metadata and arbitrary output are never retained. The stderr
+channel identifies the collected local kubectl child pipe; its ultimate origin
+remains unattributed. These projections preserve strict stderr/partial-record
+refusal and cannot qualify an identity or release custody.
 
 Every exit path after an effect requires settlement of owned streams, sockets,
 children, Pods and registrations. The preparation owner separately settles

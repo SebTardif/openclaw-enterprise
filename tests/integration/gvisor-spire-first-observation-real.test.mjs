@@ -242,6 +242,168 @@ const CHILD_SIGNALS = new Set([
   "SIGXCPU",
   "SIGXFSZ",
 ]);
+// Final failed-record reasons in the pinned Go observer. Internal inspectResponse
+// reasons become response-invalid; dial/fetch errors are translated by fetch.
+// These diagnostic labels never admit a record or establish workload identity.
+const OBSERVER_FINAL_REASONS = new Set([
+  "flags-invalid",
+  "socket-invalid",
+  "expected-id-invalid",
+  "client-create",
+  "denial-not-observed",
+  "fetch-failed",
+  "correlation-invalid",
+  "identity-set-mismatch",
+  "output-failed",
+  "close-unsettled",
+  "observer-failed",
+  "control-invalid",
+  "control-timeout",
+  "rpc-settlement-timeout",
+  "connection-extra",
+  "connection-lost",
+  "rpc-method",
+  "rpc-phase",
+  "rpc-extra-attempt",
+  "rpc-end-order",
+  "dial-extra",
+  "socket-close-failed",
+  "response-unexpected",
+  "response-invalid",
+]);
+const OBSERVER_GRPC_CODES = new Set([
+  "",
+  "OK",
+  "Canceled",
+  "Unknown",
+  "InvalidArgument",
+  "DeadlineExceeded",
+  "NotFound",
+  "AlreadyExists",
+  "PermissionDenied",
+  "ResourceExhausted",
+  "FailedPrecondition",
+  "Aborted",
+  "OutOfRange",
+  "Unimplemented",
+  "Internal",
+  "Unavailable",
+  "DataLoss",
+  "Unauthenticated",
+]);
+function observerRecordDiagnostics(records) {
+  const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const keys = (value, expected) =>
+    object(value) &&
+    Object.keys(value).length === expected.length &&
+    expected.every((key) => Object.hasOwn(value, key));
+  const count = (value) => Number.isSafeInteger(value) && value >= 0;
+  const counters = (record) =>
+    count(record.offsetMs) &&
+    keys(record.connection, ["dialAttempts", "connectionBegins", "connectionEnds"]) &&
+    Object.values(record.connection).every(count) &&
+    Array.isArray(record.rpc) &&
+    record.rpc.length === 2 &&
+    record.rpc.every(
+      (rpc, index) =>
+        object(rpc) &&
+        keys(rpc, [
+          "phase",
+          "begins",
+          "ends",
+          "responses",
+          ...(Object.hasOwn(rpc, "endCode") ? ["endCode"] : []),
+        ]) &&
+        rpc.phase === index + 1 &&
+        [rpc.begins, rpc.ends, rpc.responses].every(count) &&
+        (!Object.hasOwn(rpc, "endCode") ||
+          (rpc.endCode !== "" && OBSERVER_GRPC_CODES.has(rpc.endCode))),
+    );
+  const base = ["event", "offsetMs", "connection", "rpc"];
+  need(Array.isArray(records) && records.length <= 4, "OBSERVER_DIAGNOSTIC_UNAVAILABLE");
+  const projected = records.map((record, index) => {
+    const result = {
+      index,
+      shapeStatus: "invalid-shape",
+      event: null,
+      reasonCode: null,
+      outcome: null,
+    };
+    if (!object(record)) result.shapeStatus = "non-object";
+    else if (!["failed", "closed", "denied", "delivered"].includes(record.event))
+      result.shapeStatus = "unknown-event";
+    else {
+      result.event = record.event;
+      if (record.event === "failed") {
+        if (keys(record, ["event", "reasonCode"]) && typeof record.reasonCode === "string") {
+          if (OBSERVER_FINAL_REASONS.has(record.reasonCode)) {
+            result.shapeStatus = "recognized";
+            result.reasonCode = record.reasonCode;
+          } else result.shapeStatus = "unknown-reason";
+        }
+      } else if (record.event === "closed") {
+        if (
+          keys(record, [...base, "outcome"]) &&
+          counters(record) &&
+          ["passed", "failed"].includes(record.outcome)
+        ) {
+          result.shapeStatus = "recognized";
+          result.outcome = record.outcome;
+        }
+      } else if (record.event === "denied") {
+        if (
+          keys(record, [...base, "grpcCode"]) &&
+          counters(record) &&
+          record.grpcCode === "PermissionDenied"
+        )
+          result.shapeStatus = "recognized";
+      } else if (
+        keys(record, [
+          ...base,
+          "fetchReturned",
+          "streamEndCode",
+          "localStreamCancellation",
+          "entryCount",
+          "identities",
+          "bundles",
+        ]) &&
+        counters(record) &&
+        record.fetchReturned === true &&
+        record.streamEndCode === "Canceled" &&
+        record.localStreamCancellation === true &&
+        count(record.entryCount) &&
+        record.entryCount >= 1 &&
+        record.entryCount <= 4 &&
+        Array.isArray(record.identities) &&
+        record.identities.length === record.entryCount &&
+        record.identities.every(
+          (identity) =>
+            keys(identity, ["spiffeId", "certificateSHA256", "notBefore", "notAfter"]) &&
+            Object.values(identity).every(
+              (value) => typeof value === "string" && value.length <= 2048,
+            ),
+        ) &&
+        Array.isArray(record.bundles) &&
+        record.bundles.length >= 1 &&
+        record.bundles.length <= 4 &&
+        record.bundles.every(
+          (bundle) =>
+            keys(bundle, ["trustDomain", "authorityCount", "sha256"]) &&
+            typeof bundle.trustDomain === "string" &&
+            bundle.trustDomain.length <= 2048 &&
+            count(bundle.authorityCount) &&
+            typeof bundle.sha256 === "string" &&
+            bundle.sha256.length <= 64,
+        )
+      )
+        result.shapeStatus = "recognized";
+    }
+    return Object.freeze(result);
+  });
+  const result = Object.freeze({ schemaVersion: 1, records: Object.freeze(projected) });
+  need(Buffer.byteLength(JSON.stringify(result)) <= 2048, "OBSERVER_DIAGNOSTIC_UNAVAILABLE");
+  return result;
+}
 const childDiagnostics = new WeakMap();
 function childFailure(state, code) {
   const error = new Failure(code);
@@ -350,7 +512,7 @@ function processes() {
       let signal = state.signal ?? null;
       if (signal !== null && !CHILD_SIGNALS.has(signal)) signal = "other";
       return Object.freeze({
-        schemaVersion: 1,
+        schemaVersion: operation === "observer-exec" ? 2 : 1,
         childOrdinal: Math.min(childOrdinal, 65535),
         childOrdinalCapped: childOrdinal > 65535,
         operation,
@@ -364,6 +526,14 @@ function processes() {
         signal,
         closeObserved: state.closed,
         processGroupAbsent: state.processGroupAbsent ?? null,
+        ...(operation === "observer-exec"
+          ? {
+              observerRecordDiagnostics: observerRecordDiagnostics(state.records),
+              // This is the collected pipe, not proof of the ultimate stderr writer.
+              stderrChannel: stderrBytes ? "local-kubectl-child" : null,
+              stderrOrigin: stderrBytes ? "unattributed" : null,
+            }
+          : {}),
       });
     };
     child.stdout.on("data", (chunk) => {

@@ -1771,7 +1771,7 @@ function consumerChildManager(overrides = {}) {
       consumerBlock("const safeCode =", "function same(a, b)") +
       consumerBlock("const CHILD_OPERATIONS =", "function liveCounts(record, phase)") +
       consumerBlock("async function runObservation(profile", "\ntest(\n") +
-      "({ processes, recordAt, childDiagnostics, childFailure, runObservation })",
+      "({ processes, recordAt, childDiagnostics, childFailure, runObservation, observerRecordDiagnostics })",
     {
       spawn,
       readFileSync,
@@ -2061,4 +2061,286 @@ test("consumer failure evidence preserves exact child and always reaches final s
       unentered: 2,
     });
   }
+});
+
+// Exercise only the existing host parser and failure snapshot. These are Go-wire
+// specimens, not evidence that a remote observer emitted or qualified a record.
+const observerWireBase = () => ({
+  offsetMs: 1,
+  connection: { dialAttempts: 1, connectionBegins: 1, connectionEnds: 1 },
+  rpc: [
+    { phase: 1, begins: 1, ends: 1, responses: 0, endCode: "PermissionDenied" },
+    { phase: 2, begins: 0, ends: 0, responses: 0 },
+  ],
+});
+const observerClosed = (outcome = "failed") => ({
+  event: "closed",
+  ...observerWireBase(),
+  outcome,
+});
+const observerFailed = (reasonCode = "denial-not-observed") => ({ event: "failed", reasonCode });
+
+async function observerDiagnosticFailure(records, stderr = "unit stderr", overrides = {}) {
+  const child = fakeConsumerChild();
+  const api = consumerChildManager({ spawn: () => child, ...overrides });
+  const children = api.processes();
+  const state = children.launch("unused", [], Date.now() + 5000, {
+    interactive: true,
+    operation: "observer-exec",
+  });
+  for (const record of records) child.stdout.write(line(record));
+  if (stderr) child.stderr.write(stderr);
+  child.emit("close", 1, null);
+  await state.done;
+  let error;
+  try {
+    await api.recordAt(state, 0, Date.now() + 1000);
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(children.active.size, 0);
+  assert.equal(await children.settle(Date.now() + 1000), true);
+  return {
+    api,
+    children,
+    state,
+    child,
+    error,
+    diagnostic: error && api.childDiagnostics.get(error),
+  };
+}
+
+test("observer record diagnostics v2 preserve ordered terminal reasons without admitting records", async () => {
+  // These are final wire reasons; lower-level response-shape and dial-failed are
+  // translated before main's final failed record and belong to negative cases.
+  const reasons = [
+    "flags-invalid",
+    "socket-invalid",
+    "expected-id-invalid",
+    "client-create",
+    "denial-not-observed",
+    "fetch-failed",
+    "correlation-invalid",
+    "identity-set-mismatch",
+    "output-failed",
+    "close-unsettled",
+    "observer-failed",
+    "control-invalid",
+    "control-timeout",
+    "rpc-settlement-timeout",
+    "connection-extra",
+    "connection-lost",
+    "rpc-method",
+    "rpc-phase",
+    "rpc-extra-attempt",
+    "rpc-end-order",
+    "dial-extra",
+    "socket-close-failed",
+    "response-unexpected",
+    "response-invalid",
+  ];
+  for (const reason of reasons) {
+    const { diagnostic, error } = await observerDiagnosticFailure([
+      observerClosed(),
+      observerFailed(reason),
+    ]);
+    assert.equal(error.code, "CHILD_OUTPUT_INVALID");
+    assert.equal(diagnostic.schemaVersion, 2);
+    assert.deepEqual(plain(diagnostic.observerRecordDiagnostics), {
+      schemaVersion: 1,
+      records: [
+        {
+          index: 0,
+          shapeStatus: "recognized",
+          event: "closed",
+          reasonCode: null,
+          outcome: "failed",
+        },
+        { index: 1, shapeStatus: "recognized", event: "failed", reasonCode: reason, outcome: null },
+      ],
+    });
+  }
+  for (const records of [[observerClosed("passed")], [observerFailed(), observerClosed()]]) {
+    const { diagnostic } = await observerDiagnosticFailure(records);
+    assert.deepEqual(
+      plain(diagnostic.observerRecordDiagnostics.records).map((r) => r.event),
+      records.map((r) => r.event),
+    );
+  }
+});
+
+test("observer record diagnostics v2 reject unknown shapes and never retain private fields", () => {
+  const api = consumerChildManager();
+  const denied = { event: "denied", ...observerWireBase(), grpcCode: "PermissionDenied" };
+  const delivered = {
+    event: "delivered",
+    ...observerWireBase(),
+    fetchReturned: true,
+    streamEndCode: "Canceled",
+    localStreamCancellation: true,
+    entryCount: 1,
+    identities: [
+      { spiffeId: secret, certificateSHA256: secret, notBefore: secret, notAfter: secret },
+    ],
+    bundles: [{ trustDomain: secret, authorityCount: 1, sha256: secret }],
+  };
+  for (const record of [denied, delivered]) {
+    const projected = api.observerRecordDiagnostics([record]);
+    assert.equal(projected.records[0].shapeStatus, "recognized");
+    assert.equal(JSON.stringify(projected).includes(secret), false);
+    const extra = api.observerRecordDiagnostics([{ ...record, [secret]: secret }]);
+    assert.equal(extra.records[0].shapeStatus, "invalid-shape");
+    assert.equal(JSON.stringify(extra).includes(secret), false);
+  }
+  for (const [record, status] of [
+    [null, "non-object"],
+    [[], "non-object"],
+    [secret, "non-object"],
+    [{ event: secret }, "unknown-event"],
+    [{ ...observerFailed(), [secret]: secret }, "invalid-shape"],
+    [{ event: "failed", reasonCode: { private: secret } }, "invalid-shape"],
+    [observerFailed(secret), "unknown-reason"],
+    ...[
+      "invalid-id",
+      "response-bounds",
+      "response-shape",
+      "bundle-invalid",
+      "entry-shape",
+      "entry-id",
+      "duplicate-id",
+      "entry-invalid",
+      "entry-validity",
+      "bundle-domain",
+      "dial-failed",
+      "control-unsettled",
+      "response-type",
+    ].map((reason) => [observerFailed(reason), "unknown-reason"]),
+    [{ ...observerClosed(), outcome: secret }, "invalid-shape"],
+    [{ ...observerClosed(), reasonCode: "observer-failed" }, "invalid-shape"],
+    [{ ...observerClosed(), rpc: [] }, "invalid-shape"],
+    [{ ...observerClosed(), rpc: [null, null] }, "invalid-shape"],
+    [{ ...observerClosed(), offsetMs: -1 }, "invalid-shape"],
+  ]) {
+    const projected = api.observerRecordDiagnostics([record]);
+    assert.equal(projected.records[0].shapeStatus, status);
+    assert.equal(projected.records[0].reasonCode, null);
+    assert.equal(JSON.stringify(projected).includes(secret), false);
+  }
+  const explicitEmpty = observerClosed();
+  explicitEmpty.rpc[1].endCode = "";
+  assert.equal(
+    api.observerRecordDiagnostics([explicitEmpty]).records[0].shapeStatus,
+    "invalid-shape",
+  );
+});
+
+test("observer record diagnostics v2 retain real child joins and truthful stderr channel", async (t) => {
+  const records = [observerClosed(), observerFailed("correlation-invalid")];
+  const api = consumerChildManager(),
+    children = api.processes();
+  const code = `process.stdout.write(${JSON.stringify(records.map((r) => JSON.stringify(r) + "\n").join(""))});process.stderr.write("unit ");process.stderr.write("stderr");process.exitCode=1;`;
+  const state = children.launch(process.execPath, ["-e", code], Date.now() + 5000, {
+    interactive: true,
+    operation: "observer-exec",
+  });
+  try {
+    await state.done;
+    await assert.rejects(api.recordAt(state, 0, Date.now() + 1000), (error) => {
+      const d = api.childDiagnostics.get(error);
+      assert.equal(error.code, "CHILD_OUTPUT_INVALID");
+      assert.equal(d.stderrChannel, "local-kubectl-child");
+      assert.equal(d.stderrOrigin, "unattributed");
+      assert.equal(d.observerRecordDiagnostics.records[1].reasonCode, "correlation-invalid");
+      return true;
+    });
+  } finally {
+    assert.equal(await children.settle(Date.now() + 1000), true);
+  }
+  assert.equal(state.closed, true);
+  assert.equal(state.processGroupAbsent, true);
+  for (const pid of [state.child.pid, -state.child.pid])
+    assert.throws(
+      () => process.kill(pid, 0),
+      (e) => e.code === "ESRCH",
+    );
+  t.diagnostic(
+    `observer-diagnostic-child pid=${state.child.pid} close=true groupAbsent=true joined=true`,
+  );
+  for (const stderr of ["", secret, "command terminated with exit code 1\nextra", "part1part2"]) {
+    const { state: fakeState } = await observerDiagnosticFailure([observerFailed()], stderr);
+    const diagnostic = fakeState.outputDiagnostic();
+    assert.equal(diagnostic.stderrChannel, stderr ? "local-kubectl-child" : null);
+    assert.equal(diagnostic.stderrOrigin, stderr ? "unattributed" : null);
+    assert.equal(JSON.stringify(diagnostic).includes(secret), false);
+  }
+});
+
+test("observer record diagnostics v2 preserve immutable failure association and late mutation", async () => {
+  const first = await observerDiagnosticFailure([observerClosed(), observerFailed()]);
+  const snapshot = JSON.stringify(first.diagnostic);
+  first.state.records[1].reasonCode = "control-invalid";
+  first.state.records.push(observerFailed("observer-failed"));
+  first.child.stderr.write("late bytes");
+  const second = await observerDiagnosticFailure([observerFailed("fetch-failed")]);
+  assert.equal(JSON.stringify(first.api.childDiagnostics.get(first.error)), snapshot);
+  assert.notEqual(JSON.stringify(second.diagnostic), snapshot);
+  assert.equal(Object.isFrozen(first.diagnostic.observerRecordDiagnostics), true);
+  assert.equal(Object.isFrozen(first.diagnostic.observerRecordDiagnostics.records), true);
+  assert(first.diagnostic.observerRecordDiagnostics.records.every(Object.isFrozen));
+  assert.equal(first.api.childDiagnostics.has(second.error), false);
+});
+
+test("observer record diagnostics v2 keep byte and fifth-record refusal and full evidence bounds", async () => {
+  const api = consumerChildManager();
+  const worst = api.observerRecordDiagnostics(
+    Array.from({ length: 4 }, () => observerFailed("rpc-settlement-timeout")),
+  );
+  assert(Buffer.byteLength(JSON.stringify(worst)) <= 2048);
+  assert.throws(
+    () => api.observerRecordDiagnostics(Array(5).fill(observerFailed())),
+    /OBSERVER_DIAGNOSTIC_UNAVAILABLE/,
+  );
+  const { error, diagnostic } = await observerDiagnosticFailure(Array(5).fill(observerFailed()));
+  assert.equal(error.code, "OBSERVER_OUTPUT_INVALID");
+  assert.equal(diagnostic.parsedRecordCount, 4);
+  assert.equal(diagnostic.observerRecordDiagnostics.records.length, 4);
+  // Upper-bound the actual failure envelope with every numeric diagnostic field
+  // at a long finite JS representation. This is encoding capacity, not identity.
+  const envelope = {
+    schemaVersion: 1,
+    sequence: 64,
+    previousSHA256: "f".repeat(64),
+    observedAt: "9999-12-31T23:59:59.999Z",
+    event: "observation-failed",
+    reasonCode: "CHILD_SETTLEMENT_UNKNOWN",
+    outcomes: { a: "unqualified", b: "unqualified" },
+    childDiagnostic: {
+      ...plain(diagnostic),
+      childOrdinal: 65535,
+      childOrdinalCapped: true,
+      stdoutBytes: Number.MAX_VALUE,
+      stderrBytes: Number.MAX_VALUE,
+      pendingStdoutBytes: Number.MAX_VALUE,
+      parsedRecordCount: 4,
+      exitCode: Number.MAX_VALUE,
+      outputCondition: "pending-stdout-and-stderr",
+      signal: "SIGXFSZ",
+      observerRecordDiagnostics: plain(worst),
+    },
+  };
+  const bytes = Buffer.byteLength(JSON.stringify(envelope) + "\n");
+  assert(bytes < 2048); // Even64 such maximum failure envelopes fit the aggregate cap.
+  assert(bytes <= 16384 && bytes * 64 <= 131072);
+});
+
+test("observer record diagnostics v2 projection failure preserves primary refusal and joined manager", async () => {
+  const { api, state, children } = await observerDiagnosticFailure([observerFailed()]);
+  // Inject an impossible in-memory record-list shape at the diagnostic boundary,
+  // without replacing the manager's refusal or settlement implementation.
+  state.records = null;
+  const error = api.childFailure(state, "CHILD_OUTPUT_INVALID");
+  assert.equal(error.code, "CHILD_OUTPUT_INVALID");
+  assert.equal(api.childDiagnostics.has(error), false);
+  assert.equal(await children.settle(Date.now() + 1000), true);
+  assert.equal(children.active.size, 0);
 });
