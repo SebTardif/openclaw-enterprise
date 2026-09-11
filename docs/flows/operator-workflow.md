@@ -134,9 +134,13 @@ Credentials, cookies and raw backend errors are never printed or retained.
 There is no resend, replay, automatic retry, replacement operation ID or draft
 regeneration action. Follow the canonical
 [lifecycle recovery procedure](../guides/lifecycle-recovery.md) for the remaining
-operator decisions and independently authorized revision reads. This client
-does not enable the currently unavailable lifecycle-reader or deployment
-suppliers.
+operator decisions and independently authorized revision reads.
+
+The lifecycle read routes use the original authenticated request bridge and
+bounded PostgreSQL history reader. Every read still requires current Agent-read
+permission, rechecked after the data read. Missing runtime observations remain
+`NOT_OBSERVED` or unknown; capability remains unavailable until its protected
+record is published. This client does not enable missing deployment suppliers.
 
 ## Inspect selection and runtime
 
@@ -144,6 +148,8 @@ suppliers.
 scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID"
 scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/revisions"
 scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/revisions/$REVISION_ID"
+scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/lifecycle"
+scripts/occ-api GET "/namespaces/$NAMESPACE_ID/agents/$AGENT_ID/lifecycle/capability"
 ```
 
 Compare the Agent's `data.activeRevisionId` with the admitted revision ID. The
@@ -151,6 +157,14 @@ console calls this **Selected revision**. A different viewed snapshot changes
 only what you inspect. Agent and revision responses do not expose an observed
 serving revision, observation timestamp, runtime generation, failed activation,
 or confirmed shutdown state. Missing observation stays unavailable.
+
+Use the separately authorized lifecycle response for requested, selected and
+serving revisions and the original observation generation. Keep source
+`observedAt` separate from control-plane `recordedAt`; receiving a response does
+not refresh the underlying observation. Read access denial, route removal,
+execution termination, credential revocation and retained-state conditions
+independently. Follow the linked lifecycle recovery procedure for exact-operation
+reads and ambiguous outcomes.
 
 Use the installed environment's [runtime verification and troubleshooting
 steps](../guides/deploy.md) to check the actual workload, allowed and denied
