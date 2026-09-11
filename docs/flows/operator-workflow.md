@@ -206,6 +206,8 @@ Late responses cannot restore a prior view. Denied and unavailable requests show
 safe reason classes and, when present, a bounded request ID for operator log
 correlation. Raw backend payloads are not error messages.
 
+The final authorization check distinguishes withdrawn Agent-read permission, which returns a non-disclosing `404 NOT_FOUND`, from an expired or withdrawn session, which returns `401 UNAUTHENTICATED`; signing in again does not restore a removed permission.
+
 An unconfirmed creation or channel save may already have committed. The console
 does not replay it and blocks another write from that form until its state is
 refreshed or left. Inspect current authorized state before submitting again.
