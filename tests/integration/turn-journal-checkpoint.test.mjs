@@ -559,15 +559,31 @@ test("provenance ports cannot substitute a serializable published result for an 
   }
 });
 
+// TODO(PER11 accepting composition): the original gateway/native/workspace and
+// PostgreSQL owners must supply this exact local construction module. A URL or
+// fixture-created authority is insufficient; absence preserves the unselected
+// integration, while an explicit but incomplete selection fails.
+const checkpointCompositionModule = process.env.OCC_TEST_CHECKPOINT_COMPOSITION_MODULE;
 test(
   "UPS05 selected gateway CompletedStateAdapterV1 plus actual native/workspace evidence and PostgreSQL publication",
   {
-    // TODO(UPS05 integration): enable only with the admitted real gateway writer,
-    // native successful-terminal/workspace evidence owner, and durable journal.
-    // Service doubles above cannot satisfy or silently replace this obligation.
-    skip: "Unresolved: no admitted UPS05 CompletedStateAdapterV1 and native/workspace provenance provider is selected in this checkout.",
+    skip:
+      checkpointCompositionModule === undefined
+        ? "Unselected: supply OCC_TEST_CHECKPOINT_COMPOSITION_MODULE with the original admitted gateway/native/workspace/PostgreSQL composition."
+        : false,
   },
-  () => {
-    assert.fail("Select and exercise the actual UPS05 providers before enabling this integration.");
+  async (t) => {
+    // Load the real SDK-bearing composition only for this explicit integration;
+    // the unrelated recording-service cases above keep their original boundary.
+    const {
+      selectCheckpointCompositionV1,
+      loadCheckpointCompositionV1,
+      runCheckpointCompositionV1,
+    } = await import("../fixtures/turn-journal-checkpoint/composition.ts");
+    const selection = selectCheckpointCompositionV1(checkpointCompositionModule);
+    assert.equal(selection.kind, "selected");
+    if (selection.kind !== "selected") throw new Error("Checkpoint composition was not selected.");
+    const open = await loadCheckpointCompositionV1(selection);
+    await runCheckpointCompositionV1(open, t.signal);
   },
 );
