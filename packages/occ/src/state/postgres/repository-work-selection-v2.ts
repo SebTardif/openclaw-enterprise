@@ -130,6 +130,7 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
     inventory?: InventoryPhase;
     issue?: boolean;
     heldCheck?: (() => undefined) | undefined;
+    transferSource?: RepositoryWorkTransactionContextV2;
   };
   const contexts = new WeakMap<object, ContextMembership>();
   let origins:
@@ -1416,8 +1417,75 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
         e.selections--;
         await releaseAdmission(e);
       },
-      async prepareStateUse(handle, origin, call) {
+      async prepareStateUse(
+        handle,
+        origin,
+        call,
+        entered?: {
+          readonly context: RepositoryWorkTransactionContextV2;
+          readonly original: WorkOriginalOperationV2;
+        },
+      ) {
         const e = selectionEntry(handle, origin, call);
+        if (entered !== undefined) {
+          if (e.checking || operations.getStore() === e)
+            poison(e, new ScopeViolationError("Nested entered Work source preparation."));
+          e.checking = true;
+          try {
+            const context = entered.context,
+              originalOperation = entered.original;
+            // Authenticate the original Work source phase before inspecting any
+            // supplied context method. A real transfer from another selector must
+            // refuse here, rather than falling through to fresh preparation.
+            const source = selectedContexts?.assertWorkTransferSource(
+              context,
+              originalOperation,
+              call,
+            );
+            if (!selectedContexts) synchronous(e, assertWork(context, originalOperation, call));
+            const joinPending = context.joinAccepted.bind(context);
+            if (selectedContexts)
+              synchronous(e, assertWork(context, originalOperation, call), joinPending);
+            original(e, call);
+            const membership = contexts.get(context);
+            if (source !== undefined) {
+              if (
+                !membership?.active ||
+                membership.entry !== e ||
+                membership.call !== call ||
+                membership.transferSource !== source ||
+                !e.handoff ||
+                !e.releaseTransfer ||
+                e.workHold ||
+                !e.originalObjects?.includes(originalOperation)
+              )
+                fail();
+              // Recheck private phase/call identity after the original inspector.
+              // The unchanged Work consumer supplies its native checks around
+              // this call. No A fence, SQL acquisition or handoff rearming occurs.
+              if (
+                selectedContexts!.assertWorkTransferSource(context, originalOperation, call) !==
+                source
+              )
+                fail();
+              original(e, call);
+              return;
+            }
+            if (membership?.transferSource !== undefined) fail();
+            if (
+              selectedContexts &&
+              selectedContexts.assertWorkTransferSource(context, originalOperation, call) !==
+                undefined
+            )
+              fail();
+          } catch (error) {
+            return poison(e, error);
+          } finally {
+            e.checking = false;
+          }
+        }
+        // Three-argument preparation and validated ordinary source contexts
+        // retain their existing behavior, including the original source fence.
         await enqueue(e, async () => {
           sourceFence(e, call);
           if (e.workHold || e.handoff) fail();
@@ -1437,6 +1505,7 @@ export function createPostgresRepositoryWorkSelectionBindingV2<N, A, V extends 2
                   call,
                   active: true,
                   checking: false,
+                  transferSource: context,
                 };
                 contexts.set(workContext, membership);
                 // Cleanup enrollment precedes the async native acquisition.

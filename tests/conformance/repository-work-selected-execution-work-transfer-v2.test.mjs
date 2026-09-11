@@ -1,3 +1,9 @@
+// Source-entry R3 successor. Retains the complete 45-case ORDER-01 control suite.
+// Receiving dependency: the original lifecycle declaration adds optional fourth
+// prepareStateUse operand { context, original }, and its real source.acquire
+// branch supplies the genuine entered Work context with native checks around it.
+// The bounded peers below exercise that call shape; they do not replace the
+// original lifecycle owner or claim end-to-end issuer/provider execution.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createPostgresRepositoryWorkSelectedExecutionAdmissionV2 } from "../../packages/occ/src/state/postgres/repository-work-selected-execution-v2.ts";
@@ -155,7 +161,7 @@ async function fixture(hooks = {}, version = 2) {
     horizon = new Date(now + 60000).toISOString();
   const abort = new AbortController(),
     lifetime = new AbortController();
-  const call = {
+  const call = hooks.sharedCall ?? {
     context: Object.freeze({}),
     requestRef: request.request_ref,
     recipientRef: exact.recipientRef,
@@ -266,7 +272,7 @@ async function fixture(hooks = {}, version = 2) {
     accepted = new Set(),
     liveContexts = new Set();
   const durable = { heads: new Map(), operations: new Map() };
-  const registry = new RepositoryWorkSelectedExecutionContextsV2(),
+  const registry = hooks.sharedRegistry ?? new RepositoryWorkSelectedExecutionContextsV2(),
     selectedDriver = Object.freeze({});
   const traces = [],
     workTransactions = [];
@@ -722,8 +728,8 @@ async function fixture(hooks = {}, version = 2) {
     assert.ok(bounds.timeoutMs > 0 && bounds.timeoutMs <= 3000);
     assert.equal(
       openTransactions,
-      0,
-      "old selector SQL and source cleanup finish before Work entry",
+      hooks.ordinarySourceEntry === true ? 1 : 0,
+      "only the explicit ordinary no-transfer probe enters before original selector retirement",
     );
     const transaction = transactionBackend(scopeInput, execution, new Set(), "work");
     const outer = {
@@ -816,11 +822,13 @@ async function fixture(hooks = {}, version = 2) {
     },
     registry.forSelection(selectedDriver),
   );
-  workBinding = createPostgresRepositoryWorkBindingV2(
-    workEnter,
-    () => new CredentialInventoryOwnerPhaseV1(),
-    registry,
-  );
+  workBinding =
+    hooks.sharedWorkBinding ??
+    createPostgresRepositoryWorkBindingV2(
+      workEnter,
+      () => new CredentialInventoryOwnerPhaseV1(),
+      registry,
+    );
   const unused = () => {
     throw new Error("This transfer suite does not enter observation, inventory or origin use");
   };
@@ -977,12 +985,18 @@ async function fixture(hooks = {}, version = 2) {
       };
     },
   };
-  const workStore = workBinding.bindOriginalSources(workSource, custody);
+  // A secondary selector may share the original constructor/participant without
+  // binding its original source pair again or manufacturing any Work context.
+  const workStore = hooks.sharedWorkBinding
+    ? undefined
+    : workBinding.bindOriginalSources(workSource, custody);
   const api = {
     state,
     binding,
     workBinding,
     workStore,
+    registry,
+    native,
     seed,
     request,
     call,
@@ -1046,6 +1060,7 @@ async function fixture(hooks = {}, version = 2) {
       exactCall = call,
       body = (unit) => unit.readExactOperation(),
     ) {
+      assert.ok(workStore, "a secondary selector does not own another Work store");
       return workStore.run(
         operation,
         exactCall,
@@ -2023,3 +2038,479 @@ for (const version of [2, 3])
       assert.equal(f.releases, 1);
     });
   }
+
+for (const version of [2, 3])
+  test(`SOURCE-ENTRY V${version} original fourth operand skips retired preparation without restoring A`, async () => {
+    let f,
+      prepared = 0;
+    f = await fixture(
+      {
+        async workAcquire({ context, operation, call }) {
+          const outer = f.workTransactions.at(-1);
+          const retired = f.actualSelectorTransactions[0];
+          assert.equal(retired.sqlRetired, true);
+          assert.equal(retired.releasedBorrows, 1);
+          assert.equal(outer.selectedBorrows, 1);
+          assert.throws(() => f.state.assertCurrent(f.admission, f.session, call));
+          assert.throws(() => f.binding.assignments.assertCurrent(f.assignment));
+          const traceStart = f.traces.length;
+          // Original caller native checks surround the new entered-source identity.
+          f.native.assertCurrent(f.session, call);
+          await f.binding.selection.prepareStateUse(f.selection, f.origin, call, {
+            context,
+            original: operation,
+          });
+          f.native.assertCurrent(f.session, call);
+          prepared++;
+          assert.throws(() => f.state.assertCurrent(f.admission, f.session, call));
+          assert.throws(() => f.binding.assignments.assertCurrent(f.assignment));
+          const during = f.traces.slice(traceStart);
+          assert.equal(
+            during.some((event) => event.event === "query" || event.event === "retain-source"),
+            false,
+            "entered-source recognition cannot reacquire SQL, native ownership or prepare a new handoff",
+          );
+          assert.equal(during.filter((event) => event.event === "native-current").length, 2);
+          assert.equal(f.actualSelectorTransactions.length, 1);
+          assert.equal(outer.selectedBorrows, 1);
+        },
+      },
+      version,
+    );
+    try {
+      const selected = await f.select(),
+        admission = f.admission;
+      await f.handoff();
+      const result = await f.run();
+      assert.equal(result.kind, "committed");
+      assert.equal(prepared, 1);
+      assert.equal(f.admission, admission);
+      assert.equal(f.workSources[0].operation, selected.preparation);
+      const outer = f.workTransactions[0];
+      assertWorkPrefix(f, outer);
+      assertSingleAdmission(f);
+      const native = f.retainedSourceLeases.filter((lease) => lease.workId === outer.id);
+      assert.equal(native.length, 1);
+      assert.equal(native[0].prepares, 1);
+      assert.equal(native[0].releaseCompletions, 1);
+    } finally {
+      await f.close();
+    }
+    assert.equal(f.openTransactions, 0);
+    assert.equal(f.releases, 1);
+  });
+
+for (const version of [2, 3])
+  test(`SOURCE-ENTRY V${version} genuine no-transfer context follows ordinary preparation then stops before policy`, async () => {
+    const stopped = new Error("ordinary-no-transfer-preparation-probe-complete");
+    let f,
+      prepared = false;
+    f = await fixture(
+      {
+        ordinarySourceEntry: true,
+        async workAcquire({ context, operation, call }) {
+          const selector = f.actualSelectorTransactions[0],
+            outer = f.workTransactions.at(-1);
+          assert.equal(selector.sqlRetired, false);
+          assert.equal(outer.selectedBorrows, 0);
+          f.native.assertCurrent(f.session, call);
+          await f.binding.selection.prepareStateUse(f.selection, f.origin, call, {
+            context,
+            original: operation,
+          });
+          f.native.assertCurrent(f.session, call);
+          prepared = true;
+          assert.equal(selector.sqlRetired, true);
+          assert.equal(selector.releasedBorrows, 1);
+          assert.equal(
+            outer.selectedBorrows,
+            0,
+            "this entry cannot consume a handoff registered after its early transfer check",
+          );
+          assert.throws(() => f.state.assertCurrent(f.admission, f.session, call));
+          assert.throws(() => f.binding.assignments.assertCurrent(f.assignment));
+          throw stopped;
+        },
+      },
+      version,
+    );
+    try {
+      await f.select(); // Deliberately no prior prepareStateUse/handoff.
+      assert.equal((await f.run()).kind, "not-committed");
+      assert.equal(prepared, true);
+      const outer = f.workTransactions[0];
+      assert.equal(outer.failure, stopped);
+      assert.equal(outer.terminal, "ROLLBACK");
+      assert.equal(outer.selectedBorrows, 0);
+      const local = f.traces.filter((event) => event.kind === "work" && event.id === outer.id);
+      assert.equal(
+        local.some(
+          (event) =>
+            event.event === "query" ||
+            event.event === "custody-acquire" ||
+            event.event === "policy-stage" ||
+            event.event === "body-enter",
+        ),
+        false,
+      );
+      assertSingleAdmission(f);
+    } finally {
+      await f.close();
+    }
+    assert.equal(f.openTransactions, 0);
+    assert.equal(f.releases, 1);
+  });
+
+for (const operand of [
+  "copied-context",
+  "foreign-context",
+  "copied-original",
+  "foreign-original",
+  "copied-call",
+  "changed-call",
+]) {
+  test(`SOURCE-ENTRY refuses ${operand} before entered-source recognition can prepare or restore authority`, async () => {
+    let f,
+      denied = false,
+      fakeCalls = 0;
+    const fake = () => {
+      fakeCalls++;
+      throw new Error("foreign context method must not execute");
+    };
+    f = await fixture({
+      async workAcquire({ context, operation, call }) {
+        const candidateContext =
+          operand === "copied-context"
+            ? { ...context, assertActive: fake, retain: fake, joinAccepted: fake }
+            : operand === "foreign-context"
+              ? {
+                  installationId: "foreign/installation",
+                  assertActive: fake,
+                  retain: fake,
+                  joinAccepted: fake,
+                }
+              : context;
+        const candidateOriginal =
+          operand === "copied-original"
+            ? { ...operation }
+            : operand === "foreign-original"
+              ? { ...operation, operationRef: "foreign/source-operation" }
+              : operation;
+        const candidateCall =
+          operand === "copied-call"
+            ? { ...call }
+            : operand === "changed-call"
+              ? { ...call, requestRef: "changed/source-call" }
+              : call;
+        await assert.rejects(
+          f.binding.selection.prepareStateUse(f.selection, f.origin, candidateCall, {
+            context: candidateContext,
+            original: candidateOriginal,
+          }),
+        );
+        denied = true;
+        assert.equal(fakeCalls, 0);
+        assert.throws(() => f.state.assertCurrent(f.admission, f.session, call));
+        assert.equal(f.workTransactions.at(-1).selectedBorrows, 1);
+        throw new Error("stop after denied original-source identity probe");
+      },
+    });
+    try {
+      await f.select();
+      await f.handoff();
+      assert.equal((await f.run()).kind, "not-committed");
+      assert.equal(denied, true);
+      const outer = f.workTransactions[0];
+      assert.equal(outer.terminal, "ROLLBACK");
+      assert.equal(outer.releasedBorrows, 1);
+      assert.equal(
+        f.traces.some(
+          (event) => event.kind === "work" && event.id === outer.id && event.event === "body-enter",
+        ),
+        false,
+      );
+      assert.equal(fakeCalls, 0);
+      assertSingleAdmission(f);
+    } finally {
+      await f.close();
+    }
+    assert.equal(f.openTransactions, 0);
+    assert.equal(f.releases, 1);
+  });
+}
+
+test("SOURCE-ENTRY original context and operation cannot invoke source preparation in the later policy phase", async () => {
+  let f,
+    sourceChecked = false,
+    policyDenied = false;
+  f = await fixture({
+    async workAcquire({ context, operation, call }) {
+      await f.binding.selection.prepareStateUse(f.selection, f.origin, call, {
+        context,
+        original: operation,
+      });
+      sourceChecked = true;
+    },
+    async policyStage({ context, operation, call }) {
+      await assert.rejects(
+        f.binding.selection.prepareStateUse(f.selection, f.origin, call, {
+          context,
+          original: operation,
+        }),
+      );
+      policyDenied = true;
+      throw new Error("stop after denied later-phase source preparation");
+    },
+  });
+  try {
+    await f.select();
+    await f.handoff();
+    assert.equal((await f.run()).kind, "not-committed");
+    assert.equal(sourceChecked, true);
+    assert.equal(policyDenied, true);
+    const outer = f.workTransactions[0];
+    const local = f.traces.filter((event) => event.kind === "work" && event.id === outer.id);
+    assert.equal(
+      local.filter((event) => event.event === "query" && workParentName(event.sql)).length,
+      3,
+    );
+    assert.equal(local.filter((event) => event.event === "policy-stage").length, 1);
+    assert.equal(
+      local.some((event) => event.event === "body-enter"),
+      false,
+    );
+    assert.equal(outer.releasedBorrows, 1);
+    assertSingleAdmission(f);
+  } finally {
+    await f.close();
+  }
+  assert.equal(f.openTransactions, 0);
+  assert.equal(f.releases, 1);
+});
+
+test("SOURCE-ENTRY a retired original Work context cannot regain its earlier transfer-source membership", async () => {
+  let f, entered;
+  f = await fixture({
+    async workAcquire({ context, operation, call }) {
+      entered = { context, original: operation };
+      await f.binding.selection.prepareStateUse(f.selection, f.origin, call, entered);
+    },
+  });
+  try {
+    await f.select();
+    await f.handoff();
+    assert.equal((await f.run()).kind, "committed");
+    const outer = f.workTransactions[0];
+    assert.equal(outer.sqlRetired, true);
+    assert.equal(outer.releasedBorrows, 1);
+    const before = f.traces.length;
+    await assert.rejects(
+      f.binding.selection.prepareStateUse(f.selection, f.origin, f.call, entered),
+    );
+    assert.equal(
+      f.traces.length,
+      before,
+      "stale original identity does not enter a source, SQL or second borrow",
+    );
+    assert.equal(f.workTransactions.length, 1);
+    assertSingleAdmission(f);
+  } finally {
+    await f.close();
+  }
+  assert.equal(f.openTransactions, 0);
+  assert.equal(f.releases, 1);
+});
+
+test("SOURCE-ENTRY an independent actual selector owner refuses another owner's genuine entered Work context", async () => {
+  let first,
+    second,
+    refused = false;
+  second = await fixture();
+  first = await fixture({
+    async workAcquire({ context, operation, call }) {
+      // Both owners are actual core/selector/Work constructions. This proves
+      // cross-owner registry refusal, not a same-registry marker cross-product.
+      await assert.rejects(
+        second.binding.selection.prepareStateUse(second.selection, second.origin, second.call, {
+          context,
+          original: operation,
+        }),
+      );
+      refused = true;
+      assert.throws(() => first.state.assertCurrent(first.admission, first.session, call));
+      await first.binding.selection.prepareStateUse(first.selection, first.origin, call, {
+        context,
+        original: operation,
+      });
+    },
+  });
+  try {
+    await second.select();
+    await second.handoff();
+    await first.select();
+    await first.handoff();
+    assert.equal((await first.run()).kind, "committed");
+    assert.equal(refused, true);
+    assert.equal(
+      (await second.run()).kind,
+      "not-committed",
+      "caught cross-owner refusal poisons that selector",
+    );
+    assertWorkPrefix(first, first.workTransactions[0]);
+    assert.equal(second.workTransactions[0].terminal, "ROLLBACK");
+    assert.equal(
+      second.traces.some((event) => event.kind === "work" && event.event === "body-enter"),
+      false,
+    );
+    assertSingleAdmission(first);
+    assertSingleAdmission(second);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+  assert.equal(first.openTransactions, 0);
+  assert.equal(second.openTransactions, 0);
+  assert.equal(first.releases, 1);
+  assert.equal(second.releases, 1);
+});
+
+test("SOURCE-ENTRY a different original selector in the same registry cannot claim the entered transfer marker", async () => {
+  let first,
+    second,
+    refused = false;
+  first = await fixture({
+    async workAcquire({ context, operation, call }) {
+      assert.equal(first.registry, second.registry);
+      assert.equal(first.workBinding, second.workBinding);
+      assert.equal(first.call, second.call);
+      // The original Work participant recognizes this context independently of
+      // either selector. Registry and participant mismatch cannot explain denial.
+      first.workBinding.participant.assertOriginal(context, operation, call);
+      second.workBinding.participant.assertOriginal(context, operation, call);
+      assert.notEqual(
+        first.actualSelectorTransactions[0].backend,
+        second.actualSelectorTransactions[0].backend,
+      );
+      const before = second.traces.length;
+      await assert.rejects(
+        second.binding.selection.prepareStateUse(second.selection, second.origin, call, {
+          context,
+          original: operation,
+        }),
+      );
+      refused = true;
+      assert.equal(
+        second.traces.length,
+        before,
+        "foreign marker recognition cannot fall through to ordinary source preparation",
+      );
+      // The selected original retains its own marker and can finish this Work.
+      await first.binding.selection.prepareStateUse(first.selection, first.origin, call, {
+        context,
+        original: operation,
+      });
+      assert.throws(() => first.state.assertCurrent(first.admission, first.session, call));
+    },
+  });
+  second = await fixture({
+    sharedRegistry: first.registry,
+    sharedCall: first.call,
+    sharedWorkBinding: first.workBinding,
+  });
+  try {
+    await second.select();
+    await second.handoff();
+    await first.select();
+    await first.handoff();
+    assert.equal((await first.run()).kind, "committed");
+    assert.equal(refused, true);
+    assertWorkPrefix(first, first.workTransactions[0]);
+    assert.equal(second.workTransactions.length, 0);
+    assert.equal(second.actualSelectorTransactions.length, 1);
+    assert.equal(second.actualSelectorTransactions[0].releasedBorrows, 1);
+    assertSingleAdmission(first);
+    assertSingleAdmission(second);
+  } finally {
+    await first.close();
+    await second.close();
+  }
+  assert.equal(first.openTransactions, 0);
+  assert.equal(second.openTransactions, 0);
+  assert.equal(first.releases, 1);
+  assert.equal(second.releases, 1);
+});
+
+for (const failure of ["operand-getter", "registry-identity"]) {
+  test(`SOURCE-ENTRY caught ${failure} failure poisons later legitimate preparation and original Work joins cleanup`, async () => {
+    let f,
+      firstFailure,
+      retried = false,
+      getterCalls = 0;
+    const getterFailure = new Error("entered-source-context-getter-refused");
+    f = await fixture({
+      async workAcquire({ context, operation, call }) {
+        const entered =
+          failure === "operand-getter"
+            ? {
+                get context() {
+                  getterCalls++;
+                  throw getterFailure;
+                },
+                original: operation,
+              }
+            : { context, original: { ...operation } };
+        try {
+          await f.binding.selection.prepareStateUse(f.selection, f.origin, call, entered);
+        } catch (error) {
+          firstFailure = error;
+        }
+        assert.ok(firstFailure, "the entered getter or registry predicate must refuse");
+        if (failure === "operand-getter") assert.equal(firstFailure, getterFailure);
+        // This is the same correct original context/operation accepted by the
+        // positive source-entry control. Catching the first refusal cannot reset it.
+        await assert.rejects(
+          f.binding.selection.prepareStateUse(f.selection, f.origin, call, {
+            context,
+            original: operation,
+          }),
+          (error) => error === firstFailure,
+        );
+        retried = true;
+        // Return normally: the original Work owner's retained selector lease must
+        // propagate the poisoned state and own every acquired cleanup itself.
+      },
+    });
+    try {
+      await f.select();
+      await f.handoff();
+      assert.equal((await f.run()).kind, "not-committed");
+      assert.equal(retried, true);
+      assert.equal(getterCalls, failure === "operand-getter" ? 1 : 0);
+      const outer = f.workTransactions[0];
+      assert.equal(outer.failure, firstFailure);
+      assert.equal(outer.terminal, "ROLLBACK");
+      assert.equal(outer.selectedBorrows, 1);
+      assert.equal(outer.releasedBorrows, 1);
+      const local = f.traces.filter((event) => event.kind === "work" && event.id === outer.id);
+      assert.equal(
+        local.some((event) => event.event === "body-enter" || event.event === "policy-stage"),
+        false,
+      );
+      assert.equal(
+        local.some((event) => event.event === "query" && workParentName(event.sql)),
+        false,
+      );
+      assert.equal(f.workSources.length, 1);
+      assert.equal(f.workSources[0].releases, 1);
+      const native = f.retainedSourceLeases.filter((lease) => lease.workId === outer.id);
+      assert.equal(native.length, 1);
+      assert.equal(native[0].prepares, 0);
+      assert.equal(native[0].releaseCompletions, 1);
+      assertSingleAdmission(f);
+    } finally {
+      await f.close();
+    }
+    assert.equal(f.openTransactions, 0);
+    assert.equal(f.releases, 1);
+  });
+}

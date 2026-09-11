@@ -124,6 +124,10 @@ export interface RepositoryWorkSelectionSourceV2<
     selection: B["selection"],
     origin: B["origin"],
     call: AuthorityCallV1,
+    entered?: {
+      readonly context: RepositoryWorkTransactionContextV2;
+      readonly original: WorkOriginalOperationV2;
+    },
   ): Promise<void>;
   retainPolicy(
     context: RepositoryWorkTransactionContextV2,
@@ -870,7 +874,10 @@ export class RepositoryWorkStateAdapterV2<
               // later native inspection reopens it. This fresh enrollment is
               // owned by the entered State acquisition and creates no readset.
               current();
-              await this.selection.prepareStateUse(entry.selection, entry.origin, call);
+              await this.selection.prepareStateUse(entry.selection, entry.origin, call, {
+                context,
+                original,
+              });
               current();
             }
             let prefix: RepositoryWorkHeldLeaseV2 | undefined;

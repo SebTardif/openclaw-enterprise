@@ -1412,6 +1412,10 @@ export function createPostgresRepositoryWorkBindingV2(
                         assertEntry(current);
                         if (current.stage !== "policy") reject(current);
                       },
+                      () => {
+                        assertEntry(current);
+                        if (current.stage !== "source") reject(current);
+                      },
                     );
                     // Retain only the native/source/preparation prefix here.
                     // Live A/policy/Work currentness remains absent until prepareUse.

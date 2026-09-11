@@ -60,6 +60,7 @@ type Context = {
   prepareHandoff?: (() => void) | undefined;
   original?: WorkOriginalOperationV2;
   assertPreparing?: (() => void) | undefined;
+  assertSource?: (() => void) | undefined;
   workTransfer?: Transfer | undefined;
   prefixReady?: boolean;
   completionStarted?: boolean;
@@ -67,6 +68,7 @@ type Context = {
 };
 type Transfer = {
   source: Context;
+  sourceContext: RepositoryWorkTransactionContextV2;
   originals: readonly object[];
   call: AuthorityCallV1;
   active: boolean;
@@ -140,6 +142,7 @@ export class RepositoryWorkSelectedExecutionContextsV2 {
     requestRetirement: () => void,
     retired: Promise<void>,
     assertPreparing: () => void,
+    assertSource: () => void,
   ): () => void {
     const dispose = this.enrollContext(
       backend,
@@ -153,6 +156,7 @@ export class RepositoryWorkSelectedExecutionContextsV2 {
     entry.kind = "work";
     entry.original = original;
     entry.assertPreparing = assertPreparing;
+    entry.assertSource = assertSource;
     return dispose;
   }
   /** Retains lifetime only. The selected source invalidates outward currentness
@@ -180,6 +184,7 @@ export class RepositoryWorkSelectedExecutionContextsV2 {
     source.prepareHandoff();
     const transfer: Transfer = {
       source,
+      sourceContext: context,
       call,
       originals: Object.freeze([...originals]),
       active: true,
@@ -231,6 +236,56 @@ export class RepositoryWorkSelectedExecutionContextsV2 {
     // This early retained prefix cannot complete live A/policy/Work currentness.
     await transfer.acquire(context);
     entry.prefixReady = true;
+  }
+  /** Recognizes source-phase lifetime membership only, never live A. The
+   * returned identity is the ORIGINAL retired selector context, retained solely
+   * for comparison with that selector's private transfer-created membership.
+   * Undefined means a genuine original Work source context has no transfer;
+   * foreign contexts, wrong calls and later phases always refuse. */
+  assertWorkTransferSource(
+    context: RepositoryWorkTransactionContextV2,
+    original: WorkOriginalOperationV2,
+    call: AuthorityCallV1,
+  ): RepositoryWorkTransactionContextV2 | undefined {
+    const entry = this.#contexts.get(context);
+    if (
+      !entry?.active ||
+      !entry.backend.active ||
+      entry.kind !== "work" ||
+      entry.original !== original ||
+      entry.call !== call ||
+      call.context !== entry.fixedCall.context ||
+      call.requestRef !== entry.fixedCall.requestRef ||
+      call.recipientRef !== entry.fixedCall.recipientRef ||
+      call.deadline !== entry.fixedCall.deadline ||
+      call.signal !== entry.fixedCall.signal ||
+      call.signal.aborted ||
+      !entry.assertSource
+    )
+      fail();
+    entry.backend.execution.phase.assertOperationActive();
+    entry.assertSource();
+    const transfer = entry.workTransfer;
+    if (!transfer) return undefined;
+    if (
+      !transfer.active ||
+      !transfer.consumed ||
+      !entry.prefixReady ||
+      !entry.borrowed ||
+      !entry.complete ||
+      entry.completionStarted ||
+      transfer.call !== call ||
+      !transfer.originals.includes(original) ||
+      !sameScope(transfer.source.backend.scope, entry.backend.scope) ||
+      call.context !== transfer.source.fixedCall.context ||
+      call.requestRef !== transfer.source.fixedCall.requestRef ||
+      call.recipientRef !== transfer.source.fixedCall.recipientRef ||
+      call.deadline !== transfer.source.fixedCall.deadline ||
+      call.signal !== transfer.source.fixedCall.signal ||
+      call.signal.aborted
+    )
+      fail();
+    return transfer.sourceContext;
   }
   /** Only the original Work constructor's captured prepareUse phase calls this,
    * after custody and its real parent locks on the same entered backend. */
