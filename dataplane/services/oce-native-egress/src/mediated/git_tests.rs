@@ -1396,3 +1396,6 @@ async fn original_lease_cancels_actual_delta_worker_before_terminal_receipt() {
     std::fs::remove_file(socket_path).unwrap();
     std::fs::remove_dir(directory).unwrap();
 }
+
+#[path = "../git_read_listener_tests.rs"]
+mod listener_tests;

@@ -6,6 +6,7 @@ mod broker_rpc;
 pub mod dns;
 mod git_pack;
 mod git_protocol;
+pub mod git_read_listener;
 mod http;
 mod ingress;
 mod json;

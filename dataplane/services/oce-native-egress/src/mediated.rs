@@ -163,6 +163,26 @@ impl Mediator {
     /// No listener, trust source, attachment producer or production grant is
     /// synthesized here. All sockets and async drivers remain request-owned.
     pub async fn serve(&self, socket: TcpStream, attachment_ref: &str) -> Result<(), Refusal> {
+        self.serve_owned(socket, attachment_ref, None).await
+    }
+
+    /// Local listener cancellation only. It grants no authority and enters the
+    /// same normal cleanup that cancels and joins every retained request task.
+    pub(crate) async fn serve_until(
+        &self,
+        socket: TcpStream,
+        attachment_ref: &str,
+        stop: watch::Receiver<bool>,
+    ) -> Result<(), Refusal> {
+        self.serve_owned(socket, attachment_ref, Some(stop)).await
+    }
+
+    async fn serve_owned(
+        &self,
+        socket: TcpStream,
+        attachment_ref: &str,
+        mut stop: Option<watch::Receiver<bool>>,
+    ) -> Result<(), Refusal> {
         let _slot = self
             .concurrency
             .try_acquire()
@@ -217,8 +237,22 @@ impl Mediator {
                     .await
                     .map_err(|_| Refusal::Protocol)
             };
+            let cancelled = async {
+                match stop.as_mut() {
+                    Some(stop) => loop {
+                        if *stop.borrow() {
+                            break;
+                        }
+                        if stop.changed().await.is_err() {
+                            break;
+                        }
+                    },
+                    None => std::future::pending::<()>().await,
+                }
+            };
             tokio::select! {
                 biased;
+                _ = cancelled => Err(Refusal::Deadline),
                 reason = lost(&mut deadlines) => Err(reason),
                 result = operation => result,
             }
