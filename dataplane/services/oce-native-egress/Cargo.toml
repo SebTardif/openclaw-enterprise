@@ -26,6 +26,11 @@ ds-tlsproxy = { path = "../ds-tlsproxy" }
 hickory-resolver = { workspace = true, features = ["tokio"] }
 hickory-proto = { workspace = true }
 
+spiffe = { version = "=0.16.0", default-features = false, features = ["x509"] }
+tonic = { version = "=0.14.6", default-features = false, features = ["channel", "codegen"] }
+bytes = { version = "=1.11.1", default-features = false, features = ["std"] }
+x509-parser = "=0.18.1"
+
 [dev-dependencies]
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["process"] }

@@ -12,6 +12,7 @@ mod ingress;
 mod json;
 pub mod mediated;
 pub mod publication;
+pub mod publication_identity;
 mod publication_protocol;
 mod route;
 mod transport;

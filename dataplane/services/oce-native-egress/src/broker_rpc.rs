@@ -234,7 +234,11 @@ impl Channel {
     }
 }
 
-fn protected_path(path: &Path, uid: u32, trusted_ancestors: &[u32]) -> Result<(), Refusal> {
+pub(crate) fn protected_path(
+    path: &Path,
+    uid: u32,
+    trusted_ancestors: &[u32],
+) -> Result<(), Refusal> {
     let endpoint = std::fs::symlink_metadata(path).map_err(|_| Refusal::AuthorityUnavailable)?;
     if !endpoint.file_type().is_socket() || endpoint.uid() != uid || endpoint.mode() & 0o077 != 0 {
         return Err(Refusal::AuthorityUnavailable);
