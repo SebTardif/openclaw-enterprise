@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadStartupConfigurationSnapshot } from "./composition/startup-config/read.ts";
 import { startupDiagnostic } from "./startup-diagnostics.ts";
 import { createOccLogger } from "./logging.ts";
@@ -164,8 +165,22 @@ function configuration() {
   });
 }
 
-async function start() {
+/**
+ * Compose without listening or installing process signal handlers. The caller
+ * owns app.close(), including after a failed listen.
+ * @param {{ githubReadServices?: readonly import("./composition/github-read-mediation.ts").ControllerGitHubReadService[] }} [options]
+ */
+export async function createControllerServer({ githubReadServices } = {}) {
+  if (githubReadServices !== undefined && !Array.isArray(githubReadServices)) {
+    throw new Error("GitHub read services must be an array of original service definitions.");
+  }
+  // Capture the list before configuration awaits; preserve each original handle.
+  const readServices =
+    githubReadServices === undefined ? undefined : Object.freeze([...githubReadServices]);
   const settings = configuration();
+  if (settings.mode === "development" && readServices !== undefined) {
+    throw new Error("GitHub read services require production controller startup.");
+  }
   const startupConfiguration = await loadStartupConfigurationSnapshot({ mode: settings.mode });
   const logging = startupConfiguration.logging;
   const logger = createOccLogger({ component: "occ-api", level: logging.level });
@@ -238,6 +253,7 @@ async function start() {
       drivers,
       logger,
       ...(serviceAccountDriverFactory === undefined ? {} : { serviceAccountDriverFactory }),
+      ...(readServices === undefined ? {} : { githubReadServices: readServices }),
     });
   } else {
     const { composePostgresDevelopment } = await import("./composition/development-postgres.ts");
@@ -248,12 +264,26 @@ async function start() {
     );
   }
 
-  let closing = false;
+  return { app, listenOptions: { host: settings.host, port: settings.port }, logger };
+}
+
+async function start() {
+  // TODO: Supply original read-service definitions from the fixed production
+  // assembly once genuine accepted-execution and full Work owners are available.
+  const { app, listenOptions, logger } = await createControllerServer();
+  let closing;
+  function close() {
+    closing ??= Promise.resolve()
+      .then(() => app.close())
+      .finally(() => {
+        process.removeListener("SIGTERM", shutdown);
+        process.removeListener("SIGINT", shutdown);
+      });
+    return closing;
+  }
   async function shutdown() {
-    if (closing) return;
-    closing = true;
     try {
-      await app.close();
+      await close();
       process.exitCode = 0;
     } catch {
       process.exitCode = 1;
@@ -264,16 +294,18 @@ async function start() {
   process.once("SIGINT", shutdown);
 
   try {
-    await app.listen({ host: settings.host, port: settings.port });
+    await app.listen(listenOptions);
   } catch (error) {
-    await app.close().catch(() => {});
+    await close().catch(() => {});
     throw error;
   }
-  logger.info({ event: "listening", host: settings.host, port: settings.port });
+  logger.info({ event: "listening", ...listenOptions });
 }
 
-try {
-  await start();
-} catch (error) {
-  startupFailure(error);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await start();
+  } catch (error) {
+    startupFailure(error);
+  }
 }
