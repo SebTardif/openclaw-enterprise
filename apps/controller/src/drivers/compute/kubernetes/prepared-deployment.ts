@@ -6,6 +6,12 @@ import {
 } from "@openclaw-enterprise/contracts/runtime-effects-v1";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import type {
+  RuntimeCreateEncodingConditionalWireTargetV1,
+  RuntimeCreateEncodingHoldingV1,
+  RuntimeCreateEncodingMutationHoldV1,
+  RuntimeCreateEncodingOutcomeV1,
+} from "@openclaw-enterprise/occ/state/postgres/runtime-create-encoding-holding";
 
 export const PREPARED_DEPLOYMENT_ANNOTATIONS = Object.freeze({
   assignment: "openclaw.dev/runtime-assignment-ref",
@@ -19,6 +25,17 @@ export interface KubernetesPreparedDeploymentResponse {
   readonly uid: string;
   readonly resourceVersion: string;
   readonly receivedAt: string;
+}
+
+/** A projection of the original holding contract, not a new issuer. I is
+ * forwarded unchanged from the original accepting execution lease. */
+export interface KubernetesPreparedDeploymentEncodingV1<I extends object> {
+  readonly originalInvocation: I;
+  readonly holding: Pick<
+    RuntimeCreateEncodingHoldingV1<I, never, never>,
+    "beginMutation" | "retainOutcome"
+  >;
+  readonly target: RuntimeCreateEncodingConditionalWireTargetV1;
 }
 
 const refuse = (): never => {
@@ -131,39 +148,188 @@ export function prepareKubernetesDeploymentRequest(
       return refuse();
     record(mutation.value);
   }
+  let submitted = false;
+  let poisoned = false;
+  let poison: unknown;
   return Object.freeze({
     child,
     namespace,
     providerWireUtf8,
-    async submit(
+    async submit<I extends object>(
       apps: Pick<AppsV1Api, "createNamespacedDeployment" | "patchNamespacedDeployment">,
+      input: KubernetesPreparedDeploymentEncodingV1<I>,
     ): Promise<KubernetesPreparedDeploymentResponse> {
-      const response: V1Deployment =
-        action === "reserve-inert"
-          ? await apps.createNamespacedDeployment({ namespace, body: body as V1Deployment })
-          : await apps.patchNamespacedDeployment(
-              { namespace, name: target.name, body },
-              setHeaderOptions("Content-Type", "application/json-patch+json"),
-            );
-      const metadata = response.metadata;
+      if (submitted) {
+        if (!poisoned) {
+          poisoned = true;
+          poison = new Error("The original conditional Deployment submission was already entered.");
+        }
+        throw poison;
+      }
+      submitted = true;
+      // Reserve before getters and publish the full continuation before supplier
+      // entry. The original provider independently joins this returned promise.
+      await Promise.resolve();
+      const holding = input.holding;
+      const beginMutation = holding.beginMutation;
+      const retainOutcome = holding.retainOutcome;
+      const originalInvocation = input.originalInvocation;
+      const offered = input.target;
+      const committed = offered.committed;
+      const sourceSelection = offered.selection;
+      const selection = Object.freeze({
+        installationId: reference(sourceSelection.installationId),
+        namespaceId: reference(sourceSelection.namespaceId),
+        agentId: reference(sourceSelection.agentId),
+        clusterRef: reference(sourceSelection.clusterRef),
+        kubernetesNamespaceUid: reference(sourceSelection.kubernetesNamespaceUid),
+        namespace: reference(sourceSelection.namespace),
+        name: reference(sourceSelection.name),
+      });
       if (
-        response.apiVersion !== "apps/v1" ||
-        response.kind !== "Deployment" ||
-        !metadata ||
-        metadata.namespace !== namespace ||
-        metadata.name !== target.name ||
-        metadata.deletionTimestamp !== undefined ||
-        Object.entries(identity).some(([key, value]) => metadata.annotations?.[key] !== value) ||
-        (child.predicate.kind === "expected-object" && metadata.uid !== child.predicate.uid)
+        typeof beginMutation !== "function" ||
+        typeof retainOutcome !== "function" ||
+        !isDeepStrictEqual(offered.child, child) ||
+        !isDeepStrictEqual(committed.child, child) ||
+        offered.providerWireUtf8 !== providerWireUtf8 ||
+        committed.providerWireUtf8 !== providerWireUtf8 ||
+        selection.installationId !== committed.request.selection.installationId ||
+        selection.namespaceId !== committed.request.selection.namespaceId ||
+        selection.agentId !== committed.request.selection.agentId ||
+        selection.namespace !== namespace ||
+        selection.name !== target.name
       )
         return refuse();
-      return Object.freeze({
-        namespace,
-        name: target.name,
-        uid: reference(metadata.uid),
-        resourceVersion: reference(metadata.resourceVersion),
-        receivedAt: new Date().toISOString(),
+      const conditionalTarget: RuntimeCreateEncodingConditionalWireTargetV1 = Object.freeze({
+        committed,
+        selection,
+        child,
+        providerWireUtf8,
       });
+      // Capture the exact SDK method/arguments before the final held fence. No
+      // caller getter or authority callback is opened between it and dispatch.
+      const dispatch =
+        action === "reserve-inert"
+          ? (() => {
+              const create = apps.createNamespacedDeployment;
+              const request = { namespace, body: body as V1Deployment };
+              return () => Reflect.apply(create, apps, [request]) as Promise<V1Deployment>;
+            })()
+          : (() => {
+              const patch = apps.patchNamespacedDeployment;
+              const request = { namespace, name: target.name, body };
+              const headers = setHeaderOptions("Content-Type", "application/json-patch+json");
+              return () => Reflect.apply(patch, apps, [request, headers]) as Promise<V1Deployment>;
+            })();
+      let hold: RuntimeCreateEncodingMutationHoldV1 | undefined;
+      let release: RuntimeCreateEncodingMutationHoldV1["release"] | undefined;
+      let outcome: RuntimeCreateEncodingOutcomeV1 = Object.freeze({ status: "unknown" });
+      let result: KubernetesPreparedDeploymentResponse | undefined;
+      const errors: unknown[] = [];
+      const deferred: Promise<unknown>[] = [];
+      const assertLocal = () => {
+        if (poisoned) throw poison;
+      };
+      try {
+        assertLocal();
+        // The genuine owner alone recognizes I, commits possible-effect history
+        // definitely, and supplies exclusive all-writer custody. Values are data.
+        const originalHold: RuntimeCreateEncodingMutationHoldV1 = await Reflect.apply(
+          beginMutation,
+          holding,
+          [originalInvocation, conditionalTarget],
+        );
+        hold = originalHold;
+        // Capture cleanup immediately, before currentness/history getters.
+        release = originalHold.release;
+        if (typeof release !== "function") return refuse();
+        const current = originalHold.assertCurrent;
+        if (typeof current !== "function") return refuse();
+        const possible = originalHold.possibleEffect;
+        const possibleSelection = possible.selection;
+        if (
+          possible.schemaVersion !== 1 ||
+          possible.kind !== "possible-effect" ||
+          possible.submissionRef !== committed.submissionRef ||
+          Object.keys(possibleSelection).sort().join(",") !==
+            Object.keys(selection).sort().join(",") ||
+          Object.entries(selection).some(
+            ([key, value]) => possibleSelection[key as keyof typeof selection] !== value,
+          ) ||
+          possible.childEffectRef !== child.effect.effectRef ||
+          possible.assignmentRef !== target.ownerAssignmentRef.id ||
+          possible.createEffectRef !== target.ownerCreateEffectRef ||
+          possible.expectedUid !==
+            (child.predicate.kind === "expected-object" ? child.predicate.uid : null) ||
+          possible.expectedResourceVersion !==
+            (child.predicate.kind === "expected-object" ? child.predicate.resourceVersion : null) ||
+          possible.requestedFenceEpoch !== child.guard.requestedFenceEpoch ||
+          possible.providerWireDigest !== child.providerWire.bytesDigest
+        )
+          return refuse();
+        const returned: unknown = Reflect.apply(current, originalHold, []);
+        if (returned !== undefined) {
+          const pending = Promise.resolve(returned);
+          void pending.catch(() => {});
+          deferred.push(pending);
+          return refuse();
+        }
+        assertLocal();
+        // Await the actual SDK continuation without racing away from late work.
+        // Public cancellation cannot release this hold or erase possible effects.
+        const response: V1Deployment = await dispatch();
+        const metadata = response.metadata;
+        if (
+          response.apiVersion !== "apps/v1" ||
+          response.kind !== "Deployment" ||
+          !metadata ||
+          metadata.namespace !== namespace ||
+          metadata.name !== target.name ||
+          metadata.deletionTimestamp !== undefined ||
+          Object.entries(identity).some(([key, value]) => metadata.annotations?.[key] !== value) ||
+          (child.predicate.kind === "expected-object" && metadata.uid !== child.predicate.uid)
+        )
+          return refuse();
+        result = Object.freeze({
+          namespace,
+          name: target.name,
+          uid: reference(metadata.uid),
+          resourceVersion: reference(metadata.resourceVersion),
+          receivedAt: new Date().toISOString(),
+        });
+        outcome = Object.freeze({ status: "response", response: result });
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        if (hold !== undefined) {
+          // A malformed response, refusal after acquisition or SDK error remains
+          // unknown. Neither outcome resolves the durable possible-effect entry.
+          try {
+            await Reflect.apply(retainOutcome, holding, [hold, outcome]);
+          } catch (error) {
+            errors.push(error);
+          }
+          const settled = await Promise.allSettled(deferred);
+          for (const item of settled) if (item.status === "rejected") errors.push(item.reason);
+          if (release !== undefined) {
+            try {
+              await Reflect.apply(release, hold, []);
+            } catch (error) {
+              errors.push(error);
+            }
+          }
+        }
+      }
+      if (poisoned && !errors.includes(poison)) errors.push(poison);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1)
+        throw new AggregateError(errors, "Conditional Deployment outcome or cleanup failed.", {
+          cause: errors[0],
+        });
+      if (result === undefined) return refuse();
+      // Return the SAME response projection retained above. The original Hume
+      // observer then persists it under its independent response-call lifetime.
+      return result;
     },
   });
 }

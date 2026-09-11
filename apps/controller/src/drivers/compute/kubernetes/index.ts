@@ -381,6 +381,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   private readonly routing: KubernetesRouting;
   private readonly cleanup: KubernetesCleanup;
   private readonly runtimeObservations: KubernetesRuntimeObservations;
+  private readonly encodingClusterRef: string | undefined;
   private readonly installationProcess: KubernetesInstallationProcess;
   private readonly agentGatewaySelected: boolean;
   private readonly workloadRenderer: FixedWorkloadRenderer;
@@ -624,12 +625,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const observationDriverId = this.id;
     const observationImplementation = this.implementation;
     const observationOptions = this.options;
+    const observationDependencies = selection.runtimeObservationDependencies;
+    this.encodingClusterRef = observationDependencies?.clusterRef;
     this.runtimeObservations = new KubernetesRuntimeObservations(
       {
         clients: () => this.clients(),
         request: (operation) => this.request(operation),
       },
-      selection.runtimeObservationDependencies,
+      observationDependencies,
       this.options.isolationProfile,
       selection.nodeNetworkObservation === undefined
         ? undefined
@@ -821,21 +824,97 @@ export class KubernetesComputeDriver implements ComputeDriver {
   /** Original selected provider construction. Composition must independently
    * supply the accepting Runtime/State owner; no default issuer is installed.
    * This adapter does not replace legacy apply or grant readiness/serving. */
-  createRuntimePreparationSubmission(
+  createRuntimePreparationSubmission<I extends object = never>(
     options: Pick<
-      KubernetesPreparedSubmissionOptions,
-      "state" | "selection" | "capabilities" | "originals" | "responseSource"
+      KubernetesPreparedSubmissionOptions<I>,
+      "state" | "selection" | "capabilities" | "originals" | "responseSource" | "encodingHolding"
     >,
-  ): KubernetesPreparedSubmission {
+  ): KubernetesPreparedSubmission<I> {
     if (options.selection.selectedDriver("compute") !== this)
       throw new ConfigurationFailure("The original Compute selection is unavailable.");
     const verify = this.verifyPreparedDeployment.bind(this);
-    return new KubernetesPreparedSubmission({
+    const selectedDriver = options.selection.selectedDriver.bind(options.selection);
+    const originalId = this.id;
+    const originalImplementation = this.implementation;
+    const originalOptions = this.options;
+    const clusterRef = this.encodingClusterRef;
+    const assertSelected = () => {
+      if (
+        selectedDriver("compute") !== this ||
+        this.id !== originalId ||
+        this.implementation !== originalImplementation ||
+        this.options !== originalOptions ||
+        this.encodingClusterRef !== clusterRef
+      )
+        throw new ConfigurationFailure("The original encoding Driver selection changed.");
+    };
+    return new KubernetesPreparedSubmission<I>({
       ...options,
       driver: this,
       verify,
       clients: () => this.clients(),
       namespace: async (namespaceId) => (await this.resolveNamespace(namespaceId)).name,
+      encodingSelection: async (committed, namespace, call) => {
+        // Expected selection data only. The holding owner independently binds
+        // these values to its original invocation and complete writer custody.
+        const signal = call.signal;
+        const deadlineAt = Date.parse(call.deadline);
+        const assertCurrent = () => {
+          if (signal.aborted || !Number.isFinite(deadlineAt) || Date.now() >= deadlineAt)
+            throw new ConfigurationFailure("The original encoding selection call expired.");
+          assertSelected();
+        };
+        assertCurrent();
+        const selectedCluster = required(
+          clusterRef,
+          "Original selected Kubernetes cluster reference",
+        );
+        const remaining = deadlineAt - Date.now();
+        if (remaining <= 0)
+          throw new ConfigurationFailure("The original encoding selection call expired.");
+        const bounded = AbortSignal.any([
+          signal,
+          AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
+        ]);
+        return withComputeAbortSignal(bounded, async () => {
+          const originalSelection = committed.request.selection;
+          const { name, external } = await this.resolveNamespace(originalSelection.namespaceId);
+          assertCurrent();
+          if (name !== namespace)
+            throw new OwnershipFailure("The selected Kubernetes namespace changed.");
+          const observed = await this.get("Namespace", namespace);
+          assertCurrent();
+          if (
+            observed === undefined ||
+            observed.apiVersion !== "v1" ||
+            observed.metadata.name !== namespace ||
+            observed.metadata.deletionTimestamp !== undefined ||
+            observed.status?.phase !== "Active"
+          )
+            throw new OwnershipFailure("The selected Kubernetes namespace is unavailable.");
+          this.verifyNamespaceOwnership(
+            observed,
+            { namespaceId: originalSelection.namespaceId },
+            external,
+          );
+          const kubernetesNamespaceUid = required(
+            observed.metadata.uid,
+            "Original Kubernetes Namespace UID",
+          );
+          const expected = Object.freeze({
+            installationId: originalSelection.installationId,
+            namespaceId: originalSelection.namespaceId,
+            agentId: originalSelection.agentId,
+            clusterRef: selectedCluster,
+            kubernetesNamespaceUid,
+            namespace,
+            name: committed.child.providerTarget.name,
+          });
+          assertCurrent();
+          bounded.throwIfAborted();
+          return expected;
+        });
+      },
       request: (operation, call) => {
         const remaining = Date.parse(call.deadline) - Date.now();
         if (!Number.isFinite(remaining) || remaining <= 0 || call.signal.aborted)

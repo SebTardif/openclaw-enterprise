@@ -29,12 +29,12 @@ import {
  * consumer boundary before composition supplies it. Structural objects and a
  * committed marker do not grant permission. Missing source refuses before State
  * submit. No generic owner.run, SQL unit, gate or effect result is forwarded. */
-export interface KubernetesPreparationExecutionSourceV1 {
+export interface KubernetesPreparationExecutionSourceV1<I extends object = never> {
   acquireExecution(
     driver: ComputeDriver,
     committed: RuntimePreparationCommittedSubmissionV1,
     fixedProvider: KubernetesPreparedProviderEntryV1,
-  ): Promise<KubernetesPreparationExecutionLeaseV1>;
+  ): Promise<KubernetesPreparationExecutionLeaseV1<I>>;
   acquireObservation(
     driver: ComputeDriver,
     committed: RuntimePreparationCommittedSubmissionV1,
@@ -42,7 +42,7 @@ export interface KubernetesPreparationExecutionSourceV1 {
   ): Promise<KubernetesPreparationObservationCallLeaseV1>;
 }
 
-export interface KubernetesPreparationExecutionLeaseV1 {
+export interface KubernetesPreparationExecutionLeaseV1<I extends object = never> {
   readonly context: LifecycleWorkerGuardContext;
   /** Full original interface, retained by the SAME original guard constructor.
    * The original create implementation alone may call fixedProvider, after its
@@ -54,6 +54,13 @@ export interface KubernetesPreparationExecutionLeaseV1 {
    * this bounded call after any verifier wait. NOT a caller-positive validator.
    * Its genuine producer is still a required, separately owned source input. */
   assertProviderEntry(request: RuntimeCreateV1, originalCall: RuntimeEffectCallV1): undefined;
+  /** Synchronously lends the SAME original accepting implementation's private I
+   * for this exact already-accepted request/call. That implementation owns its
+   * registration and cleanup through release, after every entered SDK/outcome
+   * continuation joins. It must refuse an absent, wrong-purpose, expired or
+   * unaccepted invocation. A successful assertion, DTO, brand or marker cannot
+   * create I. This declaration does not implement the required genuine issuer. */
+  retainProviderInvocation(request: RuntimeCreateV1, originalCall: RuntimeEffectCallV1): I;
   release(): Promise<void>;
 }
 
@@ -63,10 +70,12 @@ export interface KubernetesPreparationObservationCallLeaseV1 {
   release(): Promise<void>;
 }
 
-export interface KubernetesPreparedSubmissionOptions extends KubernetesPreparationProviderOptions {
-  readonly state: KubernetesPreparationProviderOptions["state"] &
+export interface KubernetesPreparedSubmissionOptions<
+  I extends object = never,
+> extends KubernetesPreparationProviderOptions<I> {
+  readonly state: KubernetesPreparationProviderOptions<I>["state"] &
     RuntimePreparationSubmissionFactoryV1;
-  readonly originals?: KubernetesPreparationExecutionSourceV1;
+  readonly originals?: KubernetesPreparationExecutionSourceV1<I>;
   readonly responseSource?: RuntimePreparationResponseObservationSourceV1;
 }
 
@@ -78,16 +87,21 @@ const originalGuardRun = LifecycleEffectGuard.prototype.run;
 /** Canonical durable submission is OUTSIDE guard/create. The one post-COMMIT
  * participant obtains a fresh original worker/effect lease. No stored marker,
  * child fields, response row or callback success becomes effect authority. */
-export class KubernetesPreparedSubmission implements RuntimePreparationSubmissionOwnerV1 {
-  readonly #options: KubernetesPreparedSubmissionOptions;
+export class KubernetesPreparedSubmission<
+  I extends object = never,
+> implements RuntimePreparationSubmissionOwnerV1 {
+  readonly #options: KubernetesPreparedSubmissionOptions<I>;
   readonly #factory: RuntimePreparationSubmissionFactoryV1["runtimePreparationSubmissionOwnerV1"];
-  readonly #execution: KubernetesPreparationExecutionSourceV1["acquireExecution"] | undefined;
-  readonly #observation: KubernetesPreparationExecutionSourceV1["acquireObservation"] | undefined;
+  readonly #execution: KubernetesPreparationExecutionSourceV1<I>["acquireExecution"] | undefined;
+  readonly #observation:
+    KubernetesPreparationExecutionSourceV1<I>["acquireObservation"] | undefined;
   readonly #responseSource: RuntimePreparationResponseObservationSourceV1 | undefined;
 
-  constructor(options: KubernetesPreparedSubmissionOptions) {
+  constructor(options: KubernetesPreparedSubmissionOptions<I>) {
     const {
       driver,
+      encodingHolding,
+      encodingSelection,
       selection,
       state,
       capabilities,
@@ -98,12 +112,21 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
       originals,
       responseSource,
     } = options;
+    // Fixed original holding methods and selection receiver, captured before I/O.
+    const beginMutation = encodingHolding.beginMutation;
+    const retainOutcome = encodingHolding.retainOutcome;
+    const selectEncoding = encodingSelection.bind(options);
     const factory = state.runtimePreparationSubmissionOwnerV1;
     const currentUse = state.withRuntimePreparationWorkerCurrentUseV1;
     const acquireCapabilities = capabilities.acquire;
     this.#factory = factory.bind(state);
     this.#options = Object.freeze({
       driver,
+      encodingSelection: selectEncoding,
+      encodingHolding: Object.freeze({
+        beginMutation: beginMutation.bind(encodingHolding),
+        retainOutcome: retainOutcome.bind(encodingHolding),
+      }),
       selection,
       verify,
       clients,
@@ -174,8 +197,8 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
   private async invoke(
     committed: RuntimePreparationCommittedSubmissionV1,
     retainResponse: RuntimePreparationRetainResponseV1,
-    acquireExecution: KubernetesPreparationExecutionSourceV1["acquireExecution"],
-    acquireObservation: KubernetesPreparationExecutionSourceV1["acquireObservation"],
+    acquireExecution: KubernetesPreparationExecutionSourceV1<I>["acquireExecution"],
+    acquireObservation: KubernetesPreparationExecutionSourceV1<I>["acquireObservation"],
     assertSelection: () => void,
   ): Promise<void> {
     const options = this.#options;
@@ -183,10 +206,13 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
     let failed = false;
     let failure: unknown;
     let guardOpen = false;
-    let execution: KubernetesPreparationExecutionLeaseV1 | undefined;
+    let execution: KubernetesPreparationExecutionLeaseV1<I> | undefined;
     let release: (() => Promise<void>) | undefined;
     let current: (() => undefined) | undefined;
-    let providerCurrent: KubernetesPreparationExecutionLeaseV1["assertProviderEntry"] | undefined;
+    let providerCurrent:
+      KubernetesPreparationExecutionLeaseV1<I>["assertProviderEntry"] | undefined;
+    let providerInvocation:
+      KubernetesPreparationExecutionLeaseV1<I>["retainProviderInvocation"] | undefined;
     const noteFailure = (error: unknown) => {
       if (!failed) {
         failed = true;
@@ -234,6 +260,36 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
         throw error;
       }
     };
+    const retainInvocation = (input: RuntimeCreateV1, call: RuntimeEffectCallV1): I => {
+      try {
+        assertEntry(input, call);
+        if (!providerInvocation) throw unavailable();
+        const invocation = providerInvocation(input, call);
+        // Shape checks detect a broken synchronous supplier only. Authenticity
+        // stays with the original owner; I is neither copied nor registered here.
+        if (
+          invocation === null ||
+          (typeof invocation !== "object" && typeof invocation !== "function")
+        )
+          throw unavailable();
+        const then: unknown = Reflect.get(invocation, "then");
+        if (typeof then === "function") {
+          // A nonconforming deferred supplier remains joined before source release.
+          void track(
+            () =>
+              new Promise<unknown>((resolve, reject) => {
+                Reflect.apply(then, invocation, [resolve, reject]);
+              }),
+          );
+          throw unavailable();
+        }
+        assertEntry(input, call);
+        return invocation;
+      } catch (error) {
+        noteFailure(error);
+        throw error;
+      }
+    };
     const captureResponse = (response: RuntimePreparationDeploymentResponseV1): Promise<void> =>
       track(async () => {
         let observationRelease: (() => Promise<void>) | undefined;
@@ -266,6 +322,7 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
       options,
       committed,
       assertEntry,
+      retainInvocation,
       captureResponse,
       track,
     );
@@ -285,6 +342,7 @@ export class KubernetesPreparedSubmission implements RuntimePreparationSubmissio
       release = execution.release.bind(execution);
       current = execution.assertCurrent.bind(execution);
       providerCurrent = execution.assertProviderEntry.bind(execution);
+      providerInvocation = execution.retainProviderInvocation.bind(execution);
       if (failed) throw failure;
       synchronous(current);
       assertSelection();
