@@ -164,7 +164,9 @@ and both effect outcomes. The decoder rejects contradictory completion records
 and checks the PR's predecessor and observed head against the confirmed push.
 
 An original result is retained even if drain, inspection, correspondence, or
-outcome recording fails. State receives that exact original result for uncertainty
+outcome recording fails. An available native result promise is observed before
+reading the drain field; a missing or throwing drain field cannot discard its
+result or release the use lease and State observer before result settlement. State receives that exact original result for uncertainty
 accounting, rather than an invented replacement DTO. A known outcome cannot be
 downgraded by subsequent uncertain acknowledgement. State's independently retained
 observer records outcomes after caller cancellation and supplies status before

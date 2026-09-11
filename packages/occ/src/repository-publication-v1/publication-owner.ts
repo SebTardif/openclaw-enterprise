@@ -418,6 +418,7 @@ export class RepositoryPublicationOwnerV1<B extends PublicationOriginalsV1> {
     let candidate: PublicationCandidateV1 | undefined;
     let effect: PublicationEffectV1 | undefined;
     let retainedOutcome: B["outcome"] | null = null;
+    let observedResult: Promise<void> | undefined;
     const observedAssertions: Promise<unknown>[] = [];
     try {
       this.#active(call);
@@ -476,8 +477,14 @@ export class RepositoryPublicationOwnerV1<B extends PublicationOriginalsV1> {
       synchronousUndefined(beginUse(), observedAssertions);
       const ticket = this.#ds.submit(prepared, use.original);
       const result = ticket.result;
+      if (!types.isPromise(result)) publicationRefuseV1();
+      // Retain the available result before another ticket field can throw or
+      // refuse. Observe rejection now, even while actual retirement is pending.
+      observedResult = Promise.allSettled([result]).then(([settled]) => {
+        if (settled!.status === "fulfilled") retainedOutcome = settled!.value;
+      });
       const drained = ticket.drained;
-      if (!types.isPromise(result) || !types.isPromise(drained)) publicationRefuseV1();
+      if (!types.isPromise(drained)) publicationRefuseV1();
       const settled = await Promise.allSettled([result, drained]);
       if (settled[0]!.status === "fulfilled") retainedOutcome = settled[0]!.value;
       if (settled[0]!.status !== "fulfilled" || settled[1]!.status !== "fulfilled")
@@ -500,6 +507,9 @@ export class RepositoryPublicationOwnerV1<B extends PublicationOriginalsV1> {
       // effect, replace an original operand, or turn uncertainty into success.
       await Promise.allSettled(observedAssertions);
       if (prepared) await this.#joinFinalizer(() => this.#ds.releasePrepared(prepared!));
+      // Prepared retirement may finish the original result. Join its retained
+      // settlement before releasing use or transferring State observer custody.
+      await observedResult;
       if (releaseUse) await this.#joinFinalizer(releaseUse);
       if (!recorded) {
         try {

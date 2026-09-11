@@ -24,8 +24,10 @@ measurements, not continuous observation of every transient file.
 
 These checks exercise real local Git objects, retained custody, closed data
 contracts, and explicitly labeled application refusal and lifecycle controls.
-Controlled internal operands and sequences establish only those component
-behaviors. They establish no genuine Work authority, State approval or commit,
+Malformed-ticket cases cover missing and throwing drain fields with fulfilled
+and rejected native results, including settlement after prepared retirement and
+rejection while retirement is pending. Controlled internal operands and sequences
+establish only those component behaviors. They establish no genuine Work authority, State approval or commit,
 credential release, or upstream publication. Complete verification must compose the actual
 Work, State/IAM, and dispatcher owners, including separate push and draft-PR
 claims, current-authority leases, exact outcome attribution, and recovery. No

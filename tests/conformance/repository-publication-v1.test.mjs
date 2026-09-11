@@ -313,7 +313,8 @@ let lifecycleFixtures = 0,
   lifecycleAllocatedBytes = 0;
 async function componentFixture(t, overrides = {}, maxPending = 1, controls = {}) {
   assert.ok(lifecycleGit);
-  assert.ok(++lifecycleFixtures <= 9, "A new fixture requires an updated forecast");
+  // Seven empty fixtures and six two-object captures fit the 96 KiB partition.
+  assert.ok(++lifecycleFixtures <= 13, "A new fixture requires an updated forecast");
   const directory = await mkdtemp(join(homedir(), ".publication-controls-"));
   const unblock = [];
   let custody, application;
@@ -904,6 +905,210 @@ componentTest(
     }
   },
 );
+
+for (const drainShape of ["missing", "throwing"])
+  for (const resultKind of ["fulfilled", "rejected"])
+    componentTest(
+      `${drainShape} drain retains the ${resultKind} native result through original retirement`,
+      async (t) => {
+        // These controlled peers expose the application's cleanup schedule only.
+        // Candidate restore and Git validation use the actual protected custodian.
+        const originalCandidate = Object.freeze({}),
+          originalApproval = Object.freeze({}),
+          originalEffect = Object.freeze({}),
+          originalPrepared = Object.freeze({}),
+          originalUse = Object.freeze({}),
+          originalOutcome = Object.freeze({}),
+          selectedPolicy = policy(),
+          retiring = deferred(),
+          retirementGate = deferred(),
+          offered = deferred(),
+          transferGate = deferred();
+        selectedPolicy.rules[0].allowCreate = true;
+        const resultGate = Promise.withResolvers();
+        let capturedCandidate,
+          capturedEffect,
+          submissions = 0,
+          useReleased = 0,
+          effectReleased = 0,
+          finished = false;
+        const observations = [];
+        const f = await componentFixture(t, {}, 1, {
+          capture: true,
+          policy: selectedPolicy,
+          state: {
+            async claimEffect() {
+              return { kind: "committed", original: originalEffect };
+            },
+            inspectEffect(actual) {
+              assert.equal(actual, originalEffect);
+              return {
+                effect: capturedEffect,
+                candidate: originalCandidate,
+                approval: originalApproval,
+              };
+            },
+            inspectCandidate(actual) {
+              assert.equal(actual, originalCandidate);
+              return { candidateRef: "candidate/1", candidate: capturedCandidate };
+            },
+            inspectApproval(actual) {
+              assert.equal(actual, originalApproval);
+              return {
+                version: 1,
+                approvalRef: "approval/1",
+                candidateRef: "candidate/1",
+                actionDigest: capturedCandidate.actionDigest,
+                approverPrincipalId: "principal/reviewer",
+                policyRef: selectedPolicy.policyRef,
+                policyRevision: selectedPolicy.revision,
+                policyDigest: publicationDigestV1("approver-policy", selectedPolicy),
+                approvedAtMs: 1000,
+                expiresAtMs: 2000,
+              };
+            },
+            async acquireUse(actualEffect, actualPrepared) {
+              assert.equal(actualEffect, originalEffect);
+              assert.equal(actualPrepared, originalPrepared);
+              return {
+                original: originalUse,
+                candidate: originalCandidate,
+                approval: originalApproval,
+                effect: originalEffect,
+                assertCurrent() {},
+                beginSubmittedUse() {},
+                async release() {
+                  useReleased++;
+                },
+              };
+            },
+            async recordUncertain(actualEffect, outcome) {
+              assert.equal(actualEffect, originalEffect);
+              observations.push(outcome);
+              offered.resolve();
+              return "unknown";
+            },
+            async statusForEffect(actual) {
+              assert.equal(actual, originalEffect);
+              return {
+                version: 1,
+                candidateRef: "candidate/1",
+                actionDigest: capturedCandidate.actionDigest,
+                state: "unknown",
+                push: { effect: capturedEffect, outcome: { kind: "unknown", pullRequest: null } },
+                pullRequest: null,
+              };
+            },
+            releaseEffect(actual) {
+              assert.equal(actual, originalEffect);
+              effectReleased++;
+              return transferGate.promise;
+            },
+          },
+          dispatcher: {
+            async preparePush() {
+              return originalPrepared;
+            },
+            inspectPrepared(actual) {
+              assert.equal(actual, originalPrepared);
+              return {
+                effectRef: capturedEffect.effectRef,
+                actionDigest: capturedCandidate.actionDigest,
+                kind: "push",
+              };
+            },
+            submit(actualPrepared, actualUse) {
+              assert.equal(actualPrepared, originalPrepared);
+              assert.equal(actualUse, originalUse);
+              submissions++;
+              const ticket = { result: resultGate.promise };
+              if (drainShape === "throwing")
+                Object.defineProperty(ticket, "drained", {
+                  get() {
+                    throw new Error("Controlled drain getter failure");
+                  },
+                });
+              return ticket;
+            },
+            releasePrepared(actual) {
+              assert.equal(actual, originalPrepared);
+              retiring.resolve();
+              return retirementGate.promise;
+            },
+          },
+        });
+        f.unblock.push(
+          () => resultGate.resolve(originalOutcome),
+          retirementGate.resolve,
+          transferGate.resolve,
+        );
+        const object = (type, bytes) => ({
+          type,
+          bytes,
+          oid: createHash("sha1").update(`${type} ${bytes.length}\0`).update(bytes).digest("hex"),
+        });
+        const tree = object("tree", Buffer.alloc(0));
+        const commit = object(
+          "commit",
+          Buffer.from(
+            `tree ${tree.oid}\nauthor Component Fixture <component@example.invalid> 946684800 +0000\n` +
+              "committer Component Fixture <component@example.invalid> 946684800 +0000\n\nComponent fixture\n",
+          ),
+        );
+        const req = {
+          ...request(),
+          baseOid: commit.oid,
+          proposedOid: commit.oid,
+          expectedTarget: { kind: "create" },
+        };
+        const call = componentCall();
+        const capture = await f.custody.capture(req, [tree, commit], call.signal);
+        capturedCandidate = createPublicationCandidateV1(
+          work(req),
+          req,
+          f.custody.inspect(capture),
+        );
+        capturedEffect = effect("push", capturedCandidate);
+        const publication = f.application.publish({}, "candidate/1", "approval/1", call);
+        await retiring.promise;
+        const closed = f.application.close();
+        void closed.then(() => {
+          finished = true;
+        });
+        if (resultKind === "rejected") {
+          // Node's test runner fails on an unhandled rejection. Reject while
+          // physical retirement is still pending, before cleanup can await it.
+          resultGate.reject(new Error("Controlled native result failure"));
+          await immediate();
+        }
+        assert.equal(finished, false);
+        assert.equal(useReleased, 0);
+        assert.deepEqual(observations, []);
+        retirementGate.resolve();
+        if (resultKind === "fulfilled") {
+          // Even after prepared retirement the result may arrive later. Its
+          // original observer and use lease must remain held until it settles.
+          await immediate();
+          assert.equal(useReleased, 0);
+          assert.equal(effectReleased, 0);
+          assert.deepEqual(observations, []);
+          resultGate.resolve(originalOutcome);
+        }
+        await offered.promise;
+        await immediate();
+        assert.deepEqual(observations, [resultKind === "fulfilled" ? originalOutcome : null]);
+        assert.equal(useReleased, 1);
+        assert.equal(effectReleased, 1);
+        assert.equal(finished, false);
+        transferGate.resolve();
+        const result = await publication;
+        await closed;
+        assert.equal(result.kind, "complete");
+        assert.equal(result.value.state, "unknown");
+        assert.equal(submissions, 1);
+        assert.deepEqual(f.forbidden, []);
+      },
+    );
 
 test("closed request decoder refuses extra effects, unsupported targets and changed draft semantics", () => {
   for (const change of [
