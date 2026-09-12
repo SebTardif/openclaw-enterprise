@@ -1,4 +1,4 @@
-import type { SecretBindings } from "./index.ts";
+import type { SecretBindings } from "./resources/secret.ts";
 
 const reserved =
   /^(?:OPENCLAW_|CODEX_|OCC_|KUBERNETES_|KUBECONFIG$|APP_SERVER_|NODE_|LD_|DYLD_|PYTHON|SSL_|TLS_|NPM_|PNPM_|OTEL_)/i;

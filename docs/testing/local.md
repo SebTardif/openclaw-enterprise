@@ -52,6 +52,32 @@ node --test tests/integration/secret-api.test.mjs
 node --test --test-name-pattern='part of the test name' tests/integration/secret-api.test.mjs
 ```
 
+## Contract package verification
+
+After preparing the [shared dependencies](README.md#requirements-and-credentials),
+run the package compatibility and helper checks:
+
+```sh
+node --test tests/conformance/contract-imports.test.mjs tests/conformance/contracts.test.mjs
+pnpm typecheck
+```
+
+`contract-imports` resolves the supported package root and checks that runtime
+exports share their canonical helpers and schemas. It compiles NodeNext fixtures
+under `packages/contracts/test-fixtures/imports`: a resource consumer, real Driver
+implementation types, and rejected type assignments. The consumer uses the Secret
+names as both types and schema values. The negative cases protect scope,
+immutability, resource kinds, and Driver capability and readiness contracts.
+Compiler diagnostics fail the test; unused `@ts-expect-error` directives fail when
+a rejected assignment becomes valid. These fixtures compile source and do not
+instantiate Drivers or exercise their backing infrastructure.
+
+`contracts` verifies helper behavior, schema validation, and detached immutable
+revision snapshots. Existing Configuration, Secret, and Plugin suites exercise
+those helpers through their production owners. Both contract files run in the
+baseline CI lane; full workspace typechecking covers existing package consumers.
+For source ownership, see [Contract ownership](../ARCHITECTURE.md#contract-ownership).
+
 ## Authentication and authorization coverage
 
 `tests/conformance/iam.test.mjs` covers explicit identities, exact scopes, Group

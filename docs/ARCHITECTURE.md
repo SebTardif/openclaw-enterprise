@@ -65,6 +65,30 @@ for initialization ordering and failure handling.
 | `packages/iam`       | Identity lookup and authorization.                            |
 | `packages/audit`     | Audit events and sensitive-value sanitization.                |
 
+### Contract ownership
+
+Consumers import resource types, Driver interfaces, validation schemas, and
+runtime helpers from `@openclaw-enterprise/contracts`. The package root explicitly
+re-exports the resource, identity, and Driver definitions from their owning
+modules under `packages/contracts/src`; these internal paths are not additional
+package entrypoints.
+
+`resources/` owns resource shapes and revision helpers, `identity/` owns identity,
+authorization, and audit types, and `drivers/` owns infrastructure interfaces.
+Internal modules import the definitions they use directly. Logging and Secret
+binding normalization remain separate helpers, while `api/` owns HTTP schemas.
+The Secret reference and binding names retain both their resource types and
+runtime schemas at the package root.
+
+These responsibilities include deliberate cross-module relationships: Agent
+resources reference the Provider type, Secret types share names with their API
+schemas, plugin validation uses API schemas, and the base Driver references
+Compute lifecycle hooks while Compute extends Driver.
+The Driver cycle is type-only. This organization preserves those contracts; it
+does not impose a strict dependency layer between every directory. See
+[contract verification](testing/local.md#contract-package-verification) when
+changing a definition or export.
+
 ## Drivers
 
 Installation configuration selects infrastructure implementations for compute,

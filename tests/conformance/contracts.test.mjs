@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createRequire } from "node:module";
 import {
   CONFIGURATION_KINDS,
   DRIVER_CAPABILITIES,
@@ -14,7 +15,16 @@ import {
   isResourceKind,
   isSandboxFacet,
   normalizeLoggingLevel,
+  normalizePluginDesiredState,
+  validPluginRevisionState,
+  SecretReference,
+  SecretBinding,
 } from "../../packages/contracts/src/index.ts";
+
+const contractsRequire = createRequire(
+  new URL("../../packages/contracts/package.json", import.meta.url),
+);
+const { Check } = contractsRequire("typebox/value");
 
 test("the Driver contract exposes IAM, Compute, Configuration, ServiceAccount, Secret, Sandbox, and Plugin capabilities", () => {
   assert.deepEqual(DRIVER_CAPABILITIES, [
@@ -166,6 +176,7 @@ test("an admitted AgentRevision is a detached and deeply immutable deployment sn
     namespaceId: "namespace-a",
     agentId: "agent-a",
     revision: 1,
+    providerId: null,
     configurationId: "configuration-a",
     configurationKind: "agent",
     configurationGeneration: 1,
@@ -173,6 +184,15 @@ test("an admitted AgentRevision is a detached and deeply immutable deployment sn
     harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
     compute: { id: "compute-test", implementation: "deterministic-fake" },
     sandboxDriverId: "sandbox-test",
+    secretBindings: {
+      MODEL_KEY: { source: { kind: "secret", id: "secret-a", namespaceId: "namespace-a" } },
+    },
+    plugins: {
+      driver: { id: "plugins", implementation: "occ/plugins" },
+      plugins: {
+        calendar: { enabled: true, approvalMode: "prompt", tools: { read: { enabled: true } } },
+      },
+    },
     servicePrincipalId: "service-principal-agent-a",
     createdAt: "2026-08-15T00:00:00.000Z",
   };
@@ -183,6 +203,9 @@ test("an admitted AgentRevision is a detached and deeply immutable deployment sn
   assert.equal(Object.isFrozen(admitted.configuration), true);
   assert.equal(Object.isFrozen(admitted.harness), true);
   assert.equal(Object.isFrozen(admitted.compute), true);
+  assert.equal(Object.isFrozen(admitted.secretBindings.MODEL_KEY.source), true);
+  assert.equal(Object.isFrozen(admitted.plugins.driver), true);
+  assert.equal(Object.isFrozen(admitted.plugins.plugins.calendar.tools.read), true);
   assert.equal(admitted.sandboxDriverId, "sandbox-test");
   assert.equal(admitted.configurationId, "configuration-a");
   assert.equal(admitted.configurationKind, "agent");
@@ -195,7 +218,11 @@ test("an admitted AgentRevision is a detached and deeply immutable deployment sn
   mutableRevision.harness.mode = "embedded";
   mutableRevision.compute.implementation = "changed-after-admission";
   mutableRevision.sandboxDriverId = "changed-after-admission";
+  mutableRevision.secretBindings.MODEL_KEY.source.id = "changed-after-admission";
+  mutableRevision.plugins.plugins.calendar.tools.read.enabled = false;
 
+  assert.equal(admitted.secretBindings.MODEL_KEY.source.id, "secret-a");
+  assert.equal(admitted.plugins.plugins.calendar.tools.read.enabled, true);
   assert.deepEqual(admitted.configuration, {
     model: "gpt-test",
     temperature: "0",
@@ -225,4 +252,48 @@ test("an admitted AgentRevision is a detached and deeply immutable deployment sn
   assert.throws(() => {
     admitted.sandboxDriverId = "unauthorized-sandbox-mutation";
   }, TypeError);
+});
+
+test("Secret schemas require exact references and supported delivery shapes", () => {
+  const uuid = "12345678-1234-4234-8234-123456789abc";
+  const reference = { kind: "secret", id: `sec_${uuid}`, namespaceId: `ns_${uuid}` };
+  assert.equal(Check(SecretReference, reference), true);
+  assert.equal(Check(SecretReference, { ...reference, value: "unrecognized-field" }), false);
+  assert.equal(Check(SecretReference, { kind: "secret", id: reference.id }), false);
+  assert.equal(Check(SecretReference, { ...reference, kind: "configuration" }), false);
+  assert.equal(Check(SecretBinding, { source: reference, delivery: { type: "env" } }), true);
+  assert.equal(Check(SecretBinding, { source: reference, delivery: { type: "file" } }), false);
+  assert.equal(Check(SecretBinding, { source: reference, extra: true }), false);
+});
+
+test("plugin helpers validate selections and return detached immutable policy", () => {
+  const desired = {
+    calendar: { enabled: true, approvalMode: "prompt", tools: { read: { enabled: true } } },
+  };
+  const fail = (message) => {
+    throw new Error(message);
+  };
+  const normalized = normalizePluginDesiredState(desired, fail);
+  assert.deepEqual(normalized, desired);
+  assert.notStrictEqual(normalized, desired);
+  assert.equal(Object.isFrozen(normalized.calendar.tools.read), true);
+  desired.calendar.tools.read.enabled = false;
+  assert.equal(normalized.calendar.tools.read.enabled, true);
+  assert.throws(
+    () =>
+      normalizePluginDesiredState(
+        { calendar: { ...desired.calendar, approvalMode: "invalid" } },
+        fail,
+      ),
+    /invalid/,
+  );
+  assert.equal(normalizePluginDesiredState(undefined, fail), undefined);
+  const state = { driver: { id: "plugins", implementation: "occ/plugins" }, plugins: desired };
+  assert.equal(validPluginRevisionState(state), true);
+  assert.equal(validPluginRevisionState({ ...state, unexpected: true }), false);
+  assert.equal(
+    validPluginRevisionState({ ...state, driver: { id: "", implementation: "occ/plugins" } }),
+    false,
+  );
+  assert.equal(validPluginRevisionState(undefined), true);
 });
