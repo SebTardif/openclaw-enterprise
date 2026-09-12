@@ -153,6 +153,8 @@
                 "pages": [
                   "testing/README",
                   "testing/local",
+                  "testing/developer-skills",
+                  "testing/autoreview",
                   "testing/ci",
                   "testing/repository-publication"
                 ]
