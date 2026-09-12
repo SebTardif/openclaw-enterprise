@@ -2,6 +2,8 @@ import { PLUGIN_RUNTIME_TRANSLATOR_SOURCE } from "../../plugin/runtime-translato
 
 export const MAX_PORTABLE_COMMAND_ARGUMENT_BYTES = 30 * 1024;
 
+// TODO(runtime-image-entrypoints): Replace inline command chunking once immutable
+// runtime images provide versioned launcher files compatible with the controller.
 export function portableNodeInlineCommand(source: string): readonly string[] {
   const chunks: string[] = [];
   let chunk = "";
