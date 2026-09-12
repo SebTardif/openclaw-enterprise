@@ -157,6 +157,9 @@
           "path": "tests/integration/ci-openshell.test.mjs"
         },
         {
+          "path": "tests/integration/openshell-local-launcher.test.mjs"
+        },
+        {
           "path": "tests/browser/console-agents.test.mjs"
         },
         {
