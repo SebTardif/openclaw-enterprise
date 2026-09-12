@@ -86,6 +86,9 @@ longer Ready. Keep it running while using the UI. Demo credentials remain in
 the helper's private state directory. This retained deployment is for local
 inspection, not production operation.
 
+Run `reset` before starting another `demo`. The helper refuses to replace an
+existing retained demo record, preserving access to its running resources.
+
 Show the retained namespace's Kubernetes resources and query its OpenShell
 gateway for workspace-scoped providers and sandboxes:
 
@@ -107,7 +110,8 @@ pnpm openshell:podman:demo  # or openshell:docker:demo
 ```
 
 `reset` is idempotent. It removes only the exact retained demo namespace; it
-does not delete the cluster or its containerd image store.
+does not delete the cluster or its containerd image store. If namespace cleanup
+fails, the helper keeps the demo record so you can retry `reset`.
 
 Remove only the helper's owned resources when finished:
 
