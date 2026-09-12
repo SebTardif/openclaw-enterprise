@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+cd "$repo_root"
+
+usage() {
+  printf 'usage: pnpm openshell:%s[:demo|ui|inspect|reset|down|help]\n\n' "$container_engine"
+  cat <<'EOF'
+Commands:
+  run      Run the real OpenShell integration and clean its test workload.
+  demo     Run the integration and retain a working Control UI demo.
+  ui       Forward the retained Control UI to http://127.0.0.1:18888.
+  inspect  Show retained Kubernetes and OpenShell gateway resources.
+  reset    Remove the retained demo; preserve the cluster, images, and PostgreSQL.
+  down     Remove all resources owned by this helper, including the cluster.
+  help     Show this help.
+
+Typical workflow:
+EOF
+  printf '  pnpm openshell:%s:demo\n' "$container_engine"
+  printf '  pnpm openshell:%s:ui\n' "$container_engine"
+  printf '  pnpm openshell:%s:inspect\n' "$container_engine"
+  printf '  pnpm openshell:%s:reset\n' "$container_engine"
+  printf '  pnpm openshell:%s:demo\n' "$container_engine"
+  printf '  pnpm openshell:%s:down\n\n' "$container_engine"
+  printf '%s\n' \
+    'OPENAI_API_KEY is required by run and demo. The other commands use private state' \
+    "under \$XDG_STATE_HOME/openclaw-enterprise/openshell-$container_engine, or ~/.local/state" \
+    'when XDG_STATE_HOME is unset.'
+  if [ "$container_engine" = "docker" ]; then
+    printf '%s\n' "Docker preserves the caller's active Docker context and DOCKER_HOST."
+  else
+    printf '%s\n' 'Podman configures k3d through the discovered Podman API socket.'
+  fi
+}
+
+container_engine="${OCC_OPENSHELL_CONTAINER_ENGINE:-podman}"
+case "$container_engine" in
+  podman) engine_label="Podman" ;;
+  docker) engine_label="Docker" ;;
+  *)
+    echo "openshell-local: unsupported container engine: $container_engine" >&2
+    exit 2
+    ;;
+esac
+
+fail() {
+  echo "openshell-$container_engine: $*" >&2
+  exit 1
+}
+
+info() {
+  printf '[openshell:%s] %s\n' "$container_engine" "$*"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is required on PATH"
+}
+
+case "${1:-run}" in
+  run | demo | ui | inspect | reset | down)
+    action="${1:-run}"
+    ;;
+  help | -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+info "Checking $engine_label, k3d, Helm, and Node.js prerequisites."
+for command in node k3d helm; do
+  require_command "$command"
+done
+
+k3d_bin="$(command -v k3d)"
+helm_bin="$(command -v helm)"
+
+if [ "$container_engine" = "podman" ]; then
+  require_command podman
+  require_command podman-compose
+  container_bin="$(command -v podman)"
+  podman_compose_bin="$(command -v podman-compose)"
+  case "$(uname -s)" in
+    Darwin)
+      podman_socket="$($container_bin machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"
+      ;;
+    Linux)
+      podman_socket="$($container_bin info --format '{{.Host.RemoteSocket.Path}}')"
+      podman_socket="${podman_socket#unix://}"
+      ;;
+    *)
+      fail "only macOS and Linux hosts are supported"
+      ;;
+  esac
+  [ -S "$podman_socket" ] || fail "Podman API socket is unavailable: $podman_socket"
+  export DOCKER_HOST="unix://$podman_socket"
+  export PODMAN_COMPOSE_PROVIDER="$podman_compose_bin"
+  state_override="${OCC_OPENSHELL_PODMAN_STATE_DIR:-}"
+else
+  require_command docker
+  container_bin="$(command -v docker)"
+  state_override="${OCC_OPENSHELL_DOCKER_STATE_DIR:-}"
+fi
+
+state_base="${XDG_STATE_HOME:-${HOME}/.local/state}"
+state_dir="${OCC_OPENSHELL_LOCAL_STATE_DIR:-${state_override:-$state_base/openclaw-enterprise/openshell-$container_engine}}"
+case "$state_dir" in
+  /*) ;;
+  *) fail "OpenShell local state directory must be absolute" ;;
+esac
+mkdir -p "$state_dir"
+chmod 700 "$state_dir"
+
+state_file="$state_dir/state.json"
+env_file="$state_dir/env"
+results_file="$state_dir/results.json"
+demo_file="$state_dir/demo.json"
+
+export OCC_DOCKER_BIN="$container_bin"
+export OPENCLAW_CI_K3D_BIN="$k3d_bin"
+export OCC_HELM_BIN="$helm_bin"
+export RUNNER_TEMP="$state_dir"
+export OCC_TEST_OPENAI_MODEL="${OCC_TEST_OPENAI_MODEL:-gpt-5.1}"
+
+if [ "$action" = "down" ]; then
+  if [ ! -f "$state_file" ]; then
+    echo "OpenShell $engine_label environment is already down."
+    exit 0
+  fi
+  info "Removing the owned cluster, images, and PostgreSQL resources."
+  node scripts/ci/cleanup.mjs --state "$state_file"
+  rm -f "$env_file" "$results_file" "$demo_file"
+  echo "OpenShell $engine_label environment removed."
+  exit 0
+fi
+
+if [ "$action" = "reset" ]; then
+  if [ ! -f "$demo_file" ]; then
+    echo "OpenShell $engine_label demo is already reset."
+    exit 0
+  fi
+  [ -f "$env_file" ] || fail "prepared environment metadata is unavailable; run 'pnpm openshell:$container_engine:down'"
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+  namespace="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).namespace' "$demo_file")"
+  case "$namespace" in
+    oce-ns-*) ;;
+    *) fail "refusing to reset unexpected demo namespace: $namespace" ;;
+  esac
+  info "Removing retained demo namespace $namespace; cached images and services will remain."
+  "$OCC_KUBECTL_BIN" \
+    --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+    --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+    delete namespace "$namespace" \
+    --ignore-not-found=true \
+    --wait=true \
+    --timeout=120s
+  rm -f "$demo_file"
+  echo "OpenShell $engine_label demo removed; prepared cluster, images, and PostgreSQL remain available."
+  exit 0
+fi
+
+if [ "$action" = "inspect" ]; then
+  [ -f "$env_file" ] || fail "prepared environment is unavailable; run 'pnpm openshell:$container_engine:demo' first"
+  [ -f "$demo_file" ] || fail "retained demo is unavailable; run 'pnpm openshell:$container_engine:demo' first"
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+  [ -x "$OCC_TEST_OPENSHELL_CLI" ] || fail "prepared OpenShell CLI is unavailable: $OCC_TEST_OPENSHELL_CLI"
+  namespace="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).namespace' "$demo_file")"
+  case "$namespace" in
+    oce-ns-*) ;;
+    *) fail "refusing to inspect unexpected demo namespace: $namespace" ;;
+  esac
+  openshell_service="$(
+    "$OCC_KUBECTL_BIN" \
+      --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+      --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+      --namespace "$namespace" \
+      get service \
+      --selector=app.kubernetes.io/name=openshell \
+      --output=jsonpath='{.items[0].metadata.name}'
+  )"
+  [ -n "$openshell_service" ] || fail "retained OpenShell gateway Service is unavailable"
+
+  echo "Kubernetes resources in $namespace:"
+  "$OCC_KUBECTL_BIN" \
+    --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+    --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+    --namespace "$namespace" \
+    get pods,services,sandboxes
+
+  forward_log="$(mktemp "$state_dir/.inspect-forward.XXXXXX")"
+  forward_pid=""
+  cleanup_inspect_forward() {
+    if [ -n "$forward_pid" ]; then
+      kill "$forward_pid" 2>/dev/null || true
+      wait "$forward_pid" 2>/dev/null || true
+    fi
+    rm -f "$forward_log"
+  }
+  trap cleanup_inspect_forward EXIT INT TERM
+  "$OCC_KUBECTL_BIN" \
+    --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+    --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+    --namespace "$namespace" \
+    port-forward --address 127.0.0.1 "service/$openshell_service" 0:8080 \
+    >"$forward_log" 2>&1 &
+  forward_pid="$!"
+
+  endpoint_port=""
+  for _ in {1..50}; do
+    endpoint_port="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9][0-9]*\) -> 8080$/\1/p' "$forward_log" | head -1)"
+    [ -n "$endpoint_port" ] && break
+    kill -0 "$forward_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [ -z "$endpoint_port" ]; then
+    sed -n '1,20p' "$forward_log" >&2
+    fail "unable to connect to the retained OpenShell gateway"
+  fi
+  endpoint="http://127.0.0.1:$endpoint_port"
+
+  printf '\nOpenShell gateway:\n'
+  "$OCC_TEST_OPENSHELL_CLI" --gateway-endpoint "$endpoint" --workspace default gateway info
+  printf '\nOpenShell providers:\n'
+  "$OCC_TEST_OPENSHELL_CLI" --gateway-endpoint "$endpoint" --workspace default provider list
+  printf '\nOpenShell sandboxes:\n'
+  "$OCC_TEST_OPENSHELL_CLI" --gateway-endpoint "$endpoint" --workspace default sandbox list
+  exit 0
+fi
+
+if [ "$action" = "ui" ]; then
+  [ -f "$env_file" ] || fail "prepared environment is unavailable; run 'pnpm openshell:$container_engine:demo' first"
+  [ -f "$demo_file" ] || fail "retained demo is unavailable; run 'pnpm openshell:$container_engine:demo' first"
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+  namespace="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).namespace' "$demo_file")"
+  service="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).service' "$demo_file")"
+  gateway_token="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).gatewayToken' "$demo_file")"
+  sandbox_pod="$(
+    "$OCC_KUBECTL_BIN" \
+      --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+      --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+      --namespace "$namespace" \
+      get pods \
+      --selector=openclaw.dev/workload-role=agent \
+      --output=jsonpath='{.items[0].metadata.name}'
+  )"
+  [ -n "$sandbox_pod" ] || fail "retained OpenShell sandbox Pod is unavailable"
+  "$OCC_KUBECTL_BIN" \
+    --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+    --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+    --namespace "$namespace" \
+    wait --for=condition=Ready "pod/$sandbox_pod" --timeout=20s >/dev/null ||
+    fail "retained OpenShell sandbox is not Ready; rerun 'pnpm openshell:$container_engine:demo'"
+  dashboard_url="http://127.0.0.1:18888/#token=$gateway_token"
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$dashboard_url" | pbcopy
+    echo "Control UI URL copied to the clipboard."
+  else
+    echo "Control UI token is stored in the private file: $demo_file"
+  fi
+  echo "Forwarding Control UI at http://127.0.0.1:18888 (keep this process running)."
+  exec "$OCC_KUBECTL_BIN" \
+    --kubeconfig "$OCC_TEST_KUBERNETES_KUBECONFIG" \
+    --context "$OCC_TEST_KUBERNETES_CONTEXT" \
+    --namespace "$namespace" \
+    port-forward "service/$service" 18888:8080
+fi
+
+[ -n "${OPENAI_API_KEY:-}" ] || fail "OPENAI_API_KEY is required for the real model turn"
+
+if [ ! -f "$state_file" ]; then
+  info "Preparing a new local environment; initial image builds and imports can take several minutes."
+  node_base_image="$(sed -n 's/^ARG NODE_BASE_IMAGE=//p' deploy/runtime/Dockerfile | head -1)"
+  [ -n "$node_base_image" ] || fail "deploy/runtime/Dockerfile does not declare NODE_BASE_IMAGE"
+  if [ "$container_engine" = "podman" ]; then
+    image_exists=(image exists "$node_base_image")
+  else
+    image_exists=(image inspect "$node_base_image")
+  fi
+  if ! "$container_bin" "${image_exists[@]}" >/dev/null 2>&1; then
+    info "Pulling the pinned Node.js base image."
+    "$container_bin" pull "$node_base_image"
+  fi
+  info "Creating k3d, PostgreSQL, runtime images, and OpenShell prerequisites."
+  node scripts/ci/prepare.mjs \
+    --lane openshell \
+    --state "$state_file" \
+    --github-env "$env_file"
+  info "Local environment preparation completed."
+elif [ ! -f "$env_file" ]; then
+  fail "preparation state is incomplete; run 'pnpm openshell:$container_engine:down' before retrying"
+else
+  info "Reusing the prepared cluster, PostgreSQL service, and imported images."
+fi
+
+if [ "$action" = "demo" ]; then
+  rm -f "$demo_file"
+  export OPENCLAW_ENTERPRISE_OPENSHELL_DEMO_STATE="$demo_file"
+fi
+
+info "Running the real OpenShell integration; sandbox startup and the model turn can take several minutes."
+node scripts/ci/run-tests.mjs run openshell \
+  --state "$state_file" \
+  --results "$results_file"
+
+info "OpenShell integration completed successfully."
+echo "OpenShell $engine_label test passed. Prepared environment remains available."
+if [ "$action" = "demo" ]; then
+  [ -f "$demo_file" ] || fail "the test passed without retaining demo state"
+  echo "Retained Control UI demo is ready. Start it with: pnpm openshell:$container_engine:ui"
+fi
+echo "Clean it with: pnpm openshell:$container_engine:down"

@@ -98,6 +98,9 @@ The selected model credential determines how model access is configured:
   `runtime.modelSecretPrefix` and the `OPENAI_API_KEY` key.
 - **Provider-issued access token:** The selected Provider-owned ServiceAccount Driver
   creates an account-owned Secret projected only into the dedicated Codex Pod.
+- **Externally brokered API key:** A selected Sandbox Driver may explicitly own
+  model credential delivery. Kubernetes Compute then requires no model Secret
+  and rejects a competing OCE-managed model credential.
 
 If channels are enabled, configure `runtime.channels.secretPrefix` and
 `runtime.channels.proxyUrl`, then provide the Agent's channel credentials in

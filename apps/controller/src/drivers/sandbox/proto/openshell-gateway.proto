@@ -1,4 +1,4 @@
-// Minimal OpenShell v0.0.113 gateway surface used by OpenClaw Enterprise.
+// Minimal OpenShell v0.0.116 gateway surface used by OpenClaw Enterprise.
 //
 // This intentionally models only the messages needed for lifecycle-safe
 // Sandbox creation and deletion. Field numbers and packages match the

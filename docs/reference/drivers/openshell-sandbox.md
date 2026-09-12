@@ -107,11 +107,28 @@ drivers:
             endpoints:
               - host: api.openai.com
                 ports: [443]
-                protocol: tcp
+                protocol: rest
+                access: read-write
+                enforcement: enforce
+      providers:
+        - oce-openai
+      modelCredential:
+        source: provider
 ```
 
 The OpenShell gateway must be installed separately before this driver's
 `ensureNamespace` runs. The bundled driver does not install the gateway.
+
+Every entry in `providers` names an existing provider in
+`gateway.workspace`. OpenShell attaches those providers to each Sandbox and
+owns their endpoint-bound credential delivery. Do not also place the provider's
+real credential in Sandbox environment values or startup YAML.
+
+Set `modelCredential.source` to `provider` when an attached OpenShell provider
+supplies `OPENAI_API_KEY`. OCE then treats the model credential as configured,
+does not create or mount an Agent model Secret, and rejects a competing OCE API
+key or model Secret. Without this option, the ordinary OCE model-credential
+contract remains unchanged.
 
 `gateway.networkPolicyResources` accepts namespace-scoped Kubernetes resource
 objects for provider networking. They are applied into the OpenClaw Namespace
@@ -182,7 +199,7 @@ depends on upstream/provider behavior matching this contract:
   creates for the Harness.
 - OpenShell must preserve the Harness's exact audience-bound, short-lived
   projected ServiceAccount token and read-only mount. Its gateway bootstrap
-  token is not a substitute. Stock OpenShell `v0.0.113` does not support
+  token is not a substitute. Stock OpenShell `v0.0.116` does not support
   projected volumes in gateway driver configuration. Until upstream
   projected-volume support exists, local verification may require an
   operator-owned template bridge; that bridge is not production support.
@@ -190,7 +207,7 @@ depends on upstream/provider behavior matching this contract:
   without falling back to its default workspace claim or mounting the PVC root.
 - OpenShell must support exact environment entries backed by Kubernetes
   `secretKeyRef`, including the startup app-server token Secret. Stock
-  OpenShell `v0.0.113` cannot receive those entries through the current gateway
+  OpenShell `v0.0.116` cannot receive those entries through the current gateway
   API. Until upstream secret support exists, local verification may require a
   credential bridge; that bridge is not production support.
 - OpenShell gateway authentication must be bound to the trusted caller and the
@@ -198,7 +215,9 @@ depends on upstream/provider behavior matching this contract:
 
 If any of these conditions are unavailable, OpenShell-selected deployments must
 fail closed instead of launching an unsandboxed or incorrectly credentialed
-Harness.
+Harness. The testing guide lists the exact
+[verification-only compatibility bridges](../../testing/openshell.md#test-only-openshell-adaptations)
+and their removal conditions.
 
 ## Troubleshooting
 
@@ -208,7 +227,7 @@ Common fail-closed errors include:
 - `OpenShell gateway Service is unavailable.`
 - `OpenShell gateway Pod is not ready.`
 - `OpenShell SandboxDriver only supports dedicated Codex Harness revisions.`
-- `OpenShell v0.0.113 cannot receive secretKeyRef environment ...`
+- `OpenShell v0.0.116 cannot receive secretKeyRef environment ...`
 
 ## Related documentation
 

@@ -13,7 +13,7 @@ export const PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT = "OPENCLAW_PLUGIN_CODEX_CO
 export const PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT = "OPENCLAW_PLUGIN_READY_MARKER";
 export const PLUGIN_RUNTIME_READY_MARKER = "/tmp/openclaw-plugin-runtime-ready";
 
-const MAX_DOCKER_PLUGIN_RUNTIME_BYTES = 64 * 1024;
+const MAX_PLUGIN_RUNTIME_ENVIRONMENT_BYTES = 64 * 1024;
 const CODEX_NO_PLUGIN_CONFIG_TOML = `[features]
 apps = false
 plugins = false
@@ -100,6 +100,7 @@ export function pluginRuntimeConfigMapData(
 
 export function pluginRuntimeEnvironment(
   runtime: PluginRuntimeSpec,
+  maximumBytes = MAX_PLUGIN_RUNTIME_ENVIRONMENT_BYTES,
 ): Readonly<Record<string, string>> {
   const codexConfig = codexConfigurationToml(runtime);
   const manifest = runtimeManifest(runtime);
@@ -107,8 +108,8 @@ export function pluginRuntimeEnvironment(
     manifest,
     ...(codexConfig === undefined ? {} : { codexConfigurationToml: codexConfig }),
   });
-  if (Buffer.byteLength(encoded, "utf8") > MAX_DOCKER_PLUGIN_RUNTIME_BYTES) {
-    throw new Error("Docker plugin runtime artifacts exceed the environment delivery limit.");
+  if (Buffer.byteLength(encoded, "utf8") > maximumBytes) {
+    throw new Error("Plugin runtime artifacts exceed the environment delivery limit.");
   }
   return { [PLUGIN_RUNTIME_ENVIRONMENT]: encoded };
 }

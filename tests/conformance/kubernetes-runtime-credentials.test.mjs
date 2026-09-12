@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  KubernetesComputeDriver,
   createKubernetesComputeDriver,
   kubernetesNamespaceName,
 } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
@@ -80,8 +81,11 @@ function binding() {
   return { namespace, agent };
 }
 
-function credentialFixture({ secrets = {}, deployments = [] } = {}) {
-  const driver = createKubernetesComputeDriver(options());
+function credentialFixture({ secrets = {}, deployments = [], sandboxDriver } = {}) {
+  const driver =
+    sandboxDriver === undefined
+      ? createKubernetesComputeDriver(options())
+      : new KubernetesComputeDriver(options(), { sandboxDriver });
   const namespaceName = kubernetesNamespaceName(namespace.id);
   const namespaceObject = {
     ...driver.manifest("v1", "Namespace", namespaceName, { namespaceId: namespace.id }),
@@ -472,6 +476,55 @@ test("mocked Kubernetes client requires a model credential when the model Secret
     false,
   );
   assert.equal(created.length, 0);
+});
+
+test("externally brokered model credentials require no Kubernetes model Secret", async () => {
+  const { driver, calls, created } = credentialFixture({
+    sandboxDriver: { modelCredentialSource: "external" },
+  });
+
+  assert.deepEqual(await driver.getAgentRuntimeCredentialStatus(binding()), {
+    transportConfigured: false,
+    modelConfigured: true,
+    slackConfigured: false,
+  });
+  assert.deepEqual(await driver.provisionAgentRuntimeCredentials(binding(), {}), {
+    transportConfigured: true,
+    modelConfigured: true,
+    slackConfigured: false,
+  });
+  assert.equal(
+    calls.some(({ kind, name }) => kind === "readSecret" && name.startsWith("model-")),
+    true,
+    "the driver must still reject a competing persisted model Secret",
+  );
+  assert.deepEqual(
+    created.map((secret) => secret.metadata.name),
+    [`transport-${digest(agent.id)}`],
+  );
+});
+
+test("externally brokered model credentials reject competing OCE credential sources", async () => {
+  const external = { modelCredentialSource: "external" };
+  const fixture = credentialFixture({ sandboxDriver: external });
+  await assert.rejects(
+    fixture.driver.provisionAgentRuntimeCredentials(binding(), { modelApiKey: "model-key" }),
+    ResourceConflictError,
+  );
+  assert.equal(fixture.created.length, 0);
+
+  const first = credentialFixture();
+  const model = runtimeSecret(first.driver, first.namespaceName, "model", {
+    OPENAI_API_KEY: "model-key",
+  });
+  const persisted = credentialFixture({
+    sandboxDriver: external,
+    secrets: { [model.metadata.name]: model },
+  });
+  await assert.rejects(
+    persisted.driver.getAgentRuntimeCredentialStatus(binding()),
+    ResourceConflictError,
+  );
 });
 
 test("mocked Kubernetes client refuses initial provisioning after Agent deployments exist", async () => {

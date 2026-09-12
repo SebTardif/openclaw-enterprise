@@ -12,9 +12,21 @@ import {
   resolveKubernetesNamespace,
 } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import {
+  AGENT_RUNTIME_ENTRYPOINT,
+  MAX_PORTABLE_COMMAND_ARGUMENT_BYTES,
+  portableNodeInlineCommand,
+} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import {
   currentComputeAbortSignal,
   withComputeAbortSignal,
 } from "../../apps/controller/src/drivers/compute/operation-context.ts";
+import {
+  PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
+  PLUGIN_RUNTIME_ENVIRONMENT,
+  PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT,
+  PLUGIN_RUNTIME_READY_MARKER,
+  PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
+} from "../../apps/controller/src/drivers/compute/plugin-runtime.ts";
 
 const kubeconfigPath = "/tmp/openclaw-enterprise-conformance/kubeconfig";
 const contextName = "openclaw-enterprise-local";
@@ -116,6 +128,19 @@ function routedRevision(driver, overrides = {}) {
     ...overrides,
   };
 }
+
+test("inline Node commands preserve UTF-8 source within portable argument limits", () => {
+  const source = `${"a".repeat(MAX_PORTABLE_COMMAND_ARGUMENT_BYTES - 1)}🙂tail`;
+  const [runtime, evaluationFlag, bootstrap, ...chunks] = portableNodeInlineCommand(source);
+
+  assert.equal(runtime, "node");
+  assert.equal(evaluationFlag, "-e");
+  assert.equal(bootstrap, 'eval(process.argv.slice(1).join(""))');
+  assert.equal(chunks.join(""), source);
+  assert.ok(
+    chunks.every((chunk) => Buffer.byteLength(chunk) <= MAX_PORTABLE_COMMAND_ARGUMENT_BYTES),
+  );
+});
 
 test("Kubernetes namespace names are deterministic, DNS-safe, distinct, and bounded", () => {
   for (const id of ["Namespace_With.UPPERCASE!punctuation", "x".repeat(250), "---"]) {
@@ -1929,6 +1954,17 @@ test("provider-owned Harness requirements preserve the exact projected ServicePr
   );
 
   const requirements = driver.harnessRequirementsFromDeployment(workload);
+  const [runtimeExecutable, evaluationFlag, bootstrap, ...entrypointChunks] = requirements.command;
+  assert.equal(runtimeExecutable, "node");
+  assert.equal(evaluationFlag, "-e");
+  assert.equal(bootstrap, 'eval(process.argv.slice(1).join(""))');
+  assert.equal(entrypointChunks.join(""), AGENT_RUNTIME_ENTRYPOINT);
+  assert.ok(
+    requirements.command.every(
+      (argument) => Buffer.byteLength(argument) <= MAX_PORTABLE_COMMAND_ARGUMENT_BYTES,
+    ),
+    "provider-owned Harness command arguments must remain within portable runtime limits",
+  );
   // Provider requirements must carry readable identities unchanged into Pod labels and selectors.
   for (const [key, value] of Object.entries({
     "openclaw.dev/namespace": ownership.namespaceId,
@@ -2020,6 +2056,7 @@ function providerReadinessFixture({ provisionHarness, lifecycleDrivers = [] } = 
       lifecycleDrivers,
       sandboxDriver: {
         id: "sandbox-provider",
+        modelCredentialSource: "external",
         async provisionHarness(context) {
           if (provisionHarness !== undefined) return provisionHarness(context);
           assert.fail("activation must only observe the previously provisioned Harness");
@@ -2358,6 +2395,27 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
   assert.deepEqual(hooks, ["start", "start", "start", "start"]);
   assert.equal(provisions.length, 4);
   assert.deepEqual(provisions[0].requirements.labels, fixture.labels);
+  const providerEnvironment = Object.fromEntries(
+    provisions[0].requirements.environment.map((entry) => [entry.name, entry]),
+  );
+  assert.deepEqual(JSON.parse(providerEnvironment[PLUGIN_RUNTIME_ENVIRONMENT].value), {
+    manifest: { kind: "codex", selections: {} },
+    codexConfigurationToml:
+      "[features]\napps = false\nplugins = false\nremote_plugin = false\n\n[apps._default]\nenabled = false\n",
+  });
+  assert.equal(providerEnvironment[PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT], undefined);
+  assert.equal(providerEnvironment[PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT], undefined);
+  assert.equal(providerEnvironment.OPENAI_API_KEY, undefined);
+  assert.equal(
+    providerEnvironment[PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT].value,
+    PLUGIN_RUNTIME_READY_MARKER,
+  );
+  assert.equal(
+    provisions[0].requirements.workspaceMounts.some(
+      ({ mountPath }) => mountPath === "/etc/openclaw/plugin-runtime",
+    ),
+    false,
+  );
   const agentServiceName = `agent-${digest(revision.agentId)}`;
   assert.equal(
     objects.get(key("Service", agentServiceName)).spec.selector["app.kubernetes.io/name"],

@@ -39,6 +39,90 @@ OCC_TEST_OPENSHELL_K3D_REAL=1 \
   node --env-file="$TEST_ENV_FILE" --test tests/integration/sandbox-driver-openshell-k3d-real.test.mjs
 ```
 
+On a macOS or Linux workstation with Podman, `podman-compose`, k3d, and Helm,
+the repository helper discovers the Podman API socket, prepares the disposable
+k3d and PostgreSQL environment, builds and imports the runtime image, and runs
+the same real test:
+
+```sh
+export OPENAI_API_KEY='<existing authorized credential>'
+export OCC_TEST_OPENAI_MODEL=gpt-5.1
+pnpm openshell:podman
+```
+
+Docker Engine with Docker Compose uses the same lifecycle without Podman socket
+discovery or `DOCKER_HOST` changes:
+
+```sh
+export OPENAI_API_KEY='<existing authorized credential>'
+export OCC_TEST_OPENAI_MODEL=gpt-5.1
+pnpm openshell:docker
+```
+
+The Docker commands preserve the caller's active Docker context and
+`DOCKER_HOST`. Their orchestration path is covered locally; the credentialed
+end-to-end proof documented here was run with Podman.
+
+Both launchers print phase markers before slow preparation, image, cluster, and
+integration-test work. First-time preparation can take several minutes; later
+runs report when they are reusing the prepared environment.
+
+The prepared base environment remains available so subsequent invocations can
+reuse the local images, cluster, and PostgreSQL service. Remove only its owned
+resources when finished:
+
+```sh
+pnpm openshell:podman:demo # or openshell:docker:demo
+pnpm openshell:podman:ui   # or openshell:docker:ui
+```
+
+The `demo` command runs the real model, filesystem, network, identity, and
+credential-isolation checks, then retains its successful Agent, gateway, and
+OpenShell sandbox before the ordinary test's destructive revision-cutover
+case. The `ui` command copies the token-bearing Control UI URL to the macOS
+clipboard when `pbcopy` is available, then forwards the gateway only on
+`127.0.0.1:18888`; it refuses to start if the retained OpenShell sandbox is no
+longer Ready. Keep it running while using the UI. Demo credentials remain in
+the helper's private state directory. This retained deployment is for local
+inspection, not production operation.
+
+Show the retained namespace's Kubernetes resources and query its OpenShell
+gateway for workspace-scoped providers and sandboxes:
+
+```sh
+pnpm openshell:podman:inspect # or openshell:docker:inspect
+```
+
+`inspect` uses the prepared CLI and a temporary random-port forward that it
+closes automatically. It reports provider metadata without printing stored
+credential values. Run `pnpm openshell:podman:help` or
+`pnpm openshell:docker:help` for the complete command lifecycle.
+
+Remove the retained demo while preserving the prepared k3d cluster, imported
+images, and PostgreSQL service for a faster subsequent test:
+
+```sh
+pnpm openshell:podman:reset # or openshell:docker:reset
+pnpm openshell:podman:demo  # or openshell:docker:demo
+```
+
+`reset` is idempotent. It removes only the exact retained demo namespace; it
+does not delete the cluster or its containerd image store.
+
+Remove only the helper's owned resources when finished:
+
+```sh
+pnpm openshell:podman:down # or openshell:docker:down
+```
+
+The helpers keep independent private runner state under
+`${XDG_STATE_HOME:-$HOME/.local/state}/openclaw-enterprise/openshell-<engine>`.
+Override it with `OCC_OPENSHELL_LOCAL_STATE_DIR`, or use the engine-specific
+`OCC_OPENSHELL_PODMAN_STATE_DIR` and `OCC_OPENSHELL_DOCKER_STATE_DIR`. On macOS,
+the Podman location must be visible inside Podman Machine; `/tmp` is not a valid
+location for its k3d host-file mounts. This remains verification-only
+infrastructure rather than a persistent OpenClaw deployment.
+
 The test checks a real gateway model turn, provider-owned dedicated Codex
 execution, exact projected workload identity, approved mounts and privileges,
 denied secret exposure, allowed and denied tool egress, duplicate
@@ -51,14 +135,67 @@ prerequisites after selection fail rather than skip.
 
 The integration uses an operator-owned Helm wrapper to install the OpenShell
 gateway before delegating to the driver. The bundled driver does not install
-that gateway.
+that gateway. Installation by the fixture is test orchestration, not an
+OpenShell security compatibility bridge.
 
-Stock OpenShell `v0.0.113` does not support projected volumes in gateway driver
-configuration. The integration applies an operator-owned Sandbox Pod-template
-patch for projected workload identity. Its gateway API also cannot receive
-exact `secretKeyRef` environment entries, so the test supplies a credential
-bridge. Both adaptations are test-only; upstream support is still required for
-the [production contract](../reference/drivers/openshell-sandbox.md#current-upstream-preconditions).
+The following bridges make the current `v0.0.116` integration verifiable. None
+is production support. “Primary owner” identifies the first project to change;
+an alternative design may move a boundary only through an explicit architecture
+decision.
+
+| Primary owner    | Gap                                  | Current test behavior                                                                                                                                                                                      | Completion condition                                                                                                                                       |
+| ---------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenShell        | Per-Sandbox Kubernetes identity      | The fixture serially replaces the Namespace gateway with one configured for the exact Agent ServiceAccount. Concurrent Agents cannot share this test gateway safely.                                       | OpenShell validates and applies the requested per-Sandbox ServiceAccount. Remove gateway replacement and serialized provisioning.                          |
+| OpenShell        | Projected volume support             | The client removes OpenShell's unsupported projected token volume. An operator suspends the Sandbox, patches its Pod template with the exact audience, expiry, path, and read-only mount, then resumes it. | OpenShell preserves the projected volume and mount through its gateway API. Remove the operator Pod-template patch.                                        |
+| OpenShell        | Kubernetes Secret-backed environment | An operator Job copies only `APP_SERVER_TOKEN` from its Secret to a private PVC subpath. The Codex startup wrapper reads it, and cleanup removes it.                                                       | OpenShell accepts the exact `secretKeyRef` environment entry without centralizing its bytes. Remove the Job, PVC token file, startup wrapper, and cleanup. |
+| OpenClaw and OCE | Remote workspace transport           | The gateway and remote Codex Harness still share a workspace PVC. The single-node test therefore requires RWX semantics.                                                                                   | OpenClaw's remote Harness no longer requires a shared filesystem, and OCE adopts that transport. Remove the cross-Pod RWX requirement.                     |
+
+#### How the branch implements each item
+
+1. **Per-Sandbox Kubernetes identity:** the test selects
+   `serviceAccount.mode: gatewayConfigured`. Before provisioning, it upgrades
+   the Namespace gateway with `sandboxServiceAccount.name` set to the exact
+   Agent ServiceAccount. A per-Namespace state map serializes this replacement.
+
+2. **Projected ServicePrincipal token:** a gateway-client wrapper first verifies
+   and removes the unsupported projected volume and mount from the OpenShell
+   request. After creation, the operator suspends the Sandbox, patches the Pod
+   template with the exact token projection, and resumes it. This and item 3 are
+   the only reasons the test needs its operator Kubernetes client.
+
+3. **App-server transport credential:** an operator Job reads only
+   `APP_SERVER_TOKEN` through its `secretKeyRef`, writes it mode `0400` to a
+   revision-specific PVC subpath, and exits. The Sandbox mounts that subpath
+   read-only; its startup wrapper exports the file value before starting Codex.
+   A cleanup Job deletes the file.
+
+4. **Remote workspace transport:** the branch does not change OpenClaw's remote
+   Harness protocol. It keeps the shared workspace PVC. For local proof only,
+   the fixture configures k3d `local-path` with `hostPath` and
+   `/var/lib/rancher/k3s/storage`, allowing Pods on the one disposable node to
+   exercise RWX behavior. This k3d setup should remain while the test needs RWX.
+
+Sidecar topology and `processBinaryAwareNetworkPolicy=false` are intentional:
+they retain the dedicated Harness connection while avoiding `SYS_PTRACE` and
+`DAC_READ_SEARCH` in the restricted workload. The `/sandbox/enterprise` mount
+maps the approved OCE workspace claim into OpenShell's workspace namespace and
+suppresses its separate default workspace PVC; it is intentional storage
+integration. Podman socket selection, direct k3d image import, command chunking,
+and the helper's `reset` and `inspect` commands are local development mechanics
+rather than upstream gaps.
+
+Production packaging has separate OCE work even after the compatibility bridges
+are removed. The fixture currently installs a Namespace gateway with TLS and
+gateway authentication disabled, reachable only through scoped cluster policy
+and local port-forwarding. Production must install and lifecycle-manage the
+gateway with authenticated TLS, configure the SandboxDriver as its trusted
+caller, and enforce admission guardrails for the exact approved OpenShell
+workload shape. These are deployment requirements, not reasons to weaken the
+Sandbox contract.
+
+See the
+[production contract](../reference/drivers/openshell-sandbox.md#current-upstream-preconditions)
+for the corresponding fail-closed requirements.
 
 Local `sandbox-driver-startup`, `controller-lifecycle`, and
 `postgres-platform-state` integration tests cover driver selection, revision
@@ -87,7 +224,7 @@ scoped environment file for this suite.
 | `OCC_TEST_OPENSHELL_HELM_CHART`       | OpenShell Helm chart path or chart archive.                                                                                                         |
 | `OCC_TEST_OPENSHELL_GATEWAY_IMAGE`    | Imported immutable OpenShell gateway image pinned by SHA-256 digest.                                                                                |
 | `OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE` | Imported immutable OpenShell supervisor image pinned by SHA-256 digest.                                                                             |
-| `OCC_TEST_OPENSHELL_CHART_VERSION`    | Optional OpenShell chart version; defaults to `0.0.113`.                                                                                            |
+| `OCC_TEST_OPENSHELL_CHART_VERSION`    | Optional OpenShell chart version; defaults to `0.0.116`.                                                                                            |
 | `OCC_TEST_OPENSHELL_RUNTIME_CLASS`    | Existing RuntimeClass used by Agent Sandbox Pods; CI creates the selected RuntimeClass, defaulting to `openshell-sandbox`, with the `runc` handler. |
 
 The selected cluster must already expose the Agent Sandbox CRD and a ready Agent

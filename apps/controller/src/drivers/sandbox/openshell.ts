@@ -83,6 +83,7 @@ export interface OpenShellSandboxDriverOptions {
   readonly sandboxNamePrefix?: string;
   readonly logLevel?: string;
   readonly providers?: readonly string[];
+  readonly modelCredential?: { readonly source: "provider" };
 }
 
 export interface OpenShellSandboxDriverSelection {
@@ -222,7 +223,7 @@ function environment(requirements: HarnessWorkloadRequirements): Record<string, 
   for (const entry of requirements.environment) {
     if ("valueFrom" in entry) {
       throw new OpenShellSandboxConfigurationFailure(
-        `OpenShell v0.0.113 cannot receive secretKeyRef environment ${entry.name}; use the integration credential bridge or upstream secretKeyRef support.`,
+        `OpenShell v0.0.116 cannot receive secretKeyRef environment ${entry.name}; use the integration credential bridge or upstream secretKeyRef support.`,
       );
     }
     result[nonempty(entry.name, "Environment variable name")] = entry.value;
@@ -724,6 +725,22 @@ function validateOptions(options: OpenShellSandboxDriverOptions): void {
     );
   }
   networkPolicies(options);
+  if (options.modelCredential !== undefined) {
+    const modelCredential = configurationObject(
+      options.modelCredential,
+      "OpenShell model credential",
+    );
+    if (
+      Object.keys(modelCredential).length !== 1 ||
+      modelCredential.source !== "provider" ||
+      !Array.isArray(options.providers) ||
+      options.providers.length === 0
+    ) {
+      throw new OpenShellSandboxConfigurationFailure(
+        "OpenShell provider model credentials require at least one attached provider.",
+      );
+    }
+  }
   const prefix = nonempty(
     options.sandboxNamePrefix ?? DEFAULT_SANDBOX_NAME_PREFIX,
     "Sandbox name prefix",
@@ -746,6 +763,12 @@ export const configurationSchema = Object.freeze({
     sandboxNamePrefix: { type: "string" },
     logLevel: { type: "string" },
     providers: { type: "array", items: { type: "string" } },
+    modelCredential: {
+      type: "object",
+      required: ["source"],
+      additionalProperties: false,
+      properties: { source: { const: "provider" } },
+    },
   },
 });
 
@@ -764,6 +787,7 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   readonly capability = "sandbox" as const;
   readonly implementation: string;
   readonly facets = Object.freeze(["networking", "filesystem", "process"] as const);
+  readonly modelCredentialSource?: "external";
   private readonly options: OpenShellSandboxDriverOptions;
   private readonly injectedGatewayClient: OpenShellGatewayClient | undefined;
   private readonly gatewayClients = new Map<string, OpenShellGatewayClient>();
@@ -782,6 +806,9 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       selection.implementation ?? "openshell",
       "OpenShell Sandbox Driver implementation",
     );
+    if (options.modelCredential?.source === "provider") {
+      this.modelCredentialSource = "external";
+    }
     if (this.implementation !== "openshell") {
       throw new OpenShellSandboxConfigurationFailure(
         "OpenShell Sandbox Driver implementation must be exactly openshell.",

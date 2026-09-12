@@ -604,6 +604,8 @@ export interface SandboxDriver extends Driver {
   readonly capability: "sandbox";
   /** One or more distinct containment facets implemented by this driver. */
   readonly facets: readonly SandboxFacet[];
+  /** The Sandbox provider supplies the model credential without an OCE-managed Secret. */
+  readonly modelCredentialSource?: "external";
   configureAgent?(
     configuration: Readonly<OpenClawConfigurationDocument>,
   ): OpenClawConfigurationDocument;

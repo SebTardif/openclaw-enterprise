@@ -1,5 +1,25 @@
 import { PLUGIN_RUNTIME_TRANSLATOR_SOURCE } from "../../plugin/runtime-translator.ts";
 
+export const MAX_PORTABLE_COMMAND_ARGUMENT_BYTES = 30 * 1024;
+
+export function portableNodeInlineCommand(source: string): readonly string[] {
+  const chunks: string[] = [];
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of source) {
+    const characterBytes = Buffer.byteLength(character);
+    if (chunkBytes + characterBytes > MAX_PORTABLE_COMMAND_ARGUMENT_BYTES && chunk.length > 0) {
+      chunks.push(chunk);
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += character;
+    chunkBytes += characterBytes;
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+  return ["node", "-e", 'eval(process.argv.slice(1).join(""))', ...chunks];
+}
+
 export const PLUGIN_RUNTIME_HELPERS = String.raw`
 const pluginRuntimeTranslator = (${PLUGIN_RUNTIME_TRANSLATOR_SOURCE})();
 const {
@@ -523,6 +543,7 @@ async function installCodexSelectionSet(selections) {
 async function installCodexPlugins(runtime) {
   assertCodexPluginRuntime(runtime);
   const selections = runtime.manifest.selections ?? {};
+  if (Object.keys(selections).length === 0) return;
   const deadline = Date.now() + CODEX_PLUGIN_RUNTIME_INSTALL_DEADLINE_MS;
   let lastError;
   while (Date.now() < deadline) {

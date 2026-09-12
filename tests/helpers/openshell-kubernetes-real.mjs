@@ -1,6 +1,6 @@
 import { sha256Hex } from "../../packages/utils/src/index.ts";
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,8 +17,9 @@ const sandboxApiResource = "sandboxes.agents.x-k8s.io";
 const harnessPort = 18790;
 const gatewayPort = 8080;
 const credentialMountPath = "/run/enterprise-credentials";
-const modelSecretPrefix = "openclaw-agent-model";
 const transportSecretPrefix = "openclaw-agent-transport";
+export const openShellOpenAiProviderName = "oce-openai";
+const openShellOpenAiProfileId = "oce-openai-api-key";
 
 const requiredWorkspaceMounts = Object.freeze([
   {
@@ -124,13 +125,13 @@ export function createOpenShellInstallationConfiguration({
       },
       kubernetes: {
         runtimeClassName: openShellRuntimeClass,
-        // TODO(OpenShell per-Sandbox ServiceAccount support): replace the shared gateway setting
-        // with Compute's exact Agent ServiceAccount on each Sandbox request.
+        // TODO(OpenShell per-Sandbox ServiceAccount support): stock OpenShell 0.0.116 rejects
+        // pod.service_account_name in Kubernetes driver_config. Once upstream validates and
+        // applies an allowed per-Sandbox ServiceAccount, select driverConfig here. Until then,
+        // the real test installs one gateway with Compute's exact Agent ServiceAccount.
         serviceAccount: { mode: "gatewayConfigured" },
-        // TODO(OpenShell existing-workspace support): remove this fixture-only mount once upstream
-        // can reuse approved Enterprise workspace subpaths without requiring a /sandbox alias.
+        // Reuse the OCE-owned workspace subpath as OpenShell's explicit /sandbox data mount.
         sandboxDataMount: {
-          claimName: "workspace-placeholder",
           subPath: "workspace",
           mountPath: "/sandbox/enterprise",
           readOnly: false,
@@ -151,10 +152,20 @@ export function createOpenShellInstallationConfiguration({
           },
           {
             name: "model-provider",
-            endpoints: [{ host: "api.openai.com", ports: [443] }],
+            endpoints: [
+              {
+                host: "api.openai.com",
+                ports: [443],
+                protocol: "rest",
+                access: "read-write",
+                enforcement: "enforce",
+              },
+            ],
           },
         ],
       },
+      providers: [openShellOpenAiProviderName],
+      modelCredential: { source: "provider" },
       sandboxNamePrefix: "os",
     },
   };
@@ -234,7 +245,7 @@ export function createOpenShellKubernetesFixture({
   openShellRuntimeClass = "openshell-sandbox",
   openShellHelmPath,
   openShellHelmChart,
-  openShellChartVersion = "0.0.113",
+  openShellChartVersion = "0.0.116",
 }) {
   const base = createRealKubernetesFixture({
     kubeconfigPath,
@@ -546,32 +557,102 @@ export function createOpenShellKubernetesFixture({
     return await base.startPortForward(namespace, openShellGatewayServiceName(namespace));
   }
 
-  async function createOperatorSecret(namespace, name, key, credential) {
-    await new Promise((resolve, reject) => {
-      const child = spawn(
-        "kubectl",
-        base.kubectlArguments([
-          "create",
-          "secret",
-          "generic",
-          name,
-          "--namespace",
-          namespace,
-          `--from-file=${key}=/dev/stdin`,
-        ]),
-        { stdio: ["pipe", "ignore", "pipe"] },
-      );
-      let stderr = "";
-      child.stderr.on("data", (chunk) => {
-        stderr = `${stderr}${chunk.toString()}`.slice(-2048);
-      });
-      child.once("error", reject);
-      child.once("exit", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`Operator Secret provisioning failed (${code}): ${stderr}`));
-      });
-      child.stdin.end(credential);
-    });
+  async function ensureOpenShellOpenAiProvider(endpoint) {
+    const directory = await mkdtemp(join(tmpdir(), "openshell-openai-provider-"));
+    const profilePath = join(directory, "profile.yaml");
+    const profile = `id: ${openShellOpenAiProfileId}
+display_name: OCE OpenAI API key
+description: OpenAI API-key provider for the OpenClaw Enterprise Codex Harness
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: OpenAI API key
+    env_vars: [OPENAI_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.openai.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /usr/bin/codex
+  - /usr/local/bin/codex
+  - /app/node_modules/@openai/**
+`;
+    const gatewayArguments = ["--gateway-endpoint", endpoint, "--workspace", "default"];
+    try {
+      await writeFile(profilePath, profile, { mode: 0o600 });
+      let profileExists = true;
+      try {
+        await execute(
+          openShellCliPath,
+          [
+            ...gatewayArguments,
+            "provider",
+            "profile",
+            "export",
+            openShellOpenAiProfileId,
+            "--output",
+            "json",
+          ],
+          { maxBuffer: 1024 * 1024 },
+        );
+      } catch (error) {
+        if (!/not found/i.test(error.stderr ?? error.message)) throw error;
+        profileExists = false;
+      }
+      if (!profileExists) {
+        await execute(
+          openShellCliPath,
+          [...gatewayArguments, "provider", "profile", "lint", "--file", profilePath],
+          { maxBuffer: 1024 * 1024 },
+        );
+        await execute(
+          openShellCliPath,
+          [...gatewayArguments, "provider", "profile", "import", "--file", profilePath],
+          { maxBuffer: 1024 * 1024 },
+        );
+      }
+      try {
+        await execute(
+          openShellCliPath,
+          [
+            ...gatewayArguments,
+            "provider",
+            "create",
+            "--name",
+            openShellOpenAiProviderName,
+            "--type",
+            openShellOpenAiProfileId,
+            "--credential",
+            "OPENAI_API_KEY",
+          ],
+          { maxBuffer: 1024 * 1024 },
+        );
+      } catch (error) {
+        if (!/already exists/i.test(error.stderr ?? error.message)) throw error;
+        await execute(
+          openShellCliPath,
+          [
+            ...gatewayArguments,
+            "provider",
+            "update",
+            openShellOpenAiProviderName,
+            "--credential",
+            "OPENAI_API_KEY",
+          ],
+          { maxBuffer: 1024 * 1024 },
+        );
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 
   async function provisionAgentTransportCredentials(directory, namespace, agentId) {
@@ -600,36 +681,6 @@ export function createOpenShellKubernetesFixture({
       await rm(tokenDirectory, { recursive: true, force: true });
     }
     return { appServerToken, gatewayToken };
-  }
-
-  async function materializeModelSecret(namespace, namespaceId, account, agentId) {
-    assert.equal(account.namespaceId, namespaceId);
-    assert.equal(account.credential.kind, "api_key");
-    const source = await base.resource("secret", account.credential.secretRef.name, namespace);
-    assert.equal(source.metadata.annotations?.["openclaw.dev/service-account-id"], account.id);
-    const credential = Buffer.from(source.data[account.credential.secretRef.key], "base64");
-    assert.ok(credential.length > 0);
-    const destinationName = `${modelSecretPrefix}-${openshellHash(agentId)}`;
-    await createOperatorSecret(namespace, destinationName, "OPENAI_API_KEY", credential);
-    await kubectl(
-      "label",
-      "secret",
-      destinationName,
-      "--namespace",
-      namespace,
-      `openclaw.dev/namespace=${namespaceId}`,
-      `openclaw.dev/agent=${agentId}`,
-    );
-    await kubectl(
-      "annotate",
-      "secret",
-      destinationName,
-      "--namespace",
-      namespace,
-      `openclaw.dev/namespace-id=${namespaceId}`,
-      `openclaw.dev/agent-id=${agentId}`,
-      `openclaw.dev/service-account-id=${account.id}`,
-    );
   }
 
   async function waitForOpenShellGateway(namespace) {
@@ -768,7 +819,7 @@ export function createOpenShellKubernetesFixture({
           mountPath === "/sandbox/enterprise" && readOnly === false && subPath === "workspace",
       ),
       true,
-      "the integration fixture must add the approved /sandbox descendant alias required by OpenShell.",
+      "OpenShell must map the approved OCE workspace into its /sandbox namespace.",
     );
   }
 
@@ -980,12 +1031,11 @@ export function createOpenShellKubernetesFixture({
     validateOpenShellPrerequisites: validatePrerequisites,
     customResources,
     maybeResource,
-    createOperatorSecret,
     provisionAgentTransportCredentials,
-    materializeModelSecret,
     waitForOpenShellGateway,
     installOpenShellGateway,
     startOpenShellGatewayPortForward,
+    ensureOpenShellOpenAiProvider,
     waitForSandbox,
     waitForProviderHarnessPod,
     assertProviderOwnedHarness,

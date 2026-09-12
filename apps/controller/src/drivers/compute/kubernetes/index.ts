@@ -59,6 +59,7 @@ import {
   PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
   type PluginRuntimeSpec,
   pluginRuntimeConfigMapData,
+  pluginRuntimeEnvironment,
   pluginRuntimeSpecForRevision,
 } from "../plugin-runtime.ts";
 import {
@@ -66,6 +67,7 @@ import {
   AGENT_RUNTIME_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
   GATEWAY_READINESS_ENTRYPOINT,
+  portableNodeInlineCommand,
 } from "./runtime-entrypoints.ts";
 
 type KubernetesRecord = Record<string, unknown>;
@@ -261,6 +263,7 @@ const CODEX_ACCESS_TOKEN = "CODEX_ACCESS_TOKEN";
 const CODEX_CHATGPT_WORKSPACE_ID = "CODEX_CHATGPT_WORKSPACE_ID";
 const MAX_RUNTIME_CREDENTIAL_BYTES = 65_536;
 const RUNTIME_STATE_VOLUME_SIZE = "1Gi";
+const MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES = 30 * 1024;
 const GATEWAY_PRIVATE_STATE_VOLUME = "openclaw-gateway-state";
 const GATEWAY_PRIVATE_STATE_SIZE = "10Gi";
 const GATEWAY_PRIVATE_STATE_CATEGORIES = Object.freeze([
@@ -878,6 +881,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
   ): Promise<AgentRuntimeCredentialStatus> {
     return this.withRuntimeCredentialErrors(async () => {
       const credentials = this.validRuntimeCredentialInput(input);
+      if (
+        this.sandboxDriver?.modelCredentialSource === "external" &&
+        credentials.modelApiKey !== undefined
+      ) {
+        throw new ResourceConflictError(
+          "The Sandbox Driver owns the externally brokered model credential.",
+        );
+      }
       const context = await this.runtimeCredentialContext(binding, credentials.slack !== undefined);
       const observed = await this.readRuntimeCredentialSecrets(context);
       const status = this.runtimeCredentialStatus(observed);
@@ -1490,6 +1501,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         [],
         [],
         pluginRuntime,
+        sandboxDriver === undefined ? "configMap" : "environment",
       );
       if (sandboxDriver?.provisionHarness !== undefined) {
         const requirements = this.harnessRequirementsFromDeployment(agentDeployment);
@@ -2069,9 +2081,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
       Partial<Record<RuntimeCredentialGroup, ManagedKubernetesObject<"Secret"> | undefined>>
     >,
   ): AgentRuntimeCredentialStatus {
+    const externalModelCredential = this.sandboxDriver?.modelCredentialSource === "external";
+    if (externalModelCredential && observed.model !== undefined) {
+      throw new ResourceConflictError(
+        "An OCE model Secret cannot coexist with an externally brokered model credential.",
+      );
+    }
     return {
       transportConfigured: observed.transport !== undefined,
-      modelConfigured: observed.model !== undefined,
+      modelConfigured: externalModelCredential || observed.model !== undefined,
       slackConfigured: observed.slack !== undefined,
     };
   }
@@ -3761,6 +3779,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     enabledChannels: readonly ChannelRequirements[] = [],
     secretEnvironment: readonly SecretEnvironmentProjection[] = [],
     pluginRuntime?: PluginRuntimeSnapshot,
+    pluginRuntimeDelivery: "configMap" | "environment" = "configMap",
   ): ManagedKubernetesObject {
     const metadata = this.ownershipMetadata(ownership);
     const workloadMetadata =
@@ -3823,39 +3842,48 @@ export class KubernetesComputeDriver implements ComputeDriver {
           !embedded &&
           Object.keys(pluginRuntime.runtime.selections).length > 0));
     if (needsPluginRuntime) {
-      volumes.push({
-        name: PLUGIN_RUNTIME_VOLUME,
-        configMap: {
-          name: pluginRuntime.name,
-          items: [
-            { key: PLUGIN_RUNTIME_MANIFEST, path: PLUGIN_RUNTIME_MANIFEST },
-            ...(pluginRuntime.runtime.kind === "codex" && role === "agent"
-              ? [{ key: PLUGIN_RUNTIME_CODEX_CONFIG, path: PLUGIN_RUNTIME_CODEX_CONFIG }]
-              : []),
-          ],
-          optional: false,
-        },
-      });
-      volumeMounts.push({
-        name: PLUGIN_RUNTIME_VOLUME,
-        mountPath: PLUGIN_RUNTIME_DIRECTORY,
-        readOnly: true,
-      });
-      variables.push({
-        name: PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT,
-        value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_MANIFEST}`,
-      });
-      if (pluginRuntime.runtime.kind === "codex" && role === "agent") {
+      if (pluginRuntimeDelivery === "environment") {
         variables.push(
-          {
-            name: PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
-            value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_CODEX_CONFIG}`,
-          },
-          {
-            name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
-            value: PLUGIN_RUNTIME_READY_MARKER,
-          },
+          ...Object.entries(
+            pluginRuntimeEnvironment(pluginRuntime.runtime, MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES),
+          ).map(([name, value]) => ({ name, value })),
+          { name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT, value: PLUGIN_RUNTIME_READY_MARKER },
         );
+      } else {
+        volumes.push({
+          name: PLUGIN_RUNTIME_VOLUME,
+          configMap: {
+            name: pluginRuntime.name,
+            items: [
+              { key: PLUGIN_RUNTIME_MANIFEST, path: PLUGIN_RUNTIME_MANIFEST },
+              ...(pluginRuntime.runtime.kind === "codex" && role === "agent"
+                ? [{ key: PLUGIN_RUNTIME_CODEX_CONFIG, path: PLUGIN_RUNTIME_CODEX_CONFIG }]
+                : []),
+            ],
+            optional: false,
+          },
+        });
+        volumeMounts.push({
+          name: PLUGIN_RUNTIME_VOLUME,
+          mountPath: PLUGIN_RUNTIME_DIRECTORY,
+          readOnly: true,
+        });
+        variables.push({
+          name: PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT,
+          value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_MANIFEST}`,
+        });
+        if (pluginRuntime.runtime.kind === "codex" && role === "agent") {
+          variables.push(
+            {
+              name: PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
+              value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_CODEX_CONFIG}`,
+            },
+            {
+              name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
+              value: PLUGIN_RUNTIME_READY_MARKER,
+            },
+          );
+        }
       }
     }
     if (projected !== undefined) {
@@ -4006,7 +4034,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
               },
             },
           );
-        } else {
+        } else if (this.sandboxDriver?.modelCredentialSource !== "external") {
           // TODO(model-credential-broker): Replace direct per-Agent API keys with brokered credentials.
           variables.push(secret(MODEL_API_KEY, runtime.modelSecretPrefix, MODEL_API_KEY));
         }
@@ -4119,10 +4147,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
                 ...(runtime === undefined
                   ? {}
                   : {
-                      command: ["node", "-e"],
-                      args: [
+                      command: portableNodeInlineCommand(
                         role === "gateway" ? GATEWAY_RUNTIME_ENTRYPOINT : AGENT_RUNTIME_ENTRYPOINT,
-                      ],
+                      ),
                     }),
               },
             ],
