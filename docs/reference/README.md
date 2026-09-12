@@ -43,10 +43,10 @@ behavioral rules such as cross-resource ownership, lifecycle ordering, and failu
 effects. Contributors updating routes or schemas should follow the
 [API generation checks](../testing/local.md#repository-and-tooling-configuration).
 
-## Inactive components
+## Libraries awaiting application integration
 
-- [Trusted repository publication](repository-publication-v1.md): exact Git
-  candidate custody and publication application ports; no available publisher.
+- [Git object snapshot store](git-object-store.md): validates and retains Git
+  objects independently of a working repository. No controller or worker caller yet.
 
 ## Drivers
 

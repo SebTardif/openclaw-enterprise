@@ -185,6 +185,9 @@
         },
         {
           "path": "tests/integration/plugin-driver-startup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/git-object-store-contract.test.mjs"
         }
       ]
     },
@@ -761,20 +764,16 @@
         }
       ]
     },
-    "repository-publication": {
-      "description": "Explicitly selected Linux Git object custody and publication application component checks. Requires a reviewed Git binary pin; excluded from automated groups until that fixture is provisioned. No live publication.",
+    "git-object-store": {
+      "description": "Local Git snapshot capture, pack interoperability, and recovery. Requires an explicitly selected Git binary; outside automated groups until a suitable fixture is provisioned.",
       "requiredEnv": [
-        "OCE_PUBLICATION_TEST_GIT_PATH",
-        "OCE_PUBLICATION_TEST_GIT_SHA256",
-        "OCE_PUBLICATION_TEST_GIT_OWNER_UID",
-        "OCE_PUBLICATION_TEST_ARTIFACT_BUDGET_BYTES"
+        "OCE_GIT_STORE_TEST_GIT_PATH",
+        "OCE_GIT_STORE_TEST_GIT_SHA256",
+        "OCE_GIT_STORE_TEST_GIT_OWNER_UID"
       ],
       "files": [
         {
-          "path": "tests/conformance/repository-publication-v1.test.mjs"
-        },
-        {
-          "path": "tests/conformance/repository-publication-v1-git-objects.test.mjs"
+          "path": "tests/conformance/git-object-store.test.mjs"
         }
       ]
     }

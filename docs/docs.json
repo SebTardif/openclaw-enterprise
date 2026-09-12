@@ -57,7 +57,6 @@
                 "group": "Features",
                 "pages": [
                   "reference/README",
-                  "reference/repository-publication-v1",
                   "reference/agent-plugins",
                   "reference/agents",
                   "reference/agents/deployment",
@@ -104,6 +103,10 @@
                   "reference/drivers/service-account",
                   "reference/drivers/ssh-compute"
                 ]
+              },
+              {
+                "group": "Libraries awaiting integration",
+                "pages": ["reference/git-object-store"]
               }
             ]
           },
@@ -156,7 +159,7 @@
                   "testing/developer-skills",
                   "testing/autoreview",
                   "testing/ci",
-                  "testing/repository-publication"
+                  "testing/git-object-store"
                 ]
               },
               {

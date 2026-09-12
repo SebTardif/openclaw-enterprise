@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import {
   link,
   mkdir,
@@ -16,46 +16,31 @@ import {
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import test from "node:test";
-import { GitObjectCustodyV1 } from "../../packages/occ/src/repository-publication-v1/git-object-custody.ts";
-import { PublicationRefusalV1 } from "../../packages/occ/src/repository-publication-v1/contract.ts";
+import { GitObjectStore } from "../../packages/occ/src/git-object-store/store.ts";
+import { GitObjectStoreError } from "../../packages/occ/src/git-object-store/contract.ts";
 
-// Object-format interoperability only. No Work, State, approval, credentials,
-// remote or publication authority is supplied by this fixture. The real Git
-// executable creates/inspects objects only; no project is checked out or run.
+// Real Git creates the fixture objects and imports the resulting pack.
+// Tests use local repositories and never check out or execute project files.
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-// Prospective bound for these thirteen small-graph cases, including bare repo
-// scaffolding, loose objects, three import repos and retained custody files.
-// The extra 256 KiB covers rounding/transient-file allowance. Logs are budgeted
-// separately by the runner. Changing generated graphs requires a new forecast.
-const fixtureForecastBytes = (1324 + 256) * 1024;
-const forecastFixtureCount = 13;
 const selectionKeys = [
-  "OCE_PUBLICATION_TEST_GIT_PATH",
-  "OCE_PUBLICATION_TEST_GIT_SHA256",
-  "OCE_PUBLICATION_TEST_GIT_OWNER_UID",
-  "OCE_PUBLICATION_TEST_ARTIFACT_BUDGET_BYTES",
+  "OCE_GIT_STORE_TEST_GIT_PATH",
+  "OCE_GIT_STORE_TEST_GIT_SHA256",
+  "OCE_GIT_STORE_TEST_GIT_OWNER_UID",
 ];
 function selectedFixture() {
   const values = selectionKeys.map((key) => process.env[key]);
   if (values.every((value) => value === undefined)) return undefined;
   assert.ok(
     values.every((value) => typeof value === "string" && value.length > 0),
-    "Partial publication Git fixture selection is unavailable; select all four settings",
+    "Partial Git store fixture selection is unavailable; select all three settings",
   );
-  const [path, sha256, owner, budget] = values;
+  const [path, sha256, owner] = values;
   assert.ok(isAbsolute(path), "The selected Git executable must have an absolute path");
   assert.match(sha256, /^[0-9a-f]{64}(?![\s\S])/);
   assert.match(owner, /^(?:0|[1-9][0-9]*)(?![\s\S])/);
-  assert.match(budget, /^[1-9][0-9]*(?![\s\S])/);
-  const ownerUid = Number(owner),
-    artifactBudget = Number(budget);
+  const ownerUid = Number(owner);
   assert.ok(Number.isSafeInteger(ownerUid) && ownerUid <= 0xffffffff);
-  assert.ok(Number.isSafeInteger(artifactBudget) && artifactBudget <= 2 * 1024 * 1024);
-  assert.ok(
-    artifactBudget >= fixtureForecastBytes + 96 * 1024,
-    "Selected fixture budget is below the prospective bound",
-  );
-  return Object.freeze({ path, sha256, ownerUid, artifactBudget });
+  return Object.freeze({ path, sha256, ownerUid });
 }
 const selected = selectedFixture();
 const gitTest = (name, options, body) =>
@@ -71,70 +56,19 @@ const gitTest = (name, options, body) =>
     },
     body,
   );
-const fixtureMaxima = new Map();
-function measureFixture(directory) {
-  const pending = [directory];
-  let apparentBytes = 0,
-    allocatedBytes = 0,
-    entries = 0;
-  while (pending.length) {
-    const path = pending.pop(),
-      stat = lstatSync(path);
-    assert.ok(++entries <= 4096, "Fixture filesystem entry count exceeded its finite bound");
-    apparentBytes += stat.size;
-    allocatedBytes += stat.blocks * 512;
-    // lstat deliberately counts a link without following it outside this fixture.
-    if (stat.isDirectory()) for (const name of readdirSync(path)) pending.push(join(path, name));
-  }
-  const prior = fixtureMaxima.get(directory) ?? { apparentBytes: 0, allocatedBytes: 0 };
-  fixtureMaxima.set(directory, {
-    apparentBytes: Math.max(prior.apparentBytes, apparentBytes),
-    allocatedBytes: Math.max(prior.allocatedBytes, allocatedBytes),
-  });
-  const total = [...fixtureMaxima.values()].reduce(
-    (sum, item) => ({
-      apparentBytes: sum.apparentBytes + item.apparentBytes,
-      allocatedBytes: sum.allocatedBytes + item.allocatedBytes,
-    }),
-    { apparentBytes: 0, allocatedBytes: 0 },
-  );
-  assert.ok(
-    total.apparentBytes <= Math.min(fixtureForecastBytes, selected.artifactBudget - 96 * 1024) &&
-      total.allocatedBytes <= Math.min(fixtureForecastBytes, selected.artifactBudget - 96 * 1024),
-    `Cumulative observed fixture maxima exceed selected budget: ${JSON.stringify(total)}`,
-  );
-  return {
-    fixture: { apparentBytes, allocatedBytes, entries },
-    cumulativeObservedMaxima: total,
-    fixtures: fixtureMaxima.size,
-    selectedBudgetBytes: selected.artifactBudget,
-  };
-}
-
 async function gitFixture(t) {
   assert.ok(selected);
-  assert.ok(
-    fixtureMaxima.size < forecastFixtureCount,
-    "New fixture needs an updated finite forecast",
-  );
   const executableStat = lstatSync(selected.path);
   assert.equal(executableStat.uid, selected.ownerUid);
   assert.equal(executableStat.isFile(), true);
   assert.equal(sha256(await readFile(selected.path)), selected.sha256);
-  const directory = await mkdtemp(join(homedir(), ".publication-objects-"));
+  const directory = await mkdtemp(join(homedir(), ".git-object-store-"));
   const owners = [];
   t.after(async () => {
     try {
-      for (const custody of owners) await custody.close();
+      for (const store of owners) await store.close();
     } finally {
-      // Account before EVERY known fixture cleanup, retaining earlier maxima
-      // even after their directories are removed. These are sampled filesystem
-      // maxima, not a claim to observe temporary files inside an awaited owner.
-      try {
-        t.diagnostic(`fixture-accounting ${JSON.stringify(measureFixture(directory))}`);
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
+      await rm(directory, { recursive: true, force: true });
     }
   });
   const empty = join(directory, "empty");
@@ -159,22 +93,18 @@ async function gitFixture(t) {
     GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
   };
   const run = (args, input) => {
-    try {
-      return execFileSync(
-        selected.path,
-        ["-c", `core.hooksPath=${empty}`, "-c", "gc.auto=0", ...args],
-        {
-          cwd: directory,
-          env,
-          input,
-          timeout: 5000,
-          maxBuffer: 512 * 1024,
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-    } finally {
-      measureFixture(directory);
-    }
+    return execFileSync(
+      selected.path,
+      ["-c", `core.hooksPath=${empty}`, "-c", "gc.auto=0", ...args],
+      {
+        cwd: directory,
+        env,
+        input,
+        timeout: 5000,
+        maxBuffer: 512 * 1024,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
   };
   run(["init", "--bare", "--object-format=sha1", `--template=${empty}`, repository]);
   const git = (args, input) => run([`--git-dir=${repository}`, ...args], input);
@@ -224,25 +154,9 @@ const limits = {
 const signal = () => new AbortController().signal;
 function request(proposed, base = proposed, expected = { kind: "create" }) {
   return {
-    version: 1,
-    repository: {
-      installationId: "installation/1",
-      githubHost: "github.com",
-      appId: "100",
-      githubInstallationId: "200",
-      repositoryId: "300",
-    },
-    baseBranch: "main",
     baseOid: base.oid,
-    targetBranch: "proposed/change",
     expectedTarget: expected,
     proposedOid: proposed.oid,
-    draftPullRequest: {
-      title: "Exact object fixture",
-      body: "Credential-free object test",
-      draft: true,
-    },
-    actions: ["push", "create-draft-pr"],
   };
 }
 function rawObject(type, bytes) {
@@ -271,7 +185,7 @@ function rawCommit(tree, parents = [], suffix = "fixture\n") {
     ),
   );
 }
-async function owner(t, fixture, overrides = {}, suffix = "custody") {
+async function owner(t, fixture, overrides = {}, suffix = "store") {
   const directory = join(fixture.directory, suffix);
   await mkdir(directory, { mode: 0o700 });
   const options = {
@@ -281,9 +195,9 @@ async function owner(t, fixture, overrides = {}, suffix = "custody") {
     gitExecutable: { path: selected.path, sha256: selected.sha256, ownerUid: selected.ownerUid },
     limits: { ...limits, ...overrides },
   };
-  const custody = await GitObjectCustodyV1.open(options);
-  fixture.owners.push(custody);
-  return { custody, options };
+  const store = await GitObjectStore.open(options);
+  fixture.owners.push(store);
+  return { store, options };
 }
 async function importPack(f, pack, root, records) {
   const destination = join(f.directory, "import.git");
@@ -309,12 +223,12 @@ gitTest(
     const f = await gitFixture(t),
       tree = f.tree(),
       root = f.commit(tree);
-    const { custody } = await owner(t, f),
+    const { store } = await owner(t, f),
       req = request(root),
       records = [...f.records.values()];
-    const captured = await custody.capture(req, records, signal());
-    const graph = custody.inspect(captured),
-      pack = Buffer.from(await custody.readPack(captured));
+    const captured = await store.capture(req, records, signal());
+    const graph = store.inspect(captured),
+      pack = Buffer.from(await store.readPack(captured));
     assert.equal(graph.objectFormat, "sha1");
     assert.equal(graph.objectCount, records.length);
     assert.equal(
@@ -349,10 +263,10 @@ gitTest(
     const right = f.commit(rightTree, [base]),
       merged = f.commit(rootTree, [left, right]);
     const req = request(merged, base, { kind: "existing", oid: base.oid });
-    const { custody } = await owner(t, f),
+    const { store } = await owner(t, f),
       records = [...f.records.values()];
-    const captured = await custody.capture(req, records, signal());
-    await importPack(f, await custody.readPack(captured), merged, records);
+    const captured = await store.capture(req, records, signal());
+    await importPack(f, await store.readPack(captured), merged, records);
   },
 );
 
@@ -368,16 +282,16 @@ gitTest(
       root = f.commit(tree);
     const records = [...f.records.values()],
       req = request(root),
-      { custody } = await owner(t, f);
-    const first = await custody.capture(req, records, signal());
-    const second = await custody.capture(req, [...records].reverse(), signal());
-    assert.equal(custody.inspect(first).graphDigest, custody.inspect(second).graphDigest);
-    await importPack(f, await custody.readPack(first), root, records);
+      { store } = await owner(t, f);
+    const first = await store.capture(req, records, signal());
+    const second = await store.capture(req, [...records].reverse(), signal());
+    assert.equal(store.inspect(first).graphDigest, store.inspect(second).graphDigest);
+    await importPack(f, await store.readPack(first), root, records);
   },
 );
 
 gitTest(
-  "capture retains immutable bytes, refuses foreign handles and restores with new original custody",
+  "capture supports concurrent saves and reopens immutable bytes after interrupted writes",
   { timeout: 15000 },
   async (t) => {
     const f = await gitFixture(t),
@@ -387,30 +301,37 @@ gitTest(
     const records = [...f.records.values()],
       req = request(root),
       original = structuredClone(req);
-    const { custody, options } = await owner(t, f);
-    const captured = await custody.capture(req, records, signal()),
-      graph = custody.inspect(captured);
-    const before = Buffer.from(await custody.readPack(captured));
+    const { store, options } = await owner(t, f);
+    // Independent requests can retain the same object graph concurrently.
+    // Every caller must receive a readable capture, even during link publication.
+    const simultaneous = await Promise.all(
+      Array.from({ length: 16 }, () => store.capture(req, records, signal())),
+    );
+    const simultaneousPacks = await Promise.all(simultaneous.map((c) => store.readPack(c)));
+    for (const pack of simultaneousPacks) assert.deepEqual(pack, simultaneousPacks[0]);
+    const captured = await store.capture(req, records, signal()),
+      graph = store.inspect(captured);
+    const before = Buffer.from(await store.readPack(captured));
     for (const record of records) {
       record.bytes.fill(0);
       record.oid = "0".repeat(40);
     }
     records.length = 0;
     req.proposedOid = "a".repeat(40);
-    const borrowed = await custody.readPack(captured);
+    const borrowed = await store.readPack(captured);
     borrowed.fill(0);
-    assert.deepEqual(Buffer.from(await custody.readPack(captured)), before);
-    assert.equal(custody.assertRequest(captured, original), undefined);
-    assert.throws(() => custody.assertRequest(captured, req), PublicationRefusalV1);
-    assert.throws(() => custody.inspect({ ...captured }), PublicationRefusalV1);
-    await custody.close();
-    const reopened = await GitObjectCustodyV1.open(options);
+    assert.deepEqual(Buffer.from(await store.readPack(captured)), before);
+    assert.equal(store.assertRequest(captured, original), undefined);
+    assert.throws(() => store.assertRequest(captured, req), GitObjectStoreError);
+    assert.throws(() => store.inspect({ ...captured }), GitObjectStoreError);
+    await store.close();
+    const reopened = await GitObjectStore.open(options);
     f.owners.push(reopened);
-    assert.throws(() => reopened.inspect(captured), PublicationRefusalV1);
+    assert.throws(() => reopened.inspect(captured), GitObjectStoreError);
     const restored = await reopened.restore(graph, original, signal());
     assert.deepEqual(Buffer.from(await reopened.readPack(restored)), before);
     assert.equal(reopened.inspect(restored).graphDigest, graph.graphDigest);
-    await assert.rejects(async () => reopened.restore(graph, req, signal()), PublicationRefusalV1);
+    await assert.rejects(async () => reopened.restore(graph, req, signal()), GitObjectStoreError);
 
     // Existing handles and restart recovery must both reject altered storage.
     // Each mutation targets only this fixture's retained content, never Git's
@@ -420,30 +341,41 @@ gitTest(
     const corrupted = Buffer.from(originalBytes);
     corrupted[corrupted.length - 1] ^= 1;
     await writeFile(retained, corrupted);
-    await assert.rejects(() => reopened.readPack(restored), PublicationRefusalV1);
-    await assert.rejects(() => reopened.restore(graph, original, signal()), PublicationRefusalV1);
+    await assert.rejects(() => reopened.readPack(restored), GitObjectStoreError);
+    await assert.rejects(() => reopened.restore(graph, original, signal()), GitObjectStoreError);
     await writeFile(retained, originalBytes);
 
-    const alias = join(f.directory, "retained-alias");
+    // A crash after publishing the hard link can leave its pending alias.
+    // Restart must recover the same bytes even when that alias survives.
+    const alias = join(options.directory, ".pending-interrupted-capture");
     await link(retained, alias);
-    await assert.rejects(() => reopened.readPack(restored), PublicationRefusalV1);
+    await reopened.close();
+    const recovered = await GitObjectStore.open(options);
+    f.owners.push(recovered);
+    const recoveredCapture = await recovered.restore(graph, original, signal());
+    assert.deepEqual(Buffer.from(await recovered.readPack(recoveredCapture)), before);
+    await recovered.close();
     await unlink(alias);
+    // Continue checking the reader after alias cleanup.
+    const reader = await GitObjectStore.open(options);
+    f.owners.push(reader);
+    const readerCapture = await reader.restore(graph, original, signal());
     await rename(retained, alias);
     await symlink(alias, retained);
-    await assert.rejects(() => reopened.readPack(restored));
-    await assert.rejects(() => reopened.restore(graph, original, signal()));
+    await assert.rejects(() => reader.readPack(readerCapture));
+    await assert.rejects(() => reader.restore(graph, original, signal()));
     await unlink(retained);
     await rename(alias, retained);
-    assert.deepEqual(Buffer.from(await reopened.readPack(restored)), before);
+    assert.deepEqual(Buffer.from(await reader.readPack(readerCapture)), before);
 
     // A still-open directory descriptor cannot authorize a replacement path.
     const moved = `${options.directory}-moved`;
     await rename(options.directory, moved);
     await mkdir(options.directory, { mode: 0o700 });
-    await assert.rejects(() => reopened.readPack(restored), PublicationRefusalV1);
+    await assert.rejects(() => reader.readPack(readerCapture), GitObjectStoreError);
     await rm(options.directory, { recursive: true });
     await rename(moved, options.directory);
-    assert.deepEqual(Buffer.from(await reopened.readPack(restored)), before);
+    assert.deepEqual(Buffer.from(await reader.readPack(readerCapture)), before);
   },
 );
 
@@ -454,7 +386,7 @@ gitTest(
     const f = await gitFixture(t),
       tree = f.tree(),
       root = f.commit(tree),
-      { custody } = await owner(t, f),
+      { store } = await owner(t, f),
       req = request(root);
     const records = [...f.records.values()];
     for (const malformed of [
@@ -465,8 +397,8 @@ gitTest(
       records.map((r, i) => (i ? r : { ...r, type: "tag" })),
     ])
       await assert.rejects(
-        async () => custody.capture(req, malformed, signal()),
-        PublicationRefusalV1,
+        async () => store.capture(req, malformed, signal()),
+        GitObjectStoreError,
       );
     let invoked = 0;
     const accessor = { ...records[0] };
@@ -478,8 +410,8 @@ gitTest(
       },
     });
     await assert.rejects(
-      async () => custody.capture(req, [accessor, records[1]], signal()),
-      PublicationRefusalV1,
+      async () => store.capture(req, [accessor, records[1]], signal()),
+      GitObjectStoreError,
     );
     assert.equal(invoked, 0);
     const shadowed = new Uint8Array(records[0].bytes);
@@ -490,15 +422,15 @@ gitTest(
       },
     });
     await assert.rejects(
-      async () => custody.capture(req, [{ ...records[0], bytes: shadowed }, records[1]], signal()),
-      PublicationRefusalV1,
+      async () => store.capture(req, [{ ...records[0], bytes: shadowed }, records[1]], signal()),
+      GitObjectStoreError,
     );
     assert.equal(invoked, 0);
     const shared = new Uint8Array(new SharedArrayBuffer(records[0].bytes.length));
     shared.set(records[0].bytes);
     await assert.rejects(
-      async () => custody.capture(req, [{ ...records[0], bytes: shared }, records[1]], signal()),
-      PublicationRefusalV1,
+      async () => store.capture(req, [{ ...records[0], bytes: shared }, records[1]], signal()),
+      GitObjectStoreError,
     );
   },
 );
@@ -510,7 +442,7 @@ gitTest(
     const f = await gitFixture(t),
       tree = f.tree(),
       root = f.commit(tree);
-    const { custody, options } = await owner(t, f);
+    const { store, options } = await owner(t, f);
     // The malformed local configuration demonstrably breaks ordinary repository
     // config parsing. The custodian must ignore both this process cwd and a .git
     // inside its object directory when invoking the fixed hash-only Git command.
@@ -522,8 +454,8 @@ gitTest(
     const previousDirectory = process.cwd();
     try {
       process.chdir(f.repository);
-      const capture = await custody.capture(request(root), [...f.records.values()], signal());
-      assert.equal(custody.inspect(capture).proposedOid, root.oid);
+      const capture = await store.capture(request(root), [...f.records.values()], signal());
+      assert.equal(store.inspect(capture).proposedOid, root.oid);
     } finally {
       process.chdir(previousDirectory);
     }
@@ -539,27 +471,27 @@ gitTest(
     const tree = f.tree([{ mode: "100644", name: "file", object: blob }]),
       base = f.commit(tree),
       root = f.commit(tree, [base]);
-    const { custody } = await owner(t, f),
+    const { store } = await owner(t, f),
       req = request(root, base),
       records = [...f.records.values()];
     for (const missing of [blob, tree, base])
       await assert.rejects(
         async () =>
-          custody.capture(
+          store.capture(
             req,
             records.filter((r) => r.oid !== missing.oid),
             signal(),
           ),
-        PublicationRefusalV1,
+        GitObjectStoreError,
       );
     const unused = rawObject("blob", Buffer.from("not reachable"));
     await assert.rejects(
-      async () => custody.capture(req, [...records, unused], signal()),
-      PublicationRefusalV1,
+      async () => store.capture(req, [...records, unused], signal()),
+      GitObjectStoreError,
     );
     await assert.rejects(
-      async () => custody.capture(request(blob), [blob], signal()),
-      PublicationRefusalV1,
+      async () => store.capture(request(blob), [blob], signal()),
+      GitObjectStoreError,
     );
   },
 );
@@ -570,7 +502,7 @@ gitTest(
   async (t) => {
     const f = await gitFixture(t),
       blob = f.blob(Buffer.from("content")),
-      { custody } = await owner(t, f);
+      { store } = await owner(t, f);
     const valid = rawTree([{ name: "file", object: blob }]);
     const cases = [
       rawObject("tree", valid.bytes.subarray(0, -1)),
@@ -580,8 +512,8 @@ gitTest(
     for (const tree of cases) {
       const root = rawCommit(tree);
       await assert.rejects(
-        async () => custody.capture(request(root), [root, tree, blob], signal()),
-        PublicationRefusalV1,
+        async () => store.capture(request(root), [root, tree, blob], signal()),
+        GitObjectStoreError,
       );
     }
   },
@@ -594,13 +526,13 @@ gitTest(
     const f = await gitFixture(t),
       blob = f.blob(Buffer.from("x")),
       child = f.tree(),
-      { custody } = await owner(t, f);
+      { store } = await owner(t, f);
     const ordered = f.tree([
       { mode: "040000", name: "foo", object: child },
       { mode: "100644", name: "foo.bar", object: blob },
     ]);
     const root = f.commit(ordered);
-    await custody.capture(request(root), [...f.records.values()], signal());
+    await store.capture(request(root), [...f.records.values()], signal());
     for (const [entries, closure] of [
       [
         [
@@ -625,8 +557,8 @@ gitTest(
       const tree = rawTree(entries),
         candidate = rawCommit(tree);
       await assert.rejects(
-        async () => custody.capture(request(candidate), [candidate, tree, ...closure], signal()),
-        PublicationRefusalV1,
+        async () => store.capture(request(candidate), [candidate, tree, ...closure], signal()),
+        GitObjectStoreError,
       );
     }
   },
@@ -638,7 +570,7 @@ gitTest(
   async (t) => {
     const f = await gitFixture(t),
       blob = f.blob(Buffer.from("data")),
-      { custody } = await owner(t, f);
+      { store } = await owner(t, f);
     for (const name of [
       ".git",
       ".GiT",
@@ -653,8 +585,8 @@ gitTest(
       const tree = rawTree([{ name, object: blob }]),
         root = rawCommit(tree);
       await assert.rejects(
-        async () => custody.capture(request(root), [root, tree, blob], signal()),
-        PublicationRefusalV1,
+        async () => store.capture(request(root), [root, tree, blob], signal()),
+        GitObjectStoreError,
       );
     }
   },
@@ -666,9 +598,9 @@ gitTest(
   async (t) => {
     const f = await gitFixture(t),
       tree = f.tree(),
-      { custody } = await owner(t, f);
+      { store } = await owner(t, f);
     const valid = rawCommit(tree, [], `parent ${"a".repeat(40)}\nmessage only\n`);
-    await custody.capture(request(valid), [valid, tree], signal());
+    await store.capture(request(valid), [valid, tree], signal());
     for (const bytes of [
       Buffer.from(`tree ${tree.oid}\n${valid.bytes.toString()}`),
       Buffer.from(valid.bytes.toString().replace(`tree ${tree.oid}`, `tree ${"z".repeat(40)}`)),
@@ -679,8 +611,8 @@ gitTest(
     ]) {
       const root = rawObject("commit", bytes);
       await assert.rejects(
-        async () => custody.capture(request(root), [root, tree], signal()),
-        PublicationRefusalV1,
+        async () => store.capture(request(root), [root, tree], signal()),
+        GitObjectStoreError,
       );
     }
   },
@@ -698,19 +630,19 @@ gitTest(
       req = request(root);
     const bounded = await owner(t, f, { maxObjectBytes: 4095 }, "small-object");
     await assert.rejects(
-      async () => bounded.custody.capture(req, records, signal()),
-      PublicationRefusalV1,
+      async () => bounded.store.capture(req, records, signal()),
+      GitObjectStoreError,
     );
     const exact = await owner(t, f, { maxObjects: records.length, maxObjectBytes: 4096 }, "exact");
-    await exact.custody.capture(req, records, signal());
+    await exact.store.capture(req, records, signal());
     const fewer = await owner(t, f, { maxObjects: records.length - 1 }, "few-objects");
     await assert.rejects(
-      async () => fewer.custody.capture(req, records, signal()),
-      PublicationRefusalV1,
+      async () => fewer.store.capture(req, records, signal()),
+      GitObjectStoreError,
     );
     await assert.rejects(
-      async () => exact.custody.capture(req, records, AbortSignal.abort()),
-      PublicationRefusalV1,
+      async () => exact.store.capture(req, records, AbortSignal.abort()),
+      GitObjectStoreError,
     );
   },
 );
@@ -733,20 +665,104 @@ gitTest(
     assert.ok(records.length < 16);
     const expanded = await owner(t, f, { maxExpandedPaths: 64 }, "expanded");
     await assert.rejects(
-      async () => expanded.custody.capture(req, records, signal()),
-      PublicationRefusalV1,
+      async () => expanded.store.capture(req, records, signal()),
+      GitObjectStoreError,
     );
     const paths = await owner(t, f, { maxPathBytes: 12 }, "paths");
     await assert.rejects(
-      async () => paths.custody.capture(req, records, signal()),
-      PublicationRefusalV1,
+      async () => paths.store.capture(req, records, signal()),
+      GitObjectStoreError,
     );
     const depth = await owner(t, f, { maxTreeDepth: 3 }, "depth");
     await assert.rejects(
-      async () => depth.custody.capture(req, records, signal()),
-      PublicationRefusalV1,
+      async () => depth.store.capture(req, records, signal()),
+      GitObjectStoreError,
     );
     const allowed = await owner(t, f, {}, "allowed");
-    await allowed.custody.capture(req, records, signal());
+    await allowed.store.capture(req, records, signal());
+  },
+);
+
+gitTest(
+  "restore and recapture preserve a valid pack produced by another compressor",
+  { timeout: 15000 },
+  async (t) => {
+    const f = await gitFixture(t);
+    const blob = f.blob(Buffer.from("compressible content\n".repeat(128)));
+    const tree = f.tree([{ mode: "100644", name: "file", object: blob }]);
+    const root = f.commit(tree);
+    const records = [...f.records.values()];
+    const req = request(root);
+    const { store, options } = await owner(t, f);
+    const captured = await store.capture(req, records, signal());
+    const originalDescriptor = store.inspect(captured);
+    const originalPack = Buffer.from(await store.readPack(captured));
+    // Git produces an independently encoded, non-delta pack for these same
+    // objects. Compression level zero reliably differs from this store's six.
+    const alternatePack = f.git(
+      [
+        "-c",
+        "pack.compression=0",
+        "pack-objects",
+        "--stdout",
+        "--window=0",
+        "--no-reuse-object",
+        "--no-reuse-delta",
+      ],
+      records.map((r) => r.oid).join("\n") + "\n",
+    );
+    assert.notDeepEqual(alternatePack, originalPack);
+    await importPack(f, alternatePack, root, records);
+    const retained = join(options.directory, `${originalDescriptor.graphDigest.slice(7)}.objects`);
+    const originalFile = await readFile(retained);
+    const metadataEnd = 12 + originalFile.readUInt32BE(8);
+    const metadata = JSON.parse(originalFile.subarray(12, metadataEnd).toString());
+    const rawObjects = originalFile.subarray(
+      metadataEnd,
+      originalFile.length - originalPack.length,
+    );
+    // Replace only this fixture's pack and its declared digest/length. This
+    // models persisted output from another compressor, with unchanged objects.
+    const savePack = async (packed) => {
+      const graph = {
+        ...originalDescriptor,
+        packSha256: `sha256:${sha256(packed)}`,
+        packBytes: packed.length,
+      };
+      const json = Buffer.from(JSON.stringify({ ...metadata, graph }));
+      const header = Buffer.from(originalFile.subarray(0, 12));
+      header.writeUInt32BE(json.length, 8);
+      await writeFile(retained, Buffer.concat([header, json, rawObjects, packed]));
+      return graph;
+    };
+    const alternateDescriptor = await savePack(alternatePack);
+    const alternateFile = await readFile(retained);
+    await store.close();
+    const reopened = await GitObjectStore.open(options);
+    f.owners.push(reopened);
+    const restored = await reopened.restore(alternateDescriptor, req, signal());
+    assert.deepEqual(Buffer.from(await reopened.readPack(restored)), alternatePack);
+    const recaptured = await reopened.capture(req, records, signal());
+    assert.deepEqual(reopened.inspect(recaptured), alternateDescriptor);
+    assert.deepEqual(Buffer.from(await reopened.readPack(recaptured)), alternatePack);
+    assert.deepEqual(await readFile(retained), alternateFile);
+
+    // A caller-supplied digest is not proof of a valid pack. Even self-consistent
+    // metadata cannot authorize arbitrary bytes or another graph's Git objects.
+    const otherBlob = f.blob(Buffer.from("different content\n"));
+    const otherTree = f.tree([{ mode: "100644", name: "file", object: otherBlob }]);
+    const otherRoot = f.commit(otherTree);
+    const wrongGraphPack = f.git(
+      ["pack-objects", "--stdout", "--window=0"],
+      [otherBlob, otherTree, otherRoot].map((r) => r.oid).join("\n") + "\n",
+    );
+    for (const invalidPack of [Buffer.alloc(alternatePack.length, 65), wrongGraphPack]) {
+      const invalidDescriptor = await savePack(invalidPack);
+      await assert.rejects(
+        () => reopened.restore(invalidDescriptor, req, signal()),
+        GitObjectStoreError,
+      );
+      await assert.rejects(() => reopened.capture(req, records, signal()), GitObjectStoreError);
+    }
   },
 );

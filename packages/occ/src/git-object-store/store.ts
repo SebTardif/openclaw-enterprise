@@ -3,29 +3,29 @@ import { constants } from "node:fs";
 import { open, lstat, link, unlink, type FileHandle } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 import { performance } from "node:perf_hooks";
 import { types } from "node:util";
 import {
-  parsePublicationGraphV1,
-  parsePublicationRequestV1,
-  publicationCanonicalV1,
-  publicationDigestV1,
-  publicationObjectV1,
-  publicationOidV1,
-  publicationRefuseV1,
-  publicationSnapshotV1,
-  type GitObjectCaptureV1,
-  type PublicationGraphV1,
-  type PublicationRequestV1,
+  parseGitSnapshotDescriptor,
+  parseGitSnapshotRequest,
+  canonicalJson,
+  digestData,
+  expectObject,
+  isGitOid,
+  refuseGitSnapshot,
+  snapshotData,
+  type GitSnapshot,
+  type GitSnapshotDescriptor,
+  type GitSnapshotRequest,
 } from "./contract.ts";
 
-export interface GitObjectInputV1 {
+export interface GitObjectInput {
   readonly oid: string;
   readonly type: "commit" | "tree" | "blob";
   readonly bytes: Uint8Array;
 }
-export interface GitObjectLimitsV1 {
+export interface GitObjectLimits {
   readonly maxObjects: number;
   readonly maxObjectBytes: number;
   readonly maxRawBytes: number;
@@ -35,24 +35,24 @@ export interface GitObjectLimitsV1 {
   readonly maxExpandedPaths: number;
   readonly captureTimeoutMs: number;
 }
-export interface GitObjectCustodyOptionsV1 {
+export interface GitObjectStoreOptions {
   readonly directory: string;
   readonly ownerUid: number;
   readonly durability: "persistent-posix";
   /** Selected executable/build must use collision-detecting SHA-1. The hash pin
    * authenticates that selected binary; its version string alone proves no build. */
   readonly gitExecutable: Readonly<{ path: string; sha256: string; ownerUid: number }>;
-  readonly limits: GitObjectLimitsV1;
+  readonly limits: GitObjectLimits;
 }
-type ObjectType = GitObjectInputV1["type"];
-type RecordV1 = { oid: string; type: ObjectType; bytes: Buffer; sha256: string };
+type ObjectType = GitObjectInput["type"];
+type ObjectRecord = { oid: string; type: ObjectType; bytes: Buffer; sha256: string };
 type TreeEntry = { name: string; rawName: Buffer; oid: string; tree: boolean };
 type ParsedGraph = {
   parents: Map<string, readonly string[]>;
   trees: Map<string, readonly TreeEntry[]>;
 };
 type Captured = {
-  graph: PublicationGraphV1;
+  graph: GitSnapshotDescriptor;
   parents: Map<string, readonly string[]>;
   storageSha256: string;
 };
@@ -68,20 +68,19 @@ function dataObject(value: unknown, keys: readonly string[]): Record<string, unk
     types.isProxy(value) ||
     Object.getPrototypeOf(value) !== Object.prototype
   )
-    publicationRefuseV1();
+    refuseGitSnapshot();
   const names = Reflect.ownKeys(value);
-  if (names.some((k) => typeof k !== "string") || names.length !== keys.length)
-    publicationRefuseV1();
+  if (names.some((k) => typeof k !== "string") || names.length !== keys.length) refuseGitSnapshot();
   const out: Record<string, unknown> = Object.create(null);
   for (const key of keys) {
     const d = Object.getOwnPropertyDescriptor(value, key);
-    if (!d || !d.enumerable || !("value" in d)) publicationRefuseV1();
+    if (!d || !d.enumerable || !("value" in d)) refuseGitSnapshot();
     out[key] = d.value;
   }
   return out;
 }
-function checkLimits(value: GitObjectLimitsV1): GitObjectLimitsV1 {
-  const o = publicationObjectV1(publicationSnapshotV1(value), [
+function checkLimits(value: GitObjectLimits): GitObjectLimits {
+  const o = expectObject(snapshotData(value), [
     "maxObjects",
     "maxObjectBytes",
     "maxRawBytes",
@@ -103,11 +102,11 @@ function checkLimits(value: GitObjectLimitsV1): GitObjectLimitsV1 {
   };
   for (const key of Object.keys(bounds))
     if (!Number.isSafeInteger(o[key]) || Number(o[key]) < 1 || Number(o[key]) > bounds[key]!)
-      publicationRefuseV1();
-  if (Number(o.maxObjectBytes) > Number(o.maxRawBytes)) publicationRefuseV1();
-  return o as unknown as GitObjectLimitsV1;
+      refuseGitSnapshot();
+  if (Number(o.maxObjectBytes) > Number(o.maxRawBytes)) refuseGitSnapshot();
+  return o as unknown as GitObjectLimits;
 }
-function copyObjects(value: readonly GitObjectInputV1[], limits: GitObjectLimitsV1): RecordV1[] {
+function copyObjects(value: readonly GitObjectInput[], limits: GitObjectLimits): ObjectRecord[] {
   if (
     !Array.isArray(value) ||
     types.isProxy(value) ||
@@ -116,20 +115,20 @@ function copyObjects(value: readonly GitObjectInputV1[], limits: GitObjectLimits
     value.length > limits.maxObjects ||
     Reflect.ownKeys(value).length !== value.length + 1
   )
-    publicationRefuseV1();
-  const result: RecordV1[] = [];
+    refuseGitSnapshot();
+  const result: ObjectRecord[] = [];
   let total = 0;
   const seen = new Set<string>();
   for (let i = 0; i < value.length; i++) {
     const d = Object.getOwnPropertyDescriptor(value, String(i));
-    if (!d || !("value" in d)) publicationRefuseV1();
+    if (!d || !("value" in d)) refuseGitSnapshot();
     const o = dataObject(d.value, ["oid", "type", "bytes"]);
     if (
-      !publicationOidV1(o.oid) ||
+      !isGitOid(o.oid) ||
       seen.has(o.oid) ||
       (o.type !== "commit" && o.type !== "tree" && o.type !== "blob")
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const v = o.bytes;
     if (
       !v ||
@@ -139,23 +138,23 @@ function copyObjects(value: readonly GitObjectInputV1[], limits: GitObjectLimits
       (Object.getPrototypeOf(v) !== Uint8Array.prototype &&
         Object.getPrototypeOf(v) !== Buffer.prototype)
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     // Own non-index properties could shadow the typed-array accessors.
     if (
       ["buffer", "byteOffset", "byteLength", "length"].some((k) => Object.hasOwn(v, k)) ||
       types.isSharedArrayBuffer(v.buffer)
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const size = v.byteLength;
     total += size;
-    if (size > limits.maxObjectBytes || total > limits.maxRawBytes) publicationRefuseV1();
+    if (size > limits.maxObjectBytes || total > limits.maxRawBytes) refuseGitSnapshot();
     const bytes = Buffer.alloc(size);
     Uint8Array.prototype.set.call(bytes, v);
     const actual = createHash("sha1")
       .update(o.type + " " + size + "\0")
       .update(bytes)
       .digest("hex");
-    if (actual !== o.oid) publicationRefuseV1();
+    if (actual !== o.oid) refuseGitSnapshot();
     seen.add(o.oid);
     result.push({ oid: o.oid, type: o.type, bytes, sha256: sha256(bytes) });
   }
@@ -165,22 +164,21 @@ function text(bytes: Uint8Array): string {
   try {
     return utf8.decode(bytes);
   } catch {
-    return publicationRefuseV1();
+    return refuseGitSnapshot();
   }
 }
 function parseCommit(bytes: Buffer): { tree: string; parents: string[] } {
-  if (bytes.length > 1024 * 1024 || bytes.includes(0)) publicationRefuseV1();
+  if (bytes.length > 1024 * 1024 || bytes.includes(0)) refuseGitSnapshot();
   const separator = bytes.indexOf("\n\n");
-  if (separator < 0 || separator > 262144) publicationRefuseV1();
+  if (separator < 0 || separator > 262144) refuseGitSnapshot();
   const header = text(bytes.subarray(0, separator));
   const lines = header.split("\n");
   const treeLine = lines.shift();
-  if (!treeLine?.startsWith("tree ") || !publicationOidV1(treeLine.slice(5))) publicationRefuseV1();
+  if (!treeLine?.startsWith("tree ") || !isGitOid(treeLine.slice(5))) refuseGitSnapshot();
   const parents: string[] = [];
   while (lines[0]?.startsWith("parent ")) {
     const oid = lines.shift()!.slice(7);
-    if (!publicationOidV1(oid) || parents.includes(oid) || parents.length >= 16)
-      publicationRefuseV1();
+    if (!isGitOid(oid) || parents.includes(oid) || parents.length >= 16) refuseGitSnapshot();
     parents.push(oid);
   }
   const identity =
@@ -193,23 +191,23 @@ function parseCommit(bytes: Buffer): { tree: string; parents: string[] } {
     !committer?.startsWith("committer ") ||
     !identity.test(committer)
   )
-    publicationRefuseV1();
+    refuseGitSnapshot();
   const seen = new Set<string>();
   let continuation = false;
   for (const line of lines) {
     if (line.startsWith(" ")) {
-      if (!continuation || /[\x00-\x08\x0b-\x1f\x7f]/.test(line)) publicationRefuseV1();
+      if (!continuation || /[\x00-\x08\x0b-\x1f\x7f]/.test(line)) refuseGitSnapshot();
       continue;
     }
     const key = line.split(" ", 1)[0]!;
-    if (seen.has(key)) publicationRefuseV1();
+    if (seen.has(key)) refuseGitSnapshot();
     seen.add(key);
     continuation = key === "gpgsig";
     if (key === "encoding") {
-      if (line !== "encoding UTF-8") publicationRefuseV1();
+      if (line !== "encoding UTF-8") refuseGitSnapshot();
     } else if (key === "gpgsig") {
-      if (!/^gpgsig [\x20-\x7e]+(?![\s\S])/.test(line)) publicationRefuseV1();
-    } else publicationRefuseV1();
+      if (!/^gpgsig [\x20-\x7e]+(?![\s\S])/.test(line)) refuseGitSnapshot();
+    } else refuseGitSnapshot();
   }
   text(bytes.subarray(separator + 2));
   return { tree: treeLine.slice(5), parents };
@@ -223,9 +221,9 @@ function parseTree(bytes: Buffer): TreeEntry[] {
     const space = bytes.indexOf(0x20, offset);
     const nul = bytes.indexOf(0, offset);
     if (space < offset || nul <= space || nul + 21 > bytes.length || space - offset > 6)
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const mode = bytes.subarray(offset, space).toString("ascii");
-    if (mode !== "40000" && mode !== "100644" && mode !== "100755") publicationRefuseV1();
+    if (mode !== "40000" && mode !== "100644" && mode !== "100755") refuseGitSnapshot();
     const rawName = bytes.subarray(space + 1, nul);
     // Deliberately portable, ASCII-only first profile. Never materialized as paths.
     const name = rawName.toString("ascii");
@@ -241,25 +239,25 @@ function parseTree(bytes: Buffer): TreeEntry[] {
       /^(?:\.git|git~[0-9]+)(?:$|[. ])/i.test(name) ||
       /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const folded = name.toLowerCase();
-    if (names.has(folded)) publicationRefuseV1();
+    if (names.has(folded)) refuseGitSnapshot();
     names.add(folded);
     const tree = mode === "40000";
     const order = Buffer.concat([rawName, Buffer.from(tree ? "/" : "\0")]);
-    if (previous && Buffer.compare(previous, order) >= 0) publicationRefuseV1();
+    if (previous && Buffer.compare(previous, order) >= 0) refuseGitSnapshot();
     previous = order;
     const oid = bytes.subarray(nul + 1, nul + 21).toString("hex");
-    if (!publicationOidV1(oid)) publicationRefuseV1();
+    if (!isGitOid(oid)) refuseGitSnapshot();
     entries.push({ name, rawName, oid, tree });
     offset = nul + 21;
   }
   return entries;
 }
 function graph(
-  records: readonly RecordV1[],
-  request: PublicationRequestV1,
-  limits: GitObjectLimitsV1,
+  records: readonly ObjectRecord[],
+  request: GitSnapshotRequest,
+  limits: GitObjectLimits,
 ): ParsedGraph {
   const byOid = new Map(records.map((r) => [r.oid, r]));
   const parents = new Map<string, readonly string[]>();
@@ -280,10 +278,10 @@ function graph(
   ];
   let steps = 0;
   while (pending.length) {
-    if (++steps > limits.maxObjects * 32) publicationRefuseV1();
+    if (++steps > limits.maxObjects * 32) refuseGitSnapshot();
     const next = pending.pop()!;
     const r = byOid.get(next.oid);
-    if (!r || r.type !== next.type) publicationRefuseV1();
+    if (!r || r.type !== next.type) refuseGitSnapshot();
     if (reached.has(next.oid)) continue;
     reached.add(next.oid);
     if (r.type === "commit") {
@@ -293,7 +291,7 @@ function graph(
       for (const e of trees.get(r.oid)!)
         pending.push({ oid: e.oid, type: e.tree ? "tree" : "blob" });
   }
-  if (reached.size !== records.length) publicationRefuseV1();
+  if (reached.size !== records.length) refuseGitSnapshot();
   // Expand each commit root independently; deduplication alone misses deeply
   // reused trees and exponentially many root paths through a small object DAG.
   const paths: { oid: string; depth: number; length: number }[] = [...commitTrees.values()].map(
@@ -302,12 +300,11 @@ function graph(
   let expanded = 0;
   while (paths.length) {
     const p = paths.pop()!;
-    if (++expanded > limits.maxExpandedPaths || p.depth > limits.maxTreeDepth)
-      publicationRefuseV1();
+    if (++expanded > limits.maxExpandedPaths || p.depth > limits.maxTreeDepth) refuseGitSnapshot();
     for (const e of trees.get(p.oid)!) {
-      if (++expanded > limits.maxExpandedPaths) publicationRefuseV1();
+      if (++expanded > limits.maxExpandedPaths) refuseGitSnapshot();
       const length = p.length + (p.depth ? 1 : 0) + e.rawName.length;
-      if (length > limits.maxPathBytes) publicationRefuseV1();
+      if (length > limits.maxPathBytes) refuseGitSnapshot();
       if (e.tree) paths.push({ oid: e.oid, depth: p.depth + 1, length });
     }
   }
@@ -315,7 +312,7 @@ function graph(
     request.expectedTarget.kind === "existing" &&
     !ancestor(parents, request.expectedTarget.oid, request.proposedOid)
   )
-    publicationRefuseV1();
+    refuseGitSnapshot();
   return { parents, trees };
 }
 function ancestor(
@@ -336,7 +333,7 @@ function ancestor(
   }
   return false;
 }
-function pack(records: readonly RecordV1[], limit: number): Buffer {
+function pack(records: readonly ObjectRecord[], limit: number): Buffer {
   const header = Buffer.alloc(12);
   header.write("PACK");
   header.writeUInt32BE(2, 4);
@@ -345,7 +342,7 @@ function pack(records: readonly RecordV1[], limit: number): Buffer {
   let total = 32;
   for (const r of records) {
     let size = r.bytes.length;
-    const t = r.type === "commit" ? 1 : r.type === "tree" ? 2 : 3;
+    const t = { commit: 1, tree: 2, blob: 3 }[r.type];
     const h: number[] = [(t << 4) | (size % 16)];
     size = Math.floor(size / 16);
     while (size) {
@@ -356,17 +353,73 @@ function pack(records: readonly RecordV1[], limit: number): Buffer {
     const encoded = deflateSync(r.bytes, { level: 6 });
     const prefix = Buffer.from(h);
     total += prefix.length + encoded.length;
-    if (total > limit) publicationRefuseV1();
+    if (total > limit) refuseGitSnapshot();
     parts.push(prefix, encoded);
   }
   const body = Buffer.concat(parts);
   return Buffer.concat([body, createHash("sha1").update(body).digest()]);
 }
+// Verify retained bytes directly: valid DEFLATE output can change between
+// compressor builds, while the underlying Git objects remain identical.
+function validatePack(packed: Buffer, records: readonly ObjectRecord[]): void {
+  if (
+    packed.length < 32 ||
+    packed.toString("ascii", 0, 4) !== "PACK" ||
+    packed.readUInt32BE(4) !== 2 ||
+    packed.readUInt32BE(8) !== records.length
+  )
+    refuseGitSnapshot();
+  const end = packed.length - 20;
+  if (!createHash("sha1").update(packed.subarray(0, end)).digest().equals(packed.subarray(end)))
+    refuseGitSnapshot();
+  const remaining = new Map(records.map((r) => [r.oid, r]));
+  const sizes = new Set(records.map((r) => `${r.type}:${r.bytes.length}`));
+  const objectTypes: Readonly<Record<number, ObjectType | undefined>> = {
+    1: "commit",
+    2: "tree",
+    3: "blob",
+  };
+  let offset = 12;
+  for (let i = 0; i < records.length; i++) {
+    if (offset >= end) refuseGitSnapshot();
+    let byte = packed[offset++]!;
+    const type = objectTypes[(byte >> 4) & 7];
+    if (!type) refuseGitSnapshot();
+    let size = byte & 15;
+    let multiplier = 16;
+    while (byte & 128) {
+      if (offset >= end || !Number.isSafeInteger(multiplier)) refuseGitSnapshot();
+      byte = packed[offset++]!;
+      size += (byte & 127) * multiplier;
+      multiplier *= 128;
+    }
+    if (!Number.isSafeInteger(size) || !sizes.has(`${type}:${size}`)) refuseGitSnapshot();
+    let inflated: Buffer;
+    try {
+      // Node returns the engine with info:true; its type declaration still
+      // declares only the ordinary Buffer result.
+      const result = inflateSync(packed.subarray(offset, end), {
+        info: true,
+        maxOutputLength: Math.max(1, size),
+      }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
+      inflated = result.buffer;
+      offset += result.engine.bytesWritten;
+    } catch {
+      refuseGitSnapshot();
+    }
+    if (inflated.length !== size) refuseGitSnapshot();
+    const oid = createHash("sha1").update(`${type} ${size}\0`).update(inflated).digest("hex");
+    const record = remaining.get(oid);
+    if (!record || record.type !== type || !record.bytes.equals(inflated)) refuseGitSnapshot();
+    remaining.delete(oid);
+  }
+  if (offset !== end || remaining.size) refuseGitSnapshot();
+}
 function descriptor(
-  records: readonly RecordV1[],
-  request: PublicationRequestV1,
+  records: readonly ObjectRecord[],
+  request: GitSnapshotRequest,
   packed: Buffer,
-): PublicationGraphV1 {
+): GitSnapshotDescriptor {
   const manifest = {
     version: 1,
     objectFormat: "sha1",
@@ -384,16 +437,20 @@ function descriptor(
     objectFormat: "sha1",
     proposedOid: request.proposedOid,
     baseOid: request.baseOid,
-    graphDigest: publicationDigestV1("object-graph", manifest),
+    graphDigest: digestData("object-graph", manifest),
     objectCount: records.length,
     rawBytes: records.reduce((n, r) => n + r.bytes.length, 0),
     packSha256: sha256(packed),
     packBytes: packed.length,
   });
 }
-function encode(records: readonly RecordV1[], fixed: PublicationGraphV1, packed: Buffer): Buffer {
+function encode(
+  records: readonly ObjectRecord[],
+  fixed: GitSnapshotDescriptor,
+  packed: Buffer,
+): Buffer {
   const metadata = Buffer.from(
-    publicationCanonicalV1({
+    canonicalJson({
       version: 1,
       graph: fixed,
       objects: records.map(({ oid, type, bytes, sha256: digest }) => ({
@@ -404,7 +461,7 @@ function encode(records: readonly RecordV1[], fixed: PublicationGraphV1, packed:
       })),
     }),
   );
-  if (metadata.length > MAX_METADATA) publicationRefuseV1();
+  if (metadata.length > MAX_METADATA) refuseGitSnapshot();
   const header = Buffer.alloc(12);
   MAGIC.copy(header);
   header.writeUInt32BE(metadata.length, 8);
@@ -412,45 +469,45 @@ function encode(records: readonly RecordV1[], fixed: PublicationGraphV1, packed:
 }
 function decode(
   bytes: Buffer,
-  limits: GitObjectLimitsV1,
-): { records: RecordV1[]; fixed: PublicationGraphV1; packed: Buffer } {
-  if (bytes.length < 12 || !bytes.subarray(0, 8).equals(MAGIC)) publicationRefuseV1();
+  limits: GitObjectLimits,
+): { records: ObjectRecord[]; fixed: GitSnapshotDescriptor; packed: Buffer } {
+  if (bytes.length < 12 || !bytes.subarray(0, 8).equals(MAGIC)) refuseGitSnapshot();
   const size = bytes.readUInt32BE(8);
-  if (size > MAX_METADATA || size + 12 > bytes.length) publicationRefuseV1();
+  if (size > MAX_METADATA || size + 12 > bytes.length) refuseGitSnapshot();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text(bytes.subarray(12, 12 + size)));
   } catch {
-    publicationRefuseV1();
+    refuseGitSnapshot();
   }
   // Metadata has a separate finite 2MiB bound and exact per-entry checks.
-  const m = publicationObjectV1(parsed, ["version", "graph", "objects"]);
+  const m = expectObject(parsed, ["version", "graph", "objects"]);
   if (
     m.version !== 1 ||
     !Array.isArray(m.objects) ||
     m.objects.length < 1 ||
     m.objects.length > limits.maxObjects
   )
-    publicationRefuseV1();
-  const fixed = parsePublicationGraphV1(m.graph);
+    refuseGitSnapshot();
+  const fixed = parseGitSnapshotDescriptor(m.graph);
   let offset = 12 + size;
   let raw = 0;
   let previous = "";
-  const records: RecordV1[] = [];
+  const records: ObjectRecord[] = [];
   for (const value of m.objects) {
-    const o = publicationObjectV1(value, ["oid", "type", "bytes", "sha256"]);
+    const o = expectObject(value, ["oid", "type", "bytes", "sha256"]);
     if (
-      !publicationOidV1(o.oid) ||
+      !isGitOid(o.oid) ||
       o.oid <= previous ||
       (o.type !== "commit" && o.type !== "tree" && o.type !== "blob") ||
       !Number.isSafeInteger(o.bytes) ||
       Number(o.bytes) < 0 ||
       Number(o.bytes) > limits.maxObjectBytes
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const count = Number(o.bytes);
     raw += count;
-    if (raw > limits.maxRawBytes || offset + count > bytes.length) publicationRefuseV1();
+    if (raw > limits.maxRawBytes || offset + count > bytes.length) refuseGitSnapshot();
     const content = bytes.subarray(offset, offset + count);
     offset += count;
     if (
@@ -460,7 +517,7 @@ function decode(
         .update(content)
         .digest("hex") !== o.oid
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     previous = o.oid;
     records.push({ oid: o.oid, type: o.type, bytes: content, sha256: o.sha256 as string });
   }
@@ -472,16 +529,16 @@ function decode(
     fixed.packBytes !== packed.length ||
     fixed.packSha256 !== sha256(packed)
   )
-    publicationRefuseV1();
+    refuseGitSnapshot();
   return { records, fixed, packed };
 }
 async function noSymlinkPath(path: string): Promise<void> {
-  if (!isAbsolute(path) || resolve(path) !== path || path.includes("\0")) publicationRefuseV1();
+  if (!isAbsolute(path) || resolve(path) !== path || path.includes("\0")) refuseGitSnapshot();
   const parts = path.split(sep).filter(Boolean);
   let current: string = sep;
   for (const part of parts) {
     current = resolve(current, part);
-    if ((await lstat(current)).isSymbolicLink()) publicationRefuseV1();
+    if ((await lstat(current)).isSymbolicLink()) refuseGitSnapshot();
   }
 }
 function sameStat(
@@ -497,24 +554,23 @@ function sameStat(
   );
 }
 
-/** Credential-free immutable object custody. The selected persistent directory
- * stores content only; candidate/approval/effect journals remain in State. */
-export class GitObjectCustodyV1 {
+/** Retains validated Git object snapshots in an owner-only directory. */
+export class GitObjectStore {
   readonly #directory: string;
   readonly #uid: number;
-  readonly #limits: GitObjectLimitsV1;
+  readonly #limits: GitObjectLimits;
   readonly #root: FileHandle;
   readonly #git: FileHandle;
   readonly #rootIdentity: { dev: number; ino: number };
   readonly #gitDigest: string;
   readonly #gitPath: string;
   readonly #gitUid: number;
-  readonly #captures = new WeakMap<GitObjectCaptureV1, Captured>();
+  readonly #captures = new WeakMap<GitSnapshot, Captured>();
   readonly #pending = new Set<Promise<unknown>>();
   #closing = false;
   #closed: Promise<void> | undefined;
   private constructor(
-    options: GitObjectCustodyOptionsV1,
+    options: GitObjectStoreOptions,
     root: FileHandle,
     git: FileHandle,
     rootIdentity: { dev: number; ino: number },
@@ -529,15 +585,15 @@ export class GitObjectCustodyV1 {
     this.#gitPath = options.gitExecutable.path;
     this.#gitUid = options.gitExecutable.ownerUid;
   }
-  static async open(options: GitObjectCustodyOptionsV1): Promise<GitObjectCustodyV1> {
-    const fixed = publicationObjectV1(publicationSnapshotV1(options), [
+  static async open(options: GitObjectStoreOptions): Promise<GitObjectStore> {
+    const fixed = expectObject(snapshotData(options), [
       "directory",
       "ownerUid",
       "durability",
       "gitExecutable",
       "limits",
     ]);
-    const executable = publicationObjectV1(fixed.gitExecutable, ["path", "sha256", "ownerUid"]);
+    const executable = expectObject(fixed.gitExecutable, ["path", "sha256", "ownerUid"]);
     if (
       process.platform !== "linux" ||
       fixed.durability !== "persistent-posix" ||
@@ -550,8 +606,8 @@ export class GitObjectCustodyV1 {
       typeof executable.sha256 !== "string" ||
       !/^[0-9a-f]{64}(?![\s\S])/.test(executable.sha256)
     )
-      publicationRefuseV1();
-    const limits = checkLimits(fixed.limits as GitObjectLimitsV1);
+      refuseGitSnapshot();
+    const limits = checkLimits(fixed.limits as GitObjectLimits);
     await noSymlinkPath(fixed.directory);
     await noSymlinkPath(executable.path);
     const root = await open(
@@ -562,7 +618,7 @@ export class GitObjectCustodyV1 {
     try {
       const stat = await root.stat();
       if (!stat.isDirectory() || stat.uid !== fixed.ownerUid || (stat.mode & 0o777) !== 0o700)
-        publicationRefuseV1();
+        refuseGitSnapshot();
       git = await open(executable.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       const gs = await git.stat();
       if (
@@ -573,7 +629,7 @@ export class GitObjectCustodyV1 {
         gs.size < 1 ||
         gs.size > 32 * 1024 * 1024
       )
-        publicationRefuseV1();
+        refuseGitSnapshot();
       const b = Buffer.alloc(gs.size);
       const got = await git.read(b, 0, b.length, 0);
       if (
@@ -581,8 +637,8 @@ export class GitObjectCustodyV1 {
         createHash("sha256").update(b).digest("hex") !== executable.sha256 ||
         !sameStat(gs, await git.stat())
       )
-        publicationRefuseV1();
-      const result = new GitObjectCustodyV1(
+        refuseGitSnapshot();
+      const result = new GitObjectStore(
         {
           directory: fixed.directory,
           ownerUid: Number(fixed.ownerUid),
@@ -607,7 +663,7 @@ export class GitObjectCustodyV1 {
     }
   }
   #run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.#closing) return Promise.reject(new Error("Git object custody is closed"));
+    if (this.#closing) return Promise.reject(new Error("Git object store is closed"));
     const p = Promise.resolve().then(fn);
     this.#pending.add(p);
     void p.finally(() => this.#pending.delete(p)).catch(() => undefined);
@@ -627,14 +683,14 @@ export class GitObjectCustodyV1 {
       (held.mode & 0o777) !== 0o700 ||
       named.isSymbolicLink()
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
   }
   #filename(digest: string): string {
-    if (!/^sha256:[0-9a-f]{64}(?![\s\S])/.test(digest)) publicationRefuseV1();
+    if (!/^sha256:[0-9a-f]{64}(?![\s\S])/.test(digest)) refuseGitSnapshot();
     return `/proc/self/fd/${this.#root.fd}/${digest.slice(7)}.objects`;
   }
-  async #hashWithGit(record: RecordV1, signal: AbortSignal, deadline: number): Promise<void> {
-    if (signal.aborted || performance.now() >= deadline) publicationRefuseV1();
+  async #hashWithGit(record: ObjectRecord, signal: AbortSignal, deadline: number): Promise<void> {
+    if (signal.aborted || performance.now() >= deadline) refuseGitSnapshot();
     const before = await this.#git.stat();
     const named = await lstat(this.#gitPath);
     if (
@@ -644,7 +700,7 @@ export class GitObjectCustodyV1 {
       (before.mode & 0o022) !== 0 ||
       named.isSymbolicLink()
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     // Rehash the held executable before invocation. The child executes that same
     // inherited descriptor; it never selects a command, config, helper or path.
     const executable = Buffer.alloc(before.size);
@@ -654,7 +710,7 @@ export class GitObjectCustodyV1 {
       createHash("sha256").update(executable).digest("hex") !== this.#gitDigest ||
       !sameStat(before, await this.#git.stat())
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     const output = await new Promise<string>((resolveResult, reject) => {
       const child = spawn(
         "/proc/self/fd/3",
@@ -724,7 +780,7 @@ export class GitObjectCustodyV1 {
       performance.now() >= deadline ||
       !sameStat(before, await this.#git.stat())
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
   }
   async #read(digest: string): Promise<Buffer> {
     await this.#assertRoot();
@@ -734,28 +790,36 @@ export class GitObjectCustodyV1 {
       const max = 12 + MAX_METADATA + this.#limits.maxRawBytes + this.#limits.maxPackBytes;
       if (
         !before.isFile() ||
-        before.nlink !== 1 ||
         before.uid !== this.#uid ||
         (before.mode & 0o777) !== 0o600 ||
         before.size < 12 ||
         before.size > max
       )
-        publicationRefuseV1();
+        refuseGitSnapshot();
       const bytes = Buffer.alloc(before.size);
       let offset = 0;
       while (offset < bytes.length) {
         const r = await file.read(bytes, offset, bytes.length - offset, offset);
-        if (!r.bytesRead) publicationRefuseV1();
+        if (!r.bytesRead) refuseGitSnapshot();
         offset += r.bytesRead;
       }
-      if (!sameStat(before, await file.stat())) publicationRefuseV1();
+      const after = await file.stat();
+      // Publishing or removing a pending hard link changes ctime and nlink,
+      // without changing content. Every caller also verifies the read bytes.
+      if (
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.uid !== after.uid ||
+        before.mode !== after.mode
+      )
+        refuseGitSnapshot();
       await this.#assertRoot();
       return bytes;
     } finally {
       await file.close();
     }
   }
-  async #retain(digest: string, bytes: Buffer): Promise<void> {
+  async #retain(digest: string, bytes: Buffer): Promise<Buffer> {
     await this.#assertRoot();
     const temporary = `/proc/self/fd/${this.#root.fd}/.pending-${randomUUID()}`;
     const file = await open(
@@ -764,6 +828,7 @@ export class GitObjectCustodyV1 {
       0o600,
     );
     let linked = false;
+    let retained = bytes;
     try {
       await file.writeFile(bytes);
       await file.sync();
@@ -772,36 +837,36 @@ export class GitObjectCustodyV1 {
         linked = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const old = await this.#read(digest);
-        if (!old.equals(bytes)) publicationRefuseV1();
+        retained = await this.#read(digest);
       }
       await this.#root.sync();
     } finally {
       await file.close();
-      // A fully written pending file is content only, not an effect journal.
-      // The final alias is never removed or overwritten on cancellation/failure.
+      // A crash may leave this pending alias; it does not invalidate the final
+      // file. Never remove or overwrite published content on cancellation.
       await unlink(temporary);
       await this.#root.sync();
     }
     await this.#assertRoot();
-    if (linked && !(await this.#read(digest)).equals(bytes)) publicationRefuseV1();
+    if (linked && !(await this.#read(digest)).equals(bytes)) refuseGitSnapshot();
+    return retained;
   }
   #issue(
-    fixed: PublicationGraphV1,
+    fixed: GitSnapshotDescriptor,
     parents: Map<string, readonly string[]>,
     bytes: Buffer,
-  ): GitObjectCaptureV1 {
-    const handle = Object.freeze({}) as GitObjectCaptureV1;
+  ): GitSnapshot {
+    const handle = Object.freeze({}) as GitSnapshot;
     this.#captures.set(handle, { graph: fixed, parents, storageSha256: sha256(bytes) });
     return handle;
   }
   capture(
-    request: PublicationRequestV1,
-    objects: readonly GitObjectInputV1[],
+    request: GitSnapshotRequest,
+    objects: readonly GitObjectInput[],
     signal: AbortSignal,
-  ): Promise<GitObjectCaptureV1> {
+  ): Promise<GitSnapshot> {
     // Capture all hostile inputs synchronously before the first await.
-    const fixed = parsePublicationRequestV1(request);
+    const fixed = parseGitSnapshotRequest(request);
     const records = copyObjects(objects, this.#limits);
     return this.#run(async () => {
       const deadline = performance.now() + this.#limits.captureTimeoutMs;
@@ -810,20 +875,31 @@ export class GitObjectCustodyV1 {
       const packed = pack(records, this.#limits.maxPackBytes);
       const described = descriptor(records, fixed, packed);
       const encoded = encode(records, described, packed);
-      if (signal.aborted || performance.now() >= deadline) publicationRefuseV1();
-      await this.#retain(described.graphDigest, encoded);
-      if (signal.aborted || performance.now() >= deadline) publicationRefuseV1();
-      return this.#issue(described, parsed.parents, encoded);
+      if (signal.aborted || performance.now() >= deadline) refuseGitSnapshot();
+      const retained = await this.#retain(described.graphDigest, encoded);
+      let retainedDescriptor = described;
+      if (!retained.equals(encoded)) {
+        const decoded = decode(retained, this.#limits);
+        validatePack(decoded.packed, decoded.records);
+        retainedDescriptor = descriptor(decoded.records, fixed, decoded.packed);
+        if (
+          retainedDescriptor.graphDigest !== described.graphDigest ||
+          canonicalJson(retainedDescriptor) !== canonicalJson(decoded.fixed)
+        )
+          refuseGitSnapshot();
+      }
+      if (signal.aborted || performance.now() >= deadline) refuseGitSnapshot();
+      return this.#issue(retainedDescriptor, parsed.parents, retained);
     });
   }
-  inspect(original: GitObjectCaptureV1): PublicationGraphV1 {
-    const held = this.#captures.get(original);
-    if (!held || this.#closing) publicationRefuseV1();
+  inspect(snapshot: GitSnapshot): GitSnapshotDescriptor {
+    const held = this.#captures.get(snapshot);
+    if (!held || this.#closing) refuseGitSnapshot();
     return held.graph;
   }
-  assertRequest(original: GitObjectCaptureV1, request: PublicationRequestV1): undefined {
-    const fixed = parsePublicationRequestV1(request);
-    const held = this.#captures.get(original);
+  assertRequest(snapshot: GitSnapshot, request: GitSnapshotRequest): undefined {
+    const fixed = parseGitSnapshotRequest(request);
+    const held = this.#captures.get(snapshot);
     if (
       !held ||
       this.#closing ||
@@ -832,42 +908,41 @@ export class GitObjectCustodyV1 {
       (fixed.expectedTarget.kind === "existing" &&
         !ancestor(held.parents, fixed.expectedTarget.oid, fixed.proposedOid))
     )
-      publicationRefuseV1();
+      refuseGitSnapshot();
     return undefined;
   }
-  readPack(original: GitObjectCaptureV1): Promise<Uint8Array> {
-    const held = this.#captures.get(original);
-    if (!held) publicationRefuseV1();
+  readPack(snapshot: GitSnapshot): Promise<Uint8Array> {
+    const held = this.#captures.get(snapshot);
+    if (!held) refuseGitSnapshot();
     return this.#run(async () => {
       const bytes = await this.#read(held.graph.graphDigest);
-      if (sha256(bytes) !== held.storageSha256) publicationRefuseV1();
+      if (sha256(bytes) !== held.storageSha256) refuseGitSnapshot();
       const decoded = decode(bytes, this.#limits);
       return Buffer.from(decoded.packed);
     });
   }
   restore(
-    graphValue: PublicationGraphV1,
-    request: PublicationRequestV1,
+    graphValue: GitSnapshotDescriptor,
+    request: GitSnapshotRequest,
     signal: AbortSignal,
-  ): Promise<GitObjectCaptureV1> {
-    const expected = parsePublicationGraphV1(graphValue);
-    const fixed = parsePublicationRequestV1(request);
+  ): Promise<GitSnapshot> {
+    const expected = parseGitSnapshotDescriptor(graphValue);
+    const fixed = parseGitSnapshotRequest(request);
     return this.#run(async () => {
       const deadline = performance.now() + this.#limits.captureTimeoutMs;
       const bytes = await this.#read(expected.graphDigest);
       const decoded = decode(bytes, this.#limits);
       const parsed = graph(decoded.records, fixed, this.#limits);
       for (const record of decoded.records) await this.#hashWithGit(record, signal, deadline);
-      const packed = pack(decoded.records, this.#limits.maxPackBytes);
-      const actual = descriptor(decoded.records, fixed, packed);
+      validatePack(decoded.packed, decoded.records);
+      const actual = descriptor(decoded.records, fixed, decoded.packed);
       if (
-        publicationCanonicalV1(actual) !== publicationCanonicalV1(expected) ||
-        publicationCanonicalV1(decoded.fixed) !== publicationCanonicalV1(expected) ||
-        !packed.equals(decoded.packed) ||
+        canonicalJson(actual) !== canonicalJson(expected) ||
+        canonicalJson(decoded.fixed) !== canonicalJson(expected) ||
         signal.aborted ||
         performance.now() >= deadline
       )
-        publicationRefuseV1();
+        refuseGitSnapshot();
       return this.#issue(actual, parsed.parents, bytes);
     });
   }

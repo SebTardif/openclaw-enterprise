@@ -36,8 +36,8 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 | Real runtime or host execution | [SSH](ssh.md), [Kubernetes](kubernetes.md), [Production TUI](production-tui.md), and [OpenShell](openshell.md) |
 | External provider integrations | [Slack](slack.md), [ChatGPT service accounts](service-accounts.md), and [Agent plugins](plugins.md)            |
 
-- [Repository publication components](repository-publication.md): pinned local
-  Git object custody and application controls, with no upstream publication.
+- [Git object store](git-object-store.md): input validation and real local Git
+  capture, pack import, and reopening tests.
 
 ## Requirements and credentials
 

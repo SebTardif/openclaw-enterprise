@@ -6,7 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./repository-publication-v1": "./src/repository-publication-v1/index.ts"
+    "./git-object-store": "./src/git-object-store/index.ts"
   },
   "types": "./src/index.ts",
   "files": [
