@@ -776,6 +776,19 @@
           "path": "tests/conformance/git-object-store.test.mjs"
         }
       ]
+    },
+    "repository-publication": {
+      "description": "Publication request validation and coordinator sequencing with controlled collaborators and local Git snapshots. No live publication or application authority proof.",
+      "requiredEnv": [
+        "OCE_GIT_STORE_TEST_GIT_PATH",
+        "OCE_GIT_STORE_TEST_GIT_SHA256",
+        "OCE_GIT_STORE_TEST_GIT_OWNER_UID"
+      ],
+      "files": [
+        {
+          "path": "tests/conformance/repository-publication-v1.test.mjs"
+        }
+      ]
     }
   },
   "groups": {

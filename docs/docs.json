@@ -106,7 +106,7 @@
               },
               {
                 "group": "Libraries awaiting integration",
-                "pages": ["reference/git-object-store"]
+                "pages": ["reference/git-object-store", "reference/repository-publication-v1"]
               }
             ]
           },
@@ -159,7 +159,8 @@
                   "testing/developer-skills",
                   "testing/autoreview",
                   "testing/ci",
-                  "testing/git-object-store"
+                  "testing/git-object-store",
+                  "testing/repository-publication"
                 ]
               },
               {

@@ -48,6 +48,10 @@ effects. Contributors updating routes or schemas should follow the
 - [Git object snapshot store](git-object-store.md): validates and retains Git
   objects independently of a working repository. No controller or worker caller yet.
 
+- [Publication coordinator](repository-publication-v1.md): binds retained Git
+  content to an exact publishing request and coordinates supplied interfaces.
+  Human approval, persistence, and native publishing still require integration.
+
 ## Drivers
 
 The term **contract** names obligations that callers and Driver implementations

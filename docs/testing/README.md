@@ -39,6 +39,9 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 - [Git object store](git-object-store.md): input validation and real local Git
   capture, pack import, and reopening tests.
 
+- [Publication coordinator](repository-publication.md): request validation and
+  sequencing tests with controlled collaborators; no live publication.
+
 ## Requirements and credentials
 
 Use Node.js 24 or newer and the pnpm version pinned in
