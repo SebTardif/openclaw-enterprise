@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import {
@@ -9,6 +12,7 @@ import {
 import {
   AGENT_RUNTIME_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
+  PLUGIN_AGENT_RUNTIME_ENTRYPOINT,
   PLUGIN_RUNTIME_HELPERS,
 } from "../../apps/controller/src/drivers/compute/runtime/runtime-entrypoints.ts";
 import {
@@ -978,6 +982,55 @@ test("Kubernetes prepared verification refuses unsupported plugins before openin
   assert.equal(currentnessCalls, 1);
   assert.equal(childReads, 0);
   assert.equal(providerCalls, 0);
+});
+
+test("Codex runtime clears stale readiness marker before startup failure", () => {
+  const directory = mkdtempSync(join(tmpdir(), "openclaw-plugin-ready-"));
+  const marker = join(directory, "ready");
+  writeFileSync(marker, "ready\n", { mode: 0o600 });
+  assert.equal(existsSync(marker), true);
+  try {
+    const sandbox = {
+      console: { error() {} },
+      process: {
+        env: {
+          CODEX_HOME: "/home/node/.codex",
+          OPENCLAW_PLUGIN_READY_MARKER: marker,
+        },
+      },
+      require(specifier) {
+        if (specifier === "node:fs") {
+          return {
+            mkdirSync() {},
+            rmSync,
+            readFileSync() {
+              throw new Error("plugin runtime payload should not be read before login failure");
+            },
+            writeFileSync() {},
+          };
+        }
+        if (specifier === "node:child_process") {
+          return {
+            spawnSync() {
+              return { status: 1 };
+            },
+            spawn() {
+              assert.fail("app-server must not start after login failure");
+            },
+          };
+        }
+        return nodeRequire(specifier);
+      },
+    };
+
+    assert.throws(
+      () => vm.runInNewContext(PLUGIN_AGENT_RUNTIME_ENTRYPOINT, sandbox),
+      /Codex model authentication initialization failed/,
+    );
+    assert.equal(existsSync(marker), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("Kubernetes no-plugin fixed agent and gateway retain entrypoints without plugin mounts", () => {
