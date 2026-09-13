@@ -70,7 +70,10 @@ names as both types and schema values. The negative cases protect scope,
 immutability, resource kinds, and Driver capability and readiness contracts.
 Compiler diagnostics fail the test; unused `@ts-expect-error` directives fail when
 a rejected assignment becomes valid. These fixtures compile source and do not
-instantiate Drivers or exercise their backing infrastructure.
+instantiate Drivers or exercise their backing infrastructure. A separate check
+emits declarations from the Secret contract module into a fresh temporary
+directory. It catches type/schema export collisions that root-first compilation
+or existing declaration files can conceal.
 
 `contracts` verifies helper behavior, schema validation, and detached immutable
 revision snapshots. Existing Configuration, Secret, and Plugin suites exercise

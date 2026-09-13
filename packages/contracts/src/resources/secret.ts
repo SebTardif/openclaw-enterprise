@@ -1,7 +1,14 @@
 import type { ResourceRef } from "./scope.ts";
+import {
+  SecretReference as SecretReferenceSchema,
+  SecretBinding as SecretBindingSchema,
+  SecretBindings as SecretBindingsSchema,
+} from "../api/common.ts";
 
-// Keep each resource type and its runtime schema under the same exported name.
-export { SecretReference, SecretBinding, SecretBindings } from "../api/common.ts";
+// Local declarations merge the schema values with their resource types during declaration emit.
+export const SecretReference = SecretReferenceSchema;
+export const SecretBinding = SecretBindingSchema;
+export const SecretBindings = SecretBindingsSchema;
 
 /** Secret material is never part of an OCC resource or revision. */
 export interface SecretReference extends ResourceRef {
