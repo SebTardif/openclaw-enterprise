@@ -53,6 +53,14 @@ The integration uses an operator-owned Helm wrapper to install the OpenShell
 gateway before delegating to the driver. The bundled driver does not install
 that gateway.
 
+The fixture gives that gateway its own scoped DNS/API access. Ordinary Harness
+DNS comes from Compute; callback policies require the Harness role and explicit
+`broad-egress-v1` profile in both directions. It installs no namespace-wide DNS
+or callback grant. Older fixtures may retain broad policies or Sandbox templates
+without the profile. Inspect their ownership and replacement routes before
+removing stale policies, or recreate the disposable fixture. Reusing a Sandbox
+by name does not update its template.
+
 Stock OpenShell `v0.0.113` does not support projected volumes in gateway driver
 configuration. The integration applies an operator-owned Sandbox Pod-template
 patch for projected workload identity. Its gateway API also cannot receive

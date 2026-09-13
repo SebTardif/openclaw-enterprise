@@ -1,4 +1,9 @@
 import {
+  NETWORK_PROFILE_LABEL,
+  ORDINARY_NETWORK_PROFILE,
+  ordinaryNetworkPolicySelector,
+} from "./resources/network.ts";
+import {
   asRecord,
   isNonEmptyString,
   numericErrorStatus,
@@ -2715,6 +2720,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ) {
       throw new ConfigurationFailure("Dedicated Harness labels must include exact revision scope.");
     }
+    if (harnessLabels[NETWORK_PROFILE_LABEL] !== ORDINARY_NETWORK_PROFILE) {
+      throw new ConfigurationFailure("Dedicated Harness requires the ordinary network profile.");
+    }
     return {
       image,
       command: command as readonly string[],
@@ -2900,11 +2908,14 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private deploymentReady(deployment: ManagedKubernetesObject): boolean {
+    const template = asRecord(deployment.spec?.template);
+    const labels = asRecord(asRecord(template?.metadata)?.labels);
     const replicas = deployment.spec?.replicas;
     const generation = deployment.metadata.generation;
     const observed = deployment.status?.observedGeneration;
     const ready = deployment.status?.readyReplicas;
     return (
+      labels?.[NETWORK_PROFILE_LABEL] === ORDINARY_NETWORK_PROFILE &&
       typeof replicas === "number" &&
       replicas > 0 &&
       typeof generation === "number" &&
@@ -3027,7 +3038,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return [
       policy("default-deny", { podSelector: {}, policyTypes: ["Ingress", "Egress"] }),
       policy("allow-dns", {
-        podSelector: {},
+        podSelector: ordinaryNetworkPolicySelector(),
         policyTypes: ["Egress"],
         egress: [
           {
@@ -3040,7 +3051,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         ],
       }),
       policy("allow-gateway-ingress", {
-        podSelector: { matchLabels: { "openclaw.dev/workload-role": "gateway" } },
+        podSelector: ordinaryNetworkPolicySelector({ "openclaw.dev/workload-role": "gateway" }),
         policyTypes: ["Ingress"],
         ingress: [
           {
@@ -3516,13 +3527,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
         namespace,
       ),
       spec: {
-        podSelector: {
-          matchLabels: {
-            "openclaw.dev/workload-role": "agent",
-            "openclaw.dev/agent": revision.agentId,
-            "openclaw.dev/revision": revision.id,
-          },
-        },
+        podSelector: ordinaryNetworkPolicySelector({
+          "openclaw.dev/workload-role": "agent",
+          "openclaw.dev/agent": revision.agentId,
+          "openclaw.dev/revision": revision.id,
+        }),
         policyTypes: ["Egress"],
         egress,
       },
@@ -3571,12 +3580,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
         namespace,
       ),
       spec: {
-        podSelector: {
-          matchLabels: {
-            "openclaw.dev/workload-role": "gateway",
-            "openclaw.dev/agent": revision.agentId,
-          },
-        },
+        podSelector: ordinaryNetworkPolicySelector({
+          "openclaw.dev/workload-role": "gateway",
+          "openclaw.dev/agent": revision.agentId,
+        }),
         policyTypes: ["Egress"],
         egress:
           proxy !== undefined
@@ -3622,19 +3629,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
     if (runtime === undefined) return [];
     const suffix = sha256Hex(revision.agentId, 12);
     const ownership = { namespaceId: revision.namespaceId, agentId: revision.agentId };
-    const agent = {
-      matchLabels: {
-        "openclaw.dev/workload-role": "agent",
-        "openclaw.dev/agent": revision.agentId,
-        "openclaw.dev/revision": revision.id,
-      },
-    };
-    const gateway = {
-      matchLabels: {
-        "openclaw.dev/workload-role": "gateway",
-        "openclaw.dev/agent": revision.agentId,
-      },
-    };
+    const agent = ordinaryNetworkPolicySelector({
+      "openclaw.dev/workload-role": "agent",
+      "openclaw.dev/agent": revision.agentId,
+      "openclaw.dev/revision": revision.id,
+    });
+    const gateway = ordinaryNetworkPolicySelector({
+      "openclaw.dev/workload-role": "gateway",
+      "openclaw.dev/agent": revision.agentId,
+    });
     const policy = (name: string, spec: KubernetesRecord): ManagedKubernetesObject => ({
       ...this.manifest(
         "networking.k8s.io/v1",
@@ -4066,6 +4069,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
               ...revisionLabels,
               ...selector,
               "openclaw.dev/workload-role": role,
+              [NETWORK_PROFILE_LABEL]: ORDINARY_NETWORK_PROFILE,
             },
           },
           spec: {

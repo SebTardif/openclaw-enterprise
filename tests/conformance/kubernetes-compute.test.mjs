@@ -1060,6 +1060,7 @@ test("account-token authentication grants only the exact Codex revision outbound
     revision.servicePrincipalId,
   );
   assert.deepEqual(policy.spec.podSelector.matchLabels, {
+    "openclaw.dev/network-profile": "broad-egress-v1",
     "openclaw.dev/workload-role": "agent",
     "openclaw.dev/agent": revision.agentId,
     "openclaw.dev/revision": revision.id,
@@ -2242,6 +2243,27 @@ test("provider Harness activation fails before routing on absent, ambiguous, or 
   assert.equal(fixture.requests.length, 5);
 });
 
+test("provider Harness requires its assigned network profile before readiness and activation", async () => {
+  const fixture = providerReadinessFixture();
+  assert.equal(fixture.labels["openclaw.dev/network-profile"], "broad-egress-v1");
+  fixture.setObservation({ items: [fixture.pod("approved")] });
+  assert.equal(await fixture.ready(), true);
+
+  // A provider may preserve identity and report Ready while losing the network classification.
+  // Observe that candidate and reject it before activation can change any routing.
+  for (const profile of [undefined, "", "unknown-profile"]) {
+    const pod = fixture.pod("unapproved");
+    if (profile === undefined) delete pod.metadata.labels["openclaw.dev/network-profile"];
+    else pod.metadata.labels["openclaw.dev/network-profile"] = profile;
+    fixture.setObservation({ items: [pod] });
+    await assert.rejects(fixture.ready(), /invalid or incomplete provider Harness Pod list/);
+    await assert.rejects(
+      fixture.driver.activateRevision(fixture.revision),
+      /invalid or incomplete provider Harness Pod list/,
+    );
+  }
+});
+
 test("provider Harness preparation preserves readiness and cleanup contracts", async () => {
   const hooks = [];
   const provisions = [];
@@ -2640,6 +2662,7 @@ test("revision lifecycle rejects another driver or missing identity before clust
   const policies = production.agentNetworkPolicies(embeddedRevision, namespace);
   assert.equal(policies.length, 1);
   assert.deepEqual(policies[0].spec.podSelector.matchLabels, {
+    "openclaw.dev/network-profile": "broad-egress-v1",
     "openclaw.dev/workload-role": "gateway",
     "openclaw.dev/agent": revision.agentId,
   });
@@ -3120,3 +3143,292 @@ test("retiring a predecessor preserves both claims and final retirement deletes 
   );
   assert.deepEqual(deletions, []);
 });
+
+// These controls inspect real Driver policy construction and its real reconcile
+// path. Label matching below is only the Kubernetes selector contract; it is
+// not a CNI/kernel/network-enforcement simulator or an admission authority.
+function selectedNetworkSelectorMatches(selector, labels) {
+  assert.deepEqual(selector.matchExpressions ?? [], []);
+  return Object.entries(selector.matchLabels ?? {}).every(([key, value]) => labels[key] === value);
+}
+function selectedNetworkDriver() {
+  return createKubernetesComputeDriver(
+    options({
+      runtime: {
+        transportSecretPrefix: "transport",
+        gatewayStorageClassName: "local-path",
+        modelSecretPrefix: "model",
+        channels: { secretPrefix: "channel", proxyUrl: "http://192.0.2.15:3128" },
+      },
+    }),
+  );
+}
+function selectedNetworkRevision(mode = "dedicated") {
+  return {
+    id: "revision-network-1",
+    namespaceId: tenant.id,
+    agentId: "agent-network",
+    servicePrincipalId: "principal-network",
+    harness: { id: mode === "embedded" ? "openclaw" : "codex", version: "1.0.0", mode },
+    configuration: { channels: mode === "embedded" ? {} : { slack: {} } },
+  };
+}
+
+function ordinaryNetworkWorkload(driver, revision, role) {
+  return driver.deployment(
+    `network-${role}`,
+    {
+      namespaceId: revision.namespaceId,
+      agentId: revision.agentId,
+      revisionId: revision.id,
+      servicePrincipalId: revision.servicePrincipalId,
+    },
+    kubernetesNamespaceName(revision.namespaceId),
+    `${role}:local`,
+    `network-${role}`,
+    role,
+    {},
+    "info",
+    undefined,
+    revision.harness.mode === "embedded",
+  );
+}
+
+test("ordinary workload readiness and provider requirements reject an unclassified template", () => {
+  const driver = selectedNetworkDriver();
+  const revision = selectedNetworkRevision();
+  for (const role of ["agent", "gateway"]) {
+    const workload = ordinaryNetworkWorkload(driver, revision, role);
+    workload.metadata.generation = 1;
+    workload.status = { observedGeneration: 1, readyReplicas: 1 };
+    assert.equal(driver.deploymentReady(workload), true);
+    for (const profile of [undefined, "", "unknown-profile"]) {
+      const unapproved = structuredClone(workload);
+      if (profile === undefined)
+        delete unapproved.spec.template.metadata.labels["openclaw.dev/network-profile"];
+      else unapproved.spec.template.metadata.labels["openclaw.dev/network-profile"] = profile;
+      assert.equal(driver.deploymentReady(unapproved), false);
+    }
+  }
+
+  const provider = providerReadinessFixture();
+  const workload = ordinaryNetworkWorkload(provider.driver, provider.revision, "agent");
+  assert.equal(
+    provider.driver.harnessRequirementsFromDeployment(workload).labels[
+      "openclaw.dev/network-profile"
+    ],
+    "broad-egress-v1",
+  );
+  for (const profile of [undefined, "", "unknown-profile"]) {
+    const unapproved = structuredClone(workload);
+    if (profile === undefined)
+      delete unapproved.spec.template.metadata.labels["openclaw.dev/network-profile"];
+    else unapproved.spec.template.metadata.labels["openclaw.dev/network-profile"] = profile;
+    assert.throws(
+      () => provider.driver.harnessRequirementsFromDeployment(unapproved),
+      /network profile/i,
+    );
+  }
+});
+
+test("every ordinary allow policy requires the explicit profile on a generated workload", () => {
+  const driver = selectedNetworkDriver();
+  const revision = selectedNetworkRevision();
+  const namespace = kubernetesNamespaceName(tenant.id);
+  const policies = [
+    ...driver.networkPolicies({ namespaceId: tenant.id }, namespace),
+    ...driver.agentNetworkPolicies(revision, namespace),
+    ...driver.agentNetworkPolicies(selectedNetworkRevision("embedded"), namespace),
+    driver.agentAuthenticationNetworkPolicy(revision, namespace),
+    driver.channelNetworkPolicy(revision, driver.enabledChannels(revision), namespace),
+  ];
+  let checked = 0;
+  for (const policy of policies) {
+    if (policy.metadata.name === "default-deny") {
+      assert.deepEqual(policy.spec.podSelector, {});
+      continue;
+    }
+    const selector = policy.spec.podSelector;
+    assert.equal(selector.matchLabels["openclaw.dev/network-profile"], "broad-egress-v1");
+    const ordinary = ordinaryNetworkWorkload(
+      driver,
+      revision,
+      selector.matchLabels["openclaw.dev/workload-role"] ?? "agent",
+    ).spec.template.metadata.labels;
+    assert.equal(ordinary["openclaw.dev/network-profile"], "broad-egress-v1");
+    assert.equal(selectedNetworkSelectorMatches(selector, ordinary), true);
+    // Omitting only the profile from an otherwise correctly scoped Pod must remove every grant.
+    for (const value of [undefined, "", "unknown-profile"]) {
+      const unapproved = { ...ordinary };
+      if (value === undefined) delete unapproved["openclaw.dev/network-profile"];
+      else unapproved["openclaw.dev/network-profile"] = value;
+      assert.equal(selectedNetworkSelectorMatches(selector, unapproved), false);
+    }
+    checked++;
+  }
+  assert.equal(checked, 7);
+});
+
+test("ordinary embedded and dedicated policy callers retain exact model and Harness routes", () => {
+  const driver = selectedNetworkDriver();
+  const revision = selectedNetworkRevision();
+  const namespace = kubernetesNamespaceName(tenant.id);
+  const [gateway, agent] = driver.agentNetworkPolicies(revision, namespace);
+  const auth = driver.agentAuthenticationNetworkPolicy(revision, namespace);
+  const [embedded] = driver.agentNetworkPolicies(selectedNetworkRevision("embedded"), namespace);
+  assert.deepEqual(agent.spec.egress, embedded.spec.egress);
+  assert.deepEqual(auth.spec.egress, agent.spec.egress);
+  assert.deepEqual(agent.spec.egress, [
+    {
+      to: [
+        {
+          ipBlock: {
+            cidr: "0.0.0.0/0",
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"],
+          },
+        },
+      ],
+      ports: [{ protocol: "TCP", port: 443 }],
+    },
+  ]);
+  assert.equal(agent.spec.ingress.length, 1);
+  assert.deepEqual(gateway.spec.egress[0].ports, agent.spec.ingress[0].ports);
+  const agentLabels = ordinaryNetworkWorkload(driver, revision, "agent").spec.template.metadata
+    .labels;
+  assert.equal(
+    selectedNetworkSelectorMatches(gateway.spec.egress[0].to[0].podSelector, agentLabels),
+    true,
+  );
+  const embeddedLabels = ordinaryNetworkWorkload(
+    driver,
+    selectedNetworkRevision("embedded"),
+    "gateway",
+  ).spec.template.metadata.labels;
+  assert.equal(selectedNetworkSelectorMatches(embedded.spec.podSelector, embeddedLabels), true);
+  const gatewayLabels = ordinaryNetworkWorkload(driver, revision, "gateway").spec.template.metadata
+    .labels;
+  for (const [selector, labels] of [
+    [gateway.spec.egress[0].to[0].podSelector, agentLabels],
+    [agent.spec.ingress[0].from[0].podSelector, gatewayLabels],
+  ]) {
+    assert.equal(selectedNetworkSelectorMatches(selector, labels), true);
+    for (const profile of [undefined, "", "unknown-profile"]) {
+      const unapproved = { ...labels };
+      if (profile === undefined) delete unapproved["openclaw.dev/network-profile"];
+      else unapproved["openclaw.dev/network-profile"] = profile;
+      assert.equal(selectedNetworkSelectorMatches(selector, unapproved), false);
+    }
+  }
+  assert.equal(
+    selectedNetworkSelectorMatches(agent.spec.podSelector, {
+      ...agentLabels,
+      "openclaw.dev/revision": "revision-network-2",
+    }),
+    false,
+  );
+  assert.equal(
+    selectedNetworkSelectorMatches(auth.spec.podSelector, {
+      ...agentLabels,
+      "openclaw.dev/agent": "another-agent",
+    }),
+    false,
+  );
+  const dns = driver
+    .networkPolicies({ namespaceId: tenant.id }, namespace)
+    .find((p) => p.metadata.name === "allow-dns");
+  assert.deepEqual(dns.spec.egress[0].ports, [
+    { protocol: "UDP", port: 53 },
+    { protocol: "TCP", port: 53 },
+  ]);
+  assert.deepEqual(dns.spec.egress[0].to, [
+    {
+      namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "kube-system" } },
+      podSelector: { matchLabels: { "k8s-app": "kube-dns" } },
+    },
+  ]);
+});
+
+test("ordinary network profile selectors remain detached across real caller results", () => {
+  const driver = selectedNetworkDriver();
+  const revision = selectedNetworkRevision();
+  const namespace = kubernetesNamespaceName(tenant.id);
+  const first = driver.agentNetworkPolicies(revision, namespace);
+  delete first[1].spec.podSelector.matchLabels["openclaw.dev/network-profile"];
+  first[1].spec.podSelector.matchLabels["openclaw.dev/agent"] = "mutated";
+  const second = driver.agentNetworkPolicies(revision, namespace);
+  assert.equal(
+    second[1].spec.podSelector.matchLabels["openclaw.dev/network-profile"],
+    "broad-egress-v1",
+  );
+  assert.equal(second[1].spec.podSelector.matchLabels["openclaw.dev/agent"], revision.agentId);
+  const disabled = createKubernetesComputeDriver(options());
+  assert.deepEqual(disabled.agentNetworkPolicies(revision, namespace), []);
+});
+
+for (const foreign of [false, true]) {
+  test(`owned policy reconciliation ${foreign ? "refuses foreign" : "replaces stale broad"} DNS and auth selectors`, async () => {
+    const driver = selectedNetworkDriver();
+    const revision = selectedNetworkRevision();
+    const namespace = kubernetesNamespaceName(tenant.id);
+    const selections = [
+      [
+        driver
+          .networkPolicies({ namespaceId: tenant.id }, namespace)
+          .find((p) => p.metadata.name === "allow-dns"),
+        { namespaceId: tenant.id },
+      ],
+      [
+        driver.agentAuthenticationNetworkPolicy(revision, namespace),
+        {
+          namespaceId: tenant.id,
+          agentId: revision.agentId,
+          servicePrincipalId: revision.servicePrincipalId,
+        },
+      ],
+    ];
+    const observed = new Map(
+      selections.map(([policy]) => {
+        const value = structuredClone(policy);
+        delete value.spec.podSelector.matchLabels["openclaw.dev/network-profile"];
+        // Cover both the original broad selector and this PR's previous absence-based grant.
+        if (policy.metadata.name.startsWith("allow-agent-auth-"))
+          value.spec.podSelector.matchExpressions = [
+            { key: "openclaw.dev/network-profile", operator: "DoesNotExist" },
+          ];
+        if (foreign) value.metadata.labels["openclaw.dev/namespace"] = "foreign-namespace";
+        return [value.metadata.name, value];
+      }),
+    );
+    const requests = [];
+    // Only the external SDK transport is substituted. Ownership validation,
+    // generated selectors, non-forced request construction and reconciliation
+    // are the real Driver methods; no successful installed enforcement is claimed.
+    driver.apiClients = Promise.resolve({
+      networking: {
+        async readNamespacedNetworkPolicy({ name, namespace: selected }) {
+          assert.equal(selected, namespace);
+          return structuredClone(observed.get(name));
+        },
+        async patchNamespacedNetworkPolicy(request) {
+          requests.push(structuredClone(request));
+        },
+      },
+    });
+    for (const [policy, ownership] of selections) {
+      if (foreign)
+        await assert.rejects(
+          driver.reconcile(policy, ownership, namespace),
+          /unowned Kubernetes NetworkPolicy/i,
+        );
+      else await driver.reconcile(policy, ownership, namespace);
+    }
+    assert.equal(requests.length, foreign ? 0 : 2);
+    if (!foreign)
+      for (const [index, request] of requests.entries()) {
+        assert.equal(request.force, false);
+        assert.equal(request.namespace, namespace);
+        assert.equal(request.name, selections[index][0].metadata.name);
+        assert.deepEqual(request.body, selections[index][0]);
+      }
+  });
+}

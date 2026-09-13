@@ -85,6 +85,12 @@ Production embedded OpenClaw starts one combined gateway/Harness with the exact 
 ServiceAccount, projected token, operator-materialized Agent-specific model key, and initially
 nonserving gateway route; no Codex workload or app-server credential exists.
 
+The shared Kubernetes Deployment builder assigns the explicit ordinary
+[network profile](../reference/drivers/kubernetes-compute/networking-and-isolation.md#explicit-network-profiles)
+to each Pod template. Allow-policy targets and gateway/Harness peers require
+that profile; a missing classification cannot inherit ordinary grants.
+Deployment readiness checks the template profile before accepting Ready counters.
+
 When a selected SandboxDriver provisions the dedicated Harness,
 `providerHarnessReady` lists Pods using the same Agent/revision/role labels as
 the active Service. It validates the complete observation and requires exactly

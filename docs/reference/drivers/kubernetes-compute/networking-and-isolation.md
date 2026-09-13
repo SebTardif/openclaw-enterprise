@@ -33,6 +33,41 @@ restricted model proxy is not yet available. Channels require an approved
 literal-IP HTTP(S) proxy configured through `runtime.channels`; direct public
 channel-provider access is denied.
 
+## Explicit network profiles
+
+Ordinary DNS, model, authentication, channel and gateway/Harness allow policies
+require the reserved Pod label
+`openclaw.dev/network-profile=broad-egress-v1`, together with their existing
+role, Agent and revision selectors. Gateway/Harness peer selectors require the
+same profile. Missing, empty or unknown profiles receive no ordinary grant;
+the tenant default-deny policy still selects every Pod.
+
+Compute assigns this profile when creating ordinary embedded and dedicated
+workload templates. Their existing routes and ports remain unchanged. It also
+passes the profile in provider-owned Harness requirements. Deployment readiness
+requires the expected template profile; provider Harness readiness and activation
+reject an otherwise matching Pod that omits or changes a required profile.
+
+The separately installed OpenShell gateway needs its own scoped DNS/API and
+callback policies. Platform services retain their existing Helm policy selectors.
+
+Development workloads created before explicit profiles may lose access or fail
+readiness after policy reconciliation. They are not automatically relabeled.
+Follow the [development recovery procedure](../../../guides/deploy/local-operations.md#build-images-for-local-kubernetes)
+to recreate affected workloads from current templates.
+
+Profile assignment is a trusted controller decision. The label qualifies a Pod
+for network grants; it does not supply workload identity or authorization to
+request those grants. Operators must control workload creation, profile-label
+mutation and NetworkPolicy writes. This component does not install admission
+controls for those privileges.
+
+Existing owned policy names remain stable and reconciliation replaces their
+selectors through the normal non-forced apply path. Kubernetes combines grants
+from every matching policy, so stale or additional allow policies can bypass
+this restriction. Inspect installed policies and verify allowed and denied
+connections on a cluster with NetworkPolicy enforcement.
+
 ## Private Agent gateway routes
 
 See [gateway routing with Envoy](../../gateway-routing.md) for shared infrastructure,
