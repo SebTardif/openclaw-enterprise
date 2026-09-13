@@ -1,7 +1,4 @@
-import type {
-  OpenClawConfigurationDocument,
-  OpenClawConfigurationValue,
-} from "./resources/configuration.ts";
+import type { OpenClawConfigurationDocument, OpenClawConfigurationValue } from "./index.ts";
 
 export const LOGGING_LEVELS = Object.freeze(["debug", "info", "warn", "error"] as const);
 
