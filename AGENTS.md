@@ -34,6 +34,34 @@ When the user or owning workflow requests an independent code review, use
 Keep the vendored skill unchanged; shared fixes belong in `openclaw/agent-skills`.
 The other skills are [Enterprise adaptations](docs/testing/developer-skills.md).
 
+## Development integration
+
+Use isolated worktrees with bounded outcomes, acceptance criteria and explicit
+change ownership. One writer owns each shared worktree file. The integrator may
+permit small understood overlaps across isolated branches; preserve semantic
+interface ownership and resolve mechanical conflicts during reviewed composition.
+Keep active worktrees in persistent home or workspace storage. Preserve existing
+worktrees and their contents.
+
+The coordinator serializes reviewed integration into `integration/dev`. Worker
+tasks do not each need a PR. Prepare small cohesive promotion PRs from independently
+verified public `main`, with explicit dependencies, behavior changes, tests and
+operator documentation together. Never merge the accumulated integration branch
+to `main` as one change. Workers must not independently push main. Required
+correctness, security and exact outgoing-content publication reviews still apply.
+
+Set a next meaningful checkpoint and record an owner, action, wake condition and
+finite coordinator decision deadline for waits. Reuse valid accepted evidence;
+reopen decisions for changed requirements or defects. Bound correction cycles
+with an integrator decision, preserving real acceptance criteria and required
+security checks.
+
+Source acceptance may precede external-service or selected-runtime qualification.
+Exercise the real OCE components being claimed; external services may be substituted
+at explicit interfaces with recorded limits. Keep outstanding live qualification
+with its named owner. Internal implementation obligations and explicitly requested
+live tests remain required for the corresponding completion claims.
+
 ## Product terminology
 
 - **OCE** means **OpenClaw Enterprise**, the product.
