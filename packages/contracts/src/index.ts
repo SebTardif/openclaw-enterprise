@@ -6,7 +6,10 @@ import {
   PluginDriverIdentitySchema,
   PluginToolPolicySchema,
 } from "./api/resources.ts";
+import { SecretReference, SecretBinding, SecretBindings } from "./api/common.ts";
 import { Check } from "typebox/value";
+
+export { SecretReference, SecretBinding, SecretBindings };
 
 export {
   LOGGING_LEVELS,
