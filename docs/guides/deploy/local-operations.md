@@ -77,6 +77,14 @@ Set the remaining database, HTTPS, network, and storage inputs for your trial
 those dependencies or prove an Agent model turn. When finished with the trial,
 run `KUBECONFIG="$KUBECONFIG_FILE" k3d cluster delete "$CLUSTER"`.
 
+For missing DNS, denied connections, or unready Kubernetes Agents after a
+checkout update, inspect the [ordinary network profile](../../reference/drivers/kubernetes-compute/networking-and-isolation.md#explicit-network-profiles)
+on the affected Pod and its workload template, plus all matching NetworkPolicies.
+Preserve needed development data, rebuild the controller, and recreate affected
+development Agents through the normal lifecycle. Restarting a Pod from an old
+template retains the missing label; assigning the profile to arbitrary Pods
+grants access and is not a repair.
+
 ## Stop development safely
 
 Run the exact command under `Cleanup` in the `dev-up` output. For Podman, it

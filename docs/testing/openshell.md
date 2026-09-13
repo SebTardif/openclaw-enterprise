@@ -68,6 +68,14 @@ that gateway. Stock OpenShell `v0.1.0-pre.7` cannot receive the required exact
 `secretKeyRef` environment entries, plugin-runtime ConfigMap, or projected
 workload identity through its gateway configuration.
 
+The fixture gives that gateway its own scoped DNS/API access. Ordinary Harness
+DNS comes from Compute; callback policies require the Harness role and explicit
+`broad-egress-v1` profile in both directions. It installs no namespace-wide DNS
+or callback grant. Older fixtures may retain broad policies or Sandbox templates
+without the profile. Inspect their ownership and replacement routes before
+removing stale policies, or recreate the disposable fixture. Reusing a Sandbox
+by name does not update its template.
+
 Positive mode bridges those shapes only inside this test. Its bootstrap Job
 mounts the production Secret references, immutable `runtime.json` and
 `config.toml` ConfigMap entries, and an audience-bound ServiceAccount token. It

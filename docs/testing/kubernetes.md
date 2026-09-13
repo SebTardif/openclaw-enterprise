@@ -62,6 +62,11 @@ infrastructure. Its API-plus-worker case verifies Secret binding admission and
 gateway projection with synthetic values, but genuine Slack/channel runtime
 requires the runtime images and credentials below.
 
+The Driver lifecycle case also clones a rendered workload into a separate probe
+Pod and checks DNS access with the explicit ordinary network profile. Missing,
+empty and unknown profiles must deny DNS, with successful
+ordinary-profile controls before and after each denial.
+
 Live Configuration ConfigMap CRUD and least-privilege RBAC cases require the
 selected disposable cluster and tenant credentials. Without those inputs, they
 skip explicitly. Schema, controller, and SDK fixtures do not exercise that live

@@ -218,6 +218,13 @@ must allow only gateway, control-plane, callback, and approved provider
 connectivity needed for OpenShell to function. Broad namespace egress or ingress
 allows can bypass the intended boundary.
 
+Compute passes the ordinary network profile to the provider Harness template;
+the provider must retain it on the resulting Pod. Provider callback policies
+must require that profile alongside the Harness role. The separately installed
+OpenShell gateway needs its own scoped DNS/API policies because it does not
+receive ordinary tenant DNS by omission. See the
+[network profile reference](kubernetes-compute/networking-and-isolation.md#explicit-network-profiles).
+
 ## Current upstream preconditions
 
 The current integration cannot run production Agents. Production support would

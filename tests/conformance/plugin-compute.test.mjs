@@ -1430,6 +1430,7 @@ test("embedded plugin preparation applies runtime egress before gateway readines
   assert.ok(runtimePolicyIndex < gatewayDeploymentIndex);
   assert.deepEqual(reconciled[runtimePolicyIndex].spec.podSelector.matchLabels, {
     "openclaw.dev/namespace": embedded.namespaceId,
+    "openclaw.dev/network-profile": "broad-egress-v1",
     "openclaw.dev/workload-role": "gateway",
     "openclaw.dev/agent": embedded.agentId,
   });

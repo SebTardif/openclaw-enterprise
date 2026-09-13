@@ -454,6 +454,10 @@ operator's local Kubernetes connection.
 A Helm release, ready controller, or active revision does not show that the
 Agent can reach its model.
 
+Inspect [network profiles](../../reference/drivers/kubernetes-compute/networking-and-isolation.md#explicit-network-profiles)
+before relabeling gateway or Harness Pods: profile assignment grants ordinary
+network access. Missing profiles deny ordinary grants.
+
 ## Attach with the OpenClaw TUI
 
 Use the requested `REVISION_ID`. This Bash function waits up to five minutes

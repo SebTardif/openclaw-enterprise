@@ -322,10 +322,22 @@ test(
     assert.equal(persistedRevision.rows[0].active_revision_id, revision.id);
     assert.equal(activeAgent.activeRevisionId, revision.id);
 
-    const revisionWork = await pool.query(
-      `SELECT namespace_id, agent_id, revision_id, actor_id, state
-       FROM occ.controller_work WHERE revision_id = $1`,
-      [revision.id],
+    // The active revision is committed before Compute activation and work completion.
+    // Wait for the worker's durable outcome before asserting success and ownership.
+    const revisionWork = await pollUntil(
+      `independent worker to complete admitted revision ${revision.id}`,
+      async () => {
+        const work = await pool.query(
+          `SELECT namespace_id, agent_id, revision_id, actor_id, state
+           FROM occ.controller_work WHERE revision_id = $1`,
+          [revision.id],
+        );
+        assert.equal(work.rowCount, 1);
+        return work.rows[0].state === "queued" || work.rows[0].state === "claimed"
+          ? undefined
+          : work;
+      },
+      { worker, timeoutMs: 60_000 },
     );
     assert.deepEqual(revisionWork.rows, [
       {
