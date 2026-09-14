@@ -74,6 +74,7 @@
                   "reference/gateway-routing",
                   "reference/harness-execution",
                   "reference/namespaces",
+                  "reference/platform-repositories",
                   "reference/providers",
                   "reference/github-app-token-issuer",
                   "reference/security",
