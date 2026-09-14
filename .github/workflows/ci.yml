@@ -78,12 +78,41 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           artifact-prefix: ci-results
 
+  runtime-security:
+    name: Native Identity and Service Peer
+    runs-on: ubuntu-24.04
+    needs: audit
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: components/runtime-security
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          go-version-file: components/runtime-security/go.mod
+          cache-dependency-path: components/runtime-security/go.sum
+      - name: Verify formatting and module checksums
+        run: |
+          test -z "$(gofmt -l identity servicepeer)"
+          go mod verify
+      - name: Analyze native packages
+        run: |
+          go vet -mod=readonly ./...
+      - name: Test Workload API and mutual TLS with race detection
+        run: go test -mod=readonly -race -count=1 -timeout=90s ./...
+      - name: Verify dependency notice collection
+        run: sh licenses/collect.sh "$RUNNER_TEMP/runtime-security-notices"
+
   ci-required:
     name: CI Required
     runs-on: ubuntu-24.04
     needs:
       - audit
       - pr-safe
+      - runtime-security
     if: always()
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -105,7 +134,7 @@ jobs:
           const fs = require("fs");
           const needs = JSON.parse(process.env.NEEDS_JSON);
           const lanes = ["checks-baseline", "postgres", "images-packaging", "k3d-fixture-configuration", "logging-collector"];
-          const expanded = { audit: needs.audit };
+          const expanded = { audit: needs.audit, "runtime-security": needs["runtime-security"] };
           for (const lane of lanes) {
             expanded[lane] = { result: needs["pr-safe"]?.result ?? "missing" };
           }

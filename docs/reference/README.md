@@ -66,3 +66,7 @@ Change a reference in the same PR that changes its supported behavior. Keep
 proposal rationale, implementation tasks, and historical alternatives in
 [top-level implementation specs](../../specs/README.md); keep runtime traces in
 `docs/flows/`. Reference pages use stable feature names rather than milestone numbers.
+
+[Native identity and service peers](native-identity.md) defines protected X.509
+credential acquisition, exact mutual TLS, current trust checks, and connection
+ownership for the repository-read mediation boundary.

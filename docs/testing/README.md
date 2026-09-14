@@ -111,3 +111,6 @@ databases, or unrelated clusters.
 - [Deployment guide](../guides/deploy.md)
 - [Runtime image recipe](../../deploy/runtime/README.md)
 - [Contributor integration boundaries](../../AGENTS.md#running-integration-tests)
+
+[Native identity tests](native-identity.md) exercise the actual Workload API
+source and mutual-TLS transport with disposable protocol peers.

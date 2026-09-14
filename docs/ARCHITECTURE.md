@@ -196,3 +196,10 @@ The target design does not establish that a capability is implemented.
 - [Documentation map](README.md)
 - [Platform design](design.md)
 - [Testing](testing/README.md)
+
+## Native workload authentication
+
+The [native identity module](reference/native-identity.md) owns protected X.509
+credential acquisition and exact service-peer TLS. Its mediation consumer must
+retain the admitted execution and existing Agent ServicePrincipal; an SVID
+does not grant an IAM operation.
