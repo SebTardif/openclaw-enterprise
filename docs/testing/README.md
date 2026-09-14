@@ -115,4 +115,4 @@ databases, or unrelated clusters.
 ## Runtime assignment storage
 
 See [runtime assignment storage verification](runtime-assignment.md) for the
-shared memory/database contract, lost-COMMIT transport fault and restart readback.
+shared memory/database contract, lost-COMMIT transport fault and fresh-pool readback.

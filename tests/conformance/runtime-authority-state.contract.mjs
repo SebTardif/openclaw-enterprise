@@ -173,7 +173,10 @@ export async function verifyRuntimeAuthorityState(t, store) {
         return Promise.resolve();
       });
       const immediate = await f.record();
-      await assert.rejects(detached);
+      await assert.rejects(detached, {
+        name: "ScopeViolationError",
+        message: "The platform transaction is closed.",
+      });
       assert.equal(immediate.authority.assignmentRecordVersion, 2);
       assert.deepEqual(await f.record(), immediate);
       assert.equal(await f.operation(late.operationRef), undefined);

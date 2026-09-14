@@ -43,7 +43,7 @@ establish current runtime eligibility.
 ## Validation, replay and transaction outcomes
 
 The curated `@openclaw-enterprise/contracts` entry point exports the versioned
-schemas, parsers and canonical mutation encoder. The object parser produces
+types, parsers and canonical mutation encoder. The object parser produces
 immutable snapshots of closed data. The raw JSON parser additionally rejects
 duplicate keys and ambiguous numeric literals before ordinary JSON decoding
 loses those distinctions. Errors identify a failed rule without echoing values.
