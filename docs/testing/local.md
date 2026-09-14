@@ -52,24 +52,6 @@ node --test tests/integration/secret-api.test.mjs
 node --test --test-name-pattern='part of the test name' tests/integration/secret-api.test.mjs
 ```
 
-## Contract package verification
-
-After preparing the [shared dependencies](README.md#requirements-and-credentials),
-run the package root checks and workspace typecheck:
-
-```sh
-node --test tests/conformance/contract-imports.test.mjs
-pnpm typecheck
-```
-
-`contract-imports` checks that the package root exposes the canonical Secret schema
-objects and compiles a NodeNext consumer that uses `SecretReference`, `SecretBinding`,
-and `SecretBindings` as both resource types and runtime validation schemas. This
-catches local type declarations hiding schema values re-exported from `api/common`.
-The suite runs in the baseline CI lane; the workspace typecheck also verifies
-declaration emission and existing package consumers. These source and type checks
-do not exercise Driver infrastructure.
-
 ## Authentication and authorization coverage
 
 `tests/conformance/iam.test.mjs` covers explicit identities, exact scopes, Group
