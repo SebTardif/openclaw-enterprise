@@ -41,6 +41,7 @@ const identifierPatterns = {
   agent: "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
   revision: "^rev_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
   secret: "^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+  repositoryBinding: "^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
   audit: "^aud_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 } as const;
 
@@ -247,7 +248,7 @@ export const agents = occSchema.table(
     ),
     check(
       "agents_repository_access_valid",
-      sql`occ.repository_access_valid(${table.repositoryAccess},${table.namespaceId})`,
+      sql`occ.repository_access_valid(${table.repositoryAccess}, ${table.namespaceId})`,
     ),
     check("agents_id_format", sql`${table.id} ~ ${identifierPatterns.agent}`),
     check("agents_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
@@ -603,6 +604,10 @@ export const iamAccessBindings = occSchema.table(
       sql`num_nonnulls(${table.identitySubjectId}, ${table.groupSubjectId}) = 1`,
     ),
     check(
+      "iam_bindings_repository_namespace",
+      sql`${table.resourceKind} IS DISTINCT FROM 'repository_binding' OR ${table.namespaceId} IS NOT NULL`,
+    ),
+    check(
       "iam_access_bindings_resource_pair",
       sql`(${table.resourceKind} IS NULL) = (${table.resourceId} IS NULL)`,
     ),
@@ -630,6 +635,10 @@ export const iamRestrictions = occSchema.table(
     check(
       "iam_restrictions_resource_kind_valid",
       sql`${table.resourceKind} IN ('installation', 'namespace', 'configuration', 'service_account', 'secret', 'agent', 'agent_revision', 'repository_binding')`,
+    ),
+    check(
+      "iam_restrictions_repository_namespace",
+      sql`${table.resourceKind} <> 'repository_binding' OR ${table.namespaceId} IS NOT NULL`,
     ),
     check("iam_restrictions_effect_deny", sql`${table.effect} = 'deny'`),
     check(
@@ -899,8 +908,17 @@ export const repositoryBindings = occSchema.table(
     descriptor: jsonb("descriptor").$type<RepositoryBinding>().notNull(),
   },
   (table) => [
-    unique().on(table.namespaceId, table.id),
+    check(
+      "repository_bindings_id_format",
+      sql`${table.id} ~ ${identifierPatterns.repositoryBinding}`,
+    ),
+    check(
+      "repository_bindings_generation_valid",
+      sql`${table.generation} BETWEEN 1 AND 9007199254740991`,
+    ),
+    index("repository_bindings_key_secret_idx").on(table.namespaceId, table.keySecretId),
     foreignKey({
+      name: "repository_bindings_secret_owner",
       columns: [table.namespaceId, table.keySecretId],
       foreignColumns: [secrets.namespaceId, secrets.id],
     }),

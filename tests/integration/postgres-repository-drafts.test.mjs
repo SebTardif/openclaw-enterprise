@@ -381,6 +381,14 @@ test(
       await request("POST", "/namespaces", { name: "other-repository-namespace" }),
       201,
     );
+    await controller.handleNamespaceLifecycle(admin.principal.id, other.id, "ready");
+    const foreignSecret = expect(
+      await request("POST", `/namespaces/${other.id}/secrets`, {
+        name: "Other Namespace signing key",
+        value: "synthetic-other-signing-key",
+      }),
+      201,
+    );
     expect(await request("GET", `/namespaces/${other.id}/repository-bindings/${binding.id}`), 404);
     expect(await request("POST", `/namespaces/${other.id}/repository-bindings`, descriptor), 404);
     const foreignDraft = {
@@ -432,10 +440,35 @@ test(
       replacement,
     );
     collideAuditId = undefined;
+    // The binding alone retains its signing Secret, even without an admitted revision.
+    expect(await request("DELETE", `${base}/secrets/${secret.ref.id}`), 409);
+    await assert.rejects(pool.query("DELETE FROM occ.secrets WHERE id = $1", [secret.ref.id]), {
+      code: "23503",
+    });
+    // A structurally valid descriptor cannot move the signing key across Namespaces.
+    const foreignKeyBinding = {
+      ...updatedBinding,
+      generation: 3,
+      keySecretRef: { ...secret.ref, id: foreignSecret.ref.id },
+    };
+    await assert.rejects(
+      pool.query(
+        `UPDATE occ.repository_bindings
+         SET key_secret_id = $2, generation = $3, descriptor = $4::jsonb
+         WHERE id = $1`,
+        [binding.id, foreignSecret.ref.id, 3, JSON.stringify(foreignKeyBinding)],
+      ),
+      { code: "23503" },
+    );
+    assert.deepEqual(
+      expect(await request("GET", `${base}/repository-bindings/${binding.id}`), 200),
+      updatedBinding,
+    );
     await assert.rejects(
       pool.query("UPDATE occ.repository_bindings SET generation=generation+2 WHERE id=$1", [
         binding.id,
       ]),
+      { code: "23514" },
     );
     await assert.rejects(
       pool.query("UPDATE occ.repository_bindings SET id=$2 WHERE id=$1", [binding.id, id("rb")]),

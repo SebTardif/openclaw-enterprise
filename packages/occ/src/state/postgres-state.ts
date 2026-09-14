@@ -1340,7 +1340,10 @@ export class PostgresPlatformState implements PlatformStateStore {
                    AND binding.value #>> '{source,kind}' = 'secret'
                    AND binding.value #>> '{source,namespaceId}' = $1
                    AND binding.value #>> '{source,id}' = $2
-               ) OR EXISTS (SELECT 1 FROM occ.repository_bindings WHERE namespace_id=$1 AND key_secret_id=$2) AS present`,
+               ) OR EXISTS (
+                 SELECT 1 FROM occ.repository_bindings
+                 WHERE namespace_id = $1 AND key_secret_id = $2
+               ) AS present`,
               [namespaceId, secretId],
             )
           ).rows,
@@ -1497,7 +1500,10 @@ export class PostgresPlatformState implements PlatformStateStore {
         const result = rows(
           (
             await client.query(
-              "SELECT b.descriptor FROM occ.repository_bindings b JOIN occ.namespaces n ON n.id = b.namespace_id AND n.deleted_at IS NULL WHERE b.namespace_id = $1 AND b.id = $2",
+              `SELECT b.descriptor
+               FROM occ.repository_bindings AS b
+               JOIN occ.namespaces AS n ON n.id = b.namespace_id AND n.deleted_at IS NULL
+               WHERE b.namespace_id = $1 AND b.id = $2`,
               [namespaceId, bindingId],
             )
           ).rows,
@@ -1507,7 +1513,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       createBinding: async (binding) => {
         const installation = await this.requireInitialized(context);
         await client.query(
-          "INSERT INTO occ.repository_bindings (id, namespace_id, owner_installation_id, key_secret_id, generation, descriptor) VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
+          `INSERT INTO occ.repository_bindings
+           (id, namespace_id, owner_installation_id, key_secret_id, generation, descriptor)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
           [
             binding.id,
             binding.namespaceId,
@@ -1523,7 +1531,10 @@ export class PostgresPlatformState implements PlatformStateStore {
         const result = rows(
           (
             await client.query(
-              "UPDATE occ.repository_bindings SET key_secret_id = $3, generation = $4, descriptor = $5::jsonb WHERE namespace_id = $1 AND id = $2 AND generation = $6 RETURNING descriptor",
+              `UPDATE occ.repository_bindings
+               SET key_secret_id = $3, generation = $4, descriptor = $5::jsonb
+               WHERE namespace_id = $1 AND id = $2 AND generation = $6
+               RETURNING descriptor`,
               [
                 binding.namespaceId,
                 binding.id,
