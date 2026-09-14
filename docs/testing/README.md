@@ -114,3 +114,6 @@ databases, or unrelated clusters.
 
 [Native identity tests](native-identity.md) exercise the actual Workload API
 source and mutual-TLS transport with disposable protocol peers.
+
+For selected Git transport and credential-boundary checks, see
+[Native GitHub read tests](native-github-read.md).

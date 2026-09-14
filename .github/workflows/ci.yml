@@ -79,7 +79,7 @@ jobs:
           artifact-prefix: ci-results
 
   runtime-security:
-    name: Native Identity and Service Peer
+    name: Native Identity and GitHub Broker
     runs-on: ubuntu-24.04
     needs: audit
     timeout-minutes: 10
@@ -96,7 +96,7 @@ jobs:
           cache-dependency-path: components/runtime-security/go.sum
       - name: Verify formatting and module checksums
         run: |
-          test -z "$(gofmt -l identity servicepeer)"
+          test -z "$(gofmt -l identity servicepeer githubbridge cmd/oce-github-mediation)"
           go mod verify
       - name: Analyze native packages
         run: |
@@ -106,6 +106,25 @@ jobs:
       - name: Verify dependency notice collection
         run: sh licenses/collect.sh "$RUNNER_TEMP/runtime-security-notices"
 
+  native-read:
+    name: Native GitHub Read
+    runs-on: ubuntu-24.04
+    needs: audit
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dataplane
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select pinned Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - name: Verify native formatting
+        run: cargo fmt --all --check
+      - name: Test repository reads and cleanup
+        run: cargo test --locked --workspace
+
   ci-required:
     name: CI Required
     runs-on: ubuntu-24.04
@@ -113,6 +132,7 @@ jobs:
       - audit
       - pr-safe
       - runtime-security
+      - native-read
     if: always()
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

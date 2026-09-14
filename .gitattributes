@@ -1,3 +1,6 @@
 # Exclude archived implementations from release archives.
 /legacy export-ignore
 /legacy/** export-ignore
+
+# Preserve byte-exact upstream notices, including their original whitespace.
+/dataplane/third-party-notices/** -whitespace linguist-vendored

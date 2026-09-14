@@ -1,0 +1,17 @@
+# Modified for OpenClaw Enterprise.
+[workspace]
+resolver = "2"
+members = ["crates/ds-credentials", "services/oce-native-egress"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+tokio = { version = "1.48", default-features = false }
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "x509-parser"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+zeroize = { version = "1", default-features = false, features = ["alloc"] }

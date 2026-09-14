@@ -1,0 +1,16 @@
+OpenClaw Enterprise selected Git-read dataplane
+
+The ds-credentials crate is derived from Dream Serpent (DS),
+https://github.com/freeqaz/ds, public baseline
+dccf15c760e219ab7bf284c7c2b52b62b9d925ef, under Apache License 2.0.
+Its credential ownership/substitution implementation retains its source notices.
+
+The native Git-read transport is selected from OpenClaw Enterprise source.
+This directory uses Apache License 2.0; see LICENSE. Its license is separate
+from the surrounding repository license. Metadata mediation, publication and network
+provisioning components are not part of this workspace.
+
+Third-party dependency and Rust standard-library notices are retained in
+third-party-notices/. The inventory covers this Linux Cargo build/test graph,
+not a final container or a claim that every listed crate is linked in the binary.
+OS packages and other target platforms require their own notice inventory.

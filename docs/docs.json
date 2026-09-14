@@ -78,6 +78,7 @@
                   "reference/platform-repositories",
                   "reference/providers",
                   "reference/native-identity",
+                  "reference/native-github-read",
                   "reference/security",
                   "reference/security/runtime-isolation",
                   "reference/service-accounts",
@@ -156,6 +157,7 @@
                   "testing/README",
                   "testing/local",
                   "testing/native-identity",
+                  "testing/native-github-read",
                   "testing/developer-skills",
                   "testing/autoreview",
                   "testing/ci"

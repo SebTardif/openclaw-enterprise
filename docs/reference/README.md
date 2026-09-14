@@ -70,3 +70,6 @@ proposal rationale, implementation tasks, and historical alternatives in
 [Native identity and service peers](native-identity.md) defines protected X.509
 credential acquisition, exact mutual TLS, current trust checks, and connection
 ownership for the repository-read mediation boundary.
+
+[Native GitHub read transport](native-github-read.md) covers repository-scoped
+Git transport, protected broker exchanges and remaining Agent checkout wiring.

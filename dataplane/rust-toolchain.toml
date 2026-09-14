@@ -1,0 +1,6 @@
+# Modified for OpenClaw Enterprise.
+# Pinned toolchain for the selected OCE dataplane workspace.
+# Update the reviewed lock, build inputs, and verification with each toolchain bump.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]

@@ -1,0 +1,11 @@
+# Modified for OpenClaw Enterprise: selected reusable library only.
+[package]
+name = "ds-credentials"
+autobins = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+zeroize.workspace = true
