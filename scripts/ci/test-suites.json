@@ -190,6 +190,9 @@
           "path": "tests/integration/plugin-driver-startup.test.mjs"
         },
         {
+          "path": "tests/conformance/repository-transactions.test.mjs"
+        },
+        {
           "path": "tests/conformance/postgres-transaction-commit.test.mjs"
         }
       ]
@@ -303,6 +306,10 @@
             "an opted-in active runtime continuously repairs under its original authorized actor",
             "active maintenance recovers after its convergence deadline and stops when its actor is denied"
           ]
+        },
+        {
+          "path": "tests/integration/postgres-repository-transactions.test.mjs",
+          "expectedTests": ["PostgreSQL repository ownership, lifetime, and atomicity"]
         },
         {
           "path": "tests/integration/postgres-transaction-commit.test.mjs",

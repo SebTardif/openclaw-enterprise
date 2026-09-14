@@ -1,3 +1,7 @@
+import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { bindRepository } from "../ports/repository-factory.ts";
+import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
   AccessBinding,
   Agent,
@@ -92,6 +96,7 @@ export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableErro
 }
 
 interface TransactionContext {
+  readonly lifetime: RepositoryTransactionLifetime;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -761,7 +766,9 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.execute(true, async (state) => work(state));
+    return this.execute(true, async (state, context) =>
+      work(createPlatformReadView(state, context.lifetime)),
+    );
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -776,15 +783,31 @@ export class PostgresPlatformState implements PlatformStateStore {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
-    return context.client.query(statement, parameters);
+    return context.lifetime.run(() => context.client.query(statement, parameters));
   }
 
   async transactWithQueue<T>(
-    work: (state: PlatformUnitOfWork, queue: PostgresWorkQueue) => Promise<T>,
+    work: (
+      state: PlatformUnitOfWork,
+      queue: Pick<PostgresWorkQueue, keyof PostgresWorkQueue>,
+    ) => Promise<T>,
     options: PostgresWorkQueueOptions = {},
   ): Promise<T> {
     return this.execute(false, async (state, context) =>
-      work(state, new PostgresWorkQueue(context.client, options)),
+      work(
+        state,
+        bindRepository(new PostgresWorkQueue(context.client, options), context.lifetime, [
+          "enqueue",
+          "claim",
+          "heartbeat",
+          "pending",
+          "complete",
+          "defer",
+          "retry",
+          "fail",
+          "recoverStale",
+        ]),
+      ),
     );
   }
 
@@ -807,6 +830,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       transportError = error;
     };
     client.on?.("error", onTransportError);
+    const lifetime = new RepositoryTransactionLifetime();
     let started = false;
     let committing = false;
     let acknowledged = false;
@@ -817,13 +841,25 @@ export class PostgresPlatformState implements PlatformStateStore {
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
       const context: TransactionContext = {
-        client,
+        lifetime,
+        client: {
+          query: async (statement, parameters) => {
+            lifetime.assertActive();
+            const result = await client.query(statement, parameters);
+            lifetime.assertActive();
+            return result;
+          },
+          release: () => {
+            throw new ScopeViolationError("Only the transaction owner releases the client.");
+          },
+        },
         installation: undefined,
         installationLoaded: false,
       };
-      unit = this.repositories(context);
+      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
       this.contexts.set(unit, context);
       const result = await work(unit, context);
+      await lifetime.finish();
       if (transportError) throw transportError;
       committing = true;
       let completion: unknown;
@@ -850,6 +886,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     } catch (error) {
       failed = true;
       discard = committing || transportError !== undefined;
+      await lifetime.finish();
       if (started) {
         try {
           await client.query("ROLLBACK");
@@ -859,6 +896,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       }
       throw committing ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      lifetime.close();
       if (unit !== undefined) this.contexts.delete(unit);
       let cleanupFailed = false;
       try {

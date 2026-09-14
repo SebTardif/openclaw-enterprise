@@ -447,14 +447,27 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
   };
 
   const transactionFailure = new Error("simulated transaction failure");
+  let escapedTransaction;
   await assert.rejects(
     store.transact(async (transaction) => {
+      escapedTransaction = transaction;
       await transaction.namespaces.createNamespace(rejectedNamespace);
       await transaction.audit.append(rejectedAudit);
       await transaction.operations.append(rejectedOperation);
       throw transactionFailure;
     }),
     (error) => error === transactionFailure,
+  );
+
+  // Use a fresh identity so a duplicate-row conflict cannot masquerade as a
+  // closed transaction when the rolled-back memory snapshot is retained.
+  await assert.rejects(
+    escapedTransaction.namespaces.createNamespace({
+      ...rejectedNamespace,
+      id: identifier("ns"),
+      name: `Escaped ${randomUUID()}`,
+    }),
+    { name: "ScopeViolationError", message: "The platform transaction is closed." },
   );
 
   await store.read(async (state) => {
