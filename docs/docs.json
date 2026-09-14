@@ -78,6 +78,7 @@
                   "reference/namespaces",
                   "reference/platform-repositories",
                   "reference/providers",
+                  "reference/github-app-token-issuer",
                   "reference/security",
                   "reference/security/runtime-isolation",
                   "reference/service-accounts",

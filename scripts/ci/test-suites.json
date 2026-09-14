@@ -196,7 +196,28 @@
           "path": "tests/conformance/postgres-transaction-commit.test.mjs"
         },
         {
+          "path": "tests/conformance/github-app-provider-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-enrollment.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-observation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-response-buffers.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-settlement.test.mjs"
+        },
+        {
           "path": "tests/conformance/repository-binding-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-crypto.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-app-material.test.mjs"
         }
       ]
     },
@@ -206,6 +227,15 @@
         "requiresPreparedStateForFile": true
       },
       "files": [
+        {
+          "path": "tests/integration/postgres-connection-auth.test.mjs",
+          "expectedTests": [
+            "password authentication preserves the existing pg connection configuration",
+            "the password pool authenticates to the selected real PostgreSQL database",
+            "the real pg client retains the Azure token callback and verified TLS after URL parsing",
+            "workload authentication rejects password fallback and unverified TLS"
+          ]
+        },
         {
           "path": "tests/integration/postgres-auth-accounts.test.mjs",
           "expectedTests": [
@@ -324,6 +354,23 @@
           "path": "tests/integration/postgres-repository-drafts.test.mjs",
           "expectedTests": [
             "authenticated repository drafts persist under application-role PostgreSQL and stay inactive"
+          ]
+        }
+      ]
+    },
+    "postgres-azure-workload-identity": {
+      "requiredEnv": [
+        "OCC_TEST_AZURE_DATABASE_URL",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_ID",
+        "AZURE_FEDERATED_TOKEN_FILE"
+      ],
+      "prepare": {},
+      "files": [
+        {
+          "path": "tests/integration/postgres-azure-workload-identity.test.mjs",
+          "expectedTests": [
+            "Azure workload identity opens successive real PostgreSQL TLS connections"
           ]
         }
       ]

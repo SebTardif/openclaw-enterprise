@@ -714,6 +714,16 @@ export * from "./api/common.ts";
 export * from "./api/resources.ts";
 export * from "./api/routes.ts";
 
+export type { EphemeralTokenHandleV1 } from "./credential-storage-v1.ts";
+export type {
+  TokenIssuerAttemptV1,
+  TokenIssuerCallBoundsV1,
+  TokenIssuerV1,
+  TokenMintResultV1,
+  TokenRevokeResultV1,
+  TokenRevokerV1,
+} from "./token-issuer-v1.ts";
+
 export {
   RepositoryAccessSchema,
   normalizeRepositoryAccess,

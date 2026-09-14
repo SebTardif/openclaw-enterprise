@@ -45,6 +45,11 @@ behavioral rules such as cross-resource ownership, lifecycle ordering, and failu
 effects. Contributors updating routes or schemas should follow the
 [API generation checks](../testing/local.md#repository-and-tooling-configuration).
 
+## Token issuers
+
+- [GitHub App token issuer](github-app-token-issuer.md): single-repository read
+  credentials and exact-token cleanup; production Agent composition is pending.
+
 ## Drivers
 
 The term **contract** names obligations that callers and Driver implementations

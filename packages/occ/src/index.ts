@@ -120,6 +120,7 @@ export {
   type ServiceAccountRepository,
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
+export { createPostgresPool } from "./state/postgres-pool.ts";
 export {
   PostgresPlatformState,
   PostgresPlatformStateStore,
@@ -2736,3 +2737,36 @@ export class OpenClawController {
     if (this.shouldRecordOperations) await state.operations.append(operation);
   }
 }
+
+export {
+  createGitHubAppMaterialV1,
+  GitHubAppTokenIssuerErrorV1,
+  assertGitHubAppBoundsV1,
+  snapshotGitHubAppKeyIdentityV1,
+} from "./github-app-provider-v1/material.ts";
+export type {
+  GitHubAppKeyIdentityV1,
+  GitHubAppMaterialV1,
+} from "./github-app-provider-v1/material.ts";
+export {
+  createGitHubAppTokenIssuerV1,
+  createGitHubAppTokenRevokerV1,
+  snapshotGitHubAppReturnedPermissionsV1,
+} from "./github-app-provider-v1/provider.ts";
+export type {
+  GitHubAppEndpointV1,
+  GitHubAppReturnedPermissionsV1,
+  GitHubAppSelectionV1,
+  GitHubAppTokenCustodyV1,
+  GitHubAppTokenIssuerOptionsV1,
+  GitHubAppTokenObservationV1,
+  GitHubAppTokenRevokerOptionsV1,
+} from "./github-app-provider-v1/provider.ts";
+
+export {
+  ProtectedGitHubCryptoV1,
+  ProtectedGitHubCustodyErrorV1,
+} from "./credential-custody-v1/protected-github-crypto.ts";
+export type { ProtectedGitHubKeySelectionV1 } from "./credential-custody-v1/protected-github-crypto.ts";
+export { ProtectedGitHubTokenStoreV1 } from "./credential-custody-v1/protected-github-token-store.ts";
+export type { ProtectedGitHubStoreSelectionV1 } from "./credential-custody-v1/protected-github-token-store.ts";
