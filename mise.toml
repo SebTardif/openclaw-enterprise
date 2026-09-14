@@ -20,15 +20,3 @@ run = [
   "pnpm install --frozen-lockfile",
   "pnpm docs:install",
 ]
-sources = [
-  "mise.toml",
-  "package.json",
-  "pnpm-lock.yaml",
-  "pnpm-workspace.yaml",
-  "scripts/docs-site/package.json",
-  "scripts/docs-site/pnpm-lock.yaml",
-]
-outputs = [
-  "node_modules/.pnpm/lock.yaml",
-  "scripts/docs-site/node_modules/.pnpm/lock.yaml",
-]

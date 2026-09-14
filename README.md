@@ -51,13 +51,8 @@ mise install
 mise run setup
 ```
 
-This installs Node.js, the pnpm version owned by [`package.json`](package.json),
-Python, `yq`, Helm, `kubectl`, k3d, and `actionlint` in mise's user-owned data
-directory. The setup task installs the root workspace and independent documentation
-site from their frozen lockfiles. Docker or Podman and basic host commands such as
-Bash, `curl`, Git, and `tar` remain host prerequisites; see
-[local tooling](docs/testing/local.md#install-the-development-toolchain) for the
-boundary and non-mise setup.
+See [local tooling](docs/testing/local.md#install-the-development-toolchain) for
+managed tools, host prerequisites, shell activation, and setup without mise.
 
 ```sh
 mise exec -- pnpm check:workspace

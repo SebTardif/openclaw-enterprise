@@ -60,8 +60,7 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 ## Requirements and credentials
 
 Use the repository's [mise toolchain](local.md#install-the-development-toolchain)
-to select the versions used by local and CI verification and install dependencies
-from both frozen lockfiles:
+to select the local tool versions and install dependencies from both frozen lockfiles:
 
 ```sh
 mise run setup

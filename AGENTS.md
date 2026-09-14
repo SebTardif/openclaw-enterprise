@@ -295,6 +295,12 @@ not verify shared-cluster admission guardrails.
 
 ## TypeScript style and verification
 
+For the managed development toolchain, follow
+[local tooling](docs/testing/local.md#install-the-development-toolchain). In an
+unactivated shell, prefix checks with `mise exec --`, for example
+`mise exec -- pnpm typecheck`. Tool and dependency installation is explicit setup,
+not a verification side effect.
+
 - Use `ts-pattern` for tagged unions and branches that would otherwise become
   nested ternaries. Prefer `match(value).with(...).exhaustive()` so every case
   is explicit and checked by TypeScript.
