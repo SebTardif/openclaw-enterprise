@@ -42,7 +42,15 @@ OCC_TEST_OPENSHELL_K3D_REAL=1 \
 On a macOS or Linux workstation with Podman, `podman-compose`, k3d, and Helm,
 the repository helper discovers the Podman API socket, prepares the disposable
 k3d and PostgreSQL environment, builds and imports the runtime image, and runs
-the same real test:
+the same real test. On Linux, start the rootless Podman API socket first; a
+normal Podman installation does not keep it active by default:
+
+```sh
+systemctl --user start podman.socket
+```
+
+Use the same Podman user for this command and the launcher. The socket grants
+that user full Podman control, so keep it local and do not expose it over TCP.
 
 ```sh
 export OPENAI_API_KEY='<existing authorized credential>'

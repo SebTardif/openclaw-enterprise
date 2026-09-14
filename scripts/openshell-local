@@ -99,7 +99,12 @@ if [ "$container_engine" = "podman" ]; then
       fail "only macOS and Linux hosts are supported"
       ;;
   esac
-  [ -S "$podman_socket" ] || fail "Podman API socket is unavailable: $podman_socket"
+  if [ ! -S "$podman_socket" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+      fail "Podman API socket is unavailable: $podman_socket; start it with 'systemctl --user start podman.socket'"
+    fi
+    fail "Podman API socket is unavailable: $podman_socket"
+  fi
   export DOCKER_HOST="unix://$podman_socket"
   export PODMAN_COMPOSE_PROVIDER="$podman_compose_bin"
   state_override="${OCC_OPENSHELL_PODMAN_STATE_DIR:-}"
