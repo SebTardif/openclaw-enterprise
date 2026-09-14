@@ -100,12 +100,12 @@ neither suite verifies a deployed installation.
 - [Choose another test suite](README.md).
 - [Results, cleanup, and troubleshooting](README.md#results-cleanup-and-troubleshooting).
 
-The PostgreSQL transaction owner retains checked-out client transport errors until
-release and discards a failed connection. Lost COMMIT acknowledgements report
+## Transaction outcome protocol
+
+The PostgreSQL owner retains client transport errors through release and discards
+failed connections. Lost COMMIT acknowledgments report
 `PostgresCommitOutcomeUnknownError`; callers must inspect retained state before
 retrying an effect. A socket failure does not prove rollback.
-
-## Transaction outcome protocol
 
 `tests/conformance/postgres-transaction-commit.test.mjs` exercises the actual outer
 transaction owner with a transport protocol fixture. It covers definite server

@@ -446,14 +446,15 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     actorId: audit.actorId,
   };
 
+  const transactionFailure = new Error("simulated transaction failure");
   await assert.rejects(
     store.transact(async (transaction) => {
       await transaction.namespaces.createNamespace(rejectedNamespace);
       await transaction.audit.append(rejectedAudit);
       await transaction.operations.append(rejectedOperation);
-      throw new Error("simulated transaction failure");
+      throw transactionFailure;
     }),
-    /simulated transaction failure/,
+    (error) => error === transactionFailure,
   );
 
   await store.read(async (state) => {

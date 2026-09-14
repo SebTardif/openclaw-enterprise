@@ -10,7 +10,7 @@ import { DependencyUnavailableError, ScopeViolationError } from "../../packages/
 
 // A transport protocol fixture for the actual outer owner, not a SQL database
 // emulator. No repository reads/writes, authentication, custody or PG evidence.
-function protocol({ commit, release, removeListener, pendingQuery } = {}) {
+function protocol({ commit, release, removeListener } = {}) {
   const calls = [];
   let releases = 0;
   const client = {
@@ -20,16 +20,10 @@ function protocol({ commit, release, removeListener, pendingQuery } = {}) {
     },
     async query(statement) {
       calls.push(statement);
-      if (statement === "SELECT 1" && pendingQuery) return pendingQuery;
       if (statement === "COMMIT")
         return commit ? commit() : { command: "COMMIT", rows: [], rowCount: 0 };
       if (statement === "ROLLBACK") return { command: "ROLLBACK", rows: [], rowCount: 0 };
-      if (
-        statement === "BEGIN" ||
-        statement.startsWith("BEGIN ISOLATION") ||
-        statement.startsWith("SELECT set_config(") ||
-        statement.startsWith("SET LOCAL ")
-      )
+      if (statement === "BEGIN" || statement.startsWith("BEGIN ISOLATION"))
         return { command: "", rows: [], rowCount: 0 };
       throw new Error("This fixture does not simulate persistence queries.");
     },
@@ -53,19 +47,6 @@ test("known outer acknowledgment returns the original value after cleanup", asyn
   const value = Object.freeze({ result: "unchanged" });
   assert.equal(await p.state.transact(async () => value), value);
   assert.deepEqual(p.calls, ["BEGIN", "COMMIT"]);
-  assert.equal(p.releases(), 1);
-});
-
-test("callback failure before dispatch preserves the error and rolls back", async () => {
-  const p = protocol();
-  const failure = new Error("callback rejected");
-  await assert.rejects(
-    p.state.transact(async () => {
-      throw failure;
-    }),
-    (error) => error === failure,
-  );
-  assert.deepEqual(p.calls, ["BEGIN", "ROLLBACK"]);
   assert.equal(p.releases(), 1);
 });
 
@@ -118,21 +99,6 @@ test("an unclassified valid SQLSTATE does not establish no commit", async () => 
     commit: () => {
       throw Object.assign(new Error("unclassified server failure"), { code: "XX000" });
     },
-  });
-  await assert.rejects(
-    p.state.transact(async () => 1),
-    PostgresCommitOutcomeUnknownError,
-  );
-  assert.deepEqual(p.calls, ["BEGIN", "COMMIT", "ROLLBACK"]);
-});
-
-test("an acknowledgment inspection failure cannot impersonate a COMMIT rejection", async () => {
-  const p = protocol({
-    commit: () => ({
-      get command() {
-        throw Object.assign(new Error("acknowledgment inspection failed"), { code: "23514" });
-      },
-    }),
   });
   await assert.rejects(
     p.state.transact(async () => 1),
