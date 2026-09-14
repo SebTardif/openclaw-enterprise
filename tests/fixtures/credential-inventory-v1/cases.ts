@@ -4,7 +4,7 @@ import type {
   OutstandingTokenRecordV1,
   MintOutcomeV1,
   ClaimRevocationV1,
-} from "@openclaw-enterprise/contracts/credential-inventory-data-v1";
+} from "@openclaw-enterprise/contracts";
 import { inventoryIntentDigestV1 } from "../../../packages/occ/src/credential-inventory-v1/transactions.ts";
 const id = (n: number) => "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
 const hash = "sha256:" + "a".repeat(64);
