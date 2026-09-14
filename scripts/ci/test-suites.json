@@ -203,6 +203,9 @@
         },
         {
           "path": "tests/conformance/runtime-authority-storage-contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-owner-phase.test.mjs"
         }
       ]
     },
@@ -336,6 +339,12 @@
           "path": "tests/integration/postgres-runtime-authority.test.mjs",
           "expectedTests": [
             "PostgreSQL runtime authority: real limited-role storage, races and COMMIT uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-credential-inventory.test.mjs",
+          "expectedTests": [
+            "PostgreSQL inventory metadata: real storage, original transaction and lost acknowledgment"
           ]
         }
       ]

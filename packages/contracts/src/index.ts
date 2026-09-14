@@ -729,3 +729,17 @@ export {
   parseRuntimeAuthorityJsonV1,
   canonicalRuntimeAuthorityMutationV1,
 } from "./runtime-authority-v1.ts";
+
+export type {
+  NamedCredentialUseV1,
+  ReserveIssuanceV1,
+  MintOutcomeV1,
+  ClaimRevocationV1,
+  RevocationOutcomeV1,
+  OutstandingTokenRecordV1,
+} from "./credential-inventory-data-v1.ts";
+export {
+  CREDENTIAL_STORAGE_LIMITS_V1,
+  parseCredentialStorageV1,
+  canonicalCredentialStorageRequestV1,
+} from "./credential-inventory-data-v1.ts";

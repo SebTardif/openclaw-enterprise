@@ -1,3 +1,4 @@
+import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import type {
   HarnessExecutionMode,
   PluginDesiredState,
@@ -1125,3 +1126,10 @@ export const runtimeAuthorityOperations = occSchema.table(
     check("runtime_authority_receipt_object", sql`jsonb_typeof(${table.receipt}) = 'object'`),
   ],
 );
+
+export const {
+  credentialInventoryRecords,
+  credentialInventoryOperations,
+  credentialInventoryMintClaims,
+  credentialInventoryRevocationClaims,
+} = createCredentialInventoryTablesV1(occSchema, { installation, agents });

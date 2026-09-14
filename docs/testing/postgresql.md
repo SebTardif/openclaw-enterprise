@@ -120,3 +120,10 @@ through its loopback proxy. It rejects nonloopback targets and TLS connections
 before mutation: inspecting encrypted protocol completion is unsupported, and
 TLS intent is never silently downgraded. Use the ordinary disposable non-TLS
 loopback setup above for this test.
+
+## Credential inventory
+
+Use the [credential inventory suite](credential-inventory.md) for its dedicated
+empty database, exact history, competing claims, failure latch and real lost-COMMIT
+readback. It requires `OCC_CREDENTIAL_INVENTORY_TEST_DATABASE_URL` and does not share
+the general suite's bootstrapped database.

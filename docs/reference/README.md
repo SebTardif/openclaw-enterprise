@@ -34,6 +34,7 @@ runtime image for local deployment.
 | [Agent plugins](agent-plugins.md)                           | Agent-owned curated selections, startup validation, and native runtime policy.         |
 | [Harness execution](harness-execution.md)                   | Runtime selection, topology, and admitted execution constraints.                       |
 | [Controller reconciliation](controller.md)                  | Durable lifecycle work, authorization refresh, claims, retries, and recovery.          |
+| [Credential inventory metadata](credential-inventory-v1.md) | Four-table persistence for the owning Agent/Token workflow.                            |
 | [Platform repositories](platform-repositories.md)           | Callback transaction lifetimes, read-only views, and storage ownership.                |
 | [Security](security.md)                                     | Kubernetes workload and credential boundaries and enforcement limitations.             |
 | [Runtime assignment storage](runtime-authority/contract.md) | Intent, allocation and initial binding persistence for an owning Agent/Token workflow. |

@@ -40,3 +40,8 @@ See [PostgreSQL testing](../testing/postgresql.md) for contributor setup and
 [Runtime assignment storage](runtime-authority/contract.md) adds intent, allocation
 and initial binding repositories under this transaction boundary. These records
 require an owning Agent/Token workflow; the current controller does not use them.
+
+[Credential inventory metadata](credential-inventory-v1.md) uses the existing
+PostgreSQL owner and guarded transaction queries. Its phase drains admitted calls
+and prevents COMMIT after a caught failure. It requires the owning Agent/Token
+workflow to provide current authority and exact credential cleanup.
