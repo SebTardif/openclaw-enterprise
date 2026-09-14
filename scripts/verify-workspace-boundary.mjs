@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const activeApplications = ["controller"];
 const activePackages = ["utils", "contracts", "occ", "iam", "audit"];
+const activeRustCrates = ["occ-client", "occ-cli"];
 const activeSourceRoots = [
   ...activeApplications.map((name) => `apps/${name}/src`),
   ...activePackages.map((name) => `packages/${name}/src`),
@@ -33,6 +34,16 @@ async function sourceFiles(directory) {
 const workspace = await readFile(join(repositoryRoot, "pnpm-workspace.yaml"), "utf8");
 assert.match(workspace, /^packages:/m, "The root pnpm workspace must declare its packages.");
 assert.match(workspace, /["']?!legacy(?:\/\*\*)?["']?/, "legacy/ must be explicitly excluded.");
+
+const cargoWorkspace = await readFile(join(repositoryRoot, "Cargo.toml"), "utf8");
+assert.match(
+  cargoWorkspace,
+  new RegExp(
+    `^members = \\[${activeRustCrates.map((name) => `"crates/${name}"`).join(", ")}\\]$`,
+    "m",
+  ),
+  "The Rust workspace must select only the OCC client and CLI crates.",
+);
 
 for (const name of activePackages) {
   assert.match(
@@ -113,5 +124,5 @@ for (const source of sources) {
 process.stdout.write(
   "Workspace boundary verified: " +
     `${activeApplications.length} application, ${activePackages.length} packages, ` +
-    `${sources.length} sources, legacy excluded.\n`,
+    `${activeRustCrates.length} Rust crates, ${sources.length} sources, legacy excluded.\n`,
 );

@@ -45,6 +45,10 @@ runs:
       if: inputs.lane == 'checks-baseline'
       shell: bash
       run: bash scripts/ci/setup-tools.sh browser
+    - name: Set up Rust toolchain
+      if: inputs.lane == 'checks-baseline' || inputs.lane == 'docker-model' || inputs.lane == 'production-tui'
+      shell: bash
+      run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
     - name: Run workspace boundary check
       if: inputs.lane == 'checks-baseline'
       shell: bash
@@ -65,6 +69,10 @@ runs:
       if: inputs.lane == 'checks-baseline'
       shell: bash
       run: pnpm typecheck
+    - name: Check Rust CLI
+      if: inputs.lane == 'checks-baseline'
+      shell: bash
+      run: pnpm cli:check && pnpm cli:test
     - name: Prepare lane
       shell: bash
       run: node scripts/ci/prepare.mjs --lane "${{ inputs.lane }}" --state "$RUNNER_TEMP/state/${{ inputs.lane }}.json" --github-env "$GITHUB_ENV"

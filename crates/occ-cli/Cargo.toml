@@ -1,0 +1,23 @@
+[package]
+name = "occ-cli"
+description = "Command-line client for OpenClaw Control Plane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "occ"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+miette.workspace = true
+occ-client = { path = "../occ-client" }
+serde_json.workspace = true
+serde_yml.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

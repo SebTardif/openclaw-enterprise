@@ -8,10 +8,12 @@ for deploying and managing [Agents](docs/guides/concepts.md#agents-and-revisions
 ## Getting Started
 
 Requires either Docker Engine with Docker Compose, or Podman with
-`podman-compose` and `yq` v4. Bash, `curl`, and Python 3 are also required. Start
-the local stack with:
+`podman-compose` and `yq` v4. Bash, Python 3, and the Rust toolchain pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml) are also required. Install the OCC
+CLI and start the local stack with:
 
 ```bash
+cargo install --locked --path crates/occ-cli
 ./scripts/dev-up
 ```
 
@@ -42,14 +44,16 @@ image versions and build options.
 
 ## Develop
 
-Requires Node.js 24 or newer and the pnpm version pinned in
-[`package.json`](package.json).
+Requires Node.js 24 or newer, the pnpm version pinned in
+[`package.json`](package.json), and the pinned Rust toolchain.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm check:workspace
 pnpm format:check
 pnpm typecheck
+pnpm cli:check
+pnpm cli:test
 pnpm openapi:check
 pnpm test
 ```
@@ -67,6 +71,8 @@ see [Testing](docs/testing/README.md) for suite coverage, credentials, setup, an
 | `packages/occ/`                               | Resource lifecycle, persistence, and work queue.                                                 |
 | `packages/iam/`                               | Identities, roles, and resource authorization.                                                   |
 | `packages/audit/`                             | Audit events and sensitive-value sanitization.                                                   |
+| `crates/occ-client/`                          | High-level Rust client that owns OCC transport and authentication.                               |
+| `crates/occ-cli/`                             | Rust domain CLI for authenticated OCC resource operations.                                       |
 | [`packages/utils/`](packages/utils/README.md) | Shared validation, hashing, and object helpers.                                                  |
 | `tests/`                                      | Conformance and integration tests.                                                               |
 
