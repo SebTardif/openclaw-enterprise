@@ -194,6 +194,15 @@
         },
         {
           "path": "tests/conformance/postgres-transaction-commit.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-assignment-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-storage-contract.test.mjs"
         }
       ]
     },
@@ -315,6 +324,18 @@
           "path": "tests/integration/postgres-transaction-commit.test.mjs",
           "expectedTests": [
             "a lost real COMMIT response preserves the unknown outcome and committed resource"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-assignment-state.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime assignments: shared contract, restart, CAS, constraints and commit uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-authority.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime authority: real limited-role storage, races and COMMIT uncertainty"
           ]
         }
       ]

@@ -1,3 +1,18 @@
+import type {
+  RuntimeAssignmentReadRepository,
+  RuntimeAssignmentRepository,
+} from "../ports/repositories/runtime-assignment.ts";
+import type {
+  RuntimeAuthorityReadRepository,
+  RuntimeAuthorityRepository,
+} from "../runtime-authority/repository.ts";
+import { RuntimeAuthorityTransactionGuard } from "../runtime-authority/repository.ts";
+import { createMemoryRuntimeRepositories } from "./memory/runtime-assignments.ts";
+import {
+  emptyRuntimeAssignmentSnapshot,
+  cloneRuntimeAssignmentSnapshot,
+  type RuntimeAssignmentSnapshot,
+} from "./runtime-assignment.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
@@ -309,6 +324,8 @@ export interface PlatformOperationRepository extends PlatformOperationReadReposi
 }
 
 export interface PlatformReadView {
+  readonly runtimeAssignments: RuntimeAssignmentReadRepository;
+  readonly runtimeAuthority: RuntimeAuthorityReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
   readonly configurations: ConfigurationReadRepository;
@@ -320,6 +337,8 @@ export interface PlatformReadView {
 }
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly runtimeAssignments: RuntimeAssignmentRepository;
+  readonly runtimeAuthority: RuntimeAuthorityRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
   readonly configurations: ConfigurationRepository;
@@ -353,7 +372,7 @@ export interface InMemoryPlatformStateOptions {
   readonly auditSink?: PlatformAuditSink;
 }
 
-interface PlatformSnapshot {
+interface PlatformSnapshot extends RuntimeAssignmentSnapshot {
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
   readonly configurations: Map<string, Readonly<ConfigurationOwnership>>;
@@ -371,6 +390,7 @@ function agentKey(namespaceId: string, agentId: string): string {
 
 function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
   return {
+    ...cloneRuntimeAssignmentSnapshot(snapshot),
     installation:
       snapshot.installation === undefined ? undefined : immutableCopy(snapshot.installation),
     namespaces: new Map(
@@ -511,7 +531,10 @@ function assertSecret(secret: Secret): void {
     throw new ScopeViolationError("The Secret or backend reference is invalid.");
 }
 
-function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
+function repositories(
+  snapshot: PlatformSnapshot,
+  authorityGuard = new RuntimeAuthorityTransactionGuard(),
+): PlatformUnitOfWork {
   const installations: InstallationRepository = {
     findInstallation: async (installationId) =>
       snapshot.installation?.id === installationId
@@ -1065,6 +1088,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
   };
 
   return {
+    ...createMemoryRuntimeRepositories(snapshot, namespaces, agents, revisions, authorityGuard),
     installations,
     namespaces,
     configurations,
@@ -1124,6 +1148,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
 /** Process-local, single-writer state. No restart or multi-process durability. */
 export class InMemoryPlatformState implements PlatformStateStore {
   private snapshot: PlatformSnapshot = {
+    ...emptyRuntimeAssignmentSnapshot(),
     installation: undefined,
     namespaces: new Map(),
     configurations: new Map(),
@@ -1158,6 +1183,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
     const previous = this.pending;
     let release: (() => void) | undefined;
     this.pending = new Promise<void>((resolve) => {
@@ -1168,8 +1194,11 @@ export class InMemoryPlatformState implements PlatformStateStore {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
-      const result = await work(bindPlatformUnitOfWork(repositories(working), lifetime));
+      const result = await work(
+        bindPlatformUnitOfWork(repositories(working, authorityGuard), lifetime),
+      );
       await lifetime.finish();
+      await authorityGuard.finish();
       await this.publishAudit(working.audit.slice(committedAuditCount));
       this.snapshot = working;
       return result;

@@ -1,3 +1,5 @@
+import { RuntimeAuthorityTransactionGuard } from "../runtime-authority/repository.ts";
+import { createPostgresRuntimeRepositories } from "./postgres/runtime-assignments.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -96,6 +98,7 @@ export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableErro
 }
 
 interface TransactionContext {
+  readonly authorityGuard: RuntimeAuthorityTransactionGuard;
   readonly lifetime: RepositoryTransactionLifetime;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
@@ -842,6 +845,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       started = true;
       const context: TransactionContext = {
         lifetime,
+        authorityGuard: new RuntimeAuthorityTransactionGuard(),
         client: {
           query: async (statement, parameters) => {
             lifetime.assertActive();
@@ -860,6 +864,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       this.contexts.set(unit, context);
       const result = await work(unit, context);
       await lifetime.finish();
+      await context.authorityGuard.finish();
       if (transportError) throw transportError;
       committing = true;
       let completion: unknown;
@@ -1715,6 +1720,14 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
 
     return {
+      ...createPostgresRuntimeRepositories(
+        client,
+        () => this.currentInstallation(context),
+        namespaces,
+        agents,
+        revisions,
+        context.authorityGuard,
+      ),
       installations,
       namespaces,
       configurations,

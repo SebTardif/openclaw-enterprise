@@ -707,3 +707,25 @@ export { normalizeSecretBindings } from "./secret-bindings.ts";
 export * from "./api/common.ts";
 export * from "./api/resources.ts";
 export * from "./api/routes.ts";
+
+export type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "./runtime-assignment.ts";
+export type {
+  RuntimeAssignmentTargetV1,
+  RuntimeAuthorityScopeV1,
+  RuntimeAssignmentRecordV1,
+  RuntimeMutationV1,
+  ExactAuthorityOperationV1,
+  RuntimeMutationResultV1,
+} from "./runtime-authority-v1/schemas.ts";
+export {
+  parseRuntimeAuthorityV1,
+  parseRuntimeAuthorityJsonV1,
+  canonicalRuntimeAuthorityMutationV1,
+} from "./runtime-authority-v1.ts";

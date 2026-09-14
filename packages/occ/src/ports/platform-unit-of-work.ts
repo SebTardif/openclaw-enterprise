@@ -8,6 +8,19 @@ export function bindPlatformUnitOfWork(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformUnitOfWork {
   return Object.freeze({
+    runtimeAssignments: bindRepository(repositories.runtimeAssignments, lifetime, [
+      "findRuntimeIntent",
+      "findRuntimeIntentHead",
+      "findRuntimeAllocation",
+      "initializeRuntimeIntent",
+      "advanceRuntimeIntent",
+      "allocateUnboundRuntime",
+    ]),
+    runtimeAuthority: bindRepository(repositories.runtimeAuthority, lifetime, [
+      "findAssignment",
+      "findOperation",
+      "appendMutation",
+    ]),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",
       "getInstallation",

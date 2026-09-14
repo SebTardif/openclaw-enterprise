@@ -36,3 +36,7 @@ The controller and worker still enforce the caller's exact resource authority.
 
 See [PostgreSQL testing](../testing/postgresql.md) for contributor setup and
 [controller reconciliation](controller.md) for worker behavior.
+
+[Runtime assignment storage](runtime-authority/contract.md) adds intent, allocation
+and initial binding repositories under this transaction boundary. These records
+require an owning Agent/Token workflow; the current controller does not use them.

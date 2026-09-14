@@ -8,6 +8,15 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    runtimeAssignments: bindRepository(repositories.runtimeAssignments, lifetime, [
+      "findRuntimeIntent",
+      "findRuntimeIntentHead",
+      "findRuntimeAllocation",
+    ]),
+    runtimeAuthority: bindRepository(repositories.runtimeAuthority, lifetime, [
+      "findAssignment",
+      "findOperation",
+    ]),
     operations: bindRepository(repositories.operations, lifetime, ["list"]),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",

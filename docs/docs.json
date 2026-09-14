@@ -75,6 +75,7 @@
                   "reference/harness-execution",
                   "reference/namespaces",
                   "reference/platform-repositories",
+                  "reference/runtime-authority/contract",
                   "reference/providers",
                   "reference/security",
                   "reference/security/runtime-isolation",
@@ -162,6 +163,7 @@
                 "group": "Infrastructure",
                 "pages": [
                   "testing/postgresql",
+                  "testing/runtime-assignment",
                   "testing/images",
                   "testing/docker",
                   "testing/ssh",
