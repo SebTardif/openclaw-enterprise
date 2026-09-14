@@ -147,37 +147,17 @@ is production support. “Primary owner” identifies the first project to chang
 an alternative design may move a boundary only through an explicit architecture
 decision.
 
-| Primary owner    | Gap                                  | Current test behavior                                                                                                                                                                                      | Completion condition                                                                                                                                       |
-| ---------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenShell        | Per-Sandbox Kubernetes identity      | The fixture serially replaces the Namespace gateway with one configured for the exact Agent ServiceAccount. Concurrent Agents cannot share this test gateway safely.                                       | OpenShell validates and applies the requested per-Sandbox ServiceAccount. Remove gateway replacement and serialized provisioning.                          |
-| OpenShell        | Projected volume support             | The client removes OpenShell's unsupported projected token volume. An operator suspends the Sandbox, patches its Pod template with the exact audience, expiry, path, and read-only mount, then resumes it. | OpenShell preserves the projected volume and mount through its gateway API. Remove the operator Pod-template patch.                                        |
-| OpenShell        | Kubernetes Secret-backed environment | An operator Job copies only `APP_SERVER_TOKEN` from its Secret to a private PVC subpath. The Codex startup wrapper reads it, and cleanup removes it.                                                       | OpenShell accepts the exact `secretKeyRef` environment entry without centralizing its bytes. Remove the Job, PVC token file, startup wrapper, and cleanup. |
-| OpenClaw and OCE | Remote workspace transport           | The gateway and remote Codex Harness still share a workspace PVC. The single-node test therefore requires RWX semantics.                                                                                   | OpenClaw's remote Harness no longer requires a shared filesystem, and OCE adopts that transport. Remove the cross-Pod RWX requirement.                     |
+| Primary owner    | Gap                                  | Current test behavior                                                                                                                                                                                                                                                          | Completion condition                                                                                                                                       |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenShell        | Per-Sandbox Kubernetes identity      | With `serviceAccount.mode: gatewayConfigured`, the fixture serially replaces the Namespace gateway, setting `sandboxServiceAccount.name` to the exact Agent ServiceAccount. Concurrent Agents cannot share this test gateway safely.                                           | OpenShell validates and applies the requested per-Sandbox ServiceAccount. Remove gateway replacement and serialized provisioning.                          |
+| OpenShell        | Projected volume support             | The client verifies and removes OpenShell's unsupported projected token volume and mount. An operator suspends the Sandbox, patches its Pod template with the exact audience, expiry, path, and read-only mount, then resumes it.                                              | OpenShell preserves the projected volume and mount through its gateway API. Remove the operator Pod-template patch.                                        |
+| OpenShell        | Kubernetes Secret-backed environment | An operator Job reads only `APP_SERVER_TOKEN` through its `secretKeyRef`, writes it mode `0400` to a revision-specific PVC subpath, and exits. The Sandbox mounts it read-only; its startup wrapper exports the value before Codex starts, and a cleanup Job deletes the file. | OpenShell accepts the exact `secretKeyRef` environment entry without centralizing its bytes. Remove the Job, PVC token file, startup wrapper, and cleanup. |
+| OpenClaw and OCE | Remote workspace transport           | The gateway and remote Codex Harness still share a workspace PVC. The single-node test therefore requires RWX semantics.                                                                                                                                                       | OpenClaw's remote Harness no longer requires a shared filesystem, and OCE adopts that transport. Remove the cross-Pod RWX requirement.                     |
 
-#### How the branch implements each item
-
-1. **Per-Sandbox Kubernetes identity:** the test selects
-   `serviceAccount.mode: gatewayConfigured`. Before provisioning, it upgrades
-   the Namespace gateway with `sandboxServiceAccount.name` set to the exact
-   Agent ServiceAccount. A per-Namespace state map serializes this replacement.
-
-2. **Projected ServicePrincipal token:** a gateway-client wrapper first verifies
-   and removes the unsupported projected volume and mount from the OpenShell
-   request. After creation, the operator suspends the Sandbox, patches the Pod
-   template with the exact token projection, and resumes it. This and item 3 are
-   the only reasons the test needs its operator Kubernetes client.
-
-3. **App-server transport credential:** an operator Job reads only
-   `APP_SERVER_TOKEN` through its `secretKeyRef`, writes it mode `0400` to a
-   revision-specific PVC subpath, and exits. The Sandbox mounts that subpath
-   read-only; its startup wrapper exports the file value before starting Codex.
-   A cleanup Job deletes the file.
-
-4. **Remote workspace transport:** the branch does not change OpenClaw's remote
-   Harness protocol. It keeps the shared workspace PVC. For local proof only,
-   the fixture configures k3d `local-path` with `hostPath` and
-   `/var/lib/rancher/k3s/storage`, allowing Pods on the one disposable node to
-   exercise RWX behavior. This k3d setup should remain while the test needs RWX.
+Only projected-token patching and transport-credential delivery require the test's
+operator Kubernetes client. For local proof, the single-node k3d fixture uses
+`local-path` with `hostPath` at `/var/lib/rancher/k3s/storage`; retain this setup
+while the test needs RWX workspace storage.
 
 Sidecar topology and `processBinaryAwareNetworkPolicy=false` are intentional:
 they retain the dedicated Harness connection while avoiding `SYS_PTRACE` and
