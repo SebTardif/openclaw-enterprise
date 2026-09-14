@@ -1,5 +1,9 @@
 # Implementation specifications
 
+The [GitHub credential gateway MVP](github-credential-gateway-mvp.md) is the current
+repository-access implementation direction. It supersedes the native-token-first
+proposal and dated native read release plan without changing their source evidence.
+
 [Configurable execution limits and persistent Agent controls](24-configurable-execution-limits.md)
 records the selected uncapped default, finite authority requirements and the
 coordinated implementation/qualification plan. Current selected-execution and
@@ -71,6 +75,13 @@ See the [OpenClaw testing infrastructure report](reports/openclaw-testing-infras
 | [Bootstrap administrator service account](16-bootstrap-admin-service-account.md) | Prior implementation locally verified; [recovery contract superseded](../docs/reference/authentication.md#installation-and-account-ownership); removal locally verified; PR review pending | [Authentication](../docs/reference/authentication.md), [bootstrap flow](../docs/flows/local-password-authentication.md)                                   |
 
 ## Archived specifications
+
+The visible [archive](archive/) preserves superseded GitHub plans:
+
+- [Repository access modes](archive/20-repository-access-modes.md): original native-token-first proposal.
+- [September 10 GitHub read release](archive/2026-09-10-github-read-mvp-release.md): original native read milestone and evidence limits.
+
+Older milestone archives remain in `.archive/` with their recorded paths.
 
 Use the linked current references for supported behavior.
 

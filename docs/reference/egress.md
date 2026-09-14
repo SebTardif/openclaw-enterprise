@@ -17,8 +17,8 @@ establish a supported production deployment. An available socket path, successfu
 image build, and passing packaging tests do not establish a provider-backed model
 turn or a qualified sandbox. Missing authority prevents readiness and authorized
 provider dispatch. The [platform design](../design.md) remains authoritative;
-[repository access modes](../../specs/20-repository-access-modes.md) describe the
-separate native Git/`gh` direction.
+[GitHub credential gateway MVP](../../specs/github-credential-gateway-mvp.md)
+defines the separate repository-access direction.
 
 For build inputs, local setup, shutdown and recovery, and Kubernetes requirements,
 see [deployment boundaries](../guides/deploy/model-egress.md). That chapter also owns packaging

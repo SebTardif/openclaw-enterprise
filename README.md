@@ -68,7 +68,9 @@ Run `npm run docs:install` once, then `npm run docs:dev` to preview the docs at 
 Use `npm run docs:build` for the full static build. See the
 [local preview instructions](docs/local-preview.md) for setup and checks.
 
-- [`integration/dev` overview](docs/integration-dev-overview.md): concise team review of branch scope, system diagrams, and remaining integration work.
+- [Current architecture](docs/ARCHITECTURE.md): implemented components and integration boundaries.
+- [GitHub credential gateway MVP](specs/github-credential-gateway-mvp.md): selected repository access design and pending qualification.
+- [September 8 integration snapshot](docs/archive/2026-09-08-integration-dev-overview.md): archived team review and system diagrams.
 - [Concepts](docs/guides/concepts.md): tenancy, revisions, execution, [configuration and Secrets](docs/guides/concepts.md#configuration-and-secrets), and access.
 - [Documentation map](docs/README.md): guides, references, and runtime flows.
 - [Observability](docs/guides/observability.md): configure operational log export, Collector metrics, and delivery checks.

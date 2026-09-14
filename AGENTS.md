@@ -257,4 +257,12 @@ before describing a runtime or denial case as executed.
 
 ## Repository access implementation direction
 
-Read [repository access modes](specs/20-repository-access-modes.md) before changing repository credentials, Git/gh integration or related egress. Native scoped-token Git/gh is the primary target; optional mediated and history-isolated modes have separate guarantees and acceptance. This is implementation direction, not proof of supported features. Preserve current reference truth until the corresponding code and verification exist.
+Follow the [GitHub credential gateway MVP](specs/github-credential-gateway-mvp.md)
+for repository credentials, Git integration and related egress. The selected
+external TypeScript service validates an OCE bearer, keeps GitHub credentials
+outside Agent execution and authorizes every operation through current OCC/IAM.
+Explicit read-write grants permit direct Git push. Existing native components
+retain their documented source contracts; they are optional reuse for this MVP.
+Selection does not establish implemented or deployed support.
+
+Documents in archive directories are dated historical records; use current design and feature references for present direction and supported behavior.

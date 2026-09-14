@@ -1,5 +1,10 @@
 # GitHub read mediation
 
+This reference describes the existing native component profile. Its contracts and
+verification limits remain unchanged. The [current gateway MVP](../../specs/github-credential-gateway-mvp.md)
+uses a separate service profile; these native joins are optional reuse, not its
+release prerequisites.
+
 The GitHub mediation service provides a bounded OCC accepting path for one
 repository metadata read or one explicitly selected Git read exchange. It connects the trusted native transport to the
 original Work authority, credential inventory and token custody owners. It does

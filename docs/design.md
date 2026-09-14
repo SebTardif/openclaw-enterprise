@@ -222,4 +222,21 @@ and [feature references](README.md) describe implementation and supported behavi
 
 ## Repository access profiles
 
-The repository-access proposal distinguishes native scoped-token Git/gh, mediated credentials with local history, and an optional history-isolated snapshot/service boundary. Long-lived platform credentials remain trusted-side; native mode permits scoped ephemeral GitHub tokens. See [repository access modes](../specs/20-repository-access-modes.md) for authority, revoke, history and compatibility contracts. These are implementation targets, not changes to currently supported runtime behavior.
+The selected GitHub MVP keeps GitHub credentials outside Agent execution in an
+independently scalable TypeScript `apps/credential-gateway` service. Agents use an
+opaque OCE bearer over server-authenticated TLS; it is not a GitHub credential.
+Every operation requires current OCC and selected IAM authorization against the
+admitted root Work, immutable execution binding and repository grant.
+
+The profile supports metadata, HTTPS clone/fetch and ordinary direct `git push`
+under an explicit read-write grant. Stronger branch and PR workflow restrictions
+are future policy capabilities. Scoped DNS and effective network enforcement
+route selected Agent traffic through the gateway. Shared SQL ciphertext custody
+and distributed accounting support multiple replicas without sticky routing.
+
+The [implementation proposal](../specs/github-credential-gateway-mvp.md) defines
+authentication, custody, failure handling and qualification. Existing native
+transport and identity components retain their own contracts as optional reuse;
+Agent-to-gateway mTLS and protected-origin proof are not MVP prerequisites.
+Mediated Git still exposes fetched history. Current feature references describe
+implemented behavior; this design does not declare the new service available.

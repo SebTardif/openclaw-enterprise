@@ -1,5 +1,10 @@
 # Native GitHub mediation identity
 
+This reference describes the existing native component profile. Its contracts and
+verification limits remain unchanged. The [current gateway MVP](../../specs/github-credential-gateway-mvp.md)
+uses a separate service profile; these native joins are optional reuse, not its
+release prerequisites.
+
 The native GitHub broker listener authenticates a trusted injector and preserves
 one original connection while the controller evaluates repository requests. It
 uses the maintained SPIFFE Workload API source and service-peer TLS transport.

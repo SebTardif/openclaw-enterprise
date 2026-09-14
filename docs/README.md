@@ -3,9 +3,10 @@
 Deploy and manage Agents through OpenClaw Control Plane (OCC).
 Start locally, install a production control plane, or look up supported behavior.
 
-Use the [`integration/dev` overview](integration-dev-overview.md) for the accumulated
-branch scope and remaining composition work. Component libraries and recorded
-checks do not establish complete production runtime acceptance.
+Use [current architecture](ARCHITECTURE.md) for branch implementation boundaries.
+The [GitHub credential gateway MVP](../specs/github-credential-gateway-mvp.md)
+defines selected repository implementation work; component checks do not establish
+complete production runtime acceptance.
 
 ## Start and deploy
 
@@ -50,5 +51,6 @@ do not supply immutable deployment admission.
 
 ## Implementation history
 
-The [spec archive](../specs/README.md) preserves proposals and delivery records.
+The [September 8 integration snapshot](archive/2026-09-08-integration-dev-overview.md)
+is a dated review record. The [spec archive](../specs/README.md) preserves proposals and delivery records.
 Recorded statuses do not replace current feature reference.

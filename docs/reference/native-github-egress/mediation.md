@@ -1,5 +1,10 @@
 # Broker-backed GitHub mediation
 
+This reference describes the existing native component profile. Its contracts and
+verification limits remain unchanged. The [current gateway MVP](../../../specs/github-credential-gateway-mvp.md)
+uses a separate service profile; these native joins are optional reuse, not its
+release prerequisites.
+
 Use the metadata or Git-read constructor below only with the selected authentic
 broker, identity, custody and current-authority suppliers. This library provides
 no listener, image or controller registration. The [native transport reference](../native-github-egress.md)

@@ -140,6 +140,21 @@ depends on it. A changed runtime selection applies only to a later authorized
 deployment. Current authorization, provider authority, and secret access remain
 subject to immediate revocation.
 
+## Credential gateway service
+
+The selected [GitHub gateway MVP](../../specs/github-credential-gateway-mvp.md)
+runs as an independently scalable `apps/credential-gateway` application outside
+Agent execution. Each replica composes local mediation, issuer and custody
+services against shared OCC/State/IAM application contracts and SQL state.
+OCC and the selected IAM Driver retain exact-operation authorization; protected
+key provisioning retains its existing SecretDriver/backend responsibilities.
+A new Driver resource or cross-process token-release protocol is not required
+for this service boundary. Local credential handles remain process-local.
+
+This is target placement, not a claim that the application is implemented.
+Existing native injector, identity and broker contracts remain applicable to
+that separate implementation profile.
+
 ## Repository layout
 
 Capability directories contain Driver implementations; shared provider clients
@@ -150,6 +165,7 @@ control-plane product entry points.
 ```text
 apps/
   controller/
+  credential-gateway/  # selected GitHub MVP; implementation pending
   access-gateway/
   console/
 packages/
