@@ -194,6 +194,9 @@
         },
         {
           "path": "tests/conformance/postgres-transaction-commit.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-binding-memory.test.mjs"
         }
       ]
     },
@@ -315,6 +318,12 @@
           "path": "tests/integration/postgres-transaction-commit.test.mjs",
           "expectedTests": [
             "a lost real COMMIT response preserves the unknown outcome and committed resource"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-repository-drafts.test.mjs",
+          "expectedTests": [
+            "authenticated repository drafts persist under application-role PostgreSQL and stay inactive"
           ]
         }
       ]

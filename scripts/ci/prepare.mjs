@@ -1136,6 +1136,9 @@ async function prepareFile({ lane, file, statePath }) {
     });
     resourceIds.push(database.resourceId);
     env.OCC_TEST_DATABASE_URL = database.appUrl;
+    if (relativeFile.endsWith("postgres-repository-drafts.test.mjs")) {
+      env.OCC_TEST_REPOSITORY_DATABASE_URL = database.appUrl;
+    }
   }
 
   if (relativeFile.endsWith("postgres-bootstrap-failures.test.mjs")) {

@@ -1,7 +1,13 @@
+import type {
+  RepositoryBindingReadRepository,
+  RepositoryBindingRepository,
+} from "../ports/repositories/repository-binding.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
+  RepositoryBinding,
+  RepositoryAccess,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -16,6 +22,8 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  validRepositoryBinding,
+  normalizeRepositoryAccess,
   normalizePluginDesiredState,
   normalizeSecretBindings,
   validPluginRevisionState,
@@ -82,6 +90,7 @@ export interface AgentRepository extends AgentReadRepository {
     serviceAccountId?: string | null,
     providerId?: string | null,
     plugins?: PluginDesiredState,
+    repositoryAccess?: RepositoryAccess,
   ): Promise<Readonly<Agent> | undefined>;
   compareAndSetActiveRevision(
     namespaceId: string,
@@ -309,6 +318,7 @@ export interface PlatformOperationRepository extends PlatformOperationReadReposi
 }
 
 export interface PlatformReadView {
+  readonly repositoryBindings: RepositoryBindingReadRepository;
   readonly installations: InstallationReadRepository;
   readonly namespaces: NamespaceReadRepository;
   readonly configurations: ConfigurationReadRepository;
@@ -320,6 +330,7 @@ export interface PlatformReadView {
 }
 
 export interface PlatformUnitOfWork extends PlatformReadView {
+  readonly repositoryBindings: RepositoryBindingRepository;
   readonly installations: InstallationRepository;
   readonly namespaces: NamespaceRepository;
   readonly configurations: ConfigurationRepository;
@@ -357,6 +368,7 @@ interface PlatformSnapshot {
   installation: Readonly<Installation> | undefined;
   readonly namespaces: Map<string, Readonly<PersistedNamespace>>;
   readonly configurations: Map<string, Readonly<ConfigurationOwnership>>;
+  readonly repositoryBindings: Map<string, Readonly<RepositoryBinding>>;
   readonly secrets: Map<string, Readonly<Secret>>;
   readonly serviceAccounts: Map<string, Readonly<ServiceAccount>>;
   readonly agents: Map<string, Readonly<Agent>>;
@@ -381,6 +393,9 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
         key,
         immutableCopy(configuration),
       ]),
+    ),
+    repositoryBindings: new Map(
+      Array.from(snapshot.repositoryBindings, ([key, binding]) => [key, immutableCopy(binding)]),
     ),
     secrets: new Map(Array.from(snapshot.secrets, ([key, secret]) => [key, immutableCopy(secret)])),
     serviceAccounts: new Map(
@@ -765,6 +780,9 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     hasReferences: async (namespaceId, secretId) => {
       if ((await secrets.findSecret(namespaceId, secretId)) === undefined) return false;
       return (
+        Array.from(snapshot.repositoryBindings.values()).some(
+          (binding) => binding.namespaceId === namespaceId && binding.keySecretRef.id === secretId,
+        ) ||
         Array.from(snapshot.configurations.values()).some(
           (configuration) =>
             configuration.namespaceId === namespaceId &&
@@ -880,6 +898,71 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     },
   };
 
+  const validateBinding = async (binding: RepositoryBinding) => {
+    assertInitialized(snapshot);
+    if (!validRepositoryBinding(binding))
+      throw new ScopeViolationError("Repository binding descriptor is invalid.");
+    const namespace = await namespaces.findNamespace(binding.namespaceId);
+    if (
+      !namespace ||
+      (namespace.status !== "ready" && namespace.status !== "provisioning") ||
+      binding.keySecretRef.namespaceId !== binding.namespaceId ||
+      !(await secrets.findSecret(binding.namespaceId, binding.keySecretRef.id))
+    )
+      throw new ScopeViolationError("Repository binding ownership is invalid.");
+  };
+  const repositoryBindings: RepositoryBindingRepository = {
+    findBinding: async (namespaceId, bindingId) => {
+      if (!(await namespaces.findNamespace(namespaceId))) return undefined;
+      const binding = snapshot.repositoryBindings.get(bindingId);
+      return binding?.namespaceId === namespaceId ? immutableCopy(binding) : undefined;
+    },
+    createBinding: async (binding) => {
+      await validateBinding(binding);
+      if (binding.generation !== 1 || snapshot.repositoryBindings.has(binding.id))
+        throw new ResourceConflictError(
+          "Repository binding already exists or has invalid initial generation.",
+        );
+      snapshot.repositoryBindings.set(binding.id, immutableCopy(binding));
+      return immutableCopy(binding);
+    },
+    updateBinding: async (binding, expectedGeneration) => {
+      const current = await repositoryBindings.findBinding(binding.namespaceId, binding.id);
+      if (!current || current.generation !== expectedGeneration) return undefined;
+      await validateBinding(binding);
+      // Ownership checks yield; another accepted update may have advanced the same binding.
+      // Keep the final comparison and publication synchronous within the working snapshot.
+      const latest = snapshot.repositoryBindings.get(binding.id);
+      if (
+        !latest ||
+        latest.namespaceId !== binding.namespaceId ||
+        latest.generation !== expectedGeneration
+      )
+        return undefined;
+      if (binding.generation !== expectedGeneration + 1 || binding.createdAt !== latest.createdAt)
+        throw new ScopeViolationError(
+          "Repository binding identity is immutable and generation must advance once.",
+        );
+      snapshot.repositoryBindings.set(binding.id, immutableCopy(binding));
+      return immutableCopy(binding);
+    },
+  };
+  const validateRepositoryDraft = async (namespaceId: string, value?: RepositoryAccess) => {
+    const draft = normalizeRepositoryAccess(value);
+    for (const entry of draft.repositories) {
+      const binding = await repositoryBindings.findBinding(namespaceId, entry.bindingRef.id);
+      if (
+        entry.bindingRef.namespaceId !== namespaceId ||
+        !binding ||
+        !binding.repositoryIds.includes(entry.repositoryId)
+      )
+        throw new ScopeViolationError(
+          "Repository draft references an unavailable binding or repository.",
+        );
+    }
+    return draft;
+  };
+
   const agents: AgentRepository = {
     findAgent: async (namespaceId, agentId) => {
       const namespace = snapshot.namespaces.get(namespaceId);
@@ -904,6 +987,10 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
         (typeof agent.providerId !== "string" || !providerIdentifier.test(agent.providerId))
       )
         throw new ScopeViolationError("The Agent Provider identity is invalid.");
+      const repositoryAccess = await validateRepositoryDraft(
+        agent.namespaceId,
+        agent.repositoryAccess,
+      );
       const plugins = normalizedPlugins(agent.plugins);
       const namespace = await namespaces.lockNamespace(agent.namespaceId);
       if (
@@ -943,6 +1030,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       const { plugins: _providedPlugins, ...withoutPlugins } = agent;
       const saved = immutableCopy({
         ...withoutPlugins,
+        repositoryAccess,
         ...(plugins === undefined ? {} : { plugins }),
       });
       snapshot.agents.set(key, saved);
@@ -957,6 +1045,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       serviceAccountId,
       providerId,
       nextPlugins,
+      repositoryAccess,
     ) => {
       const current = await agents.findAgent(namespaceId, agentId);
       if (!current) return undefined;
@@ -986,6 +1075,10 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
       const updated = immutableCopy({
         ...withoutPlugins,
         configurationId,
+        repositoryAccess: await validateRepositoryDraft(
+          namespaceId,
+          repositoryAccess ?? current.repositoryAccess,
+        ),
         providerId: nextProviderId,
         executionMode: executionMode ?? current.executionMode,
         ...(association === undefined ? {} : { serviceAccountId: association }),
@@ -1065,6 +1158,7 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
   };
 
   return {
+    repositoryBindings,
     installations,
     namespaces,
     configurations,
@@ -1127,6 +1221,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
     installation: undefined,
     namespaces: new Map(),
     configurations: new Map(),
+    repositoryBindings: new Map(),
     secrets: new Map(),
     serviceAccounts: new Map(),
     agents: new Map(),

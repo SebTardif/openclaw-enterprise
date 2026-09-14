@@ -113,3 +113,7 @@ Revision list and read operations are scoped beneath the exact Namespace and
 Agent. Each returned revision requires its own authorized read; substituting a
 parent does not grant access to another Agent's history. Public response shapes
 are defined by the [API reference](../api.md).
+
+## Repository drafts
+
+Nonempty [repository drafts](../repository-drafts.md) return `REPOSITORY_VERIFICATION_UNAVAILABLE` before revision, queue, or Compute effects. Clear the selection to use the current no-repository deployment path. Saving a binding or draft does not verify GitHub access.

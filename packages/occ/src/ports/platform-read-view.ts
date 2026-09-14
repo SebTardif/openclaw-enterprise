@@ -8,6 +8,7 @@ export function createPlatformReadView(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformReadView {
   return Object.freeze({
+    repositoryBindings: bindRepository(repositories.repositoryBindings, lifetime, ["findBinding"]),
     operations: bindRepository(repositories.operations, lifetime, ["list"]),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",

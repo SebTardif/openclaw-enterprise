@@ -1,9 +1,11 @@
+import type { RepositoryBindingRepository } from "../ports/repositories/repository-binding.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
   AccessBinding,
+  RepositoryBinding,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -23,6 +25,7 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  normalizeRepositoryAccess,
   normalizePluginDesiredState,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
@@ -210,6 +213,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    repositoryAccess: normalizeRepositoryAccess(row.repository_access),
     ...(row.plugins === null || row.plugins === undefined
       ? {}
       : { plugins: pluginStateFromJson(row.plugins)! }),
@@ -1336,7 +1340,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                    AND binding.value #>> '{source,kind}' = 'secret'
                    AND binding.value #>> '{source,namespaceId}' = $1
                    AND binding.value #>> '{source,id}' = $2
-               ) AS present`,
+               ) OR EXISTS (SELECT 1 FROM occ.repository_bindings WHERE namespace_id=$1 AND key_secret_id=$2) AS present`,
               [namespaceId, secretId],
             )
           ).rows,
@@ -1474,7 +1478,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         (
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                    a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                    a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                     a.active_revision_id, a.created_at
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
@@ -1486,6 +1490,55 @@ export class PostgresPlatformState implements PlatformStateStore {
       return found === undefined ? undefined : agentFromRow(found);
     };
 
+    const bindingFromRow = (row: PostgresRow): Readonly<RepositoryBinding> =>
+      immutableCopy(jsonObject(row.descriptor) as unknown as RepositoryBinding);
+    const repositoryBindings: RepositoryBindingRepository = {
+      findBinding: async (namespaceId, bindingId) => {
+        const result = rows(
+          (
+            await client.query(
+              "SELECT b.descriptor FROM occ.repository_bindings b JOIN occ.namespaces n ON n.id = b.namespace_id AND n.deleted_at IS NULL WHERE b.namespace_id = $1 AND b.id = $2",
+              [namespaceId, bindingId],
+            )
+          ).rows,
+        )[0];
+        return result ? bindingFromRow(result) : undefined;
+      },
+      createBinding: async (binding) => {
+        const installation = await this.requireInitialized(context);
+        await client.query(
+          "INSERT INTO occ.repository_bindings (id, namespace_id, owner_installation_id, key_secret_id, generation, descriptor) VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
+          [
+            binding.id,
+            binding.namespaceId,
+            installation.id,
+            binding.keySecretRef.id,
+            binding.generation,
+            JSON.stringify(binding),
+          ],
+        );
+        return immutableCopy(binding);
+      },
+      updateBinding: async (binding, expectedGeneration) => {
+        const result = rows(
+          (
+            await client.query(
+              "UPDATE occ.repository_bindings SET key_secret_id = $3, generation = $4, descriptor = $5::jsonb WHERE namespace_id = $1 AND id = $2 AND generation = $6 RETURNING descriptor",
+              [
+                binding.namespaceId,
+                binding.id,
+                binding.keySecretRef.id,
+                binding.generation,
+                JSON.stringify(binding),
+                expectedGeneration,
+              ],
+            )
+          ).rows,
+        )[0];
+        return result ? bindingFromRow(result) : undefined;
+      },
+    };
+
     const agents: AgentRepository = {
       findAgent,
       lockAgent: async (namespaceId, agentId) => findAgent(namespaceId, agentId, true),
@@ -1494,7 +1547,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           (
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                      a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                      a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                       a.active_revision_id, a.created_at
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
@@ -1524,13 +1577,14 @@ export class PostgresPlatformState implements PlatformStateStore {
         const { plugins: _providedPlugins, ...withoutPlugins } = agent;
         const saved = immutableCopy({
           ...withoutPlugins,
+          repositoryAccess: normalizeRepositoryAccess(agent.repositoryAccess),
           ...(plugins === undefined ? {} : { plugins }),
         });
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at, plugins)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+             service_principal_id, service_account_id, active_revision_id, created_at, plugins, repository_access)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)`,
           [
             saved.id,
             saved.namespaceId,
@@ -1543,6 +1597,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             saved.activeRevisionId ?? null,
             saved.createdAt,
             plugins === undefined ? null : JSON.stringify(plugins),
+            JSON.stringify(normalizeRepositoryAccess(agent.repositoryAccess)),
           ],
         );
         await client.query(
@@ -1560,6 +1615,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         serviceAccountId,
         providerId,
         plugins,
+        repositoryAccess,
       ) => {
         const configuration = await configurations.findConfiguration(namespaceId, configurationId);
         if (configuration === undefined)
@@ -1573,12 +1629,13 @@ export class PostgresPlatformState implements PlatformStateStore {
                SET configuration_id = $3, execution_mode = COALESCE($4::text, a.execution_mode),
                    service_account_id = CASE WHEN $5::boolean THEN $6::text ELSE a.service_account_id END,
                    provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END,
-                   plugins = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.plugins END
+                   plugins = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.plugins END,
+                   repository_access = CASE WHEN $11::boolean THEN $12::jsonb ELSE a.repository_access END
                FROM occ.namespaces AS n
                WHERE a.namespace_id = $1 AND a.id = $2
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                          a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                          a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                           a.active_revision_id, a.created_at`,
               [
                 namespaceId,
@@ -1591,6 +1648,8 @@ export class PostgresPlatformState implements PlatformStateStore {
                 providerId ?? null,
                 plugins !== undefined,
                 nextPlugins === undefined ? null : JSON.stringify(nextPlugins),
+                repositoryAccess !== undefined,
+                JSON.stringify(normalizeRepositoryAccess(repositoryAccess)),
               ],
             )
           ).rows,
@@ -1612,7 +1671,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                 AND a.active_revision_id IS NOT DISTINCT FROM $3::text
                 AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                          a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                          a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                           a.active_revision_id, a.created_at`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
@@ -1715,6 +1774,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
 
     return {
+      repositoryBindings,
       installations,
       namespaces,
       configurations,

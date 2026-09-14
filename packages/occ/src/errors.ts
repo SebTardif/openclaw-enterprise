@@ -41,6 +41,15 @@ export class DependencyUnavailableError extends AuthorizationDeniedError {
   }
 }
 
+export class RepositoryVerificationUnavailableError extends DependencyUnavailableError {
+  constructor() {
+    super(
+      "Repository deployment is unavailable: saved bindings and repository selections are unverified.",
+    );
+    this.name = "RepositoryVerificationUnavailableError";
+  }
+}
+
 export class ScopeViolationError extends Error {
   constructor(message: string) {
     super(message);

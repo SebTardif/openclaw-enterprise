@@ -21,6 +21,10 @@ import {
   AgentRuntimeCredentialResponse,
   JsonValue,
   PluginDesiredSelectionSchema,
+  RepositoryAccessSchema,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
+  type RepositoryAccess,
   PluginDesiredStateSchema,
   PluginDriverIdentitySchema,
   PluginToolPolicySchema,
@@ -54,6 +58,7 @@ import {
 import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
+  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
@@ -284,6 +289,12 @@ function operationTarget(
   const serviceAccountId =
     typeof params.serviceAccountId === "string" ? params.serviceAccountId : undefined;
   const secretId = typeof params.secretId === "string" ? params.secretId : undefined;
+  if (operation.resourceKind === "repository_binding" && namespaceId)
+    return {
+      kind: "repository_binding",
+      namespaceId,
+      id: typeof params.bindingId === "string" ? params.bindingId : namespaceId,
+    };
   const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
   const revisionId = typeof params.revisionId === "string" ? params.revisionId : undefined;
   if (operation.operationId === "createNamespace") return { kind: "namespace", id: installationId };
@@ -343,6 +354,23 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
     ];
   }
 
+  if (operation.resourceKind === "repository_binding")
+    return [
+      {
+        ...permission,
+        scope: operation.operationId === "createRepositoryBinding" ? "namespace" : "requested",
+      },
+      ...(operation.iamAction === "read"
+        ? []
+        : [
+            {
+              action: "operate" as const,
+              resourceKind: "secret" as const,
+              scope: "request_body" as const,
+            },
+          ]),
+    ];
+
   if (operation.operationId === "createSecret") {
     return [{ ...permission, scope: "namespace" }];
   }
@@ -355,6 +383,7 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
     return [
       { ...permission, scope: operation.operationId === "createAgent" ? "namespace" : "requested" },
       { action: "read", resourceKind: "configuration", scope: "requested" },
+      { action: "operate", resourceKind: "repository_binding", scope: "requested" },
       {
         action: "read",
         resourceKind: "service_account",
@@ -407,6 +436,7 @@ function permissionDescription(
   operation?: OccApiRoute,
 ): string {
   const names: Record<ResourceKind, string> = {
+    repository_binding: "Repository binding",
     installation: "Installation",
     namespace: "Namespace",
     configuration: "Configuration",
@@ -463,6 +493,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     id: agent.id,
     namespaceId: agent.namespaceId,
     name: agent.name,
+    repositoryAccess: normalizeRepositoryAccess(agent.repositoryAccess),
     configurationId: agent.configurationId,
     providerId: agent.providerId,
     executionMode: agent.executionMode,
@@ -571,6 +602,8 @@ function requestFailure(error: unknown): RequestFailure {
   if (error instanceof NamespaceNotEmptyError)
     return failure(409, "NAMESPACE_NOT_EMPTY", "The requested Namespace is not empty.");
   if (error instanceof NotImplementedError) return failure(501, "NOT_IMPLEMENTED", error.message);
+  if (error instanceof RepositoryVerificationUnavailableError)
+    return failure(503, "REPOSITORY_VERIFICATION_UNAVAILABLE", error.message);
   if (error instanceof DependencyUnavailableError)
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   if (error instanceof ResourceConflictError)
@@ -694,6 +727,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   app.addSchema(PluginDriverIdentitySchema);
   app.addSchema(PluginToolPolicySchema);
   app.addSchema(PluginDesiredSelectionSchema);
+  app.addSchema({ ...RepositoryAccessSchema, $id: "RepositoryAccess" });
   app.addSchema(PluginDesiredStateSchema);
   void app.register(swagger, {
     convertConstToEnum: false,
@@ -1654,6 +1688,56 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       return;
     }
 
+    if (operation.resourceKind === "repository_binding") {
+      if (operation.operationId === "getRepositoryBinding") {
+        const binding = await controller.getRepositoryBinding(
+          context.actorId,
+          namespaceId,
+          params.bindingId as string,
+        );
+        reply.send({ data: binding, meta: { requestId: request.id } });
+        return;
+      }
+      const binding = await controller.transact(async (unit) => {
+        const { expectedGeneration, ...descriptor } = body!;
+        const saved = await controller!.saveRepositoryBinding(
+          context.actorId,
+          namespaceId,
+          normalizeRepositoryBinding(descriptor),
+          operation.operationId === "updateRepositoryBinding"
+            ? {
+                bindingId: params.bindingId as string,
+                expectedGeneration: expectedGeneration as number,
+              }
+            : undefined,
+        );
+        await unit.audit.append(
+          event(
+            operation,
+            request,
+            { kind: "repository_binding", id: saved.id, namespaceId },
+            "mutation",
+            context,
+          ),
+        );
+        return saved;
+      });
+      reply
+        .status(operation.operationId === "createRepositoryBinding" ? 201 : 200)
+        .send({ data: binding, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (
+      (operation.operationId === "createAgent" || operation.operationId === "updateAgent") &&
+      body?.repositoryAccess !== undefined
+    ) {
+      try {
+        normalizeRepositoryAccess(body.repositoryAccess);
+      } catch {
+        throw failure(400, "INVALID_REQUEST", "The repository access draft is invalid.");
+      }
+    }
     if (operation.operationId === "createAgent") {
       const agent = await controller.transact(async (unit) => {
         const created = await controller!.createAgent(context.actorId, {
@@ -1669,6 +1753,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...(body?.serviceAccountId === undefined
             ? {}
             : { serviceAccountId: body.serviceAccountId as string }),
+          ...(body?.repositoryAccess === undefined
+            ? {}
+            : { repositoryAccess: body.repositoryAccess as RepositoryAccess }),
           ...(body?.plugins === undefined ? {} : { plugins: body.plugins as never }),
         });
         await unit.audit.append(
@@ -1718,6 +1805,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...(body?.serviceAccountId === undefined
             ? {}
             : { serviceAccountId: body.serviceAccountId as string | null }),
+          ...(body?.repositoryAccess === undefined
+            ? {}
+            : { repositoryAccess: body.repositoryAccess as RepositoryAccess }),
           ...(body?.plugins === undefined ? {} : { plugins: body.plugins as never }),
         });
         await unit.audit.append(

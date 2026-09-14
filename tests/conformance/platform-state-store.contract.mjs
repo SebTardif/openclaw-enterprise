@@ -46,6 +46,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     id: identifier("agt"),
     namespaceId: namespace.id,
     name: `Agent ${randomUUID()}`,
+    repositoryAccess: { schemaVersion: 1, repositories: [] },
     configurationId: configuration.id,
     providerId: null,
     executionMode: "embedded",
@@ -664,6 +665,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     credential,
   };
   const accountAgent = {
+    repositoryAccess: { schemaVersion: 1, repositories: [] },
     id: identifier("agt"),
     namespaceId: accountNamespace.id,
     name: "Account agent " + randomUUID(),

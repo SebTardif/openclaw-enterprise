@@ -1,4 +1,6 @@
 import type {
+  RepositoryAccess,
+  RepositoryBinding,
   HarnessExecutionMode,
   PluginDesiredState,
   SecretBindings,
@@ -226,6 +228,10 @@ export const agents = occSchema.table(
     providerId: text("provider_id"),
     executionMode: text("execution_mode").$type<HarnessExecutionMode>().notNull(),
     plugins: jsonb("plugins").$type<PluginDesiredState>(),
+    repositoryAccess: jsonb("repository_access")
+      .$type<RepositoryAccess>()
+      .notNull()
+      .default({ schemaVersion: 1, repositories: [] }),
     servicePrincipalId: text("service_principal_id").notNull(),
     serviceAccountId: text("service_account_id"),
     activeRevisionId: text("active_revision_id"),
@@ -238,6 +244,10 @@ export const agents = occSchema.table(
       table.namespaceId,
       table.id,
       table.servicePrincipalId,
+    ),
+    check(
+      "agents_repository_access_valid",
+      sql`occ.repository_access_valid(${table.repositoryAccess},${table.namespaceId})`,
     ),
     check("agents_id_format", sql`${table.id} ~ ${identifierPatterns.agent}`),
     check("agents_name_length", sql`char_length(${table.name}) BETWEEN 1 AND 200`),
@@ -619,7 +629,7 @@ export const iamRestrictions = occSchema.table(
     ),
     check(
       "iam_restrictions_resource_kind_valid",
-      sql`${table.resourceKind} IN ('installation', 'namespace', 'configuration', 'service_account', 'secret', 'agent', 'agent_revision')`,
+      sql`${table.resourceKind} IN ('installation', 'namespace', 'configuration', 'service_account', 'secret', 'agent', 'agent_revision', 'repository_binding')`,
     ),
     check("iam_restrictions_effect_deny", sql`${table.effect} = 'deny'`),
     check(
@@ -871,5 +881,28 @@ export const apikey = occSchema.table(
   (table) => [
     index("apikey_config_id_idx").on(table.configId),
     index("apikey_reference_id_idx").on(table.referenceId),
+  ],
+);
+
+export const repositoryBindings = occSchema.table(
+  "repository_bindings",
+  {
+    id: text("id").primaryKey(),
+    namespaceId: text("namespace_id")
+      .notNull()
+      .references(() => namespaces.id),
+    ownerInstallationId: text("owner_installation_id")
+      .notNull()
+      .references(() => installation.id),
+    keySecretId: text("key_secret_id").notNull(),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    descriptor: jsonb("descriptor").$type<RepositoryBinding>().notNull(),
+  },
+  (table) => [
+    unique().on(table.namespaceId, table.id),
+    foreignKey({
+      columns: [table.namespaceId, table.keySecretId],
+      foreignColumns: [secrets.namespaceId, secrets.id],
+    }),
   ],
 );

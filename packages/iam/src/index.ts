@@ -122,6 +122,10 @@ export function createAuthPrincipalSeed(
         })),
       ),
       { action: "operate", resourceKind: "secret" },
+      ...(["create", "read", "update", "operate"] as const).map((action) => ({
+        action,
+        resourceKind: "repository_binding" as const,
+      })),
       ...(["create", "read", "update", "deploy", "operate", "administer"] as const).map(
         (action) => ({
           action,
@@ -383,6 +387,11 @@ export function validateNativeIAMState(state: NativeIAMState): void {
       `AccessBinding ${binding.id} targets a ServiceAccount without a Namespace`,
     );
 
+    assertCondition(
+      binding.resourceKind !== "repository_binding" || isNonEmptyString(binding.namespaceId),
+      `AccessBinding ${binding.id} targets a repository binding without a Namespace`,
+    );
+
     const role = roles.get(binding.roleId);
     assertCondition(role !== undefined, `AccessBinding ${binding.id} references an unknown Role`);
     assertCondition(
@@ -427,6 +436,11 @@ export function validateNativeIAMState(state: NativeIAMState): void {
     assertCondition(
       restriction.effect === "deny",
       `Restriction ${restriction.id} must be deny-only`,
+    );
+    assertCondition(
+      restriction.resourceKind !== "repository_binding" ||
+        isNonEmptyString(restriction.namespaceId),
+      `Restriction ${restriction.id} targets a repository binding without a Namespace`,
     );
     assertCondition(
       restriction.namespaceId === undefined || restriction.resourceKind !== "installation",
@@ -499,6 +513,8 @@ function validRequest(request: AuthorizationRequest): boolean {
     (request.resource.kind !== "service_account" ||
       isNonEmptyString(request.resource.namespaceId)) &&
     (request.resource.kind !== "secret" || isNonEmptyString(request.resource.namespaceId)) &&
+    (request.resource.kind !== "repository_binding" ||
+      isNonEmptyString(request.resource.namespaceId)) &&
     ACTIONS.includes(request.action) &&
     RESOURCE_KINDS.includes(request.resource.kind)
   );

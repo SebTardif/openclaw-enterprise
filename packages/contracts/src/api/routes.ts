@@ -1,4 +1,11 @@
 import { Type } from "typebox";
+import {
+  RepositoryBindingId,
+  RepositoryBindingBody,
+  UpdateRepositoryBindingBody,
+  RepositoryBindingSchema,
+} from "../repository-access-v1.ts";
+import { Meta, NamespaceId } from "./common.ts";
 
 import {
   AgentParams,
@@ -65,6 +72,48 @@ const mutationErrors = {
 } as const;
 
 export const occApiRoutes = [
+  ...(
+    [
+      { action: "create", method: "POST", operationId: "createRepositoryBinding" },
+      { action: "read", method: "GET", operationId: "getRepositoryBinding" },
+      { action: "update", method: "PATCH", operationId: "updateRepositoryBinding" },
+    ] as const
+  ).map(({ action, method, operationId }) => ({
+    operationId,
+    method,
+    path:
+      action === "create"
+        ? "/namespaces/:namespaceId/repository-bindings"
+        : "/namespaces/:namespaceId/repository-bindings/:bindingId",
+    action: `openclaw.repository_bindings.${action}`,
+    iamAction: action,
+    resourceKind: "repository_binding" as const,
+    authorizationTarget:
+      action === "create" ? ("namespace_collection" as const) : ("repository_binding" as const),
+    summary: `${action} an unverified Namespace-owned repository binding descriptor`,
+    tags: ["Repository bindings"],
+    schema: {
+      querystring: EmptyQuery,
+      params:
+        action === "create"
+          ? NamespaceParams
+          : Type.Object(
+              { namespaceId: NamespaceId, bindingId: RepositoryBindingId },
+              { additionalProperties: false },
+            ),
+      ...(action === "read"
+        ? {}
+        : { body: action === "create" ? RepositoryBindingBody : UpdateRepositoryBindingBody }),
+      response: {
+        [action === "create" ? 201 : 200]: Type.Object(
+          { data: RepositoryBindingSchema, meta: Meta },
+          { additionalProperties: false },
+        ),
+        ...createErrors,
+      },
+    },
+  })),
+
   {
     operationId: "bootstrapInstallation",
     method: "POST",

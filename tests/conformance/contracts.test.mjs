@@ -151,6 +151,7 @@ test("the singleton platform resource model keeps Namespace ownership explicit",
     "secret",
     "agent",
     "agent_revision",
+    "repository_binding",
   ]);
   assert.equal(Object.isFrozen(RESOURCE_KINDS), true);
 

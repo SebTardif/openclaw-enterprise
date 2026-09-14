@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { RepositoryAccessSchema } from "../repository-access-v1.ts";
 
 import {
   AgentId,
@@ -26,7 +27,11 @@ import {
 } from "./common.ts";
 
 export const InstallationSchema = Type.Object(
-  { id: InstallationId, name: Name, createdAt: Timestamp },
+  {
+    id: InstallationId,
+    name: Name,
+    createdAt: Timestamp,
+  },
   { additionalProperties: false },
 );
 
@@ -56,6 +61,7 @@ export const AgentSchema = Type.Object(
     serviceAccountId: Type.Optional(ServiceAccountId),
     executionMode: HarnessExecutionModeSchema,
     plugins: Type.Optional(Type.Ref("PluginDesiredState")),
+    repositoryAccess: RepositoryAccessSchema,
     activeRevisionId: Type.Optional(RevisionId),
     createdAt: Timestamp,
   },

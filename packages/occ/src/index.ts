@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
+  RepositoryAccess,
+  RepositoryBinding,
+  RepositoryBindingInput,
   AgentRevision,
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -42,6 +45,8 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import {
   DRIVER_CAPABILITIES,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
   SANDBOX_FACETS,
   admitLoggingConfiguration,
   normalizeLoggingLevel,
@@ -51,6 +56,7 @@ import {
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   AuthorizationDeniedError,
+  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   DriverSelectionError,
   NamespaceNotEmptyError,
@@ -77,6 +83,7 @@ import { PostgresCommitOutcomeUnknownError } from "./state/postgres-state.ts";
 
 export {
   AuthorizationDeniedError,
+  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   DriverSelectionError,
   NamespaceNotEmptyError,
@@ -165,6 +172,7 @@ export interface CreateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string;
   readonly executionMode?: HarnessExecutionMode;
+  readonly repositoryAccess?: RepositoryAccess;
   readonly plugins?: PluginDesiredState;
 }
 
@@ -175,6 +183,7 @@ export interface UpdateAgentInput {
   readonly providerId?: string | null;
   readonly serviceAccountId?: string | null;
   readonly executionMode?: HarnessExecutionMode;
+  readonly repositoryAccess?: RepositoryAccess;
   readonly plugins?: PluginDesiredState;
 }
 
@@ -1402,6 +1411,110 @@ export class OpenClawController {
     });
   }
 
+  async getRepositoryBinding(
+    principalId: string,
+    namespaceId: string,
+    bindingId: string,
+  ): Promise<Readonly<RepositoryBinding>> {
+    await this.authorize(principalId, "read", {
+      kind: "repository_binding",
+      namespaceId,
+      id: bindingId,
+    });
+    return this.read(async (state) => {
+      await this.exactNamespace(state, namespaceId);
+      const binding = await state.repositoryBindings.findBinding(namespaceId, bindingId);
+      if (!binding)
+        throw new ScopeViolationError("Repository binding does not belong to the exact Namespace.");
+      return binding;
+    });
+  }
+
+  async saveRepositoryBinding(
+    principalId: string,
+    namespaceId: string,
+    input: RepositoryBindingInput,
+    update?: { bindingId: string; expectedGeneration: number },
+  ): Promise<Readonly<RepositoryBinding>> {
+    let descriptor: RepositoryBindingInput;
+    try {
+      descriptor = normalizeRepositoryBinding(input);
+    } catch {
+      throw new ScopeViolationError("Repository binding descriptor is invalid.");
+    }
+    if (
+      update &&
+      (!Number.isSafeInteger(update.expectedGeneration) ||
+        update.expectedGeneration < 1 ||
+        update.expectedGeneration >= Number.MAX_SAFE_INTEGER)
+    )
+      throw new ScopeViolationError("Repository binding generation is invalid.");
+    return this.mutate(async (state) => {
+      const namespace = await this.lockNamespace(state, namespaceId);
+      if (namespace.status !== "ready" && namespace.status !== "provisioning")
+        throw new ResourceConflictError("Namespace does not accept repository bindings.");
+      await this.authorize(principalId, update ? "update" : "create", {
+        kind: "repository_binding",
+        namespaceId,
+        id: update?.bindingId ?? namespaceId,
+      });
+      const current = update
+        ? await state.repositoryBindings.findBinding(namespaceId, update.bindingId)
+        : undefined;
+      if (update && !current)
+        throw new ScopeViolationError("Repository binding does not belong to the exact Namespace.");
+      if (update && current?.generation !== update.expectedGeneration)
+        throw new ResourceConflictError("Repository binding generation changed.");
+      if (descriptor.keySecretRef.namespaceId !== namespaceId)
+        throw new ScopeViolationError("The signing Secret must belong to the exact Namespace.");
+      await this.authorize(principalId, "operate", descriptor.keySecretRef);
+      if (!(await state.secrets.lockSecret(namespaceId, descriptor.keySecretRef.id)))
+        throw new ScopeViolationError("The signing Secret is unavailable.");
+      const binding: RepositoryBinding = {
+        ...descriptor,
+        id: current?.id ?? this.nextIdentifier("repository_binding"),
+        namespaceId,
+        generation: (current?.generation ?? 0) + 1,
+        state: "unverified",
+        createdAt: current?.createdAt ?? this.timestamp(),
+      };
+      const saved = update
+        ? await state.repositoryBindings.updateBinding(binding, update.expectedGeneration)
+        : await state.repositoryBindings.createBinding(binding);
+      if (!saved) throw new ResourceConflictError("Repository binding generation changed.");
+      return saved;
+    });
+  }
+
+  private repositoryDraft(value?: RepositoryAccess): RepositoryAccess {
+    try {
+      return normalizeRepositoryAccess(value);
+    } catch {
+      throw new ScopeViolationError("Repository access draft is invalid.");
+    }
+  }
+
+  private async authorizeRepositoryDraft(
+    state: PlatformReadView,
+    principalId: string,
+    namespaceId: string,
+    draft: RepositoryAccess,
+  ): Promise<void> {
+    for (const entry of draft.repositories) {
+      if (entry.bindingRef.namespaceId !== namespaceId)
+        throw new ScopeViolationError("Repository bindings cannot cross Namespace boundaries.");
+      await this.authorize(principalId, "operate", entry.bindingRef);
+      const binding = await state.repositoryBindings.findBinding(namespaceId, entry.bindingRef.id);
+      if (!binding || !binding.repositoryIds.includes(entry.repositoryId))
+        throw new ScopeViolationError(
+          "The repository is absent from the unverified binding descriptor.",
+        );
+      await this.authorize(principalId, "operate", binding.keySecretRef);
+      if (!(await state.secrets.findSecret(namespaceId, binding.keySecretRef.id)))
+        throw new ScopeViolationError("The signing Secret is unavailable.");
+    }
+  }
+
   async createAgent(principalId: string, input: CreateAgentInput): Promise<Readonly<Agent>> {
     if (!validName(input.name)) throw new ScopeViolationError("The Agent name is invalid.");
     if (!isNonEmptyString(input.configurationId))
@@ -1452,7 +1565,10 @@ export class OpenClawController {
         this.bindings(configuration.secretBindings),
       );
 
+      const repositoryAccess = this.repositoryDraft(input.repositoryAccess);
+      await this.authorizeRepositoryDraft(state, principalId, namespace.id, repositoryAccess);
       const agent = await state.agents.createAgent({
+        repositoryAccess,
         id: agentId,
         namespaceId: namespace.id,
         name: input.name,
@@ -1539,6 +1655,10 @@ export class OpenClawController {
           ? undefined
           : (input.serviceAccountId ?? agent.serviceAccountId),
       );
+      const repositoryAccess = this.repositoryDraft(
+        input.repositoryAccess ?? agent.repositoryAccess,
+      );
+      await this.authorizeRepositoryDraft(state, principalId, namespace.id, repositoryAccess);
       const updated = await state.agents.updateConfiguration(
         namespace.id,
         agent.id,
@@ -1547,6 +1667,7 @@ export class OpenClawController {
         input.serviceAccountId,
         input.providerId === undefined ? undefined : providerId,
         plugins,
+        repositoryAccess,
       );
       if (!updated)
         throw new ResourceConflictError("The Agent Configuration changed during its update.");
@@ -1590,6 +1711,9 @@ export class OpenClawController {
         throw new ScopeViolationError(
           "The Agent or its service principal does not belong to the exact Namespace.",
         );
+      // TODO(repository verification): admit repository deployments only after real provider verification and immutable selection exist.
+      if (this.repositoryDraft(lockedAgent.repositoryAccess).repositories.length > 0)
+        throw new RepositoryVerificationUnavailableError();
       const providerId = this.providerId(lockedAgent.providerId);
       if (sandbox !== undefined && lockedAgent.executionMode !== "dedicated")
         throw new ScopeViolationError(
@@ -2416,6 +2540,7 @@ export class OpenClawController {
 
   private nextIdentifier(kind: ResourceKind): string {
     const prefixes: Record<ResourceKind, string> = {
+      repository_binding: "rb",
       installation: "ins",
       namespace: "ns",
       configuration: "cfg",

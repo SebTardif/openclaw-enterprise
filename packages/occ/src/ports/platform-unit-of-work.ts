@@ -8,6 +8,11 @@ export function bindPlatformUnitOfWork(
   lifetime: RepositoryTransactionLifetime,
 ): PlatformUnitOfWork {
   return Object.freeze({
+    repositoryBindings: bindRepository(repositories.repositoryBindings, lifetime, [
+      "findBinding",
+      "createBinding",
+      "updateBinding",
+    ]),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",
       "getInstallation",

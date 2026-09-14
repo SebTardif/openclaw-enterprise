@@ -1,3 +1,4 @@
+import type { RepositoryAccess } from "./repository-access-v1.ts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   PluginDesiredSelectionSchema,
@@ -75,6 +76,7 @@ export const RESOURCE_KINDS = Object.freeze([
   "secret",
   "agent",
   "agent_revision",
+  "repository_binding",
 ] as const);
 
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
@@ -307,6 +309,7 @@ export interface ServiceAccountRevision {
 }
 
 export interface Agent extends Scope {
+  readonly repositoryAccess?: RepositoryAccess;
   readonly id: string;
   readonly namespaceId: string;
   readonly name: string;
@@ -707,3 +710,15 @@ export { normalizeSecretBindings } from "./secret-bindings.ts";
 export * from "./api/common.ts";
 export * from "./api/resources.ts";
 export * from "./api/routes.ts";
+
+export {
+  RepositoryAccessSchema,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
+  validRepositoryBinding,
+} from "./repository-access-v1.ts";
+export type {
+  RepositoryAccess,
+  RepositoryBinding,
+  RepositoryBindingInput,
+} from "./repository-access-v1.ts";
