@@ -1,6 +1,7 @@
 min_version = "2026.4.0"
 
 [settings]
+auto_install = false
 # package.json remains the owner of the exact pnpm version.
 idiomatic_version_file_enable_tools = ["pnpm"]
 
