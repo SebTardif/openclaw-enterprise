@@ -154,7 +154,7 @@ jobs:
           const fs = require("fs");
           const needs = JSON.parse(process.env.NEEDS_JSON);
           const lanes = ["checks-baseline", "postgres", "images-packaging", "k3d-fixture-configuration", "logging-collector"];
-          const expanded = { audit: needs.audit, "runtime-security": needs["runtime-security"] };
+          const expanded = { audit: needs.audit, "runtime-security": needs["runtime-security"], "native-read": needs["native-read"] };
           for (const lane of lanes) {
             expanded[lane] = { result: needs["pr-safe"]?.result ?? "missing" };
           }
