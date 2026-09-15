@@ -40,7 +40,10 @@ before signing or network dispatch. The existing read constructor remains read-o
 Trusted grant admission fixes one token profile per lease. Read-write execution
 uses its write profile for metadata, fetch, push and PR creation; operation kind
 does not select a second token profile. Separately admitted preparation retains
-its own read-only lease and never widens from a request.
+its own read-only authority and material. This issuer does not enforce the
+lease-wide one-mint claim or two aggregate outstanding slots across replicas;
+Work, inventory and custody composition must enforce those limits and retain
+unknown or provider-valid retired material until evidenced resolution.
 
 Construction fixes scope and owners. Names, Secret references and caller identity
 are not authority. The owner durably claims each attempt and records every
