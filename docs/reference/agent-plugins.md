@@ -60,6 +60,22 @@ SSH Compute currently supports plugin-free embedded OpenClaw only. A revision
 with any nonempty requested plugin map is rejected before SSH host effects,
 including when a PluginDriver is selected.
 
+## Autocomplete suggestions
+
+`GET /namespaces/:namespaceId/plugin-suggestions` returns
+`{data:[{id,name}],meta:{requestId}}` after exact Namespace `read` authorization.
+It works before an Agent exists and requires no configured PluginDriver, Provider,
+ServiceAccount, or runtime. Consumers can filter the small returned list locally.
+
+The bundled list contains 26 common OpenAI-curated suggestions with Enterprise
+IDs such as `codex-plugin:github@openai-curated-remote`. It is a maintained subset,
+not an exhaustive catalog. Responses contain no enabled, installed, availability,
+policy, or tool information. Listing performs no upstream request, credential
+lookup, or native discovery; console autocomplete UI is separate work.
+
+Suggestions do not constrain saved plugin IDs or change native startup checks.
+See the [suggestions request flow](../flows/plugin-suggestions.md) for the API path.
+
 ## HTTP operations
 
 Plugin selections are managed through the existing Agent create/update API.

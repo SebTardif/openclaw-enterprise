@@ -117,6 +117,7 @@
                 "pages": [
                   "flows/common-logging",
                   "flows/agent-plugins",
+                  "flows/plugin-suggestions",
                   "flows/compute-driver-lifecycle-hooks",
                   "flows/configuration-driver",
                   "flows/configuration-driver/persistence-and-revisions",

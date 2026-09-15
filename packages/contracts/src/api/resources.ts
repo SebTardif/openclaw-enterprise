@@ -158,6 +158,18 @@ export const ProviderSummarySchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginSuggestionSchema = Type.Object(
+  {
+    id: Type.String({
+      minLength: 1,
+      maxLength: 253,
+      pattern: "^codex-plugin:[A-Za-z0-9._~-]+@openai-curated-remote$",
+    }),
+    name: Name,
+  },
+  { additionalProperties: false },
+);
+
 export const InstallationResponse = Type.Object(
   { data: InstallationSchema, meta: Meta },
   { additionalProperties: false },
@@ -213,6 +225,11 @@ export const AgentListResponse = Type.Object(
 
 export const ProviderListResponse = Type.Object(
   { data: Type.Array(ProviderSummarySchema), meta: Meta },
+  { additionalProperties: false },
+);
+
+export const PluginSuggestionListResponse = Type.Object(
+  { data: Type.Array(PluginSuggestionSchema), meta: Meta },
   { additionalProperties: false },
 );
 
@@ -314,6 +331,7 @@ export type ConfigurationWire = Type.Static<typeof ConfigurationSchema>;
 export type SecretWire = Type.Static<typeof SecretSchema>;
 export type ServiceAccountWire = Type.Static<typeof ServiceAccountSchema>;
 export type ProviderSummaryWire = Type.Static<typeof ProviderSummarySchema>;
+export type PluginSuggestionWire = Type.Static<typeof PluginSuggestionSchema>;
 export type AgentWire = Type.Static<typeof AgentSchema>;
 export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
@@ -330,6 +348,7 @@ export type AgentResponse = Type.Static<typeof AgentResponse>;
 export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCredentialResponse>;
 export type AgentListResponse = Type.Static<typeof AgentListResponse>;
 export type ProviderListResponse = Type.Static<typeof ProviderListResponse>;
+export type PluginSuggestionListResponse = Type.Static<typeof PluginSuggestionListResponse>;
 export type AgentRevisionResponse = Type.Static<typeof AgentRevisionResponse>;
 export type AgentRevisionListResponse = Type.Static<typeof AgentRevisionListResponse>;
 export type WorkspaceFileResponse = Type.Static<typeof WorkspaceFileResponse>;

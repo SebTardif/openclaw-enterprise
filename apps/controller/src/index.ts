@@ -74,6 +74,7 @@ import {
   ConfigurationOwnershipError,
   ConfigurationValidationError,
 } from "./drivers/configuration/kubernetes/index.ts";
+import { CODEX_PLUGIN_SUGGESTIONS } from "./drivers/plugin/suggestions.ts";
 import {
   ControllerWorkspaceFileUnknownOutcomeError,
   isAllowedWorkspaceFileName,
@@ -1372,6 +1373,15 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     if (operation.operationId === "getNamespace") {
       reply.send({
         data: await controller.getNamespace(context.actorId, namespaceId),
+        meta: { requestId: request.id },
+      });
+      return;
+    }
+
+    if (operation.operationId === "listPluginSuggestions") {
+      await controller.getNamespace(context.actorId, namespaceId);
+      reply.send({
+        data: CODEX_PLUGIN_SUGGESTIONS,
         meta: { requestId: request.id },
       });
       return;

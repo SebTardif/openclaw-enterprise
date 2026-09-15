@@ -42,9 +42,9 @@ startup may update that profile's own cache. Use a separate profile from the
 operator's ordinary Codex workspace.
 
 An empty Codex Driver configuration permits Agent writes and deployment without
-controller-side catalog discovery. No HTTP plugin inventory endpoint is exposed. Agent startup uses
-its own projected credentials to resolve its selections independently of this
-reader. Unknown options, arbitrary package selectors, and external PluginDriver
+controller-side catalog discovery. The separate [autocomplete suggestions API](../agent-plugins.md#autocomplete-suggestions)
+returns bundled names and IDs without invoking this reader. Agent startup uses
+its own projected credentials to resolve its selections independently. Unknown options, arbitrary package selectors, and external PluginDriver
 packages are rejected. Existing required Driver selections remain necessary.
 
 | Driver ID      | Implementation        | Agent Harness     | Catalog source                                                                                                   |

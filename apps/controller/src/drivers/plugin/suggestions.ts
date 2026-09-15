@@ -1,0 +1,32 @@
+import type { PluginSuggestionWire } from "@openclaw-enterprise/contracts";
+
+export const CODEX_PLUGIN_SUGGESTIONS: readonly PluginSuggestionWire[] = Object.freeze(
+  [
+    { id: "codex-plugin:airtable@openai-curated-remote", name: "Airtable" },
+    { id: "codex-plugin:asana@openai-curated-remote", name: "Asana" },
+    { id: "codex-plugin:box@openai-curated-remote", name: "Box" },
+    { id: "codex-plugin:canva@openai-curated-remote", name: "Canva" },
+    { id: "codex-plugin:datadog@openai-curated-remote", name: "Datadog (Preview)" },
+    { id: "codex-plugin:figma@openai-curated-remote", name: "Figma" },
+    { id: "codex-plugin:github@openai-curated-remote", name: "GitHub" },
+    { id: "codex-plugin:google-contacts@openai-curated-remote", name: "Google Contacts" },
+    { id: "codex-plugin:granola@openai-curated-remote", name: "Granola" },
+    { id: "codex-plugin:hubspot@openai-curated-remote", name: "HubSpot" },
+    { id: "codex-plugin:quickbooks@openai-curated-remote", name: "Intuit QuickBooks" },
+    { id: "codex-plugin:linear@openai-curated-remote", name: "Linear" },
+    { id: "codex-plugin:monday-com@openai-curated-remote", name: "monday.com" },
+    { id: "codex-plugin:notion@openai-curated-remote", name: "Notion" },
+    { id: "codex-plugin:outlook-calendar@openai-curated-remote", name: "Outlook Calendar" },
+    { id: "codex-plugin:outlook-email@openai-curated-remote", name: "Outlook Email" },
+    { id: "codex-plugin:posthog@openai-curated-remote", name: "PostHog" },
+    { id: "codex-plugin:semrush@openai-curated-remote", name: "Semrush" },
+    { id: "codex-plugin:sentry@openai-curated-remote", name: "Sentry" },
+    { id: "codex-plugin:sharepoint@openai-curated-remote", name: "SharePoint" },
+    { id: "codex-plugin:slack@openai-curated-remote", name: "Slack" },
+    { id: "codex-plugin:supabase@openai-curated-remote", name: "Supabase" },
+    { id: "codex-plugin:superhuman@openai-curated-remote", name: "Superhuman Mail" },
+    { id: "codex-plugin:teams@openai-curated-remote", name: "Teams" },
+    { id: "codex-plugin:vercel@openai-curated-remote", name: "Vercel" },
+    { id: "codex-plugin:zoom@openai-curated-remote", name: "Zoom" },
+  ].map((suggestion) => Object.freeze(suggestion)),
+);

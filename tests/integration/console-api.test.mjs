@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import { createConsoleAppFixture, providerFixtures } from "../helpers/console-app.mjs";
@@ -95,6 +96,27 @@ test("console collection APIs keep exact Namespace and Agent IAM boundaries", as
   assert.equal(providerDenied.status, 403);
   assert.equal(providerDenied.body.error.code, "FORBIDDEN");
 
+  // Plugin suggestions are Namespace metadata, so the same exact Namespace read boundary applies.
+  const alphaSuggestions = await fixture.request(
+    "GET",
+    `/namespaces/${alpha.id}/plugin-suggestions`,
+    { session: limitedSession },
+  );
+  assert.equal(alphaSuggestions.status, 200);
+  assert.ok(
+    alphaSuggestions.data.some(
+      (suggestion) => suggestion.id === "codex-plugin:slack@openai-curated-remote",
+    ),
+  );
+
+  const hiddenSuggestions = await fixture.request(
+    "GET",
+    `/namespaces/${beta.id}/plugin-suggestions`,
+    { session: limitedSession },
+  );
+  assert.equal(hiddenSuggestions.status, 403);
+  assert.equal(hiddenSuggestions.body.error.code, "FORBIDDEN");
+
   fixture.policy.bindings.splice(
     fixture.policy.bindings.findIndex((binding) => binding.id === "binding-console-alpha-reader"),
     1,
@@ -104,6 +126,60 @@ test("console collection APIs keep exact Namespace and Agent IAM boundaries", as
   });
   assert.equal(revokedNamespaces.status, 200);
   assert.deepEqual(revokedNamespaces.data, []);
+});
+
+test("console plugin suggestions return autocomplete metadata without runtime prerequisites", async (t) => {
+  // Autocomplete suggestions are static metadata and must not require configured Providers or Drivers.
+  const fixture = await createConsoleAppFixture(t, { providers: [], providerSummaries: [] });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Plugin autocomplete");
+
+  const unauthenticated = await fixture.request(
+    "GET",
+    `/namespaces/${namespace.id}/plugin-suggestions`,
+    { session: null },
+  );
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(unauthenticated.body.error.code, "UNAUTHENTICATED");
+
+  const missingNamespaceId = `ns_${randomUUID()}`;
+  const missing = await fixture.request(
+    "GET",
+    `/namespaces/${missingNamespaceId}/plugin-suggestions`,
+  );
+  assert.equal(missing.status, 404);
+  assert.equal(missing.body.error.code, "NOT_FOUND");
+
+  const suggestions = await fixture.request(
+    "GET",
+    `/namespaces/${namespace.id}/plugin-suggestions`,
+  );
+  assert.equal(suggestions.status, 200);
+  assert.ok(suggestions.data.length > 0);
+  assert.equal(
+    new Set(suggestions.data.map((suggestion) => suggestion.id)).size,
+    suggestions.data.length,
+  );
+  assert.deepEqual(
+    suggestions.data.map((suggestion) => suggestion.name),
+    suggestions.data
+      .map((suggestion) => suggestion.name)
+      .sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
+    suggestions.data.filter((suggestion) =>
+      ["GitHub", "Intuit QuickBooks", "Slack"].includes(suggestion.name),
+    ),
+    [
+      { id: "codex-plugin:github@openai-curated-remote", name: "GitHub" },
+      { id: "codex-plugin:quickbooks@openai-curated-remote", name: "Intuit QuickBooks" },
+      { id: "codex-plugin:slack@openai-curated-remote", name: "Slack" },
+    ],
+  );
+  for (const suggestion of suggestions.data) {
+    assert.deepEqual(Object.keys(suggestion).sort(), ["id", "name"]);
+    assert.match(suggestion.id, /^codex-plugin:[a-z0-9._~-]+@openai-curated-remote$/);
+  }
 });
 
 test("console static routes expose only public assets and preserve API JSON failures", async (t) => {

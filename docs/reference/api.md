@@ -47,6 +47,7 @@ Each operation lists its supported status codes.
 | [Agents](#agents) | 9 operations |
 | [Agent revisions](#agent-revisions) | 2 operations |
 | [Configurations](#configurations) | 4 operations |
+| [Agent plugins](#agent-plugins) | 1 operation |
 | [Secrets](#secrets) | 4 operations |
 | [Service accounts](#service-accounts) | 6 operations |
 | [Providers](#providers) | 1 operation |
@@ -1503,6 +1504,56 @@ Replace values and increment an exact Namespace-owned Configuration generation
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.secretBindings` | `object<string, object>` | No | Optional Secret binding map. Keys are destination environment variable names; at most 64 bindings are accepted. Each value must contain `source.kind`, `source.namespaceId`, and `source.id`, and may contain `delivery.type: "env"`. Admission rejects reserved or process-control destinations such as `OPENCLAW_*`, `CODEX_*`, `OCC_*`, `KUBERNETES_*`, `PATH`, `HOME`, and proxy variables; `OPENAI_API_KEY` is the only allowed `OPENAI_*` destination. |
 | `data.values` | `object<string, SafeJsonValue>` | Yes | A native OpenClaw configuration document. |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+<span id="agent-plugins"></span>
+
+### Agent plugins
+
+| Operation | Summary |
+| --- | --- |
+| [`GET /namespaces/{namespaceId}/plugin-suggestions`](#get-namespacesnamespaceidpluginsuggestions) | List curated plugin suggestions for one Namespace |
+
+#### `GET /namespaces/{namespaceId}/plugin-suggestions`
+
+<span id="get-namespacesnamespaceidpluginsuggestions"></span>
+
+List curated plugin suggestions for one Namespace
+
+**Operation ID:** `listPluginSuggestions`
+
+**Permissions:** Requires read permission on the requested Namespace.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `namespace` | `requested` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `array<object>` | Yes | — |
+| `data[].id` | `string` | Yes | min length: 1; max length: 253; pattern: `^codex-plugin:[A-Za-z0-9._~-]+@openai-curated-remote$` |
+| `data[].name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
