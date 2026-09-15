@@ -41,10 +41,13 @@ ownership, digests and strict restoration belong to the registry implementation.
 The `checks-baseline` CI lane runs canonical JSON, admission and registry
 conformance files and
 `pnpm check:credential-gateway-types` for the five explicit contract fixtures;
-see [CI suite ownership](ci.md). Required broader proof remains actual installed
-external-package startup and rollback, the registry through broker/State/IAM/Work,
-the regular Agent workflow, two installed replicas and live GitHub operations.
-Component conformance does not satisfy those integration requirements.
+see [CI suite ownership](ci.md). Required broader proof remains actual recipe
+startup and failed-admission cleanup, the registry through broker/State/IAM/Work,
+the regular Agent workflow, and live GitHub operations. The selected MVP uses one
+active gateway with identical-version restart; its installed checks must observe
+predecessor termination before replacement and preserve outstanding cleanup.
+Concurrent versions and multi-replica qualification are deferred. Component
+conformance does not satisfy the remaining integration requirements.
 
 When a case fails, check the exact canonical byte count and root-zero depth first.
 Unsupported data must be converted explicitly by its trusted producer before
@@ -64,14 +67,14 @@ the public @openclaw-enterprise/occ entry point, then registers, commits,
 validates, retains, restores and discards a schema. Independent schema and value
 digest calculations check the domain-separated wire protocol. This public package
 self-import exercises the current source entry point; it does not establish
-installed external-package startup or regular Agent integration.
+installed recipe startup or regular Agent integration.
 
 Trusted startup supplies exact recipe `DefinitionRef` identities and the required
 `admittedPrimitives` data allowlist to `createCredentialSchemaRegistryV1`.
 Definitions include recipe ID/version/digest, the recipe contract version and
 exact interpreter primitive. Each admitted identity begins one registration
-scope. Packages receive the scope's `schemas` owner and submit data-only
-registrations naming their canonicalization primitive. The fixed internal
+scope. The trusted recipe loader uses the scope's `schemas` owner to submit
+data-only registrations naming their canonicalization primitive. The fixed internal
 catalog permits only exact installed and Installation-admitted name/version/digest
 matches of the correct kind. Callback, factory, resolver, path, module and URL
 injection refuse without invoking caller code.
@@ -95,6 +98,26 @@ at root, nested object and array-item placements with optional/required keys.
 The production API exposes no fault flag, injected implementation or public hook.
 These fault cases establish containment of substituted trusted-code faults;
 they do not establish a real backend-specific primitive's semantic correctness.
+
+### Writing schema scenarios
+
+Use the shared [schema test vocabulary](../../tests/helpers/credential-schema.mjs)
+to construct recipe registrations and independent digest vectors. `schemaRecipe`
+accepts a JSON schema and explicit overrides for the definition, role, limits and
+canonicalizer. `protoCases()` supplies the eight/nine-property regression matrix
+so admission and canonicalizer-output checks use the same input shapes.
+
+Describe value cases with `name`, `schema`, `accepts` and named `rejects` entries;
+run them as ordinary Node.js subtests. Keep lifecycle assertions beside the real
+registry calls. The helpers construct inputs and expected bytes; they do not
+implement validation or replace the component under test. Preserve literal wire
+vectors alongside shared digest builders to check the encoding independently.
+
+Ordinary schema, digest and input-bound checks belong in the admission suite.
+The isolated fault suite selects only an internal trusted-code fault and tests
+its output, ordering or lifecycle effects. Its parent requires a nonempty test
+run, completed scenarios and zero failures/skips, without fixing the number or
+display names of subtests.
 
 ## Primitive and schema digests
 

@@ -9,69 +9,20 @@ import {
   INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1 as admittedPrimitives,
 } from "../../packages/occ/src/credential-broker-v1/schema-primitives.ts";
 import { CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 } from "../../packages/occ/src/credential-broker-v1/schema-primitive-manifest.ts";
-
-const definition = {
-  backendId: "example",
-  recipeId: "example-recipe",
-  recipeVersion: 1,
-  recipeDigest: "sha256:" + "a".repeat(64),
-  contractVersion: "credential-backend-recipe-v1",
-  interpreter: primitives.interpreter,
-};
-// Independent wire encoder for ordinary vectors. It does not call production JSON/digest helpers.
-const canonical = (value) =>
-  value === null || typeof value !== "object"
-    ? JSON.stringify(value)
-    : Array.isArray(value)
-      ? "[" + value.map(canonical).join(",") + "]"
-      : "{" +
-        Object.keys(value)
-          .sort()
-          .map((key) => JSON.stringify(key) + ":" + canonical(value[key]))
-          .join(",") +
-        "}";
-const digest = (domain, payload) =>
-  "sha256:" +
-  createHash("sha256")
-    .update(domain + "\0" + payload, "utf8")
-    .digest("hex");
-function schemaDigest(
-  jsonSchema,
-  maxBytes,
-  maxDepth,
-  canonicalization = primitives.canonicalization,
-) {
-  return digest(
-    "oce-schema-recipe-v1",
-    canonical({
-      canonicalization,
-      jsonSchema,
-      maxBytes,
-      maxDepth,
-      profile: "oce-closed-draft7-v1",
-    }),
+import {
+  canonical,
+  digest,
+  schemaDigest,
+  definitionFor,
+  schemaRecipe,
+  retainedDigest,
+} from "../helpers/credential-schema.mjs";
+const definition = definitionFor("example");
+const registration = (maxBytes = 128, maxLength = 32) =>
+  schemaRecipe(
+    { type: "string", maxLength },
+    { definition, role: "configuration", name: "configuration", maxBytes, maxDepth: 32 },
   );
-}
-function registration(maxBytes = 128, maxLength = 32) {
-  const jsonSchema = { type: "string", maxLength },
-    maxDepth = 32;
-  return {
-    binding: {
-      definition: structuredClone(definition),
-      role: "configuration",
-      schema: {
-        namespace: "example",
-        name: "configuration",
-        version: 1,
-        digest: schemaDigest(jsonSchema, maxBytes, maxDepth),
-      },
-    },
-    jsonSchema,
-    maxBytes,
-    maxDepth,
-    canonicalization: primitives.canonicalization,
-  };
-}
 function registryFor(definitions = [definition], refs = admittedPrimitives) {
   return createCredentialSchemaRegistryV1(definitions, { admittedPrimitives: refs });
 }
@@ -85,21 +36,6 @@ function setup(maxBytes, maxLength) {
 }
 const denied = (run, code) =>
   assert.throws(run, code ? new RegExp("^Error: " + code + "$") : /^Error: INVALID_[A-Z]+$/);
-function retainedDigest(binding, canonicalJson) {
-  // Literal payload key order is contractual, including full recipe/interpreter identity.
-  return digest(
-    "oce-schema-value-v1",
-    '{"canonicalJson":' +
-      JSON.stringify(canonicalJson) +
-      ',"definition":' +
-      canonical(binding.definition) +
-      ',"role":' +
-      JSON.stringify(binding.role) +
-      ',"schema":' +
-      canonical(binding.schema) +
-      "}",
-  );
-}
 
 test("real installed compiler/Ajv/canonical lifecycle binds independent schema and retained vectors", () => {
   const { registry, codec, input } = setup();
@@ -277,44 +213,67 @@ test("strict restore checks exact envelope, valid digest, canonical text and sch
   assert.deepEqual(codec.retain(codec.restore(saved)), saved);
 });
 
-test("schema-valid object/number vectors reach canonical guard with independently valid digests", () => {
+test("schema-valid retained text reaches the canonical guard", async (t) => {
   const cases = [
-    [
-      {
+    {
+      name: "object spelling",
+      schema: {
         type: "object",
         properties: { a: { type: "integer" }, z: { type: "integer" } },
         required: ["a", "z"],
         additionalProperties: false,
       },
-      { a: 1, z: 1 },
-      ['{"a":1,"a":1,"z":1}', '{"z":1,"a":1}', '{"a":1,"z":1} ', '{"\\u0061":1,"z":1}'],
-    ],
-    [{ type: "number" }, 0, ["-0", "0.0", "0e0", " 0"]],
-    [{ type: "number" }, 1, ["1.0", "1e0", "1E+0"]],
+      accepts: { a: 1, z: 1 },
+      rejects: {
+        "duplicate key": '{"a":1,"a":1,"z":1}',
+        "key order": '{"z":1,"a":1}',
+        "trailing space": '{"a":1,"z":1} ',
+        "escaped key": '{"\\u0061":1,"z":1}',
+      },
+    },
+    {
+      name: "zero spelling",
+      schema: { type: "number" },
+      accepts: 0,
+      rejects: { "negative zero": "-0", decimal: "0.0", exponent: "0e0", "leading space": " 0" },
+    },
+    {
+      name: "one spelling",
+      schema: { type: "number" },
+      accepts: 1,
+      rejects: { decimal: "1.0", exponent: "1e0", "uppercase exponent": "1E+0" },
+    },
   ];
-  for (const [jsonSchema, good, texts] of cases) {
-    const registry = registryFor(),
-      scope = registry.begin(definition),
-      input = registration();
-    input.jsonSchema = jsonSchema;
-    input.binding.schema.digest = schemaDigest(jsonSchema, input.maxBytes, input.maxDepth);
-    const codec = scope.schemas.register(input);
-    scope.commit();
-    const saved = codec.retain(codec.validate(good));
-    assert.deepEqual(codec.retain(codec.restore(saved)), saved);
-    for (const text of texts) {
-      assert.equal(canonical(JSON.parse(text)), canonical(good));
-      denied(
-        () =>
-          codec.restore({
-            ...saved,
-            canonicalJson: text,
-            digest: retainedDigest(input.binding, text),
-          }),
-        "INVALID_VALUE",
-      );
-    }
-  }
+  for (const { name, schema, accepts, rejects } of cases)
+    await t.test(name, async (t) => {
+      const registry = registryFor(),
+        scope = registry.begin(definition);
+      const input = schemaRecipe(schema, {
+        definition,
+        role: "configuration",
+        name: "configuration",
+        maxBytes: 128,
+        maxDepth: 32,
+      });
+      const codec = scope.schemas.register(input);
+      scope.commit();
+      const saved = codec.retain(codec.validate(accepts));
+      assert.deepEqual(codec.retain(codec.restore(saved)), saved);
+      for (const [reason, text] of Object.entries(rejects))
+        await t.test(reason, () => {
+          // Correct binding/digest and schema-valid parsed data isolate canonical text rejection.
+          assert.equal(canonical(JSON.parse(text)), canonical(accepts));
+          denied(
+            () =>
+              codec.restore({
+                ...saved,
+                canonicalJson: text,
+                digest: retainedDigest(input.binding, text),
+              }),
+            "INVALID_VALUE",
+          );
+        });
+    });
 });
 
 test("maximum canonical payload restores despite escaped retained-envelope overhead", () => {
@@ -669,9 +628,9 @@ test("isolated trusted-code fault matrix preserves actual admission/Ajv/registry
       ),
     },
   );
-  assert.match(output, /# tests 48/);
-  assert.match(output, /# fail 0/);
-  assert.match(output, /# skipped 0/);
-  assert.match(output, /trusted-code faults: cross-codec reentry/);
-  assert.match(output, /closed-schema hook output rejects injected own __proto__/);
+  const count = Number(output.match(/^# tests (\d+)$/m)?.[1]);
+  assert.ok(count > 1, "fault subprocess must execute scenarios, not an empty suite");
+  assert.match(output, /^# fail 0$/m);
+  assert.match(output, /^# skipped 0$/m);
+  assert.match(output, /# schema-fault-scenarios-complete/);
 });

@@ -7,112 +7,72 @@ import {
 } from "../../packages/occ/src/credential-broker-v1/schema-primitives.ts";
 import { compileSchemaRegistrationV1 as actualCompile } from "../../packages/occ/src/credential-broker-v1/schema-admission.ts";
 
+import {
+  canonical,
+  definitionFor,
+  schemaRecipe as registration,
+  objectSchema,
+  protoCases,
+  schemaDigest,
+} from "../helpers/credential-schema.mjs";
+
 const admittedPrimitives = INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1;
 const primitives = CREDENTIAL_SCHEMA_PRIMITIVES_V1;
 
 const compileSchemaRegistrationV1 = (input) => actualCompile(input, admittedPrimitives);
 
-// Independent encoding for ordinary test vectors, rather than the production encoder.
-const canonical = (value) =>
-  value === null || typeof value !== "object"
-    ? JSON.stringify(value)
-    : Array.isArray(value)
-      ? "[" + value.map(canonical).join(",") + "]"
-      : "{" +
-        Object.keys(value)
-          .sort()
-          .map((key) => JSON.stringify(key) + ":" + canonical(value[key]))
-          .join(",") +
-        "}";
-const definition = {
-  backendId: "github",
-  recipeId: "example-recipe",
-  recipeVersion: 1,
-  recipeDigest: "sha256:" + "a".repeat(64),
-  contractVersion: "credential-backend-recipe-v1",
-  interpreter: primitives.interpreter,
-};
-const digest = (jsonSchema, maxBytes, maxDepth) =>
-  "sha256:" +
-  createHash("sha256")
-    .update(
-      "oce-schema-recipe-v1\0" +
-        canonical({
-          canonicalization: primitives.canonicalization,
-          profile: "oce-closed-draft7-v1",
-          jsonSchema,
-          maxBytes,
-          maxDepth,
-        }),
-    )
-    .digest("hex");
-const registration = (jsonSchema, overrides = {}) => {
-  const maxBytes = overrides.maxBytes ?? 1024;
-  const maxDepth = overrides.maxDepth ?? 8;
-  return {
-    binding: {
-      definition: { ...definition },
-      role: "operation",
-      schema: {
-        namespace: "github",
-        name: "facts",
-        version: 1,
-        digest: digest(jsonSchema, maxBytes, maxDepth),
-      },
-    },
-    jsonSchema,
-    maxBytes,
-    maxDepth,
-    canonicalization: primitives.canonicalization,
-    ...overrides,
-  };
-};
-const objectSchema = {
-  type: "object",
-  properties: {
-    name: { type: "string", minLength: 1, maxLength: 5 },
-    count: { type: "integer", minimum: 1, maximum: 3 },
-    items: { type: "array", items: { type: "boolean" }, minItems: 1, maxItems: 2 },
-  },
-  required: ["name", "count", "items"],
-  additionalProperties: false,
-};
+const definition = definitionFor();
 const schemaDenied = (value) =>
   assert.throws(() => compileSchemaRegistrationV1(value), /^Error: INVALID_SCHEMA$/);
 const valueDenied = (compiled, value) =>
   assert.throws(() => compiled.assertValid(value), /^Error: INVALID_VALUE$/);
 
-test("real Ajv evaluates the admitted closed draft-07 object and nested bounds", () => {
-  const compiled = compileSchemaRegistrationV1(
-    registration({ $schema: "http://json-schema.org/draft-07/schema#", ...objectSchema }),
-  );
-  compiled.assertValid({ name: "ok", count: 2, items: [true] });
-  for (const value of [
-    { name: "", count: 2, items: [true] },
-    { name: "longer", count: 2, items: [true] },
-    { name: "ok", count: 2.5, items: [true] },
-    { name: "ok", count: 4, items: [true] },
-    { name: "ok", count: "2", items: [true] },
-    { name: "ok", count: 2, items: [] },
-    { name: "ok", count: 2, items: [true, false, true] },
-    { name: "ok", count: 2, items: [1] },
-    { name: "ok", count: 2 },
-    { name: "ok", count: 2, items: [true], extra: 1 },
-  ])
-    valueDenied(compiled, value);
-});
-
-test("scalar const, enum, null and exclusive numeric bounds are evaluated", () => {
-  for (const [schema, good, bad] of [
-    [{ type: "string", maxLength: 5, enum: ["yes", "no"] }, "yes", "other"],
-    [{ type: "integer", const: 2 }, 2, 3],
-    [{ type: "number", exclusiveMinimum: 1, exclusiveMaximum: 3 }, 2, 1],
-    [{ type: "null" }, null, false],
-  ]) {
-    const compiled = compileSchemaRegistrationV1(registration(schema));
-    compiled.assertValid(good);
-    valueDenied(compiled, bad);
-  }
+test("real Ajv evaluates closed draft-07 schema cases", async (t) => {
+  const cases = [
+    {
+      name: "closed object and nested bounds",
+      schema: { $schema: "http://json-schema.org/draft-07/schema#", ...objectSchema },
+      accepts: { name: "ok", count: 2, items: [true] },
+      rejects: {
+        "minimum string length": { name: "", count: 2, items: [true] },
+        "maximum string length": { name: "longer", count: 2, items: [true] },
+        "integer type": { name: "ok", count: 2.5, items: [true] },
+        "numeric maximum": { name: "ok", count: 4, items: [true] },
+        "no type coercion": { name: "ok", count: "2", items: [true] },
+        "minimum items": { name: "ok", count: 2, items: [] },
+        "maximum items": { name: "ok", count: 2, items: [true, false, true] },
+        "item type": { name: "ok", count: 2, items: [1] },
+        "required property": { name: "ok", count: 2 },
+        "additional property": { name: "ok", count: 2, items: [true], extra: 1 },
+      },
+    },
+    {
+      name: "enum",
+      schema: { type: "string", maxLength: 5, enum: ["yes", "no"] },
+      accepts: "yes",
+      rejects: { "outside enum": "other" },
+    },
+    {
+      name: "const",
+      schema: { type: "integer", const: 2 },
+      accepts: 2,
+      rejects: { "different constant": 3 },
+    },
+    {
+      name: "exclusive bounds",
+      schema: { type: "number", exclusiveMinimum: 1, exclusiveMaximum: 3 },
+      accepts: 2,
+      rejects: { "exclusive minimum": 1 },
+    },
+    { name: "null", schema: { type: "null" }, accepts: null, rejects: { "wrong type": false } },
+  ];
+  for (const { name, schema, accepts, rejects } of cases)
+    await t.test(name, async (t) => {
+      const compiled = compileSchemaRegistrationV1(registration(schema));
+      compiled.assertValid(accepts);
+      for (const [reason, value] of Object.entries(rejects))
+        await t.test(reason, () => valueDenied(compiled, value));
+    });
 });
 
 test("unsupported, reference, async and unbounded schemas deny at admission", () => {
@@ -291,94 +251,39 @@ test("installed canonicalizer receives bounded frozen copies after real Ajv vali
   );
 });
 
-// Own __proto__ keys must survive construction; object-literal setter syntax would
-// miss the Ajv property-validation gap at the eight/nine ordinary-field boundary.
-const ordinaryProperties = (count) =>
-  Object.fromEntries(
-    Array.from({ length: count }, (_, index) => ["p" + index, { type: "boolean" }]),
-  );
-const ordinaryValue = (count) =>
-  Object.fromEntries(Array.from({ length: count }, (_, index) => ["p" + index, true]));
-const placeSchema = (leaf, placement) => {
-  if (placement === "root") return leaf;
-  return {
-    type: "object",
-    properties: {
-      payload: placement === "nested-object" ? leaf : { type: "array", items: leaf, maxItems: 1 },
-    },
-    required: ["payload"],
-    additionalProperties: false,
-  };
-};
-const placeValue = (leaf, placement) =>
-  placement === "root" ? leaf : { payload: placement === "nested-object" ? leaf : [leaf] };
-
-for (const count of [8, 9]) {
-  for (const required of [false, true]) {
-    for (const placement of ["root", "nested-object", "array-item-object"]) {
-      const label = `${placement}, ${count} ordinary fields, ${required ? "required" : "optional"}`;
-      const properties = ordinaryProperties(count);
-      const leaf = {
-        type: "object",
-        properties,
-        ...(required ? { required: Object.keys(properties) } : {}),
-        additionalProperties: false,
-      };
-      const schema = placeSchema(leaf, placement);
-      const good = placeValue(ordinaryValue(count), placement);
-      // JSON.parse creates a real own data property, including at nested nodes.
-      const invalidLeaf = JSON.parse(
-        canonical({ ...ordinaryValue(count), ["__proto__"]: "INVALID-STRING" }),
-      );
-      const invalid = placeValue(invalidLeaf, placement);
-
-      test(`schema admission rejects declared own __proto__ before interpretation: ${label}`, () => {
-        const forbiddenProperties = Object.fromEntries([
-          ...Object.entries(properties),
-          ["__proto__", { type: "integer", minimum: 1 }],
-        ]);
-        const forbidden = placeSchema(
-          {
-            ...leaf,
-            properties: forbiddenProperties,
-            ...(required ? { required: Object.keys(forbiddenProperties) } : {}),
-          },
-          placement,
-        );
-        assert.ok(Object.hasOwn(forbiddenProperties, "__proto__"));
-        schemaDenied(registration(forbidden));
-      });
-
-      test(`closed-schema input rejects own __proto__ through both APIs before interpretation: ${label}`, () => {
-        const compiled = compileSchemaRegistrationV1(registration(schema));
-        compiled.assertValid(good);
-        assert.equal(canonical(compiled.validateAndCanonicalize(good)), canonical(good));
-        assert.ok(Object.hasOwn(invalidLeaf, "__proto__"));
-        valueDenied(compiled, invalid);
-        assert.throws(() => compiled.validateAndCanonicalize(invalid), /^Error: INVALID_VALUE$/);
-      });
-    }
+test("own __proto__ is denied before interpretation", async (t) => {
+  for (const {
+    name,
+    schema,
+    forbidden,
+    forbiddenProperties,
+    good,
+    invalid,
+    invalidLeaf,
+  } of protoCases()) {
+    await t.test(name, () => {
+      assert.ok(Object.hasOwn(forbiddenProperties, "__proto__"));
+      schemaDenied(registration(forbidden));
+      const compiled = compileSchemaRegistrationV1(registration(schema));
+      compiled.assertValid(good);
+      assert.equal(canonical(compiled.validateAndCanonicalize(good)), canonical(good));
+      assert.ok(Object.hasOwn(invalidLeaf, "__proto__"));
+      valueDenied(compiled, invalid);
+      assert.throws(() => compiled.validateAndCanonicalize(invalid), /^Error: INVALID_VALUE$/);
+    });
   }
-}
+});
 
 // These direct checks protect the compiler boundary independently of registry admission.
 test("actual admission refuses wrong primitive identities/kinds or missing core admission", () => {
   const schema = { type: "boolean" };
   const bindDigest = (input) => {
-    input.binding.schema.digest =
-      "sha256:" +
-      createHash("sha256")
-        .update(
-          "oce-schema-recipe-v1\0" +
-            canonical({
-              canonicalization: input.canonicalization,
-              jsonSchema: input.jsonSchema,
-              maxBytes: input.maxBytes,
-              maxDepth: input.maxDepth,
-              profile: "oce-closed-draft7-v1",
-            }),
-        )
-        .digest("hex");
+    input.binding.schema.digest = schemaDigest(
+      input.jsonSchema,
+      input.maxBytes,
+      input.maxDepth,
+      input.canonicalization,
+    );
   };
   for (const target of ["interpreter", "canonicalization"]) {
     const good = registration(schema);
