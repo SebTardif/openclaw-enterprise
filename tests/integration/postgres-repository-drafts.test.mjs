@@ -284,12 +284,22 @@ test(
             ? { ...policy.bindings[0], resourceKind: "repository_binding", resourceId: binding.id }
             : {
                 id: "restriction",
+                effect: "deny",
                 action: "read",
                 resourceKind: "repository_binding",
                 resourceId: binding.id,
                 reason: "test",
               };
-        assert.throws(() => validateNativeIAMState({ ...policy, [collection]: [invalid] }));
+        assert.throws(
+          () => validateNativeIAMState({ ...policy, [collection]: [invalid] }),
+          /targets a repository binding without a Namespace/,
+        );
+        assert.doesNotThrow(() =>
+          validateNativeIAMState({
+            ...policy,
+            [collection]: [{ ...invalid, namespaceId: scenario.namespace.id }],
+          }),
+        );
       }
     });
 
