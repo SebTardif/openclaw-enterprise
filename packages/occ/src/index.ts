@@ -2871,3 +2871,8 @@ export type {
   IssuedLeaseClaimRepository,
   IssuedSlotReleaseEvidence,
 } from "./credential-gateway-v1/issuance.ts";
+export { createCredentialSchemaRegistryV1 } from "./credential-broker-v1/schema-registry.ts";
+export type {
+  CredentialSchemaRegistryV1,
+  SchemaRegistrationScopeV1,
+} from "./credential-broker-v1/schema-registry.ts";

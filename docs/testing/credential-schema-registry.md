@@ -48,3 +48,60 @@ Component conformance does not satisfy those integration requirements.
 When a case fails, check the exact canonical byte count and root-zero depth first.
 Unsupported data must be converted explicitly by its trusted producer before
 admission. Do not add coercion or invoke caller serialization hooks to repair it.
+
+## Registry lifecycle verification
+
+Run the registry conformance suite against the same prepared dependencies:
+
+```sh
+node --test tests/conformance/credential-schema-registry.test.mjs
+```
+
+The suite uses the actual registry, accepted schema compiler, Ajv evaluator and
+canonical JSON implementation. A subprocess runs from packages/occ and imports
+the public @openclaw-enterprise/occ entry point, then registers, commits,
+validates, retains, restores and discards a schema. Independent schema and value
+digest calculations check the domain-separated wire protocol. This public package
+self-import exercises the current source entry point; it does not establish
+installed external-package startup or regular Agent integration.
+
+Trusted startup supplies exact admitted DefinitionRef identities to
+createCredentialSchemaRegistryV1. Each identity can begin one registration
+scope. Packages receive the scope's schemas owner. Registration remains pending
+until commit() seals it; duplicate definition/role/schema namespace/name/version
+tuples reject even when their digests agree. Codec operations require a committed
+scope. discard() is idempotent and permanently invalidates every codec and value
+from the scope, including a formerly committed scope.
+
+The registry authenticates codecs and validated values with private WeakMaps.
+Foreign registries, other codecs, copied handles, borrowed method receivers and
+mismatched bindings reject. Semantic validation receives a frozen bounded copy
+after real schema validation; its output passes the same validation again. Nested
+codec operations during a hook reject. A hook may discard its scope, but the
+outer operation then rejects before issuing a value. Synchronous hooks cannot
+be preempted; reviewed hooks must terminate and enforce nonsecret semantics.
+Schemas alone cannot identify arbitrary secrets.
+
+## Retention and restoration
+
+Retained values contain copied frozen binding data, canonical JSON and a
+domain-separated SHA-256 digest; they carry no authority. Restoration accepts
+exact ordinary own-data envelope fields, checks binding and digest, bounds text
+before parsing, and requires canonical re-encoding to match the original bytes.
+It reruns the semantic hook and rejects any changed canonical result. Successful
+restoration issues a fresh local handle. Missing or extra fields, accessors,
+proxies, malformed JSON, duplicate keys, whitespace, noncanonical numbers and
+identity/version/digest changes reject without migration or repair.
+
+The canonical payload's declared byte bound applies independently of envelope
+overhead. A valid 65,536-byte payload remains restorable even when escaping that
+payload makes the retained envelope larger. Consequential failure cases also
+check hook input/output rejection, mutation after registration, permanent
+discard, receiver ownership and denial without getter or proxy effects.
+
+If restoration fails, verify exact definition and schema identity, domain digest,
+canonical bytes and the hook's idempotence. Reissue data through its trusted
+producer when those facts change; retained data must not silently repair them.
+The existing CI/navigation owner retains suite enrollment and full documentation
+integration. The broader caller, installed and live-provider requirements above
+remain open.
