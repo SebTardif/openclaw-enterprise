@@ -1,15 +1,15 @@
 # Configure repository drafts in development
 
-Use this procedure to register an unverified repository binding and edit an Agent's
-repository draft. Repository deployment is inactive; the supported deployment check
-uses an empty repository selection. See the [feature reference](../../reference/repository-drafts.md)
-for exact permissions, limits, and failure behavior.
+Register an unverified binding, save an Agent draft, then check deployment refusal
+and recovery. Obtain the exact Namespace, binding, and signing-Secret permissions
+in the [feature reference](../../reference/repository-drafts.md) before starting.
 
 ## Register a binding and save the Agent
 
-Use an existing authenticated session cookie jar at `$COOKIE_JAR`, your controller
-origin at `$OCC_ORIGIN`, and the actual Namespace and Secret IDs. Keep credentials in
-protected files, not command literals. Create a descriptor file containing:
+Set `$COOKIE_JAR` to an authenticated session cookie file, `$OCC_ORIGIN` to the
+controller origin, and `$NAMESPACE_ID` and `$AGENT_ID` to the target IDs. Keep
+credentials in protected files, not command literals. Create `repository-binding.json`
+with actual GitHub IDs and same-Namespace Secret references:
 
 ```json
 {
@@ -24,7 +24,7 @@ protected files, not command literals. Create a descriptor file containing:
 }
 ```
 
-Replace the illustrative IDs with your real same-Namespace references, then send:
+Replace the illustrative IDs, then send:
 
 ```sh
 curl --fail-with-body --cookie "$COOKIE_JAR" \
@@ -32,14 +32,14 @@ curl --fail-with-body --cookie "$COOKIE_JAR" \
   "$OCC_ORIGIN/namespaces/$NAMESPACE_ID/repository-bindings"
 ```
 
-The returned `data.id` and `data.generation` identify the unverified descriptor.
-To update it, send all four descriptor fields plus its current `expectedGeneration`
-with PATCH to the returned binding's exact route. A stale generation returns 409.
+The response contains `data.id` and `data.generation`. PATCH the binding's exact route
+with all four fields and its current `expectedGeneration`; stale generations return 409.
 
-Read the Agent's current `configurationId` through its GET route. Create an
-`agent-repositories.json` file containing that `configurationId` and a
-`repositoryAccess` value using the [selection shape](../../reference/repository-drafts.md#agent-selection).
-Send the update through the authenticated Agent API:
+GET the Agent's current `configurationId`. Put it and a `repositoryAccess` value
+using the [selection shape](../../reference/repository-drafts.md#agent-selection)
+in `agent-repositories.json`. A supplied selection replaces the array; omission
+preserves it. There is no draft version guard: coordinate simultaneous editors
+before submitting:
 
 ```sh
 curl --fail-with-body --cookie "$COOKIE_JAR" -X PATCH \
@@ -47,23 +47,18 @@ curl --fail-with-body --cookie "$COOKIE_JAR" -X PATCH \
   "$OCC_ORIGIN/namespaces/$NAMESPACE_ID/agents/$AGENT_ID"
 ```
 
-Read the Agent again to verify persistence. A supplied selection replaces the
-saved array; omission preserves it. Agent updates have no draft version guard,
-so coordinate simultaneous editors before submitting replacements.
+Read the Agent again to verify persistence.
 
 ## Verify and recover
 
-Verify login, same-Namespace save/read/update, denied foreign references, and a stale
-binding PATCH. A nonempty repository deployment must return
+Verify login, same-Namespace save/read/update, denied foreign references, and stale
+binding PATCH refusal. Nonempty repository deployment must return
 `REPOSITORY_VERIFICATION_UNAVAILABLE` with no new revision or queued work.
 
-Clear the draft with `{"schemaVersion":1,"repositories":[]}`, save, and use the
-existing [Agent deployment procedure](../../reference/agents/deployment.md). Check the
-admitted revision and actual worker/runtime separately; an API receipt alone does
-not prove serving or a model turn. Existing providerless and provider-backed
-no-repository configurations retain their current behavior.
+Set `repositoryAccess` to `{"schemaVersion":1,"repositories":[]}`, PATCH and reread,
+then follow [Agent deployment](../../reference/agents/deployment.md). Check the admitted
+revision and worker/runtime separately; an API receipt does not prove serving or a
+model turn. Providerless and provider-backed configurations retain their existing behavior.
 
-For a failed or ambiguous mutation, GET the exact binding/Agent and inspect its saved
-generation/value before resubmitting. An administrator must grant the exact
-Namespace, binding, and signing-Secret permissions listed in the feature reference.
-GitHub enrollment and repository verification remain unavailable.
+After a failed or ambiguous mutation, GET the exact binding/Agent and inspect its
+saved generation/value before resubmitting. Saving does not verify GitHub access.
