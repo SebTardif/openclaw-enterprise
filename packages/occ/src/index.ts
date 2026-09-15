@@ -2845,3 +2845,6 @@ export type {
   GitHubPrefixDigest,
   GitHubCreationDigest,
 } from "./credential-gateway-v1/github-operations.ts";
+
+export { RepositoryTransactionLifetime } from "./ports/transaction.ts";
+export type { CredentialInventoryTransactionV1 } from "./credential-inventory-v1/ports.ts";

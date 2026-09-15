@@ -758,6 +758,9 @@ export {
 } from "./runtime-authority-v1.ts";
 
 export type {
+  OriginalCredentialBindingV1,
+  CredentialProfileV1,
+  CredentialRepositoryGrantV1,
   NamedCredentialUseV1,
   ReserveIssuanceV1,
   MintOutcomeV1,
