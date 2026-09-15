@@ -78,6 +78,7 @@
                   "reference/namespaces",
                   "reference/platform-repositories",
                   "reference/credential-inventory-v1",
+                  "reference/credential-gateway-v1",
                   "reference/runtime-authority/contract",
                   "reference/providers",
                   "reference/github-app-token-issuer",
@@ -160,7 +161,9 @@
                   "testing/local",
                   "testing/developer-skills",
                   "testing/autoreview",
-                  "testing/ci"
+                  "testing/ci",
+                  "testing/credential-gateway-http",
+                  "testing/credential-schema-registry"
                 ]
               },
               {
