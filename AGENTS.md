@@ -26,15 +26,21 @@ Do not create a competing architecture specification in this checkout.
 ## Development integration
 
 Use isolated worktrees with narrow scopes and clear interface ownership for concurrent implementation.
+Keep at most five source slices active at once; increase this limit only after
+reviewing delivery experience. Record a common source/contract baseline and
+propagate shared interface changes explicitly to their consumers.
 Small, understood file overlaps may proceed independently; resolve mechanical conflicts
 during reviewed composition and preserve actual semantic prerequisites.
 Keep active worktrees in persistent home or workspace storage, not `/tmp` or
 `/var/tmp`, where they can be wiped. Preserve existing worktrees and their contents.
 
 Integrate task changes into the shared `integration/dev` branch, which lives parallel to
-`main`. Do not open a pull request for each task. The coordinator serializes
-reviewed integration into `integration/dev`; review the accumulated integration branch before landing
-it to `main`. Required correctness, security and exact outgoing-content reviews
+`main`. Worker slices need no separate pull request before staging. The coordinator
+serializes reviewed integration into `integration/dev`. Prepare cohesive feature
+pull requests from independently verified `main`, or an explicit feature/dependency
+base when needed. Record dependencies and landing order; retarget stacked pull
+requests as their suppliers land. Never merge accumulated integration wholesale
+to `main`. Required correctness, security and exact outgoing-content reviews
 still apply before publishing changes. Workers must not independently push main.
 
 ## Product terminology
@@ -261,8 +267,9 @@ Follow the [GitHub credential gateway MVP](specs/github-credential-gateway-mvp.m
 for repository credentials, Git integration and related egress. The selected
 external TypeScript service validates an OCE bearer, keeps GitHub credentials
 outside Agent execution and authorizes every operation through current OCC/IAM.
-Explicit read-write grants permit direct Git push. Existing native components
-retain their documented source contracts; they are optional reuse for this MVP.
+Explicit read-write grants permit direct Git push and same-repository PR creation.
+Existing native components retain their documented source contracts; they are
+optional reuse for this MVP.
 Selection does not establish implemented or deployed support.
 
 Documents in archive directories are dated historical records; use current design and feature references for present direction and supported behavior.

@@ -228,8 +228,9 @@ opaque OCE bearer over server-authenticated TLS; it is not a GitHub credential.
 Every operation requires current OCC and selected IAM authorization against the
 admitted root Work, immutable execution binding and repository grant.
 
-The profile supports metadata, HTTPS clone/fetch and ordinary direct `git push`
-under an explicit read-write grant. Stronger branch and PR workflow restrictions
+The profile supports metadata and HTTPS clone/fetch. An explicit read-write grant
+also permits ordinary direct `git push` and PR creation between distinct branches
+in the admitted repository. Stronger branch and PR workflow restrictions
 are future policy capabilities. Scoped DNS and effective network enforcement
 route selected Agent traffic through the gateway. Shared SQL ciphertext custody
 and distributed accounting support multiple replicas without sticky routing.

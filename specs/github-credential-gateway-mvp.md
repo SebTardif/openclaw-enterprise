@@ -2,6 +2,9 @@
 
 Status: **Accepted implementation direction; implementation and qualification pending.**
 
+Scope update, September 15, 2026: same-repository PR creation joins the selected
+MVP. Its implementation and qualification remain pending.
+
 This proposal implements the [platform design](../docs/design.md#repository-access-profiles).
 It supersedes the archived [repository modes](archive/20-repository-access-modes.md)
 and [native read milestone](archive/2026-09-10-github-read-mvp-release.md) for new
@@ -12,9 +15,10 @@ components that exist today.
 ## User outcome
 
 An authorized Agent reads repository metadata, clones and fetches over HTTPS,
-and uses ordinary direct `git push` when its admitted repository grant explicitly
-permits writes. A read grant never implies a write grant. The service authorizes
-the exact operation and repository, then substitutes a real GitHub credential
+and uses ordinary direct `git push` or creates a same-repository PR when its
+admitted repository grant explicitly permits writes. A read grant never implies
+a write grant. The service authorizes the exact operation and repository, then
+substitutes a real GitHub credential
 immediately before dispatch to the fixed, TLS-verified GitHub origin.
 
 Initial writes use the repository's read-write grant without an additional OCE
@@ -27,8 +31,12 @@ ref updates before a push is submitted.
 
 Ordinary local Git and fetched repository history remain visible to the Agent.
 This profile does not provide history isolation or a generic forwarding proxy.
-PR creation, additional API routes and Git extensions are later scope requiring
-explicit protocol selection and qualification; unsupported requests fail closed.
+PR creation permits distinct head and base branches in the one admitted
+repository through `POST https://api.github.com/repos/{owner}/{repo}/pulls`.
+The head need not have been pushed by the current execution. PR update, close,
+merge, list/get, forks, cross-repository PRs, general `gh pr create` compatibility,
+additional API routes and Git extensions remain outside this catalog;
+unsupported requests fail closed.
 
 ## Service and authentication
 
@@ -55,8 +63,8 @@ qualification. Neither is a prerequisite for this bearer MVP.
 
 ## Current authority and custody
 
-Every metadata, Git discovery, fetch or push operation requires real current OCC
-and selected IAM authorization. The gateway retains the admitted root Work and
+Every metadata, Git discovery, fetch, push or PR-create operation requires real
+current OCC and selected IAM authorization. The gateway retains the admitted root Work and
 execution binding across asynchronous processing; it never replaces them with
 whichever Work is currently active. Token refresh does not renew Work authority.
 OCC unavailability denies new dispatch. Closure, cancellation, revocation and
@@ -67,6 +75,12 @@ facts before authorization. For push, inspect all ref commands and negotiated
 control data before releasing provider credentials or sending the push. Preserve
 exact command-to-forwarded-byte correspondence while streaming the bounded pack.
 Apply aggregate request, mint and credential-overlap budgets across replicas.
+
+Reads select only `metadata:read` and `contents:read`, including reads under a
+write grant. Push and PR creation select the combined write profile:
+`metadata:read`, `contents:write` and `pull_requests:write`. Scope installation
+tokens to exactly the admitted numeric repository and verify returned identity
+and permissions. Insufficient permission denies without broader fallback.
 
 GitHub App keys and installation tokens remain in trusted service custody. Share
 encrypted token material, inventory, mint claims, original attempt records and
@@ -82,6 +96,27 @@ joins entered operations while retaining unresolved obligations. An HTTP success
 status alone cannot establish a successful Git push: retain actual per-ref
 results, partial rejection and unknown outcomes. Never automatically replay a
 push after an uncertain submission or lost acknowledgment.
+
+### PR creation lifecycle
+
+Use a bounded canonical JSON request containing `title`, distinct unqualified
+`head` and `base` branch names, optional `body` and optional `draft`. Reject
+unknown or duplicate fields and fork syntax. The proposed Agent helper
+`oce-github pr-create` supplies a stable operation ID and uses the OCE bearer;
+it receives no GitHub credential and does not automatically retry provider POSTs.
+
+Persist the operation ID, immutable access binding, canonical request digest and
+original dispatch identity in shared PostgreSQL before submission. Repeated
+requests with the same ID and body return the recorded outcome only after current
+authorization; a different body conflicts. Permit at most one gateway submission
+per retained operation identity across replicas. Uncertain commits, lost responses,
+replica loss and cancellation retain the original known or unknown outcome without
+resubmission. Receipt finalization continues independently of the client connection.
+
+Validate the created result and return only a bounded projection of PR identity,
+URL, state, draft and observed head/base repository IDs, branches and SHAs after
+the receipt commit is known. Never forward or persist whole provider JSON, which
+may contain nested credentials. Observed SHAs do not lock or approve branch tips.
 
 ## Routing and containment
 
@@ -108,18 +143,21 @@ required within the new implementation.
 
 1. Implement admitted read/read-write access, bearer issuance and closure, shared
    SQL ciphertext custody, distributed mint claims and original outcome records.
-2. Build the standalone HTTPS service and real metadata/Git request path. Qualify
-   bounded parsing, auth challenges, streaming, gzip and chunk framing, push
-   control data, large uploads, per-ref outcomes and cancellation.
+2. Build the standalone HTTPS service and real metadata/Git/PR-create request path.
+   Qualify bounded parsing, auth challenges, streaming, gzip and chunk framing, push
+   control data, large uploads, per-ref outcomes, PR request deduplication and safe
+   response projection, and cancellation.
 3. Package the service and regular Agent startup/client configuration. Install
    scoped DNS, trust and effective network policy. Validate useful repository
    work through that normal path and actual configured components.
 
 Required evidence includes real PostgreSQL and two-replica accounting; unknown,
-revoked and cross-scope bearer denial; read-only push denial; allowed read/write
-operation results; policy/Work closure races; provider credential absence from
-Agent-visible state; replica loss during read, push and mint; and installed
-TLS/network bypass denial. Use real Git clients and actual OCE components.
+revoked and cross-scope bearer denial; read-only push and PR-create denial;
+allowed read/write operation results; same-repository PR creation and denied
+fork/cross-repository requests; policy/Work closure races; provider credential
+absence from Agent-visible state and PR responses; replica loss during read,
+push, PR creation and mint; retained unknown outcomes without duplicate POSTs;
+and installed TLS/network bypass denial. Use real Git clients and actual OCE components.
 Controlled external peers may qualify their stated boundaries, but do not prove
 live GitHub permissions or installed runtime enforcement.
 
