@@ -28,10 +28,15 @@ import type {
 // implementations, endpoint trust, canonical encoding or provider observations.
 const definition: DefinitionRef = {
   backendId: "example-repository-backend",
-  packageName: "example-credential-package",
-  packageVersion: "1.0.0",
-  packageIntegrity: "illustrative-package-integrity",
-  contractVersion: "credential-backend-v1",
+  recipeId: "example-credential-recipe",
+  recipeVersion: 1,
+  recipeDigest: "illustrative-recipe-digest",
+  contractVersion: "credential-backend-recipe-v1",
+  interpreter: {
+    name: "oce-closed-schema-interpreter",
+    version: 1,
+    digest: "illustrative-primitive-digest",
+  },
 };
 const configurationSchema: SchemaRef = {
   namespace: "example",

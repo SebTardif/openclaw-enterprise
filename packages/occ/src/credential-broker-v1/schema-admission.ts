@@ -3,10 +3,18 @@ import { types } from "node:util";
 import { Ajv } from "ajv";
 import type {
   JsonValue,
+  PrimitiveRef,
   SchemaBinding,
   SchemaRegistration,
 } from "../credential-gateway-v1/schema.ts";
 import { snapshotCanonicalJsonV1 } from "./schema-json.ts";
+import {
+  schemaOwnRecordV1,
+  snapshotSchemaDefinitionV1,
+  selectSchemaInterpreterV1,
+  selectSchemaCanonicalizationV1,
+  snapshotSchemaPrimitiveRefV1,
+} from "./schema-primitives.ts";
 
 const PROFILE = "oce-closed-draft7-v1";
 const DRAFT = "http://json-schema.org/draft-07/schema#";
@@ -33,13 +41,6 @@ function record(value: unknown): value is RecordValue {
   return prototype === Object.prototype || prototype === null;
 }
 
-function field(value: unknown, key: string): unknown {
-  if (!record(value)) deny();
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  if (!descriptor || !Object.hasOwn(descriptor, "value") || !descriptor.enumerable) deny();
-  return descriptor.value;
-}
-
 function exactKeys(value: RecordValue, keys: readonly string[]): void {
   const actual = Object.keys(value);
   if (actual.length !== keys.length || actual.some((key) => !keys.includes(key))) deny();
@@ -64,20 +65,9 @@ function bindingSnapshot(input: unknown): SchemaBinding {
   exactKeys(value, ["definition", "role", "schema"]);
   const { definition, role, schema } = value;
   if (!record(definition) || !record(schema)) deny();
-  exactKeys(definition, [
-    "backendId",
-    "packageName",
-    "packageVersion",
-    "packageIntegrity",
-    "contractVersion",
-  ]);
+  snapshotSchemaDefinitionV1(definition);
   exactKeys(schema, ["namespace", "name", "version", "digest"]);
   if (
-    !text(definition.backendId, 256) ||
-    !text(definition.packageName, 214) ||
-    !text(definition.packageVersion, 128) ||
-    !text(definition.packageIntegrity, 1024) ||
-    definition.contractVersion !== "credential-backend-v1" ||
     typeof role !== "string" ||
     !ROLES.has(role) ||
     !text(schema.namespace, 256) ||
@@ -201,27 +191,42 @@ export interface CompiledSchemaV1 {
   assertValid(candidate: JsonValue): void;
 }
 
-/** Copy and bind all schema facts before any semantic hook can execute. */
-export function compileSchemaRegistrationV1(registration: SchemaRegistration): CompiledSchemaV1 {
+/** Copy and bind all schema facts before the installed canonicalizer can execute. */
+export function compileSchemaRegistrationV1(
+  registration: SchemaRegistration,
+  admittedPrimitives: readonly PrimitiveRef[],
+): CompiledSchemaV1 {
   try {
-    const maxBytes = field(registration, "maxBytes");
-    const maxDepth = field(registration, "maxDepth");
+    const data = schemaOwnRecordV1(registration, [
+      "binding",
+      "jsonSchema",
+      "maxBytes",
+      "maxDepth",
+      "canonicalization",
+    ]);
+    const maxBytes = data.maxBytes;
+    const maxDepth = data.maxDepth;
     if (!positive(maxBytes, 65536) || !positive(maxDepth, 32)) deny();
-    const binding = bindingSnapshot(field(registration, "binding"));
-    const captured = field(registration, "validateAndCanonicalize");
-    if (typeof captured !== "function" || types.isProxy(captured)) deny();
-    const schema = snapshotCanonicalJsonV1(field(registration, "jsonSchema"), {
+    const binding = bindingSnapshot(data.binding);
+    selectSchemaInterpreterV1(binding.definition.interpreter, admittedPrimitives);
+    const canonicalization = snapshotSchemaPrimitiveRefV1(data.canonicalization);
+    const canonicalize = selectSchemaCanonicalizationV1(canonicalization, admittedPrimitives);
+    const schema = snapshotCanonicalJsonV1(data.jsonSchema, {
       maxBytes: 65536,
       maxDepth: 32,
     });
     admitProfile(schema.value);
     // These keys are already in the canonical encoder's UTF-16 order. Embedding its
     // admitted schema bytes avoids applying the schema byte cap to domain overhead.
-    const payload = `{"jsonSchema":${schema.canonicalJson},"maxBytes":${maxBytes},"maxDepth":${maxDepth},"profile":"${PROFILE}"}`;
+    const primitiveBytes = snapshotCanonicalJsonV1(canonicalization, {
+      maxBytes: 4096,
+      maxDepth: 4,
+    }).canonicalJson;
+    const payload = `{"canonicalization":${primitiveBytes},"jsonSchema":${schema.canonicalJson},"maxBytes":${maxBytes},"maxDepth":${maxDepth},"profile":"${PROFILE}"}`;
     const digest =
       "sha256:" +
       createHash("sha256")
-        .update("oce-schema-v1\0" + payload, "utf8")
+        .update("oce-schema-recipe-v1\0" + payload, "utf8")
         .digest("hex");
     if (binding.schema.digest !== digest) deny();
     const ajv = new Ajv({
@@ -253,7 +258,7 @@ export function compileSchemaRegistrationV1(registration: SchemaRegistration): C
       validateAndCanonicalize: (candidate: JsonValue): JsonValue => {
         const input = validatedSnapshot(candidate);
         try {
-          const result: unknown = Reflect.apply(captured, undefined, [input.value]);
+          const result: unknown = canonicalize(input.value, { maxBytes, maxDepth });
           return validatedSnapshot(result).value;
         } catch {
           deny("INVALID_VALUE");

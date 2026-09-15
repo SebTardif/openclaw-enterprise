@@ -1,16 +1,55 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import test from "node:test";
+import { test, mock } from "node:test";
+import { types } from "node:util";
 import {
   CREDENTIAL_SCHEMA_PRIMITIVES_V1,
   INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1,
 } from "../../packages/occ/src/credential-broker-v1/schema-primitives.ts";
-import { compileSchemaRegistrationV1 as actualCompile } from "../../packages/occ/src/credential-broker-v1/schema-admission.ts";
-
 const admittedPrimitives = INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1;
 const primitives = CREDENTIAL_SCHEMA_PRIMITIVES_V1;
-
-const compileSchemaRegistrationV1 = (input) => actualCompile(input, admittedPrimitives);
+// Isolated fault substitution changes only the internal installed canonicalizer.
+// The actual compiler, Ajv, JSON encoder and registry remain in use.
+const installed = await import("../../packages/occ/src/credential-broker-v1/schema-primitives.ts");
+let selectedHook;
+mock.module(
+  new URL("../../packages/occ/src/credential-broker-v1/schema-primitives.ts", import.meta.url).href,
+  {
+    namedExports: {
+      ...installed,
+      selectSchemaCanonicalizationV1(ref, admitted) {
+        const real = installed.selectSchemaCanonicalizationV1(ref, admitted);
+        const captured = selectedHook;
+        return captured ? (candidate) => captured(candidate) : real;
+      },
+    },
+  },
+);
+const actualAdmission =
+  await import("../../packages/occ/src/credential-broker-v1/schema-admission.ts");
+const actualRegistry =
+  await import("../../packages/occ/src/credential-broker-v1/schema-registry.ts");
+function compileSchemaRegistrationV1(input) {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    types.isProxy(input) ||
+    Reflect.ownKeys(input).some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      return !descriptor || !Object.hasOwn(descriptor, "value") || !descriptor.enumerable;
+    })
+  )
+    return actualAdmission.compileSchemaRegistrationV1(input, admittedPrimitives);
+  const { validateAndCanonicalize, ...data } = input;
+  if (typeof validateAndCanonicalize !== "function")
+    return actualAdmission.compileSchemaRegistrationV1(input, admittedPrimitives);
+  selectedHook = validateAndCanonicalize;
+  try {
+    return actualAdmission.compileSchemaRegistrationV1(data, admittedPrimitives);
+  } finally {
+    selectedHook = undefined;
+  }
+}
 
 // Independent encoding for ordinary test vectors, rather than the production encoder.
 const canonical = (value) =>
@@ -64,6 +103,7 @@ const registration = (jsonSchema, overrides = {}) => {
     maxBytes,
     maxDepth,
     canonicalization: primitives.canonicalization,
+    validateAndCanonicalize: (candidate) => candidate,
     ...overrides,
   };
 };
@@ -115,7 +155,8 @@ test("scalar const, enum, null and exclusive numeric bounds are evaluated", () =
   }
 });
 
-test("unsupported, reference, async and unbounded schemas deny at admission", () => {
+test("unsupported, reference, async and unbounded schemas deny without hooks", () => {
+  let calls = 0;
   for (const schema of [
     true,
     {},
@@ -152,17 +193,27 @@ test("unsupported, reference, async and unbounded schemas deny at admission", ()
       items: { $schema: "http://json-schema.org/draft-07/schema#", type: "boolean" },
     },
   ])
-    schemaDenied(registration(schema));
+    schemaDenied(
+      registration(schema, {
+        validateAndCanonicalize() {
+          calls++;
+          return null;
+        },
+      }),
+    );
+  assert.equal(calls, 0);
 });
 
-test("schema, binding, limits and primitive capture resist subsequent mutation", () => {
+test("schema, binding, limits and hook capture resist subsequent mutation", () => {
   const input = registration({ type: "integer", minimum: 1, maximum: 2 });
   const compiled = compileSchemaRegistrationV1(input);
   input.jsonSchema.maximum = 99;
   input.binding.schema.name = "changed";
   input.binding.definition.backendId = "other";
   input.maxBytes = 1;
-  input.canonicalization = { ...primitives.canonicalization, digest: "sha256:" + "0".repeat(64) };
+  input.validateAndCanonicalize = () => {
+    throw new Error("private");
+  };
   compiled.assertValid(2);
   valueDenied(compiled, 3);
   assert.equal(compiled.binding.schema.name, "facts");
@@ -207,7 +258,7 @@ test("exact canonical domain digest binds schema and both declared limits", () =
   }
 });
 
-test("invalid identity, limits and non-JSON input fail before accessor or proxy effects", () => {
+test("invalid identity, limits and non-JSON input fail before accessor or hook effects", () => {
   let calls = 0;
   const input = registration({ type: "boolean" });
   const getter = Object.defineProperty({ ...input }, "jsonSchema", {
@@ -263,9 +314,20 @@ test("invalid identity, limits and non-JSON input fail before accessor or proxy 
   valueDenied(compiled, "éé");
   valueDenied(compiled, undefined);
   valueDenied(compiled, new String("x"));
+  const throwing = compileSchemaRegistrationV1(
+    registration(
+      { type: "boolean" },
+      {
+        validateAndCanonicalize() {
+          throw new Error("private token");
+        },
+      },
+    ),
+  );
+  assert.throws(() => throwing.validateAndCanonicalize(true), /^Error: INVALID_VALUE$/);
 });
 
-test("schema byte, nesting and node caps deny before compilation", () => {
+test("schema byte, nesting and node caps deny before compilation or hooks", () => {
   schemaDenied(registration({ type: "boolean", description: "x".repeat(65536) }));
   let nested = { type: "boolean" };
   for (let index = 0; index < 33; index++) nested = { type: "array", maxItems: 1, items: nested };
@@ -276,19 +338,47 @@ test("schema byte, nesting and node caps deny before compilation", () => {
   schemaDenied(registration({ type: "object", properties, additionalProperties: false }));
 });
 
-test("installed canonicalizer receives bounded frozen copies after real Ajv validation", () => {
+test("hook receives a bounded frozen copy and its output repeats JSON and Ajv checks", () => {
+  let calls = 0;
   const input = { name: "ok", count: 2, items: [true] };
-  const compiled = compileSchemaRegistrationV1(registration(objectSchema));
+  const compiled = compileSchemaRegistrationV1(
+    registration(objectSchema, {
+      validateAndCanonicalize(candidate) {
+        calls++;
+        assert.ok(Object.isFrozen(candidate));
+        assert.ok(Object.isFrozen(candidate.items));
+        assert.notEqual(candidate, input);
+        return { ...candidate, count: 3 };
+      },
+    }),
+  );
   const output = compiled.validateAndCanonicalize(input);
-  assert.notEqual(output, input);
-  assert.notEqual(output.items, input.items);
+  assert.equal(output.count, 3);
+  assert.equal(input.count, 2);
   assert.ok(Object.isFrozen(output));
-  assert.ok(Object.isFrozen(output.items));
-  assert.equal(output.count, 2);
   assert.throws(
     () => compiled.validateAndCanonicalize({ ...input, count: 9 }),
     /^Error: INVALID_VALUE$/,
   );
+  assert.equal(calls, 1);
+  for (const invalid of [
+    { ...input, count: 9 },
+    { ...input, extra: 1 },
+    { ...input, count: Infinity },
+    undefined,
+  ]) {
+    const post = compileSchemaRegistrationV1(
+      registration(objectSchema, { validateAndCanonicalize: () => invalid }),
+    );
+    assert.throws(() => post.validateAndCanonicalize(input), /^Error: INVALID_VALUE$/);
+  }
+  const bytes = compileSchemaRegistrationV1(
+    registration(
+      { type: "string", maxLength: 100 },
+      { maxBytes: 4, validateAndCanonicalize: () => "éé" },
+    ),
+  );
+  assert.throws(() => bytes.validateAndCanonicalize("é"), /^Error: INVALID_VALUE$/);
 });
 
 // Own __proto__ keys must survive construction; object-literal setter syntax would
@@ -332,7 +422,8 @@ for (const count of [8, 9]) {
       );
       const invalid = placeValue(invalidLeaf, placement);
 
-      test(`schema admission rejects declared own __proto__ before interpretation: ${label}`, () => {
+      test(`schema admission rejects declared own __proto__ before hooks: ${label}`, () => {
+        let calls = 0;
         const forbiddenProperties = Object.fromEntries([
           ...Object.entries(properties),
           ["__proto__", { type: "integer", minimum: 1 }],
@@ -346,102 +437,163 @@ for (const count of [8, 9]) {
           placement,
         );
         assert.ok(Object.hasOwn(forbiddenProperties, "__proto__"));
-        schemaDenied(registration(forbidden));
+        schemaDenied(
+          registration(forbidden, {
+            validateAndCanonicalize(candidate) {
+              calls++;
+              return candidate;
+            },
+          }),
+        );
+        assert.equal(calls, 0);
       });
 
-      test(`closed-schema input rejects own __proto__ through both APIs before interpretation: ${label}`, () => {
-        const compiled = compileSchemaRegistrationV1(registration(schema));
+      test(`closed-schema input rejects own __proto__ through both APIs before hooks: ${label}`, () => {
+        let calls = 0;
+        const compiled = compileSchemaRegistrationV1(
+          registration(schema, {
+            validateAndCanonicalize(candidate) {
+              calls++;
+              return candidate;
+            },
+          }),
+        );
         compiled.assertValid(good);
+        assert.equal(calls, 0);
         assert.equal(canonical(compiled.validateAndCanonicalize(good)), canonical(good));
+        assert.equal(calls, 1);
+        calls = 0;
         assert.ok(Object.hasOwn(invalidLeaf, "__proto__"));
         valueDenied(compiled, invalid);
+        assert.equal(calls, 0);
         assert.throws(() => compiled.validateAndCanonicalize(invalid), /^Error: INVALID_VALUE$/);
+        assert.equal(calls, 0);
+      });
+
+      test(`closed-schema hook output rejects injected own __proto__ after one hook: ${label}`, () => {
+        let calls = 0;
+        let output = good;
+        const compiled = compileSchemaRegistrationV1(
+          registration(schema, {
+            validateAndCanonicalize() {
+              calls++;
+              return output;
+            },
+          }),
+        );
+        compiled.assertValid(good);
+        assert.equal(calls, 0);
+        assert.equal(canonical(compiled.validateAndCanonicalize(good)), canonical(good));
+        assert.equal(calls, 1);
+        calls = 0;
+        output = invalid;
+        assert.throws(() => compiled.validateAndCanonicalize(good), /^Error: INVALID_VALUE$/);
+        assert.equal(calls, 1);
       });
     }
   }
 }
 
-// These direct checks protect the compiler boundary independently of registry admission.
-test("actual admission refuses wrong primitive identities/kinds or missing core admission", () => {
-  const schema = { type: "boolean" };
-  const bindDigest = (input) => {
-    input.binding.schema.digest =
-      "sha256:" +
-      createHash("sha256")
-        .update(
-          "oce-schema-recipe-v1\0" +
-            canonical({
-              canonicalization: input.canonicalization,
-              jsonSchema: input.jsonSchema,
-              maxBytes: input.maxBytes,
-              maxDepth: input.maxDepth,
-              profile: "oce-closed-draft7-v1",
-            }),
-        )
-        .digest("hex");
-  };
-  for (const target of ["interpreter", "canonicalization"]) {
-    const good = registration(schema);
-    assert.equal(compileSchemaRegistrationV1(good).validateAndCanonicalize(true), true);
-    for (const patch of [
-      { name: "not-installed" },
-      { version: 2 },
-      { digest: "sha256:" + "b".repeat(64) },
-      target === "interpreter" ? primitives.canonicalization : primitives.interpreter,
-    ]) {
-      const input = registration(schema);
-      if (target === "interpreter")
-        input.binding.definition = {
-          ...definition,
-          interpreter: { ...primitives.interpreter, ...patch },
-        };
-      else input.canonicalization = { ...primitives.canonicalization, ...patch };
-      // Primitive guard receives an otherwise valid current schema digest.
-      bindDigest(input);
-      schemaDenied(input);
-      assert.equal(
-        compileSchemaRegistrationV1(registration(schema)).validateAndCanonicalize(false),
-        false,
-      );
-    }
+const registryDefinition = { ...definition, backendId: "fault-registry" };
+function registryInput(hook, name = "configuration", maxBytes = 128) {
+  const input = registration({ type: "string", maxLength: 32 }, { maxBytes, maxDepth: 32 });
+  input.binding.definition = registryDefinition;
+  input.binding.role = "configuration";
+  input.binding.schema.name = name;
+  return { input, hook };
+}
+function registerFault(scope, hook, name) {
+  const { input } = registryInput(hook, name);
+  delete input.validateAndCanonicalize;
+  selectedHook = hook;
+  try {
+    return scope.schemas.register(input);
+  } finally {
+    selectedHook = undefined;
   }
-  for (const refs of [[], [primitives.interpreter], [primitives.canonicalization]])
-    assert.throws(() => actualCompile(registration(schema), refs), /^Error: INVALID_SCHEMA$/);
+}
+function faultSetup(hook) {
+  const registry = actualRegistry.createCredentialSchemaRegistryV1([registryDefinition], {
+    admittedPrimitives,
+  });
+  const scope = registry.begin(registryDefinition);
+  const codec = registerFault(scope, hook);
+  scope.commit();
+  return { registry, scope, codec };
+}
+const denied = (run, code) => assert.throws(run, new RegExp("^Error: " + code + "$"));
+test("trusted-code faults: Ajv precheck, invalid post-output and private throw are contained", () => {
+  let calls = 0;
+  const a = faultSetup((value) => {
+    calls++;
+    return value;
+  });
+  denied(() => a.codec.validate(123), "INVALID_VALUE");
+  denied(() => a.codec.validate("x".repeat(33)), "INVALID_VALUE");
+  assert.equal(calls, 0);
+  assert.equal(a.codec.retain(a.codec.validate("hello")).canonicalJson, '"hello"');
+  const b = faultSetup(() => {
+    calls++;
+    return 123;
+  });
+  denied(() => b.codec.validate("hello"), "INVALID_VALUE");
+  assert.equal(calls, 2);
+  const c = faultSetup(() => {
+    throw new Error("private-hook-content");
+  });
+  denied(() => c.codec.validate("hello"), "INVALID_VALUE");
 });
-test("actual admission refuses executable and hostile registration/ref fields without invocation", () => {
-  let effects = 0;
-  const hook = () => {
-    effects++;
-    return true;
-  };
-  const good = registration({ type: "boolean" });
-  const bad = [
-    ...["validateAndCanonicalize", "factory", "resolver", "implementation"].map((key) => ({
-      ...good,
-      [key]: hook,
-    })),
-    Object.defineProperty({ ...good }, "hidden", { value: hook }),
-    { ...good, [Symbol("extra")]: hook },
-    Object.defineProperty({ ...good }, "canonicalization", { enumerable: true, get: hook }),
-    new Proxy(good, { getPrototypeOf: hook, ownKeys: hook, get: hook }),
-    {
-      ...good,
-      canonicalization: new Proxy(primitives.canonicalization, { get: hook, ownKeys: hook }),
-    },
-    {
-      ...good,
-      canonicalization: Object.defineProperty({ ...primitives.canonicalization }, "digest", {
-        enumerable: true,
-        get: hook,
-      }),
-    },
-  ];
-  for (const input of bad) {
-    schemaDenied(input);
-    assert.equal(
-      compileSchemaRegistrationV1(registration({ type: "boolean" })).validateAndCanonicalize(true),
-      true,
-    );
-  }
-  assert.equal(effects, 0);
+test("trusted-code faults: non-idempotent canonicalization refuses restore", () => {
+  const { codec } = faultSetup((value) => value + "x");
+  const saved = codec.retain(codec.validate("a"));
+  assert.equal(saved.canonicalJson, '"ax"');
+  denied(() => codec.restore(saved), "INVALID_VALUE");
+});
+test("trusted-code faults: same-codec reentry, commit reentry and validate-time discard", () => {
+  let codec,
+    scope,
+    revoke = false,
+    nested = 0;
+  const a = faultSetup((value) => {
+    denied(() => codec.validate(value), "INVALID_SCOPE");
+    denied(() => scope.commit(), "INVALID_SCOPE");
+    nested++;
+    if (revoke) scope.discard();
+    return value;
+  });
+  codec = a.codec;
+  scope = a.scope;
+  const old = codec.validate("hello"),
+    saved = codec.retain(old);
+  assert.equal(nested, 1);
+  revoke = true;
+  denied(() => codec.validate("hello"), "INVALID_CODEC");
+  denied(() => codec.retain(old), "INVALID_CODEC");
+  denied(() => codec.restore(saved), "INVALID_CODEC");
+  scope.discard();
+});
+test("trusted-code faults: cross-codec reentry and restore-time discard revoke every handle", () => {
+  const registry = actualRegistry.createCredentialSchemaRegistryV1([registryDefinition], {
+    admittedPrimitives,
+  });
+  const scope = registry.begin(registryDefinition);
+  let other,
+    revoke = false,
+    calls = 0;
+  const first = registerFault(scope, (value) => {
+    calls++;
+    denied(() => other.validate(value), "INVALID_SCOPE");
+    if (revoke) scope.discard();
+    return value;
+  });
+  other = registerFault(scope, undefined, "other");
+  scope.commit();
+  const old = first.validate("hello"),
+    saved = first.retain(old),
+    otherOld = other.validate("other");
+  revoke = true;
+  denied(() => first.restore(saved), "INVALID_VALUE");
+  assert.equal(calls, 2);
+  denied(() => first.retain(old), "INVALID_CODEC");
+  denied(() => other.retain(otherOld), "INVALID_CODEC");
 });

@@ -2799,6 +2799,7 @@ export type {
 
 export type {
   DefinitionRef,
+  PrimitiveRef,
   SchemaRef,
   RetainedSchemaValue,
   JsonValue,
@@ -2876,3 +2877,8 @@ export type {
   CredentialSchemaRegistryV1,
   SchemaRegistrationScopeV1,
 } from "./credential-broker-v1/schema-registry.ts";
+
+export {
+  CREDENTIAL_SCHEMA_PRIMITIVES_V1,
+  INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1,
+} from "./credential-broker-v1/schema-primitives.ts";

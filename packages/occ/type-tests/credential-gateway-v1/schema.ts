@@ -1,4 +1,8 @@
-import { createCredentialSchemaRegistryV1 } from "@openclaw-enterprise/occ";
+import {
+  createCredentialSchemaRegistryV1,
+  CREDENTIAL_SCHEMA_PRIMITIVES_V1,
+  INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1,
+} from "@openclaw-enterprise/occ";
 import type {
   CredentialSchemaRegistryV1,
   SchemaRegistrationScopeV1,
@@ -8,6 +12,7 @@ import type {
   Bounds,
   LocalHandle,
   DefinitionRef,
+  PrimitiveRef,
   SchemaRef,
   RetainedSchemaValue,
   JsonValue,
@@ -43,10 +48,15 @@ import type { owner } from "@openclaw-enterprise/occ";
 // Inert compile fixtures do not establish valid installed identities or digests.
 const definition: DefinitionRef = {
   backendId: "example-backend",
-  packageName: "example-credential-package",
-  packageVersion: "1.0.0",
-  packageIntegrity: "illustrative-package-integrity",
-  contractVersion: "credential-backend-v1",
+  recipeId: "example-credential-recipe",
+  recipeVersion: 1,
+  recipeDigest: "illustrative-recipe-digest",
+  contractVersion: "credential-backend-recipe-v1",
+  interpreter: {
+    name: "oce-closed-schema-interpreter",
+    version: 1,
+    digest: "illustrative-primitive-digest",
+  },
 };
 const schema: SchemaRef = {
   namespace: "example",
@@ -87,9 +97,7 @@ const registration: SchemaRegistration = {
   jsonSchema,
   maxBytes: 1024,
   maxDepth: 8,
-  validateAndCanonicalize(candidate: JsonValue): JsonValue {
-    return candidate;
-  },
+  canonicalization: CREDENTIAL_SCHEMA_PRIMITIVES_V1.canonicalization,
 };
 
 // An external package consumes injected owners; no fake owner or handle is minted.
@@ -144,12 +152,12 @@ const missingSchema: SchemaBinding = { definition, role: "configuration" };
 const primitiveSchema: SchemaRegistration = { ...registration, jsonSchema: "object" };
 const undefinedCallback: SchemaRegistration = {
   ...registration,
-  // @ts-expect-error A callback must return candidate data.
+  // @ts-expect-error Executable callbacks are not registration data.
   validateAndCanonicalize: () => undefined,
 };
 const functionCallback: SchemaRegistration = {
   ...registration,
-  // @ts-expect-error A callback cannot return a function.
+  // @ts-expect-error Executable callbacks are not registration data.
   validateAndCanonicalize: () => () => null,
 };
 // @ts-expect-error Undefined is not an ordinary JSON leaf.
@@ -163,10 +171,10 @@ const nestedUndefined: JsonValue = { nested: [undefined] };
 
 // Exercise required and readonly fields without claiming runtime validity.
 function readonlyFields(value: RetainedSchemaValue): void {
-  // @ts-expect-error Installed package identity is readonly.
-  definition.packageVersion = "2.0.0";
+  // @ts-expect-error Recipe identity is readonly.
+  definition.recipeVersion = 2;
   // @ts-expect-error Backend contract version is readonly.
-  definition.contractVersion = "credential-backend-v1";
+  definition.contractVersion = "credential-backend-recipe-v1";
   // @ts-expect-error Schema versions are readonly.
   schema.version = 2;
   // @ts-expect-error Schema digests are readonly.
@@ -217,7 +225,7 @@ type RequiredFields<T, Fields extends keyof T> = {
 type RequiredDefinitionFields = AssertNever<
   RequiredFields<
     DefinitionRef,
-    "backendId" | "packageName" | "packageVersion" | "packageIntegrity" | "contractVersion"
+    "backendId" | "recipeId" | "recipeVersion" | "recipeDigest" | "contractVersion" | "interpreter"
   >
 >;
 type RequiredSchemaFields = AssertNever<
@@ -272,7 +280,9 @@ function opaqueConsumers(
 void opaqueConsumers;
 
 function registryConsumer(): void {
-  const registry: CredentialSchemaRegistryV1 = createCredentialSchemaRegistryV1([definition]);
+  const registry: CredentialSchemaRegistryV1 = createCredentialSchemaRegistryV1([definition], {
+    admittedPrimitives: INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1,
+  });
   const scope: SchemaRegistrationScopeV1 = registry.begin(definition);
   const codec = scope.schemas.register(registration);
   scope.commit();
@@ -285,3 +295,26 @@ function registryConsumer(): void {
   scope.schemas = scope.schemas;
 }
 void registryConsumer;
+
+// @ts-expect-error Installed primitive admission is required even for an empty registry.
+createCredentialSchemaRegistryV1([]);
+// @ts-expect-error Primitive versions use numbers.
+const wrongPrimitive: PrimitiveRef = { name: "example", version: "1", digest: "digest" };
+// @ts-expect-error Primitive digest is required.
+const missingPrimitiveDigest: PrimitiveRef = { name: "example", version: 1 };
+// @ts-expect-error Canonicalization data is required.
+const missingCanonicalization: SchemaRegistration = {
+  binding,
+  jsonSchema,
+  maxBytes: 1,
+  maxDepth: 1,
+};
+function readonlyPrimitive(): void {
+  // @ts-expect-error Exact interpreter identity is readonly.
+  definition.interpreter = CREDENTIAL_SCHEMA_PRIMITIVES_V1.interpreter;
+  // @ts-expect-error Primitive digests are readonly.
+  definition.interpreter.digest = "changed";
+  // @ts-expect-error Registration canonicalization is readonly.
+  registration.canonicalization = definition.interpreter;
+}
+void readonlyPrimitive;

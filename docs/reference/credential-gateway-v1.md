@@ -28,6 +28,42 @@ audit and custody reference shares the outer commit. Caught failures poison that
 transaction; uncertain commit requires reconciliation. No database transaction
 may remain open across a provider call.
 
+## Recipe schema identities
+
+`DefinitionRef` identifies an exact admitted recipe with `backendId`, `recipeId`,
+positive safe-integer `recipeVersion`, lowercase SHA-256 `recipeDigest`,
+`contractVersion: "credential-backend-recipe-v1"` and an exact `interpreter`
+`PrimitiveRef`. Primitive references contain a bounded name, positive
+safe-integer version and lowercase SHA-256 digest. Descriptor possession does
+not establish Installation admission, Work or IAM authority.
+
+Trusted core construction calls
+`createCredentialSchemaRegistryV1(admittedDefinitions, {admittedPrimitives})`.
+Both inputs are data snapshots supplied by the server-selected Installation
+owner. The required primitive allowlist intersects with the closed installed
+catalog. `CREDENTIAL_SCHEMA_PRIMITIVES_V1` and
+`INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1` expose immutable data descriptors for
+the closed schema interpreter and bounded JSON canonicalizer. The interpreter
+uses the current closed draft-07 schema profile; it is not a broker operation
+interpreter. Full recipe loading and Installation startup remain separate work.
+
+A `SchemaRegistration` contains only `binding`, `jsonSchema`, `maxBytes`,
+`maxDepth` and `canonicalization: PrimitiveRef`. It cannot supply a callback,
+resolver, module or executable implementation. The core selects its static
+implementation and validates data before and after canonicalization. Generic
+JSON canonicalization supports already-approved nonsecret projections; it
+cannot identify arbitrary secrets or establish backend resource equivalence.
+Backend-specific semantics require their original owner's reviewed installed
+primitive. See [schema verification](../testing/credential-schema-registry.md)
+for the bounded profile, digest protocol and lifecycle checks.
+
+Current recipe registries explicitly refuse old `credential-backend-v1`
+admission and retained restoration. They never convert or delete old records.
+Retain original bytes, digests, accepted legacy implementation and custody
+obligations. Existing readback and cleanup require the original approved version
+and owner; an upgrade must not abandon those obligations or create new cleanup
+authority.
+
 ## Original binding and root Work
 
 `OriginalCredentialBindingV1`, `CredentialProfileV1` and

@@ -27,7 +27,7 @@ compatibility, and issuance fixtures; the second selects the isolated HTTP
 component project.
 Both projects use `noEmit`, and a compiler failure fails the job. The lane also
 runs the [HTTP head](credential-gateway-http.md) and
-[canonical JSON](credential-schema-registry.md) conformance files. These checks
+[canonical JSON, schema admission and registry](credential-schema-registry.md) conformance files. These checks
 cover declarations and components; installed composition, ordinary Agent workflows,
 replicas, and live GitHub operations require separate evidence.
 
