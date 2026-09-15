@@ -30,7 +30,7 @@ export interface SchemaRegistrationScopeV1 {
   commit(): void;
   discard(): void;
 }
-type ScopeState = { phase: "pending" | "committed" | "discarded"; busy: boolean };
+type ScopeState = { phase: "pending" | "committed" | "discarded" };
 type CodecState = {
   scope: ScopeState;
   compiled: CompiledSchemaV1;
@@ -132,7 +132,7 @@ export function createCredentialSchemaRegistryV1(
       }
       if (!admitted.has(key) || begunDefinitions.has(key)) deny("INVALID_DEFINITION");
       begunDefinitions.add(key);
-      const state: ScopeState = { phase: "pending", busy: false };
+      const state: ScopeState = { phase: "pending" };
       const tuples = new Set<string>();
       const schemas: SchemaRegistrationOwner = Object.freeze({
         register(
@@ -140,7 +140,7 @@ export function createCredentialSchemaRegistryV1(
           registration: SchemaRegistration,
         ): RegisteredSchemaCodec {
           if (this !== schemas) deny("INVALID_OWNER");
-          if (state.phase !== "pending" || state.busy) deny("INVALID_SCOPE");
+          if (state.phase !== "pending") deny("INVALID_SCOPE");
           let compiled: CompiledSchemaV1;
           try {
             compiled = compileSchemaRegistrationV1(registration, admittedPrimitives);
@@ -169,33 +169,18 @@ export function createCredentialSchemaRegistryV1(
             readonly value: JsonValue;
             readonly canonicalJson: string;
           }): ValidatedSchemaValue => {
-            active(codecState);
             const handle = Object.freeze({});
             codecState.values.set(handle, result);
             return handle as ValidatedSchemaValue;
-          };
-          const evaluate = (
-            input: unknown,
-          ): { readonly value: JsonValue; readonly canonicalJson: string } => {
-            if (state.busy) deny("INVALID_SCOPE");
-            state.busy = true;
-            try {
-              const result = compiled.validateAndCanonicalize(input as JsonValue);
-              active(codecState);
-              return canonical(result, compiled.maxBytes, compiled.maxDepth);
-            } finally {
-              state.busy = false;
-            }
           };
           const codec = Object.freeze({
             binding: compiled.binding,
             validate(this: RegisteredSchemaCodec, input: unknown): ValidatedSchemaValue {
               authenticate(this);
-              return issue(evaluate(input));
+              return issue(compiled.validate(input));
             },
             retain(this: RegisteredSchemaCodec, value: ValidatedSchemaValue): RetainedSchemaValue {
               authenticate(this);
-              if (state.busy) deny("INVALID_SCOPE");
               const saved =
                 value && typeof value === "object" ? codecState.values.get(value) : undefined;
               if (!saved) deny();
@@ -208,7 +193,6 @@ export function createCredentialSchemaRegistryV1(
             },
             restore(this: RegisteredSchemaCodec, value: RetainedSchemaValue): ValidatedSchemaValue {
               authenticate(this);
-              if (state.busy) deny("INVALID_SCOPE");
               try {
                 const data = ownRecord(value, [
                   "definition",
@@ -236,10 +220,7 @@ export function createCredentialSchemaRegistryV1(
                   data.digest !== valueDigest(compiled.binding, text)
                 )
                   deny();
-                const parsed: unknown = JSON.parse(text);
-                const snapshot = canonical(parsed, compiled.maxBytes, compiled.maxDepth);
-                if (snapshot.canonicalJson !== text) deny();
-                const result = evaluate(snapshot.value);
+                const result = compiled.validate(JSON.parse(text));
                 if (result.canonicalJson !== text) deny();
                 return issue(result);
               } catch {
@@ -256,7 +237,7 @@ export function createCredentialSchemaRegistryV1(
         schemas,
         commit(this: SchemaRegistrationScopeV1): void {
           if (this !== scope) deny("INVALID_OWNER");
-          if (state.phase !== "pending" || state.busy) deny("INVALID_SCOPE");
+          if (state.phase !== "pending") deny("INVALID_SCOPE");
           state.phase = "committed";
         },
         discard(this: SchemaRegistrationScopeV1): void {
@@ -275,7 +256,6 @@ export function createCredentialSchemaRegistryV1(
       const state = codec && typeof codec === "object" ? codecs.get(codec) : undefined;
       if (!state) deny("INVALID_CODEC");
       active(state);
-      if (state.scope.busy) deny("INVALID_SCOPE");
       try {
         if (canonical(expected).canonicalJson !== state.bindingKey) deny();
       } catch {

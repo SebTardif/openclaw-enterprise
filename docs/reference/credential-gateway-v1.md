@@ -56,12 +56,14 @@ interpreter. Full recipe loading and Installation startup remain separate work.
 
 A `SchemaRegistration` contains only `binding`, `jsonSchema`, `maxBytes`,
 `maxDepth` and `canonicalization: PrimitiveRef`. It cannot supply a callback,
-resolver, module or executable implementation. The core selects its static
-implementation and validates data before and after canonicalization. Generic
-JSON canonicalization supports already-approved nonsecret projections; it
-cannot identify arbitrary secrets or establish backend resource equivalence.
-Backend-specific semantics require their original owner's reviewed installed
-primitive. See [schema verification](../testing/credential-schema-registry.md)
+resolver, module or executable implementation. The core admits only its fixed
+JSON protocol: it creates one bounded immutable snapshot and canonical encoding,
+validates that snapshot against the closed schema, and retains the same value
+and bytes. The encoder bounds the actual UTF-8 output, including escaping.
+Generic JSON canonicalization supports already-approved nonsecret projections;
+it cannot identify arbitrary secrets or establish backend resource equivalence.
+Backend-specific semantics belong to their original owner's reviewed primitive
+before schema admission; this codec does not execute transformations. See [schema verification](../testing/credential-schema-registry.md)
 for the bounded profile, digest protocol and lifecycle checks.
 
 Current recipe registries explicitly refuse old `credential-backend-v1`

@@ -141,7 +141,10 @@ test("pending use, duplicate tuples, once-only commit and permanent idempotent d
   const scope = registry.begin({ ...definition });
   denied(() => registry.begin(definition));
   const input = registration(),
-    codec = scope.schemas.register(input);
+    codec = scope.schemas.register(input),
+    otherInput = registration();
+  otherInput.binding.schema.name = "other";
+  const other = scope.schemas.register(otherInput);
   denied(() => scope.schemas.register(registration()));
   denied(() => scope.schemas.register(registration(128, 31)));
   denied(() => codec.validate("hello"), "INVALID_CODEC");
@@ -150,13 +153,21 @@ test("pending use, duplicate tuples, once-only commit and permanent idempotent d
   denied(() => scope.commit(), "INVALID_SCOPE");
   denied(() => scope.schemas.register(input), "INVALID_SCOPE");
   const value = codec.validate("hello"),
-    saved = codec.retain(value);
+    saved = codec.retain(value),
+    otherValue = other.validate("other"),
+    otherSaved = other.retain(otherValue);
+  // Discard revokes every codec and previously issued handle in the scope.
   scope.discard();
   scope.discard();
-  denied(() => registry.assertCodec(codec, input.binding), "INVALID_CODEC");
-  denied(() => codec.validate("hello"), "INVALID_CODEC");
-  denied(() => codec.retain(value), "INVALID_CODEC");
-  denied(() => codec.restore(saved), "INVALID_CODEC");
+  for (const [current, binding, handle, retained] of [
+    [codec, input.binding, value, saved],
+    [other, otherInput.binding, otherValue, otherSaved],
+  ]) {
+    denied(() => registry.assertCodec(current, binding), "INVALID_CODEC");
+    denied(() => current.validate("hello"), "INVALID_CODEC");
+    denied(() => current.retain(handle), "INVALID_CODEC");
+    denied(() => current.restore(retained), "INVALID_CODEC");
+  }
   denied(() => scope.commit(), "INVALID_SCOPE");
   denied(() => scope.schemas.register(input), "INVALID_SCOPE");
   denied(() => registry.begin(definition), "INVALID_DEFINITION");
@@ -609,28 +620,4 @@ test("public OCC self-import executes JSON-round-tripped current recipe lifecycl
   );
   assert.equal(result.lifecycle, "PASS");
   assert.equal(result.resolved, new URL("../../packages/occ/src/index.ts", import.meta.url).href);
-});
-
-test("isolated trusted-code fault matrix preserves actual admission/Ajv/registry/encoder guards", () => {
-  const output = execFileSync(
-    process.execPath,
-    [
-      "--experimental-test-module-mocks",
-      "--test-reporter=tap",
-      "--test",
-      new URL("../fixtures/credential-schema-primitive-faults.mjs", import.meta.url).pathname,
-    ],
-    {
-      encoding: "utf8",
-      timeout: 20000,
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => key !== "NODE_TEST_CONTEXT"),
-      ),
-    },
-  );
-  const count = Number(output.match(/^# tests (\d+)$/m)?.[1]);
-  assert.ok(count > 1, "fault subprocess must execute scenarios, not an empty suite");
-  assert.match(output, /^# fail 0$/m);
-  assert.match(output, /^# skipped 0$/m);
-  assert.match(output, /# schema-fault-scenarios-complete/);
 });

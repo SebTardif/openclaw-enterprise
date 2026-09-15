@@ -12,7 +12,7 @@ import {
   schemaOwnRecordV1,
   snapshotSchemaDefinitionV1,
   selectSchemaInterpreterV1,
-  selectSchemaCanonicalizationV1,
+  assertSchemaCanonicalizationV1,
   snapshotSchemaPrimitiveRefV1,
 } from "./schema-primitives.ts";
 
@@ -187,11 +187,10 @@ export interface CompiledSchemaV1 {
   readonly jsonSchema: JsonValue;
   readonly maxBytes: number;
   readonly maxDepth: number;
-  readonly validateAndCanonicalize: (candidate: JsonValue) => JsonValue;
-  assertValid(candidate: JsonValue): void;
+  validate(candidate: unknown): ReturnType<typeof snapshotCanonicalJsonV1>;
 }
 
-/** Copy and bind all schema facts before the installed canonicalizer can execute. */
+/** Bind the closed schema to the admitted fixed JSON protocol. */
 export function compileSchemaRegistrationV1(
   registration: SchemaRegistration,
   admittedPrimitives: readonly PrimitiveRef[],
@@ -210,7 +209,7 @@ export function compileSchemaRegistrationV1(
     const binding = bindingSnapshot(data.binding);
     selectSchemaInterpreterV1(binding.definition.interpreter, admittedPrimitives);
     const canonicalization = snapshotSchemaPrimitiveRefV1(data.canonicalization);
-    const canonicalize = selectSchemaCanonicalizationV1(canonicalization, admittedPrimitives);
+    assertSchemaCanonicalizationV1(canonicalization, admittedPrimitives);
     const schema = snapshotCanonicalJsonV1(data.jsonSchema, {
       maxBytes: 65536,
       maxDepth: 32,
@@ -255,18 +254,7 @@ export function compileSchemaRegistrationV1(
       jsonSchema: schema.value,
       maxBytes,
       maxDepth,
-      validateAndCanonicalize: (candidate: JsonValue): JsonValue => {
-        const input = validatedSnapshot(candidate);
-        try {
-          const result: unknown = canonicalize(input.value, { maxBytes, maxDepth });
-          return validatedSnapshot(result).value;
-        } catch {
-          deny("INVALID_VALUE");
-        }
-      },
-      assertValid(candidate: JsonValue): void {
-        validatedSnapshot(candidate);
-      },
+      validate: validatedSnapshot,
     });
   } catch {
     deny();

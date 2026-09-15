@@ -85,19 +85,15 @@ Codec operations require a committed scope. `discard()` is idempotent and
 permanently invalidates every codec and value, including formerly committed
 scopes. Private WeakMaps authenticate original codecs and values. Foreign
 registries, other codecs, copies, borrowed method receivers and mismatched
-bindings reject. Reentrant operations during canonicalization reject; discard
-during evaluation prevents issuance and revokes earlier handles.
+bindings reject. Discard invalidates handles from every codec in the scope.
 
-The normal suite uses the actual static catalog. A dedicated isolated Node
-subprocess runs `tests/fixtures/credential-schema-primitive-faults.mjs` with
-`--experimental-test-module-mocks` and substitutes only the internal installed
-canonicalizer selection. It preserves the actual compiler, Ajv, bounded encoder
-and registry while exercising trusted-code throw, bad post-output, non-idempotence,
-reentry and discard faults. The original eight/nine-field `__proto__` matrix runs
-at root, nested object and array-item placements with optional/required keys.
-The production API exposes no fault flag, injected implementation or public hook.
-These fault cases establish containment of substituted trusted-code faults;
-they do not establish a real backend-specific primitive's semantic correctness.
+The compiler has one internal `validate(input)` operation. It creates a bounded
+immutable snapshot, validates that exact value with the strict non-mutating Ajv
+validator and returns its value and canonical bytes together. The registry issues
+and retains handles for that pair without copying or encoding it again. Evaluation
+is synchronous and invokes no caller code or replaceable canonicalizer. Independent
+byte/digest vectors, input bounds, immutable ownership and the full eight/nine-field
+`__proto__` admission matrix protect the fixed implementation.
 
 ### Writing schema scenarios
 
@@ -105,7 +101,7 @@ Use the shared [schema test vocabulary](../../tests/helpers/credential-schema.mj
 to construct recipe registrations and independent digest vectors. `schemaRecipe`
 accepts a JSON schema and explicit overrides for the definition, role, limits and
 canonicalizer. `protoCases()` supplies the eight/nine-property regression matrix
-so admission and canonicalizer-output checks use the same input shapes.
+for admission checks at root, nested-object and array-item placements.
 
 Describe value cases with `name`, `schema`, `accepts` and named `rejects` entries;
 run them as ordinary Node.js subtests. Keep lifecycle assertions beside the real
@@ -113,11 +109,10 @@ registry calls. The helpers construct inputs and expected bytes; they do not
 implement validation or replace the component under test. Preserve literal wire
 vectors alongside shared digest builders to check the encoding independently.
 
-Ordinary schema, digest and input-bound checks belong in the admission suite.
-The isolated fault suite selects only an internal trusted-code fault and tests
-its output, ordering or lifecycle effects. Its parent requires a nonempty test
-run, completed scenarios and zero failures/skips, without fixing the number or
-display names of subtests.
+Schema and input-bound checks exercise the compiler's actual `validate` operation.
+Registry scenarios exercise authentic handles, scope lifecycle and retained data
+through the real compiler and encoder. The canonical JSON suite checks the data
+boundary directly, including that rejected getters and proxy traps never run.
 
 ## Primitive and schema digests
 
@@ -129,7 +124,17 @@ The generated internal manifest binds the final installed source closure
 `dependencies: {ajv: "8.20.0"}`. The generated manifest excludes itself.
 The conformance fixture independently hashes final source bytes and checks
 literal manifest digests, so source changes require regenerated pins before
-review. Changing descriptor data never introduces another implementation.
+review. Changing descriptor data never introduces another implementation. Format
+source files first, then regenerate and check the manifest:
+
+```sh
+node scripts/generate-credential-schema-manifest.mjs
+node scripts/generate-credential-schema-manifest.mjs --check
+```
+
+Source changes alter primitive digests even when the JSON protocol is unchanged.
+Old retained identities remain unsupported by the new codec; never relabel them
+or discard the original owner's outstanding cleanup obligations.
 
 Current schema digests hash `oce-schema-recipe-v1` followed by NUL and the exact
 canonical object `{canonicalization, jsonSchema, maxBytes, maxDepth,
@@ -148,8 +153,8 @@ pnpm check:credential-gateway-types
 Retained values contain copied frozen binding data, canonical JSON and a
 domain-separated SHA-256 digest; they carry no authority. Restoration accepts
 exact ordinary own-data envelope fields, checks binding and digest, bounds text
-before parsing, and requires canonical re-encoding to match the original bytes.
-It reruns the installed canonicalizer and rejects any changed canonical result.
+before parsing, then passes the parsed value through the same compiler operation.
+Its returned canonical bytes must exactly match the original stored text.
 Successful restoration issues a fresh local handle. Missing or extra fields, accessors,
 proxies, malformed JSON, duplicate keys, whitespace, noncanonical numbers and
 identity/version/digest changes reject without migration or repair.
@@ -157,11 +162,11 @@ identity/version/digest changes reject without migration or repair.
 The canonical payload's declared byte bound applies independently of envelope
 overhead. A valid 65,536-byte payload remains restorable even when escaping that
 payload makes the retained envelope larger. Consequential failure cases also
-check installed primitive input/output rejection, mutation after registration,
+check unsupported primitive identities, invalid values, mutation after registration,
 permanent discard, receiver ownership and denial without getter or proxy effects.
 
 If restoration fails, verify exact definition and schema identity, domain digest,
-canonical bytes and the installed canonicalizer's idempotence. Reissue data
+canonical bytes and the admitted schema/primitive versions. Reissue data
 through its trusted producer when those facts change; retained data must not silently repair them.
 The required checks-baseline lane enrolls all three suites. The broader caller,
 installed and live-provider requirements above remain open.

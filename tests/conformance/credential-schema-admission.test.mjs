@@ -25,7 +25,7 @@ const definition = definitionFor();
 const schemaDenied = (value) =>
   assert.throws(() => compileSchemaRegistrationV1(value), /^Error: INVALID_SCHEMA$/);
 const valueDenied = (compiled, value) =>
-  assert.throws(() => compiled.assertValid(value), /^Error: INVALID_VALUE$/);
+  assert.throws(() => compiled.validate(value), /^Error: INVALID_VALUE$/);
 
 test("real Ajv evaluates closed draft-07 schema cases", async (t) => {
   const cases = [
@@ -69,7 +69,9 @@ test("real Ajv evaluates closed draft-07 schema cases", async (t) => {
   for (const { name, schema, accepts, rejects } of cases)
     await t.test(name, async (t) => {
       const compiled = compileSchemaRegistrationV1(registration(schema));
-      compiled.assertValid(accepts);
+      const result = compiled.validate(accepts);
+      assert.equal(canonical(result.value), canonical(accepts));
+      assert.equal(result.canonicalJson, canonical(accepts));
       for (const [reason, value] of Object.entries(rejects))
         await t.test(reason, () => valueDenied(compiled, value));
     });
@@ -123,12 +125,11 @@ test("schema, binding, limits and primitive capture resist subsequent mutation",
   input.binding.definition.backendId = "other";
   input.maxBytes = 1;
   input.canonicalization = { ...primitives.canonicalization, digest: "sha256:" + "0".repeat(64) };
-  compiled.assertValid(2);
   valueDenied(compiled, 3);
   assert.equal(compiled.binding.schema.name, "facts");
   assert.equal(compiled.binding.definition.backendId, "github");
   assert.equal(compiled.maxBytes, 1024);
-  assert.equal(compiled.validateAndCanonicalize(2), 2);
+  assert.equal(compiled.validate(2).value, 2);
   for (const value of [
     compiled,
     compiled.jsonSchema,
@@ -219,7 +220,7 @@ test("invalid identity, limits and non-JSON input fail before accessor or proxy 
   const compiled = compileSchemaRegistrationV1(
     registration({ type: "string", maxLength: 100 }, { maxBytes: 4, maxDepth: 1 }),
   );
-  compiled.assertValid("é");
+  assert.equal(compiled.validate("é").canonicalJson, '"é"');
   valueDenied(compiled, "éé");
   valueDenied(compiled, undefined);
   valueDenied(compiled, new String("x"));
@@ -236,19 +237,20 @@ test("schema byte, nesting and node caps deny before compilation", () => {
   schemaDenied(registration({ type: "object", properties, additionalProperties: false }));
 });
 
-test("installed canonicalizer receives bounded frozen copies after real Ajv validation", () => {
+test("real Ajv evaluator returns immutable matching value and canonical bytes", () => {
   const input = { name: "ok", count: 2, items: [true] };
   const compiled = compileSchemaRegistrationV1(registration(objectSchema));
-  const output = compiled.validateAndCanonicalize(input);
-  assert.notEqual(output, input);
-  assert.notEqual(output.items, input.items);
-  assert.ok(Object.isFrozen(output));
-  assert.ok(Object.isFrozen(output.items));
-  assert.equal(output.count, 2);
-  assert.throws(
-    () => compiled.validateAndCanonicalize({ ...input, count: 9 }),
-    /^Error: INVALID_VALUE$/,
-  );
+  const output = compiled.validate(input);
+  assert.notEqual(output.value, input);
+  assert.notEqual(output.value.items, input.items);
+  for (const value of [output, output.value, output.value.items]) assert.ok(Object.isFrozen(value));
+  // Later caller mutation cannot change either half of the admitted snapshot.
+  input.count = 3;
+  input.items[0] = false;
+  const expected = '{"count":2,"items":[true],"name":"ok"}';
+  assert.equal(canonical(output.value), expected);
+  assert.equal(output.canonicalJson, expected);
+  valueDenied(compiled, { ...input, count: 9 });
 });
 
 test("own __proto__ is denied before interpretation", async (t) => {
@@ -265,11 +267,11 @@ test("own __proto__ is denied before interpretation", async (t) => {
       assert.ok(Object.hasOwn(forbiddenProperties, "__proto__"));
       schemaDenied(registration(forbidden));
       const compiled = compileSchemaRegistrationV1(registration(schema));
-      compiled.assertValid(good);
-      assert.equal(canonical(compiled.validateAndCanonicalize(good)), canonical(good));
+      const result = compiled.validate(good);
+      assert.equal(canonical(result.value), canonical(good));
+      assert.equal(result.canonicalJson, canonical(good));
       assert.ok(Object.hasOwn(invalidLeaf, "__proto__"));
       valueDenied(compiled, invalid);
-      assert.throws(() => compiled.validateAndCanonicalize(invalid), /^Error: INVALID_VALUE$/);
     });
   }
 });
@@ -287,7 +289,7 @@ test("actual admission refuses wrong primitive identities/kinds or missing core 
   };
   for (const target of ["interpreter", "canonicalization"]) {
     const good = registration(schema);
-    assert.equal(compileSchemaRegistrationV1(good).validateAndCanonicalize(true), true);
+    assert.equal(compileSchemaRegistrationV1(good).validate(true).value, true);
     for (const patch of [
       { name: "not-installed" },
       { version: 2 },
@@ -304,10 +306,7 @@ test("actual admission refuses wrong primitive identities/kinds or missing core 
       // Primitive guard receives an otherwise valid current schema digest.
       bindDigest(input);
       schemaDenied(input);
-      assert.equal(
-        compileSchemaRegistrationV1(registration(schema)).validateAndCanonicalize(false),
-        false,
-      );
+      assert.equal(compileSchemaRegistrationV1(registration(schema)).validate(false).value, false);
     }
   }
   for (const refs of [[], [primitives.interpreter], [primitives.canonicalization]])
@@ -344,7 +343,7 @@ test("actual admission refuses executable and hostile registration/ref fields wi
   for (const input of bad) {
     schemaDenied(input);
     assert.equal(
-      compileSchemaRegistrationV1(registration({ type: "boolean" })).validateAndCanonicalize(true),
+      compileSchemaRegistrationV1(registration({ type: "boolean" })).validate(true).value,
       true,
     );
   }

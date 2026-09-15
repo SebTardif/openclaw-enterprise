@@ -1,5 +1,5 @@
 import { types } from "node:util";
-import type { DefinitionRef, JsonValue, PrimitiveRef } from "../credential-gateway-v1/schema.ts";
+import type { DefinitionRef, PrimitiveRef } from "../credential-gateway-v1/schema.ts";
 import { CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 } from "./schema-primitive-manifest.ts";
 import { snapshotCanonicalJsonV1 } from "./schema-json.ts";
 
@@ -131,14 +131,10 @@ function assertAdmittedPrimitive(
 export function selectSchemaInterpreterV1(input: unknown, admitted: readonly PrimitiveRef[]): void {
   assertAdmittedPrimitive(input, interpreter, admitted);
 }
-/** Fixed static implementation; registrations cannot supply a resolver or callback. */
-export function selectSchemaCanonicalizationV1(
+/** Admit only the fixed JSON protocol; registrations supply no executable implementation. */
+export function assertSchemaCanonicalizationV1(
   input: unknown,
   admitted: readonly PrimitiveRef[],
-): (
-  input: JsonValue,
-  limits: { readonly maxBytes: number; readonly maxDepth: number },
-) => JsonValue {
+): void {
   assertAdmittedPrimitive(input, canonicalization, admitted);
-  return (candidate, limits) => snapshotCanonicalJsonV1(candidate, limits).value;
 }
