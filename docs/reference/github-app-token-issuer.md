@@ -118,6 +118,19 @@ separate mode-0600 master-key file and persistent mode-0700 token directory with
 a single custody writer; the directory cannot contain the master key. App keys
 and installation tokens remain outside the Agent.
 
+The persistent store retains each encrypted envelope in a versioned,
+length-and-digest-checked record. Its exclusively created staging name commits
+the complete record's SHA256 before any material bytes are written, so even an
+empty interrupted write rejects a different envelope. It publishes only a
+complete record matching that commitment, using a no-overwrite hard link and
+file/directory fsync. Restart recovery refuses incomplete, corrupt, malformed,
+or conflicting pending records without deleting them. The original custody
+owner may finish a byte-for-byte matching incomplete write by retrying the same
+context and envelope; it must not mint again or create a replacement envelope.
+An error can follow durable publication, so retain the original inventory and
+cleanup obligation until exact readback or reconciliation settles it. Storage
+framing does not replace AEAD authentication or confer Work authority.
+
 The original repository Work constructor must consume the prepared crypto and
 persistent token-store owners, select its fixed read-only TokenIssuer, settle
 mint/revoke attempts, and stop/join Work before closing those owners. Production

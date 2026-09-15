@@ -221,6 +221,9 @@
         },
         {
           "path": "tests/conformance/protected-github-token-store.test.mjs"
+        },
+        {
+          "path": "tests/integration/protected-github-token-store.test.mjs"
         }
       ]
     },

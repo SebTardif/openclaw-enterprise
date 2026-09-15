@@ -82,7 +82,8 @@ protected credential owner and explicit test installation/repository are availab
 
 ### Protected GitHub material
 
-Run the protected-material suites separately from the five protocol suites above:
+On Linux ext4 or XFS with Node.js 24+ and util-linux `/usr/bin/prlimit`, run the
+protected-material suites separately from the five protocol suites above:
 
 ```sh
 node --test --test-concurrency=1 \
@@ -100,6 +101,26 @@ volume durability, native fsync failures, live GitHub, Kubernetes attestation,
 token issuance through Work or Agent checkout. See
 [protected material preparation](../reference/github-app-token-issuer.md#protected-material-preparation)
 for selection, custody and lifecycle requirements.
+
+Run the persistent-store interrupted-write integration from a checkout on the
+same supported filesystem:
+
+```sh
+node --test tests/integration/protected-github-token-store.test.mjs
+```
+
+It creates a private disposable subtree in the canonical checkout, generates
+AES-GCM material, and uses a separate child with real file-size limits and core
+dumps disabled. Incomplete writes stay unpublished; even an empty staging file
+rejects a different envelope. The original envelope succeeds on retry and
+authenticates after restart. Completed publication boundaries recover, while
+unsafe, malformed, duplicate, and mismatched intents preserve their evidence and
+fail closed. Both store suites are selected by `checks-baseline`; they explicitly
+skip off Linux, but missing Linux filesystem or `prlimit` prerequisites fail.
+
+This is real storage, crypto, and filesystem proof, not a physical power-cut
+test, PersistentVolume lifecycle attestation, multiwriter guarantee, production
+Work integration, or live GitHub/Agent proof.
 
 ## Authentication and authorization coverage
 
