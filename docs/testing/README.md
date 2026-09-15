@@ -111,3 +111,8 @@ databases, or unrelated clusters.
 - [Deployment guide](../guides/deploy.md)
 - [Runtime image recipe](../../deploy/runtime/README.md)
 - [Contributor integration boundaries](../../AGENTS.md#running-integration-tests)
+
+## Runtime assignment storage
+
+See [runtime assignment storage verification](runtime-assignment.md) for the
+shared memory/database contract, lost-COMMIT transport fault and fresh-pool readback.

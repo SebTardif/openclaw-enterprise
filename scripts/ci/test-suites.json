@@ -218,6 +218,18 @@
         },
         {
           "path": "tests/conformance/protected-github-app-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-assignment-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-storage-contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-owner-phase.test.mjs"
         }
       ]
     },
@@ -354,6 +366,24 @@
           "path": "tests/integration/postgres-repository-drafts.test.mjs",
           "expectedTests": [
             "authenticated repository drafts persist under application-role PostgreSQL and stay inactive"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-assignment-state.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime assignments: shared contract, restart, CAS, constraints and commit uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-authority.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime authority: real limited-role storage, races and COMMIT uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-credential-inventory.test.mjs",
+          "expectedTests": [
+            "PostgreSQL inventory metadata: real storage, original transaction and lost acknowledgment"
           ]
         }
       ]

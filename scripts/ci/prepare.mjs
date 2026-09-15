@@ -92,7 +92,13 @@ function ownedName(prefix, label, { maxLength = 63, separator = "-" } = {}) {
 
 function databaseName(kind, label) {
   const prefix =
-    kind === "failures" ? "openclaw_failures" : kind === "k8s" ? "openclaw_k8s" : "openclaw_ci";
+    kind === "inventory"
+      ? "openclaw_inventory"
+      : kind === "failures"
+        ? "openclaw_failures"
+        : kind === "k8s"
+          ? "openclaw_k8s"
+          : "openclaw_ci";
   return ownedName(prefix, label, { maxLength: 63, separator: "_" });
 }
 
@@ -1139,6 +1145,16 @@ async function prepareFile({ lane, file, statePath }) {
     if (relativeFile.endsWith("postgres-repository-drafts.test.mjs")) {
       env.OCC_TEST_REPOSITORY_DATABASE_URL = database.appUrl;
     }
+  }
+
+  if (relativeFile.endsWith("postgres-credential-inventory.test.mjs")) {
+    const inventory = await createAndMigrateDatabase(resolvedStatePath, effectiveState, {
+      kind: "inventory",
+      label: fileStem(relativeFile),
+      requireExistingServer: true,
+    });
+    resourceIds.push(inventory.resourceId);
+    env.OCC_CREDENTIAL_INVENTORY_TEST_DATABASE_URL = inventory.appUrl;
   }
 
   if (relativeFile.endsWith("postgres-bootstrap-failures.test.mjs")) {

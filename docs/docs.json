@@ -77,6 +77,8 @@
                   "reference/harness-execution",
                   "reference/namespaces",
                   "reference/platform-repositories",
+                  "reference/credential-inventory-v1",
+                  "reference/runtime-authority/contract",
                   "reference/providers",
                   "reference/github-app-token-issuer",
                   "reference/security",
@@ -165,6 +167,8 @@
                 "group": "Infrastructure",
                 "pages": [
                   "testing/postgresql",
+                  "testing/credential-inventory",
+                  "testing/runtime-assignment",
                   "testing/images",
                   "testing/docker",
                   "testing/ssh",

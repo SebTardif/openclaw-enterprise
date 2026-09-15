@@ -13,6 +13,19 @@ export function bindPlatformUnitOfWork(
       "createBinding",
       "updateBinding",
     ]),
+    runtimeAssignments: bindRepository(repositories.runtimeAssignments, lifetime, [
+      "findRuntimeIntent",
+      "findRuntimeIntentHead",
+      "findRuntimeAllocation",
+      "initializeRuntimeIntent",
+      "advanceRuntimeIntent",
+      "allocateUnboundRuntime",
+    ]),
+    runtimeAuthority: bindRepository(repositories.runtimeAuthority, lifetime, [
+      "findAssignment",
+      "findOperation",
+      "appendMutation",
+    ]),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",
       "getInstallation",

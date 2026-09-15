@@ -735,3 +735,38 @@ export type {
   RepositoryBinding,
   RepositoryBindingInput,
 } from "./repository-access-v1.ts";
+export type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "./runtime-assignment.ts";
+export type {
+  RuntimeAssignmentTargetV1,
+  RuntimeAuthorityScopeV1,
+  RuntimeAssignmentRecordV1,
+  RuntimeMutationV1,
+  ExactAuthorityOperationV1,
+  RuntimeMutationResultV1,
+} from "./runtime-authority-v1/schemas.ts";
+export {
+  parseRuntimeAuthorityV1,
+  parseRuntimeAuthorityJsonV1,
+  canonicalRuntimeAuthorityMutationV1,
+} from "./runtime-authority-v1.ts";
+
+export type {
+  NamedCredentialUseV1,
+  ReserveIssuanceV1,
+  MintOutcomeV1,
+  ClaimRevocationV1,
+  RevocationOutcomeV1,
+  OutstandingTokenRecordV1,
+} from "./credential-inventory-data-v1.ts";
+export {
+  CREDENTIAL_STORAGE_LIMITS_V1,
+  parseCredentialStorageV1,
+  canonicalCredentialStorageRequestV1,
+} from "./credential-inventory-data-v1.ts";

@@ -1,3 +1,4 @@
+import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import type {
   RepositoryAccess,
   RepositoryBinding,
@@ -923,3 +924,261 @@ export const repositoryBindings = occSchema.table(
     }),
   ],
 );
+const runtimeReferencePattern = sql`'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`;
+
+export const agentRuntimeIntents = occSchema.table(
+  "agent_runtime_intents",
+  {
+    transitionRef: text("transition_ref").primaryKey(),
+    installationId: text("installation_id")
+      .notNull()
+      .references(() => installation.id, { onDelete: "restrict", onUpdate: "restrict" }),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    desiredMode: text("desired_mode").$type<"running" | "disabled" | "stopped">().notNull(),
+    revisionId: text("revision_id").notNull(),
+    actorId: text("actor_id").notNull(),
+    requestId: text("request_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    unique("runtime_intents_agent_generation_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.generation,
+    ),
+    unique("runtime_intents_head_identity_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.generation,
+      table.transitionRef,
+    ),
+    unique("runtime_intents_allocation_identity_unique").on(
+      table.installationId,
+      table.namespaceId,
+      table.agentId,
+      table.generation,
+      table.revisionId,
+    ),
+    foreignKey({
+      name: "runtime_intents_agent_owner",
+      columns: [table.namespaceId, table.agentId],
+      foreignColumns: [agents.namespaceId, agents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
+      name: "runtime_intents_revision_owner",
+      columns: [table.namespaceId, table.agentId, table.revisionId],
+      foreignColumns: [agentRevisions.namespaceId, agentRevisions.agentId, agentRevisions.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "runtime_intents_transition_ref_format",
+      sql`${table.transitionRef} ~ ${runtimeReferencePattern}`,
+    ),
+    check(
+      "runtime_intents_generation_valid",
+      sql`${table.generation} BETWEEN 1 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_intents_mode_valid",
+      sql`${table.desiredMode} IN ('running', 'disabled', 'stopped')`,
+    ),
+    check(
+      "runtime_intents_actor_id_valid",
+      sql`char_length(${table.actorId}) BETWEEN 1 AND 200 AND ${table.actorId} ~ '^[A-Za-z0-9._:/-]+$'`,
+    ),
+    check(
+      "runtime_intents_request_id_valid",
+      sql`char_length(${table.requestId}) BETWEEN 1 AND 200 AND ${table.requestId} ~ '^[A-Za-z0-9._:/-]+$'`,
+    ),
+    check("runtime_intents_created_at_finite", sql`isfinite(${table.createdAt})`),
+  ],
+);
+
+// Migration triggers additionally enforce initial generation one and exact head increments.
+export const agentRuntimeIntentHeads = occSchema.table(
+  "agent_runtime_intent_heads",
+  {
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    transitionRef: text("transition_ref").notNull(),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    unique("runtime_intent_heads_agent_unique").on(table.namespaceId, table.agentId),
+    foreignKey({
+      name: "runtime_intent_heads_history_owner",
+      columns: [table.namespaceId, table.agentId, table.generation, table.transitionRef],
+      foreignColumns: [
+        agentRuntimeIntents.namespaceId,
+        agentRuntimeIntents.agentId,
+        agentRuntimeIntents.generation,
+        agentRuntimeIntents.transitionRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "runtime_intent_heads_generation_valid",
+      sql`${table.generation} BETWEEN 1 AND 9007199254740991`,
+    ),
+  ],
+);
+
+// Migration triggers lock the owner and head, require the current running intent,
+// and enforce exact component increments; immutable rows retain historical identity.
+export const runtimeAssignmentAllocations = occSchema.table(
+  "runtime_assignment_allocations",
+  {
+    assignmentRef: text("assignment_ref").primaryKey(),
+    createEffectRef: text("create_effect_ref").notNull(),
+    installationId: text("installation_id").notNull(),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    servicePrincipalId: text("service_principal_id").notNull(),
+    lifecycleGeneration: bigint("lifecycle_generation", { mode: "number" }).notNull(),
+    component: text("component").$type<"gateway" | "harness">().notNull(),
+    runtimeGeneration: bigint("runtime_generation", { mode: "number" }).notNull(),
+    providerProfileRef: text("provider_profile_ref").notNull(),
+    runtimeProfileRef: text("runtime_profile_ref").notNull(),
+    identityProfileRef: text("identity_profile_ref").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    bindingCondition: text("binding_condition").$type<"unbound">().notNull().default("unbound"),
+  },
+  (table): PgTableExtraConfigValue[] => [
+    unique("runtime_allocations_create_effect_unique").on(table.createEffectRef),
+    unique("runtime_allocations_authority_owner").on(
+      table.installationId,
+      table.namespaceId,
+      table.agentId,
+      table.assignmentRef,
+    ),
+    unique("runtime_allocations_component_generation_unique").on(
+      table.namespaceId,
+      table.agentId,
+      table.component,
+      table.runtimeGeneration,
+    ),
+    foreignKey({
+      name: "runtime_allocations_intent_owner",
+      columns: [
+        table.installationId,
+        table.namespaceId,
+        table.agentId,
+        table.lifecycleGeneration,
+        table.revisionId,
+      ],
+      foreignColumns: [
+        agentRuntimeIntents.installationId,
+        agentRuntimeIntents.namespaceId,
+        agentRuntimeIntents.agentId,
+        agentRuntimeIntents.generation,
+        agentRuntimeIntents.revisionId,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
+      name: "runtime_allocations_agent_principal_owner",
+      columns: [table.namespaceId, table.agentId, table.servicePrincipalId],
+      foreignColumns: [agents.namespaceId, agents.id, agents.servicePrincipalId],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check(
+      "runtime_allocations_assignment_ref_format",
+      sql`${table.assignmentRef} ~ ${runtimeReferencePattern}`,
+    ),
+    check(
+      "runtime_allocations_create_effect_ref_format",
+      sql`${table.createEffectRef} ~ ${runtimeReferencePattern}`,
+    ),
+    check(
+      "runtime_allocations_lifecycle_generation_valid",
+      sql`${table.lifecycleGeneration} BETWEEN 1 AND 9007199254740991`,
+    ),
+    check(
+      "runtime_allocations_runtime_generation_valid",
+      sql`${table.runtimeGeneration} BETWEEN 1 AND 9007199254740991`,
+    ),
+    check("runtime_allocations_component_valid", sql`${table.component} IN ('gateway', 'harness')`),
+    check(
+      "runtime_allocations_binding_condition_valid",
+      sql`${table.bindingCondition} = 'unbound'`,
+    ),
+    check(
+      "runtime_allocations_provider_profile_ref_valid",
+      sql`char_length(${table.providerProfileRef}) BETWEEN 1 AND 200 AND ${table.providerProfileRef} ~ '^[A-Za-z0-9._:/-]+$'`,
+    ),
+    check(
+      "runtime_allocations_runtime_profile_ref_valid",
+      sql`char_length(${table.runtimeProfileRef}) BETWEEN 1 AND 200 AND ${table.runtimeProfileRef} ~ '^[A-Za-z0-9._:/-]+$'`,
+    ),
+    check(
+      "runtime_allocations_identity_profile_ref_valid",
+      sql`char_length(${table.identityProfileRef}) BETWEEN 1 AND 200 AND ${table.identityProfileRef} ~ '^[A-Za-z0-9._:/-]+$'`,
+    ),
+    check("runtime_allocations_created_at_finite", sql`isfinite(${table.createdAt})`),
+  ],
+);
+
+/** Immutable initial binding records; SQL triggers enforce the transition,
+ * immutable receipt and payload association under the existing Agent owner lock. */
+export const runtimeAuthorityOperations = occSchema.table(
+  "runtime_authority_operations",
+  {
+    operationRef: text("operation_ref").primaryKey(),
+    installationId: text("installation_id").notNull(),
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    assignmentRef: text("assignment_ref").notNull(),
+    assignmentRecordVersion: bigint("assignment_record_version", { mode: "number" }).notNull(),
+    operationKind: text("operation_kind").notNull(),
+    canonicalPayload: text("canonical_payload").notNull(),
+    receipt: jsonb("receipt").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "runtime_authority_allocation_owner",
+      columns: [table.installationId, table.namespaceId, table.agentId, table.assignmentRef],
+      foreignColumns: [
+        runtimeAssignmentAllocations.installationId,
+        runtimeAssignmentAllocations.namespaceId,
+        runtimeAssignmentAllocations.agentId,
+        runtimeAssignmentAllocations.assignmentRef,
+      ],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    unique("runtime_authority_assignment_version").on(
+      table.assignmentRef,
+      table.assignmentRecordVersion,
+    ),
+    check(
+      "runtime_authority_operation_ref",
+      sql`${table.operationRef} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      "runtime_authority_version",
+      sql`${table.assignmentRecordVersion} BETWEEN 2 AND 9007199254740991`,
+    ),
+    check("runtime_authority_kind", sql`${table.operationKind} = 'bind'`),
+    check(
+      "runtime_authority_payload_size",
+      sql`octet_length(${table.canonicalPayload}) BETWEEN 1 AND 262144`,
+    ),
+    check("runtime_authority_receipt_object", sql`jsonb_typeof(${table.receipt}) = 'object'`),
+  ],
+);
+
+export const {
+  credentialInventoryRecords,
+  credentialInventoryOperations,
+  credentialInventoryMintClaims,
+  credentialInventoryRevocationClaims,
+} = createCredentialInventoryTablesV1(occSchema, { installation, agents });

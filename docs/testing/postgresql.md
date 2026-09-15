@@ -178,3 +178,10 @@ OCC_TEST_REPOSITORY_DATABASE_URL="$REPOSITORY_APPLICATION_DATABASE_URL" \
 ```
 
 This suite uses real Fastify routes, PostgreSQL Better Auth sessions, native IAM, State, SQL constraints, atomic audit rollback, and the real worker. External Compute, Configuration, and Secret backends use the existing deterministic fixtures. It covers bounded codec rejection, exact operate permissions, foreign references, binding CAS, draft omission/replacement/clear, refused repository deployment, and successful empty-repository worker completion. It is not live GitHub or live runtime qualification.
+
+## Credential inventory
+
+Use the [credential inventory suite](credential-inventory.md) for its dedicated
+empty database, exact history, competing claims, failure latch and real lost-COMMIT
+readback. It requires `OCC_CREDENTIAL_INVENTORY_TEST_DATABASE_URL` and does not share
+the general suite's bootstrapped database.
