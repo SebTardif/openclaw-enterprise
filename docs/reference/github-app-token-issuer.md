@@ -2,14 +2,16 @@
 
 **Integration pending.** The GitHub implementation provides the `TokenIssuerV1`
 contract for one selected repository. Production startup and the regular Agent
-repository-read caller are not connected yet. Deliver this implementation with
-those owners and their integration proof before enabling the capability.
+repository caller, including read-write execution, are not connected yet. Deliver
+this implementation with those owners and their integration proof before enabling
+the capability.
 
 ## Owning contract
 
 Import `TokenIssuerV1`, `TokenRevokerV1`, their attempt/result types and
 `EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`. Import
-`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1` and
+`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1`,
+`createGitHubAppWriteTokenIssuerV1` and
 `createGitHubAppTokenRevokerV1` from `@openclaw-enterprise/occ`.
 
 A TokenIssuer mints bounded credentials into protected custody and revokes an
@@ -18,8 +20,9 @@ which supplies authenticated clients to member Drivers. There is no issuer
 registry or Installation configuration surface in this change.
 
 Trusted construction fixes the key identity, GitHub installation, exactly one
-repository ID/name, read permissions, material and custody owners. Each call
-carries only its original attempt reference, abort signal and finite deadline;
+repository ID/name, a fixed read or write permission profile, material and custody
+owners. Each call carries only its original attempt reference, abort signal and
+finite deadline;
 a request cannot choose another key, repository or permission profile.
 
 ## Select material and repository scope
@@ -32,10 +35,27 @@ before signing, before dispatch and after asynchronous work settles. `close()`
 prevents subsequent signing; JavaScript cannot erase copies owned elsewhere or
 force immediate destruction of a `KeyObject`.
 
-The issuer accepts exactly one entry in `selection.repositories`. Permissions
+The read constructor `createGitHubAppTokenIssuerV1` accepts exactly one entry in
+`selection.repositories`. Permissions
 require `metadata: "read"` and optionally `contents: "read"`. Requests for writes,
 issues, pull requests or additional permissions are rejected during construction.
 Every token request names the selected repository ID explicitly.
+
+`createGitHubAppWriteTokenIssuerV1` accepts the exported
+`GitHubRepositoryWriteSelectionV1` as its selection. It requires exactly
+`metadata: "read"`, `contents: "write"` and `pull_requests: "write"` for one
+repository. Its constructor snapshots own data into an immutable selection and
+rejects proxies, accessors, inherited scope, extra or symbol fields, unsafe IDs
+and malformed repository names before signing or network dispatch. The existing
+read constructor and signature remain read-only.
+
+Trusted grant admission fixes one token profile per lease. Read-write execution
+uses its write profile for metadata, fetch, push and PR creation; operation kind
+does not select a second token profile. Separately admitted preparation retains
+its own read-only authority and material. This issuer does not enforce the
+lease-wide one-mint claim or two aggregate outstanding slots across replicas;
+Work, inventory and custody composition must enforce those limits and retain
+unknown or provider-valid retired material until evidenced resolution.
 
 `assertDispatchCurrent` must check the original operation's current authority.
 Returning a Promise is refused. A repository name, Secret reference or
@@ -90,7 +110,7 @@ timeout does not transfer or discharge the obligation.
 
 ## Integration and verification
 
-The repository-read owner must load the selected protected App material during
+The repository workflow owner must load the selected protected App material during
 actual startup, bind custody and the original State/native/Work sources, connect
 the regular Agent repository read, and require a verified checkout before Harness
 use. Partial startup acquisitions and late/unknown token effects must retain
@@ -121,8 +141,9 @@ The token directory must have a single custody writer and cannot contain the
 master key. The App key and installation tokens remain outside the Agent.
 
 This preparation retains the original crypto and persistent token-store owners.
-The original repository Work constructor must consume them, select its fixed
-read-only TokenIssuer, settle mint/revoke attempts, and stop before closing these
+The original repository Work constructor must consume them, select the TokenIssuer
+matching the admitted fixed read or write profile, settle mint/revoke attempts,
+and stop before closing these
 owners. That production Work connection and the regular Agent checkout remain
 unimplemented in this review slice. The prepared material alone does not verify
 a repository or enable the currently refused nonempty repository deployment.

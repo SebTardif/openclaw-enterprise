@@ -2750,6 +2750,7 @@ export type {
 } from "./github-app-provider-v1/material.ts";
 export {
   createGitHubAppTokenIssuerV1,
+  createGitHubAppWriteTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
   snapshotGitHubAppReturnedPermissionsV1,
 } from "./github-app-provider-v1/provider.ts";

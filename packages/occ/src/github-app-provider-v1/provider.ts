@@ -1,4 +1,6 @@
 import { request as httpsRequest } from "node:https";
+import { types } from "node:util";
+import type { GitHubRepositoryWriteSelectionV1 } from "../credential-gateway-v1/github-operations.ts";
 import type {
   EphemeralTokenHandleV1,
   TokenIssuerAttemptV1,
@@ -105,7 +107,87 @@ function freezeSelection(input: GitHubAppSelectionV1): GitHubAppSelectionV1 {
     permissions,
   });
 }
-function scopeMatches(value: Record<string, unknown>, selected: GitHubAppSelectionV1): boolean {
+/** Snapshot only own data, without evaluating accessors or proxy traps. */
+function ownDataRecord(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || types.isProxy(value))
+    throw new GitHubAppTokenIssuerErrorV1();
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new GitHubAppTokenIssuerErrorV1();
+  const keys = Reflect.ownKeys(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    keys.length !== fields.length ||
+    keys.some((key) => typeof key !== "string" || !fields.includes(key)) ||
+    fields.some((field) => !descriptors[field] || !("value" in descriptors[field]))
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  return Object.fromEntries(fields.map((field) => [field, descriptors[field]!.value]));
+}
+function freezeWriteSelection(
+  input: GitHubRepositoryWriteSelectionV1,
+): GitHubRepositoryWriteSelectionV1 {
+  const selection = ownDataRecord(input, ["key", "installationId", "repositories", "permissions"]);
+  const keyData = ownDataRecord(selection.key, ["clientId", "bindingRef", "immutableVersion"]);
+  const key = snapshotGitHubAppKeyIdentityV1(keyData as unknown as GitHubAppKeyIdentityV1);
+  if (Object.values(key).some((value) => /[\r\n\u2028\u2029]/.test(value)))
+    throw new GitHubAppTokenIssuerErrorV1();
+  const repositories = selection.repositories;
+  if (
+    !Number.isSafeInteger(selection.installationId) ||
+    (selection.installationId as number) < 1 ||
+    !repositories ||
+    typeof repositories !== "object" ||
+    types.isProxy(repositories) ||
+    !Array.isArray(repositories) ||
+    Object.getPrototypeOf(repositories) !== Array.prototype
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const arrayKeys = Reflect.ownKeys(repositories);
+  const arrayData = Object.getOwnPropertyDescriptors(repositories) as unknown as Record<
+    string,
+    PropertyDescriptor
+  >;
+  if (
+    arrayKeys.length !== 2 ||
+    !arrayKeys.includes("0") ||
+    !arrayKeys.includes("length") ||
+    arrayData.length?.value !== 1 ||
+    !arrayData["0"] ||
+    !("value" in arrayData["0"])
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const repository = ownDataRecord(arrayData["0"].value, ["id", "fullName"]);
+  if (
+    !Number.isSafeInteger(repository.id) ||
+    (repository.id as number) < 1 ||
+    typeof repository.fullName !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*(?![\s\S])/.test(repository.fullName)
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const permissions = ownDataRecord(selection.permissions, [
+    "metadata",
+    "contents",
+    "pull_requests",
+  ]);
+  if (
+    permissions.metadata !== "read" ||
+    permissions.contents !== "write" ||
+    permissions.pull_requests !== "write"
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  return Object.freeze({
+    key,
+    installationId: selection.installationId as number,
+    repositories: Object.freeze([
+      Object.freeze({ id: repository.id as number, fullName: repository.fullName }),
+    ] as const),
+    permissions: Object.freeze({ metadata: "read", contents: "write", pull_requests: "write" }),
+  });
+}
+function scopeMatches(
+  value: Record<string, unknown>,
+  selected: GitHubAppSelectionV1 | GitHubRepositoryWriteSelectionV1,
+): boolean {
   const permissions = value.permissions;
   const repositories = value.repositories;
   if (
@@ -204,6 +286,22 @@ export function createGitHubAppTokenIssuerV1(
   });
 }
 
+/** Additive write profile. Trusted admission fixes this selection for the lease;
+ * minting does not establish current Work/IAM or durable custody authority. */
+// TODO(repository write integration): connect the regular Agent caller and fixed-profile custody owner.
+export function createGitHubAppWriteTokenIssuerV1(
+  options: Omit<GitHubAppTokenIssuerOptionsV1, "selection"> & {
+    selection: GitHubRepositoryWriteSelectionV1;
+  },
+): TokenIssuerV1 {
+  const provider = createGitHubAppTokenIssuerCoreV1(options, "write");
+  return Object.freeze({
+    mint: provider.mint,
+    revoke: provider.revoke,
+    settleAttempt: provider.settleAttempt,
+  });
+}
+
 /** Exact retained-token mitigation does not require the App signing key. This
  * construction has no mint method and reuses the same bounded DELETE protocol. */
 export function createGitHubAppTokenRevokerV1(
@@ -219,12 +317,21 @@ export function createGitHubAppTokenRevokerV1(
 }
 
 function createGitHubAppTokenIssuerCoreV1(
-  options: GitHubAppTokenIssuerOptionsV1 | GitHubAppTokenRevokerOptionsV1,
+  options:
+    | GitHubAppTokenIssuerOptionsV1
+    | (Omit<GitHubAppTokenIssuerOptionsV1, "selection"> & {
+        selection: GitHubRepositoryWriteSelectionV1;
+      })
+    | GitHubAppTokenRevokerOptionsV1,
+  profile: "read" | "write" = "read",
 ) {
   const issuance =
     "selection" in options
       ? {
-          selected: freezeSelection(options.selection),
+          selected:
+            profile === "write"
+              ? freezeWriteSelection(options.selection as GitHubRepositoryWriteSelectionV1)
+              : freezeSelection(options.selection as GitHubAppSelectionV1),
           material: options.material,
           capture: options.custody.capture.bind(options.custody),
         }
