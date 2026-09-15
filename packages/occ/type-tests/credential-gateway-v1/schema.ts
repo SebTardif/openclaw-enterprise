@@ -1,3 +1,8 @@
+import { createCredentialSchemaRegistryV1 } from "@openclaw-enterprise/occ";
+import type {
+  CredentialSchemaRegistryV1,
+  SchemaRegistrationScopeV1,
+} from "@openclaw-enterprise/occ";
 import type { JSONSchema } from "@openclaw-enterprise/contracts";
 import type {
   Bounds,
@@ -265,3 +270,18 @@ function opaqueConsumers(
   void nominal;
 }
 void opaqueConsumers;
+
+function registryConsumer(): void {
+  const registry: CredentialSchemaRegistryV1 = createCredentialSchemaRegistryV1([definition]);
+  const scope: SchemaRegistrationScopeV1 = registry.begin(definition);
+  const codec = scope.schemas.register(registration);
+  scope.commit();
+  const unknownCodec: unknown = codec;
+  registry.assertCodec(unknownCodec, binding);
+  const handle: ValidatedSchemaValue = unknownCodec.validate(true);
+  unknownCodec.retain(handle);
+  scope.discard();
+  // @ts-expect-error Registration owners are readonly.
+  scope.schemas = scope.schemas;
+}
+void registryConsumer;

@@ -2845,3 +2845,9 @@ export type {
   GitHubPrefixDigest,
   GitHubCreationDigest,
 } from "./credential-gateway-v1/github-operations.ts";
+
+export { createCredentialSchemaRegistryV1 } from "./credential-broker-v1/schema-registry.ts";
+export type {
+  CredentialSchemaRegistryV1,
+  SchemaRegistrationScopeV1,
+} from "./credential-broker-v1/schema-registry.ts";
