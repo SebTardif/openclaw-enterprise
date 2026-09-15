@@ -7,7 +7,6 @@ import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
   AccessBinding,
-  RepositoryBinding,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -19,6 +18,7 @@ import type {
   PluginDesiredState,
   Permission,
   Principal,
+  RepositoryBinding,
   Restriction,
   Role,
   Secret,
@@ -27,8 +27,8 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
-  normalizeRepositoryAccess,
   normalizePluginDesiredState,
+  normalizeRepositoryAccess,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
   validPluginRevisionState,
@@ -1466,7 +1466,44 @@ export class PostgresPlatformState implements PlatformStateStore {
         )[0];
         return updated === undefined ? undefined : serviceAccountFromRow(updated);
       },
+      hasReferences: async (namespaceId, serviceAccountId) => {
+        if ((await findServiceAccount(namespaceId, serviceAccountId)) === undefined) return false;
+        // One statement observes both sides of the worker's pending-to-active handoff.
+        const found = rows(
+          (
+            await client.query(
+              `SELECT EXISTS (
+                 SELECT 1 FROM occ.agents
+                 WHERE namespace_id = $1 AND service_account_id = $2
+               ) OR EXISTS (
+                 SELECT 1 FROM occ.agents AS a
+                 JOIN occ.agent_revisions AS r
+                   ON r.namespace_id = a.namespace_id
+                  AND r.agent_id = a.id
+                  AND r.id = a.active_revision_id
+                 WHERE a.namespace_id = $1
+                   AND r.admitted_spec #>> '{service_account,id}' = $2
+               ) OR EXISTS (
+                 SELECT 1 FROM occ.controller_work AS w
+                 JOIN occ.agent_revisions AS r
+                   ON r.namespace_id = w.namespace_id
+                  AND r.agent_id = w.agent_id
+                  AND r.id = w.revision_id
+                 WHERE w.namespace_id = $1
+                   AND w.state IN ('queued', 'claimed')
+                   AND r.admitted_spec #>> '{service_account,id}' = $2
+               ) AS present`,
+              [namespaceId, serviceAccountId],
+            )
+          ).rows,
+        )[0];
+        return found?.present === true;
+      },
       deleteServiceAccount: async (namespaceId, serviceAccountId) => {
+        if (await serviceAccounts.hasReferences(namespaceId, serviceAccountId))
+          throw new ScopeViolationError(
+            "The ServiceAccount is referenced by active platform state.",
+          );
         const deleted = await client.query(
           `DELETE FROM occ.service_accounts AS s USING occ.namespaces AS n
            WHERE s.namespace_id = $1 AND s.id = $2
@@ -1613,7 +1650,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             saved.activeRevisionId ?? null,
             saved.createdAt,
             plugins === undefined ? null : JSON.stringify(plugins),
-            JSON.stringify(normalizeRepositoryAccess(agent.repositoryAccess)),
+            JSON.stringify(saved.repositoryAccess),
           ],
         );
         await client.query(

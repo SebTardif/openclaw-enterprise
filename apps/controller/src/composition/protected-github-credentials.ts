@@ -50,7 +50,7 @@ export async function prepareProtectedGitHubCredentials(options: {
   const source = selection.source;
   let closed = false;
 
-  async function current(): Promise<Readonly<RepositoryBinding>> {
+  async function readCurrentBinding(): Promise<Readonly<RepositoryBinding>> {
     if (closed) unavailable();
     return read(async (view) => {
       const binding = await view.repositoryBindings.findBinding(
@@ -76,7 +76,7 @@ export async function prepareProtectedGitHubCredentials(options: {
     });
   }
 
-  await current();
+  await readCurrentBinding();
   const crypto = new ProtectedGitHubCryptoV1(selection.masterKey);
   let store: ProtectedGitHubTokenStoreV1 | undefined;
   let sourceMaterial: GitHubAppMaterialV1 | undefined;
@@ -96,12 +96,12 @@ export async function prepareProtectedGitHubCredentials(options: {
       crypto,
       clock: options.clock,
     });
-    const owner = sourceMaterial;
+    const materialOwner = sourceMaterial;
     const material: GitHubAppMaterialV1 = Object.freeze<GitHubAppMaterialV1>({
       async withJwt(identity, bounds, consume) {
-        await current();
-        return owner.withJwt(identity, bounds, async (jwt, assertMaterialCurrent) => {
-          await current();
+        await readCurrentBinding();
+        return materialOwner.withJwt(identity, bounds, async (jwt, assertMaterialCurrent) => {
+          await readCurrentBinding();
           assertMaterialCurrent();
           return consume(jwt, () => {
             if (closed) unavailable();
