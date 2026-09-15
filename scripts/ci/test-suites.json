@@ -238,6 +238,12 @@
         },
         {
           "path": "tests/conformance/credential-inventory-owner-phase.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-token-store.test.mjs"
+        },
+        {
+          "path": "tests/integration/protected-github-token-store.test.mjs"
         }
       ]
     },
@@ -320,6 +326,12 @@
           "expectedTests": [
             "in-memory state persists Secret metadata and binding references without values",
             "PostgreSQL state persists Secret metadata and enforces binding dependencies"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-service-account-deletion.test.mjs",
+          "expectedTests": [
+            "ServiceAccount deletion protects queued, claimed, and active revisions before Driver effects"
           ]
         },
         {

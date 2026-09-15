@@ -170,14 +170,22 @@ loopback setup above for this test.
 
 ## Repository draft definitions
 
-Run `tests/integration/postgres-repository-drafts.test.mjs` with `OCC_TEST_REPOSITORY_DATABASE_URL` pointing to a **fresh**, separately migrated database under `occ_app`. Apply all migrations as `occ_migrator` using the database setup above. The suite uses a separate URL because it bootstraps the Installation, accounts, and current administrator policy.
+Prepare a **fresh**, separate database using the [setup above](#postgresql),
+applying all migrations as `occ_migrator`. Set `REPOSITORY_APPLICATION_DATABASE_URL`
+to its `occ_app` URL, then run:
 
 ```sh
 OCC_TEST_REPOSITORY_DATABASE_URL="$REPOSITORY_APPLICATION_DATABASE_URL" \
   node --test tests/integration/postgres-repository-drafts.test.mjs
 ```
 
-This suite uses real Fastify routes, PostgreSQL Better Auth sessions, native IAM, State, SQL constraints, atomic audit rollback, and the real worker. External Compute, Configuration, and Secret backends use the existing deterministic fixtures. It covers bounded codec rejection, exact operate permissions, foreign references, binding CAS, draft omission/replacement/clear, refused repository deployment, and successful empty-repository worker completion. It is not live GitHub or live runtime qualification.
+The suite bootstraps the Installation, accounts and administrator policy. It uses
+real Fastify routes, PostgreSQL Better Auth sessions, native IAM, State, SQL
+constraints, atomic audit rollback and worker execution. Compute, Configuration
+and Secret backends use deterministic fixtures. Coverage includes bounded codec
+rejection, exact operate permissions, foreign references, binding CAS, draft
+omission/replacement/clear, refused nonempty repository deployment and successful
+empty-repository worker completion. This does not qualify live GitHub or runtimes.
 
 ## Credential inventory
 
