@@ -81,11 +81,11 @@ function binding() {
   return { namespace, agent };
 }
 
-function credentialFixture({ secrets = {}, deployments = [], sandboxDriver } = {}) {
+function credentialFixture({ secrets = {}, deployments = [], runtimeAuthenticationOwner } = {}) {
   const driver =
-    sandboxDriver === undefined
+    runtimeAuthenticationOwner === undefined
       ? createKubernetesComputeDriver(options())
-      : new KubernetesComputeDriver(options(), { sandboxDriver });
+      : new KubernetesComputeDriver(options(), { runtimeAuthenticationOwner });
   const namespaceName = kubernetesNamespaceName(namespace.id);
   const namespaceObject = {
     ...driver.manifest("v1", "Namespace", namespaceName, { namespaceId: namespace.id }),
@@ -464,35 +464,44 @@ test("mocked Kubernetes client rejects malformed existing credential Secrets bef
   }
 });
 
-test("mocked Kubernetes client requires a model credential when the model Secret is missing", async () => {
-  const { driver, calls, created } = credentialFixture();
+// These cases substitute only the declared owner status port and Kubernetes API.
+// A configured result proves Compute readiness handling, not admitted runtime access.
+function configuredRuntimeAuthenticationOwner() {
+  return {
+    async status() {
+      return { configured: true };
+    },
+  };
+}
 
-  await assert.rejects(
-    driver.provisionAgentRuntimeCredentials(binding(), {}),
-    DependencyUnavailableError,
-  );
-  assert.equal(
-    calls.some(({ kind }) => kind === "listDeployments"),
-    false,
-  );
-  assert.equal(created.length, 0);
-});
-
-test("externally brokered model credentials require no Kubernetes model Secret", async () => {
+test("substituted runtime authentication status allows transport provisioning without a model Secret", async () => {
+  const selectedBinding = binding();
+  const statusCalls = [];
   const { driver, calls, created } = credentialFixture({
-    sandboxDriver: { modelCredentialSource: "external" },
+    runtimeAuthenticationOwner: {
+      async status(input) {
+        statusCalls.push(input);
+        assert.deepEqual(input.binding, selectedBinding);
+        assert.ok(input.bounds.signal instanceof AbortSignal);
+        assert.equal(input.bounds.signal.aborted, false);
+        assert.ok(Number.isFinite(input.bounds.deadline));
+        assert.ok(input.bounds.deadline > Date.now());
+        return { configured: true };
+      },
+    },
   });
 
-  assert.deepEqual(await driver.getAgentRuntimeCredentialStatus(binding()), {
+  assert.deepEqual(await driver.getAgentRuntimeCredentialStatus(selectedBinding), {
     transportConfigured: false,
     modelConfigured: true,
     slackConfigured: false,
   });
-  assert.deepEqual(await driver.provisionAgentRuntimeCredentials(binding(), {}), {
+  assert.deepEqual(await driver.provisionAgentRuntimeCredentials(selectedBinding, {}), {
     transportConfigured: true,
     modelConfigured: true,
     slackConfigured: false,
   });
+  assert.equal(statusCalls.length, 2, "each public operation must consult the selected owner");
   assert.equal(
     calls.some(({ kind, name }) => kind === "readSecret" && name.startsWith("model-")),
     true,
@@ -504,9 +513,10 @@ test("externally brokered model credentials require no Kubernetes model Secret",
   );
 });
 
-test("externally brokered model credentials reject competing OCE credential sources", async () => {
-  const external = { modelCredentialSource: "external" };
-  const fixture = credentialFixture({ sandboxDriver: external });
+test("substituted runtime authentication status rejects competing OCE credential sources", async () => {
+  const fixture = credentialFixture({
+    runtimeAuthenticationOwner: configuredRuntimeAuthenticationOwner(),
+  });
   await assert.rejects(
     fixture.driver.provisionAgentRuntimeCredentials(binding(), { modelApiKey: "model-key" }),
     ResourceConflictError,
@@ -518,13 +528,79 @@ test("externally brokered model credentials reject competing OCE credential sour
     OPENAI_API_KEY: "model-key",
   });
   const persisted = credentialFixture({
-    sandboxDriver: external,
+    runtimeAuthenticationOwner: configuredRuntimeAuthenticationOwner(),
     secrets: { [model.metadata.name]: model },
   });
-  await assert.rejects(
-    persisted.driver.getAgentRuntimeCredentialStatus(binding()),
-    ResourceConflictError,
-  );
+  for (const operation of [
+    () => persisted.driver.getAgentRuntimeCredentialStatus(binding()),
+    () => persisted.driver.provisionAgentRuntimeCredentials(binding(), {}),
+  ]) {
+    await assert.rejects(operation, ResourceConflictError);
+  }
+  assert.equal(persisted.created.length, 0);
+
+  const serviceAccountBinding = {
+    namespace,
+    agent: { ...agent, serviceAccountId: "sac_runtime_00000000-0000-4000-8000-000000000001" },
+  };
+  const serviceAccount = credentialFixture({
+    runtimeAuthenticationOwner: configuredRuntimeAuthenticationOwner(),
+  });
+  for (const operation of [
+    () => serviceAccount.driver.getAgentRuntimeCredentialStatus(serviceAccountBinding),
+    () => serviceAccount.driver.provisionAgentRuntimeCredentials(serviceAccountBinding, {}),
+  ]) {
+    await assert.rejects(operation, ResourceConflictError);
+  }
+  assert.equal(serviceAccount.created.length, 0);
+});
+
+test("absent or unconfigured runtime authentication owner does not make missing model credentials ready", async () => {
+  for (const runtimeAuthenticationOwner of [
+    undefined,
+    {
+      async status() {
+        return { configured: false };
+      },
+    },
+  ]) {
+    const { driver, calls, created } = credentialFixture({ runtimeAuthenticationOwner });
+    assert.deepEqual(await driver.getAgentRuntimeCredentialStatus(binding()), {
+      transportConfigured: false,
+      modelConfigured: false,
+      slackConfigured: false,
+    });
+    await assert.rejects(
+      driver.provisionAgentRuntimeCredentials(binding(), {}),
+      DependencyUnavailableError,
+    );
+    assert.equal(
+      calls.some(({ kind }) => kind === "listDeployments"),
+      false,
+    );
+    assert.equal(created.length, 0, "missing model credentials must block transport creation");
+  }
+});
+
+test("unknown runtime authentication status fails closed before credential writes", async () => {
+  for (const status of [
+    async () => {
+      throw new Error("Runtime authentication status unavailable");
+    },
+    async () => ({}),
+  ]) {
+    const { driver, created } = credentialFixture({ runtimeAuthenticationOwner: { status } });
+    await assert.rejects(
+      driver.getAgentRuntimeCredentialStatus(binding()),
+      DependencyUnavailableError,
+    );
+    // Supplying a local key cannot turn an unknown external owner into a safe fallback.
+    await assert.rejects(
+      driver.provisionAgentRuntimeCredentials(binding(), { modelApiKey: "model-key" }),
+      DependencyUnavailableError,
+    );
+    assert.equal(created.length, 0);
+  }
 });
 
 test("mocked Kubernetes client refuses initial provisioning after Agent deployments exist", async () => {

@@ -1,4 +1,8 @@
 import type { RepositoryAccess } from "./repository-access-v1.ts";
+import type {
+  RuntimeAuthenticationProjectionV1,
+  RuntimeAuthenticationRequestV1,
+} from "./runtime-authentication-v1.ts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   PluginDesiredSelectionSchema,
@@ -183,6 +187,7 @@ export interface SecretEnvironmentProjection {
 
 export interface ComputeRevisionContext {
   readonly secretEnvironment: readonly SecretEnvironmentProjection[];
+  readonly runtimeAuthentication?: RuntimeAuthenticationProjectionV1;
 }
 
 export type PluginApprovalMode = "always" | "never" | "prompt" | "auto";
@@ -564,6 +569,7 @@ export interface SandboxNamespaceContext {
 export interface SandboxHarnessContext extends SandboxNamespaceContext {
   readonly revision: Readonly<AgentRevision>;
   readonly requirements: HarnessWorkloadRequirements;
+  readonly runtimeAuthentication?: RuntimeAuthenticationRequestV1;
 }
 
 export interface ComputeLifecycleHooks {
@@ -610,8 +616,6 @@ export interface SandboxDriver extends Driver {
   readonly capability: "sandbox";
   /** One or more distinct containment facets implemented by this driver. */
   readonly facets: readonly SandboxFacet[];
-  /** The Sandbox provider supplies the model credential without an OCE-managed Secret. */
-  readonly modelCredentialSource?: "external";
   configureAgent?(
     configuration: Readonly<OpenClawConfigurationDocument>,
   ): OpenClawConfigurationDocument;
@@ -717,6 +721,13 @@ export * from "./api/resources.ts";
 export * from "./api/routes.ts";
 
 export type { EphemeralTokenHandleV1 } from "./credential-storage-v1.ts";
+export type {
+  RuntimeAuthenticationProjectionV1,
+  RuntimeAuthenticationReceiverV1,
+  RuntimeAuthenticationAttachmentOutcomeV1,
+  RuntimeAuthenticationDeliveryV1,
+  RuntimeAuthenticationRequestV1,
+} from "./runtime-authentication-v1.ts";
 export type {
   TokenIssuerAttemptV1,
   TokenIssuerCallBoundsV1,

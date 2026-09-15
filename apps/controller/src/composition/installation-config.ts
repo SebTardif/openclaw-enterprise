@@ -80,6 +80,8 @@ export interface InstallationRuntimeDrivers {
   readonly secretDriver: SecretDriver;
   readonly sandboxDriver?: SandboxDriver;
   readonly pluginDriver?: PluginDriver;
+  /** Trusted startup dependency; JSON configuration cannot supply a broker implementation. */
+  readonly runtimeAuthenticationOwner?: import("@openclaw-enterprise/occ").RuntimeAuthenticationOwnerV1;
   readonly createIAMDriver: (state: NativeIAMStateStore) => IAMDriver;
 }
 

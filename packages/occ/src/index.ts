@@ -2817,6 +2817,7 @@ export type {
   CredentialAccessGrant,
   ServiceBindingView,
   OperationCapability,
+  ExternalRuntimeAuthenticationCapabilityV1,
   BackendCapabilities,
   AuthenticationMode,
   AcquisitionMode,
@@ -2845,3 +2846,11 @@ export type {
   GitHubPrefixDigest,
   GitHubCreationDigest,
 } from "./credential-gateway-v1/github-operations.ts";
+
+export type {
+  RuntimeAuthenticationAttachmentV1,
+  RuntimeAuthenticationAttachmentPreparationV1,
+  RuntimeAuthenticationAttachmentInspectionV1,
+  RuntimeAuthenticationWithdrawalV1,
+  RuntimeAuthenticationOwnerV1,
+} from "./credential-gateway-v1/runtime-authentication.ts";

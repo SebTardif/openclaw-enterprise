@@ -38,8 +38,6 @@ function sandboxInstallation() {
           { name: "model-egress", endpoints: [{ host: "api.openai.com", ports: [443] }] },
         ],
       },
-      modelCredential: { source: "provider" },
-      providers: ["oce-openai"],
     },
   };
   return configuration;
@@ -56,7 +54,6 @@ test("startup constructs the bundled OpenShell SandboxDriver before constructing
   assert.ok(createdDriver.sandboxDriver instanceof OpenShellSandboxDriver);
   assert.equal(createdDriver.sandboxDriver.id, "openshell-sandbox");
   assert.deepEqual(createdDriver.sandboxDriver.facets, ["networking", "filesystem", "process"]);
-  assert.equal(createdDriver.sandboxDriver.modelCredentialSource, "external");
 
   const pool = new pg.Pool({ connectionString: "postgresql://127.0.0.1:1/occ" });
   t.after(async () => pool.end());
@@ -89,15 +86,31 @@ test("startup rejects invalid bundled OpenShell configuration before invoking an
   assert.equal(invokedFactory, false);
 });
 
-test("startup rejects an OpenShell provider model credential without an attached provider", async (t) => {
-  const configuration = sandboxInstallation();
-  delete configuration.drivers.sandbox.configuration.providers;
+for (const [name, credentialOptions] of [
+  ["modelCredential", { modelCredential: { source: "provider" } }],
+  ["providers", { providers: ["oce-openai"] }],
+  [
+    "modelCredential and providers",
+    { modelCredential: { source: "provider" }, providers: ["oce-openai"] },
+  ],
+]) {
+  test(`startup rejects OpenShell ${name} before invoking an injected factory`, async (t) => {
+    const configuration = sandboxInstallation();
+    Object.assign(configuration.drivers.sandbox.configuration, credentialOptions);
+    let invokedFactory = false;
 
-  await assert.rejects(
-    loadInstallationConfiguration({
-      mode: "production",
-      environment: { OCC_CONFIG_PATH: await fixture(t, configuration) },
-    }),
-    /provider model credentials require at least one attached provider/,
-  );
-});
+    // Startup options cannot turn provider identifiers into runtime authentication authority.
+    await assert.rejects(
+      loadInstallationConfiguration({
+        mode: "production",
+        environment: { OCC_CONFIG_PATH: await fixture(t, configuration) },
+        createSandboxDriver() {
+          invokedFactory = true;
+          throw new Error("An injected factory must not bypass credential ownership.");
+        },
+      }),
+      /drivers\.sandbox\.configuration does not match its Driver configuration schema/,
+    );
+    assert.equal(invokedFactory, false);
+  });
+}

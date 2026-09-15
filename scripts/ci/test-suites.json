@@ -103,6 +103,9 @@
           "path": "tests/integration/sandbox-driver-startup.test.mjs"
         },
         {
+          "path": "tests/integration/openshell-runtime-authentication.test.mjs"
+        },
+        {
           "path": "tests/integration/secret-api.test.mjs"
         },
         {

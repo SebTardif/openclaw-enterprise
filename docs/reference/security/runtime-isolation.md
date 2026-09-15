@@ -24,7 +24,7 @@ existing groups. It provides no credential readback, rotation, or deletion API.
 A failed request can leave completed Secret creates in place; recovery reads
 metadata and never deletes them as a rollback.
 
-There are three supported model-credential paths:
+The current model-credential paths and the external authentication boundary are:
 
 - **Existing API key:** An Agent-specific model Secret supplies
   `OPENAI_API_KEY` only to dedicated Codex or the combined embedded OpenClaw
@@ -42,11 +42,15 @@ There are three supported model-credential paths:
   in with `--with-access-token` under its forced ChatGPT workspace and stores
   login state only in its bounded ephemeral workload volume. Embedded access
   tokens are rejected before deployment.
-- **Externally brokered API key:** An explicitly configured Sandbox Driver may
-  supply the model credential directly to its provider-owned Harness. OCE
-  creates no model Secret and rejects both raw API-key provisioning and a
-  competing persisted model Secret. The OpenShell driver supports this mode
-  through an attached provider.
+- **Broker-owned external authentication:** The shared runtime contract and
+  Compute/OpenShell consumer accept only a binding authenticated by a trusted
+  owner for a genuine Work execution and exact receiver. A configuration flag,
+  provider identifier, or plain projection supplies no authority. Attachment
+  preparation does not authorize activation; the owner must observe a current
+  attachment and enforce session expiry and exact receiver withdrawal without
+  revoking a shared provider key. Production composition has no implemented
+  Work admission/runtime broker owner yet, so external-model activation remains
+  unavailable. See [OpenShell runtime authentication](../drivers/openshell-sandbox.md#broker-owned-runtime-authentication).
 
 A dedicated gateway never receives either model credential. Public OCC Agent
 and AgentRevision responses can include the configured provider ID, which is

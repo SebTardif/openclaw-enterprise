@@ -2038,7 +2038,11 @@ test("provider-owned Harness requirements preserve the exact projected ServicePr
   );
 });
 
-function providerReadinessFixture({ provisionHarness, lifecycleDrivers = [] } = {}) {
+function providerReadinessFixture({
+  provisionHarness,
+  lifecycleDrivers = [],
+  runtimeAuthenticationOwner,
+} = {}) {
   const driver = new KubernetesComputeDriver(
     options({
       runtime: {
@@ -2054,9 +2058,22 @@ function providerReadinessFixture({ provisionHarness, lifecycleDrivers = [] } = 
     }),
     {
       lifecycleDrivers,
+      runtimeAuthenticationOwner,
+      runtimeAuthenticationBinding: async (revision) => ({
+        namespace: tenant,
+        agent: {
+          id: revision.agentId,
+          namespaceId: tenant.id,
+          servicePrincipalId: revision.servicePrincipalId,
+          name: "Provider Harness Agent",
+          configurationId: revision.configurationId,
+          providerId: null,
+          executionMode: "dedicated",
+          createdAt: revision.createdAt,
+        },
+      }),
       sandboxDriver: {
         id: "sandbox-provider",
-        modelCredentialSource: "external",
         async provisionHarness(context) {
           if (provisionHarness !== undefined) return provisionHarness(context);
           assert.fail("activation must only observe the previously provisioned Harness");
@@ -2279,35 +2296,7 @@ test("provider Harness activation fails before routing on absent, ambiguous, or 
   assert.equal(fixture.requests.length, 5);
 });
 
-test("provider Harness preparation preserves readiness and cleanup contracts", async () => {
-  const hooks = [];
-  const provisions = [];
-  const fixture = providerReadinessFixture({
-    async provisionHarness(context) {
-      provisions.push(context);
-      return {
-        namespaceName: context.namespace.name,
-        resourceName: "provider-sandbox",
-        agentId: context.revision.agentId,
-        revisionId: context.revision.id,
-      };
-    },
-    lifecycleDrivers: [
-      {
-        id: "configuration-lifecycle",
-        capability: "configuration",
-        implementation: "conformance-lifecycle",
-        computeLifecycleHooks: {
-          async beforeWorkloadStart() {
-            hooks.push("start");
-          },
-          async beforeWorkloadStop() {
-            hooks.push("stop");
-          },
-        },
-      },
-    ],
-  });
+function providerPreparationTransport(fixture) {
   const { driver, revision, namespace, core } = fixture;
   const gatewayName = `gateway-${digest(revision.agentId)}`;
   const gatewayOwnership = { namespaceId: tenant.id, agentId: revision.agentId };
@@ -2353,6 +2342,11 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
     },
   };
   core.readNamespace = async ({ name }) => structuredClone(objects.get(key("Namespace", name)));
+  core.readNamespacedSecret = async ({ name }) => {
+    const secret = objects.get(key("Secret", name));
+    if (secret === undefined) throw Object.assign(new Error("not found"), { statusCode: 404 });
+    return structuredClone(secret);
+  };
   const writes = [];
   for (const [api, kinds] of [
     [core, ["ConfigMap", "Service", "ServiceAccount", "PersistentVolumeClaim"]],
@@ -2382,6 +2376,40 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
     }
   }
   driver.apiClients = Promise.resolve(clients);
+  return { objects, writes };
+}
+
+test("provider Harness preparation preserves readiness and cleanup contracts", async () => {
+  const hooks = [];
+  const provisions = [];
+  const fixture = providerReadinessFixture({
+    async provisionHarness(context) {
+      provisions.push(context);
+      return {
+        namespaceName: context.namespace.name,
+        resourceName: "provider-sandbox",
+        agentId: context.revision.agentId,
+        revisionId: context.revision.id,
+      };
+    },
+    lifecycleDrivers: [
+      {
+        id: "configuration-lifecycle",
+        capability: "configuration",
+        implementation: "conformance-lifecycle",
+        computeLifecycleHooks: {
+          async beforeWorkloadStart() {
+            hooks.push("start");
+          },
+          async beforeWorkloadStop() {
+            hooks.push("stop");
+          },
+        },
+      },
+    ],
+  });
+  const { driver, revision } = fixture;
+  const { objects, writes } = providerPreparationTransport(fixture);
   const expected = { namespaceId: tenant.id, agentId: revision.agentId, revisionId: revision.id };
   for (const [items, ready] of [
     [[], false],
@@ -2405,7 +2433,10 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
   });
   assert.equal(providerEnvironment[PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT], undefined);
   assert.equal(providerEnvironment[PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT], undefined);
-  assert.equal(providerEnvironment.OPENAI_API_KEY, undefined);
+  assert.deepEqual(providerEnvironment.OPENAI_API_KEY.valueFrom.secretKeyRef, {
+    name: `model-${digest(revision.agentId)}`,
+    key: "OPENAI_API_KEY",
+  });
   assert.equal(
     providerEnvironment[PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT].value,
     PLUGIN_RUNTIME_READY_MARKER,
@@ -2418,7 +2449,7 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
   );
   const agentServiceName = `agent-${digest(revision.agentId)}`;
   assert.equal(
-    objects.get(key("Service", agentServiceName)).spec.selector["app.kubernetes.io/name"],
+    objects.get(`Service:${agentServiceName}`).spec.selector["app.kubernetes.io/name"],
     `${agentServiceName}-inactive`,
   );
 
@@ -2431,7 +2462,7 @@ test("provider Harness preparation preserves readiness and cleanup contracts", a
 
   fixture.setObservation({ items: [fixture.pod("ready")] });
   await driver.activateRevision(revision);
-  assert.deepEqual(objects.get(key("Service", agentServiceName)).spec.selector, {
+  assert.deepEqual(objects.get(`Service:${agentServiceName}`).spec.selector, {
     "openclaw.dev/agent": revision.agentId,
     "openclaw.dev/revision": revision.id,
     "openclaw.dev/workload-role": "agent",
@@ -3177,4 +3208,256 @@ test("retiring a predecessor preserves both claims and final retirement deletes 
     namespace,
   );
   assert.deepEqual(deletions, []);
+});
+
+function runtimeProjection(revision, overrides = {}) {
+  return Object.freeze({
+    schemaVersion: 1,
+    namespaceId: revision.namespaceId,
+    agentId: revision.agentId,
+    revisionId: revision.id,
+    executionId: "retained-execution",
+    servicePrincipalId: revision.servicePrincipalId,
+    sandboxDriverId: revision.sandboxDriverId,
+    connectionId: "external-model-connection",
+    connectionGeneration: "1",
+    serviceId: "model-service",
+    profileDigest: "admitted-profile-digest",
+    expiresAt: Date.now() + 60_000,
+    session: { permission: "whole-session", lifetime: "bounded", withdrawal: "exact-receiver" },
+    ...overrides,
+  });
+}
+
+test("Compute consumes the declared owner port and separates attachment inspection from provider create", async () => {
+  // The owner and Sandbox are explicit port substitutes. This proves Compute consumption,
+  // exact handoff and routing gates; it supplies no broker admission or live provider proof.
+  let projection;
+  let observation = { state: "unknown" };
+  let rejectGate = false;
+  let abortAfterCreate;
+  const preparations = [];
+  const outcomes = [];
+  const providerSelections = [];
+  const attachment = Object.freeze({});
+  const owner = {
+    async status() {
+      return { configured: true };
+    },
+    async prepareAttachment(input) {
+      assert.equal(input.projection, projection, "Compute must retain the opaque owner identity");
+      preparations.push(input);
+      const providers = ["approved-provider"];
+      providerSelections.push(providers);
+      return {
+        attachment,
+        providers,
+        assertAndConsume() {
+          if (rejectGate) throw new Error("owner authority closed");
+        },
+      };
+    },
+    async observeAttachment(input) {
+      assert.equal(input.attachment, attachment);
+      assert.equal(input.bounds.signal.aborted, false, "recording survives caller cancellation");
+      outcomes.push(input.outcome);
+    },
+    async inspect(input) {
+      assert.equal(input.attachment, attachment);
+      return observation;
+    },
+  };
+  let submitted = 0;
+  const fixture = providerReadinessFixture({
+    runtimeAuthenticationOwner: owner,
+    async provisionHarness(context) {
+      const signal = abortAfterCreate?.signal ?? new AbortController().signal;
+      const delivery = await context.runtimeAuthentication.prepare(
+        {
+          sandboxDriverId: context.revision.sandboxDriverId,
+          gatewayEndpoint: "https://openshell.example.internal:8080",
+          workspace: "tenant-workspace",
+          namespaceName: context.namespace.name,
+          resourceName: "provider-sandbox",
+        },
+        signal,
+      );
+      providerSelections.at(-1).push("late-provider-change");
+      assert.deepEqual(delivery.providers, ["approved-provider"]);
+      assert.ok(Object.isFrozen(delivery.providers));
+      const environment = Object.fromEntries(
+        context.requirements.environment.map((entry) => [entry.name, entry]),
+      );
+      assert.equal(environment.OPENAI_API_KEY, undefined);
+      assert.deepEqual(environment.APP_SERVER_TOKEN.valueFrom.secretKeyRef, {
+        name: `transport-${digest(context.revision.agentId)}`,
+        key: "app-server-token",
+      });
+      try {
+        delivery.assertAndConsume();
+      } catch (error) {
+        await delivery.observe({ kind: "not-submitted" });
+        throw error;
+      }
+      submitted += 1;
+      assert.throws(() => delivery.assertAndConsume(), /already consumed/);
+      abortAfterCreate?.abort();
+      await delivery.observe({ kind: "created", receiverUid: "provider-receiver-uid" });
+      return {
+        namespaceName: context.namespace.name,
+        resourceName: "provider-sandbox",
+        agentId: context.revision.agentId,
+        revisionId: context.revision.id,
+      };
+    },
+  });
+  projection = runtimeProjection(fixture.revision);
+  const { writes } = providerPreparationTransport(fixture);
+  fixture.setObservation({ items: [fixture.pod("ready")] });
+  const context = { runtimeAuthentication: projection };
+  for (const unavailable of [
+    { state: "unknown" },
+    { state: "pending" },
+    { state: "withdrawn" },
+    { state: "attached", receiverUid: "uid", usableUntil: Date.now() - 1 },
+    { state: "attached", receiverUid: "uid", usableUntil: projection.expiresAt + 1 },
+    { state: "attached", receiverUid: "", usableUntil: projection.expiresAt },
+  ]) {
+    observation = unavailable;
+    assert.equal((await fixture.driver.prepareRevision(fixture.revision, context)).ready, false);
+    const beforeActivation = writes.length;
+    await assert.rejects(fixture.driver.activateRevision(fixture.revision, context), /not ready/);
+    assert.equal(
+      writes.length,
+      beforeActivation,
+      "unusable authentication cannot activate routing",
+    );
+  }
+  observation = {
+    state: "attached",
+    receiverUid: "provider-receiver-uid",
+    usableUntil: projection.expiresAt,
+  };
+  assert.equal((await fixture.driver.prepareRevision(fixture.revision, context)).ready, true);
+  const beforeWrongSession = writes.length;
+  observation = { state: "withdrawn" };
+  await assert.rejects(fixture.driver.activateRevision(fixture.revision, context), /not ready/);
+  assert.equal(
+    writes.length,
+    beforeWrongSession,
+    "withdrawal after successful preparation blocks activation",
+  );
+  observation = {
+    state: "attached",
+    receiverUid: "provider-receiver-uid",
+    usableUntil: projection.expiresAt,
+  };
+  await assert.rejects(
+    fixture.driver.activateRevision(fixture.revision, {
+      runtimeAuthentication: runtimeProjection(fixture.revision, {
+        executionId: "another-execution",
+      }),
+    }),
+    /not ready/,
+  );
+  assert.equal(writes.length, beforeWrongSession);
+  await fixture.driver.activateRevision(fixture.revision, context);
+  assert.equal(preparations[0].receiver.workspace, "tenant-workspace");
+  assert.equal(preparations[0].receiver.resourceName, "provider-sandbox");
+  assert.equal(JSON.stringify(fixture.driver).includes("retained-execution"), false);
+  assert.equal(JSON.stringify(writes).includes("approved-provider"), false);
+  const submittedBefore = submitted;
+  rejectGate = true;
+  await assert.rejects(
+    fixture.driver.prepareRevision(fixture.revision, context),
+    /owner authority closed/,
+  );
+  assert.equal(submitted, submittedBefore);
+  assert.deepEqual(outcomes.at(-1), { kind: "not-submitted" });
+  rejectGate = false;
+  abortAfterCreate = new AbortController();
+  assert.equal((await fixture.driver.prepareRevision(fixture.revision, context)).ready, true);
+  assert.equal(abortAfterCreate.signal.aborted, true);
+  assert.deepEqual(outcomes.at(-1), { kind: "created", receiverUid: "provider-receiver-uid" });
+});
+
+test("Compute refuses missing, stale, mismatched, or competing external authentication before workload writes", async () => {
+  const fixture = providerReadinessFixture({
+    runtimeAuthenticationOwner: {
+      async status() {
+        return { configured: true };
+      },
+    },
+  });
+  const { objects, writes } = providerPreparationTransport(fixture);
+  const projection = runtimeProjection(fixture.revision);
+  await assert.rejects(fixture.driver.prepareRevision(fixture.revision), /not admitted/);
+  for (const overrides of [
+    { namespaceId: "another-namespace" },
+    { agentId: "another-agent" },
+    { revisionId: "another-revision" },
+    { servicePrincipalId: "another-principal" },
+    { sandboxDriverId: "another-sandbox" },
+    { executionId: "" },
+    { connectionGeneration: "" },
+    { expiresAt: Date.now() - 1 },
+    { expiresAt: Infinity },
+    {
+      session: { permission: "whole-session", lifetime: "unbounded", withdrawal: "exact-receiver" },
+    },
+  ]) {
+    await assert.rejects(
+      fixture.driver.prepareRevision(fixture.revision, {
+        runtimeAuthentication: { ...projection, ...overrides },
+      }),
+      /stale or does not match/,
+    );
+  }
+  const noOwner = providerReadinessFixture();
+  await assert.rejects(
+    noOwner.driver.prepareRevision(noOwner.revision, {
+      runtimeAuthentication: runtimeProjection(noOwner.revision),
+    }),
+    /owner is unavailable/,
+  );
+  await assert.rejects(
+    fixture.driver.prepareRevision(
+      {
+        ...fixture.revision,
+        serviceAccount: {
+          id: "competing-service-account",
+          credential: {
+            kind: "access_token",
+            secretRef: {
+              name: `service-account-${digest("competing-service-account", 32)}`,
+              key: "token",
+            },
+          },
+        },
+      },
+      { runtimeAuthentication: projection },
+    ),
+    /stale or does not match/,
+  );
+  const modelName = `model-${digest(fixture.revision.agentId)}`;
+  objects.set(
+    `Secret:${modelName}`,
+    fixture.driver.manifest(
+      "v1",
+      "Secret",
+      modelName,
+      {
+        namespaceId: fixture.revision.namespaceId,
+        agentId: fixture.revision.agentId,
+      },
+      fixture.namespace,
+    ),
+  );
+  await assert.rejects(
+    fixture.driver.prepareRevision(fixture.revision, {
+      runtimeAuthentication: projection,
+    }),
+    /model Secret cannot coexist/,
+  );
+  assert.equal(writes.length, 0);
 });

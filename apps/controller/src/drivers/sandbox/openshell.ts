@@ -82,8 +82,6 @@ export interface OpenShellSandboxDriverOptions {
   };
   readonly sandboxNamePrefix?: string;
   readonly logLevel?: string;
-  readonly providers?: readonly string[];
-  readonly modelCredential?: { readonly source: "provider" };
 }
 
 export interface OpenShellSandboxDriverSelection {
@@ -610,6 +608,7 @@ function networkPolicies(options: OpenShellSandboxDriverOptions) {
 function sandboxSpec(
   options: OpenShellSandboxDriverOptions,
   requirements: HarnessWorkloadRequirements,
+  providers: readonly string[],
 ) {
   const workspace = workspaceVolumeMounts(requirements);
   const servicePrincipal = servicePrincipalVolume(requirements);
@@ -661,7 +660,7 @@ function sandboxSpec(
       },
       network_policies: networkPolicies(options),
     },
-    providers: [...(options.providers ?? [])],
+    providers: [...providers],
     command: [...requirements.command],
     tty: false,
   };
@@ -725,21 +724,10 @@ function validateOptions(options: OpenShellSandboxDriverOptions): void {
     );
   }
   networkPolicies(options);
-  if (options.modelCredential !== undefined) {
-    const modelCredential = configurationObject(
-      options.modelCredential,
-      "OpenShell model credential",
+  if (Object.hasOwn(options, "providers") || Object.hasOwn(options, "modelCredential")) {
+    throw new OpenShellSandboxConfigurationFailure(
+      "OpenShell provider credentials require a broker-owned runtime authentication binding.",
     );
-    if (
-      Object.keys(modelCredential).length !== 1 ||
-      modelCredential.source !== "provider" ||
-      !Array.isArray(options.providers) ||
-      options.providers.length === 0
-    ) {
-      throw new OpenShellSandboxConfigurationFailure(
-        "OpenShell provider model credentials require at least one attached provider.",
-      );
-    }
   }
   const prefix = nonempty(
     options.sandboxNamePrefix ?? DEFAULT_SANDBOX_NAME_PREFIX,
@@ -762,13 +750,6 @@ export const configurationSchema = Object.freeze({
     policy: { type: "object" },
     sandboxNamePrefix: { type: "string" },
     logLevel: { type: "string" },
-    providers: { type: "array", items: { type: "string" } },
-    modelCredential: {
-      type: "object",
-      required: ["source"],
-      additionalProperties: false,
-      properties: { source: { const: "provider" } },
-    },
   },
 });
 
@@ -787,7 +768,6 @@ export class OpenShellSandboxDriver implements SandboxDriver {
   readonly capability = "sandbox" as const;
   readonly implementation: string;
   readonly facets = Object.freeze(["networking", "filesystem", "process"] as const);
-  readonly modelCredentialSource?: "external";
   private readonly options: OpenShellSandboxDriverOptions;
   private readonly injectedGatewayClient: OpenShellGatewayClient | undefined;
   private readonly gatewayClients = new Map<string, OpenShellGatewayClient>();
@@ -806,9 +786,6 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       selection.implementation ?? "openshell",
       "OpenShell Sandbox Driver implementation",
     );
-    if (options.modelCredential?.source === "provider") {
-      this.modelCredentialSource = "external";
-    }
     if (this.implementation !== "openshell") {
       throw new OpenShellSandboxConfigurationFailure(
         "OpenShell Sandbox Driver implementation must be exactly openshell.",
@@ -883,33 +860,70 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     }
     labels(context.requirements.labels, "Harness workload labels");
     const sandbox = this.sandboxRef(context);
+    const workspace = this.options.gateway.workspace ?? DEFAULT_WORKSPACE;
+    const delivery = await context.runtimeAuthentication?.prepare(
+      Object.freeze({
+        sandboxDriverId: this.id,
+        gatewayEndpoint: gatewayEndpoint(this.options, sandbox.namespaceName),
+        workspace,
+        namespaceName: sandbox.namespaceName,
+        resourceName: sandbox.resourceName,
+      }),
+      context.signal,
+    );
+    let submitted = false;
     let created;
     try {
-      created = await this.gatewayClientForNamespace(sandbox.namespaceName).createSandbox(
-        {
-          name: sandbox.resourceName,
-          workspace: this.options.gateway.workspace ?? DEFAULT_WORKSPACE,
-          labels: context.requirements.labels,
-          annotations: {
-            "openclaw.dev/namespace-id": context.revision.namespaceId,
-            "openclaw.dev/agent-id": context.revision.agentId,
-            "openclaw.dev/revision-id": context.revision.id,
-          },
-          spec: sandboxSpec(this.options, context.requirements),
+      const providers = [...(delivery?.providers ?? [])];
+      if (
+        (delivery !== undefined && providers.length === 0) ||
+        providers.length > 64 ||
+        new Set(providers).size !== providers.length ||
+        providers.some(
+          (provider) =>
+            typeof provider !== "string" ||
+            provider.trim().length === 0 ||
+            provider.length > 256 ||
+            /[\u0000-\u001f\u007f]/u.test(provider),
+        )
+      ) {
+        throw new OpenShellSandboxConfigurationFailure(
+          "The broker returned invalid OpenShell provider references.",
+        );
+      }
+      const request = {
+        name: sandbox.resourceName,
+        workspace,
+        labels: context.requirements.labels,
+        annotations: {
+          "openclaw.dev/namespace-id": context.revision.namespaceId,
+          "openclaw.dev/agent-id": context.revision.agentId,
+          "openclaw.dev/revision-id": context.revision.id,
         },
-        context.signal,
-      );
+        spec: sandboxSpec(this.options, context.requirements, providers),
+      };
+      const client = this.gatewayClientForNamespace(sandbox.namespaceName);
+      context.signal.throwIfAborted();
+      delivery?.assertAndConsume();
+      submitted = true;
+      created = await client.createSandbox(request, context.signal);
     } catch (error) {
+      await delivery?.observe({ kind: submitted ? "unknown" : "not-submitted" });
       if (error instanceof OpenShellSandboxAlreadyExistsError) {
         return Object.freeze(sandbox);
       }
       throw error;
     }
     if (created.name !== sandbox.resourceName) {
+      await delivery?.observe({ kind: "unknown" });
       throw new OpenShellSandboxConfigurationFailure(
         "OpenShell returned a different Sandbox name than requested.",
       );
     }
+    await delivery?.observe({
+      kind: "created",
+      ...(created.id === undefined ? {} : { receiverUid: created.id }),
+    });
     return Object.freeze(sandbox);
   }
 

@@ -58,7 +58,7 @@ const selected =
 const requiresOpenShellK3d = {
   skip: selected
     ? false
-    : "Set OCC_TEST_OPENSHELL_K3D_REAL=1 with explicit k3d, PostgreSQL, OpenShell, real image, and OPENAI_API_KEY prerequisites.",
+    : "OpenShell external-model integration is unselected; selecting OCC_TEST_OPENSHELL_K3D_REAL=1 currently fails the missing trusted runtime authentication owner prerequisite.",
 };
 const installationName = "OpenClaw OpenShell SandboxDriver integration";
 const authSecret = "openshell-sandbox-driver-auth-secret-32";
@@ -100,7 +100,6 @@ const {
   waitForOpenShellGateway,
   installOpenShellGateway,
   startOpenShellGatewayPortForward,
-  ensureOpenShellOpenAiProvider,
   waitForSandbox,
   waitForProviderHarnessPod,
   assertProviderOwnedHarness,
@@ -464,8 +463,8 @@ function bridgeRequirements(context) {
     ...context.requirements,
     command,
     environment: context.requirements.environment.filter(
-      // OpenShell supplies its provider placeholder after the Sandbox attaches oce-openai.
-      ({ name }) => name !== "APP_SERVER_TOKEN" && name !== "OPENAI_API_KEY",
+      // This bridge handles transport only; the driver must see any conflicting model entry.
+      ({ name }) => name !== "APP_SERVER_TOKEN",
     ),
     workspaceMounts: [
       ...context.requirements.workspaceMounts,
@@ -690,7 +689,6 @@ function createIntegrationSandboxDriverFactory(
       await installOpenShellGateway(namespaceName, { sandboxServiceAccountName });
       throwOpenShellAbortReason(context.signal);
       const forward = await startOpenShellGatewayPortForward(namespaceName);
-      await ensureOpenShellOpenAiProvider(forward.url);
       ownedState = { endpoint: forward.url, forward, sandboxServiceAccountName };
       gatewayState.set(namespaceName, ownedState);
       if (context.signal.aborted) {
@@ -748,7 +746,6 @@ function createIntegrationSandboxDriverFactory(
       capability: "sandbox",
       implementation: selection.implementation,
       facets: Object.freeze(["networking", "filesystem", "process"]),
-      modelCredentialSource: "external",
       configureAgent(configuration) {
         return new OpenShellSandboxDriver(selection.configuration, {
           id: selection.id,
@@ -778,7 +775,7 @@ function createIntegrationSandboxDriverFactory(
         const bridge = credentialBridgeResource(context, claimName, subPath);
         credentialBridges.set(context.revision.id, bridge);
         // Current upstream OpenShell cannot inject the transport Secret reference. The temporary
-        // bridge is operator-owned test infrastructure; OpenShell brokers the model credential.
+        // bridge is operator-owned test infrastructure and grants no model authentication.
         await applyCredentialJob(operatorKubernetes, bridge);
         await waitForCredentialJob(
           operatorKubernetes,

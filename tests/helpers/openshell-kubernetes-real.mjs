@@ -18,8 +18,6 @@ const harnessPort = 18790;
 const gatewayPort = 8080;
 const credentialMountPath = "/run/enterprise-credentials";
 const transportSecretPrefix = "openclaw-agent-transport";
-export const openShellOpenAiProviderName = "oce-openai";
-const openShellOpenAiProfileId = "oce-openai-api-key";
 
 const requiredWorkspaceMounts = Object.freeze([
   {
@@ -164,8 +162,6 @@ export function createOpenShellInstallationConfiguration({
           },
         ],
       },
-      providers: [openShellOpenAiProviderName],
-      modelCredential: { source: "provider" },
       sandboxNamePrefix: "os",
     },
   };
@@ -264,6 +260,12 @@ export function createOpenShellKubernetesFixture({
       process.env.OCC_TEST_OPENSHELL_K3D_REAL,
       "1",
       "OCC_TEST_OPENSHELL_K3D_REAL=1 is required for the real OpenShell integration.",
+    );
+    // TODO(runtime authentication broker owner): wire and qualify the existing broker's
+    // genuine Work admission and receiver lifecycle before enabling this external-model lane.
+    // Fail before reading model credentials, running external tools, or touching the cluster.
+    assert.fail(
+      "OpenShell external-model prerequisite unavailable: a trusted runtime authentication owner with genuine Work admission, provider custody, and qualified attachment/withdrawal is not wired. Startup provider options cannot supply this authority.",
     );
     assert.ok(
       process.env.OPENAI_API_KEY,
@@ -555,104 +557,6 @@ export function createOpenShellKubernetesFixture({
 
   async function startOpenShellGatewayPortForward(namespace) {
     return await base.startPortForward(namespace, openShellGatewayServiceName(namespace));
-  }
-
-  async function ensureOpenShellOpenAiProvider(endpoint) {
-    const directory = await mkdtemp(join(tmpdir(), "openshell-openai-provider-"));
-    const profilePath = join(directory, "profile.yaml");
-    const profile = `id: ${openShellOpenAiProfileId}
-display_name: OCE OpenAI API key
-description: OpenAI API-key provider for the OpenClaw Enterprise Codex Harness
-category: inference
-inference_capable: true
-credentials:
-  - name: api_key
-    description: OpenAI API key
-    env_vars: [OPENAI_API_KEY]
-    required: true
-    auth_style: bearer
-    header_name: authorization
-discovery:
-  credentials: [api_key]
-endpoints:
-  - host: api.openai.com
-    port: 443
-    protocol: rest
-    access: read-write
-    enforcement: enforce
-binaries:
-  - /usr/bin/codex
-  - /usr/local/bin/codex
-  - /app/node_modules/@openai/**
-`;
-    const gatewayArguments = ["--gateway-endpoint", endpoint, "--workspace", "default"];
-    try {
-      await writeFile(profilePath, profile, { mode: 0o600 });
-      let profileExists = true;
-      try {
-        await execute(
-          openShellCliPath,
-          [
-            ...gatewayArguments,
-            "provider",
-            "profile",
-            "export",
-            openShellOpenAiProfileId,
-            "--output",
-            "json",
-          ],
-          { maxBuffer: 1024 * 1024 },
-        );
-      } catch (error) {
-        if (!/not found/i.test(error.stderr ?? error.message)) throw error;
-        profileExists = false;
-      }
-      if (!profileExists) {
-        await execute(
-          openShellCliPath,
-          [...gatewayArguments, "provider", "profile", "lint", "--file", profilePath],
-          { maxBuffer: 1024 * 1024 },
-        );
-        await execute(
-          openShellCliPath,
-          [...gatewayArguments, "provider", "profile", "import", "--file", profilePath],
-          { maxBuffer: 1024 * 1024 },
-        );
-      }
-      try {
-        await execute(
-          openShellCliPath,
-          [
-            ...gatewayArguments,
-            "provider",
-            "create",
-            "--name",
-            openShellOpenAiProviderName,
-            "--type",
-            openShellOpenAiProfileId,
-            "--credential",
-            "OPENAI_API_KEY",
-          ],
-          { maxBuffer: 1024 * 1024 },
-        );
-      } catch (error) {
-        if (!/already exists/i.test(error.stderr ?? error.message)) throw error;
-        await execute(
-          openShellCliPath,
-          [
-            ...gatewayArguments,
-            "provider",
-            "update",
-            openShellOpenAiProviderName,
-            "--credential",
-            "OPENAI_API_KEY",
-          ],
-          { maxBuffer: 1024 * 1024 },
-        );
-      }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
   }
 
   async function provisionAgentTransportCredentials(directory, namespace, agentId) {
@@ -1035,7 +939,6 @@ binaries:
     waitForOpenShellGateway,
     installOpenShellGateway,
     startOpenShellGatewayPortForward,
-    ensureOpenShellOpenAiProvider,
     waitForSandbox,
     waitForProviderHarnessPod,
     assertProviderOwnedHarness,
