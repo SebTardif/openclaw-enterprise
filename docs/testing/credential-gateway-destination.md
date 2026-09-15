@@ -1,14 +1,16 @@
 # Credential gateway destination selection checks
 
-Run the selector checks from the repository root with Node.js 24 or newer:
+Run the selector and configured DNS checks from the repository root with Node.js 24 or newer:
 
 ```sh
-node --test tests/conformance/credential-gateway-destination.test.mjs
+node --test tests/conformance/credential-gateway-destination.test.mjs \
+  tests/integration/credential-gateway-dns.test.mjs
 ```
 
-The suite imports the actual TypeScript destination selector and supplies controlled
-DNS observations through its resolver factory. It checks numeric selection and
-refusal behavior without contacting GitHub or replacing the selector implementation.
+The suites import the actual TypeScript destination selector. Conformance checks
+supply controlled DNS observations; integration checks use the native resolver and
+real loopback DNS exchange. Both check selection and refusal without contacting
+GitHub or replacing the selector implementation.
 
 ## Component contract
 
@@ -17,7 +19,8 @@ three numeric trusted DNS servers, ports from 1 to 65535, and an integer lookup
 budget from 1 to 5000 milliseconds. Private infrastructure DNS servers are allowed.
 Hostnames, scoped addresses, brackets and whitespace are refused in server addresses.
 Configuration fields must be own data properties; accessors and sparse arrays are refused.
-The factory is the production seam for a configured native resolver.
+Pass `createNodeDestinationResolver` from the adjacent `destination-node-resolver.ts`
+module as the factory to use the configured native resolver.
 
 Each `select(hostname, { signal, deadline })` requires the exact `github.com` or
 `api.github.com` name, an unwrapped native AbortSignal and a safe integer epoch deadline in
@@ -62,15 +65,31 @@ fields, suppressed abort propagation, signal method mutations, throwing disposal
 malformed runtime operands, immutable configuration
 and answers, abort/deadline races, late rejections and independent cancellation.
 
-These are selector component checks with substituted DNS observations. Actual
-configured DNS exchange requires the native resolver integration suite. Upstream
+The conformance suite uses substituted DNS observations. The integration suite uses
+the actual `node:dns/promises` Resolver and selector against ephemeral IPv4 and IPv6
+loopback UDP DNS servers. It observes fixed-name A and AAAA wire queries, configured
+ports, multiple configured servers, public answers, NOERROR empty families, both-empty refusal, mixed private
+answers in either family, NXDOMAIN despite a safe opposite family, a silent-server
+deadline, fresh answers on later selections and concurrent cancellation isolation.
+Late real responses cannot change an aborted outcome. Fixture sockets and delayed
+response timers close after each case, and global DNS server configuration stays
+unchanged. The fixtures never dial the returned public answer addresses.
+
+Each selection creates a fresh native Resolver with the retained lookup timeout
+and one native try, then replaces its servers with every configured numeric
+address and port. IPv6 server addresses use bracketed port syntax. Only ENODATA
+becomes an empty answer; other native errors propagate to the selector's fixed
+refusal. There is no OS lookup fallback, global DNS mutation, application cache,
+CNAME/SRV query or alternate application retry. Native Resolver CNAME following
+remains allowed. These checks establish configured DNS component behavior. Upstream
 socket address pinning, fixed Host/SNI, independent public TLS trust, certificate
 refusal, current authority and final submission admission require the real upstream
 transport and its integration tests. A numeric destination is data and grants no
 authority to submit a request.
 
-The suite needs explicit enrollment in the central
-[CI suite map](../../scripts/ci/test-suites.json) before claiming selected CI coverage.
+Both suites are enrolled once in the baseline lane of the central
+[CI suite map](../../scripts/ci/test-suites.json). Catalog audit validates enrollment;
+local suite results alone do not establish a remote CI run.
 The application entry point, regular Agent caller, executable lifecycle, installed
 backend, containment and live provider remain separate required acceptance.
 A scoped compile of this module does not establish application build enrollment.

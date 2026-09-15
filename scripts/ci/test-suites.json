@@ -16,10 +16,16 @@
           "path": "tests/conformance/contracts.test.mjs"
         },
         {
+          "path": "tests/conformance/credential-gateway-destination.test.mjs"
+        },
+        {
           "path": "tests/conformance/credential-gateway-http-request.test.mjs"
         },
         {
           "path": "tests/conformance/credential-schema-json.test.mjs"
+        },
+        {
+          "path": "tests/integration/credential-gateway-dns.test.mjs"
         },
         {
           "path": "tests/conformance/docker-compute.test.mjs"

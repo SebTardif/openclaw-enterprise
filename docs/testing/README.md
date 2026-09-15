@@ -63,6 +63,9 @@ Use [HTTP head checks](credential-gateway-http.md) for native request inspection
 and [schema runtime verification](credential-schema-registry.md) for bounded
 canonical JSON. The [CI guide](ci.md) describes their compiler and suite selection;
 these component checks do not establish the broader gateway integration.
+Use [destination selection and native DNS checks](credential-gateway-destination.md)
+for configured loopback DNS exchange and selection refusal; these results remain
+component evidence with separate caller, transport and provider acceptance.
 
 ## Requirements and credentials
 
