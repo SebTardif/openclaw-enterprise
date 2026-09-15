@@ -65,6 +65,7 @@ export function bindPlatformUnitOfWork(
       "lockServiceAccount",
       "updateCredential",
       "deleteServiceAccount",
+      "hasReferences",
     ]),
     agents: bindRepository(repositories.agents, lifetime, [
       "findAgent",

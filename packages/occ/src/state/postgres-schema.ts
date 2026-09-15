@@ -1,9 +1,9 @@
 import { createCredentialInventoryTablesV1 } from "./postgres/credential-inventory-schema.ts";
 import type {
-  RepositoryAccess,
-  RepositoryBinding,
   HarnessExecutionMode,
   PluginDesiredState,
+  RepositoryAccess,
+  RepositoryBinding,
   SecretBindings,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";

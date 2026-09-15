@@ -76,6 +76,7 @@ function validCheckoutRef(value: string): boolean {
     .split("/")
     .every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"));
 }
+
 export function normalizeRepositoryAccess(
   value: unknown = { schemaVersion: 1, repositories: [] },
 ): RepositoryAccess {
@@ -91,6 +92,7 @@ export function normalizeRepositoryAccess(
   }
   return immutableCopy(value);
 }
+
 export function validRepositoryBinding(value: unknown): value is RepositoryBinding {
   return Check(RepositoryBindingSchema, value);
 }
