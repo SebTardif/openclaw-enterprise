@@ -116,11 +116,9 @@ export {
 export { createPostgresPool } from "./state/postgres-pool.ts";
 export {
   applyDriverLifecycle,
-  recordExistingDriverLifecycle,
   uninstallDriverLifecycle,
   DriverLifecycleAbortedError,
   DriverLifecycleConnectionLostError,
-  DriverLifecycleTimeoutError,
   type DriverLifecycleContext,
   type DriverLifecycleHooks,
   type DriverLifecycleOptions,

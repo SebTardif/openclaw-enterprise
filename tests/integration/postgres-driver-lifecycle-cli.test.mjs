@@ -482,13 +482,11 @@ test(
     let configPath = await startupPath(workspace, {
       driverId,
       effectsPath,
-      mode: "normal",
+      mode: "no-hooks",
     });
     assert.deepEqual(
-      completed(await runCli(workspace, ["apply", "--record-existing"], configPath)).map(
-        ({ kind }) => kind,
-      ),
-      ["recorded", "recorded", "recorded", "recorded"],
+      completed(await runCli(workspace, ["apply"], configPath)).map(({ kind }) => kind),
+      ["installed", "installed", "installed", "installed"],
     );
     assert.deepEqual(await effectEvents(effectsPath), []);
     assert.deepEqual(
@@ -527,10 +525,7 @@ test(
         },
       ],
     );
-    assert.equal(
-      failed(await runCli(workspace, ["apply", "--record-existing"], configPath)).code,
-      "DRIVER_LIFECYCLE_FAILED",
-    );
+    configPath = await startupPath(workspace, { driverId, effectsPath, mode: "normal" });
     assert.deepEqual(
       completed(await runCli(workspace, ["apply"], configPath)).map(({ kind }) => kind),
       ["unchanged", "unchanged", "unchanged", "unchanged"],

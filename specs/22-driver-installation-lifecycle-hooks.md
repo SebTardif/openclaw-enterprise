@@ -2,7 +2,13 @@
 
 **Date:** 2026-09-09
 
-**Status:** Implemented locally; focused verification passed
+**Status:** Original proposal retained; implementation simplified before merge.
+
+The 2026-09-15 approved simplification removes the proposed existing-installation
+adoption command and consolidates runtime targets and deadline ownership.
+The [current Driver contract](../docs/reference/drivers/selection.md#installation-lifecycle-hooks)
+owns supported behavior; the proposal and earlier verification below record the
+original design.
 
 **Owner:** OCC controller and deployment tooling
 
@@ -102,6 +108,8 @@ Implemented in the local working tree:
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- [2026-09-15]: Removed `apply --record-existing` after user approval; first apply invokes install hooks for missing receipts. Consolidated runtime targets and made the CLI supervisor the sole deadline owner. (NOT_IN_SPEC)
 
 - [2026-09-09 17:02]: Proposed Installation-scoped onInstall, onUpdate and onUninstall with durable state, ordered deployment, outgoing-code retention and focused verification. (01a08890-87c8-7293-bd75-d7fc58e52cf2 - ee53c7b562ab0d593a3bfb8ecfd6e700ee98a716)
 - [2026-09-09 17:10]: Simplified to three hooks, version receipts and one deployment command; removed configuration snapshots, pending workflows and runtime inventory gates. (01a088a6-721b-7f52-b86f-82f05270b41a - ee53c7b562ab0d593a3bfb8ecfd6e700ee98a716)

@@ -1,7 +1,14 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { appendFile } from "node:fs/promises";
 
-const modes = new Set(["normal", "fail-update", "crash-install", "spawn-hang-install"]);
+const modes = new Set([
+  "normal",
+  "no-hooks",
+  "fail-update",
+  "crash-install",
+  "spawn-hang-install",
+]);
 
 export const configurationSchema = Object.freeze({
   type: "object",
@@ -28,6 +35,8 @@ async function record(configuration, event) {
 }
 
 async function hook(configuration, name, context) {
+  assert.equal(Object.isFrozen(context), true);
+  assert.equal(context.signal instanceof AbortSignal, true);
   await record(configuration, {
     hook: name,
     installationId: context.installationId,
@@ -66,11 +75,15 @@ export function createDriver({ id, implementation, configuration }) {
     id,
     capability: "configuration",
     implementation,
-    lifecycleHooks: Object.freeze({
-      onInstall: (context) => hook(configuration, "onInstall", context),
-      onUpdate: (context) => hook(configuration, "onUpdate", context),
-      onUninstall: (context) => hook(configuration, "onUninstall", context),
-    }),
+    ...(configuration.mode === "no-hooks"
+      ? {}
+      : {
+          lifecycleHooks: Object.freeze({
+            onInstall: (context) => hook(configuration, "onInstall", context),
+            onUpdate: (context) => hook(configuration, "onUpdate", context),
+            onUninstall: (context) => hook(configuration, "onUninstall", context),
+          }),
+        }),
     async create(value) {
       values.set(key(value), structuredClone(value));
       return structuredClone(value);

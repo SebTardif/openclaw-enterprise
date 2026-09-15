@@ -236,10 +236,9 @@ Lifecycle hooks may start packaged subprocesses, but those subprocesses must
 remain in the lifecycle command's process group and stop when its signal aborts.
 Detached or daemonized work is unsupported.
 
-For the first hook-aware rollout of an existing Installation, run
-`node scripts/driver-lifecycle.mjs apply --record-existing` only from the exact
-outgoing image and Installation YAML. It records loaded versions without hooks
-and refuses nonempty receipt state.
+The first lifecycle-aware deployment runs `apply`: every selected Driver without
+a receipt receives `onInstall`. Hooks must tolerate retries and inspect existing
+external state when setup may already exist. There is no separate adoption step.
 
 ## Related
 

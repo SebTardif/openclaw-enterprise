@@ -336,12 +336,9 @@
         {
           "path": "tests/integration/postgres-driver-lifecycle.test.mjs",
           "expectedTests": [
-            "Driver lifecycle receipts follow install, update, no-op, uninstall, and reinstall",
             "external command abort skips hooks and receipt writes",
-            "record-existing writes only once and never runs hooks",
             "later hook failure preserves earlier successful receipts",
             "family changes require explicit uninstall before install",
-            "timeout aborts the hook and leaves the receipt unchanged",
             "database session loss aborts the hook and leaves the receipt unchanged",
             "session advisory lock contention rejects another lifecycle command",
             "uninstall blocks Drivers that still have conservative platform references",
@@ -415,8 +412,9 @@
             "production native examples satisfy the current Helm, Installation, and PVC schemas",
             "production Helm values example renders the providerless default chart",
             "the production Helm chart renders private least-privilege runtime and ordered bootstrap",
-            "the optional ChatGPT Provider isolates admin credentials, tenant Secrets, and provider egress to the API",
+            "the optional ChatGPT Provider isolates admin credentials to API and lifecycle Pods",
             "the real Helm renderer rejects mutable images, broad dependencies, and shared credentials",
+            "production Driver lifecycle egress is explicitly scoped",
             "private Envoy Gateway routing renders automatic CA and deterministic default hostnames",
             "private Envoy Gateway routing preserves explicit hostnames and external CA trust"
           ]

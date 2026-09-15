@@ -2,16 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
-import {
-  DriverLifecycleAbortedError,
-  DriverLifecycleConnectionLostError,
-  DriverLifecycleTimeoutError,
-  ResourceConflictError,
-  ScopeViolationError,
-} from "../../packages/occ/src/index.ts";
+import { ResourceConflictError, ScopeViolationError } from "../../packages/occ/src/errors.ts";
 import {
   applyDriverLifecycle,
-  recordExistingDriverLifecycle,
+  DriverLifecycleAbortedError,
+  DriverLifecycleConnectionLostError,
   uninstallDriverLifecycle,
 } from "../../packages/occ/src/state/driver-lifecycle.ts";
 import { PostgresPlatformState } from "../../packages/occ/src/state/postgres-state.ts";
@@ -90,6 +85,11 @@ async function assertBlockedUninstallKeepsReceipt({
   providerIds = [],
 }) {
   let called = false;
+  const base = target({
+    capability,
+    id,
+    implementationFamily,
+  });
   const selected = target({
     capability,
     id,
@@ -100,7 +100,7 @@ async function assertBlockedUninstallKeepsReceipt({
       },
     },
   });
-  await recordExistingDriverLifecycle({ pool, targets: [selected] });
+  await applyDriverLifecycle({ pool, targets: [base] });
   const before = await receipts(pool);
 
   await assert.rejects(
@@ -116,127 +116,6 @@ async function assertBlockedUninstallKeepsReceipt({
   assert.equal(called, false);
   assert.deepEqual(await receipts(pool), before);
 }
-
-test(
-  "Driver lifecycle receipts follow install, update, no-op, uninstall, and reinstall",
-  requiresPostgres,
-  async (context) => {
-    const { pool, installation } = await setup(context);
-    const events = [];
-    const hooks = {
-      async onInstall(value) {
-        events.push({
-          hook: "onInstall",
-          installationId: value.installationId,
-          capability: value.capability,
-          driverId: value.driverId,
-          version: value.version,
-          previousVersion: value.previousVersion,
-          frozen: Object.isFrozen(value),
-          signal: value.signal instanceof AbortSignal,
-        });
-      },
-      async onUpdate(value) {
-        events.push({
-          hook: "onUpdate",
-          driverId: value.driverId,
-          version: value.version,
-          previousVersion: value.previousVersion,
-        });
-      },
-      async onUninstall(value) {
-        events.push({
-          hook: "onUninstall",
-          driverId: value.driverId,
-          version: value.version,
-          previousVersion: value.previousVersion,
-        });
-      },
-    };
-    const selected = target({ id: "compute-lifecycle", lifecycleHooks: hooks });
-
-    assert.deepEqual(await applyDriverLifecycle({ pool, targets: [selected] }), [
-      {
-        kind: "installed",
-        capability: "compute",
-        driverId: "compute-lifecycle",
-        implementationFamily: "@fixture/test-compute-driver",
-        version: "1.0.0",
-      },
-    ]);
-    assert.equal(events[0].installationId, installation.id);
-    assert.equal(events[0].frozen, true);
-    assert.equal(events[0].signal, true);
-    assert.deepEqual(await receipts(pool), [
-      {
-        capability: "compute",
-        driver_id: "compute-lifecycle",
-        implementation_family: "@fixture/test-compute-driver",
-        version: "1.0.0",
-      },
-    ]);
-
-    assert.deepEqual(await applyDriverLifecycle({ pool, targets: [selected] }), [
-      {
-        kind: "unchanged",
-        capability: "compute",
-        driverId: "compute-lifecycle",
-        implementationFamily: "@fixture/test-compute-driver",
-        version: "1.0.0",
-      },
-    ]);
-    assert.equal(events.length, 1);
-
-    const upgraded = target({
-      id: "compute-lifecycle",
-      version: "1.1.0",
-      lifecycleHooks: hooks,
-    });
-    assert.deepEqual(await applyDriverLifecycle({ pool, targets: [upgraded] }), [
-      {
-        kind: "updated",
-        capability: "compute",
-        driverId: "compute-lifecycle",
-        implementationFamily: "@fixture/test-compute-driver",
-        version: "1.1.0",
-        previousVersion: "1.0.0",
-      },
-    ]);
-    assert.deepEqual(events[1], {
-      hook: "onUpdate",
-      driverId: "compute-lifecycle",
-      version: "1.1.0",
-      previousVersion: "1.0.0",
-    });
-
-    assert.deepEqual(
-      await uninstallDriverLifecycle({
-        pool,
-        targets: [upgraded],
-        capability: "compute",
-        driverId: "compute-lifecycle",
-      }),
-      [
-        {
-          kind: "uninstalled",
-          capability: "compute",
-          driverId: "compute-lifecycle",
-          implementationFamily: "@fixture/test-compute-driver",
-          version: "1.1.0",
-        },
-      ],
-    );
-    assert.deepEqual(events[2], {
-      hook: "onUninstall",
-      driverId: "compute-lifecycle",
-      version: "1.1.0",
-      previousVersion: undefined,
-    });
-    assert.deepEqual(await receipts(pool), []);
-
-    assert.equal((await applyDriverLifecycle({ pool, targets: [upgraded] }))[0].kind, "installed");
-  },
-);
 
 test("external command abort skips hooks and receipt writes", requiresPostgres, async (context) => {
   const { pool } = await setup(context);
@@ -263,34 +142,6 @@ test("external command abort skips hooks and receipt writes", requiresPostgres, 
   );
   assert.equal(called, false);
   assert.deepEqual(await receipts(pool), []);
-});
-
-test("record-existing writes only once and never runs hooks", requiresPostgres, async (context) => {
-  const { pool } = await setup(context);
-  let called = false;
-  const selected = target({
-    id: "recorded-driver",
-    lifecycleHooks: {
-      async onInstall() {
-        called = true;
-      },
-    },
-  });
-
-  assert.deepEqual(await recordExistingDriverLifecycle({ pool, targets: [selected] }), [
-    {
-      kind: "recorded",
-      capability: "compute",
-      driverId: "recorded-driver",
-      implementationFamily: "@fixture/test-compute-driver",
-      version: "1.0.0",
-    },
-  ]);
-  assert.equal(called, false);
-  await assert.rejects(
-    recordExistingDriverLifecycle({ pool, targets: [selected] }),
-    ResourceConflictError,
-  );
 });
 
 test(
@@ -346,42 +197,6 @@ test(
 );
 
 test(
-  "timeout aborts the hook and leaves the receipt unchanged",
-  requiresPostgres,
-  async (context) => {
-    const { pool } = await setup(context);
-    let observedAbort = false;
-    const selected = target({
-      id: "timeout-driver",
-      lifecycleHooks: {
-        async onInstall({ signal }) {
-          signal.addEventListener(
-            "abort",
-            () => {
-              observedAbort = true;
-            },
-            { once: true },
-          );
-          await new Promise(() => {});
-        },
-      },
-    });
-
-    await assert.rejects(
-      applyDriverLifecycle({
-        pool,
-        targets: [selected],
-        timeoutMs: 20,
-        connectionCheckIntervalMs: 5,
-      }),
-      DriverLifecycleTimeoutError,
-    );
-    assert.equal(observedAbort, true);
-    assert.deepEqual(await receipts(pool), []);
-  },
-);
-
-test(
   "database session loss aborts the hook and leaves the receipt unchanged",
   requiresPostgres,
   async (context) => {
@@ -415,8 +230,6 @@ test(
       applyDriverLifecycle({
         pool,
         targets: [selected],
-        timeoutMs: 5_000,
-        connectionCheckIntervalMs: 5,
       }),
       DriverLifecycleConnectionLostError,
     );
@@ -454,7 +267,7 @@ test(
       id: "iam-lifecycle",
       implementationFamily: "@fixture/test-iam-driver",
     });
-    await recordExistingDriverLifecycle({ pool, targets: [selected] });
+    await applyDriverLifecycle({ pool, targets: [selected] });
 
     await assert.rejects(
       uninstallDriverLifecycle({

@@ -21,6 +21,7 @@ import type {
 import { NativeIAMDriver, type NativeIAMStateStore } from "@openclaw-enterprise/iam";
 import {
   validateProviderDefinitions,
+  type DriverLifecycleTarget,
   type OpenClawController,
   type PostgresPlatformState,
 } from "@openclaw-enterprise/occ";
@@ -58,18 +59,6 @@ export interface SelectedDriverConfiguration<T = ConfigurationRecord> {
   readonly configuration: T;
 }
 
-export interface DriverLifecycleSelection {
-  readonly capability: DriverCapability;
-  readonly driverId: string;
-  readonly implementation: string;
-  readonly implementationFamily: string;
-  readonly version: string;
-}
-
-export interface RuntimeDriverLifecycleSelection extends DriverLifecycleSelection {
-  readonly driver: Driver;
-}
-
 export interface InstallationStartupConfiguration {
   readonly occ: { readonly cluster: string };
   readonly logging: LoggingConfiguration;
@@ -92,17 +81,16 @@ export type ServiceAccountDriverFactory = (
 
 export interface InstallationRuntimeDrivers {
   readonly installation: InstallationStartupConfiguration;
-  readonly lifecycleDriverSelections: readonly DriverLifecycleSelection[];
   readonly computeDriver: ComputeDriver;
   readonly configurationDriver: ConfigurationDriver;
   readonly secretDriver: SecretDriver;
   readonly sandboxDriver?: SandboxDriver;
   readonly pluginDriver?: PluginDriver;
   readonly createIAMDriver: (state: NativeIAMStateStore) => IAMDriver;
-  readonly createLifecycleDrivers: (options: {
+  readonly createLifecycleTargets: (options: {
     readonly iamState: NativeIAMStateStore;
     readonly serviceAccountDriver?: ServiceAccountDriver;
-  }) => readonly RuntimeDriverLifecycleSelection[];
+  }) => readonly DriverLifecycleTarget[];
 }
 
 async function startupConfiguration(
@@ -458,33 +446,6 @@ async function loadDriverPackage(
   });
 }
 
-function lifecycleSelection(
-  capability: DriverCapability,
-  driverId: string,
-  descriptor: BundledDriverDescriptor,
-): DriverLifecycleSelection {
-  return Object.freeze({
-    capability,
-    driverId,
-    implementation: descriptor.implementation,
-    implementationFamily: descriptor.implementationFamily,
-    version: descriptor.version,
-  });
-}
-
-function selectedLifecycleSelection(
-  capability: DriverCapability,
-  selection: SelectedDriverConfiguration,
-): DriverLifecycleSelection {
-  return Object.freeze({
-    capability,
-    driverId: selection.id,
-    implementation: selection.implementation,
-    implementationFamily: selection.implementationFamily,
-    version: selection.version,
-  });
-}
-
 function validateLifecycleHooks(driver: ConfigurationRecord, path: string): void {
   if (driver.lifecycleHooks === undefined) return;
   const hooks = object(driver.lifecycleHooks, `${path}.lifecycleHooks`);
@@ -496,20 +457,30 @@ function validateLifecycleHooks(driver: ConfigurationRecord, path: string): void
   }
 }
 
-function runtimeLifecycleSelection(
-  selection: DriverLifecycleSelection,
+function lifecycleTarget(
+  capability: DriverCapability,
   driver: Driver,
-): RuntimeDriverLifecycleSelection {
-  const created = object(driver, `drivers.${selection.capability} lifecycle Driver`);
+  metadata: Pick<
+    SelectedDriverConfiguration,
+    "id" | "implementation" | "implementationFamily" | "version"
+  >,
+): DriverLifecycleTarget {
+  const created = object(driver, `drivers.${capability} lifecycle Driver`);
   if (
-    created.capability !== selection.capability ||
-    created.id !== selection.driverId ||
-    created.implementation !== selection.implementation
+    created.capability !== capability ||
+    created.id !== metadata.id ||
+    created.implementation !== metadata.implementation
   ) {
-    throw new Error(`drivers.${selection.capability} lifecycle Driver identity changed.`);
+    throw new Error(`drivers.${capability} lifecycle Driver identity changed.`);
   }
-  validateLifecycleHooks(created, `drivers.${selection.capability}`);
-  return Object.freeze({ ...selection, driver });
+  validateLifecycleHooks(created, `drivers.${capability}`);
+  return Object.freeze({
+    capability,
+    id: metadata.id,
+    implementationFamily: metadata.implementationFamily,
+    version: metadata.version,
+    ...(driver.lifecycleHooks === undefined ? {} : { lifecycleHooks: driver.lifecycleHooks }),
+  });
 }
 
 function selected(
@@ -759,31 +730,6 @@ export async function loadInstallationConfiguration(options: {
       ...(serviceAccount === undefined ? {} : { service_account: serviceAccount }),
     }),
   });
-  const configurationLifecycle = selectedLifecycleSelection("configuration", configured);
-  const sandboxLifecycle =
-    sandbox === undefined ? undefined : selectedLifecycleSelection("sandbox", sandbox);
-  const computeLifecycle = selectedLifecycleSelection("compute", compute);
-  const secretLifecycle = selectedLifecycleSelection("secret", secret);
-  const iamLifecycle = selectedLifecycleSelection("iam", iam);
-  const pluginLifecycle =
-    plugin === undefined ? undefined : selectedLifecycleSelection("plugin", plugin);
-  const serviceAccountLifecycle =
-    serviceAccount === undefined
-      ? undefined
-      : lifecycleSelection(
-          "service_account",
-          serviceAccount.id,
-          BUNDLED_DRIVER_DESCRIPTORS.serviceAccountChatGPT,
-        );
-  const lifecycleDriverSelections = Object.freeze([
-    configurationLifecycle,
-    ...(sandboxLifecycle === undefined ? [] : [sandboxLifecycle]),
-    computeLifecycle,
-    secretLifecycle,
-    iamLifecycle,
-    ...(pluginLifecycle === undefined ? [] : [pluginLifecycle]),
-    ...(serviceAccountLifecycle === undefined ? [] : [serviceAccountLifecycle]),
-  ]);
   const configurationDriver =
     configurationPackage === undefined
       ? new KubernetesConfigurationDriver(
@@ -842,34 +788,38 @@ export async function loadInstallationConfiguration(options: {
       ? new NativeIAMDriver(state, { id: iam.id, implementation: iam.implementation })
       : (createExternalDriver(iamPackage.module, iam, "iam", state) as IAMDriver);
   };
-  const createLifecycleDrivers = (options: {
+  const createLifecycleTargets = (options: {
     readonly iamState: NativeIAMStateStore;
     readonly serviceAccountDriver?: ServiceAccountDriver;
-  }): readonly RuntimeDriverLifecycleSelection[] => {
+  }): readonly DriverLifecycleTarget[] => {
     const serviceAccountDriver = options.serviceAccountDriver;
-    if (serviceAccountLifecycle !== undefined && serviceAccountDriver === undefined) {
+    if (serviceAccount !== undefined && serviceAccountDriver === undefined) {
       throw new Error(
         "The selected ServiceAccount lifecycle Driver requires API-side construction.",
       );
     }
-    if (serviceAccountLifecycle === undefined && serviceAccountDriver !== undefined) {
+    if (serviceAccount === undefined && serviceAccountDriver !== undefined) {
       throw new Error("An unselected ServiceAccount lifecycle Driver was supplied.");
     }
     const iamDriver = createIAMDriver(options.iamState);
     return Object.freeze([
-      runtimeLifecycleSelection(configurationLifecycle, configurationDriver),
-      ...(sandboxLifecycle === undefined
+      lifecycleTarget("configuration", configurationDriver, configured),
+      ...(sandbox === undefined ? [] : [lifecycleTarget("sandbox", sandboxDriver!, sandbox)]),
+      lifecycleTarget("compute", computeDriver, compute),
+      lifecycleTarget("secret", secretDriver, secret),
+      lifecycleTarget("iam", iamDriver, iam),
+      ...(plugin === undefined ? [] : [lifecycleTarget("plugin", pluginDriver!, plugin)]),
+      ...(serviceAccount === undefined
         ? []
-        : [runtimeLifecycleSelection(sandboxLifecycle, sandboxDriver!)]),
-      runtimeLifecycleSelection(computeLifecycle, computeDriver),
-      runtimeLifecycleSelection(secretLifecycle, secretDriver),
-      runtimeLifecycleSelection(iamLifecycle, iamDriver),
-      ...(pluginLifecycle === undefined
-        ? []
-        : [runtimeLifecycleSelection(pluginLifecycle, pluginDriver!)]),
-      ...(serviceAccountLifecycle === undefined
-        ? []
-        : [runtimeLifecycleSelection(serviceAccountLifecycle, serviceAccountDriver!)]),
+        : [
+            lifecycleTarget("service_account", serviceAccountDriver!, {
+              id: serviceAccount.id,
+              implementation: BUNDLED_DRIVER_DESCRIPTORS.serviceAccountChatGPT.implementation,
+              implementationFamily:
+                BUNDLED_DRIVER_DESCRIPTORS.serviceAccountChatGPT.implementationFamily,
+              version: BUNDLED_DRIVER_DESCRIPTORS.serviceAccountChatGPT.version,
+            }),
+          ]),
     ]);
   };
   if (
@@ -883,14 +833,13 @@ export async function loadInstallationConfiguration(options: {
   }
   return Object.freeze({
     installation,
-    lifecycleDriverSelections,
     computeDriver,
     configurationDriver,
     secretDriver,
     ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
     createIAMDriver,
     ...(pluginDriver === undefined ? {} : { pluginDriver }),
-    createLifecycleDrivers,
+    createLifecycleTargets,
   });
 }
 

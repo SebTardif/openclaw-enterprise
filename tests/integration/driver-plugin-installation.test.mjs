@@ -292,64 +292,52 @@ test("reviewed scoped Driver packages install, activate, and fail closed", async
       configuration.drivers.compute = selectedCompute();
       configuration.drivers.iam = selectedIAM();
       const drivers = await load(owner, configuration, "production");
-      assert.deepEqual(
-        drivers.lifecycleDriverSelections.map(
-          ({ capability, driverId, implementation, implementationFamily, version }) => ({
-            capability,
-            driverId,
-            implementation,
-            implementationFamily,
-            version,
-          }),
-        ),
-        [
-          {
-            capability: "configuration",
-            driverId: "configuration-installed-fixture",
-            implementation: `${configurationPackage}@1.0.0`,
-            implementationFamily: configurationPackage,
-            version: "1.0.0",
-          },
-          {
-            capability: "compute",
-            driverId: "compute-installed-fixture",
-            implementation: `${computePackage}@1.0.0`,
-            implementationFamily: computePackage,
-            version: "1.0.0",
-          },
-          {
-            capability: "secret",
-            driverId: "secret-kubernetes",
-            implementation: "occ/kubernetes-secret",
-            implementationFamily: "occ/kubernetes-secret",
-            version: "0.1.0",
-          },
-          {
-            capability: "iam",
-            driverId: "iam-installed-fixture",
-            implementation: `${iamPackage}@1.0.0`,
-            implementationFamily: iamPackage,
-            version: "1.0.0",
-          },
-        ],
-      );
-      const lifecycleDrivers = drivers.createLifecycleDrivers({
+      const lifecycleTargets = drivers.createLifecycleTargets({
         iamState: emptyNativeIAMStateStore,
       });
       assert.deepEqual(
-        lifecycleDrivers.map(({ driver, ...metadata }) => metadata),
-        drivers.lifecycleDriverSelections,
+        lifecycleTargets.map(({ lifecycleHooks, ...metadata }) => ({
+          ...metadata,
+          hasInstallHook: typeof lifecycleHooks?.onInstall === "function",
+        })),
+        [
+          {
+            capability: "configuration",
+            id: "configuration-installed-fixture",
+            implementationFamily: configurationPackage,
+            version: "1.0.0",
+            hasInstallHook: true,
+          },
+          {
+            capability: "compute",
+            id: "compute-installed-fixture",
+            implementationFamily: computePackage,
+            version: "1.0.0",
+            hasInstallHook: true,
+          },
+          {
+            capability: "secret",
+            id: "secret-kubernetes",
+            implementationFamily: "occ/kubernetes-secret",
+            version: "0.1.0",
+            hasInstallHook: false,
+          },
+          {
+            capability: "iam",
+            id: "iam-installed-fixture",
+            implementationFamily: iamPackage,
+            version: "1.0.0",
+            hasInstallHook: true,
+          },
+        ],
       );
       const lifecycleSignal = new AbortController().signal;
-      for (const entry of lifecycleDrivers) {
-        assert.equal(entry.driver.id, entry.driverId);
-        assert.equal(entry.driver.capability, entry.capability);
-        assert.equal(entry.driver.implementation, entry.implementation);
-        await entry.driver.lifecycleHooks?.onInstall?.({
+      for (const target of lifecycleTargets) {
+        await target.lifecycleHooks?.onInstall?.({
           installationId: "ins_lifecycle_loader_test",
-          capability: entry.capability,
-          driverId: entry.driverId,
-          version: entry.version,
+          capability: target.capability,
+          driverId: target.id,
+          version: target.version,
           signal: lifecycleSignal,
         });
       }

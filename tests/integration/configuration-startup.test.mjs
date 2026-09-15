@@ -148,15 +148,8 @@ test("shared startup loads provider metadata without reading the API-only ChatGP
   assert.deepEqual(drivers.installation.drivers.service_account, {
     id: "chatgpt-service-accounts",
   });
-  assert.deepEqual(drivers.lifecycleDriverSelections.at(-1), {
-    capability: "service_account",
-    driverId: "chatgpt-service-accounts",
-    implementation: "chatgpt",
-    implementationFamily: "chatgpt",
-    version: "0.1.0",
-  });
   assert.throws(
-    () => drivers.createLifecycleDrivers({ iamState: emptyNativeIAMStateStore }),
+    () => drivers.createLifecycleTargets({ iamState: emptyNativeIAMStateStore }),
     /ServiceAccount lifecycle Driver requires API-side construction/,
   );
   const serviceAccountDriver = Object.freeze({
@@ -164,11 +157,16 @@ test("shared startup loads provider metadata without reading the API-only ChatGP
     capability: "service_account",
     implementation: "chatgpt",
   });
-  const lifecycleDrivers = drivers.createLifecycleDrivers({
+  const lifecycleTargets = drivers.createLifecycleTargets({
     iamState: emptyNativeIAMStateStore,
     serviceAccountDriver,
   });
-  assert.equal(lifecycleDrivers.at(-1).driver, serviceAccountDriver);
+  assert.deepEqual(lifecycleTargets.at(-1), {
+    capability: "service_account",
+    id: "chatgpt-service-accounts",
+    implementationFamily: "chatgpt",
+    version: "0.1.0",
+  });
   assert.equal(Object.hasOwn(drivers, "serviceAccountDriver"), false);
   assert.equal(Object.hasOwn(drivers, "chatgptClient"), false);
 });

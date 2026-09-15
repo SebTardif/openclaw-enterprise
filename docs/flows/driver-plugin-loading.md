@@ -100,8 +100,11 @@ After migration and bootstrap succeed, deployment runs
 while comparing selected Drivers with lifecycle receipts. New selected Drivers
 receive `onInstall`; same-family version changes receive `onUpdate`; unchanged
 versions receive no hook. Missing hooks are recorded as successful no-ops.
-Packaged subprocesses remain inside the lifecycle command's process group and
-must stop when its signal aborts; detached daemon work is unsupported.
+Composition returns one list of validated runtime targets directly to the
+command. Its supervisor owns the five-minute deadline and terminates the owned
+process group; the locked database session aborts hooks on connection loss.
+Packaged subprocesses remain inside that group and must stop when the command
+signal aborts; detached daemon work is unsupported.
 
 This command is the only automatic deployment-time lifecycle path. Removing a
 Driver from YAML does not call `onUninstall`; operators run
@@ -185,6 +188,8 @@ their existing Harness-owned runtime topology.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-15: Consolidated runtime targets and command timeout ownership; removed the separate existing-installation adoption command. First apply invokes install hooks for missing receipts. (NOT_IN_SPEC)
 
 - 2026-09-09 17:25: Added the deployment-time Driver installation lifecycle command before API and worker startup. (01a08890-87c8-7293-bd75-d7fc58e52cf2 - ee53c7b562ab0d593a3bfb8ecfd6e700ee98a716)
 - 2026-09-01 19:09: Include Secret and Sandbox construction and the API-only Provider/ServiceAccount branch in the current loading trace. (01a05f95-dd80-7011-990f-d1c46b5bb3cc - aa366c49c44834d59f74994c5fd37fb8096f169f)

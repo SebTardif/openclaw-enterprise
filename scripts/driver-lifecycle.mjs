@@ -11,9 +11,6 @@ function fail(code) {
 
 function parseArguments(args) {
   if (args.length === 1 && args[0] === "apply") return { operation: "apply" };
-  if (args.length === 2 && args[0] === "apply" && args[1] === "--record-existing") {
-    return { operation: "record-existing" };
-  }
   if (args.length === 5 && args[0] === "uninstall") {
     const options = new Map();
     for (let index = 1; index < args.length; index += 2) {
@@ -117,28 +114,16 @@ async function run(options, signal) {
       drivers === undefined
         ? undefined
         : await selectedServiceAccountDriver(drivers, installation, state);
-    const selected =
-      drivers?.createLifecycleDrivers({
+    const targets =
+      drivers?.createLifecycleTargets({
         iamState: state,
         ...(serviceAccountDriver === undefined ? {} : { serviceAccountDriver }),
       }) ?? [];
     signal.throwIfAborted();
-    const targets = selected.map(
-      ({ capability, driverId, implementationFamily, version, driver }) => ({
-        capability,
-        id: driverId,
-        implementationFamily,
-        version,
-        ...(driver.lifecycleHooks === undefined ? {} : { lifecycleHooks: driver.lifecycleHooks }),
-      }),
-    );
     const common = { pool, targets, signal };
     let results;
     if (options.operation === "apply") results = await lifecycle.applyDriverLifecycle(common);
-    else if (options.operation === "record-existing") {
-      if (targets.length === 0) throw new Error("An explicit outgoing selection is required.");
-      results = await lifecycle.recordExistingDriverLifecycle(common);
-    } else {
+    else {
       results = await lifecycle.uninstallDriverLifecycle({
         ...common,
         capability: options.capability,

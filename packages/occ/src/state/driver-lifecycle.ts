@@ -32,7 +32,7 @@ export interface DriverLifecycleReceipt {
 }
 
 export type DriverLifecycleResultKind =
-  "installed" | "updated" | "unchanged" | "recorded" | "uninstalled" | "noop";
+  "installed" | "updated" | "unchanged" | "uninstalled" | "noop";
 
 export interface DriverLifecycleResult {
   readonly kind: DriverLifecycleResultKind;
@@ -47,21 +47,12 @@ export interface DriverLifecycleOptions {
   readonly pool: PostgresPool;
   readonly targets: readonly DriverLifecycleTarget[];
   readonly signal?: AbortSignal;
-  readonly timeoutMs?: number;
-  readonly connectionCheckIntervalMs?: number;
 }
 
 export interface DriverLifecycleUninstallOptions extends DriverLifecycleOptions {
   readonly capability: DriverCapability;
   readonly driverId: string;
   readonly providerIds?: readonly string[];
-}
-
-export class DriverLifecycleTimeoutError extends DependencyUnavailableError {
-  constructor() {
-    super("The Driver lifecycle hook timed out.");
-    this.name = "DriverLifecycleTimeoutError";
-  }
 }
 
 export class DriverLifecycleConnectionLostError extends DependencyUnavailableError {
@@ -78,7 +69,6 @@ export class DriverLifecycleAbortedError extends DependencyUnavailableError {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 300_000;
 const DEFAULT_CONNECTION_CHECK_INTERVAL_MS = 1_000;
 const LIFECYCLE_LOCK_NAMESPACE = "openclaw-enterprise:driver-lifecycle";
 
@@ -342,8 +332,6 @@ async function runHook(
   target: DriverLifecycleTarget,
   hookName: DriverLifecycleHookName,
   previousVersion: string | undefined,
-  timeoutMs: number,
-  connectionCheckIntervalMs: number,
   commandSignal: AbortSignal | undefined,
 ): Promise<void> {
   const hooks = lifecycleHooks(target);
@@ -361,7 +349,7 @@ async function runHook(
     rejectAbort(error);
   };
   commandSignal?.addEventListener("abort", abort, { once: true });
-  const monitor = startConnectionMonitor(client, controller, connectionCheckIntervalMs);
+  const monitor = startConnectionMonitor(client, controller, DEFAULT_CONNECTION_CHECK_INTERVAL_MS);
   const context = Object.freeze({
     installationId,
     capability: target.capability,
@@ -370,19 +358,10 @@ async function runHook(
     ...(previousVersion === undefined ? {} : { previousVersion }),
     signal: controller.signal,
   });
-  let timeout: NodeJS.Timeout | undefined;
-  const timeoutFailure = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      const error = new DriverLifecycleTimeoutError();
-      controller.abort(error);
-      reject(error);
-    }, timeoutMs);
-  });
   const hookFailure = Promise.resolve()
     .then(() => hook.call(hooks, context))
     .catch((error) => {
       if (
-        error instanceof DriverLifecycleTimeoutError ||
         error instanceof DriverLifecycleConnectionLostError ||
         error instanceof DriverLifecycleAbortedError
       ) {
@@ -392,10 +371,9 @@ async function runHook(
     });
   hookFailure.catch(() => undefined);
   try {
-    await Promise.race([hookFailure, timeoutFailure, monitor.failure, aborted]);
+    await Promise.race([hookFailure, monitor.failure, aborted]);
   } finally {
     commandSignal?.removeEventListener("abort", abort);
-    if (timeout !== undefined) clearTimeout(timeout);
     controller.abort();
     await monitor.stop();
   }
@@ -431,9 +409,6 @@ export async function applyDriverLifecycle(
   options: DriverLifecycleOptions,
 ): Promise<readonly DriverLifecycleResult[]> {
   const targets = validatedTargets(options.targets);
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const connectionCheckIntervalMs =
-    options.connectionCheckIntervalMs ?? DEFAULT_CONNECTION_CHECK_INTERVAL_MS;
   return dedicatedLifecycleSession(options.pool, async (client, installationId) => {
     throwIfAborted(options.signal);
     const receipts = await receiptsForInstallation(client, installationId);
@@ -442,16 +417,7 @@ export async function applyDriverLifecycle(
     for (const step of planned) {
       throwIfAborted(options.signal);
       if (step.kind === "installed") {
-        await runHook(
-          client,
-          installationId,
-          step.target,
-          "onInstall",
-          undefined,
-          timeoutMs,
-          connectionCheckIntervalMs,
-          options.signal,
-        );
+        await runHook(client, installationId, step.target, "onInstall", undefined, options.signal);
         throwIfAborted(options.signal);
         await writeReceipt(client, installationId, step.target);
       } else if (step.kind === "updated") {
@@ -461,8 +427,6 @@ export async function applyDriverLifecycle(
           step.target,
           "onUpdate",
           step.receipt!.version,
-          timeoutMs,
-          connectionCheckIntervalMs,
           options.signal,
         );
         throwIfAborted(options.signal);
@@ -480,50 +444,6 @@ export async function applyDriverLifecycle(
       );
     }
     return Object.freeze(results);
-  });
-}
-
-export async function recordExistingDriverLifecycle(
-  options: DriverLifecycleOptions,
-): Promise<readonly DriverLifecycleResult[]> {
-  const targets = validatedTargets(options.targets);
-  return dedicatedLifecycleSession(options.pool, async (client, installationId) => {
-    throwIfAborted(options.signal);
-    await client.query("BEGIN");
-    try {
-      const count = await client.query(
-        "SELECT count(*)::integer AS count FROM occ.driver_lifecycle_receipts",
-      );
-      if (row(count.rows[0]).count !== 0) {
-        throw new ResourceConflictError(
-          "Existing Driver lifecycle receipts have already been recorded.",
-        );
-      }
-      const results: DriverLifecycleResult[] = [];
-      for (const target of targets) {
-        throwIfAborted(options.signal);
-        const receipt = await writeReceipt(client, installationId, target);
-        results.push(
-          immutableCopy({
-            kind: "recorded",
-            capability: target.capability,
-            driverId: target.id,
-            implementationFamily: receipt.implementationFamily,
-            version: receipt.version,
-          }),
-        );
-      }
-      throwIfAborted(options.signal);
-      await client.query("COMMIT");
-      return Object.freeze(results);
-    } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        throw new DriverLifecycleConnectionLostError();
-      }
-      throw error;
-    }
   });
 }
 
@@ -608,9 +528,6 @@ export async function uninstallDriverLifecycle(
   options: DriverLifecycleUninstallOptions,
 ): Promise<readonly DriverLifecycleResult[]> {
   const targets = validatedTargets(options.targets);
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const connectionCheckIntervalMs =
-    options.connectionCheckIntervalMs ?? DEFAULT_CONNECTION_CHECK_INTERVAL_MS;
   return dedicatedLifecycleSession(options.pool, async (client, installationId) => {
     throwIfAborted(options.signal);
     const receipts = await receiptsForInstallation(client, installationId);
@@ -643,16 +560,7 @@ export async function uninstallDriverLifecycle(
     ) {
       throw new ResourceConflictError("The outgoing Driver is still referenced by platform state.");
     }
-    await runHook(
-      client,
-      installationId,
-      target,
-      "onUninstall",
-      undefined,
-      timeoutMs,
-      connectionCheckIntervalMs,
-      options.signal,
-    );
+    await runHook(client, installationId, target, "onUninstall", undefined, options.signal);
     throwIfAborted(options.signal);
     await deleteReceipt(client, installationId, options.capability, options.driverId);
     const results: DriverLifecycleResult[] = [
