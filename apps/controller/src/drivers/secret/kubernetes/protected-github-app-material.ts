@@ -187,6 +187,113 @@ function decodeSecretEnvelope(
   return bytes;
 }
 
+interface ProtectedMaterialOwner {
+  readonly source: ProtectedKubernetesGitHubAppSourceV1;
+  readonly readNamespace: CoreV1Api["readNamespace"];
+  readonly readSecret: CoreV1Api["readNamespacedSecret"];
+  readonly openEnvelope: ProtectedGitHubCryptoV1["open"];
+  readonly assertMasterAvailable: ProtectedGitHubCryptoV1["assertAvailable"];
+  readonly clock: () => number;
+  closed: boolean;
+  busy: boolean;
+  active: GitHubAppMaterialV1 | undefined;
+}
+
+function createInvocation(owner: ProtectedMaterialOwner, rawBounds: TokenIssuerCallBoundsV1) {
+  const { clock } = owner;
+  const requested = Object.freeze({
+    signal: rawBounds.signal,
+    deadline: rawBounds.deadline,
+  });
+  const now = clock();
+  assertGitHubAppBoundsV1(requested, now);
+  const bounds = Object.freeze({
+    signal: requested.signal,
+    deadline: Math.min(requested.deadline, now + PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1),
+  });
+  const horizon = performance.now() + PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1;
+  const timeout = AbortSignal.timeout(
+    Math.max(1, Math.min(PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1, bounds.deadline - clock())),
+  );
+  const signal = AbortSignal.any([bounds.signal, timeout]);
+  const current = () => {
+    if (owner.closed || signal.aborted || performance.now() >= horizon) unavailable();
+    assertGitHubAppBoundsV1(bounds, clock());
+    owner.assertMasterAvailable();
+  };
+  const read = async (): Promise<Buffer> => {
+    current();
+    const namespace = await withComputeAbortSignal(signal, () =>
+      owner.readNamespace({ name: owner.source.namespaceName }),
+    );
+    current();
+    assertNamespaceOwnership(namespace, owner.source);
+    const secret = await withComputeAbortSignal(signal, () =>
+      owner.readSecret({ namespace: owner.source.namespaceName, name: owner.source.name }),
+    );
+    current();
+    return decodeSecretEnvelope(secret, owner.source);
+  };
+  return { bounds, current, read };
+}
+
+function openSecretEnvelope(owner: ProtectedMaterialOwner, encoded: Buffer): Buffer {
+  try {
+    return owner.openEnvelope("github-app-key-v1", envelopeContext(owner.source), encoded);
+  } finally {
+    encoded.fill(0);
+  }
+}
+
+function createInvocationMaterial(
+  owner: ProtectedMaterialOwner,
+  encoded: Buffer,
+  current: () => void,
+): GitHubAppMaterialV1 {
+  const plain = openSecretEnvelope(owner, encoded);
+  try {
+    current();
+    return createGitHubAppMaterialV1({
+      privateKey: parseRsaPrivateKey(plain),
+      identity: owner.source.keyIdentity,
+      assertCurrent: current,
+      clock: owner.clock,
+    });
+  } finally {
+    plain.fill(0);
+  }
+}
+
+async function withProtectedJwt<T>(
+  owner: ProtectedMaterialOwner,
+  expected: GitHubAppKeyIdentityV1,
+  rawBounds: TokenIssuerCallBoundsV1,
+  consume: (jwt: string, assertMaterialCurrent: () => void) => Promise<T>,
+): Promise<T> {
+  if (owner.closed || owner.busy) unavailable();
+  const identity = snapshotGitHubAppKeyIdentityV1(expected);
+  if (JSON.stringify(identity) !== JSON.stringify(owner.source.keyIdentity)) unavailable();
+  const { bounds, current, read } = createInvocation(owner, rawBounds);
+  owner.busy = true;
+  try {
+    const encoded = await read();
+    current();
+    owner.active = createInvocationMaterial(owner, encoded, current);
+    const result = await owner.active.withJwt(identity, bounds, consume);
+    current();
+    const checked = await read();
+    checked.fill(0);
+    current();
+    return result;
+  } catch {
+    return unavailable();
+  } finally {
+    owner.active?.close();
+    owner.active = undefined;
+    owner.busy = false;
+  }
+}
+
 /** Actual CoreV1Api source boundary. Trusted startup selects the authenticated
  * Kubernetes client, exact immutable source and separate protected master key.
  * This owner grants no State/Work dispatch authority, installation membership,
@@ -210,96 +317,28 @@ export function createProtectedKubernetesGitHubAppMaterialV1(options: {
     !/^[a-f0-9]{64}$/.test(source.envelopeSHA256)
   )
     unavailable();
-  const readNamespace = options.client.readNamespace.bind(options.client);
-  const readSecret = options.client.readNamespacedSecret.bind(options.client);
-  const openEnvelope = options.crypto.open.bind(options.crypto);
-  const assertMasterAvailable = options.crypto.assertAvailable.bind(options.crypto);
-  const clock = options.clock;
-  let closed = false;
-  let busy = false;
-  let active: GitHubAppMaterialV1 | undefined;
+  const owner: ProtectedMaterialOwner = {
+    source,
+    readNamespace: options.client.readNamespace.bind(options.client),
+    readSecret: options.client.readNamespacedSecret.bind(options.client),
+    openEnvelope: options.crypto.open.bind(options.crypto),
+    assertMasterAvailable: options.crypto.assertAvailable.bind(options.crypto),
+    clock: options.clock,
+    closed: false,
+    busy: false,
+    active: undefined,
+  };
   return Object.freeze({
-    async withJwt<T>(
+    withJwt<T>(
       expected: GitHubAppKeyIdentityV1,
       rawBounds: TokenIssuerCallBoundsV1,
       consume: (jwt: string, assertMaterialCurrent: () => void) => Promise<T>,
     ): Promise<T> {
-      if (closed || busy) unavailable();
-      const identity = snapshotGitHubAppKeyIdentityV1(expected);
-      if (JSON.stringify(identity) !== JSON.stringify(source.keyIdentity)) unavailable();
-      const requested = Object.freeze({
-        signal: rawBounds.signal,
-        deadline: rawBounds.deadline,
-      });
-      const now = clock();
-      assertGitHubAppBoundsV1(requested, now);
-      const bounds = Object.freeze({
-        signal: requested.signal,
-        deadline: Math.min(requested.deadline, now + PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1),
-      });
-      const horizon = performance.now() + PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1;
-      const timeout = AbortSignal.timeout(
-        Math.max(
-          1,
-          Math.min(PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1, bounds.deadline - clock()),
-        ),
-      );
-      const signal = AbortSignal.any([bounds.signal, timeout]);
-      const current = () => {
-        if (closed || signal.aborted || performance.now() >= horizon) unavailable();
-        assertGitHubAppBoundsV1(bounds, clock());
-        assertMasterAvailable();
-      };
-      const read = async (): Promise<Buffer> => {
-        current();
-        const namespace = await withComputeAbortSignal(signal, () =>
-          readNamespace({ name: source.namespaceName }),
-        );
-        current();
-        assertNamespaceOwnership(namespace, source);
-        const secret = await withComputeAbortSignal(signal, () =>
-          readSecret({ namespace: source.namespaceName, name: source.name }),
-        );
-        current();
-        return decodeSecretEnvelope(secret, source);
-      };
-      busy = true;
-      let plain: Buffer | undefined;
-      try {
-        const encoded = await read();
-        current();
-        try {
-          plain = openEnvelope("github-app-key-v1", envelopeContext(source), encoded);
-        } finally {
-          encoded.fill(0);
-        }
-        current();
-        active = createGitHubAppMaterialV1({
-          privateKey: parseRsaPrivateKey(plain),
-          identity: source.keyIdentity,
-          assertCurrent: current,
-          clock,
-        });
-        plain.fill(0);
-        plain = undefined;
-        const result = await active.withJwt(identity, bounds, consume);
-        current();
-        const checked = await read();
-        checked.fill(0);
-        current();
-        return result;
-      } catch {
-        return unavailable();
-      } finally {
-        plain?.fill(0);
-        active?.close();
-        active = undefined;
-        busy = false;
-      }
+      return withProtectedJwt(owner, expected, rawBounds, consume);
     },
     close() {
-      closed = true;
-      active?.close();
+      owner.closed = true;
+      owner.active?.close();
     },
   });
 }
