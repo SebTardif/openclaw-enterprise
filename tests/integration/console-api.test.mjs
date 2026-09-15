@@ -249,6 +249,7 @@ test("console email sign-in sanitizes adapter write failures and recovers", asyn
 });
 
 test("console email sign-in rate limits repeated password failures by socket address", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const fixture = await createConsoleAppFixture(t, { autoSignIn: false });
   const wrongPasswordBody = {
     email: fixture.credentials.email,
@@ -274,6 +275,18 @@ test("console email sign-in rate limits repeated password failures by socket add
     }
   }
   assert.deepEqual(statuses, [401, 401, 401, 429]);
+
+  // An expired window admits requests again; concurrent failures must consume one shared budget.
+  t.mock.timers.tick(60_001);
+  const concurrent = await Promise.all(
+    Array.from({ length: 4 }, (_, index) =>
+      fixture.rawRequest("POST", "/api/auth/sign-in/email", {
+        headers: { "x-forwarded-for": `198.51.100.${index + 10}` },
+        body: wrongPasswordBody,
+      }),
+    ),
+  );
+  assert.deepEqual(concurrent.map(({ response }) => response.status).sort(), [401, 401, 401, 429]);
 
   const isolated = await createConsoleAppFixture(t);
   const session = await isolated.signIn();

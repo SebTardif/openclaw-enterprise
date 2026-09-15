@@ -23,7 +23,6 @@ export const OCC_AUTH_COOKIE_PREFIX = "openclaw_occ";
 export const OCC_SERVICE_KEY_HEADER = "x-api-key";
 const SERVICE_KEY_CONFIG = "occ-service";
 const OCC_AUTH_SOCKET_IP_HEADER = "x-openclaw-auth-socket-ip";
-const RATE_LIMIT_RECORD_TTL_MS = 60_000;
 const AUTH_ERROR_CODES: Readonly<Partial<Record<number, string>>> = {
   400: "INVALID_REQUEST",
   401: "UNAUTHENTICATED",
@@ -32,7 +31,6 @@ const AUTH_ERROR_CODES: Readonly<Partial<Record<number, string>>> = {
 };
 type ControllerBetterAuth = Auth<BetterAuthOptions & { plugins: ReturnType<typeof apiKey>[] }>;
 type RateLimitStorage = NonNullable<NonNullable<BetterAuthOptions["rateLimit"]>["customStorage"]>;
-type RateLimitRecord = NonNullable<Awaited<ReturnType<RateLimitStorage["get"]>>>;
 
 export interface ServiceKey {
   readonly id: string;
@@ -215,25 +213,27 @@ function requireTrustedBrowserOrigin(request: FastifyRequest, expectedOrigin: st
 }
 
 function createRateLimitStorage(): RateLimitStorage {
-  const records = new Map<
-    string,
-    { readonly value: RateLimitRecord; readonly expiresAt: number }
-  >();
+  const records = new Map<string, { readonly count: number; readonly expiresAt: number }>();
   const prune = (now: number) => {
     for (const [key, record] of records) {
       if (record.expiresAt <= now) records.delete(key);
     }
   };
   return {
-    async get(key) {
+    async consume(key, rule) {
       const now = Date.now();
       prune(now);
-      return records.get(key)?.value ?? null;
-    },
-    async set(key, value) {
-      const now = Date.now();
-      prune(now);
-      records.set(key, { value, expiresAt: now + RATE_LIMIT_RECORD_TTL_MS });
+      const record = records.get(key);
+      if (record !== undefined && record.count >= rule.max) {
+        return { allowed: false, retryAfter: Math.ceil((record.expiresAt - now) / 1000) };
+      }
+      // No await separates the decision and update, so concurrent requests share one limit.
+      // Better Auth's rolling window starts again on each accepted request.
+      records.set(key, {
+        count: (record?.count ?? 0) + 1,
+        expiresAt: now + rule.window * 1000,
+      });
+      return { allowed: true, retryAfter: null };
     },
   };
 }
