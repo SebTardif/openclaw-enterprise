@@ -111,3 +111,7 @@ so use Kubernetes Compute for plugin-enabled runtime proof. See
 - [Service API keys, rotation, and bootstrap recovery](deploy/service-keys.md)
 - [Local Kubernetes, development TUI, and cleanup](deploy/local-operations.md)
 - [Configuration and settings](../reference/settings.md)
+
+## Repository draft definitions
+
+Use [Configure repository drafts in development](deploy/repository-drafts.md) for the authenticated binding and Agent-selection APIs and the inactive deployment check.

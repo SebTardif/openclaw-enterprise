@@ -191,6 +191,48 @@
         },
         {
           "path": "tests/integration/plugin-driver-startup.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-transactions.test.mjs"
+        },
+        {
+          "path": "tests/conformance/postgres-transaction-commit.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-v1.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-enrollment.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-observation.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-response-buffers.test.mjs"
+        },
+        {
+          "path": "tests/conformance/github-app-provider-settlement.test.mjs"
+        },
+        {
+          "path": "tests/conformance/repository-binding-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-crypto.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-app-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-assignment-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-memory.test.mjs"
+        },
+        {
+          "path": "tests/conformance/runtime-authority-storage-contract.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-inventory-owner-phase.test.mjs"
         }
       ]
     },
@@ -200,6 +242,15 @@
         "requiresPreparedStateForFile": true
       },
       "files": [
+        {
+          "path": "tests/integration/postgres-connection-auth.test.mjs",
+          "expectedTests": [
+            "password authentication preserves the existing pg connection configuration",
+            "the password pool authenticates to the selected real PostgreSQL database",
+            "the real pg client retains the Azure token callback and verified TLS after URL parsing",
+            "workload authentication rejects password fallback and unverified TLS"
+          ]
+        },
         {
           "path": "tests/integration/postgres-auth-accounts.test.mjs",
           "expectedTests": [
@@ -303,6 +354,57 @@
             "an opted-in active runtime continuously repairs under its original authorized actor",
             "active maintenance recovers after its convergence deadline and stops when its actor is denied"
           ]
+        },
+        {
+          "path": "tests/integration/postgres-repository-transactions.test.mjs",
+          "expectedTests": ["PostgreSQL repository ownership, lifetime, and atomicity"]
+        },
+        {
+          "path": "tests/integration/postgres-transaction-commit.test.mjs",
+          "expectedTests": [
+            "a lost real COMMIT response preserves the unknown outcome and committed resource"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-repository-drafts.test.mjs",
+          "expectedTests": [
+            "authenticated repository drafts persist under application-role PostgreSQL and stay inactive"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-assignment-state.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime assignments: shared contract, restart, CAS, constraints and commit uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-runtime-authority.test.mjs",
+          "expectedTests": [
+            "PostgreSQL runtime authority: real limited-role storage, races and COMMIT uncertainty"
+          ]
+        },
+        {
+          "path": "tests/integration/postgres-credential-inventory.test.mjs",
+          "expectedTests": [
+            "PostgreSQL inventory metadata: real storage, original transaction and lost acknowledgment"
+          ]
+        }
+      ]
+    },
+    "postgres-azure-workload-identity": {
+      "requiredEnv": [
+        "OCC_TEST_AZURE_DATABASE_URL",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_ID",
+        "AZURE_FEDERATED_TOKEN_FILE"
+      ],
+      "prepare": {},
+      "files": [
+        {
+          "path": "tests/integration/postgres-azure-workload-identity.test.mjs",
+          "expectedTests": [
+            "Azure workload identity opens successive real PostgreSQL TLS connections"
+          ]
         }
       ]
     },
@@ -344,9 +446,14 @@
             "the production Helm chart renders private least-privilege runtime and ordered bootstrap",
             "the optional ChatGPT Provider isolates admin credentials, tenant Secrets, and provider egress to the API",
             "the real Helm renderer rejects mutable images, broad dependencies, and shared credentials",
-            "development packaging isolates bootstrap service key output to the bootstrap service",
             "private Envoy Gateway routing renders automatic CA and deterministic default hostnames",
             "private Envoy Gateway routing preserves explicit hostnames and external CA trust"
+          ]
+        },
+        {
+          "path": "tests/integration/development-packaging.test.mjs",
+          "expectedTests": [
+            "development packaging isolates bootstrap service key output to the bootstrap service"
           ]
         },
         {

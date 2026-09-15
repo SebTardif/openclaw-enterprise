@@ -1,3 +1,4 @@
+import type { RepositoryAccess } from "./repository-access-v1.ts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   PluginDesiredSelectionSchema,
@@ -5,7 +6,10 @@ import {
   PluginDriverIdentitySchema,
   PluginToolPolicySchema,
 } from "./api/resources.ts";
+import { SecretReference, SecretBinding, SecretBindings } from "./api/common.ts";
 import { Check } from "typebox/value";
+
+export { SecretReference, SecretBinding, SecretBindings };
 
 export {
   LOGGING_LEVELS,
@@ -75,6 +79,7 @@ export const RESOURCE_KINDS = Object.freeze([
   "secret",
   "agent",
   "agent_revision",
+  "repository_binding",
 ] as const);
 
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
@@ -307,6 +312,7 @@ export interface ServiceAccountRevision {
 }
 
 export interface Agent extends Scope {
+  readonly repositoryAccess?: RepositoryAccess;
   readonly id: string;
   readonly namespaceId: string;
   readonly name: string;
@@ -709,3 +715,60 @@ export { normalizeSecretBindings } from "./secret-bindings.ts";
 export * from "./api/common.ts";
 export * from "./api/resources.ts";
 export * from "./api/routes.ts";
+
+export type { EphemeralTokenHandleV1 } from "./credential-storage-v1.ts";
+export type {
+  TokenIssuerAttemptV1,
+  TokenIssuerCallBoundsV1,
+  TokenIssuerV1,
+  TokenMintResultV1,
+  TokenRevokeResultV1,
+  TokenRevokerV1,
+} from "./token-issuer-v1.ts";
+
+export {
+  RepositoryAccessSchema,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
+  validRepositoryBinding,
+} from "./repository-access-v1.ts";
+export type {
+  RepositoryAccess,
+  RepositoryBinding,
+  RepositoryBindingInput,
+} from "./repository-access-v1.ts";
+export type {
+  RuntimeScope,
+  RuntimeIntentAttribution,
+  RuntimeIntent,
+  RuntimeProfileRefs,
+  RuntimeAllocation,
+  RuntimeAllocationLocator,
+} from "./runtime-assignment.ts";
+export type {
+  RuntimeAssignmentTargetV1,
+  RuntimeAuthorityScopeV1,
+  RuntimeAssignmentRecordV1,
+  RuntimeMutationV1,
+  ExactAuthorityOperationV1,
+  RuntimeMutationResultV1,
+} from "./runtime-authority-v1/schemas.ts";
+export {
+  parseRuntimeAuthorityV1,
+  parseRuntimeAuthorityJsonV1,
+  canonicalRuntimeAuthorityMutationV1,
+} from "./runtime-authority-v1.ts";
+
+export type {
+  NamedCredentialUseV1,
+  ReserveIssuanceV1,
+  MintOutcomeV1,
+  ClaimRevocationV1,
+  RevocationOutcomeV1,
+  OutstandingTokenRecordV1,
+} from "./credential-inventory-data-v1.ts";
+export {
+  CREDENTIAL_STORAGE_LIMITS_V1,
+  parseCredentialStorageV1,
+  canonicalCredentialStorageRequestV1,
+} from "./credential-inventory-data-v1.ts";

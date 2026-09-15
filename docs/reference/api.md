@@ -29,7 +29,7 @@ Each operation lists its supported status codes.
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `error` | `object` | Yes | — |
-| `error.code` | `"INVALID_REQUEST" or "UNAUTHENTICATED" or "FORBIDDEN" or "NOT_FOUND" or "METHOD_NOT_ALLOWED" or "INSTALLATION_EXISTS" or "RESOURCE_CONFLICT" or "NAMESPACE_NOT_READY" or "NAMESPACE_NOT_EMPTY" or "PAYLOAD_TOO_LARGE" or "UNSUPPORTED_MEDIA_TYPE" or "UNKNOWN_OUTCOME" or "NOT_IMPLEMENTED" or "INTERNAL_ERROR" or "DEPENDENCY_UNAVAILABLE"` | Yes | — |
+| `error.code` | `"INVALID_REQUEST" or "UNAUTHENTICATED" or "FORBIDDEN" or "NOT_FOUND" or "METHOD_NOT_ALLOWED" or "INSTALLATION_EXISTS" or "RESOURCE_CONFLICT" or "NAMESPACE_NOT_READY" or "NAMESPACE_NOT_EMPTY" or "PAYLOAD_TOO_LARGE" or "UNSUPPORTED_MEDIA_TYPE" or "UNKNOWN_OUTCOME" or "NOT_IMPLEMENTED" or "REPOSITORY_VERIFICATION_UNAVAILABLE" or "INTERNAL_ERROR" or "DEPENDENCY_UNAVAILABLE"` | Yes | — |
 | `error.details` | `array<object>` | No | max items: 32 |
 | `error.details[].code` | `"REQUIRED" or "UNKNOWN_FIELD" or "INVALID_TYPE" or "INVALID_FORMAT" or "INVALID_VALUE" or "TOO_LONG" or "TOO_DEEP"` | Yes | — |
 | `error.details[].path` | `string` | Yes | max length: 512; pattern: `^(?:/(?:[^~/]\|~0\|~1)*)*$` |
@@ -47,6 +47,7 @@ Each operation lists its supported status codes.
 | [Agents](#agents) | 9 operations |
 | [Agent revisions](#agent-revisions) | 2 operations |
 | [Configurations](#configurations) | 4 operations |
+| [Repository bindings](#repository-bindings) | 3 operations |
 | [Secrets](#secrets) | 4 operations |
 | [Service accounts](#service-accounts) | 6 operations |
 | [Providers](#providers) | 1 operation |
@@ -653,6 +654,18 @@ List authorized Agents in one exact Namespace
 | `data[].namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data[].plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `data[].providerId` | `string or null` | Yes | — |
+| `data[].repositoryAccess` | `object` | Yes | — |
+| `data[].repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `data[].repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `data[].repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `data[].repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data[].repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `data[].repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `data[].repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `data[].repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `data[].repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data[].repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `data[].serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
@@ -665,12 +678,13 @@ Create a Namespace-owned Agent
 
 **Operation ID:** `createAgent`
 
-**Permissions:** Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.
+**Permissions:** Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
 | `create` | `agent` | `namespace` |
 | `read` | `configuration` | `requested` |
+| `operate` | `repository_binding` | `requested` |
 | `read` | `service_account` | `requested` (when associated) |
 | `operate` | `secret` | `requested` (when bound) |
 
@@ -693,6 +707,18 @@ Create a Namespace-owned Agent
 | `name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `providerId` | `string or null` | No | — |
+| `repositoryAccess` | `RepositoryAccess` | No | — |
+| `repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
 ##### Responses
@@ -724,6 +750,18 @@ Create a Namespace-owned Agent
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `data.providerId` | `string or null` | Yes | — |
+| `data.repositoryAccess` | `object` | Yes | — |
+| `data.repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `data.repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `data.repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `data.repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `data.repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
@@ -775,6 +813,18 @@ Get an exact Namespace-owned Agent
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `data.providerId` | `string or null` | Yes | — |
+| `data.repositoryAccess` | `object` | Yes | — |
+| `data.repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `data.repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `data.repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `data.repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `data.repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
@@ -787,12 +837,13 @@ Replace an exact Namespace-owned Agent's editable draft
 
 **Operation ID:** `updateAgent`
 
-**Permissions:** Requires update permission on the requested Agent. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.
+**Permissions:** Requires update permission on the requested Agent. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
 | `update` | `agent` | `requested` |
 | `read` | `configuration` | `requested` |
+| `operate` | `repository_binding` | `requested` |
 | `read` | `service_account` | `requested` (when associated) |
 | `operate` | `secret` | `requested` (when bound) |
 
@@ -815,6 +866,18 @@ Replace an exact Namespace-owned Agent's editable draft
 | `executionMode` | `"embedded" or "dedicated"` | No | — |
 | `plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `providerId` | `string or null` | No | — |
+| `repositoryAccess` | `RepositoryAccess` | No | — |
+| `repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `serviceAccountId` | `string or null` | No | — |
 
 ##### Responses
@@ -846,6 +909,18 @@ Replace an exact Namespace-owned Agent's editable draft
 | `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.plugins` | `PluginDesiredState` | No | Agent plugin selection map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$. |
 | `data.providerId` | `string or null` | Yes | — |
+| `data.repositoryAccess` | `object` | Yes | — |
+| `data.repositoryAccess.repositories` | `array<object>` | Yes | max items: 8 |
+| `data.repositoryAccess.repositories[].bindingRef` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].bindingRef.kind` | `"repository_binding"` | Yes | — |
+| `data.repositoryAccess.repositories[].bindingRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryAccess.repositories[].checkoutRef` | `string` | Yes | min length: 1; max length: 256 |
+| `data.repositoryAccess.repositories[].publication` | `object` | Yes | — |
+| `data.repositoryAccess.repositories[].publication.mode` | `"disabled"` | Yes | — |
+| `data.repositoryAccess.repositories[].readProfile` | `"checkout"` | Yes | — |
+| `data.repositoryAccess.repositories[].repositoryId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.repositoryAccess.schemaVersion` | `1` | Yes | — |
 | `data.serviceAccountId` | `string` | No | pattern: `^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
@@ -858,12 +933,13 @@ Admit an immutable revision from the Agent's saved draft
 
 **Operation ID:** `deployAgent`
 
-**Permissions:** Requires deploy permission on the requested Agent. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Deployment also requires the owning Agent service principal to have operate permission on each bound Secret.
+**Permissions:** Requires deploy permission on the requested Agent. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Deployment also requires the owning Agent service principal to have operate permission on each bound Secret.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
 | `deploy` | `agent` | `requested` |
 | `read` | `configuration` | `requested` |
+| `operate` | `repository_binding` | `requested` |
 | `read` | `service_account` | `requested` (when associated) |
 | `operate` | `secret` | `requested` (when bound) |
 
@@ -1506,6 +1582,218 @@ Replace values and increment an exact Namespace-owned Configuration generation
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
+<span id="repository-bindings"></span>
+
+### Repository bindings
+
+| Operation | Summary |
+| --- | --- |
+| [`POST /namespaces/{namespaceId}/repository-bindings`](#post-namespacesnamespaceidrepositorybindings) | create an unverified Namespace-owned repository binding descriptor |
+| [`GET /namespaces/{namespaceId}/repository-bindings/{bindingId}`](#get-namespacesnamespaceidrepositorybindingsbindingid) | read an unverified Namespace-owned repository binding descriptor |
+| [`PATCH /namespaces/{namespaceId}/repository-bindings/{bindingId}`](#patch-namespacesnamespaceidrepositorybindingsbindingid) | update an unverified Namespace-owned repository binding descriptor |
+
+#### `POST /namespaces/{namespaceId}/repository-bindings`
+
+<span id="post-namespacesnamespaceidrepositorybindings"></span>
+
+create an unverified Namespace-owned repository binding descriptor
+
+**Operation ID:** `createRepositoryBinding`
+
+**Permissions:** Requires create permission for Repository binding resources in the requested Namespace. Requires operate permission on the requested Secret.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `create` | `repository_binding` | `namespace` |
+| `operate` | `secret` | `request_body` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `appId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `installationId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `keySecretRef` | `object` | Yes | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
+| `keySecretRef.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `keySecretRef.kind` | `"secret"` | Yes | — |
+| `keySecretRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryIds` | `array<integer>` | Yes | min items: 1; max items: 32 |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `201` | Created |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`201` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.appId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.generation` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.keySecretRef` | `object` | Yes | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
+| `data.keySecretRef.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.keySecretRef.kind` | `"secret"` | Yes | — |
+| `data.keySecretRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryIds` | `array<integer>` | Yes | min items: 1; max items: 32 |
+| `data.state` | `"unverified"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### `GET /namespaces/{namespaceId}/repository-bindings/{bindingId}`
+
+<span id="get-namespacesnamespaceidrepositorybindingsbindingid"></span>
+
+read an unverified Namespace-owned repository binding descriptor
+
+**Operation ID:** `getRepositoryBinding`
+
+**Permissions:** Requires read permission on the requested Repository binding.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `read` | `repository_binding` | `requested` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.appId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.generation` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.keySecretRef` | `object` | Yes | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
+| `data.keySecretRef.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.keySecretRef.kind` | `"secret"` | Yes | — |
+| `data.keySecretRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryIds` | `array<integer>` | Yes | min items: 1; max items: 32 |
+| `data.state` | `"unverified"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+#### `PATCH /namespaces/{namespaceId}/repository-bindings/{bindingId}`
+
+<span id="patch-namespacesnamespaceidrepositorybindingsbindingid"></span>
+
+update an unverified Namespace-owned repository binding descriptor
+
+**Operation ID:** `updateRepositoryBinding`
+
+**Permissions:** Requires update permission on the requested Repository binding. Requires operate permission on the requested Secret.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `update` | `repository_binding` | `requested` |
+| `operate` | `secret` | `request_body` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `bindingId` | path | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `appId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `expectedGeneration` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `installationId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `keySecretRef` | `object` | Yes | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
+| `keySecretRef.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `keySecretRef.kind` | `"secret"` | Yes | — |
+| `keySecretRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `repositoryIds` | `array<integer>` | Yes | min items: 1; max items: 32 |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `413` | Payload Too Large |
+| `415` | Unsupported Media Type |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.appId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
+| `data.generation` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.id` | `string` | Yes | pattern: `^rb_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.installationId` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
+| `data.keySecretRef` | `object` | Yes | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
+| `data.keySecretRef.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.keySecretRef.kind` | `"secret"` | Yes | — |
+| `data.keySecretRef.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.repositoryIds` | `array<integer>` | Yes | min items: 1; max items: 32 |
+| `data.state` | `"unverified"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
 <span id="secrets"></span>
 
 ### Secrets
@@ -2106,6 +2394,7 @@ Reusable schema names are referenced by operation request and response tables.
 | `PluginDriverIdentity` | `object` |
 | `PluginToolPolicy` | `object` |
 | `PluginDesiredSelection` | `object` |
+| `RepositoryAccess` | `object` |
 | `PluginDesiredState` | `object<string, PluginDesiredSelection>` |
 | `ErrorResponse` | `object` |
 | `AgentRuntimeCredentialResponse` | `object` |

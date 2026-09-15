@@ -140,6 +140,8 @@ Each Agent has one stable service principal and explicitly selects embedded Open
 
 ## Editable configuration
 
+Repository selections use the typed [repository draft](repository-drafts.md) field. Saved selections remain unverified and disable repository deployment until cleared.
+
 An Agent's `configurationId` selects exactly one native OpenClaw Configuration
 document with `kind: "agent"` in its own Namespace. A PATCH requires
 `configurationId`, exact-Agent `update`, and exact-Configuration `read`.

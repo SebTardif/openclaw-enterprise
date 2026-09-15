@@ -113,6 +113,34 @@
       "when": 1787000000015,
       "tag": "0015_agent_plugins",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787000000016,
+      "tag": "0016_runtime_assignment_storage",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787000000017,
+      "tag": "0017_runtime_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787000000018,
+      "tag": "0018_credential_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787000000019,
+      "tag": "0019_repository_access",
+      "breakpoints": true
     }
   ]
 }

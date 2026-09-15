@@ -46,6 +46,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     id: identifier("agt"),
     namespaceId: namespace.id,
     name: `Agent ${randomUUID()}`,
+    repositoryAccess: { schemaVersion: 1, repositories: [] },
     configurationId: configuration.id,
     providerId: null,
     executionMode: "embedded",
@@ -446,14 +447,28 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     actorId: audit.actorId,
   };
 
+  const transactionFailure = new Error("simulated transaction failure");
+  let escapedTransaction;
   await assert.rejects(
     store.transact(async (transaction) => {
+      escapedTransaction = transaction;
       await transaction.namespaces.createNamespace(rejectedNamespace);
       await transaction.audit.append(rejectedAudit);
       await transaction.operations.append(rejectedOperation);
-      throw new Error("simulated transaction failure");
+      throw transactionFailure;
     }),
-    /simulated transaction failure/,
+    (error) => error === transactionFailure,
+  );
+
+  // Use a fresh identity so a duplicate-row conflict cannot masquerade as a
+  // closed transaction when the rolled-back memory snapshot is retained.
+  await assert.rejects(
+    escapedTransaction.namespaces.createNamespace({
+      ...rejectedNamespace,
+      id: identifier("ns"),
+      name: `Escaped ${randomUUID()}`,
+    }),
+    { name: "ScopeViolationError", message: "The platform transaction is closed." },
   );
 
   await store.read(async (state) => {
@@ -650,6 +665,7 @@ export async function verifyPlatformStateStoreContract(store, options = {}) {
     credential,
   };
   const accountAgent = {
+    repositoryAccess: { schemaVersion: 1, repositories: [] },
     id: identifier("agt"),
     namespaceId: accountNamespace.id,
     name: "Account agent " + randomUUID(),

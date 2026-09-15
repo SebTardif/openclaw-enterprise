@@ -1,5 +1,13 @@
+import type { RepositoryBindingRepository } from "../ports/repositories/repository-binding.ts";
+import { RuntimeAuthorityTransactionGuard } from "../runtime-authority/repository.ts";
+import { createPostgresRuntimeRepositories } from "./postgres/runtime-assignments.ts";
+import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
+import { bindRepository } from "../ports/repository-factory.ts";
+import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
+import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
   AccessBinding,
+  RepositoryBinding,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -19,6 +27,7 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
+  normalizeRepositoryAccess,
   normalizePluginDesiredState,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
@@ -55,7 +64,9 @@ import {
 type PostgresRow = Record<string, unknown>;
 
 export interface PostgresClient extends PostgresQueryClient {
-  release(): void;
+  release(discard?: boolean): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  removeListener?(event: "error", listener: (error: Error) => void): unknown;
 }
 
 export interface PostgresPool {
@@ -90,6 +101,8 @@ export class PostgresCommitOutcomeUnknownError extends DependencyUnavailableErro
 }
 
 interface TransactionContext {
+  readonly authorityGuard: RuntimeAuthorityTransactionGuard;
+  readonly lifetime: RepositoryTransactionLifetime;
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
@@ -203,6 +216,7 @@ function agentFromRow(row: PostgresRow): Readonly<Agent> {
     configurationId: text(row, "configuration_id"),
     providerId,
     executionMode: text(row, "execution_mode") as Agent["executionMode"],
+    repositoryAccess: normalizeRepositoryAccess(row.repository_access),
     ...(row.plugins === null || row.plugins === undefined
       ? {}
       : { plugins: pluginStateFromJson(row.plugins)! }),
@@ -403,11 +417,11 @@ function commitOutcomeUnknown(error: unknown): boolean {
     error instanceof Error && "code" in error && typeof error.code === "string"
       ? error.code
       : undefined;
-  return (
-    code === undefined ||
-    !/^[0-9A-Z]{5}$/.test(code) ||
-    code.startsWith("08") ||
-    code.startsWith("57")
+  // Only server responses that establish transaction rejection prove no commit.
+  // 40003 and arbitrary SQLSTATEs retain the possibly committed outcome.
+  return !(
+    code !== undefined &&
+    (/^23[0-9A-Z]{3}$/.test(code) || code === "40001" || code === "40P01" || code === "25P02")
   );
 }
 
@@ -759,7 +773,9 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.execute(true, async (state) => work(state));
+    return this.execute(true, async (state, context) =>
+      work(createPlatformReadView(state, context.lifetime)),
+    );
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -774,15 +790,31 @@ export class PostgresPlatformState implements PlatformStateStore {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
-    return context.client.query(statement, parameters);
+    return context.lifetime.run(() => context.client.query(statement, parameters));
   }
 
   async transactWithQueue<T>(
-    work: (state: PlatformUnitOfWork, queue: PostgresWorkQueue) => Promise<T>,
+    work: (
+      state: PlatformUnitOfWork,
+      queue: Pick<PostgresWorkQueue, keyof PostgresWorkQueue>,
+    ) => Promise<T>,
     options: PostgresWorkQueueOptions = {},
   ): Promise<T> {
     return this.execute(false, async (state, context) =>
-      work(state, new PostgresWorkQueue(context.client, options)),
+      work(
+        state,
+        bindRepository(new PostgresWorkQueue(context.client, options), context.lifetime, [
+          "enqueue",
+          "claim",
+          "heartbeat",
+          "pending",
+          "complete",
+          "defer",
+          "retry",
+          "fail",
+          "recoverStale",
+        ]),
+      ),
     );
   }
 
@@ -797,39 +829,98 @@ export class PostgresPlatformState implements PlatformStateStore {
       throw databaseError(error);
     }
 
+    // Checked-out pg clients emit transport errors independently of query rejection.
+    // The transaction owner retains the event through release; repository callers
+    // still receive the original query failure or the exact unknown-COMMIT outcome.
+    let transportError: Error | undefined;
+    const onTransportError = (error: Error) => {
+      transportError = error;
+    };
+    client.on?.("error", onTransportError);
+    const lifetime = new RepositoryTransactionLifetime();
     let started = false;
     let committing = false;
+    let acknowledged = false;
+    let failed = false;
+    let discard = false;
     let unit: PlatformUnitOfWork | undefined;
     try {
       await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
       started = true;
       const context: TransactionContext = {
-        client,
+        lifetime,
+        authorityGuard: new RuntimeAuthorityTransactionGuard(),
+        client: {
+          query: async (statement, parameters) => {
+            lifetime.assertActive();
+            const result = await client.query(statement, parameters);
+            lifetime.assertActive();
+            return result;
+          },
+          release: () => {
+            throw new ScopeViolationError("Only the transaction owner releases the client.");
+          },
+        },
         installation: undefined,
         installationLoaded: false,
       };
-      unit = this.repositories(context);
+      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
       this.contexts.set(unit, context);
       const result = await work(unit, context);
+      await lifetime.finish();
+      await context.authorityGuard.finish();
+      if (transportError) throw transportError;
       committing = true;
-      await client.query("COMMIT");
+      let completion: unknown;
+      try {
+        completion = await client.query("COMMIT");
+      } catch (error) {
+        if (commitOutcomeUnknown(error)) throw new PostgresCommitOutcomeUnknownError();
+        committing = false;
+        throw error;
+      }
+      // Inspect acknowledgment separately: a throwing projection is not a server
+      // rejection, even if its exception happens to contain a SQLSTATE.
+      const command = (completion as { command?: unknown } | null)?.command;
+      if (command === "ROLLBACK") {
+        committing = false;
+        started = false;
+        throw new DependencyUnavailableError("The platform transaction was rolled back.");
+      }
+      if (command !== "COMMIT") throw new PostgresCommitOutcomeUnknownError();
+      acknowledged = true;
       committing = false;
       started = false;
       return result;
     } catch (error) {
+      failed = true;
+      discard = committing || transportError !== undefined;
+      await lifetime.finish();
       if (started) {
         try {
           await client.query("ROLLBACK");
         } catch {
-          // The failed client is still returned to the pool below.
+          discard = true;
         }
       }
-      throw committing && commitOutcomeUnknown(error)
-        ? new PostgresCommitOutcomeUnknownError()
-        : databaseError(error);
+      throw committing ? new PostgresCommitOutcomeUnknownError() : databaseError(error);
     } finally {
+      lifetime.close();
       if (unit !== undefined) this.contexts.delete(unit);
-      client.release();
+      let cleanupFailed = false;
+      try {
+        client.release(discard || transportError !== undefined);
+      } catch {
+        cleanupFailed = true;
+      }
+      try {
+        client.removeListener?.("error", onTransportError);
+      } catch {
+        cleanupFailed = true;
+      }
+      // Preserve the original failure. A failure after acknowledged COMMIT can
+      // never be reported as definite rollback or authorize an automatic replay.
+      if (!failed && cleanupFailed && acknowledged) throw new PostgresCommitOutcomeUnknownError();
     }
   }
 
@@ -1254,6 +1345,9 @@ export class PostgresPlatformState implements PlatformStateStore {
                    AND binding.value #>> '{source,kind}' = 'secret'
                    AND binding.value #>> '{source,namespaceId}' = $1
                    AND binding.value #>> '{source,id}' = $2
+               ) OR EXISTS (
+                 SELECT 1 FROM occ.repository_bindings
+                 WHERE namespace_id = $1 AND key_secret_id = $2
                ) AS present`,
               [namespaceId, secretId],
             )
@@ -1392,7 +1486,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         (
           await client.query(
             `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                    a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                    a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                     a.active_revision_id, a.created_at
              FROM occ.agents AS a
              JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
@@ -1404,6 +1498,63 @@ export class PostgresPlatformState implements PlatformStateStore {
       return found === undefined ? undefined : agentFromRow(found);
     };
 
+    const bindingFromRow = (row: PostgresRow): Readonly<RepositoryBinding> =>
+      immutableCopy(jsonObject(row.descriptor) as unknown as RepositoryBinding);
+    const repositoryBindings: RepositoryBindingRepository = {
+      findBinding: async (namespaceId, bindingId) => {
+        const result = rows(
+          (
+            await client.query(
+              `SELECT b.descriptor
+               FROM occ.repository_bindings AS b
+               JOIN occ.namespaces AS n ON n.id = b.namespace_id AND n.deleted_at IS NULL
+               WHERE b.namespace_id = $1 AND b.id = $2`,
+              [namespaceId, bindingId],
+            )
+          ).rows,
+        )[0];
+        return result ? bindingFromRow(result) : undefined;
+      },
+      createBinding: async (binding) => {
+        const installation = await this.requireInitialized(context);
+        await client.query(
+          `INSERT INTO occ.repository_bindings
+           (id, namespace_id, owner_installation_id, key_secret_id, generation, descriptor)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [
+            binding.id,
+            binding.namespaceId,
+            installation.id,
+            binding.keySecretRef.id,
+            binding.generation,
+            JSON.stringify(binding),
+          ],
+        );
+        return immutableCopy(binding);
+      },
+      updateBinding: async (binding, expectedGeneration) => {
+        const result = rows(
+          (
+            await client.query(
+              `UPDATE occ.repository_bindings
+               SET key_secret_id = $3, generation = $4, descriptor = $5::jsonb
+               WHERE namespace_id = $1 AND id = $2 AND generation = $6
+               RETURNING descriptor`,
+              [
+                binding.namespaceId,
+                binding.id,
+                binding.keySecretRef.id,
+                binding.generation,
+                JSON.stringify(binding),
+                expectedGeneration,
+              ],
+            )
+          ).rows,
+        )[0];
+        return result ? bindingFromRow(result) : undefined;
+      },
+    };
+
     const agents: AgentRepository = {
       findAgent,
       lockAgent: async (namespaceId, agentId) => findAgent(namespaceId, agentId, true),
@@ -1412,7 +1563,7 @@ export class PostgresPlatformState implements PlatformStateStore {
           (
             await client.query(
               `SELECT a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                      a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                      a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                       a.active_revision_id, a.created_at
                FROM occ.agents AS a
                JOIN occ.namespaces AS n ON n.id = a.namespace_id AND n.deleted_at IS NULL
@@ -1442,13 +1593,14 @@ export class PostgresPlatformState implements PlatformStateStore {
         const { plugins: _providedPlugins, ...withoutPlugins } = agent;
         const saved = immutableCopy({
           ...withoutPlugins,
+          repositoryAccess: normalizeRepositoryAccess(agent.repositoryAccess),
           ...(plugins === undefined ? {} : { plugins }),
         });
         await client.query(
           `INSERT INTO occ.agents
            (id, namespace_id, name, configuration_id, provider_id, execution_mode,
-             service_principal_id, service_account_id, active_revision_id, created_at, plugins)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+             service_principal_id, service_account_id, active_revision_id, created_at, plugins, repository_access)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)`,
           [
             saved.id,
             saved.namespaceId,
@@ -1461,6 +1613,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             saved.activeRevisionId ?? null,
             saved.createdAt,
             plugins === undefined ? null : JSON.stringify(plugins),
+            JSON.stringify(normalizeRepositoryAccess(agent.repositoryAccess)),
           ],
         );
         await client.query(
@@ -1478,6 +1631,7 @@ export class PostgresPlatformState implements PlatformStateStore {
         serviceAccountId,
         providerId,
         plugins,
+        repositoryAccess,
       ) => {
         const configuration = await configurations.findConfiguration(namespaceId, configurationId);
         if (configuration === undefined)
@@ -1491,12 +1645,13 @@ export class PostgresPlatformState implements PlatformStateStore {
                SET configuration_id = $3, execution_mode = COALESCE($4::text, a.execution_mode),
                    service_account_id = CASE WHEN $5::boolean THEN $6::text ELSE a.service_account_id END,
                    provider_id = CASE WHEN $7::boolean THEN $8::text ELSE a.provider_id END,
-                   plugins = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.plugins END
+                   plugins = CASE WHEN $9::boolean THEN $10::jsonb ELSE a.plugins END,
+                   repository_access = CASE WHEN $11::boolean THEN $12::jsonb ELSE a.repository_access END
                FROM occ.namespaces AS n
                WHERE a.namespace_id = $1 AND a.id = $2
                  AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                          a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                          a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                           a.active_revision_id, a.created_at`,
               [
                 namespaceId,
@@ -1509,6 +1664,8 @@ export class PostgresPlatformState implements PlatformStateStore {
                 providerId ?? null,
                 plugins !== undefined,
                 nextPlugins === undefined ? null : JSON.stringify(nextPlugins),
+                repositoryAccess !== undefined,
+                JSON.stringify(normalizeRepositoryAccess(repositoryAccess)),
               ],
             )
           ).rows,
@@ -1530,7 +1687,7 @@ export class PostgresPlatformState implements PlatformStateStore {
                 AND a.active_revision_id IS NOT DISTINCT FROM $3::text
                 AND n.id = a.namespace_id AND n.deleted_at IS NULL
                 RETURNING a.id, a.namespace_id, a.name, a.configuration_id, a.execution_mode,
-                          a.provider_id, a.plugins, a.service_principal_id, a.service_account_id,
+                          a.provider_id, a.plugins, a.repository_access, a.service_principal_id, a.service_account_id,
                           a.active_revision_id, a.created_at`,
               [namespaceId, agentId, expectedRevisionId ?? null, candidateRevisionId],
             )
@@ -1633,6 +1790,15 @@ export class PostgresPlatformState implements PlatformStateStore {
     };
 
     return {
+      repositoryBindings,
+      ...createPostgresRuntimeRepositories(
+        client,
+        () => this.currentInstallation(context),
+        namespaces,
+        agents,
+        revisions,
+        context.authorityGuard,
+      ),
       installations,
       namespaces,
       configurations,
