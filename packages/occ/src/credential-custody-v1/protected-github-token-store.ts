@@ -36,14 +36,131 @@ const absent = (error: unknown): boolean =>
 const exists = (error: unknown): boolean =>
   error instanceof Error && "code" in error && error.code === "EEXIST";
 
+interface StoreState {
+  readonly directory: string;
+  readonly identity: BigIntStats;
+  closed: boolean;
+}
+
+// Keep directory identity and closure out of caller-replaceable instance properties.
+const storeStates = new WeakMap<ProtectedGitHubTokenStoreV1, StoreState>();
+
+function storeState(owner: ProtectedGitHubTokenStoreV1): StoreState {
+  const state = storeStates.get(owner);
+  if (state === undefined) throw new TypeError("Invalid protected GitHub token store receiver.");
+  return state;
+}
+
+function assertDirectory(state: StoreState): void {
+  if (state.closed) unavailable();
+  const current = protectedGitHubDirectoryV1(state.directory);
+  if (current.dev !== state.identity.dev || current.ino !== state.identity.ino) unavailable();
+  // Local Linux filesystems with the selected POSIX fsync/link semantics.
+  // Filesystem type alone does not attest a Kubernetes volume's lifecycle.
+  const filesystem = statfsSync(state.directory, { bigint: true });
+  if (![0xef53n, 0x58465342n].includes(filesystem.type)) unavailable();
+}
+
+function envelopeName(originalContext: string): string {
+  if (
+    typeof originalContext !== "string" ||
+    originalContext.length < 1 ||
+    originalContext.length > 65536
+  )
+    unavailable();
+  return (
+    createHash("sha256")
+      .update("occ/github-token-material/v1\0")
+      .update(originalContext)
+      .digest("hex") + ".enc"
+  );
+}
+
+function readEnvelope(
+  state: StoreState,
+  path: string,
+  expectedLinks: bigint = 1n,
+): Buffer | undefined {
+  let descriptor: number | undefined;
+  let envelopeBytes: Buffer | undefined;
+  let accepted = false;
+  try {
+    assertDirectory(state);
+    let fileBefore: BigIntStats;
+    try {
+      fileBefore = lstatSync(path, { bigint: true });
+    } catch (error) {
+      if (absent(error)) return undefined;
+      throw error;
+    }
+    if (
+      !fileBefore.isFile() ||
+      !protectedGitHubOwnedV1(fileBefore) ||
+      (fileBefore.mode & 0o777n) !== 0o600n ||
+      fileBefore.nlink !== expectedLinks ||
+      fileBefore.size < 1n ||
+      fileBefore.size > BigInt(maximumEnvelopeBytes)
+    )
+      unavailable();
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!protectedGitHubSameFileV1(fileBefore, fstatSync(descriptor, { bigint: true })))
+      unavailable();
+    envelopeBytes = Buffer.alloc(Number(fileBefore.size));
+    let offset = 0;
+    while (offset < envelopeBytes.length) {
+      const bytesRead = readSync(
+        descriptor,
+        envelopeBytes,
+        offset,
+        envelopeBytes.length - offset,
+        offset,
+      );
+      if (bytesRead < 1) unavailable();
+      offset += bytesRead;
+    }
+    if (
+      !protectedGitHubSameFileV1(fileBefore, fstatSync(descriptor, { bigint: true })) ||
+      !protectedGitHubSameFileV1(fileBefore, lstatSync(path, { bigint: true }))
+    )
+      unavailable();
+    fsyncSync(descriptor);
+    assertDirectory(state);
+    accepted = true;
+  } catch {
+    accepted = false;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        accepted = false;
+      }
+    }
+    if (!accepted) envelopeBytes?.fill(0);
+  }
+  if (!accepted || envelopeBytes === undefined) unavailable();
+  return envelopeBytes;
+}
+
+function syncDirectory(state: StoreState): void {
+  const descriptor = openSync(
+    state.directory,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
+  try {
+    const current = fstatSync(descriptor, { bigint: true });
+    if (current.dev !== state.identity.dev || current.ino !== state.identity.ino) unavailable();
+    fsyncSync(descriptor);
+    assertDirectory(state);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /** Encrypted material files only. All operation/claim/release state remains in
  * the original inventory. The selected deployment must retain this dedicated
  * directory across restarts and enforce one custody writer. */
 export class ProtectedGitHubTokenStoreV1 {
-  readonly #directory: string;
-  readonly #identity: BigIntStats;
-  #closed = false;
-
   constructor(selection: ProtectedGitHubStoreSelectionV1) {
     try {
       if (
@@ -55,126 +172,36 @@ export class ProtectedGitHubTokenStoreV1 {
         /^\/(tmp|var\/tmp|dev|proc|sys|run)(\/|$)/.test(selection.directory)
       )
         unavailable();
-      this.#directory = selection.directory;
-      this.#identity = protectedGitHubDirectoryV1(this.#directory);
-      this.#assertDirectory();
+      const directory = selection.directory;
+      const state: StoreState = {
+        directory,
+        identity: protectedGitHubDirectoryV1(directory),
+        closed: false,
+      };
+      storeStates.set(this, state);
+      assertDirectory(state);
     } catch {
       unavailable();
-    }
-  }
-
-  #assertDirectory(): void {
-    if (this.#closed) unavailable();
-    const current = protectedGitHubDirectoryV1(this.#directory);
-    if (current.dev !== this.#identity.dev || current.ino !== this.#identity.ino) unavailable();
-    // Local Linux filesystems with the selected POSIX fsync/link semantics.
-    // Filesystem type alone does not attest a Kubernetes volume's lifecycle.
-    const fs = statfsSync(this.#directory, { bigint: true });
-    if (![0xef53n, 0x58465342n].includes(fs.type)) unavailable();
-  }
-
-  #name(originalContext: string): string {
-    if (
-      typeof originalContext !== "string" ||
-      originalContext.length < 1 ||
-      originalContext.length > 65536
-    )
-      unavailable();
-    return (
-      createHash("sha256")
-        .update("occ/github-token-material/v1\0")
-        .update(originalContext)
-        .digest("hex") + ".enc"
-    );
-  }
-
-  #read(path: string, links: bigint = 1n): Buffer | undefined {
-    let descriptor: number | undefined;
-    let bytes: Buffer | undefined;
-    let accepted = false;
-    try {
-      this.#assertDirectory();
-      let before: BigIntStats;
-      try {
-        before = lstatSync(path, { bigint: true });
-      } catch (error) {
-        if (absent(error)) return undefined;
-        throw error;
-      }
-      if (
-        !before.isFile() ||
-        !protectedGitHubOwnedV1(before) ||
-        (before.mode & 0o777n) !== 0o600n ||
-        before.nlink !== links ||
-        before.size < 1n ||
-        before.size > BigInt(maximumEnvelopeBytes)
-      )
-        unavailable();
-      descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      if (!protectedGitHubSameFileV1(before, fstatSync(descriptor, { bigint: true })))
-        unavailable();
-      bytes = Buffer.alloc(Number(before.size));
-      let offset = 0;
-      while (offset < bytes.length) {
-        const count = readSync(descriptor, bytes, offset, bytes.length - offset, offset);
-        if (count < 1) unavailable();
-        offset += count;
-      }
-      if (
-        !protectedGitHubSameFileV1(before, fstatSync(descriptor, { bigint: true })) ||
-        !protectedGitHubSameFileV1(before, lstatSync(path, { bigint: true }))
-      )
-        unavailable();
-      fsyncSync(descriptor);
-      this.#assertDirectory();
-      accepted = true;
-    } catch {
-      accepted = false;
-    } finally {
-      if (descriptor !== undefined) {
-        try {
-          closeSync(descriptor);
-        } catch {
-          accepted = false;
-        }
-      }
-      if (!accepted) bytes?.fill(0);
-    }
-    if (!accepted || bytes === undefined) unavailable();
-    return bytes;
-  }
-
-  #syncDirectory(): void {
-    const descriptor = openSync(
-      this.#directory,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    );
-    try {
-      const current = fstatSync(descriptor, { bigint: true });
-      if (current.dev !== this.#identity.dev || current.ino !== this.#identity.ino) unavailable();
-      fsyncSync(descriptor);
-      this.#assertDirectory();
-    } finally {
-      closeSync(descriptor);
     }
   }
 
   read(originalContext: string): Buffer | undefined {
     try {
-      this.#assertDirectory();
-      const name = this.#name(originalContext);
-      const destination = join(this.#directory, name);
-      const pending = join(this.#directory, ".pending-" + name);
+      const state = storeState(this);
+      assertDirectory(state);
+      const name = envelopeName(originalContext);
+      const destinationPath = join(state.directory, name);
+      const pendingPath = join(state.directory, ".pending-" + name);
       let pendingStat: BigIntStats | undefined;
       try {
-        pendingStat = lstatSync(pending, { bigint: true });
+        pendingStat = lstatSync(pendingPath, { bigint: true });
       } catch (error) {
         if (!absent(error)) throw error;
       }
       if (pendingStat !== undefined) {
         let destinationStat: BigIntStats | undefined;
         try {
-          destinationStat = lstatSync(destination, { bigint: true });
+          destinationStat = lstatSync(destinationPath, { bigint: true });
         } catch (error) {
           if (!absent(error)) throw error;
         }
@@ -183,21 +210,25 @@ export class ProtectedGitHubTokenStoreV1 {
           (pendingStat.dev !== destinationStat.dev || pendingStat.ino !== destinationStat.ino)
         )
           unavailable();
-        const bytes = this.#read(pending, destinationStat === undefined ? 1n : 2n);
-        if (bytes === undefined) unavailable();
+        const envelopeBytes = readEnvelope(
+          state,
+          pendingPath,
+          destinationStat === undefined ? 1n : 2n,
+        );
+        if (envelopeBytes === undefined) unavailable();
         try {
-          if (destinationStat === undefined) linkSync(pending, destination);
-          unlinkSync(pending);
-          this.#syncDirectory();
-          return bytes;
+          if (destinationStat === undefined) linkSync(pendingPath, destinationPath);
+          unlinkSync(pendingPath);
+          syncDirectory(state);
+          return envelopeBytes;
         } catch {
-          bytes.fill(0);
+          envelopeBytes.fill(0);
           unavailable();
         }
       }
-      const bytes = this.#read(destination);
-      if (bytes !== undefined) this.#syncDirectory();
-      return bytes;
+      const envelopeBytes = readEnvelope(state, destinationPath);
+      if (envelopeBytes !== undefined) syncDirectory(state);
+      return envelopeBytes;
     } catch {
       unavailable();
     }
@@ -207,59 +238,61 @@ export class ProtectedGitHubTokenStoreV1 {
    * publication; retry/readback must keep the same original context/envelope. */
   retain(originalContext: string, envelope: Uint8Array): void {
     let descriptor: number | undefined;
-    let temporary: string | undefined;
+    let pendingPath: string | undefined;
     const copiedEnvelope = Buffer.from(envelope);
     try {
       if (copiedEnvelope.length < 1 || copiedEnvelope.length > maximumEnvelopeBytes) unavailable();
-      this.#assertDirectory();
-      const name = this.#name(originalContext);
-      const destination = join(this.#directory, name);
-      const previous = this.read(originalContext);
-      if (previous !== undefined) {
+      const state = storeState(this);
+      assertDirectory(state);
+      const name = envelopeName(originalContext);
+      const destinationPath = join(state.directory, name);
+      const previousEnvelope = this.read(originalContext);
+      if (previousEnvelope !== undefined) {
         try {
-          if (!previous.equals(copiedEnvelope)) unavailable();
+          if (!previousEnvelope.equals(copiedEnvelope)) unavailable();
         } finally {
-          previous.fill(0);
+          previousEnvelope.fill(0);
         }
         return;
       }
-      temporary = join(this.#directory, ".pending-" + name);
+      pendingPath = join(state.directory, ".pending-" + name);
       descriptor = openSync(
-        temporary,
+        pendingPath,
         constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
         0o600,
       );
       let offset = 0;
       while (offset < copiedEnvelope.length) {
-        const count = writeSync(
+        const bytesWritten = writeSync(
           descriptor,
           copiedEnvelope,
           offset,
           copiedEnvelope.length - offset,
           offset,
         );
-        if (count < 1) unavailable();
-        offset += count;
+        if (bytesWritten < 1) unavailable();
+        offset += bytesWritten;
       }
       fsyncSync(descriptor);
       closeSync(descriptor);
       descriptor = undefined;
-      this.#assertDirectory();
+      assertDirectory(state);
       // link is an atomic, no-overwrite publication, unlike rename on POSIX.
       try {
-        linkSync(temporary, destination);
+        linkSync(pendingPath, destinationPath);
       } catch (error) {
         if (!exists(error)) throw error;
-        const competing = this.#read(destination);
+        const competingEnvelope = readEnvelope(state, destinationPath);
         try {
-          if (competing === undefined || !competing.equals(copiedEnvelope)) unavailable();
+          if (competingEnvelope === undefined || !competingEnvelope.equals(copiedEnvelope))
+            unavailable();
         } finally {
-          competing?.fill(0);
+          competingEnvelope?.fill(0);
         }
       }
-      unlinkSync(temporary);
-      temporary = undefined;
-      this.#syncDirectory();
+      unlinkSync(pendingPath);
+      pendingPath = undefined;
+      syncDirectory(state);
     } catch {
       unavailable();
     } finally {
@@ -268,7 +301,7 @@ export class ProtectedGitHubTokenStoreV1 {
         try {
           closeSync(descriptor);
         } catch {
-          this.#closed = true;
+          storeState(this).closed = true;
         }
       }
       // Preserve failed partial/publication files for custody reconciliation.
@@ -277,11 +310,12 @@ export class ProtectedGitHubTokenStoreV1 {
   }
 
   assertSeparateKeySource(crypto: ProtectedGitHubCryptoV1): void {
-    this.#assertDirectory();
-    crypto.assertSeparateStorage(this.#directory);
+    const state = storeState(this);
+    assertDirectory(state);
+    crypto.assertSeparateStorage(state.directory);
   }
 
   close(): void {
-    this.#closed = true;
+    storeState(this).closed = true;
   }
 }

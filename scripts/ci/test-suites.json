@@ -218,6 +218,9 @@
         },
         {
           "path": "tests/conformance/protected-github-app-material.test.mjs"
+        },
+        {
+          "path": "tests/conformance/protected-github-token-store.test.mjs"
         }
       ]
     },

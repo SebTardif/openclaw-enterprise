@@ -87,14 +87,17 @@ Run the protected-material suites separately from the five protocol suites above
 ```sh
 node --test --test-concurrency=1 \
   tests/conformance/protected-github-crypto.test.mjs \
-  tests/conformance/protected-github-app-material.test.mjs
+  tests/conformance/protected-github-app-material.test.mjs \
+  tests/conformance/protected-github-token-store.test.mjs
 ```
 
 They exercise real envelope cryptography, RSA signing, protected filesystem
 checks and in-memory State, with the Kubernetes read boundary substituted.
-Coverage includes exact source refusal, binding withdrawal and closure. They do
-not prove token-store durability or restart recovery, live GitHub, Kubernetes
-attestation, token issuance through Work or Agent checkout. See
+Coverage includes exact source refusal, binding withdrawal and closure. Real-file
+token-store cases cover retain/read, idempotence, conflict refusal, fresh-owner
+readback and recovery of staged pending publications. They do not prove crash or
+volume durability, native fsync failures, live GitHub, Kubernetes attestation,
+token issuance through Work or Agent checkout. See
 [protected material preparation](../reference/github-app-token-issuer.md#protected-material-preparation)
 for selection, custody and lifecycle requirements.
 
