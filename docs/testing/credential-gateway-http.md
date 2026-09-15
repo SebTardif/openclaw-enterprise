@@ -3,7 +3,7 @@
 Run the focused native HTTP component checks from the repository root with Node.js 24 and the pinned pnpm version, using a matching frozen dependency installation:
 
 ```sh
-pnpm exec tsc -p apps/credential-gateway/tsconfig.http.json --pretty false
+pnpm check:credential-gateway-http-types
 node --test tests/conformance/credential-gateway-http-request.test.mjs
 pnpm check:workspace
 pnpm format:check
@@ -18,6 +18,6 @@ A consuming server must use `maxHeaderSize: 32768`, `insecureHTTPParser: false`,
 
 GET candidates have zero body limits and accept only absent or zero Content-Length. Fetch POST candidates permit 1 MiB, push POST candidates 256 MiB, and PR JSON candidates 64 KiB, for both wire and decoded limits. Declared lengths are checked here. Actual EOF, chunk framing, trailers, gzip validity, decoded counters, stream use and body authorization remain separate obligations.
 
-These checks qualify this component only. The authenticated HTTPS server must share inspection between request, checkContinue and checkExpectation handling, validate SNI/Host, reject CONNECT and upgrades, reserve capacity and authenticate before emitting 100 Continue, and enforce body and authority deadlines. Head inspection cannot establish a push probe. Production callers, curated package exports, required CI registration, independently installed backend composition, ordinary Agent workflows, replicas and live GitHub operations require their own acceptance evidence.
+These checks qualify this component only. The authenticated HTTPS server must share inspection between request, checkContinue and checkExpectation handling, validate SNI/Host, reject CONNECT and upgrades, reserve capacity and authenticate before emitting 100 Continue, and enforce body and authority deadlines. Head inspection cannot establish a push probe. The `checks-baseline` CI lane runs the focused compiler and this conformance file; see [CI suite ownership](ci.md). Production callers, curated package exports, independently installed backend composition, ordinary Agent workflows, replicas and live GitHub operations require their own acceptance evidence.
 
 If a case fails before the inspector runs, investigate the native parsing boundary. If the focused compiler cannot resolve Node types, restore the repository's matching declared dependency installation; do not substitute transitive packages. A passing root build does not select this isolated gateway configuration.

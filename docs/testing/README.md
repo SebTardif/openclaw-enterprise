@@ -57,6 +57,13 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 | Real runtime or host execution | [SSH](ssh.md), [Kubernetes](kubernetes.md), [Production TUI](production-tui.md), and [OpenShell](openshell.md) |
 | External provider integrations | [Slack](slack.md), [ChatGPT service accounts](service-accounts.md), and [Agent plugins](plugins.md)            |
 
+## Credential gateway components
+
+Use [HTTP head checks](credential-gateway-http.md) for native request inspection
+and [schema runtime verification](credential-schema-registry.md) for bounded
+canonical JSON. The [CI guide](ci.md) describes their compiler and suite selection;
+these component checks do not establish the broader gateway integration.
+
 ## Requirements and credentials
 
 Use Node.js 24 or newer and the pnpm version pinned in
