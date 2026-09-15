@@ -10,3 +10,8 @@ packages:
 allowBuilds:
   esbuild: true
   protobufjs: true
+
+# TODO: Remove these temporary pins when the registry permits the upstream versions.
+overrides:
+  "@better-auth/core": 1.7.3
+  zod: 4.5.4
