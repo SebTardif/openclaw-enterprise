@@ -12,6 +12,18 @@ supply controlled DNS observations; integration checks use the native resolver a
 real loopback DNS exchange. Both check selection and refusal without contacting
 GitHub or replacing the selector implementation.
 
+## Adding cases
+
+Use the conformance suite's `destinationHarness` for controlled A/AAAA outcomes,
+factory and cancellation observations, and fixed refusal assertions. Keep address
+vectors and expected outcomes in the test file. Lifecycle cases can use deferred
+answers to make the ordering being checked explicit.
+
+For native DNS coverage, add an `answerCases` entry with `A` and `AAAA` records
+and an expected destination or error. The `nativeDns` helper owns UDP wire encoding,
+fixture cleanup and query assertions. Keep stateful deadline, freshness and
+concurrent-cancellation scenarios as short tests using that same helper.
+
 ## Component contract
 
 `createDestinationSelector(config, factory)` retains a deep frozen copy of one to

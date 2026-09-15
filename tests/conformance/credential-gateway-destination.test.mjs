@@ -1,41 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getEventListeners } from "node:events";
+import { createDestinationSelector } from "../../apps/credential-gateway/src/transport/destination.ts";
 import {
-  createDestinationSelector,
-  DestinationError,
-} from "../../apps/credential-gateway/src/transport/destination.ts";
-
-const config = () => ({ servers: [{ address: "127.0.0.1", port: 5353 }], lookupTimeoutMs: 1000 });
-const bounds = () => ({ signal: new AbortController().signal, deadline: Date.now() + 2000 });
-function observed(v4 = ["140.82.112.3"], v6 = []) {
-  const observations = [];
-  const factory = (retained) => {
-    const observation = { retained, names: [], cancelled: 0 };
-    observations.push(observation);
-    return {
-      resolve4(name) {
-        observation.names.push([4, name]);
-        return typeof v4 === "function" ? v4() : Promise.resolve(v4);
-      },
-      resolve6(name) {
-        observation.names.push([6, name]);
-        return typeof v6 === "function" ? v6() : Promise.resolve(v6);
-      },
-      cancel() {
-        observation.cancelled++;
-      },
-    };
-  };
-  return { selector: createDestinationSelector(config(), factory), observations, factory };
-}
-const denied = (code) => (error) => error instanceof DestinationError && error.code === code;
-async function addressCase(address, family, permitted) {
-  const { selector } = family === 4 ? observed([address]) : observed([], [address]);
-  const result = selector.select("github.com", bounds());
-  if (permitted) assert.equal((await result).address, address);
-  else await assert.rejects(result, denied("address-denied"), address);
-}
+  assertAddress,
+  deferred,
+  destinationConfig as config,
+  destinationError,
+  destinationHarness,
+  dnsFailure,
+  selectionBounds as bounds,
+} from "../helpers/credential-gateway-destination.mjs";
 
 // Independent numerical boundary vectors include the complete denied intervals.
 const ipv4Intervals = [
@@ -92,250 +67,281 @@ const ipv4PublicNeighbors = [
   "203.0.114.0",
   "223.255.255.255",
 ];
-test("IPv4 conservative policy denies each full interval and admits public neighbors", async () => {
-  for (const interval of ipv4Intervals)
-    for (const address of interval) await addressCase(address, 4, false);
-  for (const address of ipv4PublicNeighbors) await addressCase(address, 4, true);
-});
-test("IPv6 conservative policy enforces global envelope and every exception boundary", async () => {
-  const blocked = [
-    "1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "4000::",
-    "::",
-    "::1",
-    "fc00::",
-    "fe80::1",
-    "ff02::1",
-    "2001::",
-    "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2001:db8::",
-    "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2002::",
-    "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2620:4f:8000::",
-    "2620:4f:8000:ffff:ffff:ffff:ffff:ffff",
-    "3fff::",
-    "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "::ffff:140.82.112.3",
-    "::140.82.112.3",
-    "64:ff9b::8c52:7003",
-    "64:ff9b:1::1",
-  ];
-  const publicAddresses = [
-    "2000::",
-    "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2001:200::",
-    "2001:db7:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2001:db9::",
-    "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "2003::",
-    "2620:4f:7fff:ffff:ffff:ffff:ffff:ffff",
-    "2620:4f:8001::",
-    "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-    "3fff:1000::",
-    "2606:50C0:8000::153",
-    "2606:50c0:8000:0000:0000:0000:0000:0153",
-  ];
-  for (const address of blocked) await addressCase(address, 6, false);
-  for (const address of publicAddresses) await addressCase(address, 6, true);
-});
-test("address syntax and answer family are strict, and one unsafe record denies the whole set", async () => {
-  for (const address of [
-    "127.1",
-    "0140.82.112.3",
-    "140.82.112.3:443",
-    " 140.82.112.3",
-    "https://github.com",
-    "[2606:50c0::1]",
-    "2606:50c0::1%eth0",
-    "2606::1.2.3.4",
-    "bad",
-    "",
-    null,
-    false,
-  ]) {
-    await addressCase(address, 4, false);
-  }
-  await addressCase("2606:50c0::1", 4, false);
-  await addressCase("140.82.112.3", 6, false);
-  for (const address of [
-    "[2606:50c0::1]",
-    "2606:50c0::1%eth0",
-    "2606::1.2.3.4",
-    " 2606:50c0::1",
-    "2606:50c0:::1",
-    "2606:50c0::10000",
-    "2606:50c0::1:443:99999",
-  ])
-    await addressCase(address, 6, false);
-  for (const [v4, v6] of [
-    [["140.82.112.3", "10.0.0.1"], []],
-    [["140.82.112.3"], ["fe80::1"]],
-    [[], ["2606:50c0::1", "::1"]],
-  ]) {
-    await assert.rejects(
-      observed(v4, v6).selector.select("github.com", bounds()),
-      denied("address-denied"),
-    );
-  }
-});
-test("empty, malformed, sparse, accessor and oversized answers fail with finite codes", async () => {
-  for (const [v4, code] of [
-    [[], "empty-answer"],
-    [null, "dns-failure"],
-    [false, "dns-failure"],
-    [Array(1), "address-denied"],
-    [Array(33).fill("140.82.112.3"), "answer-limit"],
-    [["a".repeat(46)], "address-denied"],
-  ]) {
-    await assert.rejects(observed(v4).selector.select("github.com", bounds()), denied(code));
-  }
-  let executed = false;
+const ipv6Blocked = [
+  "1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "4000::",
+  "::",
+  "::1",
+  "fc00::",
+  "fe80::1",
+  "ff02::1",
+  "2001::",
+  "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2001:db8::",
+  "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2002::",
+  "2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2620:4f:8000::",
+  "2620:4f:8000:ffff:ffff:ffff:ffff:ffff",
+  "3fff::",
+  "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "::ffff:140.82.112.3",
+  "::140.82.112.3",
+  "64:ff9b::8c52:7003",
+  "64:ff9b:1::1",
+];
+const ipv6PublicAddresses = [
+  "2000::",
+  "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2001:200::",
+  "2001:db7:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2001:db9::",
+  "2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "2003::",
+  "2620:4f:7fff:ffff:ffff:ffff:ffff:ffff",
+  "2620:4f:8001::",
+  "3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+  "3fff:1000::",
+  "2606:50C0:8000::153",
+  "2606:50c0:8000:0000:0000:0000:0000:0153",
+];
+
+for (const { name, family, permitted, addresses } of [
+  {
+    name: "IPv4 denied interval endpoints",
+    family: 4,
+    permitted: false,
+    addresses: ipv4Intervals.flat(),
+  },
+  { name: "IPv4 public neighbors", family: 4, permitted: true, addresses: ipv4PublicNeighbors },
+  {
+    name: "IPv6 denied envelope and exception boundaries",
+    family: 6,
+    permitted: false,
+    addresses: ipv6Blocked,
+  },
+  {
+    name: "IPv6 public envelope and exception neighbors",
+    family: 6,
+    permitted: true,
+    addresses: ipv6PublicAddresses,
+  },
+  {
+    name: "malformed and wrong-family A records",
+    family: 4,
+    permitted: false,
+    addresses: [
+      "127.1",
+      "0140.82.112.3",
+      "140.82.112.3:443",
+      " 140.82.112.3",
+      "https://github.com",
+      "[2606:50c0::1]",
+      "2606:50c0::1%eth0",
+      "2606::1.2.3.4",
+      "bad",
+      "",
+      null,
+      false,
+      "2606:50c0::1",
+    ],
+  },
+  {
+    name: "malformed and wrong-family AAAA records",
+    family: 6,
+    permitted: false,
+    addresses: [
+      "140.82.112.3",
+      "[2606:50c0::1]",
+      "2606:50c0::1%eth0",
+      "2606::1.2.3.4",
+      " 2606:50c0::1",
+      "2606:50c0:::1",
+      "2606:50c0::10000",
+      "2606:50c0::1:443:99999",
+    ],
+  },
+]) {
+  test(name, async (t) => {
+    for (const address of addresses)
+      await t.test(String(address), () => assertAddress(address, family, permitted));
+  });
+}
+
+for (const { name, v4, v6, code } of [
+  { name: "unsafe A alongside public A", v4: ["140.82.112.3", "10.0.0.1"], code: "address-denied" },
+  {
+    name: "unsafe AAAA alongside public A",
+    v4: ["140.82.112.3"],
+    v6: ["fe80::1"],
+    code: "address-denied",
+  },
+  {
+    name: "unsafe AAAA alongside public AAAA",
+    v4: [],
+    v6: ["2606:50c0::1", "::1"],
+    code: "address-denied",
+  },
+  { name: "empty answers", v4: [], code: "empty-answer" },
+  { name: "null answers", v4: null, code: "dns-failure" },
+  { name: "boolean answers", v4: false, code: "dns-failure" },
+  { name: "sparse answers", v4: Array(1), code: "address-denied" },
+  { name: "oversized answer set", v4: Array(33).fill("140.82.112.3"), code: "answer-limit" },
+  { name: "oversized address", v4: ["a".repeat(46)], code: "address-denied" },
+  ...["ENOTFOUND", "ECANCELLED", "ETIMEOUT", undefined].map((code) => ({
+    name: `AAAA failure ${code} despite public A`,
+    v6: dnsFailure(code),
+    code: "dns-failure",
+  })),
+  {
+    name: "synchronous DNS failure",
+    v4: () => {
+      throw new Error("sync DNS failure");
+    },
+    code: "dns-failure",
+  },
+]) {
+  test(`selection refuses ${name}`, () => destinationHarness({ v4, v6 }).refuses(code));
+}
+
+test("answer accessors are refused without execution", async () => {
+  let accessed = 0;
   const answers = [];
   Object.defineProperty(answers, "0", {
     get() {
-      executed = true;
+      accessed++;
       return "140.82.112.3";
     },
   });
-  await assert.rejects(
-    observed(answers).selector.select("github.com", bounds()),
-    denied("address-denied"),
-  );
-  assert.equal(executed, false);
-  const full = Array(32).fill("140.82.112.3");
-  const ipv6 = Array(32).fill("2606:50c0::1");
-  assert.equal((await observed(full, ipv6).selector.select("github.com", bounds())).family, 4);
+  await destinationHarness({ v4: answers }).refuses("address-denied");
+  assert.equal(accessed, 0);
 });
-test("only ENODATA is empty; other family failure refuses even with a public answer", async () => {
-  const rejected = (code) => () =>
-    Promise.reject(Object.assign(new Error("external detail"), { code }));
-  assert.equal(
-    (
-      await observed(rejected("ENODATA"), ["2606:50c0::1"]).selector.select(
-        "api.github.com",
-        bounds(),
-      )
-    ).family,
-    6,
-  );
-  for (const code of ["ENOTFOUND", "ECANCELLED", "ETIMEOUT", undefined]) {
-    await assert.rejects(
-      observed(["140.82.112.3"], rejected(code)).selector.select("github.com", bounds()),
-      denied("dns-failure"),
-    );
-  }
-  await assert.rejects(
-    observed(() => {
-      throw new Error("sync DNS failure");
-    }).selector.select("github.com", bounds()),
-    denied("dns-failure"),
-  );
+
+test("each family can supply the maximum 32 records and A is preferred", async () => {
+  const harness = destinationHarness({
+    v4: Array(32).fill("140.82.112.3"),
+    v6: Array(32).fill("2606:50c0::1"),
+  });
+  assert.equal((await harness.select()).family, 4);
 });
-test("fixed host, mandatory native signal and safe integer epoch deadline reject before factory", async () => {
-  const { selector, observations } = observed();
-  for (const name of [
-    "github.com.",
-    "GitHub.com",
-    "other.example",
-    "api.github.com:443",
-    null,
-    false,
-  ])
-    await assert.rejects(selector.select(name, bounds()), denied("invalid-host"));
-  for (const b of [
-    null,
-    false,
-    {},
-    { signal: {}, deadline: Date.now() + 1000 },
-    ...[NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1].map((deadline) => ({
-      ...bounds(),
-      deadline,
-    })),
-  ])
-    await assert.rejects(selector.select("github.com", b), denied("invalid-bounds"));
-  const aborted = new AbortController();
-  aborted.abort();
-  await assert.rejects(
-    selector.select("github.com", { ...bounds(), signal: aborted.signal }),
-    denied("aborted"),
-  );
-  await assert.rejects(
-    selector.select("github.com", { ...bounds(), deadline: Date.now() - 1 }),
-    denied("deadline"),
-  );
-  assert.equal(observations.length, 0);
-  await assert.rejects(
-    selector.select("github.com", { ...bounds(), signal: Object.create(AbortSignal.prototype) }),
-    denied("invalid-bounds"),
-  );
-});
-test("configuration is validated, copied deeply and frozen; each selection owns its resolver", async () => {
-  for (const c of [
-    null,
-    false,
-    {},
-    { ...config(), servers: [] },
-    { ...config(), servers: Array(4).fill(config().servers[0]) },
-    ...[0, 5001, 1.5, NaN, false].map((lookupTimeoutMs) => ({ ...config(), lookupTimeoutMs })),
-    ...["dns.example", "[::1]", "::1%lo", " 127.0.0.1"].map((address) => ({
-      ...config(),
-      servers: [{ address, port: 53 }],
-    })),
-    ...[0, 65536, 1.5, false].map((port) => ({ ...config(), servers: [{ address: "::1", port }] })),
-  ])
-    assert.throws(() => createDestinationSelector(c, () => {}), denied("invalid-config"));
-  assert.throws(() => createDestinationSelector(config(), null), denied("invalid-config"));
-  const { factory, observations } = observed();
-  const c = config();
-  const selector = createDestinationSelector(c, factory);
-  c.servers[0].address = "10.0.0.1";
-  c.servers[0].port = 1;
-  c.lookupTimeoutMs = 1;
-  c.servers.push({ address: "::1", port: 53 });
-  const results = await Promise.all([
-    selector.select("github.com", bounds()),
-    selector.select("api.github.com", bounds()),
-  ]);
-  assert.equal(observations.length, 2);
-  for (const o of observations) {
-    assert.deepEqual(o.retained, config());
-    assert.ok(
-      Object.isFrozen(o.retained) &&
-        Object.isFrozen(o.retained.servers) &&
-        Object.isFrozen(o.retained.servers[0]),
-    );
-    assert.equal(o.cancelled, 1);
-    assert.equal(o.names.length, 2);
-    assert.equal(o.names[0][1], o.names[1][1]);
-  }
-  assert.deepEqual(results[0], {
-    hostname: "github.com",
-    address: "140.82.112.3",
-    family: 4,
+
+test("ENODATA permits selecting a public answer from the other family", async () => {
+  const harness = destinationHarness({ v4: dnsFailure("ENODATA"), v6: ["2606:50c0::1"] });
+  assert.deepEqual(await harness.select("api.github.com"), {
+    hostname: "api.github.com",
+    address: "2606:50c0::1",
+    family: 6,
     port: 443,
   });
-  assert.ok(Object.isFrozen(results[0]));
 });
-function deferred() {
-  let resolve, reject;
-  const promise = new Promise((a, b) => {
-    resolve = a;
-    reject = b;
+
+const invalidHosts = [
+  "github.com.",
+  "GitHub.com",
+  "other.example",
+  "api.github.com:443",
+  null,
+  false,
+];
+const invalidBounds = () => [
+  null,
+  false,
+  {},
+  { signal: {}, deadline: Date.now() + 1000 },
+  ...[NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1].map((deadline) => bounds({ deadline })),
+  bounds({ signal: Object.create(AbortSignal.prototype) }),
+];
+for (const { name, operands, code, options } of [
+  {
+    name: "invalid host",
+    operands: () => invalidHosts,
+    code: "invalid-host",
+    options: (hostname) => ({ hostname }),
+  },
+  {
+    name: "invalid bounds",
+    operands: invalidBounds,
+    code: "invalid-bounds",
+    options: (bounds) => ({ bounds }),
+  },
+]) {
+  test(`${name} refuses before creating a resolver`, async () => {
+    const harness = destinationHarness();
+    for (const operand of operands()) await harness.refuses(code, options(operand));
+    assert.equal(harness.observations.length, 0);
   });
-  return { promise, resolve, reject };
 }
+
+test("already aborted and expired requests refuse before creating a resolver", async () => {
+  const harness = destinationHarness();
+  await harness.refuses("aborted", { bounds: bounds({ signal: AbortSignal.abort() }) });
+  await harness.refuses("deadline", { bounds: bounds({ deadline: Date.now() - 1 }) });
+  assert.equal(harness.observations.length, 0);
+});
+
+test("configuration rejects invalid servers, timeouts and factories", () => {
+  const invalidConfigs = [
+    null,
+    false,
+    {},
+    config({ servers: [] }),
+    config({ servers: Array(4).fill(config().servers[0]) }),
+    ...[0, 5001, 1.5, NaN, false].map((lookupTimeoutMs) => config({ lookupTimeoutMs })),
+    ...["dns.example", "[::1]", "::1%lo", " 127.0.0.1"].map((address) =>
+      config({ servers: [{ address, port: 53 }] }),
+    ),
+    ...[0, 65536, 1.5, false].map((port) => config({ servers: [{ address: "::1", port }] })),
+  ];
+  for (const value of invalidConfigs)
+    assert.throws(
+      () => createDestinationSelector(value, () => {}),
+      destinationError("invalid-config"),
+    );
+  assert.throws(
+    () => createDestinationSelector(config(), null),
+    destinationError("invalid-config"),
+  );
+});
+
+test("configuration is deeply copied and frozen; each selection owns its resolver", async () => {
+  const input = config();
+  const harness = destinationHarness({ config: input });
+  input.servers[0].address = "10.0.0.1";
+  input.servers[0].port = 1;
+  input.lookupTimeoutMs = 1;
+  input.servers.push({ address: "::1", port: 53 });
+  const hostnames = ["github.com", "api.github.com"];
+  const results = await Promise.all(hostnames.map((hostname) => harness.select(hostname)));
+  harness.assertCancellations(1, 1);
+  for (const [index, { retained, queries }] of harness.observations.entries()) {
+    assert.deepEqual(retained, config());
+    assert.ok(
+      Object.isFrozen(retained) &&
+        Object.isFrozen(retained.servers) &&
+        Object.isFrozen(retained.servers[0]),
+    );
+    assert.deepEqual(queries, [
+      [4, hostnames[index]],
+      [6, hostnames[index]],
+    ]);
+    assert.deepEqual(results[index], {
+      hostname: hostnames[index],
+      address: "140.82.112.3",
+      family: 4,
+      port: 443,
+    });
+    assert.ok(Object.isFrozen(results[index]));
+  }
+});
+
 test("answers are copied at settlement and preferred A waits for complete AAAA validation", async () => {
   const a = deferred(),
     aaaa = deferred();
   const answers = ["140.82.112.3"];
-  const { selector } = observed(
-    () => a.promise,
-    () => aaaa.promise,
-  );
+  const harness = destinationHarness({ v4: () => a.promise, v6: () => aaaa.promise });
   let finished = false;
-  const selected = selector.select("github.com", bounds()).then((value) => {
+  const selected = harness.select().then((value) => {
     finished = true;
     return value;
   });
@@ -346,259 +352,216 @@ test("answers are copied at settlement and preferred A waits for complete AAAA v
   aaaa.resolve(["2606:50c0::1"]);
   assert.equal((await selected).address, "140.82.112.3");
 });
-test("abort and shorter monotonic timeout settle without hung DNS; late failures are consumed", async () => {
-  const lateA = deferred(),
-    lateAAAA = deferred();
+
+test("abort settles hung DNS and consumes late success and failure", async () => {
+  const a = deferred(),
+    aaaa = deferred();
   const controller = new AbortController();
-  const { selector, observations } = observed(
-    () => lateA.promise,
-    () => lateAAAA.promise,
-  );
-  const failure = selector.select("github.com", { ...bounds(), signal: controller.signal });
+  const harness = destinationHarness({ v4: () => a.promise, v6: () => aaaa.promise });
+  const selected = harness.select("github.com", bounds({ signal: controller.signal }));
   controller.abort();
-  await assert.rejects(failure, denied("aborted"));
-  assert.equal(observations[0].cancelled, 1);
-  lateA.resolve(["140.82.112.3"]);
-  lateAAAA.reject(new Error("late failure"));
-  const hanging = observed(
-    () => new Promise(() => {}),
-    () => new Promise(() => {}),
-  );
-  const timed = createDestinationSelector({ ...config(), lookupTimeoutMs: 15 }, hanging.factory);
-  await assert.rejects(timed.select("github.com", bounds()), denied("deadline"));
-  assert.equal(hanging.observations[0].cancelled, 1);
-  await assert.rejects(
-    hanging.selector.select("github.com", { ...bounds(), deadline: Date.now() + 15 }),
-    denied("deadline"),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 5));
-});
-test("cancellation isolation and synchronous factory abort both cancel exactly their own resolver", async () => {
-  const hanging = deferred();
-  let count = 0;
-  const cancellations = [0, 0];
-  const selector = createDestinationSelector(config(), () => {
-    const id = count++;
-    return {
-      resolve4: () => (id ? Promise.resolve(["140.82.112.4"]) : hanging.promise),
-      resolve6: () => Promise.resolve([]),
-      cancel() {
-        cancellations[id]++;
-      },
-    };
-  });
-  const controller = new AbortController();
-  const first = selector.select("github.com", { ...bounds(), signal: controller.signal });
-  const second = selector.select("api.github.com", bounds());
-  controller.abort();
-  await assert.rejects(first, denied("aborted"));
-  assert.equal((await second).address, "140.82.112.4");
-  assert.deepEqual(cancellations, [1, 1]);
-  hanging.resolve(["140.82.112.3"]);
-  const sync = new AbortController();
-  let cancelled = 0,
-    queried = 0;
-  const abortedFactory = createDestinationSelector(config(), () => {
-    sync.abort();
-    return {
-      resolve4() {
-        queried++;
-        return Promise.resolve([]);
-      },
-      resolve6() {
-        queried++;
-        return Promise.resolve([]);
-      },
-      cancel() {
-        cancelled++;
-      },
-    };
-  });
-  await assert.rejects(
-    abortedFactory.select("github.com", { ...bounds(), signal: sync.signal }),
-    denied("aborted"),
-  );
-  assert.equal(cancelled, 1);
-  assert.equal(queried, 0);
+  await assert.rejects(selected, destinationError("aborted"));
+  harness.assertCancellations(1);
+  a.resolve(["140.82.112.3"]);
+  aaaa.reject(new Error("late failure"));
 });
 
-test("configuration and bounds accessor fields are refused without running them", async () => {
+for (const { name, lookupTimeoutMs, deadlineMs } of [
+  { name: "lookup timeout", lookupTimeoutMs: 15, deadlineMs: 2000 },
+  { name: "request deadline", lookupTimeoutMs: 1000, deadlineMs: 15 },
+]) {
+  test(`shorter ${name} settles hung DNS`, async () => {
+    const hanging = deferred();
+    const harness = destinationHarness({
+      config: config({ lookupTimeoutMs }),
+      v4: () => hanging.promise,
+      v6: () => hanging.promise,
+    });
+    await harness.refuses("deadline", { bounds: bounds({ deadline: Date.now() + deadlineMs }) });
+    harness.assertCancellations(1);
+  });
+}
+
+test("cancelling one selection leaves the other resolver independent", async () => {
+  const hanging = deferred();
+  const controller = new AbortController();
+  const harness = destinationHarness({
+    v4: (id) => (id ? Promise.resolve(["140.82.112.4"]) : hanging.promise),
+  });
+  const first = harness.select("github.com", bounds({ signal: controller.signal }));
+  const second = harness.select("api.github.com");
+  controller.abort();
+  await assert.rejects(first, destinationError("aborted"));
+  assert.equal((await second).address, "140.82.112.4");
+  harness.assertCancellations(1, 1);
+  hanging.resolve(["140.82.112.3"]);
+});
+
+test("synchronous factory abort cancels its resolver without issuing queries", async () => {
+  const controller = new AbortController();
+  const harness = destinationHarness({ onCreate: () => controller.abort() });
+  await harness.refuses("aborted", { bounds: bounds({ signal: controller.signal }) });
+  harness.assertCancellations(1);
+  assert.deepEqual(harness.observations[0].queries, []);
+});
+
+test("configuration and bounds accessors are refused without execution", async () => {
   let accessed = 0;
-  const c = config();
-  Object.defineProperty(c, "servers", {
+  const trap = {
     get() {
       accessed++;
       throw new Error("getter");
     },
-  });
-  assert.throws(() => createDestinationSelector(c, () => {}), denied("invalid-config"));
-  const b = bounds();
-  Object.defineProperty(b, "deadline", {
-    get() {
-      accessed++;
-      throw new Error("getter");
-    },
-  });
-  await assert.rejects(observed().selector.select("github.com", b), denied("invalid-bounds"));
+  };
+  const inputConfig = config(),
+    inputBounds = bounds();
+  Object.defineProperty(inputConfig, "servers", trap);
+  Object.defineProperty(inputBounds, "deadline", trap);
+  assert.throws(
+    () => destinationHarness({ config: inputConfig }),
+    destinationError("invalid-config"),
+  );
+  await destinationHarness().refuses("invalid-bounds", { bounds: inputBounds });
   assert.equal(accessed, 0);
 });
 
-test("hostile bounds and signal inspection reject with fixed invalid-bounds before factory", async () => {
-  const { selector, observations } = observed();
-  const external = () => {
-    throw new Error("external operand detail");
-  };
-  const revokedBounds = Proxy.revocable(bounds(), {});
-  revokedBounds.revoke();
-  const revokedSignal = Proxy.revocable(new AbortController().signal, {});
-  revokedSignal.revoke();
-  const operands = [
-    ...["signal", "deadline"].map(
-      (field) =>
-        new Proxy(bounds(), {
-          getOwnPropertyDescriptor(target, key) {
-            if (key === field) external();
-            return Reflect.getOwnPropertyDescriptor(target, key);
-          },
+const external = () => {
+  throw new Error("external operand detail");
+};
+const revokedProxy = (value) => {
+  const proxy = Proxy.revocable(value, {});
+  proxy.revoke();
+  return proxy.proxy;
+};
+for (const { name, operand } of [
+  ...["signal", "deadline"].map((field) => ({
+    name: `bounds ${field} descriptor trap`,
+    operand: () =>
+      new Proxy(bounds(), {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === field) external();
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      }),
+  })),
+  { name: "revoked bounds", operand: () => revokedProxy(bounds()) },
+  {
+    name: "signal prototype trap",
+    operand: () =>
+      bounds({ signal: new Proxy(new AbortController().signal, { getPrototypeOf: external }) }),
+  },
+  {
+    name: "revoked signal",
+    operand: () => bounds({ signal: revokedProxy(new AbortController().signal) }),
+  },
+  {
+    name: "signal property trap",
+    operand: () => bounds({ signal: new Proxy(new AbortController().signal, { get: external }) }),
+  },
+  {
+    name: "signal constructor trap",
+    operand: () =>
+      bounds({
+        signal: Object.defineProperty(new AbortController().signal, "constructor", {
+          get: external,
         }),
-    ),
-    revokedBounds.proxy,
-    { ...bounds(), signal: new Proxy(new AbortController().signal, { getPrototypeOf: external }) },
-    { ...bounds(), signal: revokedSignal.proxy },
-    { ...bounds(), signal: new Proxy(new AbortController().signal, { get: external }) },
-  ];
-  // These are caller operands; the actual selector must contain their inspection errors.
-  for (const operand of operands) {
-    await assert.rejects(selector.select("github.com", operand), (error) => {
-      assert.ok(error instanceof DestinationError);
-      assert.equal(error.code, "invalid-bounds");
-      assert.equal(error.message, "Destination selection refused: invalid-bounds");
-      return true;
-    });
-    assert.equal(observations.length, 0);
-  }
-});
-
-test("native constructor traps and transparent signal wrappers refuse before resolver effects", async () => {
-  const { selector, observations } = observed();
-  const trapped = new AbortController().signal;
-  Object.defineProperty(trapped, "constructor", {
-    get() {
-      throw new Error("external operand detail");
-    },
+      }),
+  },
+  {
+    name: "transparent signal wrapper",
+    operand: () => bounds({ signal: new Proxy(new AbortController().signal, {}) }),
+  },
+]) {
+  test(`${name} refuses with a fixed bounds error before resolver effects`, async () => {
+    const harness = destinationHarness();
+    // Caller operands may throw during inspection; no external error detail may escape.
+    await harness.refuses("invalid-bounds", { bounds: operand() });
+    assert.equal(harness.observations.length, 0);
   });
-  const revocable = Proxy.revocable(new AbortController().signal, {});
-  for (const signal of [trapped, new Proxy(new AbortController().signal, {}), revocable.proxy]) {
-    const selected = selector.select("github.com", { ...bounds(), signal });
-    // Revocation immediately after the public call must never reach an installed listener.
-    if (signal === revocable.proxy) revocable.revoke();
-    await assert.rejects(selected, (error) => {
-      assert.ok(error instanceof DestinationError);
-      assert.equal(error.code, "invalid-bounds");
-      assert.equal(error.message, "Destination selection refused: invalid-bounds");
-      return true;
-    });
-    assert.equal(observations.length, 0);
-  }
+}
+
+test("signal wrapper revocation after selection cannot reach an installed listener", async () => {
+  const harness = destinationHarness();
+  const signal = Proxy.revocable(new AbortController().signal, {});
+  const selected = harness.select("github.com", bounds({ signal: signal.proxy }));
+  signal.revoke();
+  await assert.rejects(selected, destinationError("invalid-bounds"));
+  assert.equal(harness.observations.length, 0);
 });
 
 test("earlier stopImmediatePropagation cannot suppress native cancellation", async () => {
   const controller = new AbortController();
   const suppress = (event) => event.stopImmediatePropagation();
   controller.signal.addEventListener("abort", suppress);
-  const lateA = deferred(),
-    lateAAAA = deferred();
-  const { factory, observations } = observed(
-    () => lateA.promise,
-    () => lateAAAA.promise,
-  );
-  const selector = createDestinationSelector({ ...config(), lookupTimeoutMs: 80 }, factory);
-  const selected = selector.select("github.com", { ...bounds(), signal: controller.signal });
+  const a = deferred(),
+    aaaa = deferred();
+  const harness = destinationHarness({
+    config: config({ lookupTimeoutMs: 80 }),
+    v4: () => a.promise,
+    v6: () => aaaa.promise,
+  });
+  const selected = harness.select("github.com", bounds({ signal: controller.signal }));
   controller.abort();
-  // Cancellation is observable synchronously, before any deadline timer can run.
-  assert.equal(observations[0].cancelled, 1);
-  await assert.rejects(selected, denied("aborted"));
+  // Cancellation must be synchronous, before any deadline timer can run.
+  harness.assertCancellations(1);
+  await assert.rejects(selected, destinationError("aborted"));
   assert.deepEqual(getEventListeners(controller.signal, "abort"), [suppress]);
-  lateA.resolve(["140.82.112.3"]);
-  lateAAAA.reject(new Error("late DNS"));
+  a.resolve(["140.82.112.3"]);
+  aaaa.reject(new Error("late DNS"));
   controller.signal.removeEventListener("abort", suppress);
 });
 
 test("signal method mutation and throwing resolver disposal cannot strand settlement", async () => {
   const controller = new AbortController();
-  const lateA = deferred(),
-    lateAAAA = deferred();
-  let cancelled = 0;
-  const selector = createDestinationSelector({ ...config(), lookupTimeoutMs: 40 }, () => ({
-    resolve4: () => lateA.promise,
-    resolve6: () => lateAAAA.promise,
-    cancel() {
-      cancelled++;
-      throw new Error("external disposal detail");
-    },
-  }));
-  const selected = selector.select("github.com", { ...bounds(), signal: controller.signal });
-  for (const method of ["addEventListener", "removeEventListener"]) {
-    Object.defineProperty(controller.signal, method, {
-      get() {
-        throw new Error("external method detail");
-      },
-    });
-  }
+  const a = deferred(),
+    aaaa = deferred();
+  const harness = destinationHarness({
+    config: config({ lookupTimeoutMs: 40 }),
+    v4: () => a.promise,
+    v6: () => aaaa.promise,
+    onCancel: external,
+  });
+  const selected = harness.select("github.com", bounds({ signal: controller.signal }));
+  for (const method of ["addEventListener", "removeEventListener"])
+    Object.defineProperty(controller.signal, method, { get: external });
   controller.abort();
-  await assert.rejects(selected, denied("aborted"));
-  assert.equal(cancelled, 1);
+  await assert.rejects(selected, destinationError("aborted"));
+  harness.assertCancellations(1);
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-  lateA.resolve(["140.82.112.3"]);
-  lateAAAA.reject(new Error("late DNS"));
+  a.resolve(["140.82.112.3"]);
+  aaaa.reject(new Error("late DNS"));
   await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(cancelled, 1);
+  harness.assertCancellations(1);
 });
 
-test("later native signal observation failures settle with fixed bounds error and own cancellation", async () => {
+test("later signal observation failure settles with a fixed bounds error and own cancellation", async () => {
   const controller = new AbortController();
-  const lateA = deferred(),
-    lateAAAA = deferred();
-  const { factory, observations } = observed(
-    () => lateA.promise,
-    () => lateAAAA.promise,
-  );
-  const selector = createDestinationSelector({ ...config(), lookupTimeoutMs: 25 }, factory);
-  const selected = selector.select("github.com", { ...bounds(), signal: controller.signal });
+  const a = deferred(),
+    aaaa = deferred();
+  const harness = destinationHarness({
+    config: config({ lookupTimeoutMs: 25 }),
+    v4: () => a.promise,
+    v6: () => aaaa.promise,
+  });
+  const selected = harness.select("github.com", bounds({ signal: controller.signal }));
   // Native composite currentness reads its source; a later operand trap must be contained.
-  Object.defineProperty(controller.signal, "aborted", {
-    get() {
-      throw new Error("external currentness detail");
-    },
-  });
-  await assert.rejects(selected, (error) => {
-    assert.ok(error instanceof DestinationError);
-    assert.equal(error.code, "invalid-bounds");
-    assert.equal(error.message, "Destination selection refused: invalid-bounds");
-    return true;
-  });
-  assert.equal(observations[0].cancelled, 1);
+  Object.defineProperty(controller.signal, "aborted", { get: external });
+  await assert.rejects(selected, destinationError("invalid-bounds"));
+  harness.assertCancellations(1);
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-  lateA.resolve(["140.82.112.3"]);
-  lateAAAA.reject(new Error("late DNS"));
+  a.resolve(["140.82.112.3"]);
+  aaaa.reject(new Error("late DNS"));
 });
 
 test("cancellation during successful disposal refuses the destination exactly once", async () => {
   const controller = new AbortController();
-  let cancelled = 0;
-  const selector = createDestinationSelector(config(), () => ({
-    resolve4: () => Promise.resolve(["140.82.112.3"]),
-    resolve6: () => Promise.resolve([]),
-    cancel() {
-      cancelled++;
+  const harness = destinationHarness({
+    onCancel() {
       controller.abort();
-      throw new Error("external disposal detail");
+      external();
     },
-  }));
-  await assert.rejects(
-    selector.select("github.com", { ...bounds(), signal: controller.signal }),
-    denied("aborted"),
-  );
-  assert.equal(cancelled, 1);
+  });
+  await harness.refuses("aborted", { bounds: bounds({ signal: controller.signal }) });
+  harness.assertCancellations(1);
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
