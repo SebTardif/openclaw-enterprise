@@ -208,29 +208,36 @@ export class ProtectedGitHubTokenStoreV1 {
   retain(originalContext: string, envelope: Uint8Array): void {
     let descriptor: number | undefined;
     let temporary: string | undefined;
-    const owned = Buffer.from(envelope);
+    const copiedEnvelope = Buffer.from(envelope);
     try {
-      if (owned.length < 1 || owned.length > maximumEnvelopeBytes) unavailable();
+      if (copiedEnvelope.length < 1 || copiedEnvelope.length > maximumEnvelopeBytes) unavailable();
       this.#assertDirectory();
-      const destination = join(this.#directory, this.#name(originalContext));
+      const name = this.#name(originalContext);
+      const destination = join(this.#directory, name);
       const previous = this.read(originalContext);
       if (previous !== undefined) {
         try {
-          if (!previous.equals(owned)) unavailable();
+          if (!previous.equals(copiedEnvelope)) unavailable();
         } finally {
           previous.fill(0);
         }
         return;
       }
-      temporary = join(this.#directory, ".pending-" + this.#name(originalContext));
+      temporary = join(this.#directory, ".pending-" + name);
       descriptor = openSync(
         temporary,
         constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
         0o600,
       );
       let offset = 0;
-      while (offset < owned.length) {
-        const count = writeSync(descriptor, owned, offset, owned.length - offset, offset);
+      while (offset < copiedEnvelope.length) {
+        const count = writeSync(
+          descriptor,
+          copiedEnvelope,
+          offset,
+          copiedEnvelope.length - offset,
+          offset,
+        );
         if (count < 1) unavailable();
         offset += count;
       }
@@ -245,7 +252,7 @@ export class ProtectedGitHubTokenStoreV1 {
         if (!exists(error)) throw error;
         const competing = this.#read(destination);
         try {
-          if (competing === undefined || !competing.equals(owned)) unavailable();
+          if (competing === undefined || !competing.equals(copiedEnvelope)) unavailable();
         } finally {
           competing?.fill(0);
         }
@@ -256,7 +263,7 @@ export class ProtectedGitHubTokenStoreV1 {
     } catch {
       unavailable();
     } finally {
-      owned.fill(0);
+      copiedEnvelope.fill(0);
       if (descriptor !== undefined) {
         try {
           closeSync(descriptor);

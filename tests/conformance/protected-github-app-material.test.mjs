@@ -309,33 +309,49 @@ test("source replacement after JWT consumption rejects the returned result on so
 });
 
 test("cancellation, closure, busy ownership and expired bounds fail closed", async (t) => {
+  for (const stop of ["cancellation", "closure"])
+    await t.test(stop, async (t) => {
+      const f = await fixture(t);
+      const material = f.create();
+      let release;
+      let entered;
+      const entering = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const controller = new AbortController();
+      let continuationRejected = false;
+      const pending = material.withJwt(
+        identity,
+        { ...bounds(), signal: controller.signal },
+        async (_jwt, current) => {
+          current();
+          entered();
+          await gate;
+          assert.throws(current);
+          continuationRejected = true;
+        },
+      );
+      await entering;
+      await assert.rejects(material.withJwt(identity, bounds(), async () => {}));
+      // Each stop must independently invalidate the suspended consumer.
+      if (stop === "cancellation") controller.abort();
+      else material.close();
+      release();
+      await assert.rejects(pending);
+      // The owner also wraps consumer assertion errors, so check this separately.
+      assert.equal(continuationRejected, true);
+      if (stop === "closure")
+        await assert.rejects(material.withJwt(identity, bounds(), async () => {}));
+      else
+        assert.equal(
+          await material.withJwt(identity, bounds(), async () => "fresh invocation"),
+          "fresh invocation",
+        );
+    });
   const f = await fixture(t);
-  const material = f.create();
-  let release;
-  let entered;
-  const entering = new Promise((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  const controller = new AbortController();
-  const pending = material.withJwt(
-    identity,
-    { ...bounds(), signal: controller.signal },
-    async (_jwt, current) => {
-      entered();
-      await gate;
-      assert.throws(current);
-    },
-  );
-  await entering;
-  await assert.rejects(material.withJwt(identity, bounds(), async () => {}));
-  controller.abort();
-  material.close();
-  release();
-  await assert.rejects(pending);
-  await assert.rejects(material.withJwt(identity, bounds(), async () => {}));
   await assert.rejects(f.create().withJwt(identity, { ...bounds(), deadline: 1 }, async () => {}));
 });
 

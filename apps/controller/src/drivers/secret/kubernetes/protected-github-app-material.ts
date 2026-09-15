@@ -2,10 +2,10 @@ import type { TokenIssuerCallBoundsV1 } from "@openclaw-enterprise/contracts";
 import { createHash, createPrivateKey, type KeyObject } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import type { CoreV1Api, V1Namespace, V1Secret } from "@kubernetes/client-node";
-import { ProtectedGitHubCryptoV1 } from "@openclaw-enterprise/occ";
 import {
   createGitHubAppMaterialV1,
   GitHubAppTokenIssuerErrorV1,
+  ProtectedGitHubCryptoV1,
   assertGitHubAppBoundsV1,
   snapshotGitHubAppKeyIdentityV1,
   type GitHubAppKeyIdentityV1,
@@ -40,7 +40,7 @@ const annotation = "openclaw.dev/";
 const maximumEnvelopeBytes = 32768 + 34;
 const maximumEnvelopeChars = 4 * Math.ceil(maximumEnvelopeBytes / 3);
 
-function locator(
+function snapshotLocator(
   input: ProtectedKubernetesGitHubAppLocatorV1,
 ): ProtectedKubernetesGitHubAppLocatorV1 {
   const keyIdentity = snapshotGitHubAppKeyIdentityV1(input.keyIdentity);
@@ -69,7 +69,7 @@ function locator(
     unavailable();
   return Object.freeze(selected);
 }
-function context(source: ProtectedKubernetesGitHubAppLocatorV1): readonly string[] {
+function envelopeContext(source: ProtectedKubernetesGitHubAppLocatorV1): readonly string[] {
   return [
     source.driverId,
     source.namespaceId,
@@ -83,7 +83,7 @@ function context(source: ProtectedKubernetesGitHubAppLocatorV1): readonly string
     source.keyIdentity.immutableVersion,
   ];
 }
-function rsa(bytes: Uint8Array): KeyObject {
+function parseRsaPrivateKey(bytes: Uint8Array): KeyObject {
   const encoded = Buffer.from(bytes);
   try {
     const key = createPrivateKey({ key: encoded, format: "pem" });
@@ -116,15 +116,18 @@ export function sealProtectedKubernetesGitHubAppKeyV1(
       privateKeyBytes.length > 32768
     )
       unavailable();
-    const selected = locator(input);
-    rsa(privateKeyBytes);
-    return crypto.seal("github-app-key-v1", context(selected), privateKeyBytes);
+    const selected = snapshotLocator(input);
+    parseRsaPrivateKey(privateKeyBytes);
+    return crypto.seal("github-app-key-v1", envelopeContext(selected), privateKeyBytes);
   } catch {
     return unavailable();
   }
 }
 
-function namespaceMatches(value: V1Namespace, source: ProtectedKubernetesGitHubAppSourceV1): void {
+function assertNamespaceOwnership(
+  value: V1Namespace,
+  source: ProtectedKubernetesGitHubAppSourceV1,
+): void {
   const meta = value.metadata;
   if (
     meta?.name !== source.namespaceName ||
@@ -137,7 +140,10 @@ function namespaceMatches(value: V1Namespace, source: ProtectedKubernetesGitHubA
   )
     unavailable();
 }
-function envelope(value: V1Secret, source: ProtectedKubernetesGitHubAppSourceV1): Buffer {
+function decodeSecretEnvelope(
+  value: V1Secret,
+  source: ProtectedKubernetesGitHubAppSourceV1,
+): Buffer {
   const meta = value.metadata;
   const tags = meta?.annotations;
   if (
@@ -193,7 +199,7 @@ export function createProtectedKubernetesGitHubAppMaterialV1(options: {
   readonly clock: () => number;
 }): GitHubAppMaterialV1 {
   const source = Object.freeze({
-    ...locator(options.source),
+    ...snapshotLocator(options.source),
     uid: options.source.uid,
     resourceVersion: options.source.resourceVersion,
     envelopeSHA256: options.source.envelopeSHA256,
@@ -250,12 +256,12 @@ export function createProtectedKubernetesGitHubAppMaterialV1(options: {
           readNamespace({ name: source.namespaceName }),
         );
         current();
-        namespaceMatches(namespace, source);
+        assertNamespaceOwnership(namespace, source);
         const secret = await withComputeAbortSignal(signal, () =>
           readSecret({ namespace: source.namespaceName, name: source.name }),
         );
         current();
-        return envelope(secret, source);
+        return decodeSecretEnvelope(secret, source);
       };
       busy = true;
       let plain: Buffer | undefined;
@@ -263,13 +269,13 @@ export function createProtectedKubernetesGitHubAppMaterialV1(options: {
         const encoded = await read();
         current();
         try {
-          plain = openEnvelope("github-app-key-v1", context(source), encoded);
+          plain = openEnvelope("github-app-key-v1", envelopeContext(source), encoded);
         } finally {
           encoded.fill(0);
         }
         current();
         active = createGitHubAppMaterialV1({
-          privateKey: rsa(plain),
+          privateKey: parseRsaPrivateKey(plain),
           identity: source.keyIdentity,
           assertCurrent: current,
           clock,

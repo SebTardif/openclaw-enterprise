@@ -6,8 +6,6 @@ import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
-  RepositoryBinding,
-  RepositoryAccess,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -16,17 +14,19 @@ import type {
   Namespace,
   NamespaceStatus,
   PluginDesiredState,
+  RepositoryAccess,
+  RepositoryBinding,
   Secret,
   SecretBindings,
   ServiceAccount,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
-  validRepositoryBinding,
-  normalizeRepositoryAccess,
   normalizePluginDesiredState,
+  normalizeRepositoryAccess,
   normalizeSecretBindings,
   validPluginRevisionState,
+  validRepositoryBinding,
 } from "@openclaw-enterprise/contracts";
 import { immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {

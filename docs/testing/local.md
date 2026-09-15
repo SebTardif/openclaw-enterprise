@@ -80,6 +80,24 @@ restart cleanup, real App-key compatibility or an admitted Agent read. The
 remain outstanding. No live opt-in fixture is supplied until its actual startup,
 protected credential owner and explicit test installation/repository are available.
 
+### Protected GitHub material
+
+Run the protected-material suites separately from the five protocol suites above:
+
+```sh
+node --test --test-concurrency=1 \
+  tests/conformance/protected-github-crypto.test.mjs \
+  tests/conformance/protected-github-app-material.test.mjs
+```
+
+They exercise real envelope cryptography, RSA signing, protected filesystem
+checks and in-memory State, with the Kubernetes read boundary substituted.
+Coverage includes exact source refusal, binding withdrawal and closure. They do
+not prove token-store durability or restart recovery, live GitHub, Kubernetes
+attestation, token issuance through Work or Agent checkout. See
+[protected material preparation](../reference/github-app-token-issuer.md#protected-material-preparation)
+for selection, custody and lifecycle requirements.
+
 ## Authentication and authorization coverage
 
 `tests/conformance/iam.test.mjs` covers explicit identities, exact scopes, Group

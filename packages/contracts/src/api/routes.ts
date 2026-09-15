@@ -1,12 +1,10 @@
 import { Type } from "typebox";
 import {
-  RepositoryBindingId,
   RepositoryBindingBody,
-  UpdateRepositoryBindingBody,
+  RepositoryBindingId,
   RepositoryBindingSchema,
+  UpdateRepositoryBindingBody,
 } from "../repository-access-v1.ts";
-import { Meta, NamespaceId } from "./common.ts";
-
 import {
   AgentParams,
   AgentRuntimeCredentialsBody,
@@ -18,7 +16,9 @@ import {
   CreateServiceAccountBody,
   CreateServiceAccountCredentialBody,
   EmptyQuery,
+  Meta,
   NamedResourceBody,
+  NamespaceId,
   NamespaceParams,
   RevisionParams,
   SecretParams,
@@ -72,48 +72,80 @@ const mutationErrors = {
 } as const;
 
 export const occApiRoutes = [
-  ...(
-    [
-      { action: "create", method: "POST", operationId: "createRepositoryBinding" },
-      { action: "read", method: "GET", operationId: "getRepositoryBinding" },
-      { action: "update", method: "PATCH", operationId: "updateRepositoryBinding" },
-    ] as const
-  ).map(({ action, method, operationId }) => ({
-    operationId,
-    method,
-    path:
-      action === "create"
-        ? "/namespaces/:namespaceId/repository-bindings"
-        : "/namespaces/:namespaceId/repository-bindings/:bindingId",
-    action: `openclaw.repository_bindings.${action}`,
-    iamAction: action,
-    resourceKind: "repository_binding" as const,
-    authorizationTarget:
-      action === "create" ? ("namespace_collection" as const) : ("repository_binding" as const),
-    summary: `${action} an unverified Namespace-owned repository binding descriptor`,
+  {
+    operationId: "createRepositoryBinding",
+    method: "POST",
+    path: "/namespaces/:namespaceId/repository-bindings",
+    action: "openclaw.repository_bindings.create",
+    iamAction: "create",
+    resourceKind: "repository_binding",
+    authorizationTarget: "namespace_collection",
+    summary: "create an unverified Namespace-owned repository binding descriptor",
     tags: ["Repository bindings"],
     schema: {
       querystring: EmptyQuery,
-      params:
-        action === "create"
-          ? NamespaceParams
-          : Type.Object(
-              { namespaceId: NamespaceId, bindingId: RepositoryBindingId },
-              { additionalProperties: false },
-            ),
-      ...(action === "read"
-        ? {}
-        : { body: action === "create" ? RepositoryBindingBody : UpdateRepositoryBindingBody }),
+      params: NamespaceParams,
+      body: RepositoryBindingBody,
       response: {
-        [action === "create" ? 201 : 200]: Type.Object(
+        201: Type.Object(
           { data: RepositoryBindingSchema, meta: Meta },
           { additionalProperties: false },
         ),
         ...createErrors,
       },
     },
-  })),
-
+  },
+  {
+    operationId: "getRepositoryBinding",
+    method: "GET",
+    path: "/namespaces/:namespaceId/repository-bindings/:bindingId",
+    action: "openclaw.repository_bindings.read",
+    iamAction: "read",
+    resourceKind: "repository_binding",
+    authorizationTarget: "repository_binding",
+    summary: "read an unverified Namespace-owned repository binding descriptor",
+    tags: ["Repository bindings"],
+    schema: {
+      querystring: EmptyQuery,
+      params: Type.Object(
+        { namespaceId: NamespaceId, bindingId: RepositoryBindingId },
+        { additionalProperties: false },
+      ),
+      response: {
+        200: Type.Object(
+          { data: RepositoryBindingSchema, meta: Meta },
+          { additionalProperties: false },
+        ),
+        ...createErrors,
+      },
+    },
+  },
+  {
+    operationId: "updateRepositoryBinding",
+    method: "PATCH",
+    path: "/namespaces/:namespaceId/repository-bindings/:bindingId",
+    action: "openclaw.repository_bindings.update",
+    iamAction: "update",
+    resourceKind: "repository_binding",
+    authorizationTarget: "repository_binding",
+    summary: "update an unverified Namespace-owned repository binding descriptor",
+    tags: ["Repository bindings"],
+    schema: {
+      querystring: EmptyQuery,
+      params: Type.Object(
+        { namespaceId: NamespaceId, bindingId: RepositoryBindingId },
+        { additionalProperties: false },
+      ),
+      body: UpdateRepositoryBindingBody,
+      response: {
+        200: Type.Object(
+          { data: RepositoryBindingSchema, meta: Meta },
+          { additionalProperties: false },
+        ),
+        ...createErrors,
+      },
+    },
+  },
   {
     operationId: "bootstrapInstallation",
     method: "POST",

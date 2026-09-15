@@ -27,11 +27,7 @@ import {
 } from "./common.ts";
 
 export const InstallationSchema = Type.Object(
-  {
-    id: InstallationId,
-    name: Name,
-    createdAt: Timestamp,
-  },
+  { id: InstallationId, name: Name, createdAt: Timestamp },
   { additionalProperties: false },
 );
 

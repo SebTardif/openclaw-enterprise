@@ -5,7 +5,6 @@ import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
   AccessBinding,
-  RepositoryBinding,
   Agent,
   AgentRevision,
   AuditEvent,
@@ -17,6 +16,7 @@ import type {
   PluginDesiredState,
   Permission,
   Principal,
+  RepositoryBinding,
   Restriction,
   Role,
   Secret,
@@ -25,8 +25,8 @@ import type {
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
 import {
-  normalizeRepositoryAccess,
   normalizePluginDesiredState,
+  normalizeRepositoryAccess,
   normalizeSecretBindings,
   RESOURCE_KINDS as PLATFORM_RESOURCE_KINDS,
   validPluginRevisionState,
@@ -1608,7 +1608,7 @@ export class PostgresPlatformState implements PlatformStateStore {
             saved.activeRevisionId ?? null,
             saved.createdAt,
             plugins === undefined ? null : JSON.stringify(plugins),
-            JSON.stringify(normalizeRepositoryAccess(agent.repositoryAccess)),
+            JSON.stringify(saved.repositoryAccess),
           ],
         );
         await client.query(

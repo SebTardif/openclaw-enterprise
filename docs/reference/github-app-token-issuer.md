@@ -104,34 +104,28 @@ required before this delivery is complete.
 
 ## Protected material preparation
 
-The controller's `prepareProtectedGitHubCredentials` composition owner joins an
-admitted repository binding to an operator-selected immutable Kubernetes App-key
-source. The selection fixes the binding generation, App ID, installation ID,
-repository ID, logical signing Secret, encrypted source UID/resource version and
-envelope digest. It reads the binding and Secret through State before preparing
-the owners and before each signing use. A changed generation or different
-repository, App, installation, Secret or Secret Driver is refused.
+The controller's `prepareProtectedGitHubCredentials` joins an admitted repository
+binding to an operator-selected immutable Kubernetes App-key source. Selection
+fixes the binding generation, App, installation, repository, logical signing
+Secret, encrypted source UID/resource version and envelope digest. State checks
+before preparation and each signing use reject changes to the binding generation,
+selected identities, same-Namespace Secret reference or Secret Driver.
 
-The immutable source is a separately sealed copy associated with the admitted
-logical Secret. Ordinary mutable Secret backend metadata is not sufficient to
-select it. Operators must provision the encrypted immutable Secret and exact
-ownership annotations required by the protected Kubernetes loader, plus a
-separate mode-0600 master-key file and a persistent mode-0700 token directory.
-The token directory must have a single custody writer and cannot contain the
-master key. The App key and installation tokens remain outside the Agent.
+Provision a separately sealed, encrypted immutable Secret associated with the
+admitted logical Secret and carrying the protected loader's exact ownership
+annotations. Ordinary mutable Secret metadata cannot select this source. Use a
+separate mode-0600 master-key file and persistent mode-0700 token directory with
+a single custody writer; the directory cannot contain the master key. App keys
+and installation tokens remain outside the Agent.
 
-This preparation retains the original crypto and persistent token-store owners.
-The original repository Work constructor must consume them, select its fixed
-read-only TokenIssuer, settle mint/revoke attempts, and stop before closing these
-owners. That production Work connection and the regular Agent checkout remain
-unimplemented in this review slice. The prepared material alone does not verify
-a repository or enable the currently refused nonempty repository deployment.
+The original repository Work constructor must consume the prepared crypto and
+persistent token-store owners, select its fixed read-only TokenIssuer, settle
+mint/revoke attempts, and stop/join Work before closing those owners. Production
+Work integration and regular Agent checkout remain unimplemented. Preparation
+grants no Work dispatch authority, verifies no repository and does not enable
+nonempty repository deployment. See the
+[protected-material proof limits](../testing/local.md#protected-github-material).
 
-Verification: the protected-material conformance cases exercise real envelope
-cryptography, RSA signing, filesystem checks and the in-memory State repository,
-with only the Kubernetes read boundary substituted. They cover exact source
-refusal, binding withdrawal and closure; they do not prove live GitHub,
-Kubernetes attestation, token issuance through Work or Agent checkout. A generic
-unavailable error indicates that the binding, immutable source or protected
-filesystem no longer matches the selected values; restore those owners before
-retrying preparation, and never substitute mutable material or widen scope.
+A generic unavailable error means the binding, immutable source or protected
+filesystem no longer matches the selection. Restore those owners before retrying;
+never substitute mutable material or widen scope.

@@ -328,6 +328,7 @@ test(
     ])
       assert.ok(
         [400, 404].includes((await request("PATCH", agentPath, updateAgent(value))).status),
+        `invalid repository draft must be rejected: ${JSON.stringify(value)}`,
       );
     // PostgreSQL and the codec enforce the same UTF-16 bound for supplementary characters.
     for (const [count, accepted] of [

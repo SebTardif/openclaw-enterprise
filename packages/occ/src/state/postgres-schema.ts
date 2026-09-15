@@ -1,8 +1,8 @@
 import type {
-  RepositoryAccess,
-  RepositoryBinding,
   HarnessExecutionMode,
   PluginDesiredState,
+  RepositoryAccess,
+  RepositoryBinding,
   SecretBindings,
   ServiceAccountCredential,
 } from "@openclaw-enterprise/contracts";
