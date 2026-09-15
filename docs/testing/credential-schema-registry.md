@@ -38,7 +38,8 @@ schema runtime. The helper is internal and supplies no identity, authentication,
 nonsecret semantic guarantee or dispatch authority. Schema admission, registry
 ownership, digests and strict restoration belong to the registry implementation.
 
-The CI catalog owner must enroll this file before integrated CI acceptance;
+The `checks-baseline` CI lane runs this conformance file and
+`pnpm check:credential-gateway-types` for the four explicit contract fixtures;
 see [CI suite ownership](ci.md). Required broader proof remains actual installed
 external-package startup and rollback, the registry through broker/State/IAM/Work,
 the regular Agent workflow, two installed replicas and live GitHub operations.

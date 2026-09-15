@@ -40,6 +40,7 @@ runtime image for local deployment.
 | [Settings](settings.md)                                     | Supported environment variables and programmatic configuration.                             |
 | [HTTP API](api.md)                                          | Generated routes, wire schemas, and declared permissions.                                   |
 | [Credential inventory metadata](credential-inventory-v1.md) | Four-table persistence for the owning Agent/Token workflow.                                 |
+| [Credential gateway contracts](credential-gateway-v1.md)    | Schema, connection, and GitHub operation declarations; runtime integration remains pending. |
 | [Runtime assignment storage](runtime-authority/contract.md) | Intent, allocation and initial binding persistence for an owning Agent/Token workflow.      |
 
 Generated schemas describe wire shape. The feature pages additionally own
