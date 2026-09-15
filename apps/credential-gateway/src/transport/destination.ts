@@ -72,110 +72,137 @@ function queryAnswers(
 
 function selectDestination(
   hostname: GitHubHostname,
-  { signal, duration, currentError }: SelectionBounds,
+  bounds: SelectionBounds,
   config: Readonly<DestinationConfig>,
   factory: DestinationResolverFactory,
 ): Promise<Readonly<NumericDestination>> {
-  return new Promise<Readonly<NumericDestination>>((resolve, reject) => {
-    let resolver: DestinationResolver | undefined;
-    let settled = false;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let subscription: ReturnType<typeof addAbortListener> | undefined;
-    const cleanup = (): DestinationError | undefined => {
-      clearTimeout(timer);
-      const disposable = subscription;
-      subscription = undefined;
-      let error: DestinationError | undefined;
-      try {
-        disposable?.[Symbol.dispose]();
-      } catch {
-        error = new DestinationError("invalid-bounds");
-      }
-      // Disposal failure must never prevent cancellation or terminal settlement.
-      if (resolver && !cancelled) {
-        cancelled = true;
-        try {
-          resolver.cancel();
-        } catch {
-          /* Cancellation cannot grant authority. */
-        }
-      }
-      return error;
-    };
-    const fail = (error: DestinationError) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onAbort = () => fail(new DestinationError("aborted"));
+  return new Promise((resolve, reject) => {
+    new DestinationLookup(hostname, bounds, resolve, reject).start(config, factory);
+  });
+}
+
+// Each selection owns its resolver, bounds subscription and terminal settlement.
+class DestinationLookup {
+  private readonly hostname: GitHubHostname;
+  private readonly bounds: SelectionBounds;
+  private readonly resolve: (destination: Readonly<NumericDestination>) => void;
+  private readonly reject: (error: DestinationError) => void;
+  private resolver: DestinationResolver | undefined;
+  private settled = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private subscription: ReturnType<typeof addAbortListener> | undefined;
+
+  constructor(
+    hostname: GitHubHostname,
+    bounds: SelectionBounds,
+    resolve: (destination: Readonly<NumericDestination>) => void,
+    reject: (error: DestinationError) => void,
+  ) {
+    this.hostname = hostname;
+    this.bounds = bounds;
+    this.resolve = resolve;
+    this.reject = reject;
+  }
+
+  start(config: Readonly<DestinationConfig>, factory: DestinationResolverFactory): void {
     try {
-      subscription = addAbortListener(signal, onAbort);
-      timer = setTimeout(() => fail(currentError() ?? new DestinationError("deadline")), duration);
+      this.subscription = addAbortListener(this.bounds.signal, () =>
+        this.fail(new DestinationError("aborted")),
+      );
+      this.timer = setTimeout(
+        () => this.fail(this.bounds.currentError() ?? new DestinationError("deadline")),
+        this.bounds.duration,
+      );
     } catch {
-      fail(new DestinationError("invalid-bounds"));
+      this.fail(new DestinationError("invalid-bounds"));
       return;
     }
     try {
-      const beforeFactory = currentError();
-      if (beforeFactory) {
-        fail(beforeFactory);
-        return;
-      }
-      resolver = factory(config);
-      if (settled) {
-        cleanup();
-        return;
-      }
-      if (
-        !resolver ||
-        typeof resolver.resolve4 !== "function" ||
-        typeof resolver.resolve6 !== "function" ||
-        typeof resolver.cancel !== "function"
-      ) {
-        fail(new DestinationError("dns-failure"));
-        return;
-      }
-      const afterFactory = currentError();
-      if (afterFactory) {
-        fail(afterFactory);
-        return;
-      }
-      // Each query gets settlement handlers before either answer is awaited.
-      const a = queryAnswers(resolver, hostname, 4);
-      const aaaa = queryAnswers(resolver, hostname, 6);
-      void Promise.all([a, aaaa]).then(
-        ([v4, v6]) => {
-          if (settled) return;
-          const error = currentError();
-          if (error) {
-            fail(error);
-            return;
-          }
-          const address = v4[0] ?? v6[0];
-          if (address === undefined) {
-            fail(new DestinationError("empty-answer"));
-            return;
-          }
-          const result: Readonly<NumericDestination> = Object.freeze({
-            hostname,
-            address,
-            family: v4.length ? 4 : 6,
-            port: 443,
-          });
-          settled = true;
-          const cleanupError = cleanup();
-          // A trusted resolver's cancel callback may itself trigger cancellation.
-          const afterCleanup = cleanupError ?? currentError();
-          if (afterCleanup) reject(afterCleanup);
-          else resolve(result);
-        },
-        (error: unknown) =>
-          fail(error instanceof DestinationError ? error : new DestinationError("dns-failure")),
-      );
+      this.lookup(config, factory);
     } catch {
-      fail(new DestinationError("dns-failure"));
+      this.fail(new DestinationError("dns-failure"));
     }
-  });
+  }
+
+  private lookup(config: Readonly<DestinationConfig>, factory: DestinationResolverFactory): void {
+    const beforeFactory = this.bounds.currentError();
+    if (beforeFactory) return this.fail(beforeFactory);
+
+    const resolver = factory(config);
+    this.resolver = resolver;
+    // Factory code can abort synchronously before its resolver is returned.
+    if (this.settled) {
+      this.cleanup();
+      return;
+    }
+    if (
+      !resolver ||
+      typeof resolver.resolve4 !== "function" ||
+      typeof resolver.resolve6 !== "function" ||
+      typeof resolver.cancel !== "function"
+    ) {
+      this.fail(new DestinationError("dns-failure"));
+      return;
+    }
+    const afterFactory = this.bounds.currentError();
+    if (afterFactory) return this.fail(afterFactory);
+
+    // Both queries get handlers before either answer is awaited, including after abort.
+    const a = queryAnswers(resolver, this.hostname, 4);
+    const aaaa = queryAnswers(resolver, this.hostname, 6);
+    void Promise.all([a, aaaa]).then(
+      ([v4, v6]) => this.succeed(v4, v6),
+      (error: unknown) =>
+        this.fail(error instanceof DestinationError ? error : new DestinationError("dns-failure")),
+    );
+  }
+
+  private succeed(v4: readonly string[], v6: readonly string[]): void {
+    if (this.settled) return;
+    const error = this.bounds.currentError();
+    if (error) return this.fail(error);
+    const address = v4[0] ?? v6[0];
+    if (address === undefined) return this.fail(new DestinationError("empty-answer"));
+
+    const result: Readonly<NumericDestination> = Object.freeze({
+      hostname: this.hostname,
+      address,
+      family: v4.length ? 4 : 6,
+      port: 443,
+    });
+    this.settled = true;
+    const cleanupError = this.cleanup();
+    // Resolver cleanup can itself abort an otherwise successful selection.
+    const afterCleanup = cleanupError ?? this.bounds.currentError();
+    if (afterCleanup) this.reject(afterCleanup);
+    else this.resolve(result);
+  }
+
+  private fail(error: DestinationError): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.cleanup();
+    this.reject(error);
+  }
+
+  private cleanup(): DestinationError | undefined {
+    clearTimeout(this.timer);
+    const subscription = this.subscription;
+    this.subscription = undefined;
+    try {
+      subscription?.[Symbol.dispose]();
+    } catch {
+      return new DestinationError("invalid-bounds");
+    } finally {
+      // Relinquish ownership before caller code runs; cancellation can reenter cleanup.
+      const resolver = this.resolver;
+      this.resolver = undefined;
+      try {
+        resolver?.cancel();
+      } catch {
+        /* Cancellation cannot grant authority. */
+      }
+    }
+    return undefined;
+  }
 }

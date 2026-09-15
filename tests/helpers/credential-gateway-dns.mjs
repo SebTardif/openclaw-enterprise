@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createSocket } from "node:dgram";
+import { once } from "node:events";
 import { performance } from "node:perf_hooks";
 import {
   createDestinationSelector,
@@ -87,78 +88,91 @@ function response(packet, query, spec) {
 }
 // Plans describe A/AAAA answers, response codes, delay, or silence. Only the
 // native resolver and selector interpret their application consequences.
-export async function nativeDns(t, answers, address = "127.0.0.1") {
-  const socket = createSocket(address === "::1" ? "udp6" : "udp4");
-  const queries = [];
-  const faults = [];
-  const timers = new Set();
-  let sent = 0;
-  let closed = false;
-  socket.on("error", (error) => faults.push(error));
-  socket.on("message", (packet, peer) => {
+class NativeDnsFixture {
+  queries = [];
+  faults = [];
+  timers = new Map();
+  sent = 0;
+  closed = false;
+
+  constructor(answers, address) {
+    this.answers = answers;
+    this.address = address;
+    this.socket = createSocket(address === "::1" ? "udp6" : "udp4");
+    this.socket.on("error", this.recordFault.bind(this));
+    this.socket.on("message", this.receive.bind(this));
+  }
+
+  recordFault(error) {
+    this.faults.push(error);
+  }
+
+  receive(packet, peer) {
     try {
       const query = question(packet);
-      queries.push({ ...query, id: packet.readUInt16BE(0), peer: peer.address });
-      const plan = typeof answers === "function" ? answers(query) : answers;
+      this.queries.push({ ...query, id: packet.readUInt16BE(0), peer: peer.address });
+      const plan = typeof this.answers === "function" ? this.answers(query) : this.answers;
       if (plan.silent) return;
       const records = plan[query.type === 1 ? "A" : "AAAA"];
       assert.ok(records, "fixture must specify both A and AAAA responses");
       const spec = Array.isArray(records) ? { answers: records } : records;
       const reply = response(packet, query, spec);
-      const send = () => {
-        if (closed) return;
-        socket.send(reply, peer.port, peer.address, (error) => {
-          if (error) faults.push(error);
-          else sent++;
-        });
-      };
       if (plan.delayMs) {
-        const timer = setTimeout(() => {
-          timers.delete(timer);
-          send();
-        }, plan.delayMs);
-        timers.add(timer);
-      } else send();
+        this.timers.set(reply, setTimeout(this.send.bind(this, reply, peer), plan.delayMs));
+      } else {
+        this.send(reply, peer);
+      }
     } catch (error) {
-      faults.push(error);
+      this.recordFault(error);
     }
-  });
-  try {
-    await new Promise((resolve, reject) => {
-      socket.once("error", reject);
-      socket.bind(0, address, () => {
-        socket.removeListener("error", reject);
-        resolve();
-      });
-    });
-  } catch (cause) {
-    socket.close();
-    throw new Error(`DNS fixture could not bind ${address}`, { cause });
   }
-  t.after(async () => {
-    closed = true;
-    for (const timer of timers) clearTimeout(timer);
-    await new Promise((resolve) => socket.close(resolve));
-    assert.deepEqual(faults, [], "DNS fixture wire/parser errors");
-  });
-  const config = {
-    servers: [{ address, port: socket.address().port }],
-    lookupTimeoutMs: 1000,
-  };
-  const selector = nativeSelector(config);
-  return {
-    selector,
-    config,
-    queries,
-    get sent() {
-      return sent;
-    },
-    async waitQueries(count) {
-      const deadline = performance.now() + 500;
-      while (queries.length < count && performance.now() < deadline) await delay(2);
-      assert.ok(queries.length >= count, "actual configured wire queries observed");
-    },
-  };
+
+  send(reply, peer) {
+    this.timers.delete(reply);
+    if (this.closed) return;
+    this.socket.send(reply, peer.port, peer.address, this.recordSend.bind(this));
+  }
+
+  recordSend(error) {
+    if (error) this.recordFault(error);
+    else this.sent++;
+  }
+
+  async listen() {
+    try {
+      const listening = once(this.socket, "listening");
+      this.socket.bind(0, this.address);
+      await listening;
+    } catch (cause) {
+      this.socket.close();
+      throw new Error(`DNS fixture could not bind ${this.address}`, { cause });
+    }
+    this.config = {
+      servers: [{ address: this.address, port: this.socket.address().port }],
+      lookupTimeoutMs: 1000,
+    };
+  }
+
+  async close() {
+    this.closed = true;
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    await new Promise((resolve) => this.socket.close(resolve));
+    assert.deepEqual(this.faults, [], "DNS fixture wire/parser errors");
+  }
+
+  async waitQueries(count) {
+    const deadline = performance.now() + 500;
+    while (this.queries.length < count && performance.now() < deadline) await delay(2);
+    assert.ok(this.queries.length >= count, "actual configured wire queries observed");
+  }
+}
+
+export async function nativeDns(t, answers, address = "127.0.0.1") {
+  const fixture = new NativeDnsFixture(answers, address);
+  await fixture.listen();
+  t.after(() => fixture.close());
+  fixture.selector = nativeSelector(fixture.config);
+  return fixture;
 }
 
 export function nativeSelector(config) {

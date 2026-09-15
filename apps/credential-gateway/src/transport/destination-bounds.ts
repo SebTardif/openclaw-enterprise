@@ -44,45 +44,55 @@ export interface SelectionBounds {
   currentError(): DestinationError | undefined;
 }
 
-export function retainBounds(bounds: unknown, lookupTimeoutMs: number): SelectionBounds {
-  let signal: AbortSignal;
-  let deadline: number;
-  let aborted: boolean;
+function readBounds(bounds: unknown): { signal: AbortSignal; deadline: number; aborted: boolean } {
   // Normalize descriptor, type and native-brand inspection before any effects.
   try {
     if (!bounds || typeof bounds !== "object") throw new DestinationError("invalid-bounds");
     const inputSignal = ownData(bounds, "signal");
-    const inputDeadline = ownData(bounds, "deadline");
+    const deadline = ownData(bounds, "deadline");
     if (
       types.isProxy(inputSignal) ||
-      typeof inputDeadline !== "number" ||
-      !Number.isSafeInteger(inputDeadline)
+      typeof deadline !== "number" ||
+      !Number.isSafeInteger(deadline)
     )
       throw new DestinationError("invalid-bounds");
-    signal = retainedSignal(inputSignal);
-    deadline = inputDeadline;
-    aborted = nativeAborted.call(signal);
+    const signal = retainedSignal(inputSignal);
+    return { signal, deadline, aborted: nativeAborted.call(signal) };
   } catch {
     throw new DestinationError("invalid-bounds");
   }
+}
+
+class RetainedBounds implements SelectionBounds {
+  readonly signal: AbortSignal;
+  readonly duration: number;
+  private readonly deadline: number;
+  private readonly monotonicDeadline: number;
+
+  constructor(signal: AbortSignal, deadline: number, duration: number) {
+    this.signal = signal;
+    this.deadline = deadline;
+    this.duration = duration;
+    this.monotonicDeadline = performance.now() + duration;
+  }
+
+  currentError(): DestinationError | undefined {
+    try {
+      if (nativeAborted.call(this.signal)) return new DestinationError("aborted");
+      if (Date.now() >= this.deadline || performance.now() >= this.monotonicDeadline) {
+        return new DestinationError("deadline");
+      }
+      return undefined;
+    } catch {
+      return new DestinationError("invalid-bounds");
+    }
+  }
+}
+
+export function retainBounds(bounds: unknown, lookupTimeoutMs: number): SelectionBounds {
+  const { signal, deadline, aborted } = readBounds(bounds);
   if (aborted) throw new DestinationError("aborted");
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new DestinationError("deadline");
-  const duration = Math.min(remaining, lookupTimeoutMs);
-  const monotonicDeadline = performance.now() + duration;
-  return {
-    signal,
-    duration,
-    currentError() {
-      try {
-        if (nativeAborted.call(signal)) return new DestinationError("aborted");
-        if (Date.now() >= deadline || performance.now() >= monotonicDeadline) {
-          return new DestinationError("deadline");
-        }
-        return undefined;
-      } catch {
-        return new DestinationError("invalid-bounds");
-      }
-    },
-  };
+  return new RetainedBounds(signal, deadline, Math.min(remaining, lookupTimeoutMs));
 }
