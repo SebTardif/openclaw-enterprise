@@ -2807,3 +2807,19 @@ export type {
   RegisteredSchemaCodec,
   SchemaRegistrationOwner,
 } from "./credential-gateway-v1/schema.ts";
+
+export type {
+  CredentialConnection,
+  ResourceIdentity,
+  CanonicalCredentialTargetIdentity,
+  CredentialTarget,
+  CredentialProfileRef,
+  CredentialAccessGrant,
+  ServiceBindingView,
+  OperationCapability,
+  BackendCapabilities,
+  AuthenticationMode,
+  AcquisitionMode,
+  MechanismContractRef,
+  CredentialObservation,
+} from "./credential-gateway-v1/connection.ts";
