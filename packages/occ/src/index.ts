@@ -2823,3 +2823,25 @@ export type {
   MechanismContractRef,
   CredentialObservation,
 } from "./credential-gateway-v1/connection.ts";
+
+export type {
+  AccessProfile,
+  TokenProfile,
+  RepositoryIdentity,
+  GitHubRepositorySelection,
+  GitHubRepositoryAccessV1,
+  GitHubRepositoryWriteSelectionV1,
+  RefUpdate,
+  CreatePullRequestInput,
+  GitHubOperation,
+  CanonicalTarget,
+  GitHubHost,
+  GitHubAccessId,
+  GitHubRequestId,
+  GitHubClientOperationId,
+  GitHubDispatchId,
+  GitHubFactsDigest,
+  GitHubBodyDigest,
+  GitHubPrefixDigest,
+  GitHubCreationDigest,
+} from "./credential-gateway-v1/github-operations.ts";
