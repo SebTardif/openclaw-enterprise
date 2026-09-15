@@ -2846,28 +2846,3 @@ export type {
   GitHubPrefixDigest,
   GitHubCreationDigest,
 } from "./credential-gateway-v1/github-operations.ts";
-
-export { RepositoryTransactionLifetime } from "./ports/transaction.ts";
-export type { CredentialInventoryTransactionV1 } from "./credential-inventory-v1/ports.ts";
-
-export type {
-  ProtectedSourceLease,
-  ProtectedSourceLoader,
-  IssuedMechanismFactory,
-  GitHubIssuedMechanismDependencies,
-  SealedMaterial,
-  EncryptedMaterialStore,
-  IssuanceRetentionTransaction,
-  IssuanceStateDependencies,
-  KnownIssuanceCommit,
-  IssuanceCommitOutcome,
-  OriginalIssuedSettlement,
-  IssuanceRetentionObligation,
-  RetainedIssuedMaterialObligation,
-  IssuanceRetentionOutcome,
-  IssuedLeaseIdentity,
-  ChargedIssuedSlot,
-  IssuedLeaseClaims,
-  IssuedLeaseClaimRepository,
-  IssuedSlotReleaseEvidence,
-} from "./credential-gateway-v1/issuance.ts";
