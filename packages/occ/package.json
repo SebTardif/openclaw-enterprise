@@ -19,6 +19,7 @@
     "@azure/identity": "4.13.1",
     "@openclaw-enterprise/contracts": "workspace:*",
     "@openclaw-enterprise/utils": "workspace:*",
+    "ajv": "8.20.0",
     "drizzle-orm": "0.45.2",
     "pg": "8.23.0",
     "pg-connection-string": "2.12.0"
