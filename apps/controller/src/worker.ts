@@ -1402,7 +1402,7 @@ export class ControllerWorker {
   }
 
   private async enqueueMaintenance(
-    queue: PostgresWorkQueue,
+    queue: Pick<PostgresWorkQueue, keyof PostgresWorkQueue>,
     claim: ClaimedWork,
     revision: Readonly<AgentRevision>,
   ): Promise<void> {
