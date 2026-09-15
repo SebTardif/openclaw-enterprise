@@ -21,14 +21,13 @@ import {
   AgentRuntimeCredentialResponse,
   JsonValue,
   PluginDesiredSelectionSchema,
-  RepositoryAccessSchema,
-  normalizeRepositoryAccess,
-  normalizeRepositoryBinding,
-  type RepositoryAccess,
   PluginDesiredStateSchema,
   PluginDriverIdentitySchema,
   PluginToolPolicySchema,
+  RepositoryAccessSchema,
   SecretResponse,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
   occApiRoutes,
   type Agent,
   type AgentRevision,
@@ -44,6 +43,7 @@ import {
   type OpenClawConfigurationDocument,
   type PermissionAction,
   type ProviderSummary,
+  type RepositoryAccess,
   type ResourceKind,
   type ResourceRef,
   type SandboxDriver,
@@ -58,11 +58,11 @@ import {
 import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
-  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   NotImplementedError,
+  RepositoryVerificationUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
   type HarnessResolver,
@@ -146,7 +146,8 @@ interface RequiredPermission {
   readonly action: PermissionAction;
   readonly resourceKind: ResourceKind;
   readonly scope: "requested" | "installation" | "namespace" | "each_returned" | "request_body";
-  readonly condition?: "associated_service_account" | "existing_namespace" | "bound_secret";
+  readonly condition?:
+    "associated_service_account" | "existing_namespace" | "bound_secret" | "selected_repository";
 }
 
 interface DocumentedFastifySchema extends FastifySchema {
@@ -383,7 +384,22 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
     return [
       { ...permission, scope: operation.operationId === "createAgent" ? "namespace" : "requested" },
       { action: "read", resourceKind: "configuration", scope: "requested" },
-      { action: "operate", resourceKind: "repository_binding", scope: "requested" },
+      ...(operation.operationId === "deployAgent"
+        ? []
+        : [
+            {
+              action: "operate" as const,
+              resourceKind: "repository_binding" as const,
+              scope: "requested" as const,
+              condition: "selected_repository" as const,
+            },
+            {
+              action: "operate" as const,
+              resourceKind: "secret" as const,
+              scope: "requested" as const,
+              condition: "selected_repository" as const,
+            },
+          ]),
       {
         action: "read",
         resourceKind: "service_account",
@@ -453,6 +469,10 @@ function permissionDescription(
         return `Requires ${action} permission on each currently associated or newly associated ${name} when present.`;
       if (condition === "existing_namespace")
         return `Requires ${action} permission on the ${name} when selecting an existing Kubernetes namespace.`;
+      if (condition === "selected_repository")
+        return resourceKind === "secret"
+          ? `Requires ${action} permission on each signing Secret referenced by a Repository binding selected in the resulting Agent repository draft, when selections are present.`
+          : `Requires ${action} permission on each ${name} selected in the resulting Agent repository draft, when selections are present.`;
       if (condition === "bound_secret") {
         if (operation?.operationId === "createConfiguration")
           return `Requires ${action} permission on each ${name} supplied in request body Secret bindings.`;

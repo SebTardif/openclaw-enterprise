@@ -1,9 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   Agent,
-  RepositoryAccess,
-  RepositoryBinding,
-  RepositoryBindingInput,
   AgentRevision,
   AgentRuntimeCredentialsInput,
   AgentRuntimeCredentialStatus,
@@ -30,6 +27,9 @@ import type {
   PluginRevisionState,
   ProviderDefinition,
   ProviderRef,
+  RepositoryAccess,
+  RepositoryBinding,
+  RepositoryBindingInput,
   ResourceKind,
   ResourceRef,
   SandboxDriver,
@@ -45,23 +45,23 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import {
   DRIVER_CAPABILITIES,
-  normalizeRepositoryAccess,
-  normalizeRepositoryBinding,
   SANDBOX_FACETS,
   admitLoggingConfiguration,
   normalizeLoggingLevel,
   normalizePluginDesiredState,
+  normalizeRepositoryAccess,
+  normalizeRepositoryBinding,
   normalizeSecretBindings,
 } from "@openclaw-enterprise/contracts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
 import {
   AuthorizationDeniedError,
-  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   DriverSelectionError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   NotImplementedError,
+  RepositoryVerificationUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
 } from "./errors.ts";
@@ -83,12 +83,12 @@ import { PostgresCommitOutcomeUnknownError } from "./state/postgres-state.ts";
 
 export {
   AuthorizationDeniedError,
-  RepositoryVerificationUnavailableError,
   DependencyUnavailableError,
   DriverSelectionError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   NotImplementedError,
+  RepositoryVerificationUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
 } from "./errors.ts";
@@ -1266,7 +1266,7 @@ export class OpenClawController {
   ): Promise<void> {
     this.serviceAccountIdentity(namespaceId, serviceAccountId);
     return this.mutate(async (state) => {
-      const namespace = await this.exactNamespace(state, namespaceId);
+      const namespace = await this.lockNamespace(state, namespaceId);
       await this.authorize(principalId, "delete", {
         kind: "service_account",
         id: serviceAccountId,
@@ -1278,9 +1278,10 @@ export class OpenClawController {
       );
       if (account === undefined)
         throw new ScopeViolationError("The ServiceAccount does not belong to the exact Namespace.");
-      const agents = await state.agents.listAgents(namespace.id);
-      if (agents.some((agent) => agent.serviceAccountId === account.id))
-        throw new ResourceConflictError("An Agent still references the exact ServiceAccount.");
+      if (await state.serviceAccounts.hasReferences(namespace.id, account.id))
+        throw new ResourceConflictError(
+          "An Agent draft, active revision, or pending deployment still references the exact ServiceAccount.",
+        );
       const driver = this.serviceAccountDriver();
       if (account.credential?.kind === "access_token" && driver === undefined)
         throw new DependencyUnavailableError("The selected ServiceAccount Driver is unavailable.");

@@ -2263,7 +2263,7 @@
         ]
       },
       "post": {
-        "description": "Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
+        "description": "Requires create permission for Agent resources in the requested Namespace. Requires read permission on the requested Configuration. Requires operate permission on each Repository binding selected in the resulting Agent repository draft, when selections are present. Requires operate permission on each signing Secret referenced by a Repository binding selected in the resulting Agent repository draft, when selections are present. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
         "operationId": "createAgent",
         "parameters": [
           {
@@ -2534,7 +2534,18 @@
         "x-openclaw-permissions": [
           { "action": "create", "resourceKind": "agent", "scope": "namespace" },
           { "action": "read", "resourceKind": "configuration", "scope": "requested" },
-          { "action": "operate", "resourceKind": "repository_binding", "scope": "requested" },
+          {
+            "action": "operate",
+            "condition": "selected_repository",
+            "resourceKind": "repository_binding",
+            "scope": "requested"
+          },
+          {
+            "action": "operate",
+            "condition": "selected_repository",
+            "resourceKind": "secret",
+            "scope": "requested"
+          },
           {
             "action": "read",
             "condition": "associated_service_account",
@@ -2769,7 +2780,7 @@
         ]
       },
       "patch": {
-        "description": "Requires update permission on the requested Agent. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
+        "description": "Requires update permission on the requested Agent. Requires read permission on the requested Configuration. Requires operate permission on each Repository binding selected in the resulting Agent repository draft, when selections are present. Requires operate permission on each signing Secret referenced by a Repository binding selected in the resulting Agent repository draft, when selections are present. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
         "operationId": "updateAgent",
         "parameters": [
           {
@@ -3048,7 +3059,18 @@
         "x-openclaw-permissions": [
           { "action": "update", "resourceKind": "agent", "scope": "requested" },
           { "action": "read", "resourceKind": "configuration", "scope": "requested" },
-          { "action": "operate", "resourceKind": "repository_binding", "scope": "requested" },
+          {
+            "action": "operate",
+            "condition": "selected_repository",
+            "resourceKind": "repository_binding",
+            "scope": "requested"
+          },
+          {
+            "action": "operate",
+            "condition": "selected_repository",
+            "resourceKind": "secret",
+            "scope": "requested"
+          },
           {
             "action": "read",
             "condition": "associated_service_account",
@@ -3066,7 +3088,7 @@
     },
     "/namespaces/{namespaceId}/agents/{agentId}/deploy": {
       "post": {
-        "description": "Requires deploy permission on the requested Agent. Requires read permission on the requested Configuration. Requires operate permission on the requested Repository binding. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Deployment also requires the owning Agent service principal to have operate permission on each bound Secret.",
+        "description": "Requires deploy permission on the requested Agent. Requires read permission on the requested Configuration. Requires read permission on each currently associated or newly associated ServiceAccount when present. Requires operate permission on each bound Secret when Secret bindings are present or selected. Deployment also requires the owning Agent service principal to have operate permission on each bound Secret.",
         "operationId": "deployAgent",
         "parameters": [
           {
@@ -3339,7 +3361,6 @@
         "x-openclaw-permissions": [
           { "action": "deploy", "resourceKind": "agent", "scope": "requested" },
           { "action": "read", "resourceKind": "configuration", "scope": "requested" },
-          { "action": "operate", "resourceKind": "repository_binding", "scope": "requested" },
           {
             "action": "read",
             "condition": "associated_service_account",
