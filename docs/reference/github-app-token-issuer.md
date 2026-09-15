@@ -1,158 +1,139 @@
 # GitHub App token issuer
 
-**Integration pending.** The GitHub implementation provides the `TokenIssuerV1`
-contract for one selected repository. Production startup and the regular Agent
-repository caller, including read-write execution, are not connected yet. Deliver
-this implementation with those owners and their integration proof before enabling
-the capability.
+**Integration pending:** production startup, repository Work and regular Agent
+checkout are unconnected. Do not enable repository deployment through this API.
 
 ## Owning contract
 
-Import `TokenIssuerV1`, `TokenRevokerV1`, their attempt/result types and
-`EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`. Import
-`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1`,
-`createGitHubAppWriteTokenIssuerV1` and
-`createGitHubAppTokenRevokerV1` from `@openclaw-enterprise/occ`.
+Import `TokenIssuerV1`, `TokenRevokerV1`, attempt/result types and
+`EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`;
+GitHub factories/types from `@openclaw-enterprise/occ`.
 
-A TokenIssuer mints bounded credentials into protected custody and revokes an
-original opaque handle. It is separate from the existing Provider contract,
-which supplies authenticated clients to member Drivers. There is no issuer
-registry or Installation configuration surface in this change.
+| Factory                             | Required options                                                                 | Returns                                    |
+| ----------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------ |
+| `createGitHubAppMaterialV1`         | `privateKey`, `identity`, `assertCurrent`, `clock`                               | `GitHubAppMaterialV1`                      |
+| `createGitHubAppTokenIssuerV1`      | `selection`, `material`, `custody`, `assertDispatchCurrent`, `clock`, `endpoint` | `TokenIssuerV1`                            |
+| `createGitHubAppWriteTokenIssuerV1` | `selection`, `material`, `custody`, `assertDispatchCurrent`, `clock`, `endpoint` | `TokenIssuerV1` with a fixed write profile |
+| `createGitHubAppTokenRevokerV1`     | `custody`, `assertDispatchCurrent`, `clock`, `endpoint`                          | `TokenRevokerV1`; no signing key required  |
 
-Trusted construction fixes the key identity, GitHub installation, exactly one
-repository ID/name, a fixed read or write permission profile, material and custody
-owners. Each call carries only its original attempt reference, abort signal and
-finite deadline;
-a request cannot choose another key, repository or permission profile.
+TokenIssuer owns bounded credentials in protected custody; Provider supplies
+authenticated clients to Drivers. No issuer registry or Installation
+configuration surface exists.
 
 ## Select material and repository scope
 
-Construct App material from a private RSA `KeyObject` of 2048–8192 bits, its exact
-App client ID, binding reference and immutable key version, a trusted clock and
-a synchronous currentness assertion. The key owner authenticates the source and
-immutable version before construction. The material checks identity/currentness
-before signing, before dispatch and after asynchronous work settles. `close()`
-prevents subsequent signing; JavaScript cannot erase copies owned elsewhere or
-force immediate destruction of a `KeyObject`.
-
-The read constructor `createGitHubAppTokenIssuerV1` accepts exactly one entry in
-`selection.repositories`. Permissions
-require `metadata: "read"` and optionally `contents: "read"`. Requests for writes,
-issues, pull requests or additional permissions are rejected during construction.
-Every token request names the selected repository ID explicitly.
+| Input                                     | Contract                                                                                                                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `privateKey`                              | Private RSA `KeyObject`, 2048–8192 bits; owner authenticates source/version.                                                                                     |
+| `identity` / `selection.key`              | Exact `clientId`, `bindingRef`, `immutableVersion`.                                                                                                              |
+| Read `selection`                          | Positive `installationId`; `repositories: [{ id, fullName }]` (exactly one); `permissions: { metadata: "read", contents?: "read" }`. Other permissions rejected. |
+| `clock`                                   | Trusted epoch-millisecond clock.                                                                                                                                 |
+| `assertCurrent` / `assertDispatchCurrent` | Synchronous, returning `undefined`; Promises refused. Dispatch checks original operation authority.                                                              |
 
 `createGitHubAppWriteTokenIssuerV1` accepts the exported
-`GitHubRepositoryWriteSelectionV1` as its selection. It requires exactly
-`metadata: "read"`, `contents: "write"` and `pull_requests: "write"` for one
-repository. Its constructor snapshots own data into an immutable selection and
-rejects proxies, accessors, inherited scope, extra or symbol fields, unsafe IDs
-and malformed repository names before signing or network dispatch. The existing
-read constructor and signature remain read-only.
+`GitHubRepositoryWriteSelectionV1`. It requires exactly `metadata: "read"`,
+`contents: "write"` and `pull_requests: "write"` for one repository. Its constructor
+snapshots own data into an immutable selection and rejects proxies, accessors,
+inherited scope, extra or symbol fields, unsafe IDs and malformed repository names
+before signing or network dispatch. The existing read constructor remains read-only.
 
 Trusted grant admission fixes one token profile per lease. Read-write execution
 uses its write profile for metadata, fetch, push and PR creation; operation kind
 does not select a second token profile. Separately admitted preparation retains
-its own read-only authority and material. This issuer does not enforce the
-lease-wide one-mint claim or two aggregate outstanding slots across replicas;
-Work, inventory and custody composition must enforce those limits and retain
-unknown or provider-valid retired material until evidenced resolution.
+its own read-only lease and never widens from a request.
 
-`assertDispatchCurrent` must check the original operation's current authority.
-Returning a Promise is refused. A repository name, Secret reference or
-caller-supplied identity does not establish that authority. The owner must durably
-claim each attempt before minting and record every outcome before token use.
+Construction fixes scope and owners. Names, Secret references and caller identity
+are not authority. The owner durably claims each attempt and records every
+outcome before token use.
+
+Material checks identity/currentness before signing, before dispatch and after
+asynchronous work. `close()` prevents signing; external copies and immediate
+`KeyObject` destruction remain outside its control.
 
 ## Mint, retain and revoke
 
-`mint()` calls GitHub's installation-token endpoint and accepts HTTP 201 only
-when the returned repository ID/name and permission map match exactly, with an
-unexpired token no more than one hour ahead. Missing, additional or duplicate
-repositories and broader permissions are refused.
+Calls take `TokenIssuerAttemptV1`:
+`{ providerAttemptRef, bounds: { signal, deadline } }`.
 
-A recognizable token is captured synchronously even when its scope or expiry is
-invalid, so cleanup retains responsibility for it. The custody owner copies the
-bytes into protected material before returning its opaque handle. The issuer
-wipes its temporary buffers. Returned-permission observations retain broad or
-administrative permissions; malformed evidence is marked unavailable instead of
-being replaced by requested permissions.
+| Method / outcome                          | Meaning                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `mint(attempt)` → `minted`                | HTTP 201 from `POST /app/installations/{installationId}/access_tokens`; opaque `material` and `expiresAt`. |
+| Mint → `rejected`                         | HTTP 401/403/404/422; returns `status`.                                                                    |
+| `revoke(attempt, material)` → `confirmed` | Original custody handle; HTTP 204 from `DELETE /installation/token`.                                       |
+| Either → `not-dispatched`                 | This invocation did not dispatch; says nothing about other attempts.                                       |
+| Either → `unknown`                        | Reconcile only; mint may include captured `material`. Never automatically replay.                          |
 
-`EphemeralTokenHandleV1` has no byte accessor or serialized form. Its type brand
-is not authority: custody authenticates the original handle before borrowing its
-token. Capture alone does not establish durable recording or permit Agent use.
-App keys and installation-token bytes must not be delivered to the Agent.
+Mint explicitly requests the selected repository ID. Acceptance requires exactly
+that ID/name (case-insensitive name), exactly selected permissions, and expiry
+in the next hour. Missing, extra or duplicate repositories are refused.
 
-Mint results distinguish `minted`, `rejected`, `not-dispatched` and `unknown`.
-Unknown results require reconciliation and may include captured material; a lost
-response never permits automatic replay. `not-dispatched` describes only the
-current invocation and does not prove another attempt did not execute.
+Custody synchronously copies recognizable tokens into protected material even
+when scope/expiry is invalid. Observations retain returned write/admin
+permissions; malformed evidence is unavailable, never replaced with requested
+permissions. Capture proves neither durable recording nor permission for Agent use.
 
-A separately constructed `TokenRevokerV1` can revoke retained material after App
-key loss. It borrows the exact authenticated handle, calls `DELETE
-/installation/token`, and confirms only HTTP 204. Other dispatched outcomes
-remain unknown. Every issuer-owned revocation copy is wiped, including malformed
-material; custody retains its original bytes and cleanup obligation.
+`EphemeralTokenHandleV1` has no byte accessor or serialized form; custody
+authenticates the original handle, not its type brand. App keys/token bytes must
+never reach the Agent. Issuer buffers, including malformed revocation copies,
+are wiped; custody retains originals and cleanup. Immutable strings may survive
+until garbage collection.
 
 ## Bounds and settlement
 
-Production transport uses `https://api.github.com`, API version `2026-03-10`,
-verified fresh HTTPS connections and no redirects, ambient proxies or retries.
-Calls require a deadline at most 30 seconds ahead. Responses are bounded to
-256 KiB and token material to 16 KiB. Mutable buffers are wiped on success and
-failure; immutable JavaScript strings can remain until garbage collection.
+| Limit               | Value                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| Production endpoint | `endpoint: { kind: "github" }`; `https://api.github.com`, API `2026-03-10`           |
+| Transport           | Fresh verified HTTPS; no redirects, ambient proxies or retries                       |
+| Bounds              | Unaborted `signal`; finite integer epoch-ms `deadline`, future and ≤30 seconds ahead |
+| Response / token    | ≤256 KiB / ≤16 KiB                                                                   |
+| Concurrency         | One pending operation per instance until owner and actual callback finish            |
 
-An instance retains its single pending-operation capacity until the original
-material/custody owner and actual callback finish. The outward deadline may
-return first. `settleAttempt(originalResult)` joins that exact result's finalizer
-without another network operation or changing the outcome. It rejects copies and
-foreign results. The operation owner must await it before releasing its original
-authority use. A noncooperating owner may leave settlement pending indefinitely;
-timeout does not transfer or discharge the obligation.
+`settleAttempt(originalResult)` joins that exact result's finalizer, rejecting
+copies/foreign results. It performs no network action or outcome change. Await
+it before releasing original authority, even after outward timeout. A
+noncooperating owner can delay settlement indefinitely; timeout never transfers
+or discharges the obligation.
 
 ## Integration and verification
 
-The repository workflow owner must load the selected protected App material during
-actual startup, bind custody and the original State/native/Work sources, connect
-the regular Agent repository read, and require a verified checkout before Harness
-use. Partial startup acquisitions and late/unknown token effects must retain
-cleanup ownership through shutdown.
+Required integration: startup loads protected material and binds custody to
+original State/native/Work sources; the Work constructor consumes prepared
+crypto/store owners and selects the issuer matching its admitted fixed read or
+write profile. Connect regular Agent repository execution; require verified checkout before Harness use. Settle mint/revoke,
+retain partial-startup and late/unknown cleanup through shutdown, and stop/join
+Work before closing owners.
 
-The [protocol tests](../testing/local.md#github-app-token-issuer-protocol) verify
-local HTTPS/RSA behavior. They do not prove live GitHub compatibility, protected
-production custody or a regular Agent execution. A real App-key test and the
-positive Agent workflow, scope-denial and interrupted-read cleanup cases remain
-required before this delivery is complete.
+See [protocol](../testing/local.md#github-app-token-issuer-protocol) and
+[protected-material proof limits](../testing/local.md#protected-github-material).
+Local HTTPS/RSA proof establishes neither live GitHub compatibility, production
+custody nor Agent execution. Real App-key, positive Agent workflow, scope-denial
+and interrupted-read cleanup proof remain required.
 
 ## Protected material preparation
 
-The controller's `prepareProtectedGitHubCredentials` composition owner joins an
-admitted repository binding to an operator-selected immutable Kubernetes App-key
-source. The selection fixes the binding generation, App ID, installation ID,
-repository ID, logical signing Secret, encrypted source UID/resource version and
-envelope digest. It reads the binding and Secret through State before preparing
-the owners and before each signing use. A changed generation or different
-repository, App, installation, Secret or Secret Driver is refused.
+Controller `prepareProtectedGitHubCredentials({ state, client, selection, clock })`
+requires:
 
-The immutable source is a separately sealed copy associated with the admitted
-logical Secret. Ordinary mutable Secret backend metadata is not sufficient to
-select it. Operators must provision the encrypted immutable Secret and exact
-ownership annotations required by the protected Kubernetes loader, plus a
-separate mode-0600 master-key file and a persistent mode-0700 token directory.
-The token directory must have a single custody writer and cannot contain the
-master key. The App key and installation tokens remain outside the Agent.
+| Owner      | Required selection                                                                                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| State      | Admitted binding generation, App, installation, repository and same-Namespace logical signing Secret/Driver; rechecked before preparation and each signing use. Changes rejected. |
+| Kubernetes | Operator-selected, separately sealed encrypted immutable Secret; exact loader ownership annotations, UID/resource version and envelope SHA256. Mutable metadata cannot select it. |
+| Filesystem | Separate mode-0600 master-key file; persistent mode-0700 token directory with one custody writer, excluding the master key.                                                       |
 
-This preparation retains the original crypto and persistent token-store owners.
-The original repository Work constructor must consume them, select the TokenIssuer
-matching the admitted fixed read or write profile, settle mint/revoke attempts,
-and stop before closing these
-owners. That production Work connection and the regular Agent checkout remain
-unimplemented in this review slice. The prepared material alone does not verify
-a repository or enable the currently refused nonempty repository deployment.
+Preparation grants no Work dispatch authority, verifies no repository and does
+not enable nonempty repository deployment. On unavailable errors, restore
+selected owners; never substitute mutable material or widen scope.
 
-Verification: the protected-material conformance cases exercise real envelope
-cryptography, RSA signing, filesystem checks and the in-memory State repository,
-with only the Kubernetes read boundary substituted. They cover exact source
-refusal, binding withdrawal and closure; they do not prove live GitHub,
-Kubernetes attestation, token issuance through Work or Agent checkout. A generic
-unavailable error indicates that the binding, immutable source or protected
-filesystem no longer matches the selected values; restore those owners before
-retrying preparation, and never substitute mutable material or widen scope.
+### Token-store recovery
+
+Versioned records check envelope length/digest. Exclusive staging names commit
+the complete record's SHA256 before any bytes, including empty interrupted
+writes. Only complete matching records publish: no-overwrite hard link and
+file/directory fsync.
+
+Recovery refuses incomplete, corrupt, malformed or conflicting pending records
+without deleting them. The original custody owner alone may finish matching
+partial writes with identical context/envelope; never mint again or replace
+the envelope. Errors can follow durable publication: retain original inventory
+and cleanup until exact readback or reconciliation. Storage framing neither
+replaces AEAD authentication nor confers Work authority.
