@@ -137,6 +137,8 @@ function operationReference(path, method, operation, document, { headingLevel = 
         "| Action | Resource | Scope |",
         "| --- | --- | --- |",
         ...operation["x-openclaw-permissions"].map(({ action, resourceKind, scope, condition }) => {
+          if (condition === "selected_repository")
+            return `| \`${action}\` | \`${resourceKind}\` | \`${scope}\` (when repository selections are present) |`;
           const qualifier =
             condition === "associated_service_account"
               ? " (when associated)"
