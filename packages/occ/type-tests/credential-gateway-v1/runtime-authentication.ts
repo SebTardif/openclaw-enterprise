@@ -68,12 +68,20 @@ async function consume(): Promise<void> {
     ...(prepared === undefined ? {} : { runtimeAuthentication: prepared }),
   };
   const planned = await owner.prepareAttachment({ projection, receiver, bounds });
-  planned.assertAndConsume();
-  await owner.observeAttachment({
-    attachment: planned.attachment,
-    outcome: { kind: "created", receiverUid: "example-observed-receiver" },
-    bounds,
-  });
+  if (planned.kind === "create") {
+    planned.assertAndConsume();
+    await owner.observeAttachment({
+      attachment: planned.attachment,
+      outcome: { kind: "created", receiverUid: "example-observed-receiver" },
+      bounds,
+    });
+  } else {
+    // @ts-expect-error The original submitted/uncertain attempt has no new create gate.
+    planned.assertAndConsume();
+    // @ts-expect-error Retained attempts provide no provider references for resubmission.
+    planned.providers;
+  }
+  // Both branches inspect their original owner-retained attachment.
   const observation = await owner.inspect({ attachment: planned.attachment, bounds });
   if (observation.state === "attached") {
     const usableUntil: number = observation.usableUntil;
@@ -154,8 +162,17 @@ const requestPermission: RuntimeAuthenticationProjectionV1["session"]["permissio
 const unbounded: RuntimeAuthenticationProjectionV1["session"]["lifetime"] = "unbounded";
 // @ts-expect-error The runtime consumer cannot substitute another immutable profile.
 projection.profileDigest = "replacement-profile";
-// @ts-expect-error A Sandbox cannot append arbitrary provider references to the delivery.
-delivery.providers.push("another-provider");
+if (delivery.kind === "create") {
+  // @ts-expect-error A Sandbox cannot append arbitrary provider references to the delivery.
+  delivery.providers.push("another-provider");
+} else {
+  // @ts-expect-error Recovery never provides another create gate.
+  delivery.assertAndConsume();
+  // @ts-expect-error Recovery cannot re-submit provider references.
+  delivery.providers;
+  // @ts-expect-error Recovery inspects the existing attempt rather than reporting another create.
+  delivery.observe({ kind: "created" });
+}
 
 void [
   operationCapabilities,

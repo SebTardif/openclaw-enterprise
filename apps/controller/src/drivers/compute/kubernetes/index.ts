@@ -2270,9 +2270,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
           attachment: preparation.attachment,
           projection,
           resourceName: exactReceiver.resourceName,
-          observed: false,
+          observed: preparation.kind === "retained",
         };
         state.attempts.set(revision.id, attempt);
+        if (preparation.kind === "retained") {
+          return Object.freeze({ kind: "retained" as const });
+        }
         const providers = Object.freeze([...preparation.providers]);
         if (
           providers.length === 0 ||
@@ -2295,6 +2298,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         }
         let consumed = false;
         return Object.freeze({
+          kind: "create" as const,
           providers,
           assertAndConsume: () => {
             signal.throwIfAborted();

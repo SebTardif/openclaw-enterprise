@@ -702,15 +702,23 @@ export class ControllerWorker {
         }
         return;
       }
-      const runtimeAuthentication =
-        this.runtimeAuthenticationOwner === undefined
-          ? undefined
-          : await this.withClaimHeartbeat(claim, () =>
-              this.runtimeAuthenticationOwner!.prepare({
-                revision,
-                bounds: this.runtimeAuthenticationBounds(),
-              }),
-            );
+      let runtimeAuthentication: ComputeRevisionContext["runtimeAuthentication"];
+      try {
+        runtimeAuthentication =
+          this.runtimeAuthenticationOwner === undefined
+            ? undefined
+            : await this.withClaimHeartbeat(claim, () =>
+                this.runtimeAuthenticationOwner!.prepare({
+                  revision,
+                  bounds: this.runtimeAuthenticationBounds(),
+                }),
+              );
+      } catch (error) {
+        if (error instanceof WorkClaimLostError) throw error;
+        if (agent.activeRevisionId !== revision.id) throw error;
+        await this.finalizeActiveRevision(claim, revision, "RUNTIME_AUTHENTICATION_UNAVAILABLE");
+        return;
+      }
       const revisionContext: ComputeRevisionContext = {
         ...secretContext.context,
         ...(runtimeAuthentication === undefined ? {} : { runtimeAuthentication }),
@@ -718,7 +726,9 @@ export class ControllerWorker {
       if (agent.activeRevisionId === revision.id) {
         try {
           const compute = this.compute;
-          if (this.maintenanceIntervalMs !== undefined) {
+          // Recover the broker's retained attachment for each admitted projection,
+          // including retries after activation publication or controller restart.
+          if (this.maintenanceIntervalMs !== undefined || runtimeAuthentication !== undefined) {
             const observation = await this.withClaimHeartbeat(claim, () =>
               compute.prepareRevision(revision, revisionContext),
             );

@@ -3250,6 +3250,7 @@ test("Compute consumes the declared owner port and separates attachment inspecti
       const providers = ["approved-provider"];
       providerSelections.push(providers);
       return {
+        kind: "create",
         attachment,
         providers,
         assertAndConsume() {
@@ -3282,6 +3283,7 @@ test("Compute consumes the declared owner port and separates attachment inspecti
         },
         signal,
       );
+      assert.equal(delivery.kind, "create");
       providerSelections.at(-1).push("late-provider-change");
       assert.deepEqual(delivery.providers, ["approved-provider"]);
       assert.ok(Object.isFrozen(delivery.providers));
@@ -3460,4 +3462,158 @@ test("Compute refuses missing, stale, mismatched, or competing external authenti
     /model Secret cannot coexist/,
   );
   assert.equal(writes.length, 0);
+});
+
+test("Compute recovers retained authentication across fresh projections and a restarted driver without another create", async () => {
+  // These substitutes implement the declared owner/Sandbox boundary only. The same
+  // opaque attachment and consumed gate survive each Compute instance in this test.
+  const attachment = Object.freeze({});
+  const projections = new Set();
+  const deadline = Date.now() + 60_000;
+  let consumed = false;
+  let receiver;
+  let observation = {
+    state: "attached",
+    receiverUid: "retained-receiver-uid",
+    usableUntil: deadline,
+  };
+  let gateCalls = 0;
+  let submissions = 0;
+  let outcomes = 0;
+  let retainedPreparations = 0;
+  const owner = {
+    async status() {
+      return { configured: true };
+    },
+    async prepareAttachment(input) {
+      assert.ok(
+        projections.has(input.projection),
+        "the owner must authenticate the current projection",
+      );
+      if (receiver !== undefined) assert.deepEqual(input.receiver, receiver);
+      receiver = input.receiver;
+      if (consumed) {
+        retainedPreparations += 1;
+        return { kind: "retained", attachment };
+      }
+      return {
+        kind: "create",
+        attachment,
+        providers: ["approved-provider"],
+        assertAndConsume() {
+          gateCalls += 1;
+          assert.equal(consumed, false, "the original attempt can only be consumed once");
+          consumed = true;
+        },
+      };
+    },
+    async observeAttachment(input) {
+      assert.equal(input.attachment, attachment);
+      assert.deepEqual(input.outcome, {
+        kind: "created",
+        receiverUid: "retained-receiver-uid",
+      });
+      outcomes += 1;
+    },
+    async inspect(input) {
+      assert.equal(
+        input.attachment,
+        attachment,
+        "inspection must keep the original retained attempt",
+      );
+      return observation;
+    },
+  };
+  async function provisionHarness(context) {
+    const delivery = await context.runtimeAuthentication.prepare(
+      {
+        sandboxDriverId: context.revision.sandboxDriverId,
+        gatewayEndpoint: "https://openshell.example.internal:8080",
+        workspace: "tenant-workspace",
+        namespaceName: context.namespace.name,
+        resourceName: "provider-sandbox",
+      },
+      new AbortController().signal,
+    );
+    if (delivery.kind === "create") {
+      delivery.assertAndConsume();
+      submissions += 1;
+      await delivery.observe({
+        kind: "created",
+        receiverUid: "retained-receiver-uid",
+      });
+    } else {
+      assert.deepEqual(
+        delivery,
+        { kind: "retained" },
+        "recovery carries no new create gate or outcome",
+      );
+    }
+    return {
+      namespaceName: context.namespace.name,
+      resourceName: "provider-sandbox",
+      agentId: context.revision.agentId,
+      revisionId: context.revision.id,
+    };
+  }
+  function freshProjection(fixture) {
+    const projection = runtimeProjection(fixture.revision, {
+      expiresAt: deadline,
+    });
+    projections.add(projection);
+    return { runtimeAuthentication: projection };
+  }
+  function startCompute() {
+    const fixture = providerReadinessFixture({
+      runtimeAuthenticationOwner: owner,
+      provisionHarness,
+    });
+    const transport = providerPreparationTransport(fixture);
+    fixture.setObservation({ items: [fixture.pod("ready")] });
+    return { ...fixture, ...transport };
+  }
+  const first = startCompute();
+  const initial = freshProjection(first);
+  assert.equal((await first.driver.prepareRevision(first.revision, initial)).ready, true);
+  await first.driver.activateRevision(first.revision, initial);
+  assert.equal(submissions, 1);
+
+  const refreshed = freshProjection(first);
+  assert.notEqual(refreshed.runtimeAuthentication, initial.runtimeAuthentication);
+  assert.equal((await first.driver.prepareRevision(first.revision, refreshed)).ready, true);
+  await first.driver.activateRevision(first.revision, refreshed);
+
+  // A new Compute object starts with no process-local attempt cache. The owner
+  // authenticates and returns the original attempt before readiness can recover.
+  const restarted = startCompute();
+  const recovered = freshProjection(restarted);
+  await assert.rejects(
+    restarted.driver.activateRevision(restarted.revision, recovered),
+    /not ready/,
+  );
+  assert.equal((await restarted.driver.prepareRevision(restarted.revision, recovered)).ready, true);
+  await restarted.driver.activateRevision(restarted.revision, recovered);
+
+  for (const state of ["unknown", "pending"]) {
+    observation = { state };
+    const current = freshProjection(restarted);
+    assert.equal(
+      (await restarted.driver.prepareRevision(restarted.revision, current)).ready,
+      false,
+    );
+    const beforeActivation = restarted.writes.length;
+    await assert.rejects(
+      restarted.driver.activateRevision(restarted.revision, current),
+      /not ready/,
+    );
+    assert.equal(restarted.writes.length, beforeActivation);
+  }
+  assert.equal(retainedPreparations, 4);
+  assert.equal(gateCalls, 1, "retained recovery must not consume the original gate again");
+  assert.equal(
+    submissions,
+    1,
+    "retained attached or unknown state must not submit a replacement create",
+  );
+  assert.equal(outcomes, 1, "recovery must not manufacture a fresh create outcome");
 });

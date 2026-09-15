@@ -26,6 +26,7 @@ function fixture({ gateFailure = false, createFailure, providers = ["model-provi
   const observations = [];
   const requests = [];
   const receivers = [];
+  let retained = false;
   const options = {
     gateway: { endpoint: "https://broker.example.test:50051", workspace: "model-workspace" },
     kubernetes: {
@@ -91,7 +92,9 @@ function fixture({ gateFailure = false, createFailure, providers = ["model-provi
     runtimeAuthentication: {
       async prepare(receiver) {
         receivers.push(receiver);
+        if (retained) return { kind: "retained" };
         return {
+          kind: "create",
           providers,
           assertAndConsume() {
             events.push("gate");
@@ -105,7 +108,17 @@ function fixture({ gateFailure = false, createFailure, providers = ["model-provi
       },
     },
   };
-  return { driver, context, events, observations, requests, receivers };
+  return {
+    driver,
+    context,
+    events,
+    observations,
+    requests,
+    receivers,
+    retain() {
+      retained = true;
+    },
+  };
 }
 
 test("OpenShell gates the exact receiver and attaches only the broker-selected providers", async () => {
@@ -151,4 +164,18 @@ test("invalid broker provider references fail before OpenShell submission", asyn
   await assert.rejects(f.driver.provisionHarness(f.context), /invalid OpenShell provider/);
   assert.deepEqual(f.requests, []);
   assert.deepEqual(f.observations, [{ kind: "not-submitted" }]);
+});
+
+test("OpenShell reuses an owner-retained receiver without another create or outcome", async () => {
+  const f = fixture();
+  const original = await f.driver.provisionHarness(f.context);
+  // The broker dependency now identifies the retained original attempt. The
+  // adapter must leave readiness to Compute inspection and submit no new create.
+  f.retain();
+  const recovered = await f.driver.provisionHarness(f.context);
+  assert.deepEqual(recovered, original);
+  assert.equal(f.receivers.length, 2);
+  assert.equal(f.requests.length, 1);
+  assert.deepEqual(f.events, ["gate", "create", "observe"]);
+  assert.deepEqual(f.observations, [{ kind: "created", receiverUid: "runtime-uid" }]);
 });

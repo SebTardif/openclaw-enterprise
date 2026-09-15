@@ -15,16 +15,26 @@ import type { ExternalRuntimeAuthenticationCapabilityV1 } from "./connection.ts"
  */
 export type RuntimeAuthenticationAttachmentV1 = LocalHandle<"runtime-authentication-attachment-v1">;
 
-export interface RuntimeAuthenticationAttachmentPreparationV1 {
-  readonly attachment: RuntimeAuthenticationAttachmentV1;
-  /** Exact nonsecret external provider references selected by the admitted profile. */
-  readonly providers: readonly string[];
-  /**
-   * Immediately before create, atomically authenticate current authority, bounds and
-   * exact receiver and consume this attempt once. A failed gate submits nothing.
-   */
-  assertAndConsume(): void;
-}
+/**
+ * Retained means the owner authenticated the original submitted or uncertain
+ * attempt against the exact requested receiver. Inspect it without resubmission.
+ */
+export type RuntimeAuthenticationAttachmentPreparationV1 =
+  | {
+      readonly kind: "create";
+      readonly attachment: RuntimeAuthenticationAttachmentV1;
+      /** Exact nonsecret external provider references selected by the admitted profile. */
+      readonly providers: readonly string[];
+      /**
+       * Immediately before create, atomically authenticate current authority, bounds and
+       * exact receiver and consume this attempt once. A failed gate submits nothing.
+       */
+      assertAndConsume(): void;
+    }
+  | {
+      readonly kind: "retained";
+      readonly attachment: RuntimeAuthenticationAttachmentV1;
+    };
 
 /** Only a current, authenticated provider observation can establish attached. */
 export type RuntimeAuthenticationAttachmentInspectionV1 =
@@ -74,6 +84,8 @@ export interface RuntimeAuthenticationOwnerV1 {
    * Authenticate the projection and exact receiver, then durably retain the original
    * attempt and cleanup obligation before returning the one-use gate. Retry or alias
    * changes must not create replacement authority after an uncertain create.
+   * Return the retained branch for the original submitted or uncertain attempt;
+   * only inspection can determine whether its authentication is attached and usable.
    */
   prepareAttachment(input: {
     readonly projection: RuntimeAuthenticationProjectionV1;

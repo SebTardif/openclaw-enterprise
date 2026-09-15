@@ -493,3 +493,171 @@ test(
     assert.equal(maintenanceAttempts, effectsBeforeDenial);
   },
 );
+
+test(
+  "active maintenance resumes after runtime authentication preparation recovers",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const agent = await fixture.agent();
+    const candidate = await fixture.revision(agent, 1);
+    let available = false;
+
+    // Exercise real worker authorization, queue failure, and successor scheduling.
+    // The owner port only reports an outage or no external session; it invents no
+    // admitted projection and supplies no broker or external-runtime proof.
+    const runtimeAuthenticationOwner = {
+      async prepare({ revision }) {
+        if (!available && (await fixture.activeRevision(agent)) === revision.id) {
+          throw new Error("runtime authentication state is temporarily unavailable");
+        }
+        return undefined;
+      },
+    };
+    await fixture.start(
+      {
+        ...fixture.compute,
+        activationOrder: "beforeCommit",
+        maintenanceIntervalMs: 75,
+        async preflight() {},
+        setRuntimeAuthenticationOwner() {},
+        async activateRevision() {},
+      },
+      30_000,
+      900_000,
+      "production",
+      runtimeAuthenticationOwner,
+    );
+    try {
+      await fixture.work(candidate);
+
+      // A prolonged owner outage must leave successive durable observations, rather
+      // than spend one maintenance claim's retry budget and abandon the runtime.
+      const failures = await waitFor(
+        "broker preparation failures to retain maintenance successors",
+        async () => {
+          const result = await fixture.observerPool.query(
+            `SELECT actor_id, attempt_count
+           FROM occ.controller_work
+           WHERE namespace_id = $1 AND revision_id = $2
+             AND idempotency_key LIKE $3 AND state = 'failed_permanent'`,
+            [fixture.namespace.id, candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
+          );
+          return result.rows.length >= 2 ? result.rows : undefined;
+        },
+      );
+      assert.ok(failures.every(({ actor_id }) => actor_id === fixture.actor.id));
+      available = true;
+
+      const recovered = await waitFor("maintenance after broker preparation recovers", async () => {
+        const result = await fixture.observerPool.query(
+          `SELECT actor_id
+           FROM occ.controller_work
+           WHERE namespace_id = $1 AND revision_id = $2
+             AND idempotency_key LIKE $3 AND state = 'succeeded'
+           ORDER BY completed_at DESC LIMIT 1`,
+          [fixture.namespace.id, candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
+        );
+        return result.rows[0];
+      });
+      assert.equal(recovered.actor_id, fixture.actor.id);
+      assert.equal(await fixture.activeRevision(agent), candidate.id);
+    } finally {
+      await fixture.stop();
+
+      // Retire this test's queued maintenance after stopping its owner, so a later
+      // fixture does not consume work belonging to this substituted dependency.
+      await fixture.observerPool.query(
+        `UPDATE occ.controller_work
+         SET state = 'succeeded', completed_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE namespace_id = $1 AND state = 'queued'
+           AND idempotency_key LIKE $2`,
+        [fixture.namespace.id, `agent_revision:${candidate.id}:maintenance:%`],
+      );
+    }
+  },
+);
+
+test(
+  "an active revision retry prepares its fresh runtime authentication projection without periodic maintenance",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const agent = await fixture.agent();
+    const candidate = await fixture.revision(agent, 1);
+    const effects = [];
+    const projections = [];
+    let activationAttempts = 0;
+    const expiresAt = Date.now() + 60_000;
+
+    // Compute and the owner are explicit dependency substitutes. The real worker
+    // persists activation and retries its interrupted post-commit finalization.
+    // Projection-shaped values exercise context identity and call ordering only;
+    // they do not prove admission, attachment, provider readiness, or model access.
+    const runtimeAuthenticationOwner = {
+      async prepare({ revision }) {
+        const projection = Object.freeze({
+          schemaVersion: 1,
+          namespaceId: revision.namespaceId,
+          agentId: revision.agentId,
+          revisionId: revision.id,
+          executionId: "retained-worker-test-execution",
+          servicePrincipalId: revision.servicePrincipalId,
+          sandboxDriverId: "worker-test-sandbox",
+          connectionId: "worker-test-connection",
+          connectionGeneration: "1",
+          serviceId: "worker-test-model-service",
+          profileDigest: "worker-test-profile-digest",
+          expiresAt,
+          session: {
+            permission: "whole-session",
+            lifetime: "bounded",
+            withdrawal: "exact-receiver",
+          },
+        });
+        projections.push(projection);
+        return projection;
+      },
+    };
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async preflight() {},
+        setRuntimeAuthenticationOwner() {},
+        async prepareRevision(revision, revisionContext) {
+          effects.push({ action: "prepare", projection: revisionContext.runtimeAuthentication });
+          return fixture.compute.prepareRevision(revision);
+        },
+        async deactivateRevision() {},
+        async activateRevision(revision, revisionContext) {
+          effects.push({ action: "activate", projection: revisionContext.runtimeAuthentication });
+          assert.equal(await fixture.activeRevision(agent), revision.id);
+          activationAttempts += 1;
+          if (activationAttempts === 1) throw new Error("gateway activation was interrupted");
+        },
+      },
+      30_000,
+      900_000,
+      "production",
+      runtimeAuthenticationOwner,
+    );
+    const work = await fixture.work(candidate);
+
+    // A fresh owner projection represents the same retained session. Retry must
+    // prepare that exact object before activation can consume its current state.
+    assert.equal(work.attempt_count, 1);
+    assert.equal(await fixture.activeRevision(agent), candidate.id);
+    assert.equal(activationAttempts, 2);
+    assert.equal(projections.length, 2);
+    assert.notEqual(projections[0], projections[1]);
+    assert.deepEqual(projections[0], projections[1]);
+    assert.deepEqual(
+      effects.map(({ action }) => action),
+      ["prepare", "activate", "prepare", "activate"],
+    );
+    assert.equal(effects[0].projection, projections[0]);
+    assert.equal(effects[1].projection, projections[0]);
+    assert.equal(effects[2].projection, projections[1]);
+    assert.equal(effects[3].projection, projections[1]);
+  },
+);

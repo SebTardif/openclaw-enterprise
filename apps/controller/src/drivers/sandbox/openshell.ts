@@ -871,6 +871,9 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       }),
       context.signal,
     );
+    // The owner has retained this receiver's original submission. Compute will
+    // inspect its current authentication state; never consume or create it again.
+    if (delivery?.kind === "retained") return Object.freeze(sandbox);
     let submitted = false;
     let created;
     try {

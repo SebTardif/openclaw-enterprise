@@ -165,11 +165,18 @@ permission. Revision IDs, deployment permission, or a structurally valid
 projection cannot create that authority.
 
 OpenShell receives only the nonsecret provider references prepared for its exact
-gateway, workspace, namespace, and Sandbox receiver. A one-use owner gate runs
-immediately before submission. Preparing an attachment or receiving a create
-response does not establish that authentication is attached; Compute requires a
-current owner observation before activation. Ambiguous create, duplicate, and
-withdrawal outcomes retain their reconciliation obligations.
+gateway, workspace, namespace, and Sandbox receiver. The owner returns a tagged
+`create` or `retained` attachment. A new `create` uses a one-use owner gate
+immediately before submission. A `retained` attachment preserves the original
+submitted or uncertain attempt, skips Sandbox creation, and issues no new grant
+or gate. In either case, `owner.inspect` must establish the current attachment
+before activation; `unknown` and `pending` remain unresolved. Preparing an
+attachment or receiving a create response is insufficient.
+
+The worker prepares a fresh projection when retrying an active revision, while
+the owner retains the original attachment obligation. Broker unavailability uses
+the existing maintenance successor path so later reconciliation can retry.
+Ambiguous create, duplicate, and withdrawal outcomes retain their obligations.
 
 Cleanup withdraws the exact receiver's access independently of workload deletion,
 including after grant closure, expiry, abort, or process restart. It must preserve

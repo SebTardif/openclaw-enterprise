@@ -53,13 +53,18 @@ export type RuntimeAuthenticationAttachmentOutcomeV1 =
  * nonsecret external identifiers; standing provider keys never cross this port.
  * Call the owner gate immediately before submitting the exact create request, and
  * report its outcome even when create fails or cancellation makes it ambiguous.
+ * A retained delivery represents the original submitted or uncertain attempt;
+ * skip creation and let Compute inspect that attempt's current authentication.
  */
-export interface RuntimeAuthenticationDeliveryV1 {
-  readonly providers: readonly string[];
-  /** Rechecks current owner authority, exact receiver and expiry; succeeds only once. */
-  assertAndConsume(): void;
-  observe(outcome: RuntimeAuthenticationAttachmentOutcomeV1): Promise<void>;
-}
+export type RuntimeAuthenticationDeliveryV1 =
+  | {
+      readonly kind: "create";
+      readonly providers: readonly string[];
+      /** Rechecks current owner authority, exact receiver and expiry; succeeds only once. */
+      assertAndConsume(): void;
+      observe(outcome: RuntimeAuthenticationAttachmentOutcomeV1): Promise<void>;
+    }
+  | { readonly kind: "retained" };
 
 /** Compute retains the owner and authenticates the Sandbox's exact planned receiver. */
 export interface RuntimeAuthenticationRequestV1 {
