@@ -47,9 +47,13 @@ also used directly by the optional `SandboxDriver.ensureNamespace` hook to
 apply approved namespace-scoped OpenShell NetworkPolicy resources
 and check gateway readiness. The selected driver's optional `provisionHarness`
 hook creates the provider-owned Harness Sandbox; without that hook, Compute
-creates the ordinary Harness Deployment. Revision cleanup is delegated to the
-provider, so Compute does not need Sandbox custom-resource permissions. No
-separate SandboxDriver Kubernetes access adapter is introduced. The privileged
+creates the ordinary Harness Deployment. Retirement deletes that ordinary
+Deployment when present and then always invokes the selected provider's required
+revision cleanup. An absent Deployment does not skip cleanup, and cleanup failure
+blocks gateway teardown so the worker can retry it. Provider-owned Harness
+retirement remains delegated to the provider, so Compute does not need Sandbox
+custom-resource permissions. No separate SandboxDriver Kubernetes access adapter
+is introduced. The privileged
 OpenShell init or sidecar containers must be allowed only through an
 operator-approved RuntimeClass or equivalent admission exemption with a
 matching fail-closed policy; the Harness container itself remains unprivileged.
@@ -181,7 +185,12 @@ for additional execution details.
   ownership, exclusive tenant use, and no foreign NetworkPolicies.
 - **Gateway or Harness remains pending:** Check image digests, image pull
   permissions, CPU and memory limits, namespace quotas, required Secrets, and
-  workload readiness.
+  workload readiness. Dedicated Codex Harness containers clear the plugin
+  readiness marker at process start so a marker left in the Pod's temporary
+  volume by a previous container attempt cannot make a restarted runtime ready.
+  Native plugin startup, authentication, transport, and installation failures
+  remain generic workload startup failures unless the native runtime provides a
+  trusted typed failure source.
 - **Gateway storage is pending or rejected:** Check the configured
   `runtime.gatewayStorageClassName`, available `10Gi` capacity, filesystem
   support, worker PVC permissions, and the PVC's exact ownership. Preserve
