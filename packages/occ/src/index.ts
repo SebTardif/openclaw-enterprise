@@ -2770,3 +2770,40 @@ export {
 export type { ProtectedGitHubKeySelectionV1 } from "./credential-custody-v1/protected-github-crypto.ts";
 export { ProtectedGitHubTokenStoreV1 } from "./credential-custody-v1/protected-github-token-store.ts";
 export type { ProtectedGitHubStoreSelectionV1 } from "./credential-custody-v1/protected-github-token-store.ts";
+
+export type {
+  Bounds,
+  LocalHandle,
+  AuthenticatedAccess,
+  RetainedCredential,
+  CoreAuthenticationBinding,
+  AdmittedServiceBinding,
+  AdmittedReceiver,
+  ProtectedDerivedCapability,
+  DerivedRequest,
+  ProtectedUpstreamResponse,
+  DispatchPermit,
+  ReceiptFinalization,
+  BoundCredentialOperation,
+  ValidatedAdapterOperation,
+  ValidatedSchemaValue,
+  AdmissionCondition,
+  AdmittedRootContext,
+  AuthorizedClosure,
+  AdmittedConnection,
+  AdmittedCredentialSelection,
+  ProtectedCredentialSource,
+  RegisteredCredentialMechanism,
+} from "./credential-gateway-v1/handles.ts";
+
+export type {
+  DefinitionRef,
+  SchemaRef,
+  RetainedSchemaValue,
+  JsonValue,
+  SchemaRole,
+  SchemaBinding,
+  SchemaRegistration,
+  RegisteredSchemaCodec,
+  SchemaRegistrationOwner,
+} from "./credential-gateway-v1/schema.ts";
