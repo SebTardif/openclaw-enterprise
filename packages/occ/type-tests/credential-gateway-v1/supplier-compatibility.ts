@@ -24,13 +24,11 @@ import type {
   EphemeralTokenHandleV1,
 } from "@openclaw-enterprise/contracts";
 import {
-  RepositoryTransactionLifetime,
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
   createGitHubAppMaterialV1,
 } from "@openclaw-enterprise/occ";
 import type {
-  CredentialInventoryTransactionV1,
   PlatformReadView,
   PlatformUnitOfWork,
   PlatformStateStore,
@@ -43,7 +41,15 @@ import type {
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
 } from "@openclaw-enterprise/occ";
+import type { RepositoryTransactionLifetime } from "../../src/ports/transaction.ts";
+import type { CredentialInventoryTransactionV1 } from "../../src/credential-inventory-v1/ports.ts";
+
 import { transactCredentialInventoryMetadataV1 } from "../../src/credential-inventory-v1/owner.ts";
+
+// @ts-expect-error Transaction lifetimes belong to OCC internals, not its public entry point.
+import type { RepositoryTransactionLifetime as PublicTransactionLifetime } from "@openclaw-enterprise/occ";
+// @ts-expect-error Inventory transactions belong to OCC internals, not its public entry point.
+import type { CredentialInventoryTransactionV1 as PublicInventoryTransaction } from "@openclaw-enterprise/occ";
 
 // Compile-only correspondence against actual suppliers. Every operand/callback
 // is supplied by its real owner; these inert functions construct no authority.

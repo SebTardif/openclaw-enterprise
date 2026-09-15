@@ -9,19 +9,26 @@ import {
   createGitHubAppTokenIssuerV1,
   createGitHubAppWriteTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-  RepositoryTransactionLifetime,
 } from "@openclaw-enterprise/occ";
 import type {
   AdmittedCredentialSelection,
   Bounds,
-  ChargedIssuedSlot,
-  EncryptedMaterialStore,
   GitHubAppMaterialV1,
   GitHubAppTokenCustodyV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
-  GitHubIssuedMechanismDependencies,
   GitHubRepositoryWriteSelectionV1,
+  RetainedCredential,
+  PlatformReadView,
+  PlatformStateStore,
+  PlatformUnitOfWork,
+  ProtectedCredentialSource,
+} from "@openclaw-enterprise/occ";
+
+import type {
+  ChargedIssuedSlot,
+  EncryptedMaterialStore,
+  GitHubIssuedMechanismDependencies,
   IssuedLeaseClaims,
   IssuedLeaseIdentity,
   IssuedMechanismFactory,
@@ -33,16 +40,15 @@ import type {
   IssuanceStateDependencies,
   KnownIssuanceCommit,
   OriginalIssuedSettlement,
-  RetainedCredential,
-  PlatformReadView,
-  PlatformStateStore,
-  PlatformUnitOfWork,
-  ProtectedCredentialSource,
   ProtectedSourceLease,
   ProtectedSourceLoader,
   SealedMaterial,
-  CredentialInventoryTransactionV1,
-} from "@openclaw-enterprise/occ";
+} from "../../src/credential-gateway-v1/issuance.ts";
+import type { CredentialInventoryTransactionV1 } from "../../src/credential-inventory-v1/ports.ts";
+import type { RepositoryTransactionLifetime } from "../../src/ports/transaction.ts";
+
+// @ts-expect-error Protected source loading belongs to OCC internals, not its public entry point.
+import type { ProtectedSourceLoader as PublicProtectedSourceLoader } from "@openclaw-enterprise/occ";
 
 // Public construction uses the actual read/write/revoker suppliers and actual
 // material/custody contracts. This fixture provides no authority or fake runtime.
@@ -64,7 +70,7 @@ export function supplierConstructors(
   void [readIssuer, writeIssuer, keyless];
 }
 
-export async function publicSourceAndSettlement(
+export async function internalSourceAndSettlement(
   loader: ProtectedSourceLoader,
   source: ProtectedCredentialSource,
   bounds: Bounds,
