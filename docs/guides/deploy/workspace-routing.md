@@ -198,3 +198,9 @@ proxy/native gateway is unavailable, file requests return
 path. The [Agents reference](../../reference/agents.md#workspace-files) owns file
 limits and authorization behavior; [testing](../../testing/README.md) distinguishes live
 integration evidence from rendering and conformance checks.
+
+After enabling the route, open an Agent document in two editors. When the
+Gateway returns file hashes, saving the first change and then the stale second
+change should show a conflict while preserving the second editor's text. Copy
+that text before reloading. See [workspace file semantics](../../reference/agents.md#workspace-files)
+for version support and unknown write outcomes.

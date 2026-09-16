@@ -286,6 +286,7 @@ export const WorkspaceFileResponse = Type.Object(
     data: Type.Object(
       {
         name: WorkspaceFileName,
+        hash: Type.Optional(Type.String({ pattern: "^[a-fA-F0-9]{64}$" })),
         content: Type.String({ maxLength: 16 * 1024, pattern: "^[^\\u0000]*$" }),
       },
       { additionalProperties: false },
@@ -300,6 +301,7 @@ export const WorkspaceFileUpdateResponse = Type.Object(
     data: Type.Object(
       {
         name: WorkspaceFileName,
+        hash: Type.Optional(Type.String({ pattern: "^[a-fA-F0-9]{64}$" })),
         size: Type.Optional(Type.Integer({ minimum: 0, maximum: 16 * 1024 })),
       },
       { additionalProperties: false },

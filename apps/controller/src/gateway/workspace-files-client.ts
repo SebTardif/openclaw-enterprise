@@ -36,20 +36,26 @@ export function createNativeWorkspaceFilesAccess(
     read: async (request) => {
       if (!isAllowedWorkspaceFileName(request.filename)) return { status: "unavailable" };
       const result = await requestNativeWorkspaceFile(request, resolveTarget, "read");
+      if (result.status === "conflict") return { status: "unavailable" };
       if (result.status !== "ok") return result;
       return normalizeReadResponse(request.filename, result.payload);
     },
     write: async (request) => {
       if (
         !isAllowedWorkspaceFileName(request.filename) ||
-        !validWorkspaceFileContent(request.content)
+        !validWorkspaceFileContent(request.content) ||
+        (request.expectedHash !== undefined && !validHash(request.expectedHash))
       ) {
         return { status: "unavailable" };
       }
       const result = await requestNativeWorkspaceFile(request, resolveTarget, "write");
+      if (result.status === "conflict") return { status: "conflict" };
       if (result.status !== "ok") return { status: "unavailable" };
       const normalized = normalizeWriteResponse(request.filename, result.payload);
-      if (normalized.status !== "ok") {
+      if (
+        normalized.status !== "ok" ||
+        (request.expectedHash !== undefined && normalized.file.hash === undefined)
+      ) {
         throw new ControllerWorkspaceFileUnknownOutcomeError(
           "The native gateway returned an invalid workspace file write acknowledgement.",
         );
@@ -64,7 +70,8 @@ type GatewayHello = Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0
 
 type NativeRequestResult =
   | { readonly status: "ok"; readonly payload: unknown }
-  | { readonly status: "missing" | "unavailable" };
+  | { readonly status: "missing" | "unavailable" }
+  | { readonly status: "conflict" };
 
 async function requestNativeWorkspaceFile(
   request: ControllerWorkspaceFileReadRequest | ControllerWorkspaceFileWriteRequest,
@@ -109,6 +116,9 @@ async function requestNativeWorkspaceFile(
             agentId: target.nativeAgentId,
             name: request.filename,
             content: (request as ControllerWorkspaceFileWriteRequest).content,
+            ...((request as ControllerWorkspaceFileWriteRequest).expectedHash === undefined
+              ? {}
+              : { expectedHash: (request as ControllerWorkspaceFileWriteRequest).expectedHash }),
           };
     const payload = await client.request(
       operation === "read" ? "agents.files.get" : "agents.files.set",
@@ -123,6 +133,9 @@ async function requestNativeWorkspaceFile(
     );
     return { status: "ok", payload };
   } catch (error) {
+    if (operation === "write" && isFileConflictError(error, request.filename)) {
+      return { status: "conflict" };
+    }
     if (operation === "write" && writeOutcomeUnknown(error, requestSent)) {
       throw new ControllerWorkspaceFileUnknownOutcomeError(undefined, { cause: error });
     }
@@ -202,11 +215,16 @@ function normalizeReadResponse(
   if (nativeFile?.name !== filename || typeof nativeFile.content !== "string") {
     return { status: "unavailable" };
   }
-  if (!validWorkspaceFileContent(nativeFile.content)) return { status: "unavailable" };
+  if (
+    !validWorkspaceFileContent(nativeFile.content) ||
+    (nativeFile.hash !== undefined && !validHash(nativeFile.hash))
+  )
+    return { status: "unavailable" };
   const size = safeSize(nativeFile.size);
   const response: ControllerWorkspaceFileData = {
     name: filename,
     content: nativeFile.content,
+    ...(nativeFile.hash === undefined ? {} : { hash: nativeFile.hash as string }),
     ...(size === undefined ? {} : { size }),
   };
   return { status: "ok", file: response };
@@ -217,9 +235,32 @@ function normalizeWriteResponse(
   payload: unknown,
 ): ControllerWorkspaceFileWriteResult {
   const file = asRecord(asRecord(payload)?.file);
-  if (file?.name !== filename) return { status: "unavailable" };
+  if (file?.name !== filename || (file.hash !== undefined && !validHash(file.hash))) {
+    return { status: "unavailable" };
+  }
   const size = safeSize(file.size);
-  return { status: "ok", file: { name: filename, ...(size === undefined ? {} : { size }) } };
+  return {
+    status: "ok",
+    file: {
+      name: filename,
+      ...(file.hash === undefined ? {} : { hash: file.hash as string }),
+      ...(size === undefined ? {} : { size }),
+    },
+  };
+}
+
+function validHash(value: unknown): value is string {
+  return typeof value === "string" && /^[a-fA-F0-9]{64}$/.test(value);
+}
+
+function isFileConflictError(error: unknown, filename: WorkspaceFileName): boolean {
+  if (!(error instanceof GatewayClientRequestError)) return false;
+  const details = asRecord(error.details);
+  return (
+    (error.gatewayCode || error.code) === "INVALID_REQUEST" &&
+    details?.type === "agent_file_conflict" &&
+    details.name === filename
+  );
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -231,7 +272,11 @@ function isMissingFileError(error: unknown): boolean {
 }
 
 function writeOutcomeUnknown(error: unknown, requestSent: boolean): boolean {
-  if (error instanceof GatewayClientRequestError) return false;
+  if (error instanceof GatewayClientRequestError) {
+    // Native dispatch also reports UNAVAILABLE when a handler throws after a
+    // remote write. Its error response alone does not prove the file is unchanged.
+    return requestSent && (error.gatewayCode || error.code) === "UNAVAILABLE";
+  }
   if (error instanceof GatewayClientRequestTimeoutError) return error.requestSent || requestSent;
   return requestSent;
 }

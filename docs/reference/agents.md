@@ -86,19 +86,22 @@ in an Agent's live workspace:
 /namespaces/:namespaceId/agents/:agentId/workspace/files/:name
 ```
 
-| Method | Operation                  | Agent permission | Response `data`     |
-| ------ | -------------------------- | ---------------- | ------------------- |
-| `GET`  | Read the file              | `read`           | `{ name, content }` |
-| `PUT`  | Create or replace the file | `operate`        | `{ name, size }`    |
+| Method | Operation                  | Agent permission | Response `data`            |
+| ------ | -------------------------- | ---------------- | -------------------------- |
+| `GET`  | Read the file              | `read`           | `{ name, content, hash? }` |
+| `PUT`  | Create or replace the file | `operate`        | `{ name, size, hash? }`    |
 
 Authenticate with a session or scoped service API key. Session-authenticated
 writes must pass the [CSRF checks](authentication.md). The Agent must have an
 active revision and a reachable gateway.
 
-`PUT` accepts one `content` field:
+`PUT` accepts `content` and an optional `expectedHash` from the last read:
 
 ```json
-{ "content": "You are a support assistant.\n" }
+{
+  "content": "You are a support assistant.\n",
+  "expectedHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+}
 ```
 
 `content` must be well-formed Unicode without NUL characters and fit within
@@ -110,12 +113,25 @@ count. Successful writes record the Agent, file name, and outcome in the audit l
 | ---------------------------- | ---------------------------------------------------- |
 | `400 INVALID_REQUEST`        | Invalid file name or content.                        |
 | `404 NOT_FOUND`              | The requested Agent or file was not found.           |
+| `409 RESOURCE_CONFLICT`      | The file changed since the supplied version.         |
 | `413 PAYLOAD_TOO_LARGE`      | The request body exceeds 48 KiB.                     |
 | `503 DEPENDENCY_UNAVAILABLE` | Workspace access is unavailable.                     |
 | `503 UNKNOWN_OUTCOME`        | OCC could not confirm the write or its audit record. |
 
 After `UNKNOWN_OUTCOME`, read the current file before deciding whether to submit
-another write.
+another write. A supplied `expectedHash` is a 64-character SHA-256 hex digest.
+When it differs from the current file, the Gateway rejects the save and OCC
+returns `409 RESOURCE_CONFLICT`. The Console preserves your text and requires
+a reload before another save; copy your edits before reloading. This is a
+best-effort stale-edit check, not a lock on native Harness writes.
+
+The native Gateway may omit `hash`; those initial reads and unversioned saves
+retain their existing behavior. Once the Console has a version, it will not
+silently downgrade to an unversioned save. A versioned write with a missing or
+invalid acknowledgement hash returns `UNKNOWN_OUTCOME`. A native `UNAVAILABLE`
+error after write dispatch also returns `UNKNOWN_OUTCOME`, because the handler
+may have failed after changing the file. File contents are not
+retained in OCC or audit history.
 
 See [gateway routing](gateway-routing.md) for transport configuration and
 [workspace-file setup](../guides/deploy/workspace-routing.md#agent-workspace-files) to enable

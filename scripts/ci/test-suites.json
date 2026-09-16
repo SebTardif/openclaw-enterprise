@@ -82,6 +82,9 @@
           "path": "tests/integration/console-api.test.mjs"
         },
         {
+          "path": "tests/integration/workspace-files.test.mjs"
+        },
+        {
           "path": "tests/integration/controller-lifecycle.test.mjs"
         },
         {

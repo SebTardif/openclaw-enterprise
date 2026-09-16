@@ -275,6 +275,7 @@ export const UpdateAgentBody = Type.Object(
 
 export const UpdateWorkspaceFileBody = Type.Object(
   {
+    expectedHash: Type.Optional(Type.String({ pattern: "^[a-fA-F0-9]{64}$" })),
     content: Type.String({
       maxLength: 16 * 1024,
       pattern: "^[^\\u0000]*$",

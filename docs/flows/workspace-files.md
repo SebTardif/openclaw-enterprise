@@ -36,22 +36,41 @@ an existing issuer and explicit hostname instead.
 ## Flow
 
 ```mermaid
-graph TD
-  A["GET or PUT Agent workspace file"] --> B["OCC authenticates and validates request"]
-  B --> C["Authorize exact Agent and select active revision"]
-  C --> D["Compute derives private Agent URL"]
-  D --> E["OCC reads service key and opens WSS"]
-  E --> F{"Envoy authenticates OCC?"}
-  F -->|no| G["503 dependency unavailable"]
-  F -->|yes| H["Overwrite identity and real IP; route to Agent Service"]
-  H --> I["Native gateway authorizes service identity"]
-  I --> J["Native file get or set"]
-  J --> K{"Result"}
-  K -->|read| L["Return name and content"]
-  K -->|write| M["Audit metadata and return name and size"]
-  K -->|missing| N["404 NOT_FOUND"]
-  K -->|unavailable| G
-  K -->|write uncertain| O["Audit UNKNOWN_OUTCOME; never replay"]
+---
+config:
+  theme: base
+  htmlLabels: true
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    nodeSpacing: 28
+    rankSpacing: 32
+    padding: 14
+---
+flowchart TB
+  A["<b>GET or PUT</b><br/>Agent workspace file"] --> B["<b>OCC admission</b><br/>Authenticate and validate"]
+  B --> C["<b>Authorize Agent</b><br/>Select active revision"]
+  C --> D["<b>Compute routing</b><br/>Derive private Agent URL"]
+  D --> E["<b>Open WSS</b><br/>Use mounted service key"]
+  E --> F{"<b>Envoy authentication</b><br/>OCC identity accepted?"}
+  F -->|no| G["<b>503</b><br/>DEPENDENCY_UNAVAILABLE"]
+  F -->|yes| H["<b>Route to Agent Service</b><br/>Set identity and real IP"]
+  H --> I["<b>Native authorization</b><br/>Check service identity"]
+  I --> J["<b>Native file get or set</b><br/>Forward expectedHash"]
+  J --> K{"<b>Result</b>"}
+  K -->|read| L["<b>Return file</b><br/>Name, content, optional hash"]
+  K -->|write| M["<b>Audit metadata</b><br/>Name, size, optional hash"]
+  K -->|missing| N["<b>404</b><br/>NOT_FOUND"]
+  K -->|conflict| P["<b>409 RESOURCE_CONFLICT</b><br/>Audit FILE_CONFLICT"]
+  K -->|known failure| G
+  K -->|write uncertain| O["<b>503 UNKNOWN_OUTCOME</b><br/>Audit; never replay"]
+
+  classDef api fill:#EDF2F7,stroke:#879AB0,color:#25364A,stroke-width:1px
+  classDef operation fill:#EBF3F0,stroke:#7F9D93,color:#2B4038,stroke-width:1px
+  classDef gate fill:#F7F1E5,stroke:#B3A078,color:#514532,stroke-width:1px
+  class A,D,L,M api
+  class B,C,E,H,I,J operation
+  class F,G,K,N,O,P gate
 ```
 
 ## Execution Trace
@@ -82,7 +101,7 @@ administration surface. `GET` needs Agent `read`; `PUT` needs Agent `operate`
 and, for session callers, passes the browser CSRF boundary. OCC resolves the
 active AgentRevision before invoking Compute endpoint resolution.
 
-Only the four names are accepted. `PUT` accepts only `{ "content": "..." }`,
+Only the four names are accepted. `PUT` accepts `content` and an optional SHA-256 `expectedHash`,
 rejects NUL and unpaired UTF-16 surrogates, enforces 16 KiB of UTF-8 content,
 and uses a 48 KiB request-body limit. The deadline and disconnect signal cover
 admission and native access.
@@ -130,8 +149,14 @@ hello must grant `operator.admin` for writes; reads also accept `operator.read`.
 
 The client invokes only `agents.files.get` or `agents.files.set` for the native
 primary Agent `main`. Reads re-check the response content limit and return
-`{ name, content }`; writes return `{ name, size }`. There is no list, delete,
-compare-and-swap, generic RPC, chat bridge, or PostgreSQL file copy.
+`{ name, content, hash? }`; writes return `{ name, size, hash? }`. OCC forwards
+`expectedHash` without implementing a separate file check. A native
+`agent_file_conflict` for the requested file becomes `409 RESOURCE_CONFLICT`
+and a metadata-only `FILE_CONFLICT` audit event. Native `UNAVAILABLE` after a
+dispatched write returns `503 UNKNOWN_OUTCOME`: the write may have completed
+before the handler failed. Explicit validation rejections remain known failures. This is a best-effort
+stale-edit check; native shell writers are not locked out. There is no list,
+delete, generic RPC, chat bridge, or PostgreSQL file copy.
 
 The Kubernetes PVC retains the native workspace across gateway Pod replacement.
 Certificate renewal under the same trusted CA affects new WSS connections
@@ -148,6 +173,8 @@ replays it. The native client closes in the operation's cleanup path.
 - For `503 DEPENDENCY_UNAVAILABLE`, check the Compute routing settings and key
   mount, then the Gateway, Certificate, SecurityPolicy, and HTTPRoute status.
   Check DNS/CA trust and exact NetworkPolicy peers before changing native auth.
+- `409 RESOURCE_CONFLICT` means the file changed since the supplied version.
+  Copy the preserved editor text before reloading and reviewing the current file.
 - `400 INVALID_REQUEST` indicates a file-name or content-contract violation.
 - `403 FORBIDDEN` can indicate missing exact-Agent IAM or session PUT CSRF
   rejection. Granting a native service scope does not change human IAM.

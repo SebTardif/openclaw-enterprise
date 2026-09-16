@@ -111,6 +111,7 @@ export async function createConsoleAppFixture(t, options = {}) {
     : createTestSecretDriver({ id: "console-secret" });
   let controller;
   const appOptions = {
+    publicOrigin: origin,
     auth,
     iamDriver,
     auditSink,
@@ -145,6 +146,9 @@ export async function createConsoleAppFixture(t, options = {}) {
     },
   };
   if (providerSummaries !== undefined) appOptions.providerSummaries = providerSummaries;
+  if (options.workspaceFilesAccess !== undefined) {
+    appOptions.workspaceFilesAccess = options.workspaceFilesAccess;
+  }
   const app = createFastifyApp(appOptions);
   await app.listen({ host: "127.0.0.1", port });
   const cleanupBeforeAppClose = [];

@@ -1884,7 +1884,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           )
             throw dependencyUnavailable();
           reply.send({
-            data: { name: filename, content: result.file.content },
+            data: {
+              name: filename,
+              content: result.file.content,
+              ...(result.file.hash === undefined ? {} : { hash: result.file.hash }),
+            },
             meta: { requestId: request.id },
           });
           return;
@@ -1901,6 +1905,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               revision,
               filename,
               content: writeBody.content,
+              ...(writeBody.expectedHash === undefined
+                ? {}
+                : { expectedHash: writeBody.expectedHash }),
               signal,
               deadline,
             }),
@@ -1941,6 +1948,26 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             throw dependencyUnavailable();
           }
           throw dependencyUnavailable();
+        }
+        if (result.status === "conflict") {
+          try {
+            await withWorkspaceFileRequestSignal(
+              signal,
+              options.auditSink.append(
+                workspaceFileAuditEvent(operation, request, target, context, filename, {
+                  outcome: "failure",
+                  reasonCode: "FILE_CONFLICT",
+                }),
+              ),
+            );
+          } catch {
+            throw dependencyUnavailable();
+          }
+          throw failure(
+            409,
+            "RESOURCE_CONFLICT",
+            "The workspace file changed since it was read. Reload before saving again.",
+          );
         }
         if (result.status === "missing") {
           try {
@@ -1998,6 +2025,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           data: {
             name: filename,
             size: Buffer.byteLength(writeBody.content, "utf8"),
+            ...(result.file.hash === undefined ? {} : { hash: result.file.hash }),
           },
           meta: { requestId: request.id },
         });

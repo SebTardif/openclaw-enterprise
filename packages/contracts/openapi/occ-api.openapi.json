@@ -4119,6 +4119,7 @@
                           "pattern": "^[^\\u0000]*$",
                           "type": "string"
                         },
+                        "hash": { "pattern": "^[a-fA-F0-9]{64}$", "type": "string" },
                         "name": { "enum": ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"] }
                       },
                       "required": ["name", "content"],
@@ -4226,7 +4227,8 @@
                     "maxLength": 16384,
                     "pattern": "^[^\\u0000]*$",
                     "type": "string"
-                  }
+                  },
+                  "expectedHash": { "pattern": "^[a-fA-F0-9]{64}$", "type": "string" }
                 },
                 "required": ["content"],
                 "type": "object"
@@ -4245,6 +4247,7 @@
                     "data": {
                       "additionalProperties": false,
                       "properties": {
+                        "hash": { "pattern": "^[a-fA-F0-9]{64}$", "type": "string" },
                         "name": { "enum": ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"] },
                         "size": { "maximum": 16384, "minimum": 0, "type": "integer" }
                       },

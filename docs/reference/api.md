@@ -1129,6 +1129,7 @@ Read an allowed workspace file from one active Agent
 | --- | --- | --- | --- |
 | `data` | `object` | Yes | — |
 | `data.content` | `string` | Yes | max length: 16384; pattern: `^[^\u0000]*$` |
+| `data.hash` | `string` | No | pattern: `^[a-fA-F0-9]{64}$` |
 | `data.name` | `"AGENTS.md" or "SOUL.md" or "IDENTITY.md" or "USER.md"` | Yes | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
@@ -1164,6 +1165,7 @@ Create or replace an allowed workspace file for one active Agent
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `content` | `string` | Yes | max length: 16384; pattern: `^[^\u0000]*$`; Workspace file content. The controller also enforces a 16 KiB UTF-8 byte limit and rejects unpaired UTF-16 surrogates. |
+| `expectedHash` | `string` | No | pattern: `^[a-fA-F0-9]{64}$` |
 
 ##### Responses
 
@@ -1185,6 +1187,7 @@ Create or replace an allowed workspace file for one active Agent
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
 | `data` | `object` | Yes | — |
+| `data.hash` | `string` | No | pattern: `^[a-fA-F0-9]{64}$` |
 | `data.name` | `"AGENTS.md" or "SOUL.md" or "IDENTITY.md" or "USER.md"` | Yes | — |
 | `data.size` | `integer` | No | minimum: 0; maximum: 16384 |
 | `meta` | `object` | Yes | — |

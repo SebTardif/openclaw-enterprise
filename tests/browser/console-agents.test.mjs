@@ -639,3 +639,80 @@ test("Channel drawer saves channel edits without exposing Secret values or dropp
 
   await page.screenshot({ path: join(artifacts, "agent-channels.png"), fullPage: true });
 });
+
+test("Workspace editor preserves edits on conflict and saves against the reloaded version", async (t) => {
+  const writes = [];
+  let readContent = "Initial instructions\n";
+  let readHash = "a".repeat(64);
+  const outcomes = ["conflict", "ok"];
+  // Script provider outcomes to test the real browser/API handling. Native
+  // protocol translation is covered separately by workspace-files integration.
+  const fixture = await createConsoleAppFixture(t, {
+    workspaceFilesAccess: {
+      async read({ filename }) {
+        return {
+          status: "ok",
+          file: {
+            name: filename,
+            content: readContent,
+            ...(readHash === undefined ? {} : { hash: readHash }),
+          },
+        };
+      },
+      async write(request) {
+        writes.push(request);
+        if (outcomes.shift() === "conflict") return { status: "conflict" };
+        return { status: "ok", file: { name: request.filename, hash: "c".repeat(64) } };
+      },
+    },
+  });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Workspace editor", { ready: true });
+  const created = await fixture.createAgent(namespace.id, "Editable Agent");
+  const { agent, revision } = await fixture.seedActiveAgentRevision(namespace.id, created.id);
+  const { page } = await newPage(t, fixture);
+  await login(
+    page,
+    fixture,
+    detailUrl(fixture, namespace.id, agent.id, revision.id, "workspace").pathname +
+      detailUrl(fixture, namespace.id, agent.id, revision.id, "workspace").search,
+  );
+  const editor = page.getByLabel("AGENTS.md", { exact: true });
+  await page.getByText("AGENTS.md loaded.", { exact: true }).waitFor();
+  assert.equal(await editor.inputValue(), readContent);
+  const submitted = "My unsaved instructions\n";
+  await editor.fill(submitted);
+  readContent = "Harness wrote newer instructions\n";
+  readHash = "b".repeat(64);
+  await page.getByRole("button", { name: "Save AGENTS.md", exact: true }).click();
+  await page.getByText(/This file changed since you loaded it/).waitFor();
+  assert.equal(await editor.inputValue(), submitted);
+  assert.equal(
+    await page.getByRole("button", { name: "Save AGENTS.md", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].expectedHash, "a".repeat(64));
+
+  await page.getByRole("button", { name: "Reload AGENTS.md", exact: true }).click();
+  await page.getByText("AGENTS.md loaded.", { exact: true }).waitFor();
+  assert.equal(await editor.inputValue(), readContent);
+  await editor.fill(submitted);
+  await page.getByRole("button", { name: "Save AGENTS.md", exact: true }).click();
+  await page.getByText("AGENTS.md saved.", { exact: true }).waitFor();
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].expectedHash, "b".repeat(64));
+  assert.equal(await editor.inputValue(), submitted);
+
+  // Once an editor has a version, an unversioned reload must not silently
+  // downgrade its next write or replace the owner's pending text.
+  await editor.fill("More unsaved instructions\n");
+  readHash = undefined;
+  await page.getByRole("button", { name: "Reload AGENTS.md", exact: true }).click();
+  await page.getByText(/Workspace access is unavailable/).waitFor();
+  assert.equal(await editor.inputValue(), "More unsaved instructions\n");
+  assert.equal(
+    await page.getByRole("button", { name: "Save AGENTS.md", exact: true }).isDisabled(),
+    true,
+  );
+});

@@ -6,11 +6,13 @@ const ALLOWED_WORKSPACE_FILES = new Set<string>(WORKSPACE_FILE_NAMES);
 export interface ControllerWorkspaceFileData {
   readonly name: WorkspaceFileName;
   readonly content: string;
+  readonly hash?: string;
   readonly size?: number;
 }
 
 export interface ControllerWorkspaceFileMetadata {
   readonly name: WorkspaceFileName;
+  readonly hash?: string;
   readonly size?: number;
 }
 
@@ -23,6 +25,7 @@ export interface ControllerWorkspaceFileReadRequest {
 
 export interface ControllerWorkspaceFileWriteRequest extends ControllerWorkspaceFileReadRequest {
   readonly content: string;
+  readonly expectedHash?: string;
 }
 
 export type ControllerWorkspaceFileReadResult =
@@ -38,6 +41,7 @@ export type ControllerWorkspaceFileReadResult =
     };
 
 export type ControllerWorkspaceFileWriteResult =
+  | { readonly status: "conflict" }
   | {
       readonly status: "ok";
       readonly file: ControllerWorkspaceFileMetadata;

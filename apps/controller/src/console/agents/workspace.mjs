@@ -8,6 +8,9 @@ function fileError(error, writing) {
     text = "Access denied. You do not have permission for this file operation.";
   if (error.status === 404)
     text = "File unavailable or missing. Check Agent access before creating it.";
+  if (error.status === 409)
+    text =
+      "This file changed since you loaded it. Your edits are still here. Copy them before reloading, then review the current file before saving again.";
   if (error.status === 400 || error.status === 413)
     text =
       "The file was rejected. Use valid Unicode without NUL characters, within 16 KiB of UTF-8 content.";
@@ -27,7 +30,7 @@ export function renderWorkspaceFiles(context, agent, path) {
     element(
       "p",
       { className: "notice" },
-      "These files belong to the Agent's live workspace. Saving replaces one file immediately and does not change Configuration or AgentRevisions. Concurrent writes use the last saved contents.",
+      "These files belong to the Agent's live workspace. Saving replaces one file immediately and does not change Configuration or AgentRevisions. When the Gateway supplies a file version, saving checks for changes since the last read. Running tasks can still write these files.",
     ),
   );
   if (!agent.activeRevisionId) {
@@ -55,7 +58,8 @@ export function renderWorkspaceFiles(context, agent, path) {
     let pending = false;
     let loaded = false;
     let baseline;
-    let outcomeUnknown = false;
+    let expectedHash;
+    let reloadRequired = false;
     const save = element(
       "button",
       { type: "submit", className: "primary", disabled: true },
@@ -83,7 +87,7 @@ export function renderWorkspaceFiles(context, agent, path) {
     const updateControls = () => {
       editor.disabled = pending || !loaded;
       reload.disabled = pending;
-      save.disabled = pending || !loaded || outcomeUnknown || editor.value === baseline;
+      save.disabled = pending || !loaded || reloadRequired || editor.value === baseline;
     };
     editor.addEventListener("input", () => {
       editor.setCustomValidity("");
@@ -98,11 +102,15 @@ export function renderWorkspaceFiles(context, agent, path) {
       try {
         const file = await context.request(endpoint);
         if (!context.isCurrent()) return;
+        if (expectedHash !== undefined && file.hash === undefined) {
+          throw new Error("The Gateway did not return the file version. Try reloading again.");
+        }
         editor.value = file.content;
         baseline = file.content;
+        expectedHash = file.hash;
         editor.setCustomValidity("");
         loaded = true;
-        outcomeUnknown = false;
+        reloadRequired = false;
         status.textContent = `${name} loaded.`;
       } catch (cause) {
         if (!context.isCurrent()) return;
@@ -111,9 +119,10 @@ export function renderWorkspaceFiles(context, agent, path) {
           return;
         }
         // A missing file can be created through PUT. Other read failures never enable a blank overwrite.
-        if (cause.status === 404 && !outcomeUnknown) {
+        if (cause.status === 404 && !reloadRequired) {
           editor.value = "";
           baseline = undefined;
+          expectedHash = undefined;
           editor.setCustomValidity("");
           loaded = true;
         } else loaded = false;
@@ -128,7 +137,7 @@ export function renderWorkspaceFiles(context, agent, path) {
     }
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (pending || !loaded || outcomeUnknown || !context.isCurrent() || editor.value === baseline)
+      if (pending || !loaded || reloadRequired || !context.isCurrent() || editor.value === baseline)
         return;
       const content = editor.value;
       if (
@@ -147,9 +156,13 @@ export function renderWorkspaceFiles(context, agent, path) {
       error.textContent = "";
       status.textContent = `Saving ${name}…`;
       try {
-        await context.request(endpoint, { method: "PUT", body: { content } });
+        const saved = await context.request(endpoint, {
+          method: "PUT",
+          body: { content, ...(expectedHash === undefined ? {} : { expectedHash }) },
+        });
         if (!context.isCurrent()) return;
         baseline = content;
+        expectedHash = saved.hash;
         status.textContent = `${name} saved.`;
       } catch (cause) {
         if (!context.isCurrent()) return;
@@ -157,7 +170,7 @@ export function renderWorkspaceFiles(context, agent, path) {
           context.onExpired();
           return;
         }
-        outcomeUnknown = ![400, 403, 404, 409, 413, 429].includes(cause.status);
+        reloadRequired = cause.status === 409 || ![400, 403, 404, 413, 429].includes(cause.status);
         status.textContent = "";
         error.textContent = fileError(cause, true);
       } finally {

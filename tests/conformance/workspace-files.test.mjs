@@ -276,14 +276,18 @@ test("Agent workspace file routes read and replace fixed files through the selec
       assert.ok(read.deadline instanceof Date);
       return {
         status: "ok",
-        file: { name: read.filename, content: `content from ${read.revision.agentId}\n` },
+        file: {
+          name: read.filename,
+          content: `content from ${read.revision.agentId}\n`,
+          hash: "a".repeat(64),
+        },
       };
     },
     async write(write) {
       writes.push(write);
       assert.equal(write.signal.aborted, false);
       assert.ok(write.deadline instanceof Date);
-      return { status: "ok", file: { name: write.filename, size: 100_000 } };
+      return { status: "ok", file: { name: write.filename, size: 100_000, hash: "b".repeat(64) } };
     },
   };
   const fixture = await createFixture({ workspaceFilesAccess });
@@ -300,6 +304,7 @@ test("Agent workspace file routes read and replace fixed files through the selec
   assert.deepEqual(read.payload.data, {
     name: "USER.md",
     content: `content from ${second.agent.id}\n`,
+    hash: "a".repeat(64),
   });
 
   const write = await request(
@@ -308,11 +313,11 @@ test("Agent workspace file routes read and replace fixed files through the selec
     {
       method: "PUT",
       headers: { origin: publicOrigin },
-      body: { content: "new soul\n" },
+      body: { content: "new soul\n", expectedHash: "a".repeat(64) },
     },
   );
   assert.equal(write.response.status, 200);
-  assert.deepEqual(write.payload.data, { name: "SOUL.md", size: 9 });
+  assert.deepEqual(write.payload.data, { name: "SOUL.md", size: 9, hash: "b".repeat(64) });
 
   assert.equal(reads.length, 1);
   assert.equal(reads[0].revision.id, second.revision.id);
@@ -323,6 +328,7 @@ test("Agent workspace file routes read and replace fixed files through the selec
   assert.equal(writes[0].revision.agentId, second.agent.id);
   assert.equal(writes[0].filename, "SOUL.md");
   assert.equal(writes[0].content, "new soul\n");
+  assert.equal(writes[0].expectedHash, "a".repeat(64));
   assert.notEqual(reads[0].revision.agentId, first.agent.id);
 
   const audits = fileAudits(fixture);
@@ -436,6 +442,13 @@ test("Agent workspace file routes reject invalid names, bodies, and cross-site w
     body: { content: "ok\n", agentId: "caller-selected-native-id" },
   });
   assert.equal(unknownField.response.status, 400);
+
+  const invalidHash = await request(fixture.app, `${path}/USER.md`, {
+    method: "PUT",
+    headers: { origin: publicOrigin },
+    body: { content: "ok\n", expectedHash: "invalid" },
+  });
+  assert.equal(invalidHash.response.status, 400);
 
   const nul = await request(fixture.app, `${path}/USER.md`, {
     method: "PUT",
