@@ -1,14 +1,16 @@
 import type { CoreV1Api } from "@kubernetes/client-node";
 import type { RepositoryBinding } from "@openclaw-enterprise/contracts";
 import {
-  GitHubAppTokenIssuerErrorV1,
   ProtectedGitHubCryptoV1,
   ProtectedGitHubTokenStoreV1,
-  type GitHubAppMaterialV1,
   type PlatformStateStore,
   type ProtectedGitHubKeySelectionV1,
   type ProtectedGitHubStoreSelectionV1,
 } from "@openclaw-enterprise/occ";
+import {
+  GitHubAppTokenIssuerErrorV1,
+  type GitHubAppMaterialV1,
+} from "../providers/token/github/index.ts";
 import {
   createProtectedKubernetesGitHubAppMaterialV1,
   type ProtectedKubernetesGitHubAppSourceV1,

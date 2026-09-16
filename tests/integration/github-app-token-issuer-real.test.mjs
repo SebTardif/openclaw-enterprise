@@ -8,7 +8,7 @@ import {
   createGitHubAppMaterialV1,
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-} from "../../packages/occ/src/index.ts";
+} from "../../apps/controller/src/providers/token/github/index.ts";
 
 const selected = process.env.OCC_TEST_GITHUB_APP_REAL === "1";
 const requiredNames = [
