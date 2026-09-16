@@ -7,7 +7,7 @@ export const CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 = [
     files: [
       {
         path: "packages/occ/src/credential-broker-v1/schema-admission.ts",
-        sha256: "d55035a6f0e288b39689fa7d11473a5725dc0db9fa65f97d1b07894141658201",
+        sha256: "14a85d3b4e4c352112e4a2ca778ca3e9e90a3ddad56a8ae3df31991d47723527",
       },
       {
         path: "packages/occ/src/credential-broker-v1/schema-json.ts",
@@ -23,7 +23,7 @@ export const CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 = [
       },
     ],
     dependencies: { ajv: "8.20.0" },
-    digest: "sha256:9ffa09e603aa793b87ce445ba14ac5721c483b20dc62c149381109ee7aacce64",
+    digest: "sha256:020c3470abd81ff7c490b7b5941effa1cd623afaa34f356c7a4b0e7807010af4",
   },
   {
     kind: "canonicalization",
@@ -32,7 +32,7 @@ export const CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 = [
     files: [
       {
         path: "packages/occ/src/credential-broker-v1/schema-admission.ts",
-        sha256: "d55035a6f0e288b39689fa7d11473a5725dc0db9fa65f97d1b07894141658201",
+        sha256: "14a85d3b4e4c352112e4a2ca778ca3e9e90a3ddad56a8ae3df31991d47723527",
       },
       {
         path: "packages/occ/src/credential-broker-v1/schema-json.ts",
@@ -48,6 +48,6 @@ export const CORE_SCHEMA_PRIMITIVE_MANIFEST_V1 = [
       },
     ],
     dependencies: { ajv: "8.20.0" },
-    digest: "sha256:7738ed829a459a3141d7393487bd4f1ff6144cc2daa8620f9ab2b640fd707724",
+    digest: "sha256:0095ebe47876e58c0475bbf221580e11d6072f78ea075c8f73f3c0c2c6f8406a",
   },
 ] as const;
