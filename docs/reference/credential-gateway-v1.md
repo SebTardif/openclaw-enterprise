@@ -28,10 +28,13 @@ operation and live-provider qualification remain pending.
 | GitHub App material  | `createGitHubAppMaterialV1` returns `GitHubAppMaterialV1`; `withJwt` borrows bounded material and `close` stops material admission. The protected owner supplies the immutable key identity and currentness checks.                            |
 | GitHub App protocol  | `createGitHubAppTokenIssuerV1` returns `TokenIssuerV1`; `createGitHubAppTokenRevokerV1` returns cleanup-only `TokenRevokerV1`. Construction receives real owner-selected options, including dispatch currentness, clock, endpoint and custody. |
 
-Internal issuance contracts join protected-source loading, original-owner
-settlement, retained material, commit evidence and charged lease capacity. OCC
-owns this coordination; package consumers use the public supplier interfaces
-rather than orchestrating these internal phases.
+Internal issuance contracts join original-owner settlement, retained material,
+commit evidence and charged lease capacity. OCC retains the source-release
+obligation; the controller's GitHub owner retains concrete material loading and
+custody dependencies. The original issuer settles its exact result before the
+source lease is released. Neither source release nor settlement proves revocation
+or durable retention. These declarations do not install the source loader or
+compose a production issuance path.
 
 The PostgreSQL State owner's existing
 `transactCredentialInventoryMetadataV1(store, scope, work, { keys?, commitRef? })`
