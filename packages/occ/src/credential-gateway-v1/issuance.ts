@@ -9,10 +9,6 @@ import type {
   TokenRevokerV1,
 } from "@openclaw-enterprise/contracts";
 import type { CredentialInventoryTransactionV1 } from "../credential-inventory-v1/ports.ts";
-import type {
-  GitHubAppMaterialV1,
-  GitHubAppTokenCustodyV1,
-} from "../github-app-provider-v1/types.ts";
 import type { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import type {
   PlatformReadView,
@@ -39,14 +35,7 @@ import type { DefinitionRef, SchemaRef } from "./schema.ts";
  * late finalizers, including failed construction; it never destroys a shared source.
  * Closing material or releasing this lease proves neither revocation nor COMMIT. */
 export interface ProtectedSourceLease {
-  readonly material: GitHubAppMaterialV1;
   release(): Promise<void>;
-}
-
-/** Trusted source owner supplies actual material, identity, clock and currentness.
- * This is an internal dependency, never an Agent/API Secret-reading callback. */
-export interface ProtectedSourceLoader {
-  load(source: ProtectedCredentialSource, bounds: Bounds): Promise<ProtectedSourceLease>;
 }
 
 /** Declaration of the existing revocable issuance specialization. Registration
@@ -64,11 +53,6 @@ export interface IssuedMechanismFactory {
   ): Promise<TokenIssuerV1>;
   /** Keyless cleanup uses the original retained custody owner. */
   createRevoker(selection: AdmittedCredentialSelection, bounds: Bounds): Promise<TokenRevokerV1>;
-}
-
-export interface GitHubIssuedMechanismDependencies {
-  readonly protectedSources: ProtectedSourceLoader;
-  readonly custody: GitHubAppTokenCustodyV1;
 }
 
 /** Protected envelope data. The crypto owner authenticates all identity/profile

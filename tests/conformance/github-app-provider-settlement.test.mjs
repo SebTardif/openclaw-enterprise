@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   createGitHubAppTokenIssuerV1,
   createGitHubAppWriteTokenIssuerV1,
-} from "../../packages/occ/src/index.ts";
+} from "../../apps/controller/src/providers/token/github/index.ts";
 import { call, keyIdentity, providerFixture } from "../helpers/github-app-provider.mjs";
 
 for (const [profile, createIssuer] of [
