@@ -60,6 +60,9 @@
           "path": "tests/conformance/platform-state-memory.test.mjs"
         },
         {
+          "path": "tests/conformance/preparation-original-contracts.test.mjs"
+        },
+        {
           "path": "tests/conformance/preparation-runtime-operands.test.mjs"
         },
         {

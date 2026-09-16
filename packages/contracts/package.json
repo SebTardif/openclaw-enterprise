@@ -8,7 +8,9 @@
     ".": "./src/index.ts",
     "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
     "./runtime-effects-v1": "./src/runtime-effects-v1.ts",
-    "./completed-state-v1": "./src/completed-state-v1.ts"
+    "./completed-state-v1": "./src/completed-state-v1.ts",
+    "./repository-preparation-v1": "./src/repository-preparation-v1.ts",
+    "./credential-authority-v1": "./src/credential-authority-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [
