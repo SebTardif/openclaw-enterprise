@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { InMemoryPlatformState } from "../../packages/occ/src/state/platform-state.ts";
-import { verifyRepositoryLifetime } from "./repository-lifetime.contract.mjs";
+import {
+  verifyAuthorityParticipants,
+  verifyRepositoryLifetime,
+} from "./repository-lifetime.contract.mjs";
 
 test("memory repository lifetime and atomicity", async (t) => {
   const store = new InMemoryPlatformState();
@@ -13,4 +16,5 @@ test("memory repository lifetime and atomicity", async (t) => {
     }),
   );
   await verifyRepositoryLifetime(t, store);
+  await verifyAuthorityParticipants(t, store, new InMemoryPlatformState());
 });

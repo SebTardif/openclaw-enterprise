@@ -21,11 +21,16 @@ export function bindPlatformUnitOfWork(
       "advanceRuntimeIntent",
       "allocateUnboundRuntime",
     ]),
-    runtimeAuthority: bindRepository(repositories.runtimeAuthority, lifetime, [
-      "findAssignment",
-      "findOperation",
-      "appendMutation",
-    ]),
+    runtimeAuthority: Object.freeze({
+      ...bindRepository(repositories.runtimeAuthority, lifetime, [
+        "findAssignment",
+        "findOperation",
+      ]),
+      appendMutation: (
+        ...args: Parameters<PlatformUnitOfWork["runtimeAuthority"]["appendMutation"]>
+      ) =>
+        lifetime.runAuthorityOperation(() => repositories.runtimeAuthority.appendMutation(...args)),
+    }),
     installations: bindRepository(repositories.installations, lifetime, [
       "findInstallation",
       "getInstallation",

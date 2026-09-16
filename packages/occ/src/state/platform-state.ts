@@ -365,6 +365,11 @@ export interface PlatformUnitOfWork extends PlatformReadView {
 export interface PlatformStateStore {
   read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T>;
   transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T>;
+  /** Trusted core only; accepts this owner's exact live transaction object. */
+  runAuthorityParticipantIn<T>(
+    originalUow: PlatformUnitOfWork,
+    consume: () => Promise<T>,
+  ): Promise<T>;
 }
 
 export interface TransactionalAuditWriter {
@@ -1280,6 +1285,7 @@ export class InMemoryPlatformState implements PlatformStateStore {
   };
   private pending: Promise<void> = Promise.resolve();
   private readonly auditSink: PlatformAuditSink | undefined;
+  private readonly contexts = new WeakMap<PlatformUnitOfWork, RepositoryTransactionLifetime>();
 
   constructor(options: InMemoryPlatformStateOptions = {}) {
     this.auditSink = options.auditSink;
@@ -1293,12 +1299,25 @@ export class InMemoryPlatformState implements PlatformStateStore {
     await this.pending;
     const lifetime = new RepositoryTransactionLifetime();
     try {
-      return await work(
-        createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime),
+      return await lifetime.runOwnerCallback(() =>
+        work(createPlatformReadView(repositories(cloneSnapshot(this.snapshot)), lifetime)),
       );
     } finally {
       await lifetime.finish();
     }
+  }
+
+  runAuthorityParticipantIn<T>(
+    originalUow: PlatformUnitOfWork,
+    consume: () => Promise<T>,
+  ): Promise<T> {
+    const lifetime = this.contexts.get(originalUow);
+    if (lifetime !== undefined) return lifetime.participate(consume);
+    const result = Promise.reject<T>(
+      new ScopeViolationError("The platform transaction is unavailable."),
+    );
+    void result.catch(() => {});
+    return result;
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
@@ -1308,14 +1327,16 @@ export class InMemoryPlatformState implements PlatformStateStore {
     this.pending = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const lifetime = new RepositoryTransactionLifetime();
+    const lifetime = new RepositoryTransactionLifetime(authorityGuard);
+    let unit: PlatformUnitOfWork | undefined;
     try {
       await previous;
       const working = cloneSnapshot(this.snapshot);
       const committedAuditCount = working.audit.length;
-      const result = await work(
-        bindPlatformUnitOfWork(repositories(working, authorityGuard), lifetime),
-      );
+      const originalUnit = bindPlatformUnitOfWork(repositories(working, authorityGuard), lifetime);
+      unit = originalUnit;
+      this.contexts.set(unit, lifetime);
+      const result = await lifetime.runOwnerCallback(() => work(originalUnit));
       await lifetime.finish();
       await authorityGuard.finish();
       await this.publishAudit(working.audit.slice(committedAuditCount));
@@ -1323,6 +1344,12 @@ export class InMemoryPlatformState implements PlatformStateStore {
       return result;
     } finally {
       await lifetime.finish();
+      // Drain/close the same guard on rollback as well; preserve the primary error.
+      try {
+        await authorityGuard.finish();
+      } catch {}
+      lifetime.close();
+      if (unit !== undefined) this.contexts.delete(unit);
       release?.();
     }
   }

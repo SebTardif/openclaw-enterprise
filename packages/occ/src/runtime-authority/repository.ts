@@ -60,18 +60,52 @@ export class RuntimeAuthorityTransactionGuard {
   private failed = false;
   private closed = false;
   private pending: Promise<void> = Promise.resolve();
+  private readonly participants = new Set<Promise<void>>();
+
+  /** Keep the first authority failure, independently of later queued denials. */
+  fail(error: unknown): void {
+    if (!this.failed) {
+      this.failed = true;
+      this.failure = error;
+    }
+  }
+
+  /** Enroll before invoking work, without serializing a parent behind its children. */
+  participate<T>(work: () => Promise<T>): Promise<T> {
+    if (this.closed) return this.denied();
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason: unknown) => void;
+    const result = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    const completion = result.then(
+      () => {},
+      () => {},
+    );
+    this.participants.add(completion);
+    void completion.then(() => this.participants.delete(completion));
+    const fail = (error: unknown) => {
+      this.fail(error);
+      reject(error);
+    };
+    try {
+      this.assertCommittable();
+      Promise.resolve(work()).then(resolve, fail);
+    } catch (error) {
+      fail(error);
+    }
+    return result;
+  }
+
   run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.closed)
-      return Promise.reject(
-        new ScopeViolationError("The runtime authority transaction is closed."),
-      );
+    if (this.closed) return this.denied();
     const result = this.pending.then(async () => {
       this.assertCommittable();
       try {
         return await work();
       } catch (error) {
-        this.failed = true;
-        this.failure = error;
+        this.fail(error);
         throw error;
       }
     });
@@ -81,14 +115,24 @@ export class RuntimeAuthorityTransactionGuard {
     );
     return result;
   }
+
+  private denied<T>(): Promise<T> {
+    const result = Promise.reject<T>(
+      new ScopeViolationError("The runtime authority transaction is closed."),
+    );
+    void result.catch(() => {});
+    return result;
+  }
+
   async finish(): Promise<void> {
-    // Close submissions synchronously before draining the accepted queue. A promise
-    // continuation cannot append a new mutation while this unit is committing.
+    // The original repository lifetime drains accepted callbacks first, permitting
+    // their nested serial mutations. No outward registration can reach this queue.
     this.closed = true;
-    const accepted = this.pending;
-    await accepted;
+    while (this.participants.size !== 0) await Promise.all([...this.participants]);
+    await this.pending;
     this.assertCommittable();
   }
+
   private assertCommittable(): void {
     if (this.failed) throw this.failure;
   }

@@ -195,3 +195,83 @@ test("commit fault rejects an effective remote override and preserves TLS intent
     /non-TLS/,
   );
 });
+
+test("whole consume drains before COMMIT and release, without serial-parent deadlock", async () => {
+  const p = protocol();
+  let release;
+  let outerReturned;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const outer = new Promise((resolve) => {
+    outerReturned = resolve;
+  });
+  let completed = false;
+  const transaction = p.state.transact(async (unit) => {
+    p.state.runAuthorityParticipantIn(unit, async () => {
+      await gate;
+      assert.deepEqual(p.calls, ["BEGIN"]);
+      assert.equal(p.releases(), 0);
+      completed = true;
+    });
+    outerReturned();
+    return 7;
+  });
+  await outer;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(p.calls, ["BEGIN"]);
+  assert.equal(p.releases(), 0);
+  release();
+  assert.equal(await transaction, 7);
+  assert.equal(completed, true);
+  assert.deepEqual(p.calls, ["BEGIN", "COMMIT"]);
+  assert.equal(p.releases(), 1);
+});
+
+test("caught and unawaited whole consume failures prohibit COMMIT and retain original error", async () => {
+  for (const caught of [true, false]) {
+    const failure = new Error("Original consume denial");
+    const p = protocol({
+      release: () => {
+        throw new Error("Secondary cleanup failure");
+      },
+    });
+    await assert.rejects(
+      p.state.transact(async (unit) => {
+        const participant = p.state.runAuthorityParticipantIn(unit, async () => {
+          await Promise.resolve();
+          throw failure;
+        });
+        if (caught) {
+          try {
+            await participant;
+          } catch {}
+        }
+      }),
+      (error) => error === failure,
+    );
+    assert.deepEqual(p.calls, ["BEGIN", "ROLLBACK"]);
+    assert.equal(p.releases(), 1);
+  }
+});
+
+test("drained participant retains unknown COMMIT classification", async () => {
+  const p = protocol({
+    commit: () => {
+      throw Object.assign(new Error("ACK lost"), { code: "ECONNRESET" });
+    },
+  });
+  let completed = false;
+  await assert.rejects(
+    p.state.transact(async (unit) => {
+      await p.state.runAuthorityParticipantIn(unit, async () => {
+        await Promise.resolve();
+        completed = true;
+      });
+    }),
+    PostgresCommitOutcomeUnknownError,
+  );
+  assert.equal(completed, true);
+  assert.deepEqual(p.calls, ["BEGIN", "COMMIT", "ROLLBACK"]);
+  assert.equal(p.releases(), 1);
+});

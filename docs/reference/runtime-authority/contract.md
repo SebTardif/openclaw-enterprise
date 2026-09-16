@@ -55,8 +55,52 @@ replay creates no effect and does not prove present authority.
 
 An authority mutation failure rejects the enclosing transaction even when its
 callback catches the error. Binding and receipt writes share the platform
-transaction. Repository handles reject after the callback closes; read views
-expose no mutations. See [platform repositories](../platform-repositories.md).
+transaction. Read views expose no mutations. See
+[platform repositories](../platform-repositories.md).
+
+Trusted core code can call `runAuthorityParticipantIn(originalUow, consume)` on
+the State owner to enroll a complete authority consume callback in that same
+transaction. State accepts only its exact live unit-of-work object. Enrollment
+and callback invocation are synchronous, so one-use evidence can be spent before
+the first await. Whole callbacks run concurrently; individual authority mutations
+retain their original serialized order. The ordinary `runtimeAuthority.appendMutation`
+binding also uses this participant lifetime.
+
+When the outer transaction callback settles, State closes fresh admissions and
+drains accepted callbacks and their repository work before COMMIT, rollback, or
+connection release. An accepted callback can continue original reads and nested
+mutations while draining. Each callback and child operation loses admission when
+its own Promise settles; a detached sibling cannot use an inherited context to
+start fresh work after its callback closes. New top-level participants cannot
+enroll during drain.
+
+State observes the original native Promise returned by each callback before
+normalizing its result. This includes Promise subclasses and Promises from
+other JavaScript realms, whether pending or already settled. Read and queue
+projections preserve that original callback boundary. A native settlement
+observer closes admission before reactions attached earlier by the callback.
+
+The shared observer stays active from module import through process exit, with
+weak Promise keys and a private stop handle. Stopping it between transactions
+would lose settlement history for deferred Promises created between owners;
+overlapping State owners therefore share uninterrupted observation. A Promise
+created before the module was imported has no observed creation history: State
+conservatively closes its callback's fresh admission on return while still
+delivering its result and draining accepted children. Arbitrary thenables and
+Promise proxies are outside the declared native Promise callback contract and
+receive the same conservative closure. The observer's process-wide cost still
+needs qualification in an installed workload; component tests do not establish
+application throughput.
+
+An accepted authority callback failure, or a nested repository/query failure,
+remains sticky even if caught or unawaited. State preserves the first authority
+failure and rolls back the transaction after draining accepted work. Ordinary
+caught repository conflicts outside authority callbacks keep their existing
+behavior.
+
+This lifetime mechanism does not supply a ROOT/current-entitlement snapshot,
+Installation policy fence, IAM decision, or provider authorization. Those owning
+components must retain their original transaction and supply their checks.
 
 Lost PostgreSQL COMMIT acknowledgments retain
 `PostgresCommitOutcomeUnknownError`. Read the exact original operation identity

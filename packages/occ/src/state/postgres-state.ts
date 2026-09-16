@@ -773,13 +773,26 @@ export class PostgresPlatformState implements PlatformStateStore {
   }
 
   async read<T>(work: (state: PlatformReadView) => Promise<T>): Promise<T> {
-    return this.execute(true, async (state, context) =>
+    return this.execute(true, (state, context) =>
       work(createPlatformReadView(state, context.lifetime)),
     );
   }
 
   async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
-    return this.execute(false, async (state) => work(state));
+    return this.execute(false, (state) => work(state));
+  }
+
+  runAuthorityParticipantIn<T>(
+    originalUow: PlatformUnitOfWork,
+    consume: () => Promise<T>,
+  ): Promise<T> {
+    const context = this.contexts.get(originalUow);
+    if (context !== undefined) return context.lifetime.participate(consume);
+    const result = Promise.reject<T>(
+      new ScopeViolationError("The platform transaction is unavailable."),
+    );
+    void result.catch(() => {});
+    return result;
   }
 
   queryInTransaction(
@@ -800,7 +813,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     ) => Promise<T>,
     options: PostgresWorkQueueOptions = {},
   ): Promise<T> {
-    return this.execute(false, async (state, context) =>
+    return this.execute(false, (state, context) =>
       work(
         state,
         bindRepository(new PostgresWorkQueue(context.client, options), context.lifetime, [
@@ -837,7 +850,8 @@ export class PostgresPlatformState implements PlatformStateStore {
       transportError = error;
     };
     client.on?.("error", onTransportError);
-    const lifetime = new RepositoryTransactionLifetime();
+    const authorityGuard = new RuntimeAuthorityTransactionGuard();
+    const lifetime = new RepositoryTransactionLifetime(authorityGuard);
     let started = false;
     let committing = false;
     let acknowledged = false;
@@ -849,7 +863,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       started = true;
       const context: TransactionContext = {
         lifetime,
-        authorityGuard: new RuntimeAuthorityTransactionGuard(),
+        authorityGuard,
         client: {
           query: async (statement, parameters) => {
             lifetime.assertActive();
@@ -864,9 +878,10 @@ export class PostgresPlatformState implements PlatformStateStore {
         installation: undefined,
         installationLoaded: false,
       };
-      unit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
+      const originalUnit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
+      unit = originalUnit;
       this.contexts.set(unit, context);
-      const result = await work(unit, context);
+      const result = await lifetime.runOwnerCallback(() => work(originalUnit, context));
       await lifetime.finish();
       await context.authorityGuard.finish();
       if (transportError) throw transportError;
@@ -896,6 +911,9 @@ export class PostgresPlatformState implements PlatformStateStore {
       failed = true;
       discard = committing || transportError !== undefined;
       await lifetime.finish();
+      try {
+        await authorityGuard.finish();
+      } catch {}
       if (started) {
         try {
           await client.query("ROLLBACK");
