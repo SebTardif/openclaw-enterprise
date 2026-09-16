@@ -25,12 +25,15 @@ same lane retains
 `pnpm check:credential-gateway-types` and
 `pnpm check:credential-gateway-http-types` as required compiler steps. The first
 selects the five explicit schema, connection, GitHub operation, supplier
-compatibility, and issuance fixtures; the second selects the isolated HTTP
-component project. Supplier constructors and options are checked through the
-public OCC entry point. Issuance, transaction-lifetime and inventory-transaction
-correspondence uses intra-OCC imports; representative negative imports ensure
-those internals remain unavailable through the public entry point.
-Both projects use `noEmit`, and a compiler failure fails the job. The lane also
+compatibility, and issuance fixtures; the second selects the isolated HTTP component project.
+Provider constructors and options are checked through the controller-owned GitHub
+provider entry point, alongside concrete material-loading correspondence, by
+`apps/controller/tsconfig.token-provider.json`, also run
+by `pnpm typecheck`. Driver and state correspondence retain their neutral public
+entry points. Neutral issuance, transaction-lifetime and inventory-transaction correspondence uses
+intra-OCC imports; representative negative imports ensure those internals remain
+unavailable through the public entry point.
+All three component projects use `noEmit`, and a compiler failure fails the job. The lane also
 runs the [HTTP head](credential-gateway-http.md) and
 [canonical JSON](credential-schema-registry.md) conformance files. These checks
 cover declarations and components; installed composition, ordinary Agent workflows,

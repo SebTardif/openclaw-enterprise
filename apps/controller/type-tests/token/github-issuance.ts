@@ -7,14 +7,14 @@ import {
   createGitHubAppTokenIssuerV1,
   createGitHubAppWriteTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-} from "../../src/providers/token/github/provider.ts";
+} from "../../src/providers/token/github/index.ts";
 import type {
   GitHubAppMaterialV1,
   GitHubAppTokenCustodyV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
   GitHubRepositoryWriteSelectionV1,
-} from "../../src/providers/token/github/types.ts";
+} from "../../src/providers/token/github/index.ts";
 import type {
   GitHubIssuedMechanismDependencies,
   GitHubProtectedSourceLease,

@@ -5,9 +5,14 @@ checkout are unconnected. Do not enable repository deployment through this API.
 
 ## Owning contract
 
-Import `TokenIssuerV1`, `TokenRevokerV1`, attempt/result types and
-`EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`;
-GitHub factories/types from `@openclaw-enterprise/occ`.
+Import `TokenIssuerV1`, `TokenRevokerV1`, their attempt/result types and
+`EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`. The controller owns
+`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1` and
+`createGitHubAppTokenRevokerV1` in its
+[GitHub token provider](../../apps/controller/src/providers/token/github/index.ts).
+Use that directory's `index.ts` for controller composition of these constructors
+and GitHub-specific option types. OCC retains its dependency on the provider-neutral
+contracts and does not export or depend on the concrete implementation.
 
 | Factory                             | Required options                                                                 | Returns                                    |
 | ----------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------ |
