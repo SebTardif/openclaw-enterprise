@@ -42,6 +42,20 @@ export function snapshotGitHubAppKeyIdentityV1(
     immutableVersion: identity.immutableVersion,
   });
 }
+
+function signGitHubAppJwt(key: KeyObject, clientId: string, now: number, expiry: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ iat: now - 60, exp: expiry, iss: clientId }),
+  ).toString("base64url");
+  const unsigned = `${header}.${payload}`;
+  const signature = sign("sha256", Buffer.from(unsigned), {
+    key,
+    padding: constants.RSA_PKCS1_PADDING,
+  }).toString("base64url");
+  return `${unsigned}.${signature}`;
+}
+
 /** A single external owner's immutable key lease, not a Secret resolver, authority
  * issuer or material cache. The owner authenticates its exact immutable version
  * before construction and in assertCurrent; no request or runtime supplies it. */
@@ -75,14 +89,12 @@ export function createGitHubAppMaterialV1(options: {
       if (busy) throw new GitHubAppTokenIssuerErrorV1();
       const fixed = snapshotGitHubAppKeyIdentityV1(expected);
       if (
-        Object.keys(identity).some(
-          (field) =>
-            identity[field as keyof GitHubAppKeyIdentityV1] !==
-            fixed[field as keyof GitHubAppKeyIdentityV1],
-        )
+        identity.clientId !== fixed.clientId ||
+        identity.bindingRef !== fixed.bindingRef ||
+        identity.immutableVersion !== fixed.immutableVersion
       )
         throw new GitHubAppTokenIssuerErrorV1();
-      const check = () => {
+      const assertMaterialCurrent = () => {
         assertGitHubAppBoundsV1(bounds, clock());
         assertGitHubAppSynchronousV1(assertCurrent);
         if (key === undefined) throw new GitHubAppTokenIssuerErrorV1();
@@ -90,24 +102,14 @@ export function createGitHubAppMaterialV1(options: {
       };
       busy = true;
       try {
-        check();
+        assertMaterialCurrent();
         const now = Math.floor(clock() / 1000);
         const expiry = Math.min(now + 300, Math.floor(bounds.deadline / 1000));
         if (expiry <= now) throw new GitHubAppTokenIssuerErrorV1();
-        const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString(
-          "base64url",
-        );
-        const payload = Buffer.from(
-          JSON.stringify({ iat: now - 60, exp: expiry, iss: identity.clientId }),
-        ).toString("base64url");
-        const unsigned = `${header}.${payload}`;
-        const signature = sign("sha256", Buffer.from(unsigned), {
-          key: key!,
-          padding: constants.RSA_PKCS1_PADDING,
-        }).toString("base64url");
-        check();
-        const result = await consume(`${unsigned}.${signature}`, check);
-        check();
+        const jwt = signGitHubAppJwt(key!, identity.clientId, now, expiry);
+        assertMaterialCurrent();
+        const result = await consume(jwt, assertMaterialCurrent);
+        assertMaterialCurrent();
         return result;
       } catch {
         throw new GitHubAppTokenIssuerErrorV1();

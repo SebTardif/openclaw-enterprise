@@ -122,7 +122,25 @@ function tokenBytes(value: unknown): Buffer | undefined {
     ? Buffer.from(value)
     : undefined;
 }
-async function settleOwner<T>(
+function notDispatched(
+  providerAttemptRef: string,
+): Extract<TokenMintResultV1, { kind: "not-dispatched" }> {
+  return { kind: "not-dispatched", providerAttemptRef };
+}
+
+function unknownResult(
+  providerAttemptRef: string,
+  material?: EphemeralTokenHandleV1,
+): Extract<TokenMintResultV1, { kind: "unknown" }> {
+  return {
+    kind: "unknown",
+    providerAttemptRef,
+    nextAction: "reconcile-only",
+    ...(material === undefined ? {} : { material }),
+  };
+}
+
+async function waitForOwner<T>(
   work: Promise<T>,
   bounds: TokenIssuerCallBoundsV1,
   clock: () => number,
@@ -180,12 +198,7 @@ function createGitHubAppTokenIssuerCoreV1(
           capture: options.custody.capture.bind(options.custody),
         }
       : undefined;
-  const custody =
-    "custody" in options
-      ? Object.freeze({
-          withRevocationToken: options.custody.withRevocationToken.bind(options.custody),
-        })
-      : undefined;
+  const withRevocationToken = options.custody.withRevocationToken.bind(options.custody);
   const assertDispatchCurrent = options.assertDispatchCurrent;
   const clock = options.clock;
   let origin = new URL("https://api.github.com");
@@ -221,7 +234,7 @@ function createGitHubAppTokenIssuerCoreV1(
     settlements.set(result, invocation.drained);
     return result;
   };
-  function attempt(input: TokenIssuerAttemptV1): Readonly<TokenIssuerAttemptV1> {
+  function snapshotAttempt(input: TokenIssuerAttemptV1): Readonly<TokenIssuerAttemptV1> {
     if (
       typeof input.providerAttemptRef !== "string" ||
       !/^[A-Za-z0-9._:/-]{1,200}$/.test(input.providerAttemptRef)
@@ -340,33 +353,69 @@ function createGitHubAppTokenIssuerCoreV1(
       }
     });
   }
+  async function runWithOwner<
+    Args extends unknown[],
+    Result extends TokenMintResultV1 | TokenRevokeResultV1,
+  >(
+    call: TokenIssuerAttemptV1,
+    invocation: Invocation,
+    use: (consume: (...args: Args) => Promise<Result>) => Promise<Result>,
+    perform: (...args: Args) => Promise<Result>,
+  ): Promise<Result> {
+    let callbackEntered = false;
+    let ownerClosed = false;
+    let ownerTracked = false;
+    let callbackWork: Promise<Result> | undefined;
+    let callbackResult: Result | undefined;
+    const finish = async () => {
+      ownerClosed = true;
+      await callbackWork?.catch(() => {});
+      active = false;
+    };
+    try {
+      const work = use((...args) => {
+        if (callbackEntered || ownerClosed) throw new GitHubAppTokenIssuerErrorV1();
+        callbackEntered = true;
+        callbackWork = perform(...args).then((result) => {
+          callbackResult = Object.freeze(result);
+          return callbackResult;
+        });
+        // The owner may drop the callback promise. Its actual work still holds
+        // the pending slot and must settle before the finalizer releases it.
+        void callbackWork.catch(() => {});
+        return callbackWork;
+      }).finally(finish);
+      invocation.drained = work.then(
+        () => undefined,
+        () => undefined,
+      );
+      ownerTracked = true;
+      const result = await waitForOwner(work, call.bounds, clock);
+      if (callbackResult === undefined || result !== callbackResult)
+        throw new GitHubAppTokenIssuerErrorV1();
+      return callbackResult;
+    } finally {
+      // A synchronous owner throw can follow callback dispatch. Drain it before
+      // the caller constructs an unknown outcome containing any late capture.
+      if (!ownerTracked) await finish();
+    }
+  }
+
   const operations = {
     async mint(input: TokenIssuerAttemptV1, invocation: Invocation): Promise<TokenMintResultV1> {
-      if (issuance === undefined)
-        return { kind: "not-dispatched", providerAttemptRef: safeAttemptRef(input) };
+      if (issuance === undefined) return notDispatched(safeAttemptRef(input));
       const { selected, material, capture } = issuance;
       let call: TokenIssuerAttemptV1;
       try {
-        call = attempt(input);
+        call = snapshotAttempt(input);
       } catch {
-        return { kind: "not-dispatched", providerAttemptRef: safeAttemptRef(input) };
+        return notDispatched(safeAttemptRef(input));
       }
-      if (active) return { kind: "not-dispatched", providerAttemptRef: call.providerAttemptRef };
+      if (active) return notDispatched(call.providerAttemptRef);
       active = true;
       let sent = false;
-      let staged: EphemeralTokenHandleV1 | undefined;
-      const unknown = (): TokenMintResultV1 => ({
-        kind: "unknown",
-        providerAttemptRef: call.providerAttemptRef,
-        nextAction: "reconcile-only",
-        ...(staged === undefined ? {} : { material: staged }),
-      });
-      let entered = false;
-      let ownerStarted = false;
-      let ownerClosed = false;
-      let callbackWork: Promise<TokenMintResultV1> | undefined;
-      let callbackResult: TokenMintResultV1 | undefined;
-      const perform = async (
+      let capturedMaterial: EphemeralTokenHandleV1 | undefined;
+      const mintToken = async (
         jwt: string,
         assertMaterialCurrent: () => void,
       ): Promise<TokenMintResultV1> => {
@@ -391,13 +440,14 @@ function createGitHubAppTokenIssuerCoreV1(
               kind: "rejected",
               providerAttemptRef: call.providerAttemptRef,
               status: response.status,
-            } as const;
-          if (response.status !== 201) return unknown();
+            };
+          if (response.status !== 201) return unknownResult(call.providerAttemptRef);
           const value: unknown = JSON.parse(response.body.toString("utf8"));
-          if (!value || typeof value !== "object" || Array.isArray(value)) return unknown();
+          if (!value || typeof value !== "object" || Array.isArray(value))
+            return unknownResult(call.providerAttemptRef);
           const packet = value as Record<string, unknown>;
           const bytes = tokenBytes(packet.token);
-          if (bytes === undefined) return unknown();
+          if (bytes === undefined) return unknownResult(call.providerAttemptRef);
           const expiry =
             typeof packet.expires_at === "string" ? Date.parse(packet.expires_at) : NaN;
           const validExpiry =
@@ -406,7 +456,7 @@ function createGitHubAppTokenIssuerCoreV1(
           try {
             // Even a scope-invalid response can contain a live token. Retain it
             // for exact mitigation; never return it as an accepted scoped mint.
-            staged = capture(
+            capturedMaterial = capture(
               bytes,
               Object.freeze({
                 providerAttemptRef: call.providerAttemptRef,
@@ -418,7 +468,7 @@ function createGitHubAppTokenIssuerCoreV1(
           } finally {
             bytes.fill(0);
           }
-          if (!scopeAccepted) return unknown();
+          if (!scopeAccepted) return unknownResult(call.providerAttemptRef, capturedMaterial);
           assertGitHubAppBoundsV1(call.bounds, clock());
           assertGitHubAppSynchronousV1(() => assertDispatchCurrent(call));
           assertGitHubAppSynchronousV1(assertMaterialCurrent);
@@ -426,53 +476,24 @@ function createGitHubAppTokenIssuerCoreV1(
           return {
             kind: "minted",
             providerAttemptRef: call.providerAttemptRef,
-            material: staged,
+            material: capturedMaterial,
             expiresAt: new Date(expiry).toISOString(),
-          } as const;
+          };
         } finally {
           response.body.fill(0);
         }
       };
       try {
-        const work = material
-          .withJwt(selected.key, call.bounds, (jwt, assertMaterialCurrent) => {
-            if (entered || ownerClosed) throw new GitHubAppTokenIssuerErrorV1();
-            entered = true;
-            callbackWork = perform(jwt, assertMaterialCurrent).then((result) => {
-              callbackResult = Object.freeze(result);
-              return callbackResult;
-            });
-            void callbackWork.catch(() => {});
-            return callbackWork;
-          })
-          .finally(async () => {
-            ownerClosed = true;
-            await callbackWork?.catch(() => {});
-            active = false;
-          });
-        invocation.drained = work.then(
-          () => undefined,
-          () => undefined,
+        return await runWithOwner(
+          call,
+          invocation,
+          (consume) => material.withJwt(selected.key, call.bounds, consume),
+          mintToken,
         );
-        ownerStarted = true;
-        const result = await settleOwner(work, call.bounds, clock);
-        if (!entered || callbackResult === undefined || result !== callbackResult)
-          throw new GitHubAppTokenIssuerErrorV1();
-        return callbackResult;
       } catch {
-        if (!ownerStarted) {
-          ownerClosed = true;
-          await callbackWork?.catch(() => {});
-        }
         return sent
-          ? unknown()
-          : { kind: "not-dispatched", providerAttemptRef: call.providerAttemptRef };
-      } finally {
-        if (!ownerStarted) {
-          ownerClosed = true;
-          await callbackWork?.catch(() => {});
-          active = false;
-        }
+          ? unknownResult(call.providerAttemptRef, capturedMaterial)
+          : notDispatched(call.providerAttemptRef);
       }
     },
     async revoke(
@@ -480,95 +501,53 @@ function createGitHubAppTokenIssuerCoreV1(
       handle: EphemeralTokenHandleV1,
       invocation: Invocation,
     ): Promise<TokenRevokeResultV1> {
-      if (!custody) return { kind: "not-dispatched", providerAttemptRef: safeAttemptRef(input) };
       let call: TokenIssuerAttemptV1;
       try {
-        call = attempt(input);
+        call = snapshotAttempt(input);
       } catch {
-        return { kind: "not-dispatched", providerAttemptRef: safeAttemptRef(input) };
+        return notDispatched(safeAttemptRef(input));
       }
-      if (active) return { kind: "not-dispatched", providerAttemptRef: call.providerAttemptRef };
+      if (active) return notDispatched(call.providerAttemptRef);
       active = true;
       let sent = false;
-      let entered = false;
-      let callbackResult: TokenRevokeResultV1 | undefined;
-      let ownerStarted = false;
-      let ownerClosed = false;
-      let callbackWork: Promise<TokenRevokeResultV1> | undefined;
-      try {
-        const work = custody
-          .withRevocationToken(handle, call.bounds, (bytes) => {
-            if (entered || ownerClosed) throw new GitHubAppTokenIssuerErrorV1();
-            entered = true;
-            callbackWork = (async (): Promise<TokenRevokeResultV1> => {
-              if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 16384)
-                throw new GitHubAppTokenIssuerErrorV1();
-              // Own one bounded copy. Validate inside its cleanup lifetime so
-              // malformed material is wiped too; custody retains its own bytes.
-              const token = Buffer.from(bytes);
-              try {
-                if (token.some((byte) => byte < 0x21 || byte > 0x7e))
-                  throw new GitHubAppTokenIssuerErrorV1();
-                const response = await exchange(
-                  "DELETE",
-                  "/installation/token",
-                  token.toString("utf8"),
-                  "",
-                  call,
-                  () => {
-                    sent = true;
-                  },
-                );
-                response.body.fill(0);
-                callbackResult = Object.freeze(
-                  response.status === 204
-                    ? { kind: "confirmed", providerAttemptRef: call.providerAttemptRef }
-                    : {
-                        kind: "unknown",
-                        providerAttemptRef: call.providerAttemptRef,
-                        nextAction: "reconcile-only",
-                      },
-                );
-                return callbackResult;
-              } finally {
-                token.fill(0);
-              }
-            })();
-            // Even an owner that drops this promise cannot release the provider's
-            // pending-work charge before the actual HTTP callback settles.
-            void callbackWork.catch(() => {});
-            return callbackWork;
-          })
-          .finally(async () => {
-            ownerClosed = true;
-            await callbackWork?.catch(() => {});
-            active = false;
-          });
-        invocation.drained = work.then(
-          () => undefined,
-          () => undefined,
-        );
-        ownerStarted = true;
-        const result = await settleOwner(work, call.bounds, clock);
-        if (!entered || callbackResult === undefined || result !== callbackResult)
+      const revokeToken = async (bytes: Uint8Array): Promise<TokenRevokeResultV1> => {
+        if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 16384)
           throw new GitHubAppTokenIssuerErrorV1();
-        return callbackResult;
+        // Own one bounded copy. Validate inside its cleanup lifetime so malformed
+        // material is wiped too; custody retains its original bytes.
+        const token = Buffer.from(bytes);
+        try {
+          if (token.some((byte) => byte < 0x21 || byte > 0x7e))
+            throw new GitHubAppTokenIssuerErrorV1();
+          const response = await exchange(
+            "DELETE",
+            "/installation/token",
+            token.toString("utf8"),
+            "",
+            call,
+            () => {
+              sent = true;
+            },
+          );
+          response.body.fill(0);
+          return response.status === 204
+            ? { kind: "confirmed", providerAttemptRef: call.providerAttemptRef }
+            : unknownResult(call.providerAttemptRef);
+        } finally {
+          token.fill(0);
+        }
+      };
+      try {
+        return await runWithOwner(
+          call,
+          invocation,
+          (consume) => withRevocationToken(handle, call.bounds, consume),
+          revokeToken,
+        );
       } catch {
         return sent
-          ? {
-              kind: "unknown",
-              providerAttemptRef: call.providerAttemptRef,
-              nextAction: "reconcile-only",
-            }
-          : { kind: "not-dispatched", providerAttemptRef: call.providerAttemptRef };
-      } finally {
-        // A noncooperating custody owner retains the single pending-call charge
-        // until its real settlement. Timeout cannot open another issuance slot.
-        if (!ownerStarted) {
-          ownerClosed = true;
-          await callbackWork?.catch(() => {});
-          active = false;
-        }
+          ? unknownResult(call.providerAttemptRef)
+          : notDispatched(call.providerAttemptRef);
       }
     },
   };
