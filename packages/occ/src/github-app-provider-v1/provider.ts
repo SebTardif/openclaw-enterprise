@@ -15,11 +15,34 @@ import {
   snapshotGitHubAppKeyIdentityV1,
 } from "./material.ts";
 import type {
+  GitHubAppEndpointV1,
   GitHubAppReturnedPermissionsV1,
   GitHubAppSelectionV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
 } from "./types.ts";
+
+function selectEndpoint(endpoint: GitHubAppEndpointV1): { origin: URL; ca?: string } {
+  if (endpoint.kind === "github") return { origin: new URL("https://api.github.com") };
+  if (endpoint.kind !== "local-protocol-test") throw new GitHubAppTokenIssuerErrorV1();
+  const origin = new URL(endpoint.origin);
+  const ca = endpoint.ca;
+  if (
+    origin.protocol !== "https:" ||
+    origin.hostname !== "127.0.0.1" ||
+    origin.pathname !== "/" ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash ||
+    !origin.port ||
+    typeof ca !== "string" ||
+    ca.length > 32768 ||
+    !ca.includes("BEGIN CERTIFICATE")
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  return { origin, ca };
+}
 
 function snapshotGitHubAppReturnedPermissionsV1(value: unknown): GitHubAppReturnedPermissionsV1 {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -201,26 +224,7 @@ function createGitHubAppTokenIssuerCoreV1(
   const withRevocationToken = options.custody.withRevocationToken.bind(options.custody);
   const assertDispatchCurrent = options.assertDispatchCurrent;
   const clock = options.clock;
-  let origin = new URL("https://api.github.com");
-  let ca: string | undefined;
-  if (options.endpoint.kind === "local-protocol-test") {
-    origin = new URL(options.endpoint.origin);
-    ca = options.endpoint.ca;
-    if (
-      origin.protocol !== "https:" ||
-      origin.hostname !== "127.0.0.1" ||
-      origin.pathname !== "/" ||
-      origin.username ||
-      origin.password ||
-      origin.search ||
-      origin.hash ||
-      !origin.port ||
-      typeof ca !== "string" ||
-      ca.length > 32768 ||
-      !ca.includes("BEGIN CERTIFICATE")
-    )
-      throw new GitHubAppTokenIssuerErrorV1();
-  } else if (options.endpoint.kind !== "github") throw new GitHubAppTokenIssuerErrorV1();
+  const { origin, ca } = selectEndpoint(options.endpoint);
   let active = false;
   const settlements = new WeakMap<object, Promise<void>>();
   type Invocation = { drained: Promise<void> };
