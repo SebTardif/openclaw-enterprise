@@ -8,6 +8,8 @@ component must land with its actual Agent/Token owner and integration proof.
 
 ## Component contract
 
+State owns the concrete PostgreSQL metadata transaction owner and repository.
+
 `transactCredentialInventoryMetadataV1` takes the existing PostgreSQL State owner,
 an Installation/Namespace/Agent scope, a complete bounded key set, and a metadata
 callback. The owner supplies one original `transact` and `queryInTransaction`;

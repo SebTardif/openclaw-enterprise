@@ -19,12 +19,17 @@ are flagged for review and pages above 2,500 fail, except the approved single-pa
 and links must pass. Run `pnpm docs:check-length` for the word-count
 check alone.
 
-After ordinary `pnpm typecheck`, the same lane runs
-`pnpm check:credential-gateway-types` and
+The lane's `pnpm typecheck` builds the workspace, then checks the credential
+gateway declaration fixtures and complete gateway source project in that order.
+The same lane retains `pnpm check:credential-gateway-types` and
 `pnpm check:credential-gateway-source-types` as required compiler steps. The first
 selects the four explicit schema, connection, GitHub operation, and supplier
 compatibility fixtures; the second selects all gateway source modules, including
 HTTP head inspection and destination transport.
+Supplier constructors and options are checked through the public OCC entry point.
+Transaction-lifetime and inventory-transaction correspondence uses intra-OCC
+imports; representative negative imports ensure those internals remain unavailable
+through the public entry point.
 Both projects use `noEmit`, and a compiler failure fails the job. The lane also
 runs the [HTTP head](credential-gateway-http.md) and
 [canonical JSON](credential-schema-registry.md) conformance files. These checks
@@ -80,6 +85,14 @@ testing the real helper deadline.
 | `k3d-otel`         | [harness-topology-k3d-otel-real.test.mjs](../../tests/integration/harness-topology-k3d-otel-real.test.mjs)       | Actual OTLP logs emitted during embedded and dedicated runtime model turns.                                              |
 
 #### No GitHub workflow entrypoint
+
+[github-app-token-issuer-real.test.mjs](../../tests/integration/github-app-token-issuer-real.test.mjs)
+belongs to the `github-app` lane, excluded from both the `ci` and `full` groups
+and from Full Integration dispatch options. Follow the
+[GitHub App test procedure](github-app.md) for an authorized private key,
+installation and private repository. It verifies real issuance, exact repository
+scope and keyless token revocation; production Agent workflow coverage remains
+separate.
 
 [postgres-azure-workload-identity.test.mjs](../../tests/integration/postgres-azure-workload-identity.test.mjs)
 belongs to the `postgres-azure-workload-identity` lane, excluded from both the

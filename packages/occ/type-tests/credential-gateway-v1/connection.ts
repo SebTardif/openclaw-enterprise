@@ -4,11 +4,9 @@ import type {
   SecretReference,
   SecretBackendRef,
 } from "@openclaw-enterprise/contracts";
+import type { DefinitionRef, SchemaRef, RetainedSchemaValue } from "@openclaw-enterprise/occ";
+import type { AuthenticatedAccess } from "../../src/credential-gateway-v1/handles.ts";
 import type {
-  DefinitionRef,
-  SchemaRef,
-  RetainedSchemaValue,
-  AuthenticatedAccess,
   CredentialConnection,
   ResourceIdentity,
   CanonicalCredentialTargetIdentity,
@@ -22,16 +20,26 @@ import type {
   AcquisitionMode,
   MechanismContractRef,
   CredentialObservation,
-} from "@openclaw-enterprise/occ";
+} from "../../src/credential-gateway-v1/connection.ts";
 
-// Inert public-package consumers: illustrative identities/digests are not admitted
+// @ts-expect-error Connection descriptors remain internal to their owners.
+import type { CredentialConnection as PublicCredentialConnection } from "@openclaw-enterprise/occ";
+// @ts-expect-error Generic capability descriptors are not package-root contracts.
+import type { BackendCapabilities as PublicBackendCapabilities } from "@openclaw-enterprise/occ";
+
+// Inert internal-contract consumers: illustrative identities/digests are not admitted
 // implementations, endpoint trust, canonical encoding or provider observations.
 const definition: DefinitionRef = {
   backendId: "example-repository-backend",
-  packageName: "example-credential-package",
-  packageVersion: "1.0.0",
-  packageIntegrity: "illustrative-package-integrity",
-  contractVersion: "credential-backend-v1",
+  recipeId: "example-credential-recipe",
+  recipeVersion: 1,
+  recipeDigest: "illustrative-recipe-digest",
+  contractVersion: "credential-backend-recipe-v1",
+  interpreter: {
+    name: "oce-closed-schema-interpreter",
+    version: 1,
+    digest: "illustrative-interpreter-digest",
+  },
 };
 const configurationSchema: SchemaRef = {
   namespace: "example",
