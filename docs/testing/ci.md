@@ -19,8 +19,9 @@ are flagged for review and pages above 2,500 fail, except the approved single-pa
 and links must pass. Run `pnpm docs:check-length` for the word-count
 check alone.
 
-The lane's `pnpm typecheck` builds the workspace, then checks the credential
-gateway declaration fixtures and HTTP component project in that order. The
+The lane's `pnpm typecheck` builds the workspace, then checks the OCC credential
+gateway declarations, HTTP component and controller token-provider fixtures in
+that order. The
 same lane retains
 `pnpm check:credential-gateway-types` and
 `pnpm check:credential-gateway-http-types` as required compiler steps. The first
@@ -28,10 +29,9 @@ selects the five explicit schema, connection, GitHub operation, supplier
 compatibility, and issuance fixtures; the second selects the isolated HTTP component project.
 Provider constructors and options are checked through the controller-owned GitHub
 provider entry point, alongside concrete material-loading correspondence, by
-`apps/controller/tsconfig.token-provider.json`, also run
-by `pnpm typecheck`. Driver and state correspondence retain their neutral public
-entry points. Neutral issuance, transaction-lifetime and inventory-transaction correspondence uses
-intra-OCC imports; representative negative imports ensure those internals remain
+`apps/controller/tsconfig.token-provider.json`. Driver and state correspondence retain their neutral public
+entry points. Neutral issuance, transaction-lifetime and inventory-transaction
+correspondence uses intra-OCC imports; representative negative imports ensure those internals remain
 unavailable through the public entry point.
 All three component projects use `noEmit`, and a compiler failure fails the job. The lane also
 runs the [HTTP head](credential-gateway-http.md) and

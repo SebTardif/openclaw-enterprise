@@ -6,5 +6,10 @@
     "noEmit": true,
     "rootDir": "../.."
   },
-  "include": ["type-tests/token/github-selection.ts", "type-tests/token/supplier-compatibility.ts"]
+  "include": [
+    "type-tests/token/github-selection.ts",
+    "type-tests/token/github-write.ts",
+    "type-tests/token/supplier-compatibility.ts",
+    "type-tests/token/github-issuance.ts"
+  ]
 }

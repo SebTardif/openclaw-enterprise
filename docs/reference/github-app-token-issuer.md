@@ -7,7 +7,8 @@ checkout are unconnected. Do not enable repository deployment through this API.
 
 Import `TokenIssuerV1`, `TokenRevokerV1`, their attempt/result types and
 `EphemeralTokenHandleV1` from `@openclaw-enterprise/contracts`. The controller owns
-`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1` and
+`createGitHubAppMaterialV1`, `createGitHubAppTokenIssuerV1`,
+`createGitHubAppWriteTokenIssuerV1` and
 `createGitHubAppTokenRevokerV1` in its
 [GitHub token provider](../../apps/controller/src/providers/token/github/index.ts).
 Use that directory's `index.ts` for controller composition of these constructors

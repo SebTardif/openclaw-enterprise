@@ -1,6 +1,12 @@
+import { types } from "node:util";
 import type { EphemeralTokenHandleV1, TokenMintResultV1 } from "@openclaw-enterprise/contracts";
 import { GitHubAppTokenIssuerErrorV1, snapshotKeyIdentity } from "./guards.ts";
-import type { GitHubAppReturnedPermissionsV1, GitHubAppSelectionV1 } from "./types.ts";
+import type {
+  GitHubAppReturnedPermissionsV1,
+  GitHubAppSelectionV1,
+  GitHubAppKeyIdentityV1,
+  GitHubRepositoryWriteSelectionV1,
+} from "./types.ts";
 
 export interface MintedTokenObservation {
   readonly token: string;
@@ -44,11 +50,92 @@ export function snapshotSelection(input: GitHubAppSelectionV1): GitHubAppSelecti
   });
 }
 
+/** Snapshot only own data, without evaluating accessors or proxy traps. */
+function ownDataRecord(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || types.isProxy(value))
+    throw new GitHubAppTokenIssuerErrorV1();
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new GitHubAppTokenIssuerErrorV1();
+  const keys = Reflect.ownKeys(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    keys.length !== fields.length ||
+    keys.some((key) => typeof key !== "string" || !fields.includes(key)) ||
+    fields.some((field) => !descriptors[field] || !("value" in descriptors[field]))
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  return Object.fromEntries(fields.map((field) => [field, descriptors[field]!.value]));
+}
+export function snapshotWriteSelection(
+  input: GitHubRepositoryWriteSelectionV1,
+): GitHubRepositoryWriteSelectionV1 {
+  const selection = ownDataRecord(input, ["key", "installationId", "repositories", "permissions"]);
+  const keyData = ownDataRecord(selection.key, ["clientId", "bindingRef", "immutableVersion"]);
+  const key = snapshotKeyIdentity(keyData as unknown as GitHubAppKeyIdentityV1);
+  if (Object.values(key).some((value) => /[\r\n\u2028\u2029]/.test(value)))
+    throw new GitHubAppTokenIssuerErrorV1();
+  const repositories = selection.repositories;
+  if (
+    !Number.isSafeInteger(selection.installationId) ||
+    (selection.installationId as number) < 1 ||
+    !repositories ||
+    typeof repositories !== "object" ||
+    types.isProxy(repositories) ||
+    !Array.isArray(repositories) ||
+    Object.getPrototypeOf(repositories) !== Array.prototype
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const arrayKeys = Reflect.ownKeys(repositories);
+  const arrayData = Object.getOwnPropertyDescriptors(repositories) as unknown as Record<
+    string,
+    PropertyDescriptor
+  >;
+  if (
+    arrayKeys.length !== 2 ||
+    !arrayKeys.includes("0") ||
+    !arrayKeys.includes("length") ||
+    arrayData.length?.value !== 1 ||
+    !arrayData["0"] ||
+    !("value" in arrayData["0"])
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const repository = ownDataRecord(arrayData["0"].value, ["id", "fullName"]);
+  if (
+    !Number.isSafeInteger(repository.id) ||
+    (repository.id as number) < 1 ||
+    typeof repository.fullName !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*(?![\s\S])/.test(repository.fullName)
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  const permissions = ownDataRecord(selection.permissions, [
+    "metadata",
+    "contents",
+    "pull_requests",
+  ]);
+  if (
+    permissions.metadata !== "read" ||
+    permissions.contents !== "write" ||
+    permissions.pull_requests !== "write"
+  )
+    throw new GitHubAppTokenIssuerErrorV1();
+  return Object.freeze({
+    key,
+    installationId: selection.installationId as number,
+    repositories: Object.freeze([
+      Object.freeze({ id: repository.id as number, fullName: repository.fullName }),
+    ] as const),
+    permissions: Object.freeze({ metadata: "read", contents: "write", pull_requests: "write" }),
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function matchesScope(packet: Record<string, unknown>, selected: GitHubAppSelectionV1): boolean {
+function matchesScope(
+  packet: Record<string, unknown>,
+  selected: GitHubAppSelectionV1 | GitHubRepositoryWriteSelectionV1,
+): boolean {
   if (
     !isRecord(packet.permissions) ||
     !Array.isArray(packet.repositories) ||
@@ -98,7 +185,7 @@ function readPermissions(value: unknown): GitHubAppReturnedPermissionsV1 {
  * even when the returned scope or expiry will be refused. */
 export function inspectMintResponse(
   body: Buffer,
-  selected: GitHubAppSelectionV1,
+  selected: GitHubAppSelectionV1 | GitHubRepositoryWriteSelectionV1,
 ): MintedTokenObservation | undefined {
   const packet: unknown = JSON.parse(body.toString("utf8"));
   if (

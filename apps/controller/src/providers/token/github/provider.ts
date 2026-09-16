@@ -6,9 +6,15 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import { createAttemptLifecycle } from "./lifecycle.ts";
 import { mintToken, revokeToken } from "./operations.ts";
-import { snapshotSelection } from "./protocol.ts";
+import { snapshotSelection, snapshotWriteSelection } from "./protocol.ts";
 import { createGitHubAppTransport } from "./transport.ts";
-import type { GitHubAppTokenIssuerOptionsV1, GitHubAppTokenRevokerOptionsV1 } from "./types.ts";
+import type {
+  GitHubAppTokenIssuerOptionsV1,
+  GitHubAppTokenRevokerOptionsV1,
+  GitHubAppWriteTokenIssuerOptionsV1,
+  GitHubAppSelectionV1,
+  GitHubRepositoryWriteSelectionV1,
+} from "./types.ts";
 
 function createRuntime(options: GitHubAppTokenRevokerOptionsV1) {
   const withRevocationToken = options.custody.withRevocationToken.bind(options.custody);
@@ -43,7 +49,21 @@ function composeRevoker(runtime: ReturnType<typeof createRuntime>): TokenRevoker
 export function createGitHubAppTokenIssuerV1(
   options: GitHubAppTokenIssuerOptionsV1,
 ): TokenIssuerV1 {
-  const selection = snapshotSelection(options.selection);
+  return composeIssuer(options, snapshotSelection(options.selection));
+}
+
+/** Trusted admission fixes this write profile; minting does not establish Work/IAM authority. */
+// TODO(repository write integration): connect the regular Agent caller and fixed-profile custody owner.
+export function createGitHubAppWriteTokenIssuerV1(
+  options: GitHubAppWriteTokenIssuerOptionsV1,
+): TokenIssuerV1 {
+  return composeIssuer(options, snapshotWriteSelection(options.selection));
+}
+
+function composeIssuer(
+  options: GitHubAppTokenIssuerOptionsV1 | GitHubAppWriteTokenIssuerOptionsV1,
+  selection: GitHubAppSelectionV1 | GitHubRepositoryWriteSelectionV1,
+): TokenIssuerV1 {
   const material = options.material;
   const capture = options.custody.capture.bind(options.custody);
   const runtime = createRuntime(options);

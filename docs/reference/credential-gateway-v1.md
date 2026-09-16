@@ -143,7 +143,7 @@ single-use dispatch permit. Preparation cannot borrow execution material.
 shares the read selection's key, numeric installation ID and single-repository
 tuple while requiring exactly `metadata:read`, `contents:write` and
 `pull_requests:write`. The existing `GitHubAppSelectionV1` and read issuer
-constructor remain read-only. The public `createGitHubAppWriteTokenIssuerV1`
+constructor remain read-only. The controller `createGitHubAppWriteTokenIssuerV1`
 constructor accepts `GitHubAppWriteTokenIssuerOptionsV1` and returns `TokenIssuerV1`;
 see the [token issuer reference](github-app-token-issuer.md) for its protocol
 behavior, custody requirements and integration limits.

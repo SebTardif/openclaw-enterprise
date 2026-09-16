@@ -12,11 +12,12 @@ import type { GitHubExchange } from "./transport.ts";
 import type {
   GitHubAppMaterialV1,
   GitHubAppSelectionV1,
+  GitHubRepositoryWriteSelectionV1,
   GitHubAppTokenCustodyV1,
 } from "./types.ts";
 
 interface MintDependencies {
-  readonly selection: GitHubAppSelectionV1;
+  readonly selection: GitHubAppSelectionV1 | GitHubRepositoryWriteSelectionV1;
   readonly material: GitHubAppMaterialV1;
   readonly capture: GitHubAppTokenCustodyV1["capture"];
   readonly exchange: GitHubExchange;
