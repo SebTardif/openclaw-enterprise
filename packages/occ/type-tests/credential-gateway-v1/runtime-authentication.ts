@@ -13,17 +13,26 @@ import type {
 } from "@openclaw-enterprise/contracts";
 import type {
   Bounds,
-  BackendCapabilities,
-  CoreAuthenticationBinding,
-  ExternalRuntimeAuthenticationCapabilityV1,
   RuntimeAuthenticationAttachmentInspectionV1,
+  RuntimeAuthenticationAttachmentPreparationV1,
   RuntimeAuthenticationAttachmentV1,
   RuntimeAuthenticationOwnerV1,
+  RuntimeAuthenticationWithdrawalV1,
   SchemaRef,
 } from "@openclaw-enterprise/occ";
+import type { CoreAuthenticationBinding } from "../../src/credential-gateway-v1/handles.ts";
+import type {
+  BackendCapabilities,
+  ExternalRuntimeAuthenticationCapabilityV1,
+} from "../../src/credential-gateway-v1/connection.ts";
 
-// Inert consumers of the exported declaration boundary. These declarations do
-// not implement broker admission, provider observation or external key custody.
+// @ts-expect-error Backend capability data remains internal to its connection owner.
+import type { ExternalRuntimeAuthenticationCapabilityV1 as PublicRuntimeCapability } from "@openclaw-enterprise/occ";
+// @ts-expect-error Generic authentication handles remain internal to their authority owner.
+import type { CoreAuthenticationBinding as PublicAuthenticationBinding } from "@openclaw-enterprise/occ";
+
+// Inert public consumer and internal owner fixtures. These declarations do not
+// implement broker admission, provider observation or external key custody.
 declare const owner: RuntimeAuthenticationOwnerV1;
 declare const binding: ComputeAgentBinding;
 declare const revision: Readonly<AgentRevision>;
@@ -69,7 +78,11 @@ async function consume(): Promise<void> {
     secretEnvironment: [],
     ...(prepared === undefined ? {} : { runtimeAuthentication: prepared }),
   };
-  const planned = await owner.prepareAttachment({ projection, receiver, bounds });
+  const planned: RuntimeAuthenticationAttachmentPreparationV1 = await owner.prepareAttachment({
+    projection,
+    receiver,
+    bounds,
+  });
   if (planned.kind === "create") {
     const acknowledgment = await planned.submit({ bounds, create });
     if (acknowledgment.kind === "unknown") {
@@ -103,12 +116,15 @@ async function consume(): Promise<void> {
     observation.usableUntil;
   }
   // The cleanup ports require the retained attempt or revision, not a new grant.
-  await owner.withdraw({ attachment, bounds });
+  const withdrawal: RuntimeAuthenticationWithdrawalV1 = await owner.withdraw({
+    attachment,
+    bounds,
+  });
   await owner.closeRevision({ revision, bounds });
   // Namespace cleanup addresses retained obligations even after catalog deletion.
   await owner.closeNamespace({ namespace, bounds });
   const projectedSandbox: SandboxHarnessContext = { ...sandbox, runtimeAuthentication: request };
-  void [configured, context, projectedSandbox];
+  void [configured, context, projectedSandbox, withdrawal];
 }
 void consume;
 
