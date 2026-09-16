@@ -1150,6 +1150,24 @@ async function prepareFile({ lane, file, statePath }) {
   const resourceIds = [];
 
   if (
+    relativeFile === "tests/conformance/credential-gateway-metadata.test.mjs" ||
+    relativeFile === "tests/integration/credential-gateway-metadata-http.test.mjs"
+  ) {
+    await execFile(
+      process.execPath,
+      [
+        join(repositoryRoot, "node_modules/typescript/bin/tsc"),
+        "--project",
+        "apps/credential-gateway/tsconfig.metadata.json",
+        "--noEmit",
+        "--pretty",
+        "false",
+      ],
+      { cwd: repositoryRoot },
+    );
+  }
+
+  if (
     name === "checks-baseline" &&
     (relativeFile === "tests/conformance/credential-gateway-metadata-data.test.mjs" ||
       relativeFile === "tests/conformance/credential-gateway-protocol-data.test.mjs")

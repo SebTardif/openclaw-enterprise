@@ -253,6 +253,12 @@
         },
         {
           "path": "tests/integration/protected-github-token-store.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-gateway-metadata.test.mjs"
+        },
+        {
+          "path": "tests/integration/credential-gateway-metadata-http.test.mjs"
         }
       ]
     },

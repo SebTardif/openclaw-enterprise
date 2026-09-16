@@ -167,6 +167,7 @@
                   "testing/ci",
                   "testing/credential-gateway-http",
                   "testing/credential-gateway-protocol-data",
+                  "testing/credential-gateway-metadata",
                   "testing/credential-schema-registry"
                 ]
               },

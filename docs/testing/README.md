@@ -60,9 +60,11 @@ and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 ## Credential gateway components
 
 Use [HTTP head checks](credential-gateway-http.md) for native request inspection
-and [schema runtime verification](credential-schema-registry.md) for bounded
-canonical JSON. See [protocol DATA checks](credential-gateway-protocol-data.md)
-for fetch and pull-request construction and push-result input types. The [CI guide](ci.md) describes their compiler and suite selection;
+and [repository metadata checks](credential-gateway-metadata.md) for bounded
+request and response projection. Use [schema runtime verification](credential-schema-registry.md)
+for bounded canonical JSON. See [protocol DATA checks](credential-gateway-protocol-data.md)
+for fetch and pull-request construction and push-result input types.
+The [CI guide](ci.md) describes their compiler and suite selection;
 these component checks do not establish the broader gateway integration.
 
 ## Requirements and credentials
