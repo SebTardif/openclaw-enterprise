@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGitHubAppTokenIssuerV1 } from "../../packages/occ/src/index.ts";
+import { createGitHubAppTokenIssuerV1 } from "../../apps/controller/src/providers/token/github/index.ts";
 import { call, keyIdentity, providerFixture } from "../helpers/github-app-provider.mjs";
 
 for (const cancellation of ["abort", "deadline"]) {
