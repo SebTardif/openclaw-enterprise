@@ -11,19 +11,22 @@ import {
   createGitHubAppTokenRevokerV1,
 } from "@openclaw-enterprise/occ";
 import type {
-  AdmittedCredentialSelection,
   Bounds,
   GitHubAppMaterialV1,
   GitHubAppTokenCustodyV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
   GitHubRepositoryWriteSelectionV1,
-  RetainedCredential,
   PlatformReadView,
   PlatformStateStore,
   PlatformUnitOfWork,
-  ProtectedCredentialSource,
 } from "@openclaw-enterprise/occ";
+
+import type {
+  AdmittedCredentialSelection,
+  RetainedCredential,
+  ProtectedCredentialSource,
+} from "../../src/credential-gateway-v1/handles.ts";
 
 import type {
   ChargedIssuedSlot,

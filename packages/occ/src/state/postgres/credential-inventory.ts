@@ -1,6 +1,6 @@
 import { parseCredentialStorageV1 } from "@openclaw-enterprise/contracts";
 import type { OutstandingTokenRecordV1 } from "@openclaw-enterprise/contracts";
-import type { PostgresQueryClient } from "../state/postgres-work-queue.ts";
+import type { PostgresQueryClient } from "../postgres-work-queue.ts";
 import type {
   CredentialInventoryTransactionV1,
   InventoryMutationV1,
@@ -8,13 +8,13 @@ import type {
   InventoryScopeV1,
   ProviderMintClaimV1,
   RetainedRevocationClaimV1,
-} from "./ports.ts";
+} from "../../credential-inventory-v1/ports.ts";
 import {
   canonicalInventoryValueV1,
   inventoryIntentDigestV1,
   isLiveInventoryRecordV1,
   INVENTORY_LIMITS_V1,
-} from "./transactions.ts";
+} from "../../credential-inventory-v1/transactions.ts";
 /** Metadata operation lifetime and permanent failure latch. The original owner
  * drains admitted repository calls and checks this phase before outer COMMIT. */
 export interface PostgresCredentialInventoryPhaseV1 {

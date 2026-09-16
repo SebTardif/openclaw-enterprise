@@ -1,13 +1,19 @@
 # Credential gateway v1 contracts
 
-OpenClaw Control Plane (OCC) exposes its curated public credential-gateway types
-and GitHub App supplier constructors through `@openclaw-enterprise/occ`. Import
-credential inventory data from `@openclaw-enterprise/contracts`. Issuance
-coordination, transaction lifetimes and inventory transaction ports remain
-internal to OCC; they are not exported from the package entry point. These
-declarations describe the current source interfaces and their supplier boundaries.
-Gateway composition, installed operation and live-provider qualification remain
-pending; importing a type does not admit Work or grant credential access.
+Import the public credential schema types and GitHub App supplier constructors
+from `@openclaw-enterprise/occ`. Import credential inventory data from
+`@openclaw-enterprise/contracts`. OpenClaw Control Plane (OCC) keeps generic
+handles, connection descriptors, operation data, issuance coordination and transaction ports internal
+to their owners. `RepositoryTransactionLifetime` and
+`CredentialInventoryTransactionV1` remain internal; neither is exported from the
+package entry point. Importing a type does not admit Work or grant credential access.
+
+The public schema surface is `DefinitionRef`, `PrimitiveRef`, `SchemaRef`,
+`RetainedSchemaValue`, `SchemaRole`, `SchemaBinding`, `SchemaRegistration`,
+`RegisteredSchemaCodec` and `SchemaRegistrationOwner`, with `Bounds` and
+`ValidatedSchemaValue`. The public registry constructor and immutable primitive
+catalog provide the fixed schema component described below. Gateway composition,
+installed operation and live-provider qualification remain pending.
 
 ## Supplier boundaries
 
@@ -27,7 +33,7 @@ settlement, retained material, commit evidence and charged lease capacity. OCC
 owns this coordination; package consumers use the public supplier interfaces
 rather than orchestrating these internal phases.
 
-The inventory metadata module's existing
+The PostgreSQL State owner's existing
 `transactCredentialInventoryMetadataV1(store, scope, work, { keys?, commitRef? })`
 callable borrows the original State transaction. It is an internal composition
 boundary, not an additional package-root constructor. Every inventory mutation,
@@ -72,6 +78,23 @@ Retain original bytes, digests, accepted legacy implementation and custody
 obligations. Existing readback and cleanup require the original approved version
 and owner; an upgrade must not abandon those obligations or create new cleanup
 authority.
+
+## HTTP request inspection
+
+The internal `inspectRequestHeadV1` implementation inspects native HTTP/1.1
+request heads for repository metadata, fetch discovery, fetch, push discovery,
+push and PR creation. It returns frozen, untrusted route and framing candidates
+without reading a body or retaining Authorization text. Parsing does not
+authenticate a caller or authorize an operation.
+
+The server must use the strict native parser with a 32 KiB header limit and
+preserve every raw header pair for the inspector's 64-pair limit. GET requests
+have zero body limits; fetch, push and PR JSON candidates have 1 MiB, 256 MiB and
+64 KiB wire/decoded limits respectively. The inspector checks declared lengths;
+body consumption, decoded counters, authentication, authority deadlines and
+upstream dispatch remain the consuming server's responsibility. See the
+[HTTP component guide](../testing/credential-gateway-http.md) for server settings,
+conformance procedures and remaining composition requirements.
 
 ## Original binding and root Work
 
@@ -118,8 +141,14 @@ Metadata and fetch under read-write access use that grant's write-capable profil
 Operation kind never selects another profile. Each operation still requires
 current Work/assignment/IAM authority, immutable facts and its own finite,
 single-use dispatch permit. Preparation cannot borrow execution material.
-`GitHubRepositoryWriteSelectionV1` is an additive declaration; the existing
-`GitHubAppSelectionV1` and read issuer constructor remain read-only.
+`GitHubRepositoryWriteSelectionV1` is a public, provider-owned declaration. It
+shares the read selection's key, numeric installation ID and single-repository
+tuple while requiring exactly `metadata:read`, `contents:write` and
+`pull_requests:write`. The existing `GitHubAppSelectionV1` and read issuer
+constructor remain read-only. The public `createGitHubAppWriteTokenIssuerV1`
+constructor accepts `GitHubAppWriteTokenIssuerOptionsV1` and returns `TokenIssuerV1`;
+see the [token issuer reference](github-app-token-issuer.md) for its protocol
+behavior, custody requirements and integration limits.
 
 Normally retain one current token. Allow at most one same-profile replacement,
 one in-flight mint claim and two aggregate outstanding slots per lease across
@@ -145,10 +174,11 @@ Cleanup uses the original retained handle and needs no App signing key. Unknown
 issuance, dispatch and cleanup outcomes retain their obligations without automatic
 replay.
 
-The dedicated compile checks cover public supplier imports and internal contract
-correspondence, including read/write separation, safe-reference return types and
-complete inventory ports.
-They establish source compatibility only. See the [testing guide](../testing/README.md)
+The five compiler fixtures cover schema registration data, opaque handle
+separation, internal connection and operation contracts, public supplier
+correspondence, complete inventory ports, issuance retention and root export
+privacy. They establish source compatibility only. See the
+[testing guide](../testing/README.md)
 for validation procedures and the [Provider reference](providers.md) for platform
 composition requirements. Compiler success supplies no composed, installed,
 provider or release evidence.

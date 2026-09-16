@@ -19,8 +19,16 @@ pnpm test:integration
 `check:workspace` checks the active workspace.
 The test scripts above run the same canonical workspace verification before
 their selected Node.js tests. `openapi:check` compares generated routes and both
-API artifacts with the checked-in versions. `typecheck` and `build` currently
-invoke the same TypeScript build command.
+API artifacts with the checked-in versions. `build` compiles the workspace;
+`typecheck` then checks the four credential gateway compiler fixtures, including
+their expected rejections and public package exports, followed by the isolated
+[HTTP component project](credential-gateway-http.md). The required CI baseline
+runs this same `pnpm typecheck` command. To run only these projects locally:
+
+```sh
+pnpm check:credential-gateway-types
+pnpm check:credential-gateway-http-types
+```
 
 The [conformance tests](../../tests/conformance) cover domain rules and selected
 Driver contracts. Kubernetes conformance tests use fixtures and rendered
@@ -77,8 +85,9 @@ These tests require neither real GitHub credentials nor a cluster. Missing
 OpenSSL or a TLS listener fails explicitly. They do not establish durable custody,
 restart cleanup, real App-key compatibility or an admitted Agent read. The
 [issuer integration requirements](../reference/github-app-token-issuer.md#integration-and-verification)
-remain outstanding. No live opt-in fixture is supplied until its actual startup,
-protected credential owner and explicit test installation/repository are available.
+remain outstanding. Run the separate [live App-key case](github-app.md) with an
+authorized test installation and private repository to check GitHub compatibility.
+Its test-process custody does not replace the production workflow requirements.
 
 ### Protected GitHub material
 

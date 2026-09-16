@@ -10,17 +10,20 @@ import type {
 import type { JSONSchema } from "@openclaw-enterprise/contracts";
 import type {
   Bounds,
-  LocalHandle,
+  ValidatedSchemaValue,
   DefinitionRef,
   PrimitiveRef,
   SchemaRef,
   RetainedSchemaValue,
-  JsonValue,
   SchemaRole,
   SchemaBinding,
   SchemaRegistration,
   RegisteredSchemaCodec,
   SchemaRegistrationOwner,
+} from "@openclaw-enterprise/occ";
+import type { JsonValue } from "../../src/credential-gateway-v1/schema.ts";
+import type {
+  LocalHandle,
   AuthenticatedAccess,
   RetainedCredential,
   CoreAuthenticationBinding,
@@ -33,7 +36,6 @@ import type {
   ReceiptFinalization,
   BoundCredentialOperation,
   ValidatedAdapterOperation,
-  ValidatedSchemaValue,
   AdmissionCondition,
   AdmittedRootContext,
   AuthorizedClosure,
@@ -41,7 +43,13 @@ import type {
   AdmittedCredentialSelection,
   ProtectedCredentialSource,
   RegisteredCredentialMechanism,
-} from "@openclaw-enterprise/occ";
+} from "../../src/credential-gateway-v1/handles.ts";
+// @ts-expect-error Generic handles remain internal to their authority owners.
+import type { LocalHandle as PublicLocalHandle } from "@openclaw-enterprise/occ";
+// @ts-expect-error Authentication handles are not package-root contracts.
+import type { AuthenticatedAccess as PublicAuthenticatedAccess } from "@openclaw-enterprise/occ";
+// @ts-expect-error JSON implementation data is not part of the registry signature surface.
+import type { JsonValue as PublicJsonValue } from "@openclaw-enterprise/occ";
 // @ts-expect-error The owner brand is private and has no public runtime export.
 import type { owner } from "@openclaw-enterprise/occ";
 
@@ -55,7 +63,7 @@ const definition: DefinitionRef = {
   interpreter: {
     name: "oce-closed-schema-interpreter",
     version: 1,
-    digest: "illustrative-primitive-digest",
+    digest: "illustrative-interpreter-digest",
   },
 };
 const schema: SchemaRef = {
@@ -150,15 +158,15 @@ const missingRole: SchemaBinding = { definition, schema };
 const missingSchema: SchemaBinding = { definition, role: "configuration" };
 // @ts-expect-error Registration uses the existing object-shaped JSONSchema contract.
 const primitiveSchema: SchemaRegistration = { ...registration, jsonSchema: "object" };
-const undefinedCallback: SchemaRegistration = {
+const executableRegistration: SchemaRegistration = {
   ...registration,
-  // @ts-expect-error Executable callbacks are not registration data.
-  validateAndCanonicalize: () => undefined,
+  // @ts-expect-error Even a JSON-returning callback is not registration data.
+  validateAndCanonicalize: (value: JsonValue): JsonValue => value,
 };
-const functionCallback: SchemaRegistration = {
+const executableCanonicalization: SchemaRegistration = {
   ...registration,
-  // @ts-expect-error Executable callbacks are not registration data.
-  validateAndCanonicalize: () => () => null,
+  // @ts-expect-error Canonicalization names an installed primitive, never a callback.
+  canonicalization: (value: JsonValue): JsonValue => value,
 };
 // @ts-expect-error Undefined is not an ordinary JSON leaf.
 const undefinedCandidate: JsonValue = undefined;
@@ -195,7 +203,7 @@ function readonlyFields(value: RetainedSchemaValue): void {
 void readonlyFields;
 
 // Symbol-only objects can satisfy structural JSON types; owners enforce runtime closure.
-// All fixed public handles resist ordinary empty-object/string assignment.
+// All fixed handles resist ordinary empty-object/string assignment.
 type Handles = {
   AuthenticatedAccess: AuthenticatedAccess;
   RetainedCredential: RetainedCredential;
@@ -226,6 +234,15 @@ type RequiredDefinitionFields = AssertNever<
   RequiredFields<
     DefinitionRef,
     "backendId" | "recipeId" | "recipeVersion" | "recipeDigest" | "contractVersion" | "interpreter"
+  >
+>;
+type RequiredPrimitiveFields = AssertNever<
+  RequiredFields<PrimitiveRef, "name" | "version" | "digest">
+>;
+type RequiredRegistrationFields = AssertNever<
+  RequiredFields<
+    SchemaRegistration,
+    "binding" | "jsonSchema" | "maxBytes" | "maxDepth" | "canonicalization"
   >
 >;
 type RequiredSchemaFields = AssertNever<
@@ -298,20 +315,32 @@ void registryConsumer;
 
 // @ts-expect-error Installed primitive admission is required even for an empty registry.
 createCredentialSchemaRegistryV1([]);
+
+// Exact recipe and primitive identities are data, never package or executable inputs.
+const legacyPackageIdentity = {
+  backendId: definition.backendId,
+  packageName: "example-credential-package",
+  packageVersion: "1.0.0",
+  packageIntegrity: "illustrative-package-integrity",
+  contractVersion: definition.contractVersion,
+};
+// @ts-expect-error Package identity cannot substitute for the exact recipe and interpreter.
+const packageDefinition: DefinitionRef = legacyPackageIdentity;
+// @ts-expect-error Recipe versions use numbers.
+const wrongRecipeVersion: DefinitionRef = { ...definition, recipeVersion: "1" };
 // @ts-expect-error Primitive versions use numbers.
 const wrongPrimitive: PrimitiveRef = { name: "example", version: "1", digest: "digest" };
 // @ts-expect-error Primitive digest is required.
 const missingPrimitiveDigest: PrimitiveRef = { name: "example", version: 1 };
-// @ts-expect-error Canonicalization data is required.
-const missingCanonicalization: SchemaRegistration = {
-  binding,
-  jsonSchema,
-  maxBytes: 1,
-  maxDepth: 1,
-};
+const { interpreter: omittedInterpreter, ...withoutInterpreter } = definition;
+// @ts-expect-error Definition identity requires the exact installed interpreter.
+const missingInterpreter: DefinitionRef = withoutInterpreter;
+const { canonicalization: omittedCanonicalization, ...withoutCanonicalization } = registration;
+// @ts-expect-error Registration requires the exact installed canonicalization primitive.
+const missingCanonicalization: SchemaRegistration = withoutCanonicalization;
 function readonlyPrimitive(): void {
   // @ts-expect-error Exact interpreter identity is readonly.
-  definition.interpreter = CREDENTIAL_SCHEMA_PRIMITIVES_V1.interpreter;
+  definition.interpreter = registration.canonicalization;
   // @ts-expect-error Primitive digests are readonly.
   definition.interpreter.digest = "changed";
   // @ts-expect-error Registration canonicalization is readonly.

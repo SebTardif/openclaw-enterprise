@@ -4,7 +4,7 @@ import test from "node:test";
 import pg from "pg";
 import { PostgresPlatformState } from "../../packages/occ/src/state/postgres-state.ts";
 import { PostgresCommitOutcomeUnknownError } from "../../packages/occ/src/state/postgres-state.ts";
-import { transactCredentialInventoryMetadataV1 as storage } from "../../packages/occ/src/credential-inventory-v1/owner.ts";
+import { transactCredentialInventoryMetadataV1 as storage } from "../../packages/occ/src/state/postgres/credential-inventory-owner.ts";
 import {
   INVENTORY_LIMITS_V1,
   inventoryIntentDigestV1,

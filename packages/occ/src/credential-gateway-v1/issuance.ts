@@ -9,8 +9,10 @@ import type {
   TokenRevokerV1,
 } from "@openclaw-enterprise/contracts";
 import type { CredentialInventoryTransactionV1 } from "../credential-inventory-v1/ports.ts";
-import type { GitHubAppMaterialV1 } from "../github-app-provider-v1/material.ts";
-import type { GitHubAppTokenCustodyV1 } from "../github-app-provider-v1/provider.ts";
+import type {
+  GitHubAppMaterialV1,
+  GitHubAppTokenCustodyV1,
+} from "../github-app-provider-v1/types.ts";
 import type { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import type {
   PlatformReadView,

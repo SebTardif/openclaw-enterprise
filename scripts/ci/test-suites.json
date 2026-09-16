@@ -705,6 +705,26 @@
         }
       ]
     },
+    "github-app": {
+      "requiredEnv": [
+        "OCC_TEST_GITHUB_APP_CLIENT_ID",
+        "OCC_TEST_GITHUB_APP_PRIVATE_KEY_PATH",
+        "OCC_TEST_GITHUB_APP_INSTALLATION_ID",
+        "OCC_TEST_GITHUB_APP_REPOSITORY_ID",
+        "OCC_TEST_GITHUB_APP_REPOSITORY"
+      ],
+      "env": {
+        "OCC_TEST_GITHUB_APP_REAL": "1"
+      },
+      "files": [
+        {
+          "path": "tests/integration/github-app-token-issuer-real.test.mjs",
+          "expectedTests": [
+            "real GitHub App issuer mints one private repository read token and revokes its exact handle without the App key"
+          ]
+        }
+      ]
+    },
     "provider-account": {
       "requiredEnv": [
         "OCC_TEST_KUBERNETES_KUBECONFIG",

@@ -44,7 +44,7 @@ import type {
 import type { RepositoryTransactionLifetime } from "../../src/ports/transaction.ts";
 import type { CredentialInventoryTransactionV1 } from "../../src/credential-inventory-v1/ports.ts";
 
-import { transactCredentialInventoryMetadataV1 } from "../../src/credential-inventory-v1/owner.ts";
+import { transactCredentialInventoryMetadataV1 } from "../../src/state/postgres/credential-inventory-owner.ts";
 
 // @ts-expect-error Transaction lifetimes belong to OCC internals, not its public entry point.
 import type { RepositoryTransactionLifetime as PublicTransactionLifetime } from "@openclaw-enterprise/occ";
