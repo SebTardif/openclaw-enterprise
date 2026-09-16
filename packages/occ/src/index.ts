@@ -2792,3 +2792,13 @@ export {
   type GitHubMetadataOperationV1,
   type GitHubMetadataRepositoryV1,
 } from "./credential-gateway-v1/github-metadata.ts";
+
+export {
+  createGitHubFetchOperationV1,
+  createGitHubPrCreateOperationV1,
+} from "./credential-gateway-v1/github-protocol-data.ts";
+export type {
+  GitHubFetchOperationV1,
+  GitHubPrCreateOperationV1,
+  GitHubPushResultInputV1,
+} from "./credential-gateway-v1/github-protocol-data.ts";

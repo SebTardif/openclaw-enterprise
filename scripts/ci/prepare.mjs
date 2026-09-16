@@ -1151,7 +1151,8 @@ async function prepareFile({ lane, file, statePath }) {
 
   if (
     name === "checks-baseline" &&
-    relativeFile === "tests/conformance/credential-gateway-metadata-data.test.mjs"
+    (relativeFile === "tests/conformance/credential-gateway-metadata-data.test.mjs" ||
+      relativeFile === "tests/conformance/credential-gateway-protocol-data.test.mjs")
   ) {
     await execFile(process.execPath, [
       join(repositoryRoot, "node_modules/typescript/bin/tsc"),
