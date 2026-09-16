@@ -6,8 +6,8 @@ import { createServer } from "node:https";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createGitHubAppMaterialV1 } from "../../apps/controller/src/providers/token/github/index.ts";
 import {
+  createGitHubAppMaterialV1,
   createGitHubAppTokenIssuerV1,
   createGitHubAppWriteTokenIssuerV1,
 } from "../../apps/controller/src/providers/token/github/index.ts";

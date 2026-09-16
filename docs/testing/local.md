@@ -20,12 +20,14 @@ pnpm test:integration
 The test scripts above run the same canonical workspace verification before
 their selected Node.js tests. `openapi:check` compares generated routes and both
 API artifacts with the checked-in versions. `build` compiles the workspace;
-`typecheck` then also checks the credential gateway compiler fixtures, including
-their expected rejections and public package exports. The required CI baseline
+`typecheck` then also checks the OCC credential gateway and controller token
+provider compiler fixtures, including their expected rejections and owning
+module exports. The required CI baseline
 runs this same `pnpm typecheck` command. To run only these fixtures locally:
 
 ```sh
 pnpm exec tsc -p packages/occ/tsconfig.credential-gateway-v1.json --pretty false
+pnpm exec tsc -p apps/controller/tsconfig.token-provider.json --pretty false
 ```
 
 The [conformance tests](../../tests/conformance) cover domain rules and selected

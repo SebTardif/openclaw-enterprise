@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc --build tsconfig.json --pretty false",
-    "typecheck": "tsc --build tsconfig.json --pretty false && tsc -p packages/occ/tsconfig.credential-gateway-v1.json --pretty false",
+    "typecheck": "tsc --build tsconfig.json --pretty false && tsc -p packages/occ/tsconfig.credential-gateway-v1.json --pretty false && tsc -p apps/controller/tsconfig.token-provider.json --pretty false",
     "format:fix": "prettier --write \"{apps,packages,scripts,tests}/**/*.{ts,mjs,cjs,json,html,css}\" \"*.{json,yaml,yml,md}\" \"docs/**/*.md\" \"!docs/reference/api.md\" \".github/**/*.yml\"",
     "format:check": "prettier --check \"{apps,packages,scripts,tests}/**/*.{ts,mjs,cjs,json,html,css}\" \"*.{json,yaml,yml,md}\" \"docs/**/*.md\" \"!docs/reference/api.md\" \".github/**/*.yml\"",
     "hooks:install": "node scripts/install-git-hooks.mjs",
