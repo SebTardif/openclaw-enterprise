@@ -50,12 +50,12 @@ case and skip counts. Existing suite discovery and CI selection remain available
 Each suite page owns its setup, environment variables, model defaults, cleanup,
 and coverage limits. See [GitHub Actions](ci.md) for CI coverage.
 
-| Need                           | Suite                                                                                                          |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Local source, API, and browser | [Local checks](local.md#local-checks) and [console browser checks](local.md#console-browser-checks)            |
-| Persistence and packaging      | [PostgreSQL](postgresql.md), [Images and Helm](images.md), and [Docker Compose](docker.md)                     |
-| Real runtime or host execution | [SSH](ssh.md), [Kubernetes](kubernetes.md), [Production TUI](production-tui.md), and [OpenShell](openshell.md) |
-| External provider integrations | [Slack](slack.md), [ChatGPT service accounts](service-accounts.md), and [Agent plugins](plugins.md)            |
+| Need                           | Suite                                                                                                                                   |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Local source, API, and browser | [Local checks](local.md#local-checks) and [console browser checks](local.md#console-browser-checks)                                     |
+| Persistence and packaging      | [PostgreSQL](postgresql.md), [Images and Helm](images.md), and [Docker Compose](docker.md)                                              |
+| Real runtime or host execution | [SSH](ssh.md), [Kubernetes](kubernetes.md), [Production TUI](production-tui.md), and [OpenShell](openshell.md)                          |
+| External provider integrations | [GitHub App tokens](github-app.md), [Slack](slack.md), [ChatGPT service accounts](service-accounts.md), and [Agent plugins](plugins.md) |
 
 ## Requirements and credentials
 

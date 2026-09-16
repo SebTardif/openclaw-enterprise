@@ -140,6 +140,21 @@ depends on it. A changed runtime selection applies only to a later authorized
 deployment. Current authorization, provider authority, and secret access remain
 subject to immediate revocation.
 
+## Token issuers
+
+A **TokenIssuer** is the bounded credential-issuance primitive. A Provider supplies
+authenticated clients to related Drivers; a TokenIssuer mints credentials into
+protected custody. Trusted construction fixes the external identity, resource
+scope, permissions, material owner, and custody owner. Calls carry the original
+authorized attempt and finite bounds without selecting new scope or exposing
+credential bytes to Agents. A separate TokenRevoker authenticates an original
+opaque custody handle for exact-token cleanup without requiring the signing key.
+
+The [GitHub App implementation](../reference/github-app-token-issuer.md) implements
+these contracts for one repository. Its production startup and regular Agent
+repository-read composition remain pending; the contract alone does not establish
+an integrated platform capability.
+
 ## Repository layout
 
 Capability directories contain Driver implementations; shared provider clients
