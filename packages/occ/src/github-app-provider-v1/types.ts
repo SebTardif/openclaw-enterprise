@@ -25,6 +25,18 @@ export interface GitHubAppSelectionV1 {
   readonly repositories: readonly [{ readonly id: number; readonly fullName: string }];
   readonly permissions: Readonly<{ readonly metadata: "read"; readonly contents?: "read" }>;
 }
+/** Exact write profile; existing read-only issuer selections remain unchanged. */
+export interface GitHubRepositoryWriteSelectionV1 {
+  readonly key: GitHubAppSelectionV1["key"];
+  readonly installationId: GitHubAppSelectionV1["installationId"];
+  readonly repositories: GitHubAppSelectionV1["repositories"];
+  readonly permissions: Readonly<{
+    metadata: "read";
+    contents: "write";
+    pull_requests: "write";
+  }>;
+}
+
 export interface GitHubAppTokenObservationV1 {
   readonly providerAttemptRef: string;
   readonly expiresAt: string | undefined;

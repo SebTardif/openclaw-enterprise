@@ -5,7 +5,6 @@ import type {
   RepositoryIdentity,
   GitHubRepositorySelection,
   GitHubRepositoryAccessV1,
-  GitHubRepositoryWriteSelectionV1,
   RefUpdate,
   CreatePullRequestInput,
   GitHubOperation,
@@ -19,13 +18,26 @@ import type {
   GitHubBodyDigest,
   GitHubPrefixDigest,
   GitHubCreationDigest,
+} from "../../src/credential-gateway-v1/github-operations.ts";
+import type {
   GitHubAppSelectionV1,
+  GitHubRepositoryWriteSelectionV1,
+} from "@openclaw-enterprise/occ";
+import type {
   CredentialAccessGrant,
   CredentialProfileRef,
-} from "@openclaw-enterprise/occ";
+} from "../../src/credential-gateway-v1/connection.ts";
 
-// Inert consumers of actual public roots. Inputs carry nominal data; this fixture
-// never mints authority, computes digests, admits grants or calls GitHub.
+// @ts-expect-error Generic operation data remains internal to the adapter owner.
+import type { GitHubOperation as PublicGitHubOperation } from "@openclaw-enterprise/occ";
+// @ts-expect-error Nominal operation identities are internal, not public authority.
+import type { GitHubRequestId as PublicGitHubRequestId } from "@openclaw-enterprise/occ";
+// @ts-expect-error Write selection has one provider owner and no gateway reexport.
+import type { GitHubRepositoryWriteSelectionV1 as GatewayWriteSelection } from "../../src/credential-gateway-v1/github-operations.ts";
+
+// Inert consumers of provider roots and internal operation contracts. Inputs carry
+// nominal data; this fixture never mints authority, computes digests, admits grants
+// or calls GitHub.
 export function consumeGitHubContract(
   ids: {
     readonly accessId: GitHubAccessId;
@@ -507,7 +519,7 @@ export function consumeGitHubContract(
   // @ts-expect-error Nested access arrays are immutable.
   omitted.repositories.push({ repository: selection });
   // @ts-expect-error Nested access entries are immutable.
-  writeAccess.repositories[0]?.repository.canonicalPathSegments.push("other");
+  writeAccess.repositories[0]?.repository.repository.canonicalPathSegments.push("other");
   // @ts-expect-error Selection scalar fields are immutable.
   selection.repositoryId = "404";
   // @ts-expect-error Write permission values are immutable.
