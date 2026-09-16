@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "paths": {
+      "@openclaw-enterprise/occ": ["../../packages/occ/src/index.ts"]
+    }
+  },
+  "include": ["src/github/metadata.ts", "src/github/metadata-http.ts", "src/http/request.ts"]
+}

@@ -166,6 +166,7 @@
                   "testing/autoreview",
                   "testing/ci",
                   "testing/credential-gateway-http",
+                  "testing/credential-gateway-metadata",
                   "testing/credential-schema-registry"
                 ]
               },
