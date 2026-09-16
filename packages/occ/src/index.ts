@@ -2740,29 +2740,6 @@ export class OpenClawController {
 }
 
 export {
-  createGitHubAppMaterialV1,
-  GitHubAppTokenIssuerErrorV1,
-  assertGitHubAppBoundsV1,
-  snapshotGitHubAppKeyIdentityV1,
-} from "./github-app-provider-v1/material.ts";
-export {
-  createGitHubAppTokenIssuerV1,
-  createGitHubAppTokenRevokerV1,
-} from "./github-app-provider-v1/provider.ts";
-export type {
-  GitHubAppEndpointV1,
-  GitHubAppKeyIdentityV1,
-  GitHubAppMaterialV1,
-  GitHubAppReturnedPermissionsV1,
-  GitHubAppSelectionV1,
-  GitHubAppTokenCustodyV1,
-  GitHubAppTokenIssuerOptionsV1,
-  GitHubAppTokenObservationV1,
-  GitHubAppTokenRevokerOptionsV1,
-  GitHubRepositoryWriteSelectionV1,
-} from "./github-app-provider-v1/types.ts";
-
-export {
   ProtectedGitHubCryptoV1,
   ProtectedGitHubCustodyErrorV1,
 } from "./credential-custody-v1/protected-github-crypto.ts";

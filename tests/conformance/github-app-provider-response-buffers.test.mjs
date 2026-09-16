@@ -60,7 +60,8 @@ for (const mode of ["success", "abort", "overflow"]) {
 for (const mode of ["confirmed", "invalid", "oversize", "lost-response"]) {
   test(`revocation ${mode} wipes provider copies and preserves custody bytes`, async (t) => {
     const f = await providerFixture(t);
-    const { createGitHubAppTokenRevokerV1 } = await import("../../packages/occ/src/index.ts");
+    const { createGitHubAppTokenRevokerV1 } =
+      await import("../../apps/controller/src/providers/token/github/index.ts");
     let value = "synthetic_revocation_token";
     if (mode === "invalid") value += "\ninvalid";
     if (mode === "oversize") value = "x".repeat(16385);

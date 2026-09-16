@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "rootDir": "../.."
+  },
+  "include": ["type-tests/token/github-selection.ts", "type-tests/token/supplier-compatibility.ts"]
+}
