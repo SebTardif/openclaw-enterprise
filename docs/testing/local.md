@@ -77,8 +77,9 @@ These tests require neither real GitHub credentials nor a cluster. Missing
 OpenSSL or a TLS listener fails explicitly. They do not establish durable custody,
 restart cleanup, real App-key compatibility or an admitted Agent read. The
 [issuer integration requirements](../reference/github-app-token-issuer.md#integration-and-verification)
-remain outstanding. No live opt-in fixture is supplied until its actual startup,
-protected credential owner and explicit test installation/repository are available.
+remain outstanding. Run the separate [live App-key case](github-app.md) with an
+authorized test installation and private repository to check GitHub compatibility.
+Its test-process custody does not replace the production workflow requirements.
 
 ## Authentication and authorization coverage
 

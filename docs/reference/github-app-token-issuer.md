@@ -97,7 +97,9 @@ use. Partial startup acquisitions and late/unknown token effects must retain
 cleanup ownership through shutdown.
 
 The [protocol tests](../testing/local.md#github-app-token-issuer-protocol) verify
-local HTTPS/RSA behavior. They do not prove live GitHub compatibility, protected
-production custody or a regular Agent execution. A real App-key test and the
-positive Agent workflow, scope-denial and interrupted-read cleanup cases remain
-required before this delivery is complete.
+local HTTPS/RSA behavior. The opt-in [live App-key test](../testing/github-app.md)
+checks issuance for one private repository, live token scope and keyless
+revocation against GitHub. Its test-process custody does not prove protected
+production custody or regular Agent execution. Production delivery still requires
+the positive Agent workflow, scope-denial and interrupted-read cleanup cases
+through the actual startup and repository-read caller.
