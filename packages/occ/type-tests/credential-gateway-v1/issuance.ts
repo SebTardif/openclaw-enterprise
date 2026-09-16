@@ -1,22 +1,11 @@
 import type {
-  EphemeralTokenHandleV1,
   TokenIssuerAttemptV1,
   TokenIssuerV1,
   TokenMintResultV1,
   TokenRevokerV1,
 } from "@openclaw-enterprise/contracts";
-import {
-  createGitHubAppTokenIssuerV1,
-  createGitHubAppWriteTokenIssuerV1,
-  createGitHubAppTokenRevokerV1,
-} from "@openclaw-enterprise/occ";
 import type {
   Bounds,
-  GitHubAppMaterialV1,
-  GitHubAppTokenCustodyV1,
-  GitHubAppTokenIssuerOptionsV1,
-  GitHubAppTokenRevokerOptionsV1,
-  GitHubRepositoryWriteSelectionV1,
   PlatformReadView,
   PlatformStateStore,
   PlatformUnitOfWork,
@@ -31,7 +20,6 @@ import type {
 import type {
   ChargedIssuedSlot,
   EncryptedMaterialStore,
-  GitHubIssuedMechanismDependencies,
   IssuedLeaseClaims,
   IssuedLeaseIdentity,
   IssuedMechanismFactory,
@@ -44,65 +32,24 @@ import type {
   KnownIssuanceCommit,
   OriginalIssuedSettlement,
   ProtectedSourceLease,
-  ProtectedSourceLoader,
   SealedMaterial,
 } from "../../src/credential-gateway-v1/issuance.ts";
 import type { CredentialInventoryTransactionV1 } from "../../src/credential-inventory-v1/ports.ts";
 import type { RepositoryTransactionLifetime } from "../../src/ports/transaction.ts";
 
-// @ts-expect-error Protected source loading belongs to OCC internals, not its public entry point.
+// @ts-expect-error GitHub source loading belongs to controller composition, not the OCC root.
 import type { ProtectedSourceLoader as PublicProtectedSourceLoader } from "@openclaw-enterprise/occ";
 
-// Public construction uses the actual read/write/revoker suppliers and actual
-// material/custody contracts. This fixture provides no authority or fake runtime.
-export function supplierConstructors(
-  read: GitHubAppTokenIssuerOptionsV1,
-  write: GitHubRepositoryWriteSelectionV1,
-  cleanup: GitHubAppTokenRevokerOptionsV1,
-): void {
-  const readIssuer: TokenIssuerV1 = createGitHubAppTokenIssuerV1(read);
-  const writeIssuer: TokenIssuerV1 = createGitHubAppWriteTokenIssuerV1({
-    ...read,
-    selection: write,
-  });
-  const keyless: TokenRevokerV1 = createGitHubAppTokenRevokerV1(cleanup);
-  // @ts-expect-error The read supplier still rejects write selection.
-  createGitHubAppTokenIssuerV1({ ...read, selection: write });
-  // @ts-expect-error A keyless cleanup-only supplier cannot mint.
-  keyless.mint;
-  void [readIssuer, writeIssuer, keyless];
-}
-
-export async function internalSourceAndSettlement(
-  loader: ProtectedSourceLoader,
-  source: ProtectedCredentialSource,
-  bounds: Bounds,
-  custody: GitHubAppTokenCustodyV1,
-  settlement: OriginalIssuedSettlement,
-  handle: EphemeralTokenHandleV1,
-): Promise<void> {
-  const lease: ProtectedSourceLease = await loader.load(source, bounds);
-  const actualMaterial: GitHubAppMaterialV1 = lease.material;
-  const dependencies: GitHubIssuedMechanismDependencies = { protectedSources: loader, custody };
+// OCC owns original result settlement and source release, without borrowing
+// signing material or custody callbacks from the concrete provider.
+export async function originalSettlement(settlement: OriginalIssuedSettlement): Promise<void> {
   if (settlement.kind === "mint") {
     await settlement.originalOwner.settleAttempt(settlement.originalResult);
-    await settlement.sourceLease.release();
+    const lease: ProtectedSourceLease = settlement.sourceLease;
+    await lease.release();
   } else {
     await settlement.originalOwner.settleAttempt(settlement.originalResult);
   }
-  await dependencies.custody.withRevocationToken(handle, bounds, async (bytes) => {
-    void bytes;
-  });
-  actualMaterial.close();
-  await lease.release();
-  // @ts-expect-error Actual material requires withJwt as well as close.
-  const incompleteMaterial: GitHubAppMaterialV1 = { close() {} };
-  const callbackMaterial: ProtectedSourceLease = {
-    // @ts-expect-error A bare callback is not actual protected material.
-    material: async () => {},
-    release: async () => {},
-  };
-  void [incompleteMaterial, callbackMaterial];
 }
 
 export async function realStateCorrespondence(
