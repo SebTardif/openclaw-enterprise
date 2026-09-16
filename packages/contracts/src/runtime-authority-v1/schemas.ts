@@ -9,6 +9,10 @@ export const RUNTIME_AUTHORITY_LIMITS_V1 = Object.freeze({
   maxImageEntries: 16,
   observationMaxAgeMs: 15_000,
   clockUncertaintyMaxMs: 2_000,
+  lookupMaxMs: 3_000,
+  activeRecheckMaxMs: 5_000,
+  preparationMaxMs: 900_000,
+  providerRequestMaxMs: 10_000,
 });
 
 const object = <P extends TProperties>(properties: P) =>

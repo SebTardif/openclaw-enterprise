@@ -5,7 +5,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./runtime-authority-v1": "./src/runtime-authority-v1.ts",
+    "./runtime-effects-v1": "./src/runtime-effects-v1.ts",
+    "./completed-state-v1": "./src/completed-state-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [

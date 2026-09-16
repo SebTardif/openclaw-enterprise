@@ -89,3 +89,26 @@ export function canonicalRuntimeAuthorityMutationV1(input: RuntimeMutationV1): s
   const { requestRef: _requestRef, ...payload } = parseRuntimeAuthorityV1("mutation", input);
   return canonicalJson(payload);
 }
+
+/** One original service-context identity, supplied by the selected trusted runtime owner.
+ * This nominal type prevents accidental DATA use; it does not authenticate a transport.
+ */
+declare const trustedRuntimeService: unique symbol;
+export interface RuntimeAuthorityTrustedContextV1 {
+  readonly [trustedRuntimeService]: true;
+  readonly schemaVersion: 1;
+}
+
+export interface RuntimeAuthorityCallBoundsV1 {
+  readonly requestRef: string;
+  readonly recipientRef: string;
+  /** Absolute canonical UTC cutoff. The owner also applies its trusted monotonic clock;
+   * authority lookup must finish within the remaining deadline and lookupMaxMs.
+   */
+  readonly deadline: string;
+  readonly signal: AbortSignal;
+}
+
+export interface AuthorityCallV1 extends RuntimeAuthorityCallBoundsV1 {
+  readonly context: RuntimeAuthorityTrustedContextV1;
+}
