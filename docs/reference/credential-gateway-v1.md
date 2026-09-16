@@ -1,8 +1,9 @@
 # Credential gateway v1 contracts
 
-Import the public credential schema types and GitHub App supplier constructors
-from `@openclaw-enterprise/occ`. Import credential inventory data from
-`@openclaw-enterprise/contracts`. OpenClaw Control Plane (OCC) keeps generic
+Import public credential schema types from `@openclaw-enterprise/occ` and
+credential inventory data from `@openclaw-enterprise/contracts`. The controller
+owns GitHub App constructors and selection types in its
+[GitHub token provider](../../apps/controller/src/providers/token/github/index.ts). OpenClaw Control Plane (OCC) keeps generic
 handles, connection descriptors, operation data, issuance coordination and transaction ports internal
 to their owners. `RepositoryTransactionLifetime` and
 `CredentialInventoryTransactionV1` remain internal; neither is exported from the
@@ -28,10 +29,13 @@ installed operation and live-provider qualification remain pending.
 | GitHub App material  | `createGitHubAppMaterialV1` returns `GitHubAppMaterialV1`; `withJwt` borrows bounded material and `close` stops material admission. The protected owner supplies the immutable key identity and currentness checks.                            |
 | GitHub App protocol  | `createGitHubAppTokenIssuerV1` returns `TokenIssuerV1`; `createGitHubAppTokenRevokerV1` returns cleanup-only `TokenRevokerV1`. Construction receives real owner-selected options, including dispatch currentness, clock, endpoint and custody. |
 
-Internal issuance contracts join protected-source loading, original-owner
-settlement, retained material, commit evidence and charged lease capacity. OCC
-owns this coordination; package consumers use the public supplier interfaces
-rather than orchestrating these internal phases.
+Internal issuance contracts join original-owner settlement, retained material,
+commit evidence and charged lease capacity. OCC retains the source-release
+obligation; the controller's GitHub owner retains concrete material loading and
+custody dependencies. The original issuer settles its exact result before the
+source lease is released. Neither source release nor settlement proves revocation
+or durable retention. These declarations do not install the source loader or
+compose a production issuance path.
 
 The PostgreSQL State owner's existing
 `transactCredentialInventoryMetadataV1(store, scope, work, { keys?, commitRef? })`
@@ -172,11 +176,11 @@ Metadata and fetch under read-write access use that grant's write-capable profil
 Operation kind never selects another profile. Each operation still requires
 current Work/assignment/IAM authority, immutable facts and its own finite,
 single-use dispatch permit. Preparation cannot borrow execution material.
-`GitHubRepositoryWriteSelectionV1` is a public, provider-owned declaration. It
+`GitHubRepositoryWriteSelectionV1` is exported by the controller token provider. It
 shares the read selection's key, numeric installation ID and single-repository
 tuple while requiring exactly `metadata:read`, `contents:write` and
 `pull_requests:write`. The existing `GitHubAppSelectionV1` and read issuer
-constructor remain read-only. The public `createGitHubAppWriteTokenIssuerV1`
+constructor remain read-only. The controller `createGitHubAppWriteTokenIssuerV1`
 constructor accepts `GitHubAppWriteTokenIssuerOptionsV1` and returns `TokenIssuerV1`;
 see the [token issuer reference](github-app-token-issuer.md) for its protocol
 behavior, custody requirements and integration limits.
@@ -205,11 +209,10 @@ Cleanup uses the original retained handle and needs no App signing key. Unknown
 issuance, dispatch and cleanup outcomes retain their obligations without automatic
 replay.
 
-The five compiler fixtures cover schema registration data, opaque handle
-separation, internal connection and operation contracts, public supplier
-correspondence, complete inventory ports, issuance retention and root export
-privacy. They establish source compatibility only. See the
-[testing guide](../testing/README.md)
+The compiler fixtures cover schema registration data, opaque handle separation,
+internal connection and operation contracts, controller provider correspondence,
+complete inventory ports, issuance retention and OCC export privacy. They establish source
+compatibility only. See the [testing guide](../testing/README.md)
 for validation procedures and the [Provider reference](providers.md) for platform
 composition requirements. Compiler success supplies no composed, installed,
 provider or release evidence.
