@@ -2,15 +2,14 @@ import type { TokenIssuerCallBoundsV1 } from "@openclaw-enterprise/contracts";
 import { createHash, createPrivateKey, type KeyObject } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import type { CoreV1Api, V1Namespace, V1Secret } from "@kubernetes/client-node";
+import { ProtectedGitHubCryptoV1 } from "@openclaw-enterprise/occ";
 import {
   createGitHubAppMaterialV1,
   GitHubAppTokenIssuerErrorV1,
-  ProtectedGitHubCryptoV1,
-  assertGitHubAppBoundsV1,
-  snapshotGitHubAppKeyIdentityV1,
   type GitHubAppKeyIdentityV1,
   type GitHubAppMaterialV1,
-} from "@openclaw-enterprise/occ";
+} from "../../../providers/token/github/index.ts";
+import { assertBounds, snapshotKeyIdentity } from "../../../providers/token/github/guards.ts";
 import { withComputeAbortSignal } from "../../compute/operation-context.ts";
 
 export const PROTECTED_KUBERNETES_GITHUB_APP_FORMAT_V1 = "github-app-key-aes256gcm-v1";
@@ -43,7 +42,7 @@ const maximumEnvelopeChars = 4 * Math.ceil(maximumEnvelopeBytes / 3);
 function snapshotLocator(
   input: ProtectedKubernetesGitHubAppLocatorV1,
 ): ProtectedKubernetesGitHubAppLocatorV1 {
-  const keyIdentity = snapshotGitHubAppKeyIdentityV1(input.keyIdentity);
+  const keyIdentity = snapshotKeyIdentity(input.keyIdentity);
   const selected = {
     driverId: input.driverId,
     namespaceId: input.namespaceId,
@@ -206,7 +205,7 @@ function createInvocation(owner: ProtectedMaterialOwner, rawBounds: TokenIssuerC
     deadline: rawBounds.deadline,
   });
   const now = clock();
-  assertGitHubAppBoundsV1(requested, now);
+  assertBounds(requested, now);
   const bounds = Object.freeze({
     signal: requested.signal,
     deadline: Math.min(requested.deadline, now + PROTECTED_KUBERNETES_GITHUB_APP_LEASE_MS_V1),
@@ -218,7 +217,7 @@ function createInvocation(owner: ProtectedMaterialOwner, rawBounds: TokenIssuerC
   const signal = AbortSignal.any([bounds.signal, timeout]);
   const current = () => {
     if (owner.closed || signal.aborted || performance.now() >= horizon) unavailable();
-    assertGitHubAppBoundsV1(bounds, clock());
+    assertBounds(bounds, clock());
     owner.assertMasterAvailable();
   };
   const read = async (): Promise<Buffer> => {
@@ -271,7 +270,7 @@ async function withProtectedJwt<T>(
   consume: (jwt: string, assertMaterialCurrent: () => void) => Promise<T>,
 ): Promise<T> {
   if (owner.closed || owner.busy) unavailable();
-  const identity = snapshotGitHubAppKeyIdentityV1(expected);
+  const identity = snapshotKeyIdentity(expected);
   if (JSON.stringify(identity) !== JSON.stringify(owner.source.keyIdentity)) unavailable();
   const { bounds, current, read } = createInvocation(owner, rawBounds);
   owner.busy = true;

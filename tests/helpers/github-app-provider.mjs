@@ -5,8 +5,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGitHubAppMaterialV1 } from "../../packages/occ/src/index.ts";
-import { createGitHubAppTokenIssuerV1 } from "../../packages/occ/src/index.ts";
+import {
+  createGitHubAppMaterialV1,
+  createGitHubAppTokenIssuerV1,
+} from "../../apps/controller/src/providers/token/github/index.ts";
 
 export const keyIdentity = {
   clientId: "Iv1.fixture",
