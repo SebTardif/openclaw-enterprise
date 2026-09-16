@@ -46,7 +46,7 @@ import type {
   RuntimeAuthenticationProjectionV1,
   RuntimeAuthenticationRequestV1,
   RuntimeAuthenticationReceiverV1,
-  RuntimeAuthenticationAttachmentOutcomeV1,
+  RuntimeAuthenticationCreateV1,
 } from "@openclaw-enterprise/contracts";
 import { admittedLoggingLevel, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { DependencyUnavailableError, ResourceConflictError } from "@openclaw-enterprise/occ";
@@ -2279,16 +2279,6 @@ export class KubernetesComputeDriver implements ComputeDriver {
           !providers.every(isNonEmptyString) ||
           new Set(providers).size !== providers.length
         ) {
-          await this.runtimeAuthenticationOperation(
-            (bounds) =>
-              state.owner.observeAttachment({
-                attachment: attempt.attachment,
-                outcome: { kind: "not-submitted" },
-                bounds,
-              }),
-            undefined,
-            true,
-          );
           throw new ResourceConflictError(
             "The runtime authentication provider selection is invalid.",
           );
@@ -2297,29 +2287,83 @@ export class KubernetesComputeDriver implements ComputeDriver {
         return Object.freeze({
           kind: "create" as const,
           providers,
-          assertAndConsume: () => {
-            signal.throwIfAborted();
-            currentComputeAbortSignal()?.throwIfAborted();
-            this.validateRuntimeAuthenticationProjection(revision, projection);
+          submit: async (create: RuntimeAuthenticationCreateV1) => {
             if (consumed)
               throw new ResourceConflictError(
                 "The runtime authentication attempt was already consumed.",
               );
             consumed = true;
-            preparation.assertAndConsume();
-          },
-          observe: async (outcome: RuntimeAuthenticationAttachmentOutcomeV1) => {
-            await this.runtimeAuthenticationOperation(
-              (bounds) =>
-                state.owner.observeAttachment({
-                  attachment: attempt.attachment,
-                  outcome,
-                  bounds,
-                }),
-              undefined,
-              true,
+            const computeSignal = currentComputeAbortSignal();
+            const now = Date.now();
+            const deadline = Math.min(now + REQUEST_TIMEOUT_MS, projection.expiresAt);
+            const timeout = AbortSignal.timeout(Math.max(0, Math.floor(deadline - now)));
+            const bounded = AbortSignal.any([
+              signal,
+              timeout,
+              ...(computeSignal === undefined ? [] : [computeSignal]),
+            ]);
+            bounded.throwIfAborted();
+            this.validateRuntimeAuthenticationProjection(revision, projection);
+            let accepting = true;
+            let invoked = false;
+            const callback: {
+              entered: boolean;
+              outcome?: { kind: "created" } | { kind: "unknown"; error: unknown };
+            } = { entered: false };
+            let acknowledgment;
+            try {
+              // Do not race cancellation here: the owner must finish recording with
+              // its independent finite bounds after provider entry, even on abort.
+              acknowledgment = await preparation.submit({
+                bounds: { signal: bounded, deadline },
+                create: async (ownerSignal) => {
+                  if (!accepting || invoked)
+                    throw new ResourceConflictError(
+                      "The runtime authentication create callback was already consumed or closed.",
+                    );
+                  invoked = true;
+                  try {
+                    const providerSignal = AbortSignal.any([bounded, ownerSignal]);
+                    providerSignal.throwIfAborted();
+                    this.validateRuntimeAuthenticationProjection(revision, projection);
+                    callback.entered = true;
+                    const outcome = await create(providerSignal);
+                    if (outcome?.kind !== "created")
+                      throw new ResourceConflictError(
+                        "The runtime authentication create outcome is invalid.",
+                      );
+                    callback.outcome = { kind: "created" };
+                    return outcome;
+                  } catch (error) {
+                    callback.outcome = { kind: "unknown", error };
+                    throw error;
+                  }
+                },
+              });
+            } catch (error) {
+              if (callback.outcome?.kind === "unknown") throw callback.outcome.error;
+              throw error;
+            } finally {
+              accepting = false;
+            }
+            if (acknowledgment?.kind === "created" && callback.outcome?.kind === "created") {
+              attempt.observed = true;
+              return;
+            }
+            if (
+              acknowledgment?.kind === "unknown" &&
+              Object.hasOwn(acknowledgment, "error") &&
+              callback.outcome?.kind === "unknown" &&
+              Object.is(acknowledgment.error, callback.outcome.error)
+            ) {
+              // A pre-entry cancellation can be recorded as unknown by the owner,
+              // but must not make a locally never-submitted attempt inspectable.
+              attempt.observed = callback.entered;
+              throw callback.outcome.error;
+            }
+            throw new ResourceConflictError(
+              "The runtime authentication submission acknowledgment is invalid.",
             );
-            attempt.observed = outcome.kind !== "not-submitted";
           },
         });
       },

@@ -7,6 +7,7 @@ import type {
   Namespace,
   OpenClawConfigurationDocument,
   OpenClawConfigurationValue,
+  RuntimeAuthenticationCreateV1,
   SandboxDriver,
   SandboxHarnessContext,
   SandboxNamespaceContext,
@@ -874,59 +875,59 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     // The owner has retained this receiver's original submission. Compute will
     // inspect its current authentication state; never consume or create it again.
     if (delivery?.kind === "retained") return Object.freeze(sandbox);
-    let submitted = false;
-    let created;
-    try {
-      const providers = [...(delivery?.providers ?? [])];
-      if (
-        (delivery !== undefined && providers.length === 0) ||
-        providers.length > 64 ||
-        new Set(providers).size !== providers.length ||
-        providers.some(
-          (provider) =>
-            typeof provider !== "string" ||
-            provider.trim().length === 0 ||
-            provider.length > 256 ||
-            /[\u0000-\u001f\u007f]/u.test(provider),
-        )
-      ) {
+    const providers = [...(delivery?.providers ?? [])];
+    if (
+      (delivery !== undefined && providers.length === 0) ||
+      providers.length > 64 ||
+      new Set(providers).size !== providers.length ||
+      providers.some(
+        (provider) =>
+          typeof provider !== "string" ||
+          provider.trim().length === 0 ||
+          provider.length > 256 ||
+          /[\u0000-\u001f\u007f]/u.test(provider),
+      )
+    ) {
+      throw new OpenShellSandboxConfigurationFailure(
+        "The broker returned invalid OpenShell provider references.",
+      );
+    }
+    // Admission can await durable authority. Detach the complete request before
+    // that wait so caller or configuration mutations cannot change provider input.
+    const request = structuredClone({
+      name: sandbox.resourceName,
+      workspace,
+      labels: context.requirements.labels,
+      annotations: {
+        "openclaw.dev/namespace-id": context.revision.namespaceId,
+        "openclaw.dev/agent-id": context.revision.agentId,
+        "openclaw.dev/revision-id": context.revision.id,
+      },
+      spec: sandboxSpec(this.options, context.requirements, providers),
+    });
+    const client = this.gatewayClientForNamespace(sandbox.namespaceName);
+    const create: RuntimeAuthenticationCreateV1 = async (signal) => {
+      const created = await client.createSandbox(request, signal);
+      if (created.name !== sandbox.resourceName) {
         throw new OpenShellSandboxConfigurationFailure(
-          "The broker returned invalid OpenShell provider references.",
+          "OpenShell returned a different Sandbox name than requested.",
         );
       }
-      const request = {
-        name: sandbox.resourceName,
-        workspace,
-        labels: context.requirements.labels,
-        annotations: {
-          "openclaw.dev/namespace-id": context.revision.namespaceId,
-          "openclaw.dev/agent-id": context.revision.agentId,
-          "openclaw.dev/revision-id": context.revision.id,
-        },
-        spec: sandboxSpec(this.options, context.requirements, providers),
+      return {
+        kind: "created",
+        ...(created.id === undefined ? {} : { receiverUid: created.id }),
       };
-      const client = this.gatewayClientForNamespace(sandbox.namespaceName);
-      context.signal.throwIfAborted();
-      delivery?.assertAndConsume();
-      submitted = true;
-      created = await client.createSandbox(request, context.signal);
+    };
+    context.signal.throwIfAborted();
+    try {
+      if (delivery === undefined) await create(context.signal);
+      else await delivery.submit(create);
     } catch (error) {
-      await delivery?.observe({ kind: submitted ? "unknown" : "not-submitted" });
       if (error instanceof OpenShellSandboxAlreadyExistsError) {
         return Object.freeze(sandbox);
       }
       throw error;
     }
-    if (created.name !== sandbox.resourceName) {
-      await delivery?.observe({ kind: "unknown" });
-      throw new OpenShellSandboxConfigurationFailure(
-        "OpenShell returned a different Sandbox name than requested.",
-      );
-    }
-    await delivery?.observe({
-      kind: "created",
-      ...(created.id === undefined ? {} : { receiverUid: created.id }),
-    });
     return Object.freeze(sandbox);
   }
 

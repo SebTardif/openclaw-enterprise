@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { OpenShellSandboxAlreadyExistsError } from "../../apps/controller/src/drivers/sandbox/openshell-gateway-client.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import {
   createKubernetesComputeDriver,
@@ -3357,15 +3358,15 @@ test("Compute consumes the declared owner port and separates attachment inspecti
         kind: "create",
         attachment,
         providers,
-        assertAndConsume() {
+        async submit({ bounds, create }) {
           if (rejectGate) throw new Error("owner authority closed");
+          assert.ok(Number.isFinite(bounds.deadline));
+          assert.ok(bounds.deadline <= projection.expiresAt);
+          const outcome = await create(bounds.signal);
+          outcomes.push(outcome);
+          return { kind: "created" };
         },
       };
-    },
-    async observeAttachment(input) {
-      assert.equal(input.attachment, attachment);
-      assert.equal(input.bounds.signal.aborted, false, "recording survives caller cancellation");
-      outcomes.push(input.outcome);
     },
     async inspect(input) {
       assert.equal(input.attachment, attachment);
@@ -3399,16 +3400,18 @@ test("Compute consumes the declared owner port and separates attachment inspecti
         name: `transport-${digest(context.revision.agentId)}`,
         key: "app-server-token",
       });
-      try {
-        delivery.assertAndConsume();
-      } catch (error) {
-        await delivery.observe({ kind: "not-submitted" });
-        throw error;
-      }
-      submitted += 1;
-      assert.throws(() => delivery.assertAndConsume(), /already consumed/);
-      abortAfterCreate?.abort();
-      await delivery.observe({ kind: "created", receiverUid: "provider-receiver-uid" });
+      await delivery.submit(async () => {
+        submitted += 1;
+        abortAfterCreate?.abort();
+        return { kind: "created", receiverUid: "provider-receiver-uid" };
+      });
+      await assert.rejects(
+        delivery.submit(async () => {
+          submitted += 1;
+          return { kind: "created" };
+        }),
+        /already consumed/,
+      );
       return {
         namespaceName: context.namespace.name,
         resourceName: "provider-sandbox",
@@ -3427,6 +3430,8 @@ test("Compute consumes the declared owner port and separates attachment inspecti
     { state: "withdrawn" },
     { state: "attached", receiverUid: "uid", usableUntil: Date.now() - 1 },
     { state: "attached", receiverUid: "uid", usableUntil: projection.expiresAt + 1 },
+    { state: "attached", receiverUid: "uid", usableUntil: Infinity },
+    { state: "attached", receiverUid: "uid", usableUntil: NaN },
     { state: "attached", receiverUid: "", usableUntil: projection.expiresAt },
   ]) {
     observation = unavailable;
@@ -3474,12 +3479,13 @@ test("Compute consumes the declared owner port and separates attachment inspecti
   assert.equal(JSON.stringify(writes).includes("approved-provider"), false);
   const submittedBefore = submitted;
   rejectGate = true;
+  const outcomesBefore = outcomes.length;
   await assert.rejects(
     fixture.driver.prepareRevision(fixture.revision, context),
     /owner authority closed/,
   );
   assert.equal(submitted, submittedBefore);
-  assert.deepEqual(outcomes.at(-1), { kind: "not-submitted" });
+  assert.equal(outcomes.length, outcomesBefore);
   rejectGate = false;
   abortAfterCreate = new AbortController();
   assert.equal((await fixture.driver.prepareRevision(fixture.revision, context)).ready, true);
@@ -3568,156 +3574,542 @@ test("Compute refuses missing, stale, mismatched, or competing external authenti
   assert.equal(writes.length, 0);
 });
 
-test("Compute recovers retained authentication across fresh projections and a restarted driver without another create", async () => {
-  // These substitutes implement the declared owner/Sandbox boundary only. The same
-  // opaque attachment and consumed gate survive each Compute instance in this test.
+for (const originalOutcome of ["created", "unknown"]) {
+  test(`Compute recovers retained ${originalOutcome} authentication across fresh projections and restart without another create`, async () => {
+    // These substitutes implement the declared owner/Sandbox boundary only. The same
+    // opaque attachment and original attempt survive each Compute instance in this test.
+    const attachment = Object.freeze({});
+    const projections = new Set();
+    const deadline = Date.now() + 60_000;
+    let consumed = false;
+    let receiver;
+    let observation = {
+      state: "attached",
+      receiverUid: "retained-receiver-uid",
+      usableUntil: deadline,
+    };
+    let ownerSubmissions = 0;
+    const originalError = new Error("lost original create reply");
+    let submissions = 0;
+    let outcomes = 0;
+    let retainedPreparations = 0;
+    const owner = {
+      async status() {
+        return { configured: true };
+      },
+      async prepareAttachment(input) {
+        assert.ok(
+          projections.has(input.projection),
+          "the owner must authenticate the current projection",
+        );
+        if (receiver !== undefined) assert.deepEqual(input.receiver, receiver);
+        receiver = input.receiver;
+        if (consumed) {
+          retainedPreparations += 1;
+          return { kind: "retained", attachment };
+        }
+        return {
+          kind: "create",
+          attachment,
+          providers: ["approved-provider"],
+          async submit({ bounds, create }) {
+            ownerSubmissions += 1;
+            assert.equal(consumed, false, "the original attempt can only be submitted once");
+            consumed = true;
+            try {
+              const outcome = await create(bounds.signal);
+              assert.deepEqual(outcome, { kind: "created", receiverUid: "retained-receiver-uid" });
+              outcomes += 1;
+              return { kind: "created" };
+            } catch (error) {
+              assert.equal(error, originalError);
+              outcomes += 1;
+              return { kind: "unknown", error };
+            }
+          },
+        };
+      },
+      async inspect(input) {
+        assert.equal(
+          input.attachment,
+          attachment,
+          "inspection must keep the original retained attempt",
+        );
+        return observation;
+      },
+    };
+    async function provisionHarness(context) {
+      const delivery = await context.runtimeAuthentication.prepare(
+        {
+          sandboxDriverId: context.revision.sandboxDriverId,
+          gatewayEndpoint: "https://openshell.example.internal:8080",
+          workspace: "tenant-workspace",
+          namespaceName: context.namespace.name,
+          resourceName: "provider-sandbox",
+        },
+        new AbortController().signal,
+      );
+      if (delivery.kind === "create") {
+        try {
+          await delivery.submit(async () => {
+            submissions += 1;
+            if (originalOutcome === "unknown") throw originalError;
+            return { kind: "created", receiverUid: "retained-receiver-uid" };
+          });
+        } catch (error) {
+          assert.equal(error, originalError);
+        }
+      } else {
+        assert.deepEqual(
+          delivery,
+          { kind: "retained" },
+          "recovery carries no new submission or outcome",
+        );
+      }
+      return {
+        namespaceName: context.namespace.name,
+        resourceName: "provider-sandbox",
+        agentId: context.revision.agentId,
+        revisionId: context.revision.id,
+      };
+    }
+    function freshProjection(fixture) {
+      const projection = runtimeProjection(fixture.revision, {
+        expiresAt: deadline,
+      });
+      projections.add(projection);
+      return { runtimeAuthentication: projection };
+    }
+    function startCompute() {
+      const fixture = providerReadinessFixture({
+        runtimeAuthenticationOwner: owner,
+        provisionHarness,
+      });
+      const transport = providerPreparationTransport(fixture);
+      fixture.setObservation({ items: [fixture.pod("ready")] });
+      return { ...fixture, ...transport };
+    }
+    const first = startCompute();
+    const initial = freshProjection(first);
+    assert.equal((await first.driver.prepareRevision(first.revision, initial)).ready, true);
+    await first.driver.activateRevision(first.revision, initial);
+    assert.equal(submissions, 1);
+
+    const refreshed = freshProjection(first);
+    assert.notEqual(refreshed.runtimeAuthentication, initial.runtimeAuthentication);
+    assert.equal((await first.driver.prepareRevision(first.revision, refreshed)).ready, true);
+    await first.driver.activateRevision(first.revision, refreshed);
+
+    // A new Compute object starts with no process-local attempt cache. The owner
+    // authenticates and returns the original attempt before readiness can recover.
+    const restarted = startCompute();
+    const recovered = freshProjection(restarted);
+    await assert.rejects(
+      restarted.driver.activateRevision(restarted.revision, recovered),
+      /not ready/,
+    );
+    assert.equal(
+      (await restarted.driver.prepareRevision(restarted.revision, recovered)).ready,
+      true,
+    );
+    await restarted.driver.activateRevision(restarted.revision, recovered);
+
+    for (const state of ["unknown", "pending"]) {
+      observation = { state };
+      const current = freshProjection(restarted);
+      assert.equal(
+        (await restarted.driver.prepareRevision(restarted.revision, current)).ready,
+        false,
+      );
+      const beforeActivation = restarted.writes.length;
+      await assert.rejects(
+        restarted.driver.activateRevision(restarted.revision, current),
+        /not ready/,
+      );
+      assert.equal(restarted.writes.length, beforeActivation);
+    }
+    assert.equal(retainedPreparations, 4);
+    assert.equal(
+      ownerSubmissions,
+      1,
+      "retained recovery must not submit the original attempt again",
+    );
+    assert.equal(
+      submissions,
+      1,
+      "retained attached or unknown state must not submit a replacement create",
+    );
+    assert.equal(outcomes, 1, "recovery must not manufacture a fresh create outcome");
+  });
+}
+
+function runtimeSubmissionFixture({
+  ownerSubmit,
+  sandboxSubmit,
+  providerCreate,
+  signal = new AbortController().signal,
+  expiresIn = 60_000,
+  providers = ["approved-provider"],
+} = {}) {
+  // Only authority and provider transports are substituted. The actual Compute
+  // preparation, bounded callback, acknowledgment and routing guards run below.
+  let providerCalls = 0;
+  let inspectionCalls = 0;
+  let delivery;
   const attachment = Object.freeze({});
-  const projections = new Set();
-  const deadline = Date.now() + 60_000;
-  let consumed = false;
-  let receiver;
-  let observation = {
-    state: "attached",
-    receiverUid: "retained-receiver-uid",
-    usableUntil: deadline,
-  };
-  let gateCalls = 0;
-  let submissions = 0;
-  let outcomes = 0;
-  let retainedPreparations = 0;
   const owner = {
     async status() {
       return { configured: true };
     },
-    async prepareAttachment(input) {
-      assert.ok(
-        projections.has(input.projection),
-        "the owner must authenticate the current projection",
-      );
-      if (receiver !== undefined) assert.deepEqual(input.receiver, receiver);
-      receiver = input.receiver;
-      if (consumed) {
-        retainedPreparations += 1;
-        return { kind: "retained", attachment };
-      }
+    async prepareAttachment() {
       return {
         kind: "create",
         attachment,
-        providers: ["approved-provider"],
-        assertAndConsume() {
-          gateCalls += 1;
-          assert.equal(consumed, false, "the original attempt can only be consumed once");
-          consumed = true;
+        providers,
+        async submit(input) {
+          if (ownerSubmit !== undefined) return ownerSubmit(input);
+          try {
+            await input.create(input.bounds.signal);
+            return { kind: "created" };
+          } catch (error) {
+            return { kind: "unknown", error };
+          }
         },
       };
     },
-    async observeAttachment(input) {
-      assert.equal(input.attachment, attachment);
-      assert.deepEqual(input.outcome, {
-        kind: "created",
-        receiverUid: "retained-receiver-uid",
-      });
-      outcomes += 1;
-    },
-    async inspect(input) {
-      assert.equal(
-        input.attachment,
-        attachment,
-        "inspection must keep the original retained attempt",
-      );
-      return observation;
+    async inspect({ attachment: inspected }) {
+      assert.equal(inspected, attachment);
+      inspectionCalls += 1;
+      return { state: "attached", receiverUid: "provider-uid", usableUntil: projection.expiresAt };
     },
   };
-  async function provisionHarness(context) {
-    const delivery = await context.runtimeAuthentication.prepare(
-      {
-        sandboxDriverId: context.revision.sandboxDriverId,
-        gatewayEndpoint: "https://openshell.example.internal:8080",
-        workspace: "tenant-workspace",
+  const fixture = providerReadinessFixture({
+    runtimeAuthenticationOwner: owner,
+    async provisionHarness(context) {
+      delivery = await context.runtimeAuthentication.prepare(
+        {
+          sandboxDriverId: context.revision.sandboxDriverId,
+          gatewayEndpoint: "https://openshell.example.internal:8080",
+          workspace: "tenant-workspace",
+          namespaceName: context.namespace.name,
+          resourceName: "provider-sandbox",
+        },
+        signal,
+      );
+      const create = async (providerSignal) => {
+        providerCalls += 1;
+        if (providerCreate !== undefined) return providerCreate(providerSignal);
+        return { kind: "created", receiverUid: "provider-uid" };
+      };
+      if (sandboxSubmit !== undefined) await sandboxSubmit({ delivery, create });
+      else await delivery.submit(create);
+      return {
         namespaceName: context.namespace.name,
         resourceName: "provider-sandbox",
-      },
-      new AbortController().signal,
-    );
-    if (delivery.kind === "create") {
-      delivery.assertAndConsume();
-      submissions += 1;
-      await delivery.observe({
-        kind: "created",
-        receiverUid: "retained-receiver-uid",
-      });
-    } else {
-      assert.deepEqual(
-        delivery,
-        { kind: "retained" },
-        "recovery carries no new create gate or outcome",
+        agentId: context.revision.agentId,
+        revisionId: context.revision.id,
+      };
+    },
+  });
+  const projection = runtimeProjection(fixture.revision, { expiresAt: Date.now() + expiresIn });
+  const context = { runtimeAuthentication: projection };
+  const transport = providerPreparationTransport(fixture);
+  fixture.setObservation({ items: [fixture.pod("ready")] });
+  return {
+    ...fixture,
+    ...transport,
+    projection,
+    get providerCalls() {
+      return providerCalls;
+    },
+    get inspectionCalls() {
+      return inspectionCalls;
+    },
+    get delivery() {
+      return delivery;
+    },
+    prepare: () => fixture.driver.prepareRevision(fixture.revision, context),
+    activate: () => fixture.driver.activateRevision(fixture.revision, context),
+    async assertInactive() {
+      const before = transport.writes.length;
+      await assert.rejects(
+        fixture.driver.activateRevision(fixture.revision, context),
+        /not ready|stale/,
       );
-    }
-    return {
-      namespaceName: context.namespace.name,
-      resourceName: "provider-sandbox",
-      agentId: context.revision.agentId,
-      revisionId: context.revision.id,
-    };
-  }
-  function freshProjection(fixture) {
-    const projection = runtimeProjection(fixture.revision, {
-      expiresAt: deadline,
-    });
-    projections.add(projection);
-    return { runtimeAuthentication: projection };
-  }
-  function startCompute() {
-    const fixture = providerReadinessFixture({
-      runtimeAuthenticationOwner: owner,
-      provisionHarness,
-    });
-    const transport = providerPreparationTransport(fixture);
-    fixture.setObservation({ items: [fixture.pod("ready")] });
-    return { ...fixture, ...transport };
-  }
-  const first = startCompute();
-  const initial = freshProjection(first);
-  assert.equal((await first.driver.prepareRevision(first.revision, initial)).ready, true);
-  await first.driver.activateRevision(first.revision, initial);
-  assert.equal(submissions, 1);
+      assert.equal(transport.writes.length, before, "unrecorded attempts cannot activate routing");
+      assert.equal(
+        inspectionCalls,
+        0,
+        "an attached response cannot bypass the local recording guard",
+      );
+    },
+  };
+}
 
-  const refreshed = freshProjection(first);
-  assert.notEqual(refreshed.runtimeAuthentication, initial.runtimeAuthentication);
-  assert.equal((await first.driver.prepareRevision(first.revision, refreshed)).ready, true);
-  await first.driver.activateRevision(first.revision, refreshed);
-
-  // A new Compute object starts with no process-local attempt cache. The owner
-  // authenticates and returns the original attempt before readiness can recover.
-  const restarted = startCompute();
-  const recovered = freshProjection(restarted);
-  await assert.rejects(
-    restarted.driver.activateRevision(restarted.revision, recovered),
-    /not ready/,
-  );
-  assert.equal((await restarted.driver.prepareRevision(restarted.revision, recovered)).ready, true);
-  await restarted.driver.activateRevision(restarted.revision, recovered);
-
-  for (const state of ["unknown", "pending"]) {
-    observation = { state };
-    const current = freshProjection(restarted);
-    assert.equal(
-      (await restarted.driver.prepareRevision(restarted.revision, current)).ready,
-      false,
-    );
-    const beforeActivation = restarted.writes.length;
-    await assert.rejects(
-      restarted.driver.activateRevision(restarted.revision, current),
-      /not ready/,
-    );
-    assert.equal(restarted.writes.length, beforeActivation);
-  }
-  assert.equal(retainedPreparations, 4);
-  assert.equal(gateCalls, 1, "retained recovery must not consume the original gate again");
-  assert.equal(
-    submissions,
-    1,
-    "retained attached or unknown state must not submit a replacement create",
-  );
-  assert.equal(outcomes, 1, "recovery must not manufacture a fresh create outcome");
+test("Compute waits for admission and recording and lets finalization finish after caller abort", async () => {
+  const admission = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  const finalization = Promise.withResolvers();
+  const providerDone = Promise.withResolvers();
+  const caller = new AbortController();
+  let submittedBounds;
+  const f = runtimeSubmissionFixture({
+    signal: caller.signal,
+    async ownerSubmit({ bounds, create }) {
+      submittedBounds = bounds;
+      entered.resolve();
+      await admission.promise;
+      await create(bounds.signal);
+      providerDone.resolve();
+      await finalization.promise;
+      return { kind: "created" };
+    },
+  });
+  let settled = false;
+  const operation = f.prepare().finally(() => {
+    settled = true;
+  });
+  await entered.promise;
+  assert.ok(Number.isFinite(submittedBounds.deadline));
+  assert.ok(submittedBounds.deadline <= f.projection.expiresAt);
+  assert.ok(submittedBounds.deadline <= Date.now() + 10_000);
+  assert.equal(f.providerCalls, 0);
+  await f.assertInactive();
+  admission.resolve();
+  await providerDone.promise;
+  assert.equal(f.providerCalls, 1);
+  caller.abort(new Error("caller stopped after create"));
+  assert.equal(submittedBounds.signal.aborted, true);
+  await f.assertInactive();
+  assert.equal(settled, false, "cancellation must not race outcome recording");
+  finalization.resolve();
+  assert.equal((await operation).ready, true);
+  await f.activate();
 });
+
+for (const mode of ["denied", "caller abort", "Compute abort", "owner abort", "expired"]) {
+  test(`Compute submits nothing when delayed admission is ${mode}`, async () => {
+    const entered = Promise.withResolvers();
+    const admission = Promise.withResolvers();
+    const caller = new AbortController();
+    const compute = new AbortController();
+    const owner = new AbortController();
+    const reason = new Error(mode);
+    let submittedBounds;
+    const f = runtimeSubmissionFixture({
+      signal: caller.signal,
+      expiresIn: mode === "expired" ? 200 : 60_000,
+      async ownerSubmit({ bounds, create }) {
+        submittedBounds = bounds;
+        entered.resolve();
+        await admission.promise;
+        if (mode === "denied") throw reason;
+        return create(owner.signal);
+      },
+    });
+    const operation = withComputeAbortSignal(compute.signal, () => f.prepare());
+    const rejected = assert.rejects(
+      operation,
+      mode === "expired" ? /timeout|stale/i : (error) => error === reason,
+    );
+    await entered.promise;
+    assert.equal(f.providerCalls, 0);
+    if (mode === "caller abort") caller.abort(reason);
+    if (mode === "Compute abort") compute.abort(reason);
+    if (mode === "owner abort") owner.abort(reason);
+    if (mode === "expired") {
+      assert.equal(submittedBounds.deadline, f.projection.expiresAt);
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, f.projection.expiresAt - Date.now()) + 5),
+      );
+      assert.equal(submittedBounds.signal.aborted, true);
+    }
+    admission.resolve();
+    await rejected;
+    assert.equal(f.providerCalls, 0);
+    await f.assertInactive();
+  });
+}
+
+test("Compute permits only one provider callback even if the owner invokes it twice", async () => {
+  const f = runtimeSubmissionFixture({
+    async ownerSubmit({ bounds, create }) {
+      await create(bounds.signal);
+      await assert.rejects(create(bounds.signal), /already consumed or closed/);
+      return { kind: "created" };
+    },
+  });
+  assert.equal((await f.prepare()).ready, true);
+  assert.equal(f.providerCalls, 1);
+  await assert.rejects(
+    f.delivery.submit(async () => ({ kind: "created" })),
+    /already consumed/,
+  );
+  assert.equal(f.providerCalls, 1);
+});
+
+for (const [label, originalError] of [
+  ["Error", new Error("provider failed")],
+  ["undefined", undefined],
+  ["null", null],
+  ["false", false],
+  ["zero", 0],
+  ["negative zero", -0],
+  ["empty string", ""],
+  ["NaN", NaN],
+]) {
+  test(`Compute preserves the original ${label} callback failure when finalization rejects`, async () => {
+    const f = runtimeSubmissionFixture({
+      async providerCreate() {
+        throw originalError;
+      },
+      async ownerSubmit({ bounds, create }) {
+        await assert.rejects(create(bounds.signal), (error) => Object.is(error, originalError));
+        throw new Error("outcome recording failed");
+      },
+    });
+    await assert.rejects(f.prepare(), (error) => Object.is(error, originalError));
+    assert.equal(f.providerCalls, 1);
+    await f.assertInactive();
+  });
+}
+
+for (const mode of ["no submission", "no callback", "missing", "mismatched", "failed"]) {
+  test(`Compute keeps ${mode} acknowledgment unavailable despite an attached owner response`, async () => {
+    let lateCreate;
+    const f = runtimeSubmissionFixture({
+      ...(mode === "no submission" ? { sandboxSubmit: async () => {} } : {}),
+      async ownerSubmit({ bounds, create }) {
+        if (mode === "no callback") {
+          lateCreate = () => create(bounds.signal);
+          return { kind: "created" };
+        }
+        await create(bounds.signal);
+        if (mode === "missing") return undefined;
+        if (mode === "mismatched") return { kind: "unknown", error: new Error("invented") };
+        throw new Error("recording failed");
+      },
+    });
+    if (mode === "no submission") assert.equal((await f.prepare()).ready, false);
+    else await assert.rejects(f.prepare(), /acknowledgment is invalid|recording failed/);
+    await f.assertInactive();
+    if (lateCreate !== undefined) {
+      await assert.rejects(lateCreate(), /already consumed or closed/);
+      assert.equal(f.providerCalls, 0, "an owner cannot enter the provider after submit settled");
+    }
+  });
+}
+
+test("Compute rejects an owner acknowledgment while its provider callback is still pending", async () => {
+  const provider = Promise.withResolvers();
+  let callback;
+  const f = runtimeSubmissionFixture({
+    providerCreate: () => provider.promise,
+    async ownerSubmit({ bounds, create }) {
+      callback = create(bounds.signal);
+      return { kind: "created" };
+    },
+  });
+  await assert.rejects(f.prepare(), /acknowledgment is invalid/);
+  await f.assertInactive();
+  provider.resolve({ kind: "created" });
+  await callback;
+  await f.assertInactive();
+});
+
+for (const acknowledged of [true, false]) {
+  test(`Compute ${acknowledged ? "allows" : "refuses"} AlreadyExists inspection after ${acknowledged ? "recorded unknown" : "failed recording"}`, async () => {
+    const originalError = new OpenShellSandboxAlreadyExistsError("provider-sandbox");
+    const f = runtimeSubmissionFixture({
+      async providerCreate() {
+        throw originalError;
+      },
+      async ownerSubmit({ bounds, create }) {
+        await assert.rejects(create(bounds.signal), (error) => error === originalError);
+        if (!acknowledged) throw new Error("unknown outcome was not recorded");
+        return { kind: "unknown", error: originalError };
+      },
+      async sandboxSubmit({ delivery, create }) {
+        try {
+          await delivery.submit(create);
+        } catch (error) {
+          assert.equal(error, originalError);
+          assert.ok(error instanceof OpenShellSandboxAlreadyExistsError);
+        }
+      },
+    });
+    assert.equal((await f.prepare()).ready, acknowledged);
+    assert.equal(f.providerCalls, 1);
+    if (acknowledged) await f.activate();
+    else await f.assertInactive();
+  });
+}
+
+test("Compute refuses unknown acknowledgments carrying a different callback error", async () => {
+  const originalError = new Error("original provider error");
+  const f = runtimeSubmissionFixture({
+    async providerCreate() {
+      throw originalError;
+    },
+    async ownerSubmit({ bounds, create }) {
+      await assert.rejects(create(bounds.signal), (error) => error === originalError);
+      return { kind: "unknown", error: new Error("replacement error") };
+    },
+  });
+  await assert.rejects(f.prepare(), /acknowledgment is invalid/);
+  await f.assertInactive();
+});
+
+test("Compute rejects invalid provider references before owner submission", async () => {
+  let submits = 0;
+  const f = runtimeSubmissionFixture({
+    providers: ["provider", "provider"],
+    async ownerSubmit() {
+      submits += 1;
+      return { kind: "created" };
+    },
+  });
+  await assert.rejects(f.prepare(), /provider selection is invalid/);
+  assert.equal(submits, 0);
+  assert.equal(f.providerCalls, 0);
+  await f.assertInactive();
+});
+
+for (const hasError of [true, false]) {
+  test(`Compute ${hasError ? "accepts" : "rejects"} unknown acknowledgment with ${hasError ? "explicit undefined" : "missing error"}`, async () => {
+    const f = runtimeSubmissionFixture({
+      async providerCreate() {
+        throw undefined;
+      },
+      async ownerSubmit({ bounds, create }) {
+        await assert.rejects(create(bounds.signal), (error) => error === undefined);
+        return hasError ? { kind: "unknown", error: undefined } : { kind: "unknown" };
+      },
+    });
+    if (hasError) {
+      await assert.rejects(f.prepare(), (error) => error === undefined);
+      await f.activate();
+    } else {
+      await assert.rejects(f.prepare(), /acknowledgment is invalid/);
+      await f.assertInactive();
+    }
+    assert.equal(f.providerCalls, 1);
+  });
+}
+
+for (const recorded of [true, false]) {
+  test(`Compute preserves pre-entry cancellation when owner finalization ${recorded ? "records unknown" : "fails"}`, async () => {
+    const ownerSignal = new AbortController();
+    ownerSignal.abort(false);
+    const f = runtimeSubmissionFixture({
+      async ownerSubmit({ create }) {
+        await assert.rejects(create(ownerSignal.signal), (error) => error === false);
+        if (!recorded) throw new Error("recording failed after cancellation");
+        return { kind: "unknown", error: false };
+      },
+    });
+    await assert.rejects(f.prepare(), (error) => error === false);
+    assert.equal(f.providerCalls, 0);
+    await f.assertInactive();
+  });
+}

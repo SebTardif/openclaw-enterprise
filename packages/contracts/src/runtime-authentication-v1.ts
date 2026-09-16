@@ -48,11 +48,16 @@ export type RuntimeAuthenticationAttachmentOutcomeV1 =
   | { readonly kind: "unknown" }
   | { readonly kind: "not-submitted" };
 
+/** A single bounded provider call; only a validated create response can report created. */
+export type RuntimeAuthenticationCreateV1 = (
+  signal: AbortSignal,
+) => Promise<Extract<RuntimeAuthenticationAttachmentOutcomeV1, { kind: "created" }>>;
+
 /**
  * In-process handoff from Compute to the selected Sandbox. Provider references are
  * nonsecret external identifiers; standing provider keys never cross this port.
- * Call the owner gate immediately before submitting the exact create request, and
- * report its outcome even when create fails or cancellation makes it ambiguous.
+ * The owner admits the exact create callback asynchronously and retains its outcome
+ * before submission settles, including when create or caller cancellation fails.
  * A retained delivery represents the original submitted or uncertain attempt;
  * skip creation and let Compute inspect that attempt's current authentication.
  */
@@ -60,9 +65,8 @@ export type RuntimeAuthenticationDeliveryV1 =
   | {
       readonly kind: "create";
       readonly providers: readonly string[];
-      /** Rechecks current owner authority, exact receiver and expiry; succeeds only once. */
-      assertAndConsume(): void;
-      observe(outcome: RuntimeAuthenticationAttachmentOutcomeV1): Promise<void>;
+      /** Admit once and await outcome recording; fulfillment is not authentication readiness. */
+      submit(create: RuntimeAuthenticationCreateV1): Promise<void>;
     }
   | { readonly kind: "retained" };
 

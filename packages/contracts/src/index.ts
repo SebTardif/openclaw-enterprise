@@ -726,6 +726,7 @@ export type {
   RuntimeAuthenticationProjectionV1,
   RuntimeAuthenticationReceiverV1,
   RuntimeAuthenticationAttachmentOutcomeV1,
+  RuntimeAuthenticationCreateV1,
   RuntimeAuthenticationDeliveryV1,
   RuntimeAuthenticationRequestV1,
 } from "./runtime-authentication-v1.ts";

@@ -166,12 +166,19 @@ projection cannot create that authority.
 
 OpenShell receives only the nonsecret provider references prepared for its exact
 gateway, workspace, namespace, and Sandbox receiver. The owner returns a tagged
-`create` or `retained` attachment. A new `create` uses a one-use owner gate
-immediately before submission. A `retained` attachment preserves the original
-submitted or uncertain attempt, skips Sandbox creation, and issues no new grant
-or gate. In either case, `owner.inspect` must establish the current attachment
-before activation; `unknown` and `pending` remain unresolved. Preparing an
-attachment or receiving a create response is insufficient.
+`create` or `retained` attachment. For `create`, OpenShell validates and snapshots
+the complete request before awaiting one-use asynchronous owner submission. The
+owner admits the callback before provider entry and records its outcome under
+independent finite bounds, including after caller cancellation. A fulfilled owner
+acknowledgment establishes recording only. Failed or uncertain recording cannot
+make the new attempt ready. `AlreadyExists` and wrong-name responses remain
+unknown; they are never treated as successful attachment.
+
+A `retained` attachment preserves the original submitted or uncertain attempt,
+skips Sandbox creation, and issues no new grant or submission. In either case,
+`owner.inspect` must establish the current attachment before activation; `unknown`
+and `pending` remain unresolved. Preparing an attachment or receiving a create
+response is insufficient.
 
 The worker prepares a fresh projection when retrying an active revision, while
 the owner retains the original attachment obligation. Broker unavailability uses

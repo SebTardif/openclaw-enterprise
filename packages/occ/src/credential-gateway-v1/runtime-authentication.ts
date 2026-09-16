@@ -2,7 +2,7 @@ import type {
   AgentRevision,
   ComputeAgentBinding,
   Namespace,
-  RuntimeAuthenticationAttachmentOutcomeV1,
+  RuntimeAuthenticationCreateV1,
   RuntimeAuthenticationProjectionV1,
   RuntimeAuthenticationReceiverV1,
 } from "@openclaw-enterprise/contracts";
@@ -26,10 +26,21 @@ export type RuntimeAuthenticationAttachmentPreparationV1 =
       /** Exact nonsecret external provider references selected by the admitted profile. */
       readonly providers: readonly string[];
       /**
-       * Immediately before create, atomically authenticate current authority, bounds and
-       * exact receiver and consume this attempt once. A failed gate submits nothing.
+       * Authenticate current authority, bounds and exact receiver, then invoke create
+       * once only after known-committed admission. Denied or uncertain admission calls
+       * nothing. Recheck expiry/cancellation before entry; no transaction spans create.
+       * Retain the observation idempotently under independent finite finalization
+       * bounds after grant closure, expiry or caller abort. Acknowledgment means
+       * recorded, never authentication readiness.
+       * Unknown carries the exact callback error. Failed/uncertain finalization rejects;
+       * if create also failed, preserve that original error, including falsy values.
        */
-      assertAndConsume(): void;
+      submit(input: {
+        readonly bounds: Bounds;
+        readonly create: RuntimeAuthenticationCreateV1;
+      }): Promise<
+        { readonly kind: "created" } | { readonly kind: "unknown"; readonly error: unknown }
+      >;
     }
   | {
       readonly kind: "retained";
@@ -82,7 +93,7 @@ export interface RuntimeAuthenticationOwnerV1 {
 
   /**
    * Authenticate the projection and exact receiver, then durably retain the original
-   * attempt and cleanup obligation before returning the one-use gate. Retry or alias
+   * attempt and cleanup obligation before returning one-use submission. Retry or alias
    * changes must not create replacement authority after an uncertain create.
    * Return the retained branch for the original submitted or uncertain attempt;
    * only inspection can determine whether its authentication is attached and usable.
@@ -92,17 +103,6 @@ export interface RuntimeAuthenticationOwnerV1 {
     readonly receiver: RuntimeAuthenticationReceiverV1;
     readonly bounds: Bounds;
   }): Promise<RuntimeAuthenticationAttachmentPreparationV1>;
-
-  /**
-   * Retain this attempt's create outcome idempotently, including unknown outcomes.
-   * This does not promote create success or AlreadyExists to attached. Recording and
-   * cleanup remain owned obligations after grant closure, expiry or caller abort.
-   */
-  observeAttachment(input: {
-    readonly attachment: RuntimeAuthenticationAttachmentV1;
-    readonly outcome: RuntimeAuthenticationAttachmentOutcomeV1;
-    readonly bounds: Bounds;
-  }): Promise<void>;
 
   /** Authenticate the exact receiver and current session from provider evidence. */
   inspect(input: {

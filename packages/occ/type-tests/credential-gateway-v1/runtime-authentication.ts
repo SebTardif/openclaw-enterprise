@@ -4,6 +4,7 @@ import type {
   ComputeRevisionContext,
   Namespace,
   RuntimeAuthenticationAttachmentOutcomeV1,
+  RuntimeAuthenticationCreateV1,
   RuntimeAuthenticationDeliveryV1,
   RuntimeAuthenticationProjectionV1,
   RuntimeAuthenticationReceiverV1,
@@ -28,6 +29,7 @@ declare const binding: ComputeAgentBinding;
 declare const revision: Readonly<AgentRevision>;
 declare const namespace: Readonly<Namespace>;
 declare const bounds: Bounds;
+declare const create: RuntimeAuthenticationCreateV1;
 declare const projection: RuntimeAuthenticationProjectionV1;
 declare const authentication: CoreAuthenticationBinding;
 declare const attachment: RuntimeAuthenticationAttachmentV1;
@@ -69,15 +71,24 @@ async function consume(): Promise<void> {
   };
   const planned = await owner.prepareAttachment({ projection, receiver, bounds });
   if (planned.kind === "create") {
+    const acknowledgment = await planned.submit({ bounds, create });
+    if (acknowledgment.kind === "unknown") {
+      const originalError: unknown = acknowledgment.error;
+      void originalError;
+    } else {
+      // @ts-expect-error A recorded create is not authenticated attachment evidence.
+      acknowledgment.receiverUid;
+    }
+    // @ts-expect-error Submission requires finite owner bounds.
+    planned.submit({ create });
+    // @ts-expect-error Recording is acknowledged explicitly, not by an empty result.
+    const noAcknowledgment: Promise<void> = planned.submit({ bounds, create });
+    void noAcknowledgment;
+    // @ts-expect-error Authority admission is asynchronous and has no consumer gate.
     planned.assertAndConsume();
-    await owner.observeAttachment({
-      attachment: planned.attachment,
-      outcome: { kind: "created", receiverUid: "example-observed-receiver" },
-      bounds,
-    });
   } else {
-    // @ts-expect-error The original submitted/uncertain attempt has no new create gate.
-    planned.assertAndConsume();
+    // @ts-expect-error The original submitted/uncertain attempt cannot submit again.
+    planned.submit({ bounds, create });
     // @ts-expect-error Retained attempts provide no provider references for resubmission.
     planned.providers;
   }
@@ -162,12 +173,27 @@ const requestPermission: RuntimeAuthenticationProjectionV1["session"]["permissio
 const unbounded: RuntimeAuthenticationProjectionV1["session"]["lifetime"] = "unbounded";
 // @ts-expect-error The runtime consumer cannot substitute another immutable profile.
 projection.profileDigest = "replacement-profile";
+// @ts-expect-error Synchronous create callbacks cannot cross asynchronous admission.
+const synchronousCreate: RuntimeAuthenticationCreateV1 = () => ({ kind: "created" });
+// @ts-expect-error Only the owner records unknown; a callback must throw the original error.
+const unknownCreate: RuntimeAuthenticationCreateV1 = async () => ({ kind: "unknown" });
+// @ts-expect-error Observation is internal to owner submission and finalization.
+owner.observeAttachment({ attachment, outcome: { kind: "created" }, bounds });
 if (delivery.kind === "create") {
+  const submitted: Promise<void> = delivery.submit(async (signal) => {
+    signal.throwIfAborted();
+    return { kind: "created", receiverUid: "example-observed-receiver" };
+  });
+  void submitted;
+  // @ts-expect-error The old synchronous gate is no longer public.
+  delivery.assertAndConsume();
+  // @ts-expect-error Observation is internal to owner submission and finalization.
+  delivery.observe({ kind: "created" });
   // @ts-expect-error A Sandbox cannot append arbitrary provider references to the delivery.
   delivery.providers.push("another-provider");
 } else {
-  // @ts-expect-error Recovery never provides another create gate.
-  delivery.assertAndConsume();
+  // @ts-expect-error Recovery never permits another submission.
+  delivery.submit(create);
   // @ts-expect-error Recovery cannot re-submit provider references.
   delivery.providers;
   // @ts-expect-error Recovery inspects the existing attempt rather than reporting another create.
@@ -175,6 +201,8 @@ if (delivery.kind === "create") {
 }
 
 void [
+  synchronousCreate,
+  unknownCreate,
   operationCapabilities,
   issuedAttachment,
   revocableSource,

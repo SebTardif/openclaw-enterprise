@@ -25,6 +25,15 @@ not qualify the new path. The fixture no longer creates a provider profile or
 loads a model key to manufacture authentication; do not replace the prerequisite
 with a fixture owner or a revision-derived grant.
 
+The runtime-authentication adapter and Kubernetes Compute suites use injected
+owner and provider ports to verify consumer behavior: delayed admission submits
+nothing early; cancellation still awaits recording; original provider errors
+survive finalization failures; and retained attempts reconstruct readiness without
+another create. Malformed or missing acknowledgments cannot activate routing.
+These checks establish the consumer contract, not durable authority, genuine
+broker admission, or authenticated provider evidence. The worker PostgreSQL cases
+exercise real worker/State retry ordering with injected external provider ports.
+
 ## OpenShell Sandbox
 
 Use this infrastructure after owner integration.
