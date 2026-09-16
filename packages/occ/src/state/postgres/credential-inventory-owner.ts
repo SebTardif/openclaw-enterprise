@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { PlatformStateStore, PlatformUnitOfWork } from "../state/platform-state.ts";
-import type { PostgresQueryClient } from "../state/postgres-work-queue.ts";
+import type { PlatformStateStore, PlatformUnitOfWork } from "../platform-state.ts";
+import type { PostgresQueryClient } from "../postgres-work-queue.ts";
 export interface CredentialInventoryMetadataTransactionOwnerV1 extends PlatformStateStore {
   queryInTransaction(
     unit: PlatformUnitOfWork,
@@ -8,16 +8,19 @@ export interface CredentialInventoryMetadataTransactionOwnerV1 extends PlatformS
     parameters?: readonly unknown[],
   ): ReturnType<PostgresQueryClient["query"]>;
 }
-import { ScopeViolationError } from "../errors.ts";
-import { CredentialInventoryOwnerPhaseV1 } from "./phase.ts";
+import { ScopeViolationError } from "../../errors.ts";
+import { CredentialInventoryOwnerPhaseV1 } from "../../credential-inventory-v1/phase.ts";
 import {
   createPostgresCredentialInventoryV1,
   preparePostgresCredentialInventoryScopeV1,
   preparePostgresCredentialInventoryKeysV1,
   type PostgresCredentialInventoryContextV1,
   type PostgresCredentialInventoryKeySetV1,
-} from "./postgres.ts";
-import type { CredentialInventoryTransactionV1, InventoryScopeV1 } from "./ports.ts";
+} from "./credential-inventory.ts";
+import type {
+  CredentialInventoryTransactionV1,
+  InventoryScopeV1,
+} from "../../credential-inventory-v1/ports.ts";
 const emptyKeys = (): PostgresCredentialInventoryKeySetV1 => ({
   operations: [],
   records: [],

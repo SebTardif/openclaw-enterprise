@@ -2745,24 +2745,22 @@ export {
   assertGitHubAppBoundsV1,
   snapshotGitHubAppKeyIdentityV1,
 } from "./github-app-provider-v1/material.ts";
-export type {
-  GitHubAppKeyIdentityV1,
-  GitHubAppMaterialV1,
-} from "./github-app-provider-v1/material.ts";
 export {
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-  snapshotGitHubAppReturnedPermissionsV1,
 } from "./github-app-provider-v1/provider.ts";
 export type {
   GitHubAppEndpointV1,
+  GitHubAppKeyIdentityV1,
+  GitHubAppMaterialV1,
   GitHubAppReturnedPermissionsV1,
   GitHubAppSelectionV1,
   GitHubAppTokenCustodyV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenObservationV1,
   GitHubAppTokenRevokerOptionsV1,
-} from "./github-app-provider-v1/provider.ts";
+  GitHubRepositoryWriteSelectionV1,
+} from "./github-app-provider-v1/types.ts";
 
 export {
   ProtectedGitHubCryptoV1,
@@ -2772,77 +2770,16 @@ export type { ProtectedGitHubKeySelectionV1 } from "./credential-custody-v1/prot
 export { ProtectedGitHubTokenStoreV1 } from "./credential-custody-v1/protected-github-token-store.ts";
 export type { ProtectedGitHubStoreSelectionV1 } from "./credential-custody-v1/protected-github-token-store.ts";
 
-export type {
-  Bounds,
-  LocalHandle,
-  AuthenticatedAccess,
-  RetainedCredential,
-  CoreAuthenticationBinding,
-  AdmittedServiceBinding,
-  AdmittedReceiver,
-  ProtectedDerivedCapability,
-  DerivedRequest,
-  ProtectedUpstreamResponse,
-  DispatchPermit,
-  ReceiptFinalization,
-  BoundCredentialOperation,
-  ValidatedAdapterOperation,
-  ValidatedSchemaValue,
-  AdmissionCondition,
-  AdmittedRootContext,
-  AuthorizedClosure,
-  AdmittedConnection,
-  AdmittedCredentialSelection,
-  ProtectedCredentialSource,
-  RegisteredCredentialMechanism,
-} from "./credential-gateway-v1/handles.ts";
+export type { Bounds, ValidatedSchemaValue } from "./credential-gateway-v1/handles.ts";
 
 export type {
   DefinitionRef,
+  PrimitiveRef,
   SchemaRef,
   RetainedSchemaValue,
-  JsonValue,
   SchemaRole,
   SchemaBinding,
   SchemaRegistration,
   RegisteredSchemaCodec,
   SchemaRegistrationOwner,
 } from "./credential-gateway-v1/schema.ts";
-
-export type {
-  CredentialConnection,
-  ResourceIdentity,
-  CanonicalCredentialTargetIdentity,
-  CredentialTarget,
-  CredentialProfileRef,
-  CredentialAccessGrant,
-  ServiceBindingView,
-  OperationCapability,
-  BackendCapabilities,
-  AuthenticationMode,
-  AcquisitionMode,
-  MechanismContractRef,
-  CredentialObservation,
-} from "./credential-gateway-v1/connection.ts";
-
-export type {
-  AccessProfile,
-  TokenProfile,
-  RepositoryIdentity,
-  GitHubRepositorySelection,
-  GitHubRepositoryAccessV1,
-  GitHubRepositoryWriteSelectionV1,
-  RefUpdate,
-  CreatePullRequestInput,
-  GitHubOperation,
-  CanonicalTarget,
-  GitHubHost,
-  GitHubAccessId,
-  GitHubRequestId,
-  GitHubClientOperationId,
-  GitHubDispatchId,
-  GitHubFactsDigest,
-  GitHubBodyDigest,
-  GitHubPrefixDigest,
-  GitHubCreationDigest,
-} from "./credential-gateway-v1/github-operations.ts";
