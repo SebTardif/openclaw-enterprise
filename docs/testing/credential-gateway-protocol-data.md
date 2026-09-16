@@ -43,17 +43,44 @@ response parsing. This type cannot construct an operation, capture or permit.
 
 ## Compiler and CI coverage
 
-The credential-gateway type fixture imports the curated public entry point
-and checks assignment to the original private operation types inside OCC.
-Negative cases protect hidden exports, nominal category swaps, literal
-kind/host/method/API fields and nested readonly data. The baseline CI preparation
-compiles this fixture before the protocol suite runs.
+The strict credential-gateway compiler target includes both the OCC fixture and
+`apps/credential-gateway/type-tests/github-protocol-data.ts`. They import the
+curated public entry point through real package resolution. The app fixtures
+call the existing metadata, fetch and PR constructors with their public inputs;
+they project complete push facts to the smaller status-observer input and consume
+HTTP/PR results. They check a compiler seam, not migrated native adapters.
+
+`GitHubProtocolRepositoryV1` retains the metadata repository's readonly schema.
+`GitHubProtocolOperationV1` has seven separately discriminated members: metadata,
+fetch discovery/fetch, push discovery/probe/push and PR creation. Each member
+retains its fixed host/method and required facts. Its identities and digests are
+strings; constructor-refined fetch/PR DATA assigns to it, while structural DATA
+cannot assign back to the nominal views or original authority handles.
+
+The result declarations preserve finite status/code pairs, partial upload/ref
+observations, unknown stages and exact optional-field presence. `HTTPResult<T>`
+is the sole HTTP envelope; `Result<T>` is its compatibility alias. Provider
+`pr-created` with status 201 is an observation, while `created` receipt DATA also
+requires original operation/receipt IDs and replay information. These declarations
+supply neither validation nor proof that a receipt committed.
+
+Negative cases protect hidden exports, nominal category swaps, seven-way
+extraction, literal routes/API fields, non-submission classification, forbidden
+status/code combinations, missing receipt fields and nested readonly data. The
+target sets `skipLibCheck: false` and is included in `pnpm typecheck`, the existing
+baseline CI compiler step and protocol-suite preparation hook.
 
 For a separately built OCC artifact, set the test-only
 `OCC_TEST_PROTOCOL_DATA_ENTRY` to its absolute entry-point file path.
 The suite then executes those emitted constructors with the same vectors and
-hostile cases. Declaration consumers must use strict checking with
-`skipLibCheck: false` and the actual emitted root declarations.
+hostile cases. To check physical emitted declarations, first run `pnpm exec tsc --build
+tsconfig.json --force --pretty false`. Compile both fixtures with strict checking,
+`exactOptionalPropertyTypes: true` and `skipLibCheck: false`, resolving the OCC
+public import to `packages/occ/dist/index.d.ts` and the OCC-only original-module
+imports to their corresponding emitted declarations. Use the freshly built files;
+never supply fabricated declarations, ambient modules or a source fallback.
+Ordinary workspace package resolution still selects source; this separate check
+does not certify a packaged installation.
 
 ## Qualification boundary
 

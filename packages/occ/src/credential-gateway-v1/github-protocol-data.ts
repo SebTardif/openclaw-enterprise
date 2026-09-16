@@ -52,6 +52,185 @@ export type GitHubPushResultInputV1 = Readonly<{
   capabilities: readonly string[];
 }>;
 
+/** Immutable protocol facts; runtime owners still validate and admit operations. */
+export type GitHubProtocolRepositoryV1 = Readonly<GitHubMetadataRepositoryV1>;
+
+interface ProtocolOperationFacts {
+  readonly requestId: string;
+  readonly factsDigest: string;
+}
+
+type ProtocolTarget<H extends "github.com" | "api.github.com", M extends "GET" | "POST"> = {
+  readonly repository: GitHubProtocolRepositoryV1;
+  readonly host: H;
+  readonly method: M;
+  readonly pathAndQuery: string;
+};
+
+/** Each kind is a separate member so consumers can extract its exact facts. */
+export type GitHubProtocolOperationV1 =
+  | (ProtocolOperationFacts & {
+      readonly kind: "metadata";
+      readonly target: ProtocolTarget<"api.github.com", "GET">;
+      readonly bodyDigest: string;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "fetch-discovery";
+      readonly target: ProtocolTarget<"github.com", "GET">;
+      readonly bodyDigest: string;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "fetch";
+      readonly target: ProtocolTarget<"github.com", "POST">;
+      readonly bodyDigest: string;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "push-discovery";
+      readonly target: ProtocolTarget<"github.com", "GET">;
+      readonly bodyDigest: string;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "push-probe";
+      readonly target: ProtocolTarget<"github.com", "POST">;
+      readonly bodyDigest: string;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "push";
+      readonly target: ProtocolTarget<"github.com", "POST">;
+      readonly objectFormat: "sha1";
+      readonly updates: readonly {
+        readonly refName: string;
+        readonly oldOid: string;
+        readonly newOid: string;
+        readonly change: "create" | "update" | "delete";
+      }[];
+      readonly capabilities: readonly string[];
+      readonly pushOptions: readonly string[];
+      readonly prefixDigest: string;
+      readonly prefixBytes: number;
+      readonly requiresPack: boolean;
+    })
+  | (ProtocolOperationFacts & {
+      readonly kind: "pull-request-create";
+      readonly target: ProtocolTarget<"api.github.com", "POST">;
+      readonly clientOperationId: string;
+      readonly input: GitHubPrCreateOperationV1["input"];
+      readonly apiVersion: "2026-03-10";
+      readonly bodyDigest: string;
+      readonly creationDigest: string;
+    });
+
+export type GitHubPushOperationV1 = Extract<
+  GitHubProtocolOperationV1,
+  { readonly kind: "push-discovery" | "push-probe" | "push" }
+>;
+
+export type PreSubmissionFailure =
+  | { readonly status: 401; readonly code: "unauthenticated" }
+  | { readonly status: 403; readonly code: "closed" | "forbidden" }
+  | { readonly status: 400 | 415; readonly code: "unsupported-request" }
+  | { readonly status: 413 | 431 | 429; readonly code: "limit-exceeded" }
+  | { readonly status: 408; readonly code: "deadline" }
+  | { readonly status: 503; readonly code: "unavailable" };
+
+export type RequestFailure =
+  | PreSubmissionFailure
+  | { readonly status: 503; readonly code: "indeterminate" }
+  | { readonly status: 409; readonly code: "operation-id-conflict" };
+
+export type HTTPResult<T> =
+  | { readonly kind: "ok"; readonly value: T }
+  | ({ readonly kind: "error"; readonly receiptId?: string } & RequestFailure);
+
+export type Result<T> = HTTPResult<T>;
+
+export interface BodyEvidence {
+  readonly decodedBytes: number;
+  readonly wireBytes: number;
+  readonly sha256: string;
+  readonly coverage: "complete" | "partial";
+}
+
+export interface RefResult {
+  readonly requestedRef: string;
+  readonly status: "ok" | "rejected" | "unknown";
+  readonly reportedRef?: string;
+  readonly reportedOldOid?: string;
+  readonly reportedNewOid?: string;
+  readonly reportedForcedUpdate?: boolean;
+}
+
+export interface PullRequestRefObservation {
+  readonly repositoryId: string;
+  readonly ref: string;
+  readonly sha: string;
+}
+
+export interface SafePullRequest {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly state: "open";
+  readonly draft: boolean;
+  readonly head: PullRequestRefObservation;
+  readonly base: PullRequestRefObservation;
+}
+
+export type ProviderRefusalStatus = 400 | 401 | 403 | 404 | 410 | 422 | 429;
+
+/** Receipt DATA is distinct from the provider's pr-created observation. */
+export type GitHubPrCreationResultV1 =
+  | {
+      readonly kind: "created";
+      readonly operationId: string;
+      readonly receiptId: string;
+      readonly pullRequest: SafePullRequest;
+      readonly replayed: boolean;
+    }
+  | {
+      readonly kind: "in-progress" | "unknown";
+      readonly operationId: string;
+      readonly receiptId: string;
+    }
+  | ({
+      readonly kind: "not-submitted";
+      readonly operationId: string;
+      readonly receiptId: string;
+    } & PreSubmissionFailure)
+  | {
+      readonly kind: "refused";
+      readonly operationId: string;
+      readonly receiptId: string;
+      readonly status: ProviderRefusalStatus;
+      readonly code: "provider-refused";
+    };
+
+export type GitHubExchangeOutcomeV1 =
+  | ({ readonly kind: "not-submitted" } & PreSubmissionFailure)
+  | { readonly kind: "local-probe" }
+  | {
+      readonly kind: "read-complete";
+      readonly status: number;
+      readonly responseBytes: number;
+    }
+  | { readonly kind: "provider-rejected"; readonly status: number }
+  | { readonly kind: "pr-created"; readonly status: 201; readonly pullRequest: SafePullRequest }
+  | {
+      readonly kind: "push-report";
+      readonly status: number;
+      readonly unpack: "ok" | "rejected" | "unknown";
+      readonly refs: readonly RefResult[];
+      readonly upload: BodyEvidence;
+      readonly reportComplete: boolean;
+    }
+  | {
+      readonly kind: "unknown";
+      readonly stage: "submission" | "upload" | "response" | "receipt-commit";
+      readonly upload?: BodyEvidence;
+      readonly refs?: readonly RefResult[];
+      readonly observedPullRequest?: SafePullRequest;
+    };
+
 // Reject trailing newlines and other suffixes that the $ anchor alone permits.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\s\S])/;
 const SHA256 = /^[0-9a-f]{64}$(?![\s\S])/;
