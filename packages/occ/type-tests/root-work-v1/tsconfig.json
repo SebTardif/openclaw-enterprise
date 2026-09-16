@@ -1,0 +1,20 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "rootDir": "../../../..",
+    "paths": {
+      "@openclaw-enterprise/utils": ["../../../../packages/utils/src/index.ts"],
+      "@openclaw-enterprise/contracts": ["../../../../packages/contracts/src/index.ts"],
+      "@openclaw-enterprise/occ": ["../../../../packages/occ/src/index.ts"],
+      "@openclaw-enterprise/iam": ["../../../../packages/iam/src/index.ts"],
+      "@openclaw-enterprise/audit": ["../../../../packages/audit/src/index.ts"]
+    },
+    "strict": true,
+    "incremental": false
+  },
+  "include": ["../root-work-v1.ts"]
+}

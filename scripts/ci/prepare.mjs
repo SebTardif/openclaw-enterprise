@@ -1003,6 +1003,22 @@ async function prepareLane({ lane, statePath }) {
   await writeState(resolvedStatePath, state);
 
   switch (name) {
+    case "checks-baseline":
+      // Compile the public ROOT contract through the actual owner/package exports.
+      // Two private original owner fixture types use their owning module.
+      // This supplies contract proof, not genuine Work/IAM/provider composition.
+      await execFile(
+        process.execPath,
+        [
+          "node_modules/typescript/bin/tsc",
+          "--project",
+          "packages/occ/type-tests/root-work-v1/tsconfig.json",
+          "--pretty",
+          "false",
+        ],
+        { timeoutMs: 120_000 },
+      );
+      break;
     case "postgres":
       await ensurePostgresServer(resolvedStatePath, state);
       break;

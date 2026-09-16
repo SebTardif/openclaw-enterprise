@@ -774,3 +774,16 @@ export {
   parseCredentialStorageV1,
   canonicalCredentialStorageRequestV1,
 } from "./credential-inventory-data-v1.ts";
+
+export type {
+  RootDurationPolicyV1,
+  RootCancellationPolicyV1,
+  RootWorkIdentityV1,
+  RootDeploymentInvocationV1,
+  RootWorkPolicyV1,
+} from "./root-work-v1.ts";
+export {
+  decodeRootWorkIdentityV1,
+  encodeRootWorkIdentityV1,
+  digestRootWorkIdentityV1,
+} from "./root-work-v1.ts";

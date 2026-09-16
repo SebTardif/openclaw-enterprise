@@ -79,6 +79,7 @@
                   "reference/harness-execution",
                   "reference/namespaces",
                   "reference/platform-repositories",
+                  "reference/root-work",
                   "reference/credential-inventory-v1",
                   "reference/credential-gateway-v1",
                   "reference/runtime-authority/contract",

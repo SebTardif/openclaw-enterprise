@@ -2795,3 +2795,19 @@ export {
   CREDENTIAL_SCHEMA_PRIMITIVES_V1,
   INSTALLED_CREDENTIAL_SCHEMA_PRIMITIVES_V1,
 } from "./credential-broker-v1/schema-primitives.ts";
+
+export type {
+  RootDeploymentAdmissionV1,
+  IamAdmissionEvidence,
+  OriginalPrCreationClaimV1,
+  AuthorityBoundsV1,
+  RootAuthorityBindingV1,
+  CredentialAuthorityBindingV1,
+  ResourceAuthorityBindingV1,
+  PrAuthorityBindingV1,
+  AuthorityBinding,
+  RootWorkOwnerV1,
+  RootCancellationV1,
+  WorkAdmissionOwner,
+  SelectedIamAdmissionOwner,
+} from "./root-work-v1/ports.ts";

@@ -115,6 +115,33 @@ Every current `tests/integration/*.test.mjs` file has a suite-map owner. Ownersh
 alone does not mean a workflow runs it; keep this list aligned with both the
 suite-map groups and workflow entrypoints.
 
+## ROOT contract conformance
+
+`checks-baseline` preparation executes the strict source project:
+
+```sh
+node node_modules/typescript/bin/tsc --project packages/occ/type-tests/root-work-v1/tsconfig.json --pretty false
+node --test tests/conformance/root-work-v1.test.mjs
+```
+
+The project uses strict `noEmit`, `composite: false`, `incremental: false`,
+`skipLibCheck: false` and source mappings through the actual
+contracts/OCC/IAM public exports. The two private original owner fixture types,
+`CoreAuthenticationBinding` and `ReceiptFinalization`, use their owning module;
+the ROOT public API remains checked through package exports. It checks the controller's real deployment
+parameters/returned revision, original State UoW, existing nominal Core binding,
+standard IAM, and the original ReceiptFinalization/Core owner separation. Meaningful role,
+receiver/effect, evidence and horizon negatives must reach their intended guard.
+The runtime codec file is enrolled in `checks-baseline` and uses the public
+contracts boundary for canonical bytes/digest, detached immutability and malformed
+or foreign DATA rejection. A selected suite permits no skips or TODOs.
+
+This is contract and executable DATA proof. These fixtures never supply fake
+positive Work/IAM providers; they prove no genuine root admission, IAM fence,
+SQL persistence, broker composition, installed workload or live provider behavior.
+See the [ROOT owner contract](../reference/root-work.md) for required runtime
+ownership and commit boundaries.
+
 ## Related
 
 - [Choose another test suite](README.md).
