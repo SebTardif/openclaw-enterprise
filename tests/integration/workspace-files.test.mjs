@@ -201,10 +201,10 @@ if (!process.env.OCC_WORKSPACE_FILES_TEST_CERT_DIR) {
     assert.equal((await save({ content: submitted })).status, 200);
 
     // A malformed read is unavailable. After dispatch, a versioned save with
-    // an invalid or absent version acknowledgement has an unknown outcome.
+    // an absent, invalid or different-content acknowledgement has an unknown outcome.
     queueRead(before, { hash: "invalid" });
     assert.equal((await fixture.request("GET", endpoint)).status, 503);
-    for (const extra of [{}, { hash: "invalid" }]) {
+    for (const extra of [{}, { hash: "invalid" }, { hash: hash(current) }]) {
       queueWrite(
         { content: submitted, expectedHash: hash(before) },
         {
@@ -216,6 +216,22 @@ if (!process.env.OCC_WORKSPACE_FILES_TEST_CERT_DIR) {
       assert.equal(uncertain.status, 503);
       assert.equal(uncertain.body.error.code, "UNKNOWN_OUTCOME");
     }
+
+    // A first save has no expected version, but a returned hash must still
+    // acknowledge the submitted bytes before the Console uses it for another save.
+    queueWrite(
+      { content: submitted },
+      { ok: true, payload: { file: { name: "AGENTS.md", hash: hash(current) } } },
+    );
+    const uncertainInitialSave = await save({ content: submitted });
+    assert.equal(uncertainInitialSave.status, 503);
+    assert.equal(uncertainInitialSave.body.error.code, "UNKNOWN_OUTCOME");
+
+    queueWrite(
+      { content: submitted },
+      { ok: true, payload: { file: { name: "AGENTS.md", hash: hash(submitted).toUpperCase() } } },
+    );
+    assert.equal((await save({ content: submitted })).status, 200);
 
     // A native UNAVAILABLE response can follow a committed remote write (for
     // example, the workspace host stops before its acknowledgement arrives).

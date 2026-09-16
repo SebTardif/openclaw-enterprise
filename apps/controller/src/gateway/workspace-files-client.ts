@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   GatewayClient,
   type GatewayClientOptions,
@@ -54,7 +56,10 @@ export function createNativeWorkspaceFilesAccess(
       const normalized = normalizeWriteResponse(request.filename, result.payload);
       if (
         normalized.status !== "ok" ||
-        (request.expectedHash !== undefined && normalized.file.hash === undefined)
+        (request.expectedHash !== undefined && normalized.file.hash === undefined) ||
+        (normalized.file.hash !== undefined &&
+          normalized.file.hash.toLowerCase() !==
+            createHash("sha256").update(request.content, "utf8").digest("hex"))
       ) {
         throw new ControllerWorkspaceFileUnknownOutcomeError(
           "The native gateway returned an invalid workspace file write acknowledgement.",

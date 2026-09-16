@@ -128,7 +128,9 @@ best-effort stale-edit check, not a lock on native Harness writes.
 The native Gateway may omit `hash`; those initial reads and unversioned saves
 retain their existing behavior. Once the Console has a version, it will not
 silently downgrade to an unversioned save. A versioned write with a missing or
-invalid acknowledgement hash returns `UNKNOWN_OUTCOME`. A native `UNAVAILABLE`
+invalid acknowledgement hash returns `UNKNOWN_OUTCOME`. Any returned hash must
+match the submitted content; a mismatch also returns `UNKNOWN_OUTCOME`.
+A native `UNAVAILABLE`
 error after write dispatch also returns `UNKNOWN_OUTCOME`, because the handler
 may have failed after changing the file. File contents are not
 retained in OCC or audit history.
