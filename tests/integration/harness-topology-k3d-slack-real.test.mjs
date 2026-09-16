@@ -123,6 +123,7 @@ test(
       topology.placement,
     );
     assert.deepEqual(policy.spec.podSelector.matchLabels, {
+      "openclaw.dev/network-profile": "broad-egress-v1",
       "openclaw.dev/workload-role": "gateway",
       "openclaw.dev/agent": topology.agent.id,
     });

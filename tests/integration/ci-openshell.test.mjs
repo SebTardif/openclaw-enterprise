@@ -11,7 +11,11 @@ import {
   selectCliAsset,
   selectKubectlAsset,
 } from "../../scripts/ci/openshell.mjs";
-import { openShellChartImageValues } from "../helpers/openshell-kubernetes-real.mjs";
+import {
+  createOpenShellInstallationConfiguration,
+  openShellChartImageValues,
+  openShellGatewayNetworkPolicies,
+} from "../helpers/openshell-kubernetes-real.mjs";
 
 async function fixture(t, prefix = "ci-openshell-test") {
   const root = await mkdtemp(join(tmpdir(), `${prefix}-`));
@@ -64,6 +68,64 @@ test("OpenShell Helm chart image values preserve immutable digests in rendered t
     () => openShellChartImageValues("image", "localhost/example/gateway:local", "0.0.113"),
     /immutable OpenShell image digest/,
   );
+});
+
+test("OpenShell fixture networking preserves control-plane routes without granting unclassified tenant Pods", () => {
+  const configuration = createOpenShellInstallationConfiguration({
+    authentication: {},
+    platformNamespace: "openclaw-system",
+    gatewayImage: "gateway-fixture",
+    codexImage: "codex-fixture",
+    cluster: { name: "fixture" },
+  });
+  const apiPeers = [{ ipBlock: { cidr: "192.0.2.10/32" } }];
+  const policies = [
+    ...openShellGatewayNetworkPolicies("tenant-fixture", apiPeers).items,
+    ...(configuration.drivers.sandbox.configuration.gateway.networkPolicyResources ?? []),
+  ];
+  const matches = (selector, labels) =>
+    Object.entries(selector.matchLabels ?? {}).every(([key, value]) => labels[key] === value);
+  const ordinary = {
+    "openclaw.dev/workload-role": "agent",
+    "openclaw.dev/network-profile": "broad-egress-v1",
+  };
+  const callbacks = policies.filter((policy) => matches(policy.spec.podSelector, ordinary));
+  assert.equal(callbacks.length, 1);
+  assert.deepEqual(callbacks[0].spec.policyTypes, ["Egress"]);
+  assert.deepEqual(callbacks[0].spec.egress[0].ports, [{ protocol: "TCP", port: 8080 }]);
+  const gatewayLabels = callbacks[0].spec.egress[0].to[0].podSelector.matchLabels;
+  const gatewayPolicies = policies.filter((policy) =>
+    matches(policy.spec.podSelector, gatewayLabels),
+  );
+  assert.equal(gatewayPolicies.length, 2);
+  const controlPlane = gatewayPolicies.find((policy) => policy.spec.egress !== undefined);
+  assert.deepEqual(
+    controlPlane.spec.egress.map((rule) => rule.ports),
+    [
+      [
+        { protocol: "UDP", port: 53 },
+        { protocol: "TCP", port: 53 },
+      ],
+      [{ protocol: "TCP", port: 443 }],
+      [{ protocol: "TCP", port: 6443 }],
+    ],
+  );
+  assert.deepEqual(controlPlane.spec.egress[1].to, apiPeers);
+  assert.deepEqual(controlPlane.spec.egress[2].to, apiPeers);
+  const callbackIngress = gatewayPolicies.find((policy) => policy.spec.ingress !== undefined);
+  assert.equal(matches(callbackIngress.spec.ingress[0].from[0].podSelector, ordinary), true);
+
+  // All additive fixture policies must preserve the tenant profile boundary, including DNS.
+  for (const profile of [undefined, "", "unknown-profile"]) {
+    const unclassified = { ...ordinary };
+    if (profile === undefined) delete unclassified["openclaw.dev/network-profile"];
+    else unclassified["openclaw.dev/network-profile"] = profile;
+    assert.equal(
+      policies.some((policy) => matches(policy.spec.podSelector, unclassified)),
+      false,
+    );
+    assert.equal(matches(callbackIngress.spec.ingress[0].from[0].podSelector, unclassified), false);
+  }
 });
 
 test("prepareOpenShellClusterBootstrap selects pinned K3s and kubectl with runc", async (t) => {

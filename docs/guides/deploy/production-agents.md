@@ -189,6 +189,12 @@ controller does not prove tenant runtime, gateway WebSocket authentication, or
 a model turn. Use the production TUI proof below when the accepted evidence is
 an interactive model-backed session.
 
+Check that ordinary gateway and Harness Pods carry the controller-assigned
+[network profile](../../reference/drivers/kubernetes-compute/networking-and-isolation.md#explicit-network-profiles).
+A missing or mismatched profile denies ordinary network grants. Investigate the
+workload creator and template before changing a label, since assigning this
+profile grants access to the workload's ordinary routes.
+
 ## Attach with the OpenClaw TUI
 
 Find the Ready gateway Pod for the active revision by matching the mounted
