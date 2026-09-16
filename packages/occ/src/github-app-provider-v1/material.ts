@@ -1,24 +1,12 @@
 import type { TokenIssuerCallBoundsV1 } from "@openclaw-enterprise/contracts";
 import { KeyObject, constants, sign } from "node:crypto";
+import type { GitHubAppKeyIdentityV1, GitHubAppMaterialV1 } from "./types.ts";
 
-export interface GitHubAppKeyIdentityV1 {
-  readonly clientId: string;
-  readonly bindingRef: string;
-  readonly immutableVersion: string;
-}
 export class GitHubAppTokenIssuerErrorV1 extends Error {
   constructor() {
     super("GitHub App token issuer unavailable.");
     this.name = "GitHubAppTokenIssuerErrorV1";
   }
-}
-export interface GitHubAppMaterialV1 {
-  withJwt<T>(
-    identity: GitHubAppKeyIdentityV1,
-    bounds: TokenIssuerCallBoundsV1,
-    consume: (jwt: string, assertMaterialCurrent: () => void) => Promise<T>,
-  ): Promise<T>;
-  close(): void;
 }
 export function assertGitHubAppSynchronousV1(check: () => void): void {
   const result: unknown = check();

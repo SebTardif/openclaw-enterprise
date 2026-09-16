@@ -80,6 +80,7 @@
                   "reference/namespaces",
                   "reference/platform-repositories",
                   "reference/credential-inventory-v1",
+                  "reference/credential-gateway-v1",
                   "reference/runtime-authority/contract",
                   "reference/providers",
                   "reference/github-app-token-issuer",
