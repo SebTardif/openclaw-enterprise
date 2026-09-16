@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal/runtime-session-v1": "./src/root-work-v1/runtime-session-ports.ts"
   },
   "types": "./src/index.ts",
   "files": [
