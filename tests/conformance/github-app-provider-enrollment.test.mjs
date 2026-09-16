@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-} from "../../packages/occ/src/index.ts";
+} from "../../apps/controller/src/providers/token/github/index.ts";
 import { call, keyIdentity, providerFixture, selection } from "../helpers/github-app-provider.mjs";
 
 test("read issuer rejects broader selection before dispatch and retains keyless cleanup", async (t) => {
