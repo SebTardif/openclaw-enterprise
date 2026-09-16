@@ -7,6 +7,13 @@ The bundled ChatGPT client manages upstream service accounts, not inference.
 Providers have no OCC resource or write API. Installation administrators can
 discover nonsecret configured IDs and types through `GET /providers`.
 
+Bounded credential issuance belongs to the separate
+[TokenIssuer primitive](../design/drivers.md#token-issuers). The
+[GitHub App token issuer](github-app-token-issuer.md) fixes its repository scope
+through trusted construction and retains tokens in protected custody. It is not
+a configured Provider or a member of `provider[]`; production startup and regular
+Agent composition remain pending.
+
 ## Read configured Providers
 
 `GET /providers` returns `{data:[{id,type}],meta:{requestId}}` after the selected
