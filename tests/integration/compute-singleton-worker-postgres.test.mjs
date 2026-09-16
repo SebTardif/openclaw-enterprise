@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { requiresPostgres, setup, waitFor } from "../helpers/compute-singleton-worker.mjs";
 
@@ -1185,3 +1188,120 @@ test(
     ]);
   },
 );
+
+// The real SSH Driver owns binding validation; only its remote process protocol
+// is substituted. PostgreSQL, IAM, claims, CAS, and the worker run unchanged.
+for (const phase of ["post-CAS", "revoked pre-CAS"]) {
+  test(
+    `a cold SSH worker recovers ${phase} cutover with persisted bindings`,
+    requiresPostgres,
+    async (context) => {
+      const { SshComputeDriver } =
+        await import("../../apps/controller/src/drivers/compute/ssh/index.ts");
+      const fixture = await setup(context, { id: "compute-ssh", implementation: "occ/ssh" });
+      const owner = await fixture.agent("embedded");
+      const directory = await mkdtemp(join(tmpdir(), "occ-worker-ssh-"));
+      context.after(() => rm(directory, { recursive: true, force: true }));
+      const identityFile = join(directory, "identity");
+      const knownHostsFile = join(directory, "known_hosts");
+      await Promise.all([writeFile(identityFile, "fixture"), writeFile(knownHostsFile, "fixture")]);
+      const operations = [];
+      let interrupted = false;
+      let recovering = false;
+      let second;
+      const executor = {
+        async execute(command) {
+          const operation = JSON.parse(Buffer.from(command.operation, "base64").toString());
+          operations.push(operation);
+          if (
+            !recovering &&
+            second !== undefined &&
+            ((phase === "post-CAS" && operation.operation === "retire-revision") ||
+              (phase === "revoked pre-CAS" &&
+                operation.operation === "activate-revision" &&
+                operation.revision.id === second.id))
+          ) {
+            interrupted = true;
+            throw new Error("lost remote operation confirmation");
+          }
+          return { code: 0, stdout: JSON.stringify({ ok: true, ready: true }), stderr: "" };
+        },
+      };
+      const options = {
+        ssh: { identityFile, knownHostsFile },
+        hosts: { [fixture.namespace.name]: { address: "127.0.0.1", user: "root" } },
+        runtime: {
+          nodePath: process.execPath,
+          openclawPath: "/opt/openclaw/index.js",
+          user: "openclaw",
+          root: "/var/lib/openclaw-enterprise",
+        },
+        network: { gatewayPortRange: { start: 18800, end: 18899 } },
+      };
+      const first = await fixture.revision(owner, 1);
+      await fixture.start(new SshComputeDriver(options, { executor }));
+      await fixture.work(first);
+      second = await fixture.revision(owner, 2);
+      await waitFor("an interrupted durable cutover", async () => {
+        const result = await fixture.observerPool.query(
+          "SELECT state, cutover_started_at FROM occ.controller_work WHERE idempotency_key = $1",
+          [second.idempotencyKey],
+        );
+        const row = result.rows[0];
+        return interrupted && row?.state === "queued" && row.cutover_started_at !== null
+          ? row
+          : undefined;
+      });
+      await fixture.stop();
+      const activeId = phase === "post-CAS" ? second.id : first.id;
+      assert.equal(await fixture.activeRevision(owner), activeId);
+
+      // Revocation forbids a new deployment, but cannot abandon committed cleanup
+      // or compensation for the already authorized durable attempt.
+      await fixture.observerPool.query(
+        `INSERT INTO occ.iam_restrictions (id, namespace_id, action, resource_kind, resource_id, effect)
+       VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
+        [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
+      );
+      operations.length = 0;
+      recovering = true;
+      await fixture.start(new SshComputeDriver(options, { executor }));
+      const completed = await fixture.work(
+        second,
+        phase === "post-CAS" ? "succeeded" : "failed_permanent",
+      );
+      assert.equal(completed.cutover_started_at, null);
+      assert.equal(completed.cutover_expected_active_revision_id, null);
+      assert.equal(await fixture.activeRevision(owner), activeId);
+      assert.deepEqual(
+        operations
+          .filter(({ operation }) => operation !== "probe")
+          .map(({ operation, revision, rollbackFromRevisionId }) => ({
+            operation,
+            revisionId: revision.id,
+            rollbackFromRevisionId,
+          })),
+        phase === "post-CAS"
+          ? [
+              {
+                operation: "retire-revision",
+                revisionId: first.id,
+                rollbackFromRevisionId: undefined,
+              },
+            ]
+          : [
+              {
+                operation: "deactivate-revision",
+                revisionId: second.id,
+                rollbackFromRevisionId: undefined,
+              },
+              {
+                operation: "activate-revision",
+                revisionId: first.id,
+                rollbackFromRevisionId: second.id,
+              },
+            ],
+      );
+    },
+  );
+}

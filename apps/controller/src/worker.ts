@@ -617,37 +617,27 @@ export class ControllerWorker {
           outcome: "permanent",
           code: "INVALID_REVISION_OWNER",
         };
-        if (claim.cutoverStartedAt !== undefined && revision !== undefined) {
-          await this.compensateRevisionCutover(claim, revision, active, invalid);
+        if (claim.cutoverStartedAt !== undefined) {
+          await this.deferRevisionCutover(claim, invalid.code);
         } else {
           await this.finalizeRevision(claim, invalid);
         }
         return;
       }
-      if (namespace.status !== "ready") {
-        await this.finalizeOrCompensateRevision(claim, revision, active, {
-          outcome: "permanent",
-          code: "NAMESPACE_NOT_READY",
-        });
-        return;
-      }
       if (
+        agent.namespaceId !== namespace.id ||
         revision.namespaceId !== namespace.id ||
         revision.agentId !== agent.id ||
         revision.servicePrincipalId !== agent.servicePrincipalId
       ) {
-        await this.finalizeOrCompensateRevision(claim, revision, active, {
-          outcome: "permanent",
-          code: "INVALID_ADMITTED_REVISION",
-        });
-        return;
-      }
-      const approvedHarness = resolveApprovedHarness(revision.harness.id, revision.harness.mode);
-      if (approvedHarness === undefined || revision.harness.version !== approvedHarness.version) {
-        await this.finalizeOrCompensateRevision(claim, revision, active, {
-          outcome: "permanent",
-          code: "HARNESS_DESCRIPTOR_MISMATCH",
-        });
+        if (claim.cutoverStartedAt !== undefined) {
+          await this.deferRevisionCutover(claim, "INVALID_ADMITTED_REVISION");
+        } else {
+          await this.finalizeRevision(claim, {
+            outcome: "permanent",
+            code: "INVALID_ADMITTED_REVISION",
+          });
+        }
         return;
       }
       if (
@@ -666,6 +656,26 @@ export class ControllerWorker {
       }
       if (claim.cutoverStartedAt !== undefined && !this.usesDurableCutover()) {
         await this.deferRevisionCutover(claim, "REVISION_CUTOVER_DRIVER_MISMATCH");
+        return;
+      }
+      // A retained cutover belongs to an already authorized attempt. Rebuild
+      // process-local Driver bindings before cleanup, including after revocation.
+      if (claim.cutoverStartedAt !== undefined) {
+        await this.bindRevisionAgent(claim, namespace, agent);
+      }
+      if (namespace.status !== "ready") {
+        await this.finalizeOrCompensateRevision(claim, revision, active, {
+          outcome: "permanent",
+          code: "NAMESPACE_NOT_READY",
+        });
+        return;
+      }
+      const approvedHarness = resolveApprovedHarness(revision.harness.id, revision.harness.mode);
+      if (approvedHarness === undefined || revision.harness.version !== approvedHarness.version) {
+        await this.finalizeOrCompensateRevision(claim, revision, active, {
+          outcome: "permanent",
+          code: "HARNESS_DESCRIPTOR_MISMATCH",
+        });
         return;
       }
       if (
@@ -693,10 +703,8 @@ export class ControllerWorker {
         await this.finalizeOrCompensateRevision(claim, revision, active, provider);
         return;
       }
-      if (this.compute.bindAgent !== undefined) {
-        await this.withClaimHeartbeat(claim, async () => {
-          await this.compute.bindAgent!({ namespace, agent });
-        });
+      if (claim.cutoverStartedAt === undefined) {
+        await this.bindRevisionAgent(claim, namespace, agent);
       }
       const secretContext = await this.resolveRevisionSecretContext(revision);
       if ("result" in secretContext) {
@@ -779,6 +787,18 @@ export class ControllerWorker {
       result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
     }
     await this.finalizeRevision(claim, result);
+  }
+
+  private async bindRevisionAgent(
+    claim: ClaimedWork,
+    namespace: Readonly<Namespace>,
+    agent: Readonly<Agent>,
+  ): Promise<void> {
+    if (this.compute.bindAgent !== undefined) {
+      await this.withClaimHeartbeat(claim, async () => {
+        await this.compute.bindAgent!({ namespace, agent });
+      });
+    }
   }
 
   private async finalizeOrCompensateRevision(

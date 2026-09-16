@@ -17,7 +17,7 @@ async function waitFor(description, read, timeoutMs = 10_000) {
   assert.fail(`Timed out waiting for ${description}.`);
 }
 
-async function setup(context) {
+async function setup(context, computeDriver) {
   const [
     { Pool },
     { createControllerWorker },
@@ -31,6 +31,7 @@ async function setup(context) {
     { createInstallationDriverConfiguration },
     { createTestSecretDriver },
     { createDevelopmentIAMState },
+    { admitLoggingConfiguration },
   ] = await Promise.all([
     import("pg"),
     import("../../apps/controller/src/worker.ts"),
@@ -44,6 +45,7 @@ async function setup(context) {
     import("./installation-driver-configuration.mjs"),
     import("./secret-driver.mjs"),
     import("./development-iam-state.mjs"),
+    import("../../packages/contracts/src/index.ts"),
   ]);
 
   const observerPool = new Pool({ connectionString: databaseUrl, max: 8 });
@@ -109,7 +111,7 @@ async function setup(context) {
     createdAt: new Date().toISOString(),
   };
   await state.transact((unit) => unit.namespaces.createNamespace(namespace));
-  const compute = createDevelopmentComputeDriver();
+  const compute = computeDriver ?? createDevelopmentComputeDriver();
 
   async function agent(executionMode = "dedicated") {
     const id = `agt_${randomUUID()}`;
@@ -147,7 +149,10 @@ async function setup(context) {
       namespaceId: namespace.id,
       agentId: owner.id,
       revision: number,
-      configuration: createHarnessConfiguration(harness.id, "gpt-4.1"),
+      configuration: admitLoggingConfiguration(
+        createHarnessConfiguration(harness.id, "gpt-4.1"),
+        "info",
+      ),
       configurationId: owner.configurationId,
       configurationKind: "agent",
       configurationGeneration: 1,

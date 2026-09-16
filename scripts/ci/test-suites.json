@@ -330,7 +330,9 @@
             "queue recovery completes exhausted cutovers before same-Agent successors with the same retry cap",
             "an opted-in active runtime continuously repairs under its original authorized actor",
             "active maintenance recovers after its convergence deadline and stops when its actor is denied",
-            "development after-commit Drivers activate after CAS and retry before retiring the previous revision"
+            "development after-commit Drivers activate after CAS and retry before retiring the previous revision",
+            "a cold SSH worker recovers post-CAS cutover with persisted bindings",
+            "a cold SSH worker recovers revoked pre-CAS cutover with persisted bindings"
           ]
         },
         {
