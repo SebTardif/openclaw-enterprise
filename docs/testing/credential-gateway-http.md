@@ -3,7 +3,7 @@
 Run the focused native HTTP component checks from the repository root with Node.js 24 and the pinned pnpm version, using a matching frozen dependency installation:
 
 ```sh
-pnpm check:credential-gateway-http-types
+pnpm check:credential-gateway-source-types
 node --test tests/conformance/credential-gateway-http-request.test.mjs
 pnpm check:workspace
 pnpm format:check

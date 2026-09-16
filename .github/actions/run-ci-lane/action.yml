@@ -69,10 +69,10 @@ runs:
       if: inputs.lane == 'checks-baseline'
       shell: bash
       run: pnpm check:credential-gateway-types
-    - name: Check credential gateway HTTP types
+    - name: Check credential gateway source types
       if: inputs.lane == 'checks-baseline'
       shell: bash
-      run: pnpm check:credential-gateway-http-types
+      run: pnpm check:credential-gateway-source-types
     - name: Prepare lane
       shell: bash
       run: node scripts/ci/prepare.mjs --lane "${{ inputs.lane }}" --state "$RUNNER_TEMP/state/${{ inputs.lane }}.json" --github-env "$GITHUB_ENV"
