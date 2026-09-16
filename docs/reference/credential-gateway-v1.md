@@ -1,8 +1,11 @@
 # Credential gateway v1 contracts
 
-Import the public credential schema types, runtime authentication owner types
-and GitHub App supplier constructors from `@openclaw-enterprise/occ`. Import credential inventory data from
-`@openclaw-enterprise/contracts`. OpenClaw Control Plane (OCC) keeps generic
+Import public credential schema and runtime authentication owner types from
+`@openclaw-enterprise/occ`, and credential inventory data from
+`@openclaw-enterprise/contracts`. The controller owns GitHub App constructors
+and selection types in its
+[GitHub token provider](../../apps/controller/src/providers/token/github/index.ts).
+OpenClaw Control Plane (OCC) keeps generic
 handles, connection descriptors, operation data and transaction ports internal
 to their owners. Importing a type does not admit Work or grant credential access.
 
@@ -117,7 +120,7 @@ Metadata and fetch under read-write access use that grant's write-capable profil
 Operation kind never selects another profile. Each operation still requires
 current Work/assignment/IAM authority, immutable facts and its own finite,
 single-use dispatch permit. Preparation cannot borrow execution material.
-`GitHubRepositoryWriteSelectionV1` is a public, provider-owned declaration. It
+`GitHubRepositoryWriteSelectionV1` is exported by the controller token provider. It
 shares the read selection's key, numeric installation ID and single-repository
 tuple while requiring exactly `metadata:read`, `contents:write` and
 `pull_requests:write`. The existing `GitHubAppSelectionV1` and read issuer
@@ -148,8 +151,8 @@ issuance, dispatch and cleanup outcomes retain their obligations without automat
 replay.
 
 The existing compiler fixtures cover schema registration data, opaque handle
-separation, internal connection and operation contracts, public provider
-selections and root export privacy. They establish source compatibility only. See the [testing guide](../testing/README.md)
+separation, internal connection and operation contracts, controller provider
+selections and OCC export privacy. They establish source compatibility only. See the [testing guide](../testing/README.md)
 for validation procedures and the [Provider reference](providers.md) for platform
 composition requirements. Compiler success supplies no composed, installed,
 provider or release evidence.

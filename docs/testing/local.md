@@ -20,12 +20,14 @@ pnpm test:integration
 The test scripts above run the same canonical workspace verification before
 their selected Node.js tests. `openapi:check` compares generated routes and both
 API artifacts with the checked-in versions. `build` compiles the workspace;
-`typecheck` then also checks the credential gateway compiler fixtures, including
-their expected rejections and public package exports. The required CI baseline
+`typecheck` then also checks the OCC credential gateway and controller token
+provider compiler fixtures, including their expected rejections and owning
+module exports. The required CI baseline
 runs this same `pnpm typecheck` command. To run only these fixtures locally:
 
 ```sh
 pnpm exec tsc -p packages/occ/tsconfig.credential-gateway-v1.json --pretty false
+pnpm exec tsc -p apps/controller/tsconfig.token-provider.json --pretty false
 ```
 
 The [conformance tests](../../tests/conformance) cover domain rules and selected
@@ -60,15 +62,15 @@ node --test --test-name-pattern='part of the test name' tests/integration/secret
 
 ## GitHub App token issuer protocol
 
-Run the five focused suites with Node.js 24+, matching workspace dependencies,
-and `/usr/bin/openssl`:
+Run the five focused suites with Node.js 24+ and `/usr/bin/openssl`:
 
 ```sh
 node --test --test-concurrency=1 tests/conformance/github-app-provider*.test.mjs
 ```
 
 They execute the actual TokenIssuer and RSA material implementation through its
-curated package entry point, using disposable keys and a local HTTPS peer. The
+controller provider directory entry point, using disposable keys and a local
+HTTPS peer. They require no installed workspace dependencies. The
 `local-protocol-test` endpoint requires an explicit `127.0.0.1` HTTPS origin,
 port and CA; production uses the fixed GitHub origin. Fixtures supply external
 custody/currentness inputs. Their keys and token buffers are cleaned up after use.
@@ -76,7 +78,8 @@ custody/currentness inputs. Their keys and token buffers are cleaned up after us
 Coverage includes exact signed read requests, rejected write/multiple-repository
 selection, broad returned-scope observation, invalid-token retention, response
 loss without replay, buffer wiping, currentness withdrawal, keyless revocation
-and original-owner settlement. The former enrollment suite retains constructor
+and original-owner settlement, including refusing callbacks after their owner
+has closed. The former enrollment suite retains constructor
 and keyless-cleanup coverage; the unused enrollment verifier is deferred.
 
 These tests require neither real GitHub credentials nor a cluster. Missing
