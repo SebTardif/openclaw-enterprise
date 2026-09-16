@@ -2614,12 +2614,12 @@ export class OpenClawController {
   }
 }
 
+export { createGitHubAppMaterialV1 } from "./github-app-provider-v1/material.ts";
 export {
-  createGitHubAppMaterialV1,
   GitHubAppTokenIssuerErrorV1,
-  assertGitHubAppBoundsV1,
-  snapshotGitHubAppKeyIdentityV1,
-} from "./github-app-provider-v1/material.ts";
+  assertBounds as assertGitHubAppBoundsV1,
+  snapshotKeyIdentity as snapshotGitHubAppKeyIdentityV1,
+} from "./github-app-provider-v1/guards.ts";
 export {
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,

@@ -1,47 +1,12 @@
 import type { TokenIssuerCallBoundsV1 } from "@openclaw-enterprise/contracts";
 import { KeyObject, constants, sign } from "node:crypto";
 import type { GitHubAppKeyIdentityV1, GitHubAppMaterialV1 } from "./types.ts";
-
-export class GitHubAppTokenIssuerErrorV1 extends Error {
-  constructor() {
-    super("GitHub App token issuer unavailable.");
-    this.name = "GitHubAppTokenIssuerErrorV1";
-  }
-}
-export function assertGitHubAppSynchronousV1(check: () => void): void {
-  const result: unknown = check();
-  if (result !== undefined) {
-    void Promise.resolve(result).catch(() => {});
-    throw new GitHubAppTokenIssuerErrorV1();
-  }
-}
-export function assertGitHubAppBoundsV1(bounds: TokenIssuerCallBoundsV1, now: number): void {
-  if (
-    !Number.isSafeInteger(now) ||
-    !Number.isSafeInteger(bounds.deadline) ||
-    bounds.signal.aborted ||
-    now >= bounds.deadline
-  )
-    throw new GitHubAppTokenIssuerErrorV1();
-}
-export function snapshotGitHubAppKeyIdentityV1(
-  identity: GitHubAppKeyIdentityV1,
-): GitHubAppKeyIdentityV1 {
-  if (
-    typeof identity.clientId !== "string" ||
-    typeof identity.bindingRef !== "string" ||
-    typeof identity.immutableVersion !== "string" ||
-    !/^[A-Za-z0-9._-]{1,200}$/.test(identity.clientId) ||
-    !/^[A-Za-z0-9._:/-]{1,200}$/.test(identity.bindingRef) ||
-    !/^[A-Za-z0-9._:/-]{1,200}$/.test(identity.immutableVersion)
-  )
-    throw new GitHubAppTokenIssuerErrorV1();
-  return Object.freeze({
-    clientId: identity.clientId,
-    bindingRef: identity.bindingRef,
-    immutableVersion: identity.immutableVersion,
-  });
-}
+import {
+  assertBounds,
+  assertSynchronous,
+  snapshotKeyIdentity,
+  GitHubAppTokenIssuerErrorV1,
+} from "./guards.ts";
 
 function signGitHubAppJwt(key: KeyObject, clientId: string, now: number, expiry: number): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -65,7 +30,7 @@ export function createGitHubAppMaterialV1(options: {
   readonly assertCurrent: () => void;
   readonly clock: () => number;
 }): GitHubAppMaterialV1 {
-  const identity = snapshotGitHubAppKeyIdentityV1(options.identity);
+  const identity = snapshotKeyIdentity(options.identity);
   let key: KeyObject | undefined = options.privateKey;
   const assertCurrent = options.assertCurrent;
   const clock = options.clock;
@@ -87,7 +52,7 @@ export function createGitHubAppMaterialV1(options: {
       consume: (jwt: string, assertMaterialCurrent: () => void) => Promise<T>,
     ): Promise<T> {
       if (busy) throw new GitHubAppTokenIssuerErrorV1();
-      const fixed = snapshotGitHubAppKeyIdentityV1(expected);
+      const fixed = snapshotKeyIdentity(expected);
       if (
         identity.clientId !== fixed.clientId ||
         identity.bindingRef !== fixed.bindingRef ||
@@ -95,18 +60,18 @@ export function createGitHubAppMaterialV1(options: {
       )
         throw new GitHubAppTokenIssuerErrorV1();
       const assertMaterialCurrent = () => {
-        assertGitHubAppBoundsV1(bounds, clock());
-        assertGitHubAppSynchronousV1(assertCurrent);
+        assertBounds(bounds, clock());
+        assertSynchronous(assertCurrent);
         if (key === undefined) throw new GitHubAppTokenIssuerErrorV1();
-        assertGitHubAppBoundsV1(bounds, clock());
+        assertBounds(bounds, clock());
       };
       busy = true;
       try {
         assertMaterialCurrent();
         const now = Math.floor(clock() / 1000);
         const expiry = Math.min(now + 300, Math.floor(bounds.deadline / 1000));
-        if (expiry <= now) throw new GitHubAppTokenIssuerErrorV1();
-        const jwt = signGitHubAppJwt(key!, identity.clientId, now, expiry);
+        if (expiry <= now || key === undefined) throw new GitHubAppTokenIssuerErrorV1();
+        const jwt = signGitHubAppJwt(key, identity.clientId, now, expiry);
         assertMaterialCurrent();
         const result = await consume(jwt, assertMaterialCurrent);
         assertMaterialCurrent();

@@ -70,7 +70,8 @@ custody/currentness inputs. Their keys and token buffers are cleaned up after us
 Coverage includes exact signed read requests, rejected write/multiple-repository
 selection, broad returned-scope observation, invalid-token retention, response
 loss without replay, buffer wiping, currentness withdrawal, keyless revocation
-and original-owner settlement. The former enrollment suite retains constructor
+and original-owner settlement, including refusing callbacks after their owner
+has closed. The former enrollment suite retains constructor
 and keyless-cleanup coverage; the unused enrollment verifier is deferred.
 
 These tests require neither real GitHub credentials nor a cluster. Missing
