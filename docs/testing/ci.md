@@ -69,6 +69,14 @@ testing the real helper deadline.
 
 #### No GitHub workflow entrypoint
 
+[github-app-token-issuer-real.test.mjs](../../tests/integration/github-app-token-issuer-real.test.mjs)
+belongs to the `github-app` lane, excluded from both the `ci` and `full` groups
+and from Full Integration dispatch options. Follow the
+[GitHub App test procedure](github-app.md) for an authorized private key,
+installation and private repository. It verifies real issuance, exact repository
+scope and keyless token revocation; production Agent workflow coverage remains
+separate.
+
 [postgres-azure-workload-identity.test.mjs](../../tests/integration/postgres-azure-workload-identity.test.mjs)
 belongs to the `postgres-azure-workload-identity` lane, excluded from both the
 `ci` and `full` groups and from Full Integration dispatch options. Follow the

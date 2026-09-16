@@ -90,11 +90,14 @@ Agent read; require verified checkout before Harness use. Settle mint/revoke,
 retain partial-startup and late/unknown cleanup through shutdown, and stop/join
 Work before closing owners.
 
-See [protocol](../testing/local.md#github-app-token-issuer-protocol) and
+The [protocol tests](../testing/local.md#github-app-token-issuer-protocol) verify
+local HTTPS/RSA behavior. The opt-in [live App-key test](../testing/github-app.md)
+checks issuance for one private repository, live token scope and keyless
+revocation against GitHub. Its test-process custody does not prove protected
+production custody or regular Agent execution; see the
 [protected-material proof limits](../testing/local.md#protected-github-material).
-Local HTTPS/RSA proof establishes neither live GitHub compatibility, production
-custody nor Agent execution. Real App-key, positive Agent workflow, scope-denial
-and interrupted-read cleanup proof remain required.
+Production delivery still requires the positive Agent workflow, scope-denial and
+interrupted-read cleanup cases through the actual startup and repository-read caller.
 
 ## Protected material preparation
 
