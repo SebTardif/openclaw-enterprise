@@ -24,6 +24,10 @@ After ordinary `pnpm typecheck`, the same lane runs
 `pnpm check:credential-gateway-http-types` as required compiler steps. The first
 selects the four explicit schema, connection, GitHub operation, and supplier
 compatibility fixtures; the second selects the isolated HTTP component project.
+Supplier constructors and options are checked through the public OCC entry point.
+Transaction-lifetime and inventory-transaction correspondence uses intra-OCC
+imports; representative negative imports ensure those internals remain unavailable
+through the public entry point.
 Both projects use `noEmit`, and a compiler failure fails the job. The lane also
 runs the [HTTP head](credential-gateway-http.md) and
 [canonical JSON](credential-schema-registry.md) conformance files. These checks

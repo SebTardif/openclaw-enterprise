@@ -1,11 +1,13 @@
 # Credential gateway v1 contracts
 
-OpenClaw Control Plane (OCC) exposes the shared credential-gateway contracts through
-`@openclaw-enterprise/occ`. Import credential inventory data from
-`@openclaw-enterprise/contracts`. These declarations describe the current source
-interfaces and their supplier boundaries. Gateway composition, installed operation
-and live-provider qualification remain pending; importing a type does not admit
-Work or grant credential access.
+OpenClaw Control Plane (OCC) exposes credential-gateway contracts and GitHub App
+supplier constructors through `@openclaw-enterprise/occ`. Import credential
+inventory data from `@openclaw-enterprise/contracts`. Transaction lifetimes and
+inventory transaction ports remain internal to OCC; they are not exported from
+the package entry point. These declarations describe the current source interfaces
+and their supplier boundaries. Gateway composition, installed operation and
+live-provider qualification remain pending; importing a type does not admit Work
+or grant credential access.
 
 ## Supplier boundaries
 
@@ -15,8 +17,8 @@ Work or grant credential access.
 | Secret Driver        | `SecretDriver.resolve(Secret)` returns `Promise<SecretBackendRef>`, a safe backend reference. It provides no plaintext read API. Protected material acquisition belongs to its credential owner.                                               |
 | Provider and Drivers | `Provider<Client>` retains its `id`, `client` and Driver map. `ServiceAccountDriver.createCredential` and `PluginDriver.listCatalog` retain their existing platform contracts. A token issuer does not replace Provider composition.           |
 | State                | `PlatformStateStore.read` borrows a `PlatformReadView`; `transact` borrows a `PlatformUnitOfWork`. The existing State owner controls the transaction and audit commit.                                                                         |
-| Transaction lifetime | The exported `RepositoryTransactionLifetime` class owns `assertActive`, `run`, `finish` and `close`. Its private identity prevents a copied public shape from substituting for the actual lifetime.                                            |
-| Inventory            | The exported `CredentialInventoryTransactionV1` port retains scoped operation/record reads and writes, live counts, mint claims and revocation claims. `commitRef` is preallocated correlation, not evidence of commit.                        |
+| Transaction lifetime | The internal `RepositoryTransactionLifetime` class owns `assertActive`, `run`, `finish` and `close`. Its private identity prevents a copied public shape from substituting for the actual lifetime.                                            |
+| Inventory            | The internal `CredentialInventoryTransactionV1` port retains scoped operation/record reads and writes, live counts, mint claims and revocation claims. `commitRef` is preallocated correlation, not evidence of commit.                        |
 | GitHub App material  | `createGitHubAppMaterialV1` returns `GitHubAppMaterialV1`; `withJwt` borrows bounded material and `close` stops material admission. The protected owner supplies the immutable key identity and currentness checks.                            |
 | GitHub App protocol  | `createGitHubAppTokenIssuerV1` returns `TokenIssuerV1`; `createGitHubAppTokenRevokerV1` returns cleanup-only `TokenRevokerV1`. Construction receives real owner-selected options, including dispatch currentness, clock, endpoint and custody. |
 
@@ -100,8 +102,9 @@ Cleanup uses the original retained handle and needs no App signing key. Unknown
 issuance, dispatch and cleanup outcomes retain their obligations without automatic
 replay.
 
-The dedicated compile checks cover actual supplier imports and method signatures,
-read/write separation, safe-reference return types and complete inventory ports.
+The dedicated compile checks cover public supplier imports and internal contract
+correspondence, including read/write separation, safe-reference return types and
+complete inventory ports.
 They establish source compatibility only. See the [testing guide](../testing/README.md)
 for validation procedures and the [Provider reference](providers.md) for platform
 composition requirements. Compiler success supplies no composed, installed,
