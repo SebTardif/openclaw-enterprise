@@ -2620,21 +2620,18 @@ export {
   assertGitHubAppBoundsV1,
   snapshotGitHubAppKeyIdentityV1,
 } from "./github-app-provider-v1/material.ts";
-export type {
-  GitHubAppKeyIdentityV1,
-  GitHubAppMaterialV1,
-} from "./github-app-provider-v1/material.ts";
 export {
   createGitHubAppTokenIssuerV1,
   createGitHubAppTokenRevokerV1,
-  snapshotGitHubAppReturnedPermissionsV1,
 } from "./github-app-provider-v1/provider.ts";
 export type {
   GitHubAppEndpointV1,
+  GitHubAppKeyIdentityV1,
+  GitHubAppMaterialV1,
   GitHubAppReturnedPermissionsV1,
   GitHubAppSelectionV1,
   GitHubAppTokenCustodyV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenObservationV1,
   GitHubAppTokenRevokerOptionsV1,
-} from "./github-app-provider-v1/provider.ts";
+} from "./github-app-provider-v1/types.ts";
