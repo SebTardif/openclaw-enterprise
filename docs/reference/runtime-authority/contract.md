@@ -107,6 +107,40 @@ Lost PostgreSQL COMMIT acknowledgments retain
 before retrying an effect. Missing or unavailable readback does not prove the
 transaction failed and cannot justify a replacement operation identity.
 
+## Original credential State participant
+
+Trusted credential consumers import `OriginalCredentialStateBinderV1`,
+`OriginalCredentialUnitV1`, `KnownCredentialCommitV1`, `CredentialCommitOutcomeV1`
+and the original `PlatformUnitOfWork` from
+`@openclaw-enterprise/occ/internal/credential-state-v1`. The concrete
+`PostgresPlatformState` implements the binder separately from its storage operand.
+
+`bindCredentialUnitIn(uow)` accepts only that State's exact live mutable unit.
+It refuses copied, foreign, read-only and settled units. The borrowed unit exposes
+its original `uow`, synchronous participant enrollment through `run(work)`, and
+`query(statement, parameters)`. Both operations share the original failure latch,
+callback closure and accepted-work drain. The unit exposes no client, lifetime
+finishing operation or guard reset. Queries accept one SELECT, INSERT, UPDATE,
+DELETE, WITH or LOCK statement, with an optional trailing semicolon and comments.
+Transaction/session commands and additional statements are refused. Ambiguous
+backslash escapes in ordinary string literals are refused; use parameters or
+explicit PostgreSQL escape strings.
+
+`recognizeCredentialCommit(unit)` refuses active transactions immediately. After
+the exact original transaction settles, it recognizes that transaction once.
+Only an acknowledged outer COMMIT after successful guard/drain and clean connection
+release and listener cleanup returns `committed` with the original nominal evidence.
+Callback completion, staged writes and allocated references cannot establish it.
+A definite rollback returns `not-committed`. Lost acknowledgment or uncertainty
+after COMMIT returns `unknown` with `nextAction: "reconcile-only"`, including when
+exact durable readback confirms the writes. Readback cannot recreate a process-local
+submission permit. Foreign owners and copied units cannot recognize an outcome.
+
+This evidence is the State boundary. The original issuance owner must separately
+match retained inventory and envelope identities before producing issuance evidence
+or usable material. These contract and compiler consumers do not install admission,
+inventory/retention, Work/IAM, gateway runtime or provider authorization.
+
 [Storage verification](../../testing/runtime-assignment.md) covers persistence,
 constraints and transport uncertainty. The owning workflow must separately
 supply authenticated service attribution, protected observations and authorized

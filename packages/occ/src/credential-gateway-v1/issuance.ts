@@ -98,10 +98,7 @@ export interface IssuanceRetentionTransaction {
  * receipt and does not supply current Work/IAM acquisition authority. */
 export interface IssuanceStateDependencies {
   readonly state: PlatformStateStore;
-  bindTransaction(
-    state: PlatformUnitOfWork,
-    lifetime: RepositoryTransactionLifetime,
-  ): IssuanceRetentionTransaction;
+  bindTransaction(state: PlatformUnitOfWork): IssuanceRetentionTransaction;
   bindReadView(state: PlatformReadView): Pick<EncryptedMaterialStore, "readExact">;
 }
 

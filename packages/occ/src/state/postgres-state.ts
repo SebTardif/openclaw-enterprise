@@ -6,6 +6,12 @@ import { bindRepository } from "../ports/repository-factory.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
 import type {
+  CredentialCommitOutcomeV1,
+  KnownCredentialCommitV1,
+  OriginalCredentialStateBinderV1,
+  OriginalCredentialUnitV1,
+} from "./credential-participant-v1.ts";
+import type {
   AccessBinding,
   Agent,
   AgentRevision,
@@ -106,6 +112,123 @@ interface TransactionContext {
   readonly client: PostgresClient;
   installation: Readonly<Installation> | undefined;
   installationLoaded: boolean;
+}
+
+interface CredentialTransactionRecord {
+  phase: "active" | "committed" | "not-committed" | "unknown";
+  settled: boolean;
+  recognized: boolean;
+  unit?: OriginalCredentialUnitV1;
+}
+
+// Runtime custody stays outside the State object's outward properties. Copies
+// cannot enroll a unit or change the original owner's recorded COMMIT outcome.
+const credentialTransactions = new WeakMap<
+  PostgresPlatformState,
+  WeakMap<PlatformUnitOfWork, CredentialTransactionRecord>
+>();
+const credentialUnits = new WeakMap<
+  OriginalCredentialUnitV1,
+  { owner: PostgresPlatformState; record: CredentialTransactionRecord }
+>();
+
+/** One data/lock statement only. SQL quoting and nested comments cannot conceal
+ * a second statement or hand transaction/session ownership to a borrower. */
+function assertBorrowedStatement(statement: string): void {
+  const deny = () => {
+    throw new ScopeViolationError("Borrowed queries require one data or lock statement.");
+  };
+  if (typeof statement !== "string") return deny();
+  // pg replaces lone UTF-16 surrogates during UTF-8 encoding. Reject them
+  // before scanning so distinct dollar tags cannot collapse on the wire.
+  for (let offset = 0; offset < statement.length; offset++) {
+    const code = statement.charCodeAt(offset);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = statement.charCodeAt(offset + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return deny();
+      offset++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return deny();
+  }
+  let first = "";
+  let ended = false;
+  let i = 0;
+  while (i < statement.length) {
+    const c = statement[i]!;
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+    if (statement.startsWith("--", i)) {
+      const end = /[\r\n]/.exec(statement.slice(i + 2));
+      i = end === null ? statement.length : i + 2 + end.index + 1;
+      continue;
+    }
+    if (statement.startsWith("/*", i)) {
+      let depth = 1;
+      i += 2;
+      while (i < statement.length && depth > 0) {
+        if (statement.startsWith("/*", i)) {
+          depth++;
+          i += 2;
+        } else if (statement.startsWith("*/", i)) {
+          depth--;
+          i += 2;
+        } else i++;
+      }
+      if (depth !== 0) return deny();
+      continue;
+    }
+    if (ended) return deny();
+    if (first === "") {
+      const word = /^[A-Za-z]+/.exec(statement.slice(i))?.[0];
+      if (word === undefined) return deny();
+      first = word.toUpperCase();
+      if (!["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "LOCK"].includes(first)) return deny();
+      i += word.length;
+      continue;
+    }
+    if (c === ";") {
+      ended = true;
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      const escaped =
+        c === "'" && /(?:^|[^A-Za-z0-9_$\u0080-\uFFFF])[Ee]$/.test(statement.slice(0, i));
+      const quote = c;
+      i++;
+      let closed = false;
+      while (i < statement.length) {
+        if (statement[i] === "\\" && quote === "'") {
+          // Standard strings depend on server settings; reject ambiguous escapes.
+          if (!escaped) return deny();
+          i += 2;
+        } else if (statement[i] === quote) {
+          if (statement[i + 1] === quote) i += 2;
+          else {
+            i++;
+            closed = true;
+            break;
+          }
+        } else i++;
+      }
+      if (!closed) return deny();
+      continue;
+    }
+    if (c === "$" && (i === 0 || !/[A-Za-z0-9_$\u0080-\uFFFF]/.test(statement[i - 1]!))) {
+      const tag = /^\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$/.exec(
+        statement.slice(i),
+      )?.[0];
+      if (tag !== undefined) {
+        const end = statement.indexOf(tag, i + tag.length);
+        if (end === -1) return deny();
+        i = end + tag.length;
+        continue;
+      }
+    }
+    i++;
+  }
+  if (first === "") deny();
 }
 
 const PERMISSION_ACTIONS = new Set([
@@ -509,13 +632,14 @@ function permissions(value: unknown): readonly Permission[] {
   );
 }
 
-export class PostgresPlatformState implements PlatformStateStore {
+export class PostgresPlatformState implements PlatformStateStore, OriginalCredentialStateBinderV1 {
   readonly auditSink: PlatformAuditSink;
   private readonly pool: PostgresPool;
   private bootstrapNativeIAM: PersistedNativeIAMState | undefined;
   private readonly contexts = new WeakMap<PlatformUnitOfWork, TransactionContext>();
 
   constructor(pool: PostgresPool, options: PostgresPlatformStateOptions = {}) {
+    credentialTransactions.set(this, new WeakMap());
     this.pool = pool;
     this.bootstrapNativeIAM = options.bootstrapNativeIAM;
     this.auditSink = {
@@ -778,7 +902,7 @@ export class PostgresPlatformState implements PlatformStateStore {
     );
   }
 
-  async transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
+  transact<T>(work: (state: PlatformUnitOfWork) => Promise<T>): Promise<T> {
     return this.execute(false, (state) => work(state));
   }
 
@@ -795,6 +919,57 @@ export class PostgresPlatformState implements PlatformStateStore {
     return result;
   }
 
+  bindCredentialUnitIn(uow: PlatformUnitOfWork): OriginalCredentialUnitV1 {
+    const record = credentialTransactions.get(this)?.get(uow);
+    if (record === undefined || record.phase !== "active")
+      throw new ScopeViolationError("The original credential transaction is unavailable.");
+    let admitted = false;
+    // The existing synchronous enrollment checks both outer and inherited callback
+    // admission. assertActive alone would incorrectly admit a settled callback.
+    const enrollment = this.runAuthorityParticipantIn(uow, () => {
+      admitted = true;
+      return Promise.resolve();
+    });
+    void enrollment.catch(() => {});
+    if (!admitted) throw new ScopeViolationError("The original credential transaction is closed.");
+    if (record.unit === undefined) {
+      const context = this.contexts.get(uow)!;
+      const unit = Object.freeze({
+        uow,
+        run: <T>(work: () => Promise<T>) => this.runAuthorityParticipantIn(uow, work),
+        query: (statement: string, parameters?: readonly unknown[]) =>
+          context.lifetime.runAuthorityOperation(() =>
+            this.queryInTransaction(uow, statement, parameters),
+          ),
+      }) as OriginalCredentialUnitV1;
+      record.unit = unit;
+      credentialUnits.set(unit, { owner: this, record });
+    }
+    return record.unit;
+  }
+
+  async recognizeCredentialCommit(
+    unit: OriginalCredentialUnitV1,
+  ): Promise<CredentialCommitOutcomeV1> {
+    const owned = credentialUnits.get(unit);
+    if (owned === undefined || owned.owner !== this)
+      throw new ScopeViolationError("The original credential unit is unavailable.");
+    const record = owned.record;
+    if (!record.settled)
+      throw new ScopeViolationError("The original credential transaction has not settled.");
+    if (record.recognized)
+      throw new ScopeViolationError("The original credential commit was already recognized.");
+    record.recognized = true;
+    if (record.phase === "committed")
+      return Object.freeze({
+        kind: "committed",
+        evidence: Object.freeze({}) as KnownCredentialCommitV1,
+      });
+    if (record.phase === "unknown")
+      return Object.freeze({ kind: "unknown", nextAction: "reconcile-only" });
+    return Object.freeze({ kind: "not-committed" });
+  }
+
   queryInTransaction(
     unit: PlatformUnitOfWork,
     statement: string,
@@ -803,10 +978,13 @@ export class PostgresPlatformState implements PlatformStateStore {
     const context = this.contexts.get(unit);
     if (context === undefined)
       throw new DependencyUnavailableError("The platform transaction is unavailable.");
-    return context.lifetime.run(() => context.client.query(statement, parameters));
+    return context.lifetime.run(() => {
+      assertBorrowedStatement(statement);
+      return context.client.query(statement, parameters);
+    });
   }
 
-  async transactWithQueue<T>(
+  transactWithQueue<T>(
     work: (
       state: PlatformUnitOfWork,
       queue: Pick<PostgresWorkQueue, keyof PostgresWorkQueue>,
@@ -831,9 +1009,33 @@ export class PostgresPlatformState implements PlatformStateStore {
     );
   }
 
-  private async execute<T>(
+  private execute<T>(
     readOnly: boolean,
     work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
+  ): Promise<T> {
+    const record: CredentialTransactionRecord = {
+      phase: "active",
+      settled: false,
+      recognized: false,
+    };
+    const result = this.executeTransaction(readOnly, work, record);
+    // Register before the callback can run. This exact returned Promise must
+    // settle before recognition; cleanup callbacks still see an active owner.
+    void result.then(
+      () => {
+        record.settled = true;
+      },
+      () => {
+        record.settled = true;
+      },
+    );
+    return result;
+  }
+
+  private async executeTransaction<T>(
+    readOnly: boolean,
+    work: (state: PlatformUnitOfWork, context: TransactionContext) => Promise<T>,
+    credentialRecord: CredentialTransactionRecord,
   ): Promise<T> {
     let client: PostgresClient;
     try {
@@ -881,6 +1083,7 @@ export class PostgresPlatformState implements PlatformStateStore {
       const originalUnit = bindPlatformUnitOfWork(this.repositories(context), lifetime);
       unit = originalUnit;
       this.contexts.set(unit, context);
+      if (!readOnly) credentialTransactions.get(this)!.set(unit, credentialRecord);
       const result = await lifetime.runOwnerCallback(() => work(originalUnit, context));
       await lifetime.finish();
       await context.authorityGuard.finish();
@@ -936,9 +1139,14 @@ export class PostgresPlatformState implements PlatformStateStore {
       } catch {
         cleanupFailed = true;
       }
+      if (committing || (acknowledged && (cleanupFailed || transportError !== undefined)))
+        credentialRecord.phase = "unknown";
+      else if (acknowledged && !failed) credentialRecord.phase = "committed";
+      else credentialRecord.phase = "not-committed";
       // Preserve the original failure. A failure after acknowledged COMMIT can
       // never be reported as definite rollback or authorize an automatic replay.
-      if (!failed && cleanupFailed && acknowledged) throw new PostgresCommitOutcomeUnknownError();
+      if (!failed && acknowledged && (cleanupFailed || transportError !== undefined))
+        throw new PostgresCommitOutcomeUnknownError();
     }
   }
 

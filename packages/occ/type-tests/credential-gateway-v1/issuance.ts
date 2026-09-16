@@ -61,7 +61,7 @@ export async function realStateCorrespondence(
   bounds: Bounds,
 ): Promise<void> {
   const actualState: PlatformStateStore = dependencies.state;
-  const transaction: IssuanceRetentionTransaction = dependencies.bindTransaction(state, lifetime);
+  const transaction: IssuanceRetentionTransaction = dependencies.bindTransaction(state);
   const actualInventory: CredentialInventoryTransactionV1 = transaction.inventory;
   const envelopes: EncryptedMaterialStore = transaction.envelopes;
   await envelopes.retainExact(material, bounds);

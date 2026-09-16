@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./internal/credential-material-v1": "./src/credential-gateway-v1/material-contract.ts"
+    "./internal/credential-material-v1": "./src/credential-gateway-v1/material-contract.ts",
+    "./internal/credential-state-v1": "./src/state/credential-participant-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [

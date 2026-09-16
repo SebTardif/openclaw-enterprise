@@ -213,6 +213,9 @@
           "path": "tests/conformance/postgres-transaction-commit.test.mjs"
         },
         {
+          "path": "tests/conformance/credential-state-participant.test.mjs"
+        },
+        {
           "path": "tests/conformance/github-app-provider-v1.test.mjs"
         },
         {
@@ -380,6 +383,10 @@
             "an opted-in active runtime continuously repairs under its original authorized actor",
             "active maintenance recovers after its convergence deadline and stops when its actor is denied"
           ]
+        },
+        {
+          "path": "tests/integration/postgres-credential-state-participant.test.mjs",
+          "expectedTests": ["PostgreSQL original credential participant and commit recognition"]
         },
         {
           "path": "tests/integration/postgres-repository-transactions.test.mjs",
