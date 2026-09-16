@@ -20,10 +20,6 @@ import type {
   GitHubCreationDigest,
 } from "../../src/credential-gateway-v1/github-operations.ts";
 import type {
-  GitHubAppSelectionV1,
-  GitHubRepositoryWriteSelectionV1,
-} from "@openclaw-enterprise/occ";
-import type {
   CredentialAccessGrant,
   CredentialProfileRef,
 } from "../../src/credential-gateway-v1/connection.ts";
@@ -35,7 +31,7 @@ import type { GitHubRequestId as PublicGitHubRequestId } from "@openclaw-enterpr
 // @ts-expect-error Write selection has one provider owner and no gateway reexport.
 import type { GitHubRepositoryWriteSelectionV1 as GatewayWriteSelection } from "../../src/credential-gateway-v1/github-operations.ts";
 
-// Inert consumers of provider roots and internal operation contracts. Inputs carry
+// Inert consumers of internal operation contracts. Inputs carry
 // nominal data; this fixture never mints authority, computes digests, admits grants
 // or calls GitHub.
 export function consumeGitHubContract(
@@ -80,22 +76,6 @@ export function consumeGitHubContract(
   const accessProfile: AccessProfile = "read-write";
   const tokenProfile: TokenProfile = "repository-write-v1";
   const host: GitHubHost = "github.com";
-  const issuerRead: GitHubAppSelectionV1 = {
-    key: {
-      clientId: "example-app-client",
-      bindingRef: "example-key-binding",
-      immutableVersion: "example-key-version-1",
-    },
-    installationId: 202,
-    repositories: [{ id: 303, fullName: "example-owner/example-repository" }],
-    permissions: { metadata: "read", contents: "read" },
-  };
-  const issuerWrite: GitHubRepositoryWriteSelectionV1 = {
-    key: issuerRead.key,
-    installationId: issuerRead.installationId,
-    repositories: issuerRead.repositories,
-    permissions: { metadata: "read", contents: "write", pull_requests: "write" },
-  };
   const checkout: RepositoryAccess = {
     schemaVersion: 1,
     repositories: [
@@ -224,10 +204,6 @@ export function consumeGitHubContract(
       }
     }
   }
-  const { key: omittedWritekey, ...withoutWritekey } = issuerWrite;
-  const { installationId: omittedWriteinstallationId, ...withoutWriteinstallationId } = issuerWrite;
-  const { repositories: omittedWriterepositories, ...withoutWriterepositories } = issuerWrite;
-  const { permissions: omittedWritepermissions, ...withoutWritepermissions } = issuerWrite;
   const checkoutEntry: RepositoryAccess["repositories"][number] = {
     bindingRef: { kind: "repository_binding", namespaceId: "ns_example", id: "rb_example" },
     repositoryId: 303,
@@ -277,66 +253,6 @@ export function consumeGitHubContract(
     maintainer_can_modify: omittedInputmaintainer_can_modify,
     ...withoutInputmaintainer_can_modify
   } = input;
-  const missingPrPermission: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error The write tuple requires pull_requests:write.
-    permissions: { metadata: "read", contents: "write" },
-  };
-  const unrelatedPermission: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error Checked permission literals reject unrelated scopes.
-    permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" },
-  };
-  const wrongmetadataPermission: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error The write profile fixes metadata permission.
-    permissions: { ...issuerWrite.permissions, metadata: "write" },
-  };
-  const wrongcontentsPermission: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error The write profile fixes contents permission.
-    permissions: { ...issuerWrite.permissions, contents: "read" },
-  };
-  const wrongpull_requestsPermission: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error The write profile fixes pull_requests permission.
-    permissions: { ...issuerWrite.permissions, pull_requests: "read" },
-  };
-  // @ts-expect-error Write selection retains exactly one supplier repository.
-  const emptyRepositories: GitHubRepositoryWriteSelectionV1 = { ...issuerWrite, repositories: [] };
-  const twoRepositories: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error Write selection retains exactly one supplier repository.
-    repositories: [issuerRead.repositories[0], issuerRead.repositories[0]],
-  };
-  // @ts-expect-error Write selection requires key.
-  const missingWritekey: GitHubRepositoryWriteSelectionV1 = withoutWritekey;
-  // @ts-expect-error Write selection requires installationId.
-  const missingWriteinstallationId: GitHubRepositoryWriteSelectionV1 = withoutWriteinstallationId;
-  // @ts-expect-error Write selection requires repositories.
-  const missingWriterepositories: GitHubRepositoryWriteSelectionV1 = withoutWriterepositories;
-  // @ts-expect-error Write selection requires permissions.
-  const missingWritepermissions: GitHubRepositoryWriteSelectionV1 = withoutWritepermissions;
-  const broadenedIssuerRead: GitHubAppSelectionV1 = {
-    ...issuerRead,
-    // @ts-expect-error The original issuer selection remains read-only.
-    permissions: { metadata: "read", contents: "write" },
-  };
-  const prIssuerRead: GitHubAppSelectionV1 = {
-    ...issuerRead,
-    // @ts-expect-error The original issuer read DTO has no PR permission.
-    permissions: { metadata: "read", contents: "read", pull_requests: "write" },
-  };
-  const stringInstallation: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error Installation IDs retain the actual supplier numeric type.
-    installationId: "202",
-  };
-  const incompleteKey: GitHubRepositoryWriteSelectionV1 = {
-    ...issuerWrite,
-    // @ts-expect-error Real supplier key identity requires immutableVersion.
-    key: { clientId: "client", bindingRef: "binding" },
-  };
   // @ts-expect-error The access input requires its schema version.
   const missingAccessVersion: GitHubRepositoryAccessV1 = { repositories: [] };
   // @ts-expect-error The access input supports only schema version one.
@@ -522,12 +438,6 @@ export function consumeGitHubContract(
   writeAccess.repositories[0]?.repository.repository.canonicalPathSegments.push("other");
   // @ts-expect-error Selection scalar fields are immutable.
   selection.repositoryId = "404";
-  // @ts-expect-error Write permission values are immutable.
-  issuerWrite.permissions.contents = "write";
-  // @ts-expect-error Supplier repository tuples are immutable.
-  issuerWrite.repositories.push(issuerRead.repositories[0]);
-  // @ts-expect-error Supplier repository entries are immutable.
-  issuerWrite.repositories[0].id = 404;
   // @ts-expect-error Targets are immutable.
   target.host = "api.github.com";
   // @ts-expect-error Operation identity is immutable.
@@ -549,7 +459,6 @@ export function consumeGitHubContract(
     readAccess,
     writeAccess,
     accessProfile,
-    issuerWrite,
     checkout,
     readWithWriteProfile,
   ];
