@@ -85,6 +85,37 @@ authority.
 
 ## HTTP request inspection
 
+`createGitHubMetadataOperationV1(repository, requestId)` is a public synchronous
+DATA constructor for the metadata protocol adapter. Import it and
+`GitHubMetadataRepositoryV1`/`GitHubMetadataOperationV1` from
+`@openclaw-enterprise/occ`. The repository input projects the original selection's
+seven required fields: `repository`, `appId`, `installationId`, `repositoryId`,
+`canonicalOwner`, `canonicalName` and `bindingGeneration`. Its resource includes
+`upstreamInstanceId`, `canonicalResourceId`, the readonly two-segment canonical
+path and `resourceSchema` (`namespace`, `name`, `version`, `digest`).
+
+The constructor reads each required property once, validates the original bounded
+locator/resource rules and canonical safe positive decimal IDs, copies the nested
+data, and freezes the complete result. It accepts a raw lowercase UUIDv4 request
+correlation candidate and returns `null` for malformed or throwing input.
+Schema-reference validation here establishes bounded DATA; authentic schema
+admission still belongs to the schema owner.
+
+Successful construction produces only `kind: "metadata"`, host `api.github.com`,
+method `GET`, path `/repos/{canonicalOwner}/{canonicalName}`, the SHA-256 digest
+of the empty body and the original `oce.github-metadata-facts.v1` positional facts
+digest. All seven selected fields, nested resource/schema facts and the request
+identity remain bound by that digest. Nominal request/body/facts categories stay
+internal; callers consume the computed result without manufacturing them.
+
+The HTTP adapter must still inspect the native request, compare its route and
+framing with this owned snapshot, collect complete zero-body EOF, and check its
+finite bounds and cancellation before releasing inspected DATA. Construction
+does not authenticate a caller, admit Work/IAM, choose a token profile, grant
+credential access or dispatch HTTP. Native inspection, response identity
+projection, installed operation, live-provider qualification and parent
+acceptance remain separate obligations.
+
 The internal `inspectRequestHeadV1` implementation inspects native HTTP/1.1
 request heads for repository metadata, fetch discovery, fetch, push discovery,
 push and PR creation. It returns frozen, untrusted route and framing candidates

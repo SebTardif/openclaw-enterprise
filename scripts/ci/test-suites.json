@@ -19,6 +19,12 @@
           "path": "tests/conformance/credential-gateway-http-request.test.mjs"
         },
         {
+          "path": "tests/conformance/credential-gateway-metadata-data.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-gateway-protocol-data.test.mjs"
+        },
+        {
           "path": "tests/conformance/credential-schema-json.test.mjs"
         },
         { "path": "tests/conformance/credential-schema-admission.test.mjs" },
