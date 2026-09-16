@@ -182,6 +182,7 @@
               {
                 "group": "External services",
                 "pages": [
+                  "testing/github-app",
                   "testing/slack",
                   "testing/service-accounts",
                   "testing/plugins",
