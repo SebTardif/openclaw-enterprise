@@ -6,11 +6,11 @@ import { createServer } from "node:https";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createGitHubAppMaterialV1 } from "../../packages/occ/src/index.ts";
+import { createGitHubAppMaterialV1 } from "../../apps/controller/src/providers/token/github/index.ts";
 import {
   createGitHubAppTokenIssuerV1,
   createGitHubAppWriteTokenIssuerV1,
-} from "../../packages/occ/src/index.ts";
+} from "../../apps/controller/src/providers/token/github/index.ts";
 
 // Synthetic RSA/custody/currentness inputs qualify provider protocol mechanics.
 // They do not authenticate an App installation, human, runtime or inventory owner.
@@ -460,17 +460,26 @@ for (const [profile, createIssuer, permissions] of [
       await t.test(
         "custody cannot fabricate revocation acknowledgment without provider execution",
         async () => {
+          let consumeAfterClose;
           const f = fixture({
             custody: {
               capture() {
                 return Object.freeze({});
               },
-              async withRevocationToken() {
+              async withRevocationToken(_handle, _bounds, consume) {
+                consumeAfterClose = consume;
                 return { kind: "confirmed", providerAttemptRef: "fixture/attempt" };
               },
             },
           });
           assert.equal((await f.provider.revoke(call(), Object.freeze({}))).kind, "not-dispatched");
+          assert.equal(requests.length, 0);
+          // Returning closes the borrowed callback's lifetime even if it never ran.
+          assert.equal(typeof consumeAfterClose, "function");
+          await assert.rejects(
+            async () => consumeAfterClose(Buffer.from("synthetic_late_revocation")),
+            { name: "GitHubAppTokenIssuerErrorV1" },
+          );
           assert.equal(requests.length, 0);
         },
       );
@@ -674,10 +683,12 @@ for (const [profile, createIssuer, permissions] of [
       await t.test(
         "material cannot fabricate mint acknowledgment without provider execution",
         async () => {
+          let consumeAfterClose;
           const f = fixture({
             material: {
               close() {},
-              async withJwt() {
+              async withJwt(_key, _bounds, consume) {
+                consumeAfterClose = consume;
                 return {
                   kind: "minted",
                   providerAttemptRef: "fixture/attempt",
@@ -688,6 +699,12 @@ for (const [profile, createIssuer, permissions] of [
             },
           });
           assert.equal((await f.provider.mint(call())).kind, "not-dispatched");
+          assert.equal(requests.length, 0);
+          // A retained callback cannot mint after its signing-material owner returns.
+          assert.equal(typeof consumeAfterClose, "function");
+          await assert.rejects(async () => consumeAfterClose("synthetic.late.jwt", () => {}), {
+            name: "GitHubAppTokenIssuerErrorV1",
+          });
           assert.equal(requests.length, 0);
         },
       );
