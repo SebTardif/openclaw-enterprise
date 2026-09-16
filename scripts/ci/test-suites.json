@@ -114,6 +114,9 @@
           "path": "tests/integration/sandbox-driver-startup.test.mjs"
         },
         {
+          "path": "tests/integration/openshell-runtime-authentication.test.mjs"
+        },
+        {
           "path": "tests/integration/secret-api.test.mjs"
         },
         {
@@ -166,6 +169,9 @@
         },
         {
           "path": "tests/integration/ci-openshell.test.mjs"
+        },
+        {
+          "path": "tests/integration/openshell-local-launcher.test.mjs"
         },
         {
           "path": "tests/browser/console-agents.test.mjs"

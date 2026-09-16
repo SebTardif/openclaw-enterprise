@@ -705,7 +705,8 @@ async function dockerImageId(image) {
     "{{.Id}}",
     image,
   ]);
-  const id = inspected.stdout.trim();
+  const value = inspected.stdout.trim();
+  const id = /^[a-f0-9]{64}$/i.test(value) ? `sha256:${value}` : value;
   assertDockerImageId(id, `Docker image ${image}`);
   return id;
 }
@@ -799,11 +800,11 @@ async function registerImageInK3d(statePath, state, cluster, image, envName) {
   try {
     // k3d can exit successfully after containerd rejects missing index content.
     // Export only the platform pulled locally, then verify the imported reference.
-    await execFile(process.env.OCC_DOCKER_BIN ?? "docker", [
+    const containerEngine = process.env.OCC_DOCKER_BIN ?? "docker";
+    await execFile(containerEngine, [
       "image",
       "save",
-      "--platform",
-      platform,
+      ...(basename(containerEngine) === "podman" ? [] : ["--platform", platform]),
       "--output",
       archive,
       importReference,

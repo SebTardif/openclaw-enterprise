@@ -5,35 +5,35 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { request } from "node:https";
 
-const openShellVersion = "0.0.113";
+const openShellVersion = "0.0.116";
 const agentSandboxVersion = "v0.5.2";
 const kubectlVersion = "v1.36.4";
 const k3sImage =
   "docker.io/rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657";
 const openShellChartReference = "oci://ghcr.io/nvidia/openshell/helm-chart";
 const openShellChartArchive = `helm-chart-${openShellVersion}.tgz`;
-const openShellChartSha256 = "7bf2df0e490282ab4b7fd55217e5a79dfdd0b1b19ea87cb50a2cc229ccd0400e";
+const openShellChartSha256 = "323c490ea6be2ffe6bd2022f70b7aa205c45a53af009bd9549fd29bd41b49571";
 const agentSandboxManifestSha256 =
   "230ee446d6035f631577e1c6b857f6973a8f09a0a853675d3cc34ebfe47abd6b";
 const openShellGatewayImage =
-  "ghcr.io/nvidia/openshell/gateway:0.0.113@sha256:0f8210db6590f02a2007271794104a6fcdcec0cee7a97a1cb015fafd1609ff9d";
+  "ghcr.io/nvidia/openshell/gateway:0.0.116@sha256:05cf77bbb022a739aed6f22daa0e7e164415f4ab273b5f84319e46d91eb8f645";
 const openShellSupervisorImage =
-  "ghcr.io/nvidia/openshell/supervisor:0.0.113@sha256:28f6a05314fb9aba73b0c6518aed3ffbde4b51565bfe92477241d2c94488cfbb";
+  "ghcr.io/nvidia/openshell/supervisor:0.0.116@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
 const podSecurityAdmissionConfigName = "openshell-pod-security-admission.yaml";
 const podSecurityAdmissionContainerPath = `/etc/openclaw-ci/${podSecurityAdmissionConfigName}`;
 
 const cliAssets = Object.freeze({
   "darwin:arm64": {
     name: "openshell-aarch64-apple-darwin.tar.gz",
-    sha256: "3e78bd581187ee6ace027a9fcee32970573e4a786384ed37d247c3623de19869",
+    sha256: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
   },
   "linux:arm64": {
     name: "openshell-aarch64-unknown-linux-musl.tar.gz",
-    sha256: "588692603cc518ab1aa062d69cde07cb8425a245030f222544f886e45a72f69d",
+    sha256: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
   },
   "linux:x64": {
     name: "openshell-x86_64-unknown-linux-musl.tar.gz",
-    sha256: "e6bab4e7298f311a8e04a53a089ab836d239a90ca65f66f247f71a8d5926bdd7",
+    sha256: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
   },
 });
 

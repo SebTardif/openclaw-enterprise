@@ -107,11 +107,18 @@ drivers:
             endpoints:
               - host: api.openai.com
                 ports: [443]
-                protocol: tcp
+                protocol: rest
+                access: read-write
+                enforcement: enforce
 ```
 
 The OpenShell gateway must be installed separately before this driver's
 `ensureNamespace` runs. The bundled driver does not install the gateway.
+
+Sandbox configuration accepts containment and placement options. It rejects
+`providers` and `modelCredential`: provider identifiers and a selected
+SandboxDriver do not authorize model access. The ordinary OCE model-credential
+paths remain available subject to the upstream Secret support described below.
 
 `gateway.networkPolicyResources` accepts namespace-scoped Kubernetes resource
 objects for provider networking. They are applied into the OpenClaw Namespace
@@ -146,6 +153,48 @@ app-server sandbox:
 
 This avoids stacking the Codex sandbox inside OpenShell. OpenShell becomes the
 outer containment boundary for the dedicated Harness.
+
+## Broker-owned runtime authentication
+
+External model authentication enters through the trusted runtime authentication
+owner supplied by controller composition, then through `ComputeRevisionContext`
+to the selected SandboxDriver. The owner must authenticate an existing core
+binding for the genuine Work execution, principal, exact revision, connection
+generation, service, immutable credential profile, and bounded whole-session
+permission. Revision IDs, deployment permission, or a structurally valid
+projection cannot create that authority.
+
+OpenShell receives only the nonsecret provider references prepared for its exact
+gateway, workspace, namespace, and Sandbox receiver. The owner returns a tagged
+`create` or `retained` attachment. For `create`, OpenShell validates and snapshots
+the complete request before awaiting one-use asynchronous owner submission. The
+owner admits the callback before provider entry and records its outcome under
+independent finite bounds, including after caller cancellation. A fulfilled owner
+acknowledgment establishes recording only. Failed or uncertain recording cannot
+make the new attempt ready. `AlreadyExists` and wrong-name responses remain
+unknown; they are never treated as successful attachment.
+
+A `retained` attachment preserves the original submitted or uncertain attempt,
+skips Sandbox creation, and issues no new grant or submission. In either case,
+`owner.inspect` must establish the current attachment before activation; `unknown`
+and `pending` remain unresolved. Preparing an attachment or receiving a create
+response is insufficient.
+
+The worker prepares a fresh projection when retrying an active revision, while
+the owner retains the original attachment obligation. Broker unavailability uses
+the existing maintenance successor path so later reconciliation can retry.
+Ambiguous create, duplicate, and withdrawal outcomes retain their obligations.
+
+Cleanup withdraws the exact receiver's access independently of workload deletion,
+including after grant closure, expiry, abort, or process restart. It must preserve
+the shared standing provider key in its external custodian. A mechanism that
+cannot enforce the bounded session or exact receiver withdrawal fails closed.
+
+The shared contract and Kubernetes/OpenShell consumer exist, but production
+composition does not yet supply the genuine Work admission and runtime broker
+owner. External-model activation therefore remains unavailable. Neither the
+credential gateway declarations nor driver selection establishes live OpenShell
+qualification. See the [testing boundary](../../testing/openshell.md#current-verification-boundary).
 
 ## Kubernetes and admission requirements
 
@@ -182,7 +231,7 @@ depends on upstream/provider behavior matching this contract:
   creates for the Harness.
 - OpenShell must preserve the Harness's exact audience-bound, short-lived
   projected ServiceAccount token and read-only mount. Its gateway bootstrap
-  token is not a substitute. Stock OpenShell `v0.0.113` does not support
+  token is not a substitute. Stock OpenShell `v0.0.116` does not support
   projected volumes in gateway driver configuration. Until upstream
   projected-volume support exists, local verification may require an
   operator-owned template bridge; that bridge is not production support.
@@ -190,7 +239,7 @@ depends on upstream/provider behavior matching this contract:
   without falling back to its default workspace claim or mounting the PVC root.
 - OpenShell must support exact environment entries backed by Kubernetes
   `secretKeyRef`, including the startup app-server token Secret. Stock
-  OpenShell `v0.0.113` cannot receive those entries through the current gateway
+  OpenShell `v0.0.116` cannot receive those entries through the current gateway
   API. Until upstream secret support exists, local verification may require a
   credential bridge; that bridge is not production support.
 - OpenShell gateway authentication must be bound to the trusted caller and the
@@ -198,7 +247,9 @@ depends on upstream/provider behavior matching this contract:
 
 If any of these conditions are unavailable, OpenShell-selected deployments must
 fail closed instead of launching an unsandboxed or incorrectly credentialed
-Harness.
+Harness. The testing guide lists the exact
+[verification-only compatibility bridges](../../testing/openshell.md#test-only-openshell-adaptations)
+and their removal conditions.
 
 ## Troubleshooting
 
@@ -208,7 +259,7 @@ Common fail-closed errors include:
 - `OpenShell gateway Service is unavailable.`
 - `OpenShell gateway Pod is not ready.`
 - `OpenShell SandboxDriver only supports dedicated Codex Harness revisions.`
-- `OpenShell v0.0.113 cannot receive secretKeyRef environment ...`
+- `OpenShell v0.0.116 cannot receive secretKeyRef environment ...`
 
 ## Related documentation
 

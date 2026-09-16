@@ -1,6 +1,6 @@
 # Credential gateway v1 contracts
 
-Import public credential schema types from `@openclaw-enterprise/occ` and
+Import public credential schema and runtime authentication owner types from `@openclaw-enterprise/occ` and
 credential inventory data from `@openclaw-enterprise/contracts`. The controller
 owns GitHub App constructors and selection types in its
 [GitHub token provider](../../apps/controller/src/providers/token/github/index.ts). OpenClaw Control Plane (OCC) keeps generic
@@ -15,6 +15,21 @@ The public schema surface is `DefinitionRef`, `PrimitiveRef`, `SchemaRef`,
 `ValidatedSchemaValue`. The public registry constructor and immutable primitive
 catalog provide the fixed schema component described below. Gateway composition,
 installed operation and live-provider qualification remain pending.
+
+## Runtime authentication consumer boundary
+
+Compute and Sandbox composition uses the public `RuntimeAuthenticationOwnerV1`,
+`RuntimeAuthenticationAttachmentV1`, `RuntimeAuthenticationAttachmentPreparationV1`,
+`RuntimeAuthenticationAttachmentInspectionV1` and `RuntimeAuthenticationWithdrawalV1`
+types. They describe an injected owner, its retained attachment and the results of
+preparation, inspection and withdrawal. Generic `CoreAuthenticationBinding`,
+`ExternalRuntimeAuthenticationCapabilityV1` and backend capability data remain
+internal to their authority and connection owners.
+
+These declarations do not construct a broker or grant runtime access. The
+[OpenShell Sandbox reference](drivers/openshell-sandbox.md#broker-owned-runtime-authentication)
+owns the supported consumer flow, asynchronous submission and current composition
+limits.
 
 ## Supplier boundaries
 

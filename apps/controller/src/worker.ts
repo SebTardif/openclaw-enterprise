@@ -9,6 +9,7 @@ import type {
   AuthorizationDecision,
   AuthorizationRequest,
   ComputeDriver,
+  ComputeAgentBinding,
   ComputeRevisionContext,
   ConfigurationDriver,
   Driver,
@@ -38,6 +39,7 @@ import {
   type PostgresPool,
   type PostgresQueryClient,
   type PostgresWorkQueueOptions,
+  type RuntimeAuthenticationOwnerV1,
 } from "@openclaw-enterprise/occ";
 import {
   providerDefinitionMap,
@@ -46,7 +48,10 @@ import {
 } from "@openclaw-enterprise/occ";
 import type { InstallationRuntimeDrivers } from "./composition/installation-config.ts";
 import { resolveApprovedHarness } from "./composition/production-harness.ts";
-import { withComputeAbortSignal } from "./drivers/compute/operation-context.ts";
+import {
+  currentComputeAbortSignal,
+  withComputeAbortSignal,
+} from "./drivers/compute/operation-context.ts";
 
 export interface ControllerWorkerOptions {
   readonly pool: PostgresPool & PostgresQueryClient;
@@ -54,6 +59,8 @@ export interface ControllerWorkerOptions {
   readonly drivers?: InstallationRuntimeDrivers;
   readonly computeDriver?: ComputeDriver;
   readonly sandboxDriver?: SandboxDriver;
+  /** Supplied only by trusted broker composition, never by an Installation JSON callback. */
+  readonly runtimeAuthenticationOwner?: RuntimeAuthenticationOwnerV1;
   readonly pollIntervalMs?: number;
   readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
@@ -218,6 +225,7 @@ export class ControllerWorker {
   private readonly state: PostgresPlatformState;
   private readonly queue: PostgresWorkQueue;
   private readonly compute: ComputeDriver;
+  private readonly runtimeAuthenticationOwner: RuntimeAuthenticationOwnerV1 | undefined;
   private readonly configuration: ConfigurationDriver | undefined;
   private readonly queueOptions: PostgresWorkQueueOptions;
   private readonly iamDriverId: string;
@@ -284,6 +292,41 @@ export class ControllerWorker {
       throw new Error("A before-commit Compute Driver must implement activateRevision.");
     }
     this.compute = computeDriver;
+    if (
+      options.runtimeAuthenticationOwner !== undefined &&
+      drivers?.runtimeAuthenticationOwner !== undefined &&
+      options.runtimeAuthenticationOwner !== drivers.runtimeAuthenticationOwner
+    ) {
+      throw new Error("Runtime authentication has conflicting broker owners.");
+    }
+    this.runtimeAuthenticationOwner =
+      options.runtimeAuthenticationOwner ?? drivers?.runtimeAuthenticationOwner;
+    if (this.runtimeAuthenticationOwner !== undefined) {
+      const consumer = computeDriver as ComputeDriver & {
+        setRuntimeAuthenticationOwner?: (
+          owner: RuntimeAuthenticationOwnerV1,
+          resolveBinding: (revision: Readonly<AgentRevision>) => Promise<ComputeAgentBinding>,
+        ) => void;
+      };
+      if (typeof consumer.setRuntimeAuthenticationOwner !== "function") {
+        throw new Error("The selected Compute Driver cannot consume runtime authentication.");
+      }
+      consumer.setRuntimeAuthenticationOwner(this.runtimeAuthenticationOwner, async (revision) =>
+        this.state.read(async (view) => {
+          const namespace = await view.namespaces.findNamespace(revision.namespaceId);
+          const agent = await view.agents.findAgent(revision.namespaceId, revision.agentId);
+          if (
+            namespace === undefined ||
+            agent === undefined ||
+            agent.namespaceId !== namespace.id ||
+            agent.servicePrincipalId !== revision.servicePrincipalId
+          ) {
+            throw new Error("The runtime authentication receiver is unavailable.");
+          }
+          return { namespace, agent };
+        }),
+      );
+    }
     const selectedSecretDriver = drivers?.secretDriver;
     const selectedSecretConfiguration = drivers?.installation.drivers.secret;
     this.secretDriverId = selectedSecretDriver?.id ?? selectedSecretConfiguration?.id;
@@ -659,12 +702,35 @@ export class ControllerWorker {
         }
         return;
       }
+      let runtimeAuthentication: ComputeRevisionContext["runtimeAuthentication"];
+      try {
+        runtimeAuthentication =
+          this.runtimeAuthenticationOwner === undefined
+            ? undefined
+            : await this.withClaimHeartbeat(claim, () =>
+                this.runtimeAuthenticationOwner!.prepare({
+                  revision,
+                  bounds: this.runtimeAuthenticationBounds(),
+                }),
+              );
+      } catch (error) {
+        if (error instanceof WorkClaimLostError) throw error;
+        if (agent.activeRevisionId !== revision.id) throw error;
+        await this.finalizeActiveRevision(claim, revision, "RUNTIME_AUTHENTICATION_UNAVAILABLE");
+        return;
+      }
+      const revisionContext: ComputeRevisionContext = {
+        ...secretContext.context,
+        ...(runtimeAuthentication === undefined ? {} : { runtimeAuthentication }),
+      };
       if (agent.activeRevisionId === revision.id) {
         try {
           const compute = this.compute;
-          if (this.maintenanceIntervalMs !== undefined) {
+          // Recover the broker's retained attachment for each admitted projection,
+          // including retries after activation publication or controller restart.
+          if (this.maintenanceIntervalMs !== undefined || runtimeAuthentication !== undefined) {
             const observation = await this.withClaimHeartbeat(claim, () =>
-              compute.prepareRevision(revision, secretContext.context),
+              compute.prepareRevision(revision, revisionContext),
             );
             if (!validRevisionObservation(observation, revision)) {
               await this.finalizeRevision(claim, {
@@ -680,7 +746,7 @@ export class ControllerWorker {
           }
           if (this.shouldActivatePublishedRevision(compute)) {
             await this.withClaimHeartbeat(claim, () =>
-              this.stagedRevision("activateRevision", revision, secretContext.context),
+              this.stagedRevision("activateRevision", revision, revisionContext),
             );
           }
           const earlier = await this.state.read(async (view) =>
@@ -689,7 +755,7 @@ export class ControllerWorker {
             ),
           );
           for (const previous of earlier) {
-            await this.withClaimHeartbeat(claim, () => compute.retireRevision(previous));
+            await this.withClaimHeartbeat(claim, () => this.retireRevision(previous));
           }
         } catch (error) {
           if (error instanceof WorkClaimLostError) throw error;
@@ -717,7 +783,7 @@ export class ControllerWorker {
         revision,
         previous,
         agent.activeRevisionId,
-        secretContext.context,
+        revisionContext,
       );
     } catch (error) {
       if (error instanceof WorkClaimLostError) throw error;
@@ -855,6 +921,73 @@ export class ControllerWorker {
     });
   }
 
+  private runtimeAuthenticationBounds(independent = false) {
+    const timeout = AbortSignal.timeout(15_000);
+    const current = currentComputeAbortSignal();
+    return {
+      signal: independent
+        ? timeout
+        : AbortSignal.any([
+            timeout,
+            this.abort.signal,
+            ...(current === undefined ? [] : [current]),
+          ]),
+      deadline: Date.now() + 15_000,
+    };
+  }
+
+  private async closeRuntimeAuthentication(revision: Readonly<AgentRevision>): Promise<void> {
+    if (this.runtimeAuthenticationOwner === undefined) return;
+    const result = await this.runtimeAuthenticationOwner.closeRevision({
+      revision,
+      bounds: this.runtimeAuthenticationBounds(true),
+    });
+    if (result.state !== "withdrawn") {
+      throw new Error("Runtime authentication withdrawal is not confirmed.");
+    }
+  }
+
+  private async retireRevision(revision: Readonly<AgentRevision>): Promise<void> {
+    const failures: unknown[] = [];
+    try {
+      await this.closeRuntimeAuthentication(revision);
+    } catch (error) {
+      failures.push(error);
+    }
+    // Remove the workload even if withdrawal is uncertain. The owner retains its
+    // cleanup obligation, and reconciliation must not report completion yet.
+    try {
+      await this.compute.retireRevision(revision);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Revision retirement is incomplete.");
+    }
+  }
+
+  private async deleteNamespace(namespace: Readonly<Namespace>): Promise<NamespaceDeleteResult> {
+    const failures: unknown[] = [];
+    if (this.runtimeAuthenticationOwner !== undefined) {
+      try {
+        const result = await this.runtimeAuthenticationOwner.closeNamespace({
+          namespace,
+          bounds: this.runtimeAuthenticationBounds(true),
+        });
+        if (result.state !== "withdrawn") {
+          throw new Error("Namespace authentication withdrawal is not confirmed.");
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    const observation = await this.compute.deleteNamespace(namespace);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Namespace authentication withdrawal is incomplete.");
+    }
+    return observation;
+  }
+
   private async resolveRevisionSecretContext(
     revision: Readonly<AgentRevision>,
   ): Promise<
@@ -941,7 +1074,7 @@ export class ControllerWorker {
       const observation =
         claim.namespaceTarget === "ready"
           ? await this.compute.ensureNamespace(namespace)
-          : await this.compute.deleteNamespace(namespace);
+          : await this.deleteNamespace(namespace);
       if (!validObservation(observation, namespace.id, claim.namespaceTarget ?? "ready"))
         return { outcome: "permanent", code: "INVALID_DRIVER_OBSERVATION" };
       const complete =
@@ -1015,7 +1148,7 @@ export class ControllerWorker {
           );
         }
         if (resolved.previous !== undefined) {
-          await this.withClaimHeartbeat(claim, () => compute.retireRevision(resolved.previous!));
+          await this.withClaimHeartbeat(claim, () => this.retireRevision(resolved.previous!));
         }
       } catch (error) {
         if (error instanceof WorkClaimLostError) throw error;

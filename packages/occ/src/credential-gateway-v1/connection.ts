@@ -1,6 +1,6 @@
 import type { DefinitionRef, RetainedSchemaValue, SchemaRef } from "./schema.ts";
 
-export type AuthenticationMode = "protected-material" | "workload-transport";
+export type AuthenticationMode = "protected-material" | "workload-transport" | "external-runtime";
 export type AcquisitionMode = "issued" | "standing" | "exchange" | "refresh" | "workload";
 
 /** Versioned descriptor; an implemented owner must admit the exact bridge. */
@@ -20,6 +20,21 @@ export interface OperationCapability {
   readonly mechanism: MechanismContractRef;
   readonly acquisitionMode: AcquisitionMode;
   readonly invalidation: "per-credential" | "expiry-only" | "source-managed";
+}
+
+/**
+ * Exact external attachment tuple for the runtime-authentication-v1 owner bridge.
+ * The standing source remains externally owned; receiver withdrawal does not
+ * establish per-credential revocation. Registration and live admission remain
+ * required before an owner may attach a receiver; this descriptor grants no authority.
+ */
+export interface ExternalRuntimeAuthenticationCapabilityV1 extends OperationCapability {
+  readonly authenticationMode: "external-runtime";
+  readonly mechanism: MechanismContractRef<"runtime-authentication-v1"> & {
+    readonly version: 1;
+  };
+  readonly acquisitionMode: "standing";
+  readonly invalidation: "source-managed";
 }
 
 export interface BackendCapabilities {

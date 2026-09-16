@@ -181,6 +181,7 @@ async function setup(context) {
     leaseDurationMs = 30_000,
     convergenceTimeoutMs = 900_000,
     mode = "production",
+    runtimeAuthenticationOwner,
   ) {
     const configuration = createInstallationDriverConfiguration();
     configuration.drivers.compute.id = computeDriver.id;
@@ -190,6 +191,7 @@ async function setup(context) {
       drivers: {
         installation: configuration,
         computeDriver,
+        ...(runtimeAuthenticationOwner === undefined ? {} : { runtimeAuthenticationOwner }),
         configurationDriver: createTestConfigurationDriver({
           id: configuration.drivers.configuration.id,
         }),

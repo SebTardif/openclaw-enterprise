@@ -85,3 +85,32 @@ test("startup rejects invalid bundled OpenShell configuration before invoking an
   );
   assert.equal(invokedFactory, false);
 });
+
+for (const [name, credentialOptions] of [
+  ["modelCredential", { modelCredential: { source: "provider" } }],
+  ["providers", { providers: ["oce-openai"] }],
+  [
+    "modelCredential and providers",
+    { modelCredential: { source: "provider" }, providers: ["oce-openai"] },
+  ],
+]) {
+  test(`startup rejects OpenShell ${name} before invoking an injected factory`, async (t) => {
+    const configuration = sandboxInstallation();
+    Object.assign(configuration.drivers.sandbox.configuration, credentialOptions);
+    let invokedFactory = false;
+
+    // Startup options cannot turn provider identifiers into runtime authentication authority.
+    await assert.rejects(
+      loadInstallationConfiguration({
+        mode: "production",
+        environment: { OCC_CONFIG_PATH: await fixture(t, configuration) },
+        createSandboxDriver() {
+          invokedFactory = true;
+          throw new Error("An injected factory must not bypass credential ownership.");
+        },
+      }),
+      /drivers\.sandbox\.configuration does not match its Driver configuration schema/,
+    );
+    assert.equal(invokedFactory, false);
+  });
+}

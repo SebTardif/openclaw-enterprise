@@ -43,9 +43,17 @@ import type {
   SandboxWorkspaceMount,
   SecretEnvironmentProjection,
   LoggingLevel,
+  RuntimeAuthenticationProjectionV1,
+  RuntimeAuthenticationRequestV1,
+  RuntimeAuthenticationReceiverV1,
+  RuntimeAuthenticationCreateV1,
 } from "@openclaw-enterprise/contracts";
 import { admittedLoggingLevel, normalizeSecretBindings } from "@openclaw-enterprise/contracts";
 import { DependencyUnavailableError, ResourceConflictError } from "@openclaw-enterprise/occ";
+import type {
+  RuntimeAuthenticationOwnerV1,
+  RuntimeAuthenticationAttachmentV1,
+} from "@openclaw-enterprise/occ";
 import { createKubernetesClientConfiguration } from "../../kubernetes/client.ts";
 import { ComputeLifecycleDispatcher } from "../lifecycle-hooks.ts";
 import { currentComputeAbortSignal, withComputeAbortSignal } from "../operation-context.ts";
@@ -59,6 +67,7 @@ import {
   PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
   type PluginRuntimeSpec,
   pluginRuntimeConfigMapData,
+  pluginRuntimeEnvironment,
   pluginRuntimeSpecForRevision,
 } from "../plugin-runtime.ts";
 import {
@@ -66,6 +75,7 @@ import {
   AGENT_RUNTIME_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
   GATEWAY_READINESS_ENTRYPOINT,
+  portableNodeInlineCommand,
 } from "./runtime-entrypoints.ts";
 
 type KubernetesRecord = Record<string, unknown>;
@@ -235,6 +245,27 @@ interface RuntimeCredentialContext {
   };
 }
 
+type RuntimeAuthenticationBindingResolver = (
+  revision: Readonly<AgentRevision>,
+) => Promise<ComputeAgentBinding>;
+type RuntimeAuthenticationBounds = Parameters<RuntimeAuthenticationOwnerV1["status"]>[0]["bounds"];
+interface RuntimeAuthenticationAttempt {
+  readonly attachment: RuntimeAuthenticationAttachmentV1;
+  readonly projection: RuntimeAuthenticationProjectionV1;
+  readonly resourceName: string;
+  observed: boolean;
+}
+interface RuntimeAuthenticationState {
+  readonly owner: RuntimeAuthenticationOwnerV1;
+  readonly resolveBinding: RuntimeAuthenticationBindingResolver | undefined;
+  // Readiness cache only. The owner durably retains all admission and cleanup obligations.
+  readonly attempts: Map<string, RuntimeAuthenticationAttempt>;
+}
+const runtimeAuthenticationStates = new WeakMap<
+  KubernetesComputeDriver,
+  RuntimeAuthenticationState
+>();
+
 const MANAGER = "openclaw-enterprise";
 const FIELD_MANAGER = "openclaw-enterprise-compute";
 const TOKEN_PATH = "/var/run/secrets/openclaw/service-principal";
@@ -261,6 +292,7 @@ const CODEX_ACCESS_TOKEN = "CODEX_ACCESS_TOKEN";
 const CODEX_CHATGPT_WORKSPACE_ID = "CODEX_CHATGPT_WORKSPACE_ID";
 const MAX_RUNTIME_CREDENTIAL_BYTES = 65_536;
 const RUNTIME_STATE_VOLUME_SIZE = "1Gi";
+const MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES = 30 * 1024;
 const GATEWAY_PRIVATE_STATE_VOLUME = "openclaw-gateway-state";
 const GATEWAY_PRIVATE_STATE_SIZE = "10Gi";
 const GATEWAY_PRIVATE_STATE_CATEGORIES = Object.freeze([
@@ -823,6 +855,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
       readonly implementation?: string;
       readonly lifecycleDrivers?: readonly Driver[];
       readonly sandboxDriver?: SandboxDriver;
+      readonly runtimeAuthenticationOwner?: RuntimeAuthenticationOwnerV1;
+      readonly runtimeAuthenticationBinding?: RuntimeAuthenticationBindingResolver;
     } = {},
   ) {
     KubernetesComputeDriver.validateConfiguration(options);
@@ -834,6 +868,24 @@ export class KubernetesComputeDriver implements ComputeDriver {
     this.options = options;
     this.sandboxDriver = selection.sandboxDriver;
     this.lifecycle = new ComputeLifecycleDispatcher(selection.lifecycleDrivers ?? []);
+    if (selection.runtimeAuthenticationOwner !== undefined) {
+      this.setRuntimeAuthenticationOwner(
+        selection.runtimeAuthenticationOwner,
+        selection.runtimeAuthenticationBinding,
+      );
+    }
+  }
+
+  setRuntimeAuthenticationOwner(
+    owner: RuntimeAuthenticationOwnerV1,
+    resolveBinding?: RuntimeAuthenticationBindingResolver,
+  ): void {
+    if (this.lifecycleStarted) {
+      throw new Error(
+        "Runtime authentication owner cannot change after lifecycle operations begin.",
+      );
+    }
+    runtimeAuthenticationStates.set(this, { owner, resolveBinding, attempts: new Map() });
   }
 
   setLifecycleDrivers(drivers: readonly Driver[]): void {
@@ -868,7 +920,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return this.withRuntimeCredentialErrors(async () => {
       const context = await this.runtimeCredentialContext(binding);
       const observed = await this.readRuntimeCredentialSecrets(context);
-      return this.runtimeCredentialStatus(observed);
+      return this.runtimeCredentialStatus(observed, await this.externalRuntimeConfigured(binding));
     });
   }
 
@@ -878,9 +930,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
   ): Promise<AgentRuntimeCredentialStatus> {
     return this.withRuntimeCredentialErrors(async () => {
       const credentials = this.validRuntimeCredentialInput(input);
+      const externalRuntime = await this.externalRuntimeConfigured(binding);
+      if (externalRuntime && credentials.modelApiKey !== undefined) {
+        throw new ResourceConflictError(
+          "The runtime authentication owner manages the externally brokered model credential.",
+        );
+      }
       const context = await this.runtimeCredentialContext(binding, credentials.slack !== undefined);
       const observed = await this.readRuntimeCredentialSecrets(context);
-      const status = this.runtimeCredentialStatus(observed);
+      const status = this.runtimeCredentialStatus(observed, externalRuntime);
       if (status.modelConfigured === false && credentials.modelApiKey === undefined) {
         throw new DependencyUnavailableError("The Agent model credential is not configured.");
       }
@@ -1126,6 +1184,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
   async deleteNamespace(namespace: Namespace): Promise<NamespaceDeleteResult> {
     this.lifecycleStarted = true;
     const result = { namespaceId: namespace.id, namespaceDeleted: false };
+    const authenticationState = runtimeAuthenticationStates.get(this);
+    for (const [revisionId, attempt] of authenticationState?.attempts ?? []) {
+      if (attempt.projection.namespaceId === namespace.id)
+        authenticationState?.attempts.delete(revisionId);
+    }
     try {
       const clients = await this.clients();
       const { name, external } =
@@ -1236,9 +1299,13 @@ export class KubernetesComputeDriver implements ComputeDriver {
         throw new OwnershipFailure("Refusing another ServiceAccount's credential Secret.");
       }
     }
+    const runtimeAuthentication = await this.runtimeAuthenticationForRevision(revision, context);
     const channels = this.enabledChannels(revision);
     const { name: namespace, external } = await this.resolveNamespace(revision.namespaceId);
     const secretEnvironment = this.secretEnvironmentForRevision(revision, context, namespace);
+    if (runtimeAuthentication !== undefined) {
+      await this.rejectCompetingRuntimeCredentials(revision, namespace, secretEnvironment);
+    }
     const tenantOwnership = { namespaceId: revision.namespaceId };
     const observed = await this.get("Namespace", namespace);
     if (observed === undefined) return result;
@@ -1474,6 +1541,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       const launch = await this.lifecycle.beforeWorkloadStart(revision);
       launchPrepared = true;
+      if (runtimeAuthentication !== undefined && MODEL_API_KEY in launch.environment) {
+        throw new ResourceConflictError(
+          "External runtime authentication cannot coexist with a model credential.",
+        );
+      }
       const agentDeployment = this.deployment(
         revisionName,
         revisionOwnership,
@@ -1490,6 +1562,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
         [],
         [],
         pluginRuntime,
+        sandboxDriver === undefined ? "configMap" : "environment",
+        runtimeAuthentication !== undefined,
       );
       if (sandboxDriver?.provisionHarness !== undefined) {
         const requirements = this.harnessRequirementsFromDeployment(agentDeployment);
@@ -1500,11 +1574,27 @@ export class KubernetesComputeDriver implements ComputeDriver {
           )),
           revision,
           requirements,
+          ...(runtimeAuthentication === undefined
+            ? {}
+            : {
+                runtimeAuthentication: this.runtimeAuthenticationRequest(
+                  revision,
+                  namespace,
+                  runtimeAuthentication,
+                ),
+              }),
         });
         this.verifySandboxResourceRef(sandbox, revision, namespace);
         return {
           ...result,
-          ready: await this.providerHarnessReady(revision, namespace, requirements.labels),
+          ready:
+            (await this.providerHarnessReady(revision, namespace, requirements.labels)) &&
+            (runtimeAuthentication === undefined ||
+              (await this.runtimeAuthenticationReady(
+                revision,
+                runtimeAuthentication,
+                sandbox.resourceName,
+              ))),
         };
       }
       await this.reconcile(agentDeployment, revisionOwnership, namespace);
@@ -1537,11 +1627,16 @@ export class KubernetesComputeDriver implements ComputeDriver {
 
   async activateRevision(revision: AgentRevision, context?: ComputeRevisionContext): Promise<void> {
     if (this.options.runtime === undefined) return;
+    this.lifecycleStarted = true;
     this.verifyGatewayRoutingConfiguration(revision);
+    const runtimeAuthentication = await this.runtimeAuthenticationForRevision(revision, context);
     const channels = this.enabledChannels(revision);
     const pluginRuntime = this.pluginRuntimeSnapshot(revision);
     const { name: namespace } = await this.resolveNamespace(revision.namespaceId);
     const secretEnvironment = this.secretEnvironmentForRevision(revision, context, namespace);
+    if (runtimeAuthentication !== undefined) {
+      await this.rejectCompetingRuntimeCredentials(revision, namespace, secretEnvironment);
+    }
     const agentName = `agent-${sha256Hex(revision.agentId, 12)}`;
     const gatewayName = `gateway-${sha256Hex(revision.agentId, 12)}`;
     const gatewayOwnership = { namespaceId: revision.namespaceId, agentId: revision.agentId };
@@ -1654,7 +1749,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
     } else {
       const requirements = this.harnessRequirementsFromDeployment(agentDeployment);
-      if (!(await this.providerHarnessReady(revision, namespace, requirements.labels))) {
+      if (
+        !(await this.providerHarnessReady(revision, namespace, requirements.labels)) ||
+        (runtimeAuthentication !== undefined &&
+          !(await this.runtimeAuthenticationReady(revision, runtimeAuthentication)))
+      ) {
         throw new Error("The exact AgentRevision workload is not ready.");
       }
     }
@@ -1703,6 +1802,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     for (const policy of this.agentNetworkPolicies(revision, namespace)) {
       await this.reconcile(policy, gatewayOwnership, namespace);
+    }
+    if (
+      runtimeAuthentication !== undefined &&
+      !(await this.runtimeAuthenticationReady(revision, runtimeAuthentication))
+    ) {
+      throw new Error("The exact AgentRevision runtime authentication is not ready.");
     }
     await this.reconcile(
       this.service(agentName, ownership, namespace, {
@@ -1769,6 +1874,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     required(revision.agentId, "Agent ID");
     required(revision.id, "AgentRevision ID");
     required(revision.servicePrincipalId, "Agent ServicePrincipal ID");
+    // Retiring removes only this process's readiness cache. Broker cleanup remains retained by its owner.
+    runtimeAuthenticationStates.get(this)?.attempts.delete(revision.id);
     const clients = await this.clients();
     const { name: namespace, external } = await this.resolveNamespace(revision.namespaceId);
     const existingNamespace = await this.get("Namespace", namespace);
@@ -1980,6 +2087,317 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return credential;
   }
 
+  private async runtimeAuthenticationOperation<Result>(
+    operation: (bounds: RuntimeAuthenticationBounds) => Promise<Result>,
+    signal = currentComputeAbortSignal(),
+    cleanup = false,
+  ): Promise<Result> {
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const bounded = cleanup || signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    bounded.throwIfAborted();
+    const bounds = { signal: bounded, deadline: Date.now() + REQUEST_TIMEOUT_MS };
+    let abort: (() => void) | undefined;
+    try {
+      const result = await Promise.race([
+        operation(bounds),
+        new Promise<never>((_resolve, reject) => {
+          abort = () => reject(bounded.reason);
+          bounded.addEventListener("abort", abort, { once: true });
+          if (bounded.aborted) abort();
+        }),
+      ]);
+      bounded.throwIfAborted();
+      return result;
+    } finally {
+      if (abort !== undefined) bounded.removeEventListener("abort", abort);
+    }
+  }
+
+  private async externalRuntimeConfigured(binding: ComputeAgentBinding): Promise<boolean> {
+    const state = runtimeAuthenticationStates.get(this);
+    if (state === undefined) return false;
+    const status = await this.runtimeAuthenticationOperation((bounds) =>
+      state.owner.status({ binding, bounds }),
+    );
+    if (typeof status?.configured !== "boolean") {
+      throw new DependencyUnavailableError(
+        "The external runtime authentication configuration is unknown.",
+      );
+    }
+    if (status.configured && binding.agent.serviceAccountId !== undefined) {
+      throw new ResourceConflictError(
+        "External runtime authentication cannot coexist with a ServiceAccount credential.",
+      );
+    }
+    return status.configured;
+  }
+
+  private async runtimeAuthenticationForRevision(
+    revision: AgentRevision,
+    context?: ComputeRevisionContext,
+  ): Promise<RuntimeAuthenticationProjectionV1 | undefined> {
+    const projection = context?.runtimeAuthentication;
+    const state = runtimeAuthenticationStates.get(this);
+    if (projection === undefined) {
+      if (state === undefined) return undefined;
+      if (state.resolveBinding === undefined) {
+        throw new DependencyUnavailableError(
+          "The external runtime authentication binding is unavailable.",
+        );
+      }
+      const binding = await state.resolveBinding(revision);
+      if (
+        binding.namespace.id !== revision.namespaceId ||
+        binding.agent.namespaceId !== revision.namespaceId ||
+        binding.agent.id !== revision.agentId ||
+        binding.agent.servicePrincipalId !== revision.servicePrincipalId
+      ) {
+        throw new ResourceConflictError(
+          "The external runtime authentication binding does not match the revision.",
+        );
+      }
+      if (await this.externalRuntimeConfigured(binding)) {
+        throw new DependencyUnavailableError(
+          "The configured external runtime authentication session is not admitted.",
+        );
+      }
+      return undefined;
+    }
+    if (state === undefined) {
+      throw new DependencyUnavailableError(
+        "The external runtime authentication owner is unavailable.",
+      );
+    }
+    this.validateRuntimeAuthenticationProjection(revision, projection);
+    return projection;
+  }
+
+  private validateRuntimeAuthenticationProjection(
+    revision: AgentRevision,
+    projection: RuntimeAuthenticationProjectionV1,
+  ): void {
+    if (
+      projection.schemaVersion !== 1 ||
+      projection.namespaceId !== revision.namespaceId ||
+      projection.agentId !== revision.agentId ||
+      projection.revisionId !== revision.id ||
+      projection.servicePrincipalId !== revision.servicePrincipalId ||
+      projection.sandboxDriverId !== revision.sandboxDriverId ||
+      this.sandboxDriverForRevision(revision)?.provisionHarness === undefined ||
+      revision.harness.mode !== "dedicated" ||
+      revision.serviceAccount !== undefined ||
+      ![
+        projection.executionId,
+        projection.connectionId,
+        projection.connectionGeneration,
+        projection.serviceId,
+        projection.profileDigest,
+      ].every(isNonEmptyString) ||
+      !Number.isFinite(projection.expiresAt) ||
+      projection.expiresAt <= Date.now() ||
+      projection.session?.permission !== "whole-session" ||
+      projection.session.lifetime !== "bounded" ||
+      projection.session.withdrawal !== "exact-receiver"
+    ) {
+      throw new ResourceConflictError(
+        "The external runtime authentication projection is stale or does not match the revision.",
+      );
+    }
+  }
+
+  private async rejectCompetingRuntimeCredentials(
+    revision: AgentRevision,
+    namespace: string,
+    secretEnvironment: readonly SecretEnvironmentProjection[],
+  ): Promise<void> {
+    const runtime = this.options.runtime;
+    if (runtime === undefined) {
+      throw new ConfigurationFailure(
+        "External runtime authentication requires configured runtime transport.",
+      );
+    }
+    const model = await this.getOwned(
+      "Secret",
+      `${runtime.modelSecretPrefix}-${sha256Hex(revision.agentId, 12)}`,
+      namespace,
+      { namespaceId: revision.namespaceId, agentId: revision.agentId },
+    );
+    if (model !== undefined || secretEnvironment.some(({ name }) => name === MODEL_API_KEY)) {
+      throw new ResourceConflictError(
+        "An OCE model Secret cannot coexist with external runtime authentication.",
+      );
+    }
+  }
+
+  private runtimeAuthenticationRequest(
+    revision: AgentRevision,
+    namespace: string,
+    projection: RuntimeAuthenticationProjectionV1,
+  ): RuntimeAuthenticationRequestV1 {
+    const state = runtimeAuthenticationStates.get(this);
+    if (state === undefined)
+      throw new DependencyUnavailableError("The runtime authentication owner is unavailable.");
+    let prepared = false;
+    return Object.freeze({
+      prepare: async (receiver: RuntimeAuthenticationReceiverV1, signal: AbortSignal) => {
+        if (prepared)
+          throw new ResourceConflictError(
+            "The runtime authentication receiver was already prepared.",
+          );
+        prepared = true;
+        this.validateRuntimeAuthenticationProjection(revision, projection);
+        if (
+          receiver.sandboxDriverId !== revision.sandboxDriverId ||
+          receiver.namespaceName !== namespace ||
+          ![receiver.gatewayEndpoint, receiver.workspace, receiver.resourceName].every(
+            isNonEmptyString,
+          )
+        ) {
+          throw new ResourceConflictError(
+            "The runtime authentication receiver does not match the revision.",
+          );
+        }
+        const exactReceiver = Object.freeze({ ...receiver });
+        const preparation = await this.runtimeAuthenticationOperation(
+          (bounds) =>
+            state.owner.prepareAttachment({ projection, receiver: exactReceiver, bounds }),
+          signal,
+        );
+        const attempt: RuntimeAuthenticationAttempt = {
+          attachment: preparation.attachment,
+          projection,
+          resourceName: exactReceiver.resourceName,
+          observed: preparation.kind === "retained",
+        };
+        state.attempts.set(revision.id, attempt);
+        if (preparation.kind === "retained") {
+          return Object.freeze({ kind: "retained" as const });
+        }
+        const providers = Object.freeze([...preparation.providers]);
+        if (
+          providers.length === 0 ||
+          !providers.every(isNonEmptyString) ||
+          new Set(providers).size !== providers.length
+        ) {
+          throw new ResourceConflictError(
+            "The runtime authentication provider selection is invalid.",
+          );
+        }
+        let consumed = false;
+        return Object.freeze({
+          kind: "create" as const,
+          providers,
+          submit: async (create: RuntimeAuthenticationCreateV1) => {
+            if (consumed)
+              throw new ResourceConflictError(
+                "The runtime authentication attempt was already consumed.",
+              );
+            consumed = true;
+            const computeSignal = currentComputeAbortSignal();
+            const now = Date.now();
+            const deadline = Math.min(now + REQUEST_TIMEOUT_MS, projection.expiresAt);
+            const timeout = AbortSignal.timeout(Math.max(0, Math.floor(deadline - now)));
+            const bounded = AbortSignal.any([
+              signal,
+              timeout,
+              ...(computeSignal === undefined ? [] : [computeSignal]),
+            ]);
+            bounded.throwIfAborted();
+            this.validateRuntimeAuthenticationProjection(revision, projection);
+            let accepting = true;
+            let invoked = false;
+            const callback: {
+              entered: boolean;
+              outcome?: { kind: "created" } | { kind: "unknown"; error: unknown };
+            } = { entered: false };
+            let acknowledgment;
+            try {
+              // Do not race cancellation here: the owner must finish recording with
+              // its independent finite bounds after provider entry, even on abort.
+              acknowledgment = await preparation.submit({
+                bounds: { signal: bounded, deadline },
+                create: async (ownerSignal) => {
+                  if (!accepting || invoked)
+                    throw new ResourceConflictError(
+                      "The runtime authentication create callback was already consumed or closed.",
+                    );
+                  invoked = true;
+                  try {
+                    const providerSignal = AbortSignal.any([bounded, ownerSignal]);
+                    providerSignal.throwIfAborted();
+                    this.validateRuntimeAuthenticationProjection(revision, projection);
+                    callback.entered = true;
+                    const outcome = await create(providerSignal);
+                    if (outcome?.kind !== "created")
+                      throw new ResourceConflictError(
+                        "The runtime authentication create outcome is invalid.",
+                      );
+                    callback.outcome = { kind: "created" };
+                    return outcome;
+                  } catch (error) {
+                    callback.outcome = { kind: "unknown", error };
+                    throw error;
+                  }
+                },
+              });
+            } catch (error) {
+              if (callback.outcome?.kind === "unknown") throw callback.outcome.error;
+              throw error;
+            } finally {
+              accepting = false;
+            }
+            if (acknowledgment?.kind === "created" && callback.outcome?.kind === "created") {
+              attempt.observed = true;
+              return;
+            }
+            if (
+              acknowledgment?.kind === "unknown" &&
+              Object.hasOwn(acknowledgment, "error") &&
+              callback.outcome?.kind === "unknown" &&
+              Object.is(acknowledgment.error, callback.outcome.error)
+            ) {
+              // A pre-entry cancellation can be recorded as unknown by the owner,
+              // but must not make a locally never-submitted attempt inspectable.
+              attempt.observed = callback.entered;
+              throw callback.outcome.error;
+            }
+            throw new ResourceConflictError(
+              "The runtime authentication submission acknowledgment is invalid.",
+            );
+          },
+        });
+      },
+    });
+  }
+
+  private async runtimeAuthenticationReady(
+    revision: AgentRevision,
+    projection: RuntimeAuthenticationProjectionV1,
+    resourceName?: string,
+  ): Promise<boolean> {
+    const state = runtimeAuthenticationStates.get(this);
+    const attempt = state?.attempts.get(revision.id);
+    if (
+      state === undefined ||
+      attempt === undefined ||
+      attempt.projection !== projection ||
+      !attempt.observed ||
+      (resourceName !== undefined && attempt.resourceName !== resourceName)
+    )
+      return false;
+    this.validateRuntimeAuthenticationProjection(revision, attempt.projection);
+    const observation = await this.runtimeAuthenticationOperation((bounds) =>
+      state.owner.inspect({ attachment: attempt.attachment, bounds }),
+    );
+    return (
+      observation.state === "attached" &&
+      isNonEmptyString(observation.receiverUid) &&
+      Number.isFinite(observation.usableUntil) &&
+      observation.usableUntil > Date.now() &&
+      observation.usableUntil <= attempt.projection.expiresAt
+    );
+  }
+
   private async runtimeCredentialContext(
     binding: ComputeAgentBinding,
     requireSlack = false,
@@ -2065,10 +2483,16 @@ export class KubernetesComputeDriver implements ComputeDriver {
     observed: Readonly<
       Partial<Record<RuntimeCredentialGroup, ManagedKubernetesObject<"Secret"> | undefined>>
     >,
+    externalModelCredential: boolean,
   ): AgentRuntimeCredentialStatus {
+    if (externalModelCredential && observed.model !== undefined) {
+      throw new ResourceConflictError(
+        "An OCE model Secret cannot coexist with an externally brokered model credential.",
+      );
+    }
     return {
       transportConfigured: observed.transport !== undefined,
-      modelConfigured: observed.model !== undefined,
+      modelConfigured: externalModelCredential || observed.model !== undefined,
       slackConfigured: observed.slack !== undefined,
     };
   }
@@ -3758,6 +4182,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     enabledChannels: readonly ChannelRequirements[] = [],
     secretEnvironment: readonly SecretEnvironmentProjection[] = [],
     pluginRuntime?: PluginRuntimeSnapshot,
+    pluginRuntimeDelivery: "configMap" | "environment" = "configMap",
+    externalRuntimeAuthentication = false,
   ): ManagedKubernetesObject {
     const metadata = this.ownershipMetadata(ownership);
     const workloadMetadata =
@@ -3820,39 +4246,48 @@ export class KubernetesComputeDriver implements ComputeDriver {
           !embedded &&
           Object.keys(pluginRuntime.runtime.selections).length > 0));
     if (needsPluginRuntime) {
-      volumes.push({
-        name: PLUGIN_RUNTIME_VOLUME,
-        configMap: {
-          name: pluginRuntime.name,
-          items: [
-            { key: PLUGIN_RUNTIME_MANIFEST, path: PLUGIN_RUNTIME_MANIFEST },
-            ...(pluginRuntime.runtime.kind === "codex" && role === "agent"
-              ? [{ key: PLUGIN_RUNTIME_CODEX_CONFIG, path: PLUGIN_RUNTIME_CODEX_CONFIG }]
-              : []),
-          ],
-          optional: false,
-        },
-      });
-      volumeMounts.push({
-        name: PLUGIN_RUNTIME_VOLUME,
-        mountPath: PLUGIN_RUNTIME_DIRECTORY,
-        readOnly: true,
-      });
-      variables.push({
-        name: PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT,
-        value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_MANIFEST}`,
-      });
-      if (pluginRuntime.runtime.kind === "codex" && role === "agent") {
+      if (pluginRuntimeDelivery === "environment") {
         variables.push(
-          {
-            name: PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
-            value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_CODEX_CONFIG}`,
-          },
-          {
-            name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
-            value: PLUGIN_RUNTIME_READY_MARKER,
-          },
+          ...Object.entries(
+            pluginRuntimeEnvironment(pluginRuntime.runtime, MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES),
+          ).map(([name, value]) => ({ name, value })),
+          { name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT, value: PLUGIN_RUNTIME_READY_MARKER },
         );
+      } else {
+        volumes.push({
+          name: PLUGIN_RUNTIME_VOLUME,
+          configMap: {
+            name: pluginRuntime.name,
+            items: [
+              { key: PLUGIN_RUNTIME_MANIFEST, path: PLUGIN_RUNTIME_MANIFEST },
+              ...(pluginRuntime.runtime.kind === "codex" && role === "agent"
+                ? [{ key: PLUGIN_RUNTIME_CODEX_CONFIG, path: PLUGIN_RUNTIME_CODEX_CONFIG }]
+                : []),
+            ],
+            optional: false,
+          },
+        });
+        volumeMounts.push({
+          name: PLUGIN_RUNTIME_VOLUME,
+          mountPath: PLUGIN_RUNTIME_DIRECTORY,
+          readOnly: true,
+        });
+        variables.push({
+          name: PLUGIN_RUNTIME_MANIFEST_ENVIRONMENT,
+          value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_MANIFEST}`,
+        });
+        if (pluginRuntime.runtime.kind === "codex" && role === "agent") {
+          variables.push(
+            {
+              name: PLUGIN_RUNTIME_CODEX_CONFIG_ENVIRONMENT,
+              value: `${PLUGIN_RUNTIME_DIRECTORY}/${PLUGIN_RUNTIME_CODEX_CONFIG}`,
+            },
+            {
+              name: PLUGIN_RUNTIME_READY_MARKER_ENVIRONMENT,
+              value: PLUGIN_RUNTIME_READY_MARKER,
+            },
+          );
+        }
       }
     }
     if (projected !== undefined) {
@@ -4003,7 +4438,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
               },
             },
           );
-        } else {
+        } else if (!externalRuntimeAuthentication) {
           // TODO(model-credential-broker): Replace direct per-Agent API keys with brokered credentials.
           variables.push(secret(MODEL_API_KEY, runtime.modelSecretPrefix, MODEL_API_KEY));
         }
@@ -4116,10 +4551,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
                 ...(runtime === undefined
                   ? {}
                   : {
-                      command: ["node", "-e"],
-                      args: [
+                      command: portableNodeInlineCommand(
                         role === "gateway" ? GATEWAY_RUNTIME_ENTRYPOINT : AGENT_RUNTIME_ENTRYPOINT,
-                      ],
+                      ),
                     }),
               },
             ],

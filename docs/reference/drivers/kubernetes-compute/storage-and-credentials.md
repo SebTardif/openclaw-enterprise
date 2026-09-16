@@ -98,6 +98,13 @@ The selected model credential determines how model access is configured:
   `runtime.modelSecretPrefix` and the `OPENAI_API_KEY` key.
 - **Provider-issued access token:** The selected Provider-owned ServiceAccount Driver
   creates an account-owned Secret projected only into the dedicated Codex Pod.
+- **Broker-owned external authentication:** A trusted runtime authentication
+  owner may supply an admitted execution binding through `ComputeRevisionContext`.
+  This path excludes competing OCE model credentials and requires observed
+  attachment before activation. Sandbox selection and startup provider options
+  grant no access. Production composition has no such broker owner yet, so
+  external-model activation remains unavailable. See the
+  [OpenShell runtime authentication contract](../openshell-sandbox.md#broker-owned-runtime-authentication).
 
 If channels are enabled, configure `runtime.channels.secretPrefix` and
 `runtime.channels.proxyUrl`, then provide the Agent's channel credentials in

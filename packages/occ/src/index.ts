@@ -2786,3 +2786,11 @@ export type {
   WorkAdmissionOwner,
   SelectedIamAdmissionOwner,
 } from "./root-work-v1/ports.ts";
+
+export type {
+  RuntimeAuthenticationAttachmentV1,
+  RuntimeAuthenticationAttachmentPreparationV1,
+  RuntimeAuthenticationAttachmentInspectionV1,
+  RuntimeAuthenticationWithdrawalV1,
+  RuntimeAuthenticationOwnerV1,
+} from "./credential-gateway-v1/runtime-authentication.ts";

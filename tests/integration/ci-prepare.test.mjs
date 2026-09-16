@@ -65,7 +65,7 @@ function finish(stdout = "") {
   process.exit(0);
 }
 
-if (command === "docker") {
+if (command === "docker" || command === "podman") {
   if (equals(args, ["version", "--format", "{{.Server.Version}}"])) finish("29.4.0\n");
   if (args[0] === "compose" && args[1] === "-f" && args[3] === "-p") {
     assert.match(args[4], /^openclaw_ci_pg_/);
@@ -78,11 +78,16 @@ if (command === "docker") {
     finish();
   }
   if (equals(args, ["image", "inspect", state.tag])) finish("[]\n");
-  if (equals(args, ["image", "inspect", "--format", "{{.Id}}", state.tag])) finish(configId + "\n");
+  if (equals(args, ["image", "inspect", "--format", "{{.Id}}", state.tag])) {
+    finish((command === "podman" ? configId.slice("sha256:".length) : configId) + "\n");
+  }
   if (equals(args, ["image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", state.tag])) finish("linux/amd64\n");
-  if (equals(args.slice(0, 5), ["image", "save", "--platform", "linux/amd64", "--output"]) &&
-      args.length === 7 && args[6] === state.tag) {
-    state.archive = args[5];
+  const expectedSave = command === "podman"
+    ? ["image", "save", "--output"]
+    : ["image", "save", "--platform", "linux/amd64", "--output"];
+  if (equals(args.slice(0, expectedSave.length), expectedSave) &&
+      args.length === expectedSave.length + 2 && args.at(-1) === state.tag) {
+    state.archive = args.at(-2);
     writeFileSync(state.archive, "synthetic image archive\n");
     finish();
   }
@@ -150,8 +155,8 @@ if (command === "kubectl") {
 }
 throw new Error("Unexpected external command: " + command + " " + JSON.stringify(args));
 `}`;
-  for (const command of ["docker", "k3d", "kubectl"]) {
-    await writeFile(join(bin, `${command}.mjs`), commandSource, { mode: 0o700 });
+  for (const command of ["docker.mjs", "k3d.mjs", "kubectl.mjs", "podman"]) {
+    await writeFile(join(bin, command), commandSource, { mode: 0o700 });
   }
   const statePath = join(root, "state.json");
   const githubEnv = join(root, "github.env");
@@ -165,7 +170,7 @@ throw new Error("Unexpected external command: " + command + " " + JSON.stringify
     RUNNER_TEMP: root,
     CI_FIXTURE_ROOT: root,
     CI_FIXTURE_SCENARIO: scenario,
-    OCC_DOCKER_BIN: join(bin, "docker.mjs"),
+    OCC_DOCKER_BIN: join(bin, scenario === "podman-success" ? "podman" : "docker.mjs"),
     OPENCLAW_CI_K3D_BIN: join(bin, "k3d.mjs"),
     OCC_KUBECTL_BIN: join(bin, "kubectl.mjs"),
   };
@@ -196,6 +201,7 @@ throw new Error("Unexpected external command: " + command + " " + JSON.stringify
 
 for (const { scenario, error } of [
   { scenario: "success" },
+  { scenario: "podman-success" },
   { scenario: "missing-tag", error: /Unable to find imported OCI manifest digest/ },
   {
     scenario: "missing-alias",
@@ -232,10 +238,13 @@ for (const { scenario, error } of [
 
     const preparation = await commands.commands();
     const save = preparation.find(
-      ({ command, args }) => command === "docker" && args[0] === "image" && args[1] === "save",
+      ({ command, args }) =>
+        ["docker", "podman"].includes(command) && args[0] === "image" && args[1] === "save",
     );
     assert.ok(save, "registration must export a task-owned archive");
-    await assert.rejects(() => stat(save.args[5]), { code: "ENOENT" });
+    const archive = save.args[save.args.indexOf("--output") + 1];
+    await assert.rejects(() => stat(archive), { code: "ENOENT" });
+    assert.equal(save.args.includes("--platform"), scenario !== "podman-success");
     assert.equal(
       preparation.every(({ envPublished }) => !envPublished),
       true,
@@ -252,7 +261,7 @@ for (const { scenario, error } of [
       assert.ok(
         preparation.some(
           ({ command, args }) =>
-            command === "docker" && args[2] === "crictl" && args[4] === expected,
+            ["docker", "podman"].includes(command) && args[2] === "crictl" && args[4] === expected,
         ),
       );
     }
@@ -264,7 +273,8 @@ for (const { scenario, error } of [
     await assert.rejects(() => stat(cluster.directory), { code: "ENOENT" });
     const cleanupCalls = (await commands.commands()).slice(preparation.length);
     const localRemoval = cleanupCalls.findIndex(
-      ({ command, args }) => command === "docker" && args[0] === "image" && args[1] === "rm",
+      ({ command, args }) =>
+        ["docker", "podman"].includes(command) && args[0] === "image" && args[1] === "rm",
     );
     const clusterRemoval = cleanupCalls.findIndex(
       ({ command, args }) => command === "k3d" && args[0] === "cluster" && args[1] === "delete",
