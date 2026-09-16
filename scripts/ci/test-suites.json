@@ -27,8 +27,12 @@
         {
           "path": "tests/conformance/credential-schema-json.test.mjs"
         },
-        { "path": "tests/conformance/credential-schema-admission.test.mjs" },
-        { "path": "tests/conformance/credential-schema-registry.test.mjs" },
+        {
+          "path": "tests/conformance/credential-schema-admission.test.mjs"
+        },
+        {
+          "path": "tests/conformance/credential-schema-registry.test.mjs"
+        },
         {
           "path": "tests/conformance/docker-compute.test.mjs"
         },
@@ -253,6 +257,9 @@
         },
         {
           "path": "tests/integration/protected-github-token-store.test.mjs"
+        },
+        {
+          "path": "tests/integration/mediated-network-contract.test.mjs"
         }
       ]
     },
