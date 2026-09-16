@@ -1,13 +1,20 @@
 import type { JSONSchema } from "@openclaw-enterprise/contracts";
 import type { LocalHandle, ValidatedSchemaValue } from "./handles.ts";
 
+/** Data identity of an exact reviewed implementation installed by trusted core. */
+export interface PrimitiveRef {
+  readonly name: string;
+  readonly version: number;
+  readonly digest: string;
+}
+
 export interface DefinitionRef {
   readonly backendId: string;
-  readonly packageName: string;
-  /** Exact installed package version, rather than a version range. */
-  readonly packageVersion: string;
-  readonly packageIntegrity: string;
-  readonly contractVersion: "credential-backend-v1";
+  readonly recipeId: string;
+  readonly recipeVersion: number;
+  readonly recipeDigest: string;
+  readonly contractVersion: "credential-backend-recipe-v1";
+  readonly interpreter: PrimitiveRef;
 }
 
 export interface SchemaRef {
@@ -52,15 +59,12 @@ export interface SchemaBinding {
 
 export interface SchemaRegistration {
   readonly binding: SchemaBinding;
-  /** Core admits a closed schema and finite positive limits before invoking the hook. */
+  /** Core admits a closed schema and finite positive limits before interpretation. */
   readonly jsonSchema: JSONSchema;
   readonly maxBytes: number;
   readonly maxDepth: number;
-  /**
-   * Returns ordinary nonsecret data. Core validates before and after this hook,
-   * then canonicalizes, copies/freezes and computes digests before issuing a handle.
-   */
-  validateAndCanonicalize(candidate: JsonValue): JsonValue;
+  /** Data only: the core selects the exact reviewed installed implementation. */
+  readonly canonicalization: PrimitiveRef;
 }
 
 /**

@@ -1,6 +1,5 @@
 import { request as httpsRequest } from "node:https";
 import { types } from "node:util";
-import type { GitHubRepositoryWriteSelectionV1 } from "../credential-gateway-v1/github-operations.ts";
 import type {
   EphemeralTokenHandleV1,
   TokenIssuerAttemptV1,
@@ -15,30 +14,17 @@ import {
   assertGitHubAppBoundsV1,
   assertGitHubAppSynchronousV1,
   snapshotGitHubAppKeyIdentityV1,
-  type GitHubAppKeyIdentityV1,
-  type GitHubAppMaterialV1,
 } from "./material.ts";
+import type {
+  GitHubAppKeyIdentityV1,
+  GitHubRepositoryWriteSelectionV1,
+  GitHubAppReturnedPermissionsV1,
+  GitHubAppSelectionV1,
+  GitHubAppTokenIssuerOptionsV1,
+  GitHubAppTokenRevokerOptionsV1,
+} from "./types.ts";
 
-export interface GitHubAppSelectionV1 {
-  readonly key: GitHubAppKeyIdentityV1;
-  readonly installationId: number;
-  readonly repositories: readonly [{ readonly id: number; readonly fullName: string }];
-  readonly permissions: Readonly<{ readonly metadata: "read"; readonly contents?: "read" }>;
-}
-export interface GitHubAppTokenObservationV1 {
-  readonly providerAttemptRef: string;
-  readonly expiresAt: string | undefined;
-  readonly scopeAccepted: boolean;
-  /** Exact bounded parsed response, including broader scope. Unavailable never
-   * substitutes requested permissions for a malformed provider observation. */
-  readonly returnedPermissions?: GitHubAppReturnedPermissionsV1;
-}
-export type GitHubAppReturnedPermissionsV1 =
-  Readonly<Record<string, "read" | "write" | "admin">> | Readonly<{ kind: "unavailable" }>;
-
-export function snapshotGitHubAppReturnedPermissionsV1(
-  value: unknown,
-): GitHubAppReturnedPermissionsV1 {
+function snapshotGitHubAppReturnedPermissionsV1(value: unknown): GitHubAppReturnedPermissionsV1 {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const descriptors = Object.getOwnPropertyDescriptors(value);
     const entries = Object.entries(descriptors);
@@ -57,22 +43,6 @@ export function snapshotGitHubAppReturnedPermissionsV1(
   }
   return Object.freeze({ kind: "unavailable" });
 }
-/** The fixed external custody owner captures bytes synchronously into protected
- * material. This is staging only, never proof of durable inventory recording.
- * withRevocationToken authenticates handles from that owner; no JSON token input.
- */
-export interface GitHubAppTokenCustodyV1 {
-  capture(bytes: Uint8Array, observation: GitHubAppTokenObservationV1): EphemeralTokenHandleV1;
-  withRevocationToken<T>(
-    handle: EphemeralTokenHandleV1,
-    bounds: TokenIssuerCallBoundsV1,
-    consume: (bytes: Uint8Array) => Promise<T>,
-  ): Promise<T>;
-}
-export type GitHubAppEndpointV1 =
-  | { readonly kind: "github" }
-  | { readonly kind: "local-protocol-test"; readonly origin: string; readonly ca: string };
-
 function freezeSelection(input: GitHubAppSelectionV1): GitHubAppSelectionV1 {
   const key = snapshotGitHubAppKeyIdentityV1(input.key);
   if (
@@ -254,24 +224,6 @@ async function settleOwner<T>(
     clearTimeout(timer);
     if (abort) bounds.signal.removeEventListener("abort", abort);
   }
-}
-/** Provider protocol only. Trusted startup fixes selection, key/custody and the
- * original dispatch assertion. No authority constructor, API registration or
- * native delivery callback is supplied here. Caller must durably claim the exact
- * attempt before invocation and record every outcome before any runtime release.
- */
-interface GitHubAppTokenIssuerCommonOptionsV1 {
-  readonly assertDispatchCurrent: (attempt: Readonly<TokenIssuerAttemptV1>) => void;
-  readonly clock: () => number;
-  readonly endpoint: GitHubAppEndpointV1;
-}
-export interface GitHubAppTokenIssuerOptionsV1 extends GitHubAppTokenIssuerCommonOptionsV1 {
-  readonly selection: GitHubAppSelectionV1;
-  readonly material: GitHubAppMaterialV1;
-  readonly custody: GitHubAppTokenCustodyV1;
-}
-export interface GitHubAppTokenRevokerOptionsV1 extends GitHubAppTokenIssuerCommonOptionsV1 {
-  readonly custody: Pick<GitHubAppTokenCustodyV1, "withRevocationToken">;
 }
 // TODO(repository read integration): wire the selected issuer through production
 // Work construction and the regular Agent read before landing this capability.
