@@ -2811,3 +2811,9 @@ export type {
   WorkAdmissionOwner,
   SelectedIamAdmissionOwner,
 } from "./root-work-v1/ports.ts";
+
+export {
+  createGitHubMetadataOperationV1,
+  type GitHubMetadataOperationV1,
+  type GitHubMetadataRepositoryV1,
+} from "./credential-gateway-v1/github-metadata.ts";

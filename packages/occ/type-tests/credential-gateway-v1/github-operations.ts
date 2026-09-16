@@ -1,4 +1,9 @@
 import type { RepositoryAccess } from "@openclaw-enterprise/contracts";
+import { createGitHubMetadataOperationV1 } from "@openclaw-enterprise/occ";
+import type {
+  GitHubMetadataRepositoryV1,
+  GitHubMetadataOperationV1,
+} from "@openclaw-enterprise/occ";
 import type {
   AccessProfile,
   TokenProfile,
@@ -38,6 +43,14 @@ import type {
 import type { GitHubOperation as PublicGitHubOperation } from "@openclaw-enterprise/occ";
 // @ts-expect-error Nominal operation identities are internal, not public authority.
 import type { GitHubRequestId as PublicGitHubRequestId } from "@openclaw-enterprise/occ";
+// @ts-expect-error Generic selections remain private to their original owner.
+import type { GitHubRepositorySelection as PublicSelection } from "@openclaw-enterprise/occ";
+// @ts-expect-error Metadata DATA does not expose authenticated access.
+import type { AuthenticatedAccess as PublicAccess } from "@openclaw-enterprise/occ";
+// @ts-expect-error Metadata DATA does not expose dispatch authority.
+import type { DispatchPermit as PublicPermit } from "@openclaw-enterprise/occ";
+// @ts-expect-error Metadata DATA does not expose bound credential authority.
+import type { BoundCredentialOperation as PublicBound } from "@openclaw-enterprise/occ";
 // @ts-expect-error Write selection has one provider owner and no gateway reexport.
 import type { GitHubRepositoryWriteSelectionV1 as GatewayWriteSelection } from "../../src/credential-gateway-v1/github-operations.ts";
 
@@ -58,6 +71,70 @@ export function consumeIssuerOptions(
   // @ts-expect-error Keyless cleanup options cannot issue write credentials.
   const revokerAsWrite: Parameters<typeof createGitHubAppWriteTokenIssuerV1>[0] = revoker;
   return { readInput, writeInput, revokerInput, writeAsRead, readAsWrite, revokerAsWrite };
+}
+
+// Genuine package-root protocol caller: only selected DATA and a raw request
+// candidate enter; no nominal consumer casts or private imports are needed.
+export function consumeMetadataRepository(repository: GitHubMetadataRepositoryV1) {
+  const operation = createGitHubMetadataOperationV1(
+    repository,
+    "0d2e45d2-b6cc-41e9-b5fa-14fc0767dac9",
+  );
+  createGitHubMetadataOperationV1(repository, "invalid candidate");
+  const { appId, ...missingApp } = repository;
+  // @ts-expect-error The complete selected repository is required.
+  createGitHubMetadataOperationV1(missingApp, "candidate");
+  // @ts-expect-error Numeric IDs are raw canonical decimal candidate strings.
+  createGitHubMetadataOperationV1({ ...repository, repositoryId: 303 }, "candidate");
+  // @ts-expect-error A request candidate is required.
+  createGitHubMetadataOperationV1(repository);
+  if (!operation) return null;
+  const internal: GitHubOperation = operation;
+  const kind: "metadata" = operation.kind;
+  const host: "api.github.com" = operation.target.host;
+  const method: "GET" = operation.target.method;
+  // @ts-expect-error This constructor produces metadata only.
+  const fetch: GitHubMetadataOperationV1 = { ...operation, kind: "fetch" };
+  // @ts-expect-error This constructor produces metadata only.
+  const push: GitHubMetadataOperationV1 = { ...operation, kind: "push" };
+  // @ts-expect-error This constructor produces metadata only.
+  const pr: GitHubMetadataOperationV1 = { ...operation, kind: "pull-request-create" };
+  const post: GitHubMetadataOperationV1 = {
+    ...operation,
+    // @ts-expect-error Metadata always uses GET.
+    target: { ...operation.target, method: "POST" },
+  };
+  const foreign: GitHubMetadataOperationV1 = {
+    ...operation,
+    // @ts-expect-error Metadata always uses the fixed API host.
+    target: { ...operation.target, host: "github.com" },
+  };
+  // @ts-expect-error Raw strings cannot populate the result request identity.
+  const rawRequest: typeof operation.requestId = "candidate";
+  // @ts-expect-error Raw strings cannot populate the computed facts digest.
+  const rawFacts: typeof operation.factsDigest = "digest";
+  // @ts-expect-error Raw strings cannot populate the computed body digest.
+  const rawBody: typeof operation.bodyDigest = "digest";
+  // @ts-expect-error Computed digest categories stay separate.
+  const bodyAsFacts: typeof operation.factsDigest = operation.bodyDigest;
+  // @ts-expect-error Computed digest categories stay separate.
+  const factsAsBody: typeof operation.bodyDigest = operation.factsDigest;
+  // @ts-expect-error Request correlation stays separate from digest categories.
+  const bodyAsRequest: typeof operation.requestId = operation.bodyDigest;
+  // @ts-expect-error Operation DATA is immutable.
+  operation.requestId = operation.requestId;
+  // @ts-expect-error Target DATA is immutable.
+  operation.target.pathAndQuery = "/other";
+  // @ts-expect-error Selected DATA is immutable.
+  operation.target.repository.appId = "other";
+  // @ts-expect-error Resource DATA is immutable.
+  operation.target.repository.repository.canonicalResourceId = "other";
+  // @ts-expect-error Schema DATA is immutable.
+  operation.target.repository.repository.resourceSchema.version = 2;
+  // @ts-expect-error Canonical path DATA is immutable.
+  operation.target.repository.repository.canonicalPathSegments.push("other");
+  void appId;
+  return { internal, kind, host, method };
 }
 
 // Inert consumers of provider roots and internal operation contracts. Inputs carry

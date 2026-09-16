@@ -1149,6 +1149,19 @@ async function prepareFile({ lane, file, statePath }) {
   const env = baseEnv(resolvedStatePath, effectiveState);
   const resourceIds = [];
 
+  if (
+    name === "checks-baseline" &&
+    relativeFile === "tests/conformance/credential-gateway-metadata-data.test.mjs"
+  ) {
+    await execFile(process.execPath, [
+      join(repositoryRoot, "node_modules/typescript/bin/tsc"),
+      "--project",
+      join(repositoryRoot, "packages/occ/tsconfig.credential-gateway-v1.json"),
+      "--pretty",
+      "false",
+    ]);
+  }
+
   if (prepare.postgres) {
     const dbKind = prepare.k3d ? "k8s" : "ci";
     const database = await createAndMigrateDatabase(resolvedStatePath, effectiveState, {
