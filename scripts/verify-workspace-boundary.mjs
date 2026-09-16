@@ -4,7 +4,8 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const activeApplications = ["controller"];
+const activeApplications = ["controller", "credential-gateway"];
+const executableApplications = ["controller"];
 const activePackages = ["utils", "contracts", "occ", "iam", "audit"];
 const activeSourceRoots = [
   ...activeApplications.map((name) => `apps/${name}/src`),
@@ -87,13 +88,19 @@ assert.equal(
 const sources = (
   await Promise.all(activeSourceRoots.map((path) => sourceFiles(join(repositoryRoot, path))))
 ).flat();
-for (const name of activeApplications) {
+for (const name of executableApplications) {
   for (const entrypoint of ["index.ts", "server.mjs"]) {
     assert.ok(
       sources.includes(join(repositoryRoot, "apps", name, "src", entrypoint)),
       `The ${name} application must provide its ${entrypoint} entrypoint.`,
     );
   }
+}
+for (const source of ["http/request.ts", "construction/custody-contract.ts"]) {
+  assert.ok(
+    sources.includes(join(repositoryRoot, "apps", "credential-gateway", "src", source)),
+    `The credential-gateway project must compile its ${source} source.`,
+  );
 }
 for (const source of sources) {
   const content = await readFile(source, "utf8");

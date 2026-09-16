@@ -10,6 +10,7 @@
     "type-tests/token/github-selection.ts",
     "type-tests/token/github-write.ts",
     "type-tests/token/supplier-compatibility.ts",
-    "type-tests/token/github-issuance.ts"
+    "type-tests/token/github-issuance.ts",
+    "type-tests/token/material-custody-construction.ts"
   ]
 }

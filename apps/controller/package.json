@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal/credential-custody-construction-v1": "./src/internal/credential-custody-construction-v1.ts"
   },
   "types": "./src/index.ts",
   "files": [

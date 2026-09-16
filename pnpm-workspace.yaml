@@ -1,5 +1,6 @@
 packages:
   - apps/controller
+  - apps/credential-gateway
   - packages/utils
   - packages/contracts
   - packages/occ

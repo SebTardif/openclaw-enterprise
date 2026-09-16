@@ -30,6 +30,18 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  apps/credential-gateway:
+    dependencies:
+      '@openclaw-enterprise/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@openclaw-enterprise/controller':
+        specifier: workspace:*
+        version: link:../controller
+      '@openclaw-enterprise/occ':
+        specifier: workspace:*
+        version: link:../../packages/occ
+
   apps/controller:
     dependencies:
       '@better-auth/api-key':
