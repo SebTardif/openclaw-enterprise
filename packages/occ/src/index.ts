@@ -2613,25 +2613,3 @@ export class OpenClawController {
     if (this.shouldRecordOperations) await state.operations.append(operation);
   }
 }
-
-export { createGitHubAppMaterialV1 } from "./github-app-provider-v1/material.ts";
-export {
-  GitHubAppTokenIssuerErrorV1,
-  assertBounds as assertGitHubAppBoundsV1,
-  snapshotKeyIdentity as snapshotGitHubAppKeyIdentityV1,
-} from "./github-app-provider-v1/guards.ts";
-export {
-  createGitHubAppTokenIssuerV1,
-  createGitHubAppTokenRevokerV1,
-} from "./github-app-provider-v1/provider.ts";
-export type {
-  GitHubAppEndpointV1,
-  GitHubAppKeyIdentityV1,
-  GitHubAppMaterialV1,
-  GitHubAppReturnedPermissionsV1,
-  GitHubAppSelectionV1,
-  GitHubAppTokenCustodyV1,
-  GitHubAppTokenIssuerOptionsV1,
-  GitHubAppTokenObservationV1,
-  GitHubAppTokenRevokerOptionsV1,
-} from "./github-app-provider-v1/types.ts";

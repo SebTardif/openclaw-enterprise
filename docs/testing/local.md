@@ -54,15 +54,15 @@ node --test --test-name-pattern='part of the test name' tests/integration/secret
 
 ## GitHub App token issuer protocol
 
-Run the five focused suites with Node.js 24+, matching workspace dependencies,
-and `/usr/bin/openssl`:
+Run the five focused suites with Node.js 24+ and `/usr/bin/openssl`:
 
 ```sh
 node --test --test-concurrency=1 tests/conformance/github-app-provider*.test.mjs
 ```
 
 They execute the actual TokenIssuer and RSA material implementation through its
-curated package entry point, using disposable keys and a local HTTPS peer. The
+controller provider directory entry point, using disposable keys and a local
+HTTPS peer. They require no installed workspace dependencies. The
 `local-protocol-test` endpoint requires an explicit `127.0.0.1` HTTPS origin,
 port and CA; production uses the fixed GitHub origin. Fixtures supply external
 custody/currentness inputs. Their keys and token buffers are cleaned up after use.

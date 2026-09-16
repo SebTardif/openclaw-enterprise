@@ -6,8 +6,10 @@ import { createServer } from "node:https";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createGitHubAppMaterialV1 } from "../../packages/occ/src/index.ts";
-import { createGitHubAppTokenIssuerV1 } from "../../packages/occ/src/index.ts";
+import {
+  createGitHubAppMaterialV1,
+  createGitHubAppTokenIssuerV1,
+} from "../../apps/controller/src/providers/token/github/index.ts";
 
 // Synthetic RSA/custody/currentness inputs qualify provider protocol mechanics.
 // They do not authenticate an App installation, human, runtime or inventory owner.
