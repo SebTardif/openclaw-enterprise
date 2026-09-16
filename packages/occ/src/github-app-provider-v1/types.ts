@@ -79,6 +79,11 @@ export interface GitHubAppTokenIssuerOptionsV1 extends GitHubAppTokenIssuerCommo
   readonly material: GitHubAppMaterialV1;
   readonly custody: GitHubAppTokenCustodyV1;
 }
+export interface GitHubAppWriteTokenIssuerOptionsV1 extends GitHubAppTokenIssuerCommonOptionsV1 {
+  readonly selection: GitHubRepositoryWriteSelectionV1;
+  readonly material: GitHubAppMaterialV1;
+  readonly custody: GitHubAppTokenCustodyV1;
+}
 export interface GitHubAppTokenRevokerOptionsV1 extends GitHubAppTokenIssuerCommonOptionsV1 {
   readonly custody: Pick<GitHubAppTokenCustodyV1, "withRevocationToken">;
 }

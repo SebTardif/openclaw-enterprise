@@ -31,6 +31,7 @@ configuration surface exists.
 | `assertCurrent` / `assertDispatchCurrent` | Synchronous, returning `undefined`; Promises refused. Dispatch checks original operation authority.                                                              |
 
 `createGitHubAppWriteTokenIssuerV1` accepts the exported
+`GitHubAppWriteTokenIssuerOptionsV1`, whose `selection` is
 `GitHubRepositoryWriteSelectionV1`. It requires exactly `metadata: "read"`,
 `contents: "write"` and `pull_requests: "write"` for one repository. Its constructor
 snapshots own data into an immutable selection and rejects proxies, accessors,

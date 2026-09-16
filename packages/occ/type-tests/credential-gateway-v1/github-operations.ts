@@ -20,7 +20,13 @@ import type {
   GitHubCreationDigest,
 } from "../../src/credential-gateway-v1/github-operations.ts";
 import type {
+  createGitHubAppTokenIssuerV1,
+  createGitHubAppTokenRevokerV1,
+  createGitHubAppWriteTokenIssuerV1,
   GitHubAppSelectionV1,
+  GitHubAppTokenIssuerOptionsV1,
+  GitHubAppTokenRevokerOptionsV1,
+  GitHubAppWriteTokenIssuerOptionsV1,
   GitHubRepositoryWriteSelectionV1,
 } from "@openclaw-enterprise/occ";
 import type {
@@ -34,6 +40,25 @@ import type { GitHubOperation as PublicGitHubOperation } from "@openclaw-enterpr
 import type { GitHubRequestId as PublicGitHubRequestId } from "@openclaw-enterprise/occ";
 // @ts-expect-error Write selection has one provider owner and no gateway reexport.
 import type { GitHubRepositoryWriteSelectionV1 as GatewayWriteSelection } from "../../src/credential-gateway-v1/github-operations.ts";
+
+// Constructor inputs remain available through the public entry point while the
+// shared provider options stay private. This fixture does not invoke an issuer.
+export function consumeIssuerOptions(
+  read: GitHubAppTokenIssuerOptionsV1,
+  write: GitHubAppWriteTokenIssuerOptionsV1,
+  revoker: GitHubAppTokenRevokerOptionsV1,
+) {
+  const readInput: Parameters<typeof createGitHubAppTokenIssuerV1>[0] = read;
+  const writeInput: Parameters<typeof createGitHubAppWriteTokenIssuerV1>[0] = write;
+  const revokerInput: Parameters<typeof createGitHubAppTokenRevokerV1>[0] = revoker;
+  // @ts-expect-error The read constructor does not accept a write selection.
+  const writeAsRead: Parameters<typeof createGitHubAppTokenIssuerV1>[0] = write;
+  // @ts-expect-error The write constructor requires its exact write selection.
+  const readAsWrite: Parameters<typeof createGitHubAppWriteTokenIssuerV1>[0] = read;
+  // @ts-expect-error Keyless cleanup options cannot issue write credentials.
+  const revokerAsWrite: Parameters<typeof createGitHubAppWriteTokenIssuerV1>[0] = revoker;
+  return { readInput, writeInput, revokerInput, writeAsRead, readAsWrite, revokerAsWrite };
+}
 
 // Inert consumers of provider roots and internal operation contracts. Inputs carry
 // nominal data; this fixture never mints authority, computes digests, admits grants

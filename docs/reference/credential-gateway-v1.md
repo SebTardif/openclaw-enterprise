@@ -139,10 +139,10 @@ single-use dispatch permit. Preparation cannot borrow execution material.
 shares the read selection's key, numeric installation ID and single-repository
 tuple while requiring exactly `metadata:read`, `contents:write` and
 `pull_requests:write`. The existing `GitHubAppSelectionV1` and read issuer
-constructor remain read-only. `createGitHubAppWriteTokenIssuerV1` accepts the
-write selection and returns `TokenIssuerV1`; see the
-[GitHub App issuer reference](github-app-token-issuer.md) for its exact protocol
-and custody requirements.
+constructor remain read-only. The public `createGitHubAppWriteTokenIssuerV1`
+constructor accepts `GitHubAppWriteTokenIssuerOptionsV1` and returns `TokenIssuerV1`;
+see the [token issuer reference](github-app-token-issuer.md) for its protocol
+behavior, custody requirements and integration limits.
 
 Normally retain one current token. Allow at most one same-profile replacement,
 one in-flight mint claim and two aggregate outstanding slots per lease across

@@ -2760,6 +2760,7 @@ export type {
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenObservationV1,
   GitHubAppTokenRevokerOptionsV1,
+  GitHubAppWriteTokenIssuerOptionsV1,
   GitHubRepositoryWriteSelectionV1,
 } from "./github-app-provider-v1/types.ts";
 

@@ -17,11 +17,12 @@ import {
 } from "./material.ts";
 import type {
   GitHubAppKeyIdentityV1,
-  GitHubRepositoryWriteSelectionV1,
   GitHubAppReturnedPermissionsV1,
   GitHubAppSelectionV1,
   GitHubAppTokenIssuerOptionsV1,
   GitHubAppTokenRevokerOptionsV1,
+  GitHubAppWriteTokenIssuerOptionsV1,
+  GitHubRepositoryWriteSelectionV1,
 } from "./types.ts";
 
 function snapshotGitHubAppReturnedPermissionsV1(value: unknown): GitHubAppReturnedPermissionsV1 {
@@ -242,9 +243,7 @@ export function createGitHubAppTokenIssuerV1(
  * minting does not establish current Work/IAM or durable custody authority. */
 // TODO(repository write integration): connect the regular Agent caller and fixed-profile custody owner.
 export function createGitHubAppWriteTokenIssuerV1(
-  options: Omit<GitHubAppTokenIssuerOptionsV1, "selection"> & {
-    selection: GitHubRepositoryWriteSelectionV1;
-  },
+  options: GitHubAppWriteTokenIssuerOptionsV1,
 ): TokenIssuerV1 {
   const provider = createGitHubAppTokenIssuerCoreV1(options, "write");
   return Object.freeze({
@@ -271,9 +270,7 @@ export function createGitHubAppTokenRevokerV1(
 function createGitHubAppTokenIssuerCoreV1(
   options:
     | GitHubAppTokenIssuerOptionsV1
-    | (Omit<GitHubAppTokenIssuerOptionsV1, "selection"> & {
-        selection: GitHubRepositoryWriteSelectionV1;
-      })
+    | GitHubAppWriteTokenIssuerOptionsV1
     | GitHubAppTokenRevokerOptionsV1,
   profile: "read" | "write" = "read",
 ) {
