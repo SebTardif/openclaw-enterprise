@@ -1,8 +1,10 @@
+// Cross-project type imports preserve source ownership without rewriting paths
+// across the projects' separate dist trees. Both imports are erased at runtime.
 import type {
   Bounds,
   ProtectedCredentialSource,
-} from "../../../../../../packages/occ/src/credential-gateway-v1/handles.ts";
-import type { ProtectedSourceLease } from "../../../../../../packages/occ/src/credential-gateway-v1/issuance.ts";
+} from "../../../../../../packages/occ/src/credential-gateway-v1/handles.js";
+import type { ProtectedSourceLease } from "../../../../../../packages/occ/src/credential-gateway-v1/issuance.js";
 import type { GitHubAppMaterialV1, GitHubAppTokenCustodyV1 } from "./types.ts";
 
 /** GitHub construction retains the actual material owner while OCC settlement
