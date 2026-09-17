@@ -38,7 +38,7 @@ UTF-8/JSON parsing, duplicate/unknown-field rejection, defaults and HTTP 400/413
 responses. Constructor refusal is `null`; it does not select an HTTP status.
 
 The push-result input type exposes only operation kind, destination ref names
-and capabilities. The existing observer owns their bounded snapshot and
+and capabilities. The integrating observer must own their bounded snapshot and
 response parsing. This type cannot construct an operation, capture or permit.
 
 ## Compiler and CI coverage
