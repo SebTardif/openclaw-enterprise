@@ -58,6 +58,7 @@ export const AgentSchema = Type.Object(
     executionMode: HarnessExecutionModeSchema,
     plugins: Type.Optional(Type.Ref("PluginDesiredState")),
     repositoryAccess: RepositoryAccessSchema,
+    desiredRuntimeState: Type.Union([Type.Literal("running"), Type.Literal("stopped")]),
     activeRevisionId: Type.Optional(RevisionId),
     createdAt: Timestamp,
   },
