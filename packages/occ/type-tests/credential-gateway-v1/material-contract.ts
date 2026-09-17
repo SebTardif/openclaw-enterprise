@@ -103,35 +103,17 @@ export async function completeMaterialPorts(
   foreign: ForeignToken,
   retained: RetainedCredential,
 ): Promise<void> {
-  const length: number = await custody.withCaptured(
-    handle,
-    bounds,
-    async (value) => value.byteLength,
-  );
-  const label: string = await custody.withCaptured(handle, bounds, async () => "borrowed");
+  (await custody.withCaptured(handle, bounds, async (value) => value.byteLength)) satisfies number;
+  (await custody.withCaptured(handle, bounds, async () => "borrowed")) satisfies string;
   const opened: EphemeralTokenHandleV1 = custody.captureOpened(bytes, context, bounds);
-  const envelope: OriginalSealedMaterial = await envelopes.sealIssuedMaterialV1(
-    context,
-    handle,
-    bounds,
-  );
-  const reopenedLabel: string = await envelopes.withIssuedMaterialV1(
-    context,
-    sealed,
-    bounds,
-    async (material) => {
-      const original: EphemeralTokenHandleV1 = material;
-      void original;
-      return "opened";
-    },
-  );
-  const nested: { readonly length: number } = await envelopes.withIssuedMaterialV1(
-    context,
-    sealed,
-    bounds,
-    (material) =>
-      custody.withCaptured(material, bounds, async (value) => ({ length: value.byteLength })),
-  );
+  (await envelopes.sealIssuedMaterialV1(context, handle, bounds)) satisfies OriginalSealedMaterial;
+  (await envelopes.withIssuedMaterialV1(context, sealed, bounds, async (material) => {
+    material satisfies EphemeralTokenHandleV1;
+    return "opened";
+  })) satisfies string;
+  (await envelopes.withIssuedMaterialV1(context, sealed, bounds, (material) =>
+    custody.withCaptured(material, bounds, async (value) => ({ length: value.byteLength })),
+  )) satisfies { readonly length: number };
   // @ts-expect-error A foreign nominal token cannot enter the original custody owner.
   custody.withCaptured(foreign, bounds, async (value) => value.byteLength);
   // @ts-expect-error A foreign nominal token cannot be sealed as original material.
@@ -139,11 +121,11 @@ export async function completeMaterialPorts(
   // @ts-expect-error Committed retention and transient custody handles are distinct.
   custody.withCaptured(retained, bounds, async (value) => value.byteLength);
   // @ts-expect-error Plain data cannot manufacture the original token brand.
-  const forged: EphemeralTokenHandleV1 = {};
+  ({}) satisfies EphemeralTokenHandleV1;
   // @ts-expect-error Reopened custody is not a committed retained credential.
-  const committed: RetainedCredential = opened;
+  opened satisfies RetainedCredential;
   // @ts-expect-error Opening returns the original token, never plaintext bytes.
-  const plaintext: Uint8Array = opened;
+  opened satisfies Uint8Array;
   // @ts-expect-error Custody callbacks require asynchronous settlement.
   custody.withCaptured(handle, bounds, (value) => value.byteLength);
   envelopes.withIssuedMaterialV1(
@@ -153,7 +135,6 @@ export async function completeMaterialPorts(
     // @ts-expect-error Envelope callbacks receive an original token, not raw bytes.
     async (value: Uint8Array) => value.byteLength,
   );
-  void [length, label, envelope, reopenedLabel, nested, forged, committed, plaintext];
 }
 
 export function immutableContextNegatives(context: IssuedMaterialContextV1): void {
@@ -163,45 +144,29 @@ export function immutableContextNegatives(context: IssuedMaterialContextV1): voi
   const { observation, ...missingObservation } = context;
   const { keyDigest, ...missingRetainedKey } = context;
   // @ts-expect-error Root/preparation purpose is mandatory immutable context.
-  const noPurpose: IssuedMaterialContextV1 = missingPurpose;
+  missingPurpose satisfies IssuedMaterialContextV1;
   // @ts-expect-error Full original binding correspondence is mandatory.
-  const noBinding: IssuedMaterialContextV1 = missingBinding;
+  missingBinding satisfies IssuedMaterialContextV1;
   // @ts-expect-error Configuration retains its original schema and digest.
-  const noConfiguration: IssuedMaterialContextV1 = missingConfiguration;
+  missingConfiguration satisfies IssuedMaterialContextV1;
   // @ts-expect-error The original observation cannot be reconstructed later.
-  const noObservation: IssuedMaterialContextV1 = missingObservation;
+  missingObservation satisfies IssuedMaterialContextV1;
   // @ts-expect-error Retained key digest cannot be omitted.
-  const noKey: IssuedMaterialContextV1 = missingRetainedKey;
-  const wrongPurpose: IssuedMaterialContextV1 = {
+  missingRetainedKey satisfies IssuedMaterialContextV1;
+  ({
     ...context,
     // @ts-expect-error Cipher purpose is not Work/preparation context purpose.
     purpose: "github-installation-token-v1",
-  };
+  }) satisfies IssuedMaterialContextV1;
   // @ts-expect-error Opaque connection generations cannot become numbers.
-  const numericGeneration: IssuedMaterialContextV1 = { ...context, connectionGeneration: 1 };
+  ({ ...context, connectionGeneration: 1 }) satisfies IssuedMaterialContextV1;
   // @ts-expect-error Full retained profile/schema cannot collapse to an ID.
-  const profileId: IssuedMaterialContextV1 = { ...context, profile: "profile-id" };
-  const configurationDigest: IssuedMaterialContextV1 = {
+  ({ ...context, profile: "profile-id" }) satisfies IssuedMaterialContextV1;
+  ({
     ...context,
     // @ts-expect-error Complete configuration cannot collapse to its digest.
     configuration: context.configuration.digest,
-  };
+  }) satisfies IssuedMaterialContextV1;
   // @ts-expect-error Context fields are immutable after original selection.
   context.keyId = "replacement-key";
-  void [
-    purpose,
-    bindingDigest,
-    configuration,
-    observation,
-    keyDigest,
-    noPurpose,
-    noBinding,
-    noConfiguration,
-    noObservation,
-    noKey,
-    wrongPurpose,
-    numericGeneration,
-    profileId,
-    configurationDigest,
-  ];
 }
