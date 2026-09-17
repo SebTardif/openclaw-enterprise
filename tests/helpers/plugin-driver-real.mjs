@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { ensureDevelopmentBootstrap } from "./bootstrap-installation.mjs";
 import { createHarnessConfiguration } from "./harness-configuration.mjs";
@@ -425,9 +427,15 @@ const sessionEvidenceScript = String.raw`
             .map((tool) => tool?.name)
             .filter((name) => typeof name === "string")
         : undefined;
-    const rows = db
+    const allRows = db
       .prepare("SELECT seq, event_json FROM transcript_events WHERE session_id = ? ORDER BY seq")
       .all(session.current_session_id);
+    // Repeated calls share a session; an earlier allowed result cannot prove this turn.
+    const start = allRows.findLastIndex((row) => {
+      const event = JSON.parse(row.event_json);
+      return event.type === "message" && event.message?.role === "user" && contains(event.message, marker);
+    });
+    const rows = start < 0 ? [] : allRows.slice(start);
     const messages = [];
     const calls = [];
     const results = [];
@@ -516,6 +524,10 @@ const sessionEvidenceScript = String.raw`
           isError: message.isError === true,
           matchesResult: contains(message, resultPattern) || textOf(message.content).includes(resultPattern),
           mirrorIdentity,
+          approvalReviews: (message.details?.approvalReviews ?? []).map((review) => ({
+            id: review.id,
+            status: review.status,
+          })),
         });
       }
       if (message.role === "toolResult" && typeof message.toolName === "string") {
@@ -634,27 +646,121 @@ function createNativePluginAssertions({ gatewayUrl, execGateway, proofMode = "op
     prompt,
     expectedPatterns,
     secrets = [],
+    humanReview,
   }) {
     const gateway = await gatewayUrl(agent);
     const token = gatewayToken ?? gateway.gatewayToken;
     assert.ok(token, "normal Agent turn requires a gateway token.");
+    const abort = new AbortController();
+    let reviewer;
+    let approvalCount = 0;
+    let approvalCompleted = Promise.resolve();
+    const approvalFailure = Promise.withResolvers();
+    // Attach before connecting so a rejected handshake cannot become unhandled.
+    approvalFailure.promise.catch(() => undefined);
     try {
       await assertGatewayChatCompletionsEnabled(agent);
-      const response = await fetch(`${gateway.url}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-          "x-openclaw-session-key": sessionKey,
-        },
-        body: JSON.stringify({
-          model: "openclaw/default",
-          stream: false,
-          messages: [{ role: "user", content: prompt }],
-        }),
-        signal: AbortSignal.timeout(240_000),
-      });
-      const body = await response.text();
+      if (humanReview !== undefined) {
+        const controllerRequire = createRequire(
+          new URL("../../apps/controller/package.json", import.meta.url),
+        );
+        const { GatewayClient } = await import(
+          pathToFileURL(controllerRequire.resolve("@openclaw/gateway-client")).href
+        );
+        const connected = Promise.withResolvers();
+        reviewer = new GatewayClient({
+          url: gateway.url.replace(/^http/, "ws"),
+          token,
+          clientName: "gateway-client",
+          mode: "backend",
+          role: "operator",
+          // This test operator owns the disposable gateway; the HTTP turn has
+          // a different requester connection, so approval visibility needs admin.
+          scopes: ["operator.admin"],
+          caps: ["plugin-approvals"],
+          deviceIdentity: null,
+          onHelloOk: (hello) => {
+            if (!hello.auth?.scopes?.includes("operator.admin")) {
+              connected.reject(new Error("plugin approval reviewer requires operator.admin"));
+              return;
+            }
+            connected.resolve();
+          },
+          onConnectError: (error) => {
+            connected.reject(error);
+            approvalFailure.reject(error);
+          },
+          onEvent: (event) => {
+            const approval = event.payload;
+            if (
+              event.event !== "plugin.approval.requested" ||
+              approval?.request?.sessionKey !== sessionKey
+            )
+              return;
+            approvalCount += 1;
+            approvalCompleted = (async () => {
+              assert.equal(approvalCount, 1, "each requested read must require its own approval");
+              assert.equal(approval.request.toolName, "codex_mcp_tool_approval");
+              assert.deepEqual([...approval.request.allowedDecisions].sort(), [
+                "allow-once",
+                "deny",
+              ]);
+              const pending = await sessionEvidence(agent, {
+                sessionKey,
+                ...humanReview,
+                resultPattern: "",
+              });
+              assert.equal(
+                pending.exists,
+                true,
+                "the pending approval must belong to the live session",
+              );
+              assert.equal(
+                pending.userMarkerSeen,
+                true,
+                "the pending approval must follow this request",
+              );
+              assert.equal(pending.results.length, 0, "a pending read must not have a tool result");
+              await reviewer.request("plugin.approval.resolve", {
+                id: approval.id,
+                decision: humanReview.decision,
+              });
+            })();
+            approvalCompleted.catch(approvalFailure.reject);
+          },
+        });
+        const connectTimer = setTimeout(
+          () => connected.reject(new Error("plugin approval reviewer connection timed out")),
+          15_000,
+        );
+        try {
+          reviewer.start();
+          await connected.promise;
+        } finally {
+          clearTimeout(connectTimer);
+        }
+      }
+      const { response, body } = await Promise.race([
+        fetch(`${gateway.url}/v1/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            "x-openclaw-session-key": sessionKey,
+          },
+          body: JSON.stringify({
+            model: "openclaw/default",
+            stream: false,
+            messages: [{ role: "user", content: prompt }],
+          }),
+          signal: AbortSignal.any([abort.signal, AbortSignal.timeout(240_000)]),
+        }).then(async (response) => ({ response, body: await response.text() })),
+        approvalFailure.promise,
+      ]);
+      await approvalCompleted;
+      if (humanReview !== undefined) {
+        assert.equal(approvalCount, 1, "the normal Agent turn must request human review");
+      }
       assertNoSecretMaterial(
         body,
         [token, ...secrets],
@@ -679,6 +785,9 @@ function createNativePluginAssertions({ gatewayUrl, execGateway, proofMode = "op
       }
       return content;
     } finally {
+      abort.abort();
+      reviewer?.stop();
+      await reviewer?.stopAndWait?.({ timeoutMs: 1_000 });
       await gateway.close?.();
     }
   }
@@ -778,6 +887,18 @@ function createNativePluginAssertions({ gatewayUrl, execGateway, proofMode = "op
         )}`,
       );
     }
+    const approvedReviews = result.approvalReviews.filter((review) => review.status === "approved");
+    if (options.requireAutomaticReview) {
+      assert.equal(
+        evidence.calls.length,
+        1,
+        "the reviewed turn must perform exactly the requested read",
+      );
+      assert.ok(
+        approvedReviews.length > 0,
+        "the successful native read must carry an approved automatic review",
+      );
+    }
     return {
       runtime: evidence.runtime,
       sessionId: evidence.sessionId,
@@ -786,7 +907,27 @@ function createNativePluginAssertions({ gatewayUrl, execGateway, proofMode = "op
       promptAdvertised: proofMode === "openclaw",
       ...(proofMode === "codex" ? { codexMirrorTurnVerified: true } : {}),
       resultMatched: true,
+      approvedReviewIds: approvedReviews.map((review) => review.id),
     };
+  }
+
+  async function assertSessionToolDeniedEvidence(agent, options) {
+    const evidence = await sessionEvidence(agent, options);
+    assert.equal(evidence.userMarkerSeen, true);
+    assert.equal(evidence.assistantMarkerSeen, true);
+    assert.equal(
+      evidence.calls.length,
+      1,
+      "the denied turn must attempt exactly the requested read",
+    );
+    assert.equal(evidence.results.length, 1, "the denied call must have a terminal result");
+    assert.equal(evidence.results[0].toolCallId, evidence.calls[0].id);
+    assert.equal(evidence.results[0].isError, true, "denial must prevent a successful native read");
+    assert.equal(
+      evidence.results[0].matchesResult,
+      false,
+      "denial must not expose the provider result",
+    );
   }
 
   async function assertNoSessionToolCallEvidence(agent, options) {
@@ -834,7 +975,12 @@ function createNativePluginAssertions({ gatewayUrl, execGateway, proofMode = "op
     );
   }
 
-  return { normalGatewayTurn, assertSessionToolCallEvidence, assertNoSessionToolCallEvidence };
+  return {
+    normalGatewayTurn,
+    assertSessionToolCallEvidence,
+    assertSessionToolDeniedEvidence,
+    assertNoSessionToolCallEvidence,
+  };
 }
 
 export async function createPluginDriverRealFixture(
@@ -1289,6 +1435,7 @@ export async function createPluginDriverRealFixture(
     deployAndWait,
     normalGatewayTurn: nativeAssertions.normalGatewayTurn,
     assertSessionToolCallEvidence: nativeAssertions.assertSessionToolCallEvidence,
+    assertSessionToolDeniedEvidence: nativeAssertions.assertSessionToolDeniedEvidence,
     assertNoSessionToolCallEvidence: nativeAssertions.assertNoSessionToolCallEvidence,
     bindOpenAIModelSecret,
   };

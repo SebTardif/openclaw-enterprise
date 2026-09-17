@@ -399,7 +399,6 @@ test("Codex startup translation fails selected-only policy gaps at startup", () 
       codexDetails,
       /AutoReview/i,
     ],
-    [codexSelection(linearPluginId, { approvalMode: "prompt" }), codexDetails, /approval/i],
     [codexSelection(linearPluginId, { writes: "prompt" }), codexDetails, /category/i],
     [codexSelection(linearPluginId, { tools: { search: {} } }), codexDetails, /tool/i],
     [codexSelection(linearPluginId), [], /detail/i],

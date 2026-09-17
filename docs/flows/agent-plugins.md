@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
-updated: 2026-09-09
-last_updated_session: codex/01a08228-c3ec-7ab2-b0c0-74f49a8ec8a7
+updated: 2026-09-17
+last_updated_session: codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed
 ---
 
 # Agent Plugin Deployment Flow
@@ -129,7 +129,12 @@ At startup, native `plugin/list` discovers the `openai-curated-remote` marketpla
 `plugin/read` resolves each selection using the summary's opaque remote identity.
 The shared translator validates the entire selection set before Compute writes
 native app configuration with `config/batchWrite`, including optional
-`approvals_reviewer`. Compute then calls `plugin/install`, rejects missing app
+`approvals_reviewer`. `codexRuntimeArtifact` maps `always` to `approve`,
+`auto` to `auto`, and `prompt` to `prompt`; disabled and `never` selections
+remain blocked. The OpenClaw bridge must preserve those app settings in every
+thread; the packaged `2026.9.1` bridge still needs the
+[dependency update](../testing/plugins.md#hosted-app-approval-verification).
+Compute then calls `plugin/install`, rejects missing app
 authentication, rereads native metadata, and checks installed/enabled identity,
 release version, and app mapping against the resolved selection. Finally,
 `config/read` verifies the effective configuration overlay before readiness.
@@ -189,6 +194,8 @@ and Kubernetes gateway state database retain their Agent-owned lifecycle.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-17 23:46: Added native every-call approval translation and documented the pending bridge dependency (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 039a8e0989290ac7f8486d6345c200c744a7e8a6)
 
 - 2026-09-08 16:05: Corrected Codex Linear support to the existing bridge path and kept live local-Kubernetes proof pending (codex/01a08228-c3ec-7ab2-b0c0-74f49a8ec8a7 - 79021fa)
 - 2026-09-08 17:02: Recorded current Codex Linear proof boundary: native install/readiness passed, bridge app batch request passed, force-refresh app state showed Linear enabled/callable, and a normal turn invoked Linear `list_teams` before timing out in native `waitingOnApproval` without a result (codex/01a08228-c3ec-7ab2-b0c0-74f49a8ec8a7 - 79021fa)

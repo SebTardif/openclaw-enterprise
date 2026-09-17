@@ -475,7 +475,10 @@ test("compute serializes selected OpenClaw plugins for startup-time resolution",
 });
 
 test("Codex runtime helper installs selected remote plugins before readiness", async () => {
-  const state = codexLinearPluginState({ approvalsReviewer: "auto_review" });
+  const state = codexLinearPluginState({
+    approvalMode: "prompt",
+    approvalsReviewer: "auto_review",
+  });
   const runtime = {
     manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })),
   };
@@ -506,7 +509,7 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
             mergeStrategy: "replace",
             value: {
               enabled: true,
-              default_tools_approval_mode: "auto",
+              default_tools_approval_mode: "prompt",
               approvals_reviewer: "auto_review",
             },
           },
@@ -524,7 +527,10 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
     }
     if (method === "config/read") {
       assert.deepEqual(params, {});
-      return codexConfigReadResponse({ approvals_reviewer: "auto_review" });
+      return codexConfigReadResponse({
+        default_tools_approval_mode: "prompt",
+        approvals_reviewer: "auto_review",
+      });
     }
     throw new Error(`unexpected request ${method}`);
   });

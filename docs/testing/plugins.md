@@ -7,13 +7,13 @@ behavior; this page owns contributor setup, fixture inputs, and proof notes.
 
 ## Local and integration suites
 
-| Check                          | Command or file                                                                                         | Covers                                                                                                                               |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Contract and API behavior      | `pnpm test:conformance` and `node --test tests/integration/occ-api.test.mjs`                            | Plugin map schemas, exact-Agent authorization, omission/replacement/clear semantics, audit, and immutable requested-state snapshots. |
-| Driver translation and startup | `node --test tests/conformance/plugin-driver.test.mjs tests/integration/plugin-driver-startup.test.mjs` | Curated catalog projection, selected-only Codex defaults, unsupported-policy startup failure, and native configuration rendering.    |
-| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/ssh-compute.test.mjs`          | Kubernetes preparation handoff and SSH rejection before host effects for nonempty plugin maps.                                       |
-| PostgreSQL persistence         | `node --test tests/integration/postgres-platform-state.test.mjs` with [PostgreSQL setup](postgresql.md) | Durable Agent plugin state, atomic mutation/audit, and revision snapshots.                                                           |
-| Native runtime proof           | `node --test tests/integration/plugin-driver-real.test.mjs`                                             | Opt-in Kubernetes proof against real OpenClaw or Codex runtimes.                                                                     |
+| Check                          | Command or file                                                                                                                                            | Covers                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Contract and API behavior      | `pnpm test:conformance` and `node --test tests/integration/occ-api.test.mjs`                                                                               | Plugin map schemas, exact-Agent authorization, omission/replacement/clear semantics, audit, and immutable requested-state snapshots. |
+| Driver translation and startup | `node --test tests/conformance/plugin-driver.test.mjs tests/conformance/plugin-runtime-approval.test.mjs tests/integration/plugin-driver-startup.test.mjs` | Curated catalog projection, selected-only Codex defaults, unsupported-policy startup failure, and native configuration rendering.    |
+| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/ssh-compute.test.mjs`                                                             | Kubernetes preparation handoff and SSH rejection before host effects for nonempty plugin maps.                                       |
+| PostgreSQL persistence         | `node --test tests/integration/postgres-platform-state.test.mjs` with [PostgreSQL setup](postgresql.md)                                                    | Durable Agent plugin state, atomic mutation/audit, and revision snapshots.                                                           |
+| Native runtime proof           | `node --test tests/integration/plugin-driver-real.test.mjs`                                                                                                | Opt-in Kubernetes proof against real OpenClaw or Codex runtimes.                                                                     |
 
 Skipped infrastructure or native-runtime cases are not evidence. Record the exact
 commit, selected suite, nonsecret image references, native runtime versions,
@@ -46,6 +46,13 @@ injected `CODEX_ACCESS_TOKEN` for the existing designated test account,
 supported by that Codex path; the existing acceptance fixture uses `gpt-5.6-sol`.
 The Calendar proof must show
 a model-chosen `list_calendars(max_results:1)` read during a normal Agent turn.
+
+After the initial `auto` read, the Calendar scenario redeploys the same Agent
+with `prompt` and each reviewer. The human path observes the real gateway
+approval event, allows one read, then denies a second read in the same session.
+The automatic path requires a distinct approved review on each of two successful
+reads. Each check limits transcript evidence to its marker-bearing turn. Use
+a runtime image containing the bridge fix described below.
 
 The Calendar fixture uses a narrow test-only ServiceAccount import that preserves
 the designated existing account token from a private service-account environment
@@ -86,6 +93,32 @@ account on Codex `0.149.0`, OpenClaw `1391f7c`, `gpt-5.6-sol`, and a successful
 `list_calendars(max_results:1)` result; evidence was
 `/tmp/plugin-driver-calendar-k8s-live.log`. Linear diagnostics remain historical
 connector evidence and are not the current Codex acceptance target.
+
+## Hosted-app approval verification
+
+A direct native model-turn comparison on Codex `0.152.1` with `gpt-5.5`,
+`approvalPolicy:"on-request"`, read-only sandboxing, and an existing user login
+verified the same harmless hosted GitHub `get_profile` tool:
+
+- `prompt` with `user` emitted a pre-call approval request; declining it produced
+  `user rejected MCP tool call` without executing the tool.
+- `approve` executed successfully without a pre-call approval request.
+- `prompt` with `auto_review` emitted an approved native automatic review before
+  each successful result on two successive reads in the same thread.
+
+This proves native policy enforcement, not OCE service-account or Kubernetes
+integration. A Calendar attempt under `approve` reached provider reauthentication,
+confirming that authentication remains separate from pre-call approval. Direct
+`mcpServer/tool/call` RPC is not suitable proof: it bypasses the model's pre-call
+approval path.
+
+The OCE runtime image still pins `@openclaw/codex` to `2026.9.1`. That bridge
+replaces the app approval mode with `auto` when projecting thread configuration.
+Before deployment, update the image to a release containing the bridge fix and
+run the real Agent approval scenario. Confirm review on repeated read-only calls
+and absence of successful execution after denial; a rendered config alone is
+insufficient. The standalone native comparison did not use the designated
+service-account credential and does not replace this required integration run.
 
 ## Related
 

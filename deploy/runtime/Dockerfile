@@ -2,6 +2,7 @@ ARG NODE_BASE_IMAGE=docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8
 FROM ${NODE_BASE_IMAGE}
 
 ARG OPENCLAW_VERSION=2026.9.1
+# TODO: pin a release with native app approval preservation before deploying prompt policy.
 ARG OPENCLAW_CODEX_PLUGIN_VERSION=2026.9.1
 ARG OPENCLAW_SLACK_PLUGIN_VERSION=2026.9.1
 ARG OPENAI_CODEX_VERSION=0.152.1

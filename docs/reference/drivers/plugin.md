@@ -91,7 +91,7 @@ Agent thread retains it.
 | Codex selected-app `never` or `enabled:false` | Render the resolved install identity while omitting the native app entry and disabling the selected bridge entry so execution remains blocked.                          |
 | Codex selected-app `approvalsReviewer`        | Render native app reviewer configuration for the selected app ID with `user` or `auto_review`.                                                                          |
 | Codex `always`                                | Set per-plugin `allow_destructive_actions:true`; the bridge accepts supported approvals without prompting. Explicit `auto_review` is unsupported for this mode.         |
-| Codex `prompt`, category/tool modes           | Startup failure when every-call prompting or reliable tool metadata is unavailable.                                                                                     |
+| Codex selected-app `prompt`                   | Render native every-call review with the selected reviewer; requires the bridge dependency described below.                                                             |
 | Codex empty desired set                       | Apply a plugin-free native configuration; no remote install RPC runs.                                                                                                   |
 
 The Codex boundary is separate from approval-mode translation. Marketplace
@@ -109,9 +109,17 @@ The [API policy vocabulary](../agent-plugins.md#approval-policy) retains indepen
 trigger and reviewer semantics for representable implementations. Native Codex
 `auto` and app reviewer settings are used for supported curated Codex apps.
 `always` uses the bridge's existing automatic acceptance with the default or
-`user` reviewer. Explicit `auto_review` with `always`, `prompt`, category
-overrides, and tool overrides remain unsupported at startup. Unsafe approval
+`user` reviewer. `prompt` renders native `default_tools_approval_mode:"prompt"`
+and preserves the optional reviewer. Explicit `auto_review` with `always`,
+category overrides, and tool overrides remain unsupported at startup. Unsafe approval
 schemas and ambiguous ownership continue to be declined.
+
+The packaged `@openclaw/codex` version `2026.9.1` overwrites native app mode
+with `auto` for each thread. Deploying `prompt` therefore requires a runtime
+image containing the bridge fix that preserves native approval settings.
+Native mode `approve` skips pre-call review, but does not satisfy provider
+authentication or suppress every server-requested confirmation. See
+[hosted-app approval verification](../../testing/plugins.md#hosted-app-approval-verification).
 
 Dedicated Codex starts without user plugins/apps, including when no PluginDriver
 is selected. Compute writes the safe baseline into the Agent's isolated

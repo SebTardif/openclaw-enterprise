@@ -20,14 +20,22 @@ catalog, supports a plugin-free runtime baseline, and enables selected-only
 curated apps for dedicated Codex Agents when the requested policy can be
 represented by the existing OpenClaw Codex bridge.
 `approvalMode:"auto"` enables a selected curated app with native Codex auto
-approval semantics; `approvalMode:"never"` or `enabled:false` renders a blocked
+approval semantics. `approvalMode:"prompt"` renders native every-call review
+with the selected `user` or `auto_review` reviewer; `approvalMode:"never"` or `enabled:false` renders a blocked
 bridge entry. Enterprise API fields use camelCase. The optional
 `approvalsReviewer` value maps to native Codex app
 reviewer configuration. Codex `always` maps to per-plugin `allow_destructive_actions:true`: supported approval
 requests are accepted without a user prompt. `always` with explicit
 `approvalsReviewer:"auto_review"` fails startup because native AutoReview can run
-before the bridge receives the request. `prompt`, category overrides, and tool
-overrides fail startup when the native runtime cannot represent them exactly.
+before the bridge receives a server-requested confirmation. Category and tool
+overrides remain unsupported at startup. Native `approve` skips the normal
+pre-call review; provider authentication and server-requested input still apply.
+
+Every-call review requires an OpenClaw Codex bridge that preserves native app
+approval settings when starting and resuming threads. The runtime image still
+pins `@openclaw/codex` to `2026.9.1`, which replaces the mode with `auto`;
+update that dependency before deploying `prompt`. See the
+[verification status](../testing/plugins.md#hosted-app-approval-verification).
 Linear and Google Calendar are test fixtures, not production allowlist entries.
 
 ## Lifecycle
@@ -184,7 +192,8 @@ body. It freezes requested state, not resolved native release metadata.
 At startup, Codex translation uses native Codex app settings and, when a
 supported curated Codex app is selected, OpenClaw Codex bridge configuration.
 The active native configuration sets the selected app entry to `enabled:true`
-and optional native `approvals_reviewer`, translated from Enterprise
+and `default_tools_approval_mode` (`approve`, `auto`, or `prompt`), plus
+optional native `approvals_reviewer`, translated from Enterprise
 `approvalsReviewer`. The bridge configuration sets
 `plugins.entries.codex.config.codexPlugins.enabled` to true, keeps
 `allow_all_plugins:false`, and includes one entry per selected plugin. Empty

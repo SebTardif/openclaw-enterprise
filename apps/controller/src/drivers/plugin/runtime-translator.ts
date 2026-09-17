@@ -273,9 +273,6 @@ export function createPluginRuntimeTranslator() {
     detail: Record<string, unknown>,
   ): void {
     const mode = pluginApprovalMode(selection);
-    if (!["always", "auto", "never"].includes(mode)) {
-      throw new Error("Codex plugin approval policy is unavailable at startup.");
-    }
     if (mode === "always" && reviewer(selection) === "auto_review") {
       throw new Error("Codex AutoReview cannot represent always-approved plugin calls.");
     }
@@ -364,7 +361,8 @@ export function createPluginRuntimeTranslator() {
       const enterprisePluginId = codexPluginId(nativeId);
       if (enabledByPolicy(selection)) {
         const reviewerValue = reviewer(selection);
-        const defaultApprovalMode = pluginApprovalMode(selection) === "always" ? "approve" : "auto";
+        const mode = pluginApprovalMode(selection);
+        const defaultApprovalMode = mode === "always" ? "approve" : mode;
         for (const appId of appIds(detail)) {
           const existing = appEntries.get(appId);
           const requested = {
