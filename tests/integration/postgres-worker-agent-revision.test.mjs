@@ -188,6 +188,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
     providers,
     pool = workerPool,
     transformDrivers = (drivers) => drivers,
+    runtimeAuthenticationOwner,
   ) {
     const configuredDrivers =
       providers === undefined ? undefined : createProviderWorkerDrivers(computeDriver, providers);
@@ -200,6 +201,7 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
       maxAttempts: 5,
       ...(drivers === undefined ? { computeDriver } : { drivers }),
       ...(convergenceTimeoutMs === undefined ? {} : { convergenceTimeoutMs }),
+      ...(runtimeAuthenticationOwner === undefined ? {} : { runtimeAuthenticationOwner }),
       emit,
     });
     return worker.start();
@@ -228,6 +230,61 @@ async function setup(context, { leaseDurationMs = 30_000 } = {}) {
     workerPool,
   };
 }
+
+test(
+  "Agent stop waits for runtime authentication withdrawal while still shutting down Compute",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("stop-runtime-authentication");
+    const candidate = await fixture.revision(owner, 1);
+    const effects = [];
+    let pending = true;
+
+    // Substitute the external broker and Compute dependencies. The real worker,
+    // queue and PostgreSQL state must retain the active pointer until both finish.
+    const runtimeAuthenticationOwner = {
+      async prepare() {},
+      async closeRevision({ revision }) {
+        assert.equal(revision.id, candidate.id);
+        const state = pending ? "pending" : "withdrawn";
+        pending = false;
+        effects.push(state);
+        return { state };
+      },
+    };
+    await fixture.start(
+      {
+        ...fixture.compute,
+        setRuntimeAuthenticationOwner() {},
+        async stopRevision(revision) {
+          assert.equal(revision.id, candidate.id);
+          const retained = await fixture.state.read((view) =>
+            view.agents.findAgent(fixture.namespace.id, owner.id),
+          );
+          assert.equal(retained.activeRevisionId, candidate.id);
+          effects.push("stop");
+        },
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      runtimeAuthenticationOwner,
+    );
+    await fixture.work(candidate, "succeeded");
+    const stopped = await fixture.work(await fixture.requestStop(owner), "succeeded");
+
+    assert.equal(stopped.attempt_count, 2);
+    assert.deepEqual(effects, ["pending", "stop", "withdrawn", "stop"]);
+    const current = await fixture.state.read((view) =>
+      view.agents.findAgent(fixture.namespace.id, owner.id),
+    );
+    assert.equal(current.desiredRuntimeState, "stopped");
+    assert.equal(current.activeRevisionId, undefined);
+  },
+);
 
 test(
   "Agent stop clears only the exact active pointer after Compute shutdown and retries safely",

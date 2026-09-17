@@ -369,7 +369,8 @@
             "real PostgreSQL preserves the failure budget while an Agent runtime converges",
             "an overdue Agent runtime fails closed without activating its incomplete revision",
             "one worker reconciles embedded OpenClaw and dedicated Codex but rejects unapproved pinned Harnesses",
-            "a lost retirement claim preserves the activated replacement and cannot complete stolen work"
+            "a lost retirement claim preserves the activated replacement and cannot complete stolen work",
+            "Agent stop waits for runtime authentication withdrawal while still shutting down Compute"
           ]
         },
         {

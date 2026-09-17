@@ -187,7 +187,10 @@ Ambiguous create, duplicate, and withdrawal outcomes retain their obligations.
 
 Cleanup withdraws the exact receiver's access independently of workload deletion,
 including after grant closure, expiry, abort, or process restart. It must preserve
-the shared standing provider key in its external custodian. A mechanism that
+the shared standing provider key in its external custodian. Agent stop and
+revision retirement attempt workload shutdown even when withdrawal is pending or
+unknown. Stop retains the active pointer and retries within the worker failure
+budget until both shutdown and withdrawal succeed. A mechanism that
 cannot enforce the bounded session or exact receiver withdrawal fails closed.
 
 The shared contract and Kubernetes/OpenShell consumer exist, but production
