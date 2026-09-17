@@ -1,4 +1,4 @@
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TProperties } from "typebox";
 import {
   AgentId,
   ConfigurationGeneration,
@@ -14,21 +14,20 @@ import { AccountVersionVectorSchemaV1 } from "./account-authority-v1.ts";
 import { BindRuntimeSchemaV1 } from "./runtime-authority-v1.ts";
 
 type Immutable<T> = T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T;
-const closed = { additionalProperties: false } as const;
+const closed = <P extends TProperties>(properties: P) =>
+  Type.Object(properties, { additionalProperties: false });
 const reference = Type.String({
   minLength: 1,
   maxLength: 200,
   pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
 });
 const digest = Type.String({ pattern: "^sha256:[0-9a-f]{64}$" });
-const versionedReference = Type.Object(
-  { ref: reference, version: ConfigurationGeneration, digest },
-  closed,
-);
-const scope = Type.Object(
-  { installationId: InstallationId, namespaceId: NamespaceId, agentId: AgentId },
-  closed,
-);
+const versionedReference = closed({ ref: reference, version: ConfigurationGeneration, digest });
+const scope = closed({
+  installationId: InstallationId,
+  namespaceId: NamespaceId,
+  agentId: AgentId,
+});
 const profileFields = {
   schemaVersion: Type.Literal(1),
   scope,
@@ -40,86 +39,74 @@ const profileFields = {
 
 /** Canonical profiles are DATA; the original accepting owner supplies permission. */
 export const CredentialProfileSchemaV1 = Type.Union([
-  Type.Object(
-    {
-      ...profileFields,
-      kind: Type.Literal("model"),
-      mode: Type.Literal("mediated"),
-      modelProfile: versionedReference,
-      credentialClass: Type.Enum(["workload-federation", "trusted-login", "api-key"]),
-    },
-    closed,
-  ),
-  Type.Object(
-    {
-      ...profileFields,
-      kind: Type.Literal("repository"),
-      mode: Type.Enum(["native", "mediated", "history-isolated"]),
-      providerInstallationRef: reference,
-      permissionProfile: versionedReference,
-      credentialClass: Type.Literal("installation-token"),
-    },
-    closed,
-  ),
+  closed({
+    ...profileFields,
+    kind: Type.Literal("model"),
+    mode: Type.Literal("mediated"),
+    modelProfile: versionedReference,
+    credentialClass: Type.Enum(["workload-federation", "trusted-login", "api-key"]),
+  }),
+  closed({
+    ...profileFields,
+    kind: Type.Literal("repository"),
+    mode: Type.Enum(["native", "mediated", "history-isolated"]),
+    providerInstallationRef: reference,
+    permissionProfile: versionedReference,
+    credentialClass: Type.Literal("installation-token"),
+  }),
 ]);
 export type CredentialProfileV1 = Immutable<Static<typeof CredentialProfileSchemaV1>>;
 
 /** Exact original journal projection, with its original finite dispatch horizon. */
-export const OriginalCredentialBindingSchemaV1 = Type.Object(
-  {
-    schemaVersion: Type.Literal(1),
-    scope,
-    assignmentRef: BindRuntimeSchemaV1.properties.target.properties.assignmentRef,
-    revisionId: RevisionId,
-    lifecycleGeneration: ConfigurationGeneration,
-    runtimeGeneration: ConfigurationGeneration,
-    turnRef: reference,
-    attemptRef: reference,
-    reservationRef: reference,
-    intentDigest: digest,
-    conversationRef: reference,
-    workspaceRef: reference,
-    originalPrincipalRef: reference,
-    externalIdentity: versionedReference,
-    receiptRef: reference,
-    logicalMessageRef: reference,
-    messageContentDigest: digest,
-    commonGrant: versionedReference,
-    route: versionedReference,
-    audience: versionedReference,
-    policy: versionedReference,
-    canonicalBindingDigest: digest,
-    committedDispatchAt: Timestamp,
-    turnNotAfter: Timestamp,
-  },
-  closed,
-);
+export const OriginalCredentialBindingSchemaV1 = closed({
+  schemaVersion: Type.Literal(1),
+  scope,
+  assignmentRef: BindRuntimeSchemaV1.properties.target.properties.assignmentRef,
+  revisionId: RevisionId,
+  lifecycleGeneration: ConfigurationGeneration,
+  runtimeGeneration: ConfigurationGeneration,
+  turnRef: reference,
+  attemptRef: reference,
+  reservationRef: reference,
+  intentDigest: digest,
+  conversationRef: reference,
+  workspaceRef: reference,
+  originalPrincipalRef: reference,
+  externalIdentity: versionedReference,
+  receiptRef: reference,
+  logicalMessageRef: reference,
+  messageContentDigest: digest,
+  commonGrant: versionedReference,
+  route: versionedReference,
+  audience: versionedReference,
+  policy: versionedReference,
+  canonicalBindingDigest: digest,
+  committedDispatchAt: Timestamp,
+  turnNotAfter: Timestamp,
+});
 export type OriginalCredentialBindingV1 = Immutable<
   Static<typeof OriginalCredentialBindingSchemaV1>
 >;
 
-export const CredentialAuthorityObservationSchemaV1 = Type.Object(
-  {
-    schemaVersion: Type.Literal(1),
-    original: OriginalCredentialBindingSchemaV1,
-    profile: CredentialProfileSchemaV1,
-    secretId: SecretId,
-    secretVersion: ConfigurationGeneration,
-    leaseRef: reference,
-    leaseVersion: ConfigurationGeneration,
-    leaseNotAfter: Timestamp,
-    accountVersions: AccountVersionVectorSchemaV1,
-    decisionRef: reference,
-    authorityVersion: ConfigurationGeneration,
-    invalidationVersion: ConfigurationGeneration,
-    dispatchFenceRef: reference,
-    comparedAt: Timestamp,
-    startNotAfter: Timestamp,
-    requestId: RequestId,
-    effect: Type.Enum(["model-use", "reserve-issuance", "mint-token", "deliver-token"]),
-  },
-  closed,
-);
+export const CredentialAuthorityObservationSchemaV1 = closed({
+  schemaVersion: Type.Literal(1),
+  original: OriginalCredentialBindingSchemaV1,
+  profile: CredentialProfileSchemaV1,
+  secretId: SecretId,
+  secretVersion: ConfigurationGeneration,
+  leaseRef: reference,
+  leaseVersion: ConfigurationGeneration,
+  leaseNotAfter: Timestamp,
+  accountVersions: AccountVersionVectorSchemaV1,
+  decisionRef: reference,
+  authorityVersion: ConfigurationGeneration,
+  invalidationVersion: ConfigurationGeneration,
+  dispatchFenceRef: reference,
+  comparedAt: Timestamp,
+  startNotAfter: Timestamp,
+  requestId: RequestId,
+  effect: Type.Enum(["model-use", "reserve-issuance", "mint-token", "deliver-token"]),
+});
 export type CredentialAuthorityObservationV1 = Immutable<
   Static<typeof CredentialAuthorityObservationSchemaV1>
 >;

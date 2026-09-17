@@ -267,21 +267,21 @@ export function createGitHubFetchOperationV1(
         : `/${selected.canonicalOwner}/${selected.canonicalName}.git/git-upload-pack`;
     const bodyDigest = createHash("sha256").update(owned).digest("hex");
     if (!bodyHash(bodyDigest)) return null;
-    const r = selected.repository;
-    const s = r.resourceSchema;
+    const resource = selected.repository;
+    const schema = resource.resourceSchema;
     const factsDigest = createHash("sha256")
       .update(
         JSON.stringify([
           "oce.github.git-read.request.v1",
           requestId,
           kind,
-          r.upstreamInstanceId,
-          s.namespace,
-          s.name,
-          s.version,
-          s.digest,
-          r.canonicalResourceId,
-          r.canonicalPathSegments,
+          resource.upstreamInstanceId,
+          schema.namespace,
+          schema.name,
+          schema.version,
+          schema.digest,
+          resource.canonicalResourceId,
+          resource.canonicalPathSegments,
           selected.appId,
           selected.installationId,
           selected.repositoryId,
@@ -438,18 +438,18 @@ export function createGitHubPrCreateOperationV1(
       )
       .digest("hex");
     if (!bodyHash(bodyDigest) || !creationHash(creationDigest)) return null;
-    const r = selected.repository;
-    const s = r.resourceSchema;
+    const resource = selected.repository;
+    const schema = resource.resourceSchema;
     const factsDigest = createHash("sha256")
       .update(
         JSON.stringify([
           "oce.github.pr-create.facts.v1",
           requestId,
           clientOperationId,
-          r.upstreamInstanceId,
-          [s.namespace, s.name, s.version, s.digest],
-          r.canonicalResourceId,
-          r.canonicalPathSegments,
+          resource.upstreamInstanceId,
+          [schema.namespace, schema.name, schema.version, schema.digest],
+          resource.canonicalResourceId,
+          resource.canonicalPathSegments,
           selected.appId,
           selected.installationId,
           selected.repositoryId,

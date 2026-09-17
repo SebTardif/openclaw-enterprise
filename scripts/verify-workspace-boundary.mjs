@@ -99,7 +99,7 @@ for (const name of executableApplications) {
 for (const source of ["http/request.ts", "construction/custody-contract.ts"]) {
   assert.ok(
     sources.includes(join(repositoryRoot, "apps", "credential-gateway", "src", source)),
-    `The credential-gateway project must compile its ${source} source.`,
+    `The credential-gateway project must provide its ${source} source.`,
   );
 }
 for (const source of sources) {

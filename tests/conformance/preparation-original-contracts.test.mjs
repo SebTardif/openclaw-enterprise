@@ -389,6 +389,7 @@ test("preparation subject and protected receipt retain purpose, full commit and 
 });
 
 test("receipt diagnostics retain every nonpositive status, reason and exact recovery action", () => {
+  const schema = preparation.PreparationReceiptDiagnosticSchemaV1;
   const reasons = [
     "not-submitted",
     "provider-outcome-unknown",
@@ -414,22 +415,11 @@ test("receipt diagnostics retain every nonpositive status, reason and exact reco
         reason,
         nextAction: "exact-readback-or-scoped-cleanup",
       };
-      assert.equal(
-        Check(preparation.PreparationReceiptDiagnosticSchemaV1, result),
-        true,
-        `${status}/${reason}`,
-      );
-      assert.equal(
-        Check(preparation.PreparationReceiptDiagnosticSchemaV1, { ...result, nextAction: "retry" }),
-        false,
-      );
-      assert.equal(
-        Check(preparation.PreparationReceiptDiagnosticSchemaV1, { ...result, receipt: receipt() }),
-        false,
-      );
+      assert.equal(Check(schema, result), true, `${status}/${reason}`);
+      assert.equal(Check(schema, { ...result, nextAction: "retry" }), false);
+      assert.equal(Check(schema, { ...result, receipt: receipt() }), false);
     }
   }
-  const schema = preparation.PreparationReceiptDiagnosticSchemaV1;
   assert.equal(Check(schema, { status: "not-visible" }), true);
   assert.equal(Check(schema, { status: "not-visible", request: request() }), false);
   assert.equal(Check(schema, { status: "complete", receipt: receipt(), handle: {} }), false);
