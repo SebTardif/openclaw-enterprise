@@ -6,12 +6,14 @@ import {
   NamespaceId,
   ProviderId,
   RequestId,
-  RevisionId,
   SecretId,
   Timestamp,
 } from "./api/common.ts";
 import { AccountVersionVectorSchemaV1 } from "./account-authority-v1.ts";
-import { BindRuntimeSchemaV1 } from "./runtime-authority-v1.ts";
+import { OriginalCredentialBindingSchemaV1 } from "./credential-inventory-data-v1.ts";
+
+export { OriginalCredentialBindingSchemaV1 };
+export type { OriginalCredentialBindingV1 } from "./credential-inventory-data-v1.js";
 
 type Immutable<T> = T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T;
 const closed = <P extends TProperties>(properties: P) =>
@@ -56,37 +58,6 @@ export const CredentialProfileSchemaV1 = Type.Union([
   }),
 ]);
 export type CredentialProfileV1 = Immutable<Static<typeof CredentialProfileSchemaV1>>;
-
-/** Exact original journal projection, with its original finite dispatch horizon. */
-export const OriginalCredentialBindingSchemaV1 = closed({
-  schemaVersion: Type.Literal(1),
-  scope,
-  assignmentRef: BindRuntimeSchemaV1.properties.target.properties.assignmentRef,
-  revisionId: RevisionId,
-  lifecycleGeneration: ConfigurationGeneration,
-  runtimeGeneration: ConfigurationGeneration,
-  turnRef: reference,
-  attemptRef: reference,
-  reservationRef: reference,
-  intentDigest: digest,
-  conversationRef: reference,
-  workspaceRef: reference,
-  originalPrincipalRef: reference,
-  externalIdentity: versionedReference,
-  receiptRef: reference,
-  logicalMessageRef: reference,
-  messageContentDigest: digest,
-  commonGrant: versionedReference,
-  route: versionedReference,
-  audience: versionedReference,
-  policy: versionedReference,
-  canonicalBindingDigest: digest,
-  committedDispatchAt: Timestamp,
-  turnNotAfter: Timestamp,
-});
-export type OriginalCredentialBindingV1 = Immutable<
-  Static<typeof OriginalCredentialBindingSchemaV1>
->;
 
 export const CredentialAuthorityObservationSchemaV1 = closed({
   schemaVersion: Type.Literal(1),

@@ -16,6 +16,9 @@
           "path": "tests/conformance/contracts.test.mjs"
         },
         {
+          "path": "tests/conformance/credential-custody-construction.test.mjs"
+        },
+        {
           "path": "tests/conformance/credential-gateway-http-request.test.mjs"
         },
         {
