@@ -23,6 +23,7 @@
                   "README",
                   "guides/concepts",
                   "guides/quickstart",
+                  "guides/cli",
                   "guides/deploy",
                   "guides/deploy/repository-drafts",
                   "guides/deploy/production-installation",
@@ -97,6 +98,7 @@
                 "group": "Drivers",
                 "pages": [
                   "reference/drivers/compute",
+                  "reference/drivers/compute-matrix",
                   "reference/drivers/configuration",
                   "reference/drivers/docker-compute",
                   "reference/drivers/iam",
