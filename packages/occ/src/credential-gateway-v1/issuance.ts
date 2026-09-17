@@ -9,7 +9,6 @@ import type {
   TokenRevokerV1,
 } from "@openclaw-enterprise/contracts";
 import type { CredentialInventoryTransactionV1 } from "../credential-inventory-v1/ports.ts";
-import type { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import type {
   PlatformReadView,
   PlatformStateStore,
@@ -86,7 +85,6 @@ export interface EncryptedMaterialStore {
 
 export interface IssuanceRetentionTransaction {
   readonly state: PlatformUnitOfWork;
-  readonly lifetime: RepositoryTransactionLifetime;
   readonly inventory: CredentialInventoryTransactionV1;
   readonly envelopes: EncryptedMaterialStore;
   readonly leaseClaims: IssuedLeaseClaimRepository;

@@ -62,6 +62,7 @@ export async function realStateCorrespondence(
 ): Promise<void> {
   const actualState: PlatformStateStore = dependencies.state;
   const transaction: IssuanceRetentionTransaction = dependencies.bindTransaction(state);
+  void (transaction.state satisfies PlatformUnitOfWork);
   const actualInventory: CredentialInventoryTransactionV1 = transaction.inventory;
   const envelopes: EncryptedMaterialStore = transaction.envelopes;
   await envelopes.retainExact(material, bounds);
@@ -79,6 +80,10 @@ export async function realStateCorrespondence(
   const forgedCommit: KnownIssuanceCommit = preallocated;
   // @ts-expect-error Callback/lifetime drain completion is not known COMMIT.
   const finishedCommit: KnownIssuanceCommit = await lifetime.finish();
+  // @ts-expect-error Only the original State may finish accepted transaction work.
+  await transaction.lifetime.finish();
+  // @ts-expect-error Retention borrowers cannot close the original transaction.
+  transaction.lifetime.close();
   // @ts-expect-error The real read view is not a mutable UnitOfWork.
   const readAsWrite: PlatformUnitOfWork = read;
   void [actualState, staged, immutableRead, forgedCommit, finishedCommit, readAsWrite];
