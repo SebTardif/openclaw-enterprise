@@ -1,5 +1,5 @@
 {
-  "baseline": "c4ecf32727aef09a6b4caeec16870bf391f7a505",
+  "baseline": "446dda6443d6747d9c9997fe7e647663413d7f10",
   "reviewedAt": "2026-09-17",
   "drivers": [
     {
@@ -20,8 +20,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 23,
-          "end": 48
+          "start": 25,
+          "end": 50
         }
       ],
       "cells": {
@@ -36,8 +36,8 @@
             },
             {
               "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
+              "start": 46,
+              "end": 50
             }
           ],
           "tests": [
@@ -59,8 +59,8 @@
             },
             {
               "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
+              "start": 46,
+              "end": 50
             }
           ],
           "tests": [
@@ -82,8 +82,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "start": 85,
+          "end": 95
         }
       ],
       "cells": {
@@ -93,8 +93,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 437
+              "start": 413,
+              "end": 435
             }
           ],
           "tests": [
@@ -112,17 +112,17 @@
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
               "start": 271,
-              "end": 290
+              "end": 287
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
+              "start": 303,
+              "end": 312
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 362,
+              "end": 382
             }
           ],
           "tests": [
@@ -144,8 +144,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "start": 85,
+          "end": 95
         }
       ],
       "cells": {
@@ -155,8 +155,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 416,
-              "end": 421
+              "start": 414,
+              "end": 419
             }
           ],
           "tests": [
@@ -173,13 +173,13 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
+              "start": 303,
+              "end": 312
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 362,
+              "end": 382
             }
           ],
           "tests": [
@@ -201,8 +201,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "start": 85,
+          "end": 95
         }
       ],
       "cells": {
@@ -212,8 +212,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 407,
-              "end": 445
+              "start": 405,
+              "end": 443
             }
           ],
           "tests": [
@@ -230,18 +230,18 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 344,
-              "end": 404
+              "start": 341,
+              "end": 402
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
+              "start": 303,
+              "end": 312
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 362,
+              "end": 382
             }
           ],
           "tests": [
@@ -263,13 +263,13 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
+          "start": 85,
+          "end": 115
         },
         {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 101,
+          "end": 114
         }
       ],
       "cells": {
@@ -279,8 +279,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 413,
+              "end": 423
             }
           ],
           "tests": [
@@ -292,25 +292,30 @@
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Startup rejects prompt, including with user. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "status": "partial",
+          "detail": "Translates prompt with user into native app policy. Deployment remains blocked on an OpenClaw bridge release that preserves this mode and the real Agent approval proof.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 280
+              "start": 359,
+              "end": 383
             },
             {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "path": "deploy/runtime/Dockerfile",
+              "start": 4,
+              "end": 8
             }
           ],
           "tests": [
             {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "path": "tests/conformance/plugin-runtime-approval.test.mjs",
+              "start": 21,
+              "end": 47
+            },
+            {
+              "path": "tests/integration/plugin-driver-real.test.mjs",
+              "start": 259,
+              "end": 288
             }
           ]
         }
@@ -325,13 +330,13 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
+          "start": 85,
+          "end": 115
         },
         {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 101,
+          "end": 114
         }
       ],
       "cells": {
@@ -341,8 +346,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 413,
+              "end": 423
             }
           ],
           "tests": [
@@ -354,25 +359,30 @@
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Startup rejects prompt, including with auto_review. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "status": "partial",
+          "detail": "Translates prompt with auto_review into native app policy. Deployment remains blocked on an OpenClaw bridge release that preserves this mode and the real Agent approval proof.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 280
+              "start": 359,
+              "end": 383
             },
             {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "path": "deploy/runtime/Dockerfile",
+              "start": 4,
+              "end": 8
             }
           ],
           "tests": [
             {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "path": "tests/conformance/plugin-runtime-approval.test.mjs",
+              "start": 21,
+              "end": 47
+            },
+            {
+              "path": "tests/integration/plugin-driver-real.test.mjs",
+              "start": 290,
+              "end": 329
             }
           ]
         }
@@ -387,8 +397,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "start": 87,
+          "end": 115
         }
       ],
       "cells": {
@@ -398,8 +408,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 425
+              "start": 421,
+              "end": 423
             }
           ],
           "tests": [
@@ -424,7 +434,7 @@
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 392,
-              "end": 404
+              "end": 403
             }
           ]
         }
@@ -439,8 +449,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "start": 87,
+          "end": 115
         }
       ],
       "cells": {
@@ -450,8 +460,8 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 457
+              "start": 421,
+              "end": 455
             }
           ],
           "tests": [
@@ -476,7 +486,7 @@
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 392,
-              "end": 404
+              "end": 403
             }
           ]
         }
