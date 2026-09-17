@@ -79,6 +79,15 @@ const store = () => ({
   bindingVersion: 1,
 });
 
+function setField(path, value) {
+  return (input) => {
+    const fields = path.split(".");
+    const key = fields.pop();
+    const owner = fields.reduce((object, field) => object[field], input);
+    owner[key] = value;
+  };
+}
+
 function rejectsChanges(schema, original, changes) {
   assert.equal(Check(schema, original), true, "the selected original DATA example is valid");
   for (const [reason, change] of changes) {
@@ -104,11 +113,7 @@ test("selected runtime operands reject unknown fields at every owning dictionary
       original,
       paths.map((path) => [
         `unexpected field in ${path.join(".") || "root"}`,
-        (input) => {
-          let dictionary = input;
-          for (const part of path) dictionary = dictionary[part];
-          dictionary.unexpected = true;
-        },
+        setField([...path, "unexpected"].join("."), true),
       ]),
     );
     for (const key of Object.keys(original)) {
@@ -121,158 +126,33 @@ test("selected runtime operands reject unknown fields at every owning dictionary
 
 test("gate and exact effect locators retain generations, UUIDs, scope and digest bounds", () => {
   rejectsChanges(RuntimeGateGuardSchemaV1, gate(), [
-    [
-      "schema version",
-      (x) => {
-        x.schemaVersion = 2;
-      },
-    ],
-    [
-      "scope identity",
-      (x) => {
-        x.scope.agentId = "agent/copied";
-      },
-    ],
-    [
-      "intent UUID",
-      (x) => {
-        x.intentRef = "intent/copied";
-      },
-    ],
-    [
-      "mode",
-      (x) => {
-        x.mode = "active";
-      },
-    ],
-    [
-      "zero lifecycle generation",
-      (x) => {
-        x.lifecycleGeneration = 0;
-      },
-    ],
-    [
-      "unsafe gate version",
-      (x) => {
-        x.gateVersion = Number.MAX_SAFE_INTEGER + 1;
-      },
-    ],
-    [
-      "fractional fence epoch",
-      (x) => {
-        x.requestedFenceEpoch = 1.5;
-      },
-    ],
-    [
-      "zero responsibility version",
-      (x) => {
-        x.responsibility.responsibilityVersion = 0;
-      },
-    ],
-    [
-      "responsibility kind",
-      (x) => {
-        x.responsibility.kind = "execution";
-      },
-    ],
-    [
-      "zero plan version",
-      (x) => {
-        x.planVersion = 0;
-      },
-    ],
-    [
-      "empty reference",
-      (x) => {
-        x.planRef = "";
-      },
-    ],
-    [
-      "oversize reference",
-      (x) => {
-        x.planRef = "a".repeat(201);
-      },
-    ],
-    [
-      "invalid reference characters",
-      (x) => {
-        x.planRef = "plan with space";
-      },
-    ],
-    [
-      "wrong digest algorithm",
-      (x) => {
-        x.planDigest = "sha1:" + "a".repeat(40);
-      },
-    ],
-    [
-      "negative child cutoff",
-      (x) => {
-        x.admittedChildCutoff = -1;
-      },
-    ],
-    [
-      "unsafe child cutoff",
-      (x) => {
-        x.admittedChildCutoff = Number.MAX_SAFE_INTEGER + 1;
-      },
-    ],
+    ["schema version", setField("schemaVersion", 2)],
+    ["scope identity", setField("scope.agentId", "agent/copied")],
+    ["intent UUID", setField("intentRef", "intent/copied")],
+    ["mode", setField("mode", "active")],
+    ["zero lifecycle generation", setField("lifecycleGeneration", 0)],
+    ["unsafe gate version", setField("gateVersion", Number.MAX_SAFE_INTEGER + 1)],
+    ["fractional fence epoch", setField("requestedFenceEpoch", 1.5)],
+    ["zero responsibility version", setField("responsibility.responsibilityVersion", 0)],
+    ["responsibility kind", setField("responsibility.kind", "execution")],
+    ["zero plan version", setField("planVersion", 0)],
+    ["empty reference", setField("planRef", "")],
+    ["oversize reference", setField("planRef", "a".repeat(201))],
+    ["invalid reference characters", setField("planRef", "plan with space")],
+    ["wrong digest algorithm", setField("planDigest", "sha1:" + "a".repeat(40))],
+    ["negative child cutoff", setField("admittedChildCutoff", -1)],
+    ["unsafe child cutoff", setField("admittedChildCutoff", Number.MAX_SAFE_INTEGER + 1)],
   ]);
   rejectsChanges(ExactEffectLocatorSchemaV1, effect(), [
-    [
-      "schema version",
-      (x) => {
-        x.schemaVersion = 2;
-      },
-    ],
-    [
-      "effect UUID",
-      (x) => {
-        x.effectRef = "effect/copied";
-      },
-    ],
-    [
-      "effect kind",
-      (x) => {
-        x.effectKind = "release-job";
-      },
-    ],
-    [
-      "target component",
-      (x) => {
-        x.target.component = "worker";
-      },
-    ],
-    [
-      "target generation",
-      (x) => {
-        x.target.runtimeGeneration = 0;
-      },
-    ],
-    [
-      "target assignment version",
-      (x) => {
-        x.target.assignmentRef.schemaVersion = 2;
-      },
-    ],
-    [
-      "target revision identity",
-      (x) => {
-        x.target.revisionId = id(5);
-      },
-    ],
-    [
-      "request digest case",
-      (x) => {
-        x.requestDigest = "sha256:" + "A".repeat(64);
-      },
-    ],
-    [
-      "responsibility UUID",
-      (x) => {
-        x.responsibility.responsibilityRef = "responsibility/copied";
-      },
-    ],
+    ["schema version", setField("schemaVersion", 2)],
+    ["effect UUID", setField("effectRef", "effect/copied")],
+    ["effect kind", setField("effectKind", "release-job")],
+    ["target component", setField("target.component", "worker")],
+    ["target generation", setField("target.runtimeGeneration", 0)],
+    ["target assignment version", setField("target.assignmentRef.schemaVersion", 2)],
+    ["target revision identity", setField("target.revisionId", id(5))],
+    ["request digest case", setField("requestDigest", "sha256:" + "A".repeat(64))],
+    ["responsibility UUID", setField("responsibility.responsibilityRef", "responsibility/copied")],
   ]);
   for (const mode of ["running", "stopped", "disabled"])
     assert.equal(Check(RuntimeGateGuardSchemaV1, { ...gate(), mode }), true);
@@ -301,92 +181,32 @@ test("gate and exact effect locators retain generations, UUIDs, scope and digest
 
 test("independent provenance retains every source clock and finite uncertainty bound", () => {
   rejectsChanges(RuntimeEvidenceProvenanceSchemaV1, provenance(), [
-    [
-      "producer version",
-      (x) => {
-        x.producerServiceVersion = 0;
-      },
-    ],
-    [
-      "evidence version",
-      (x) => {
-        x.evidenceVersion = 1.5;
-      },
-    ],
-    [
-      "profile digest length",
-      (x) => {
-        x.producerProfileDigest = "sha256:" + "a".repeat(63);
-      },
-    ],
+    ["producer version", setField("producerServiceVersion", 0)],
+    ["evidence version", setField("evidenceVersion", 1.5)],
+    ["profile digest length", setField("producerProfileDigest", "sha256:" + "a".repeat(63))],
     ...["producerRef", "producerProfileRef", "acceptedPortRef", "evidenceRef"].flatMap((field) => [
-      [
-        `empty ${field}`,
-        (x) => {
-          x[field] = "";
-        },
-      ],
-      [
-        `oversize ${field}`,
-        (x) => {
-          x[field] = "a".repeat(201);
-        },
-      ],
-      [
-        `invalid ${field}`,
-        (x) => {
-          x[field] = "invalid reference";
-        },
-      ],
+      [`empty ${field}`, setField(field, "")],
+      [`oversize ${field}`, setField(field, "a".repeat(201))],
+      [`invalid ${field}`, setField(field, "invalid reference")],
     ]),
     ...["sourceObservedAt", "receivedAt", "validUntil"].map((field) => [
       `noncanonical ${field}`,
-      (x) => {
-        x.clock[field] = "2026-01-01T00:00:00Z";
+      setField(`clock.${field}`, "2026-01-01T00:00:00Z"),
+    ]),
+    ...[
+      ["missing source clock", "sourceObservedAt"],
+      ["missing receive clock", "receivedAt"],
+      ["missing cutoff", "validUntil"],
+      ["missing uncertainty", "uncertaintyMs"],
+    ].map(([reason, field]) => [
+      reason,
+      (input) => {
+        delete input.clock[field];
       },
     ]),
-    [
-      "missing source clock",
-      (x) => {
-        delete x.clock.sourceObservedAt;
-      },
-    ],
-    [
-      "missing receive clock",
-      (x) => {
-        delete x.clock.receivedAt;
-      },
-    ],
-    [
-      "missing cutoff",
-      (x) => {
-        delete x.clock.validUntil;
-      },
-    ],
-    [
-      "missing uncertainty",
-      (x) => {
-        delete x.clock.uncertaintyMs;
-      },
-    ],
-    [
-      "negative uncertainty",
-      (x) => {
-        x.clock.uncertaintyMs = -1;
-      },
-    ],
-    [
-      "uncertainty above ceiling",
-      (x) => {
-        x.clock.uncertaintyMs = 2001;
-      },
-    ],
-    [
-      "fractional uncertainty",
-      (x) => {
-        x.clock.uncertaintyMs = 0.5;
-      },
-    ],
+    ["negative uncertainty", setField("clock.uncertaintyMs", -1)],
+    ["uncertainty above ceiling", setField("clock.uncertaintyMs", 2001)],
+    ["fractional uncertainty", setField("clock.uncertaintyMs", 0.5)],
   ]);
   assert.equal(
     Check(RuntimeEvidenceProvenanceSchemaV1, {
@@ -399,55 +219,18 @@ test("independent provenance retains every source clock and finite uncertainty b
 
 test("store locator retains original scope, binding versions and bounded references", () => {
   rejectsChanges(StoreBindingRefSchemaV1, store(), [
-    [
-      "schema version",
-      (x) => {
-        x.schemaVersion = 2;
-      },
-    ],
+    ["schema version", setField("schemaVersion", 2)],
     ...["installationId", "namespaceId", "agentId"].map((field) => [
       `original ${field} identity`,
-      (x) => {
-        x.scope[field] = id(1);
-      },
+      setField(`scope.${field}`, id(1)),
     ]),
-    [
-      "zero binding version",
-      (x) => {
-        x.bindingVersion = 0;
-      },
-    ],
-    [
-      "unsafe binding version",
-      (x) => {
-        x.bindingVersion = Number.MAX_SAFE_INTEGER + 1;
-      },
-    ],
-    [
-      "fractional binding version",
-      (x) => {
-        x.bindingVersion = 1.5;
-      },
-    ],
+    ["zero binding version", setField("bindingVersion", 0)],
+    ["unsafe binding version", setField("bindingVersion", Number.MAX_SAFE_INTEGER + 1)],
+    ["fractional binding version", setField("bindingVersion", 1.5)],
     ...["logicalStoreRef", "bindingRef"].flatMap((field) => [
-      [
-        `empty ${field}`,
-        (x) => {
-          x[field] = "";
-        },
-      ],
-      [
-        `oversize ${field}`,
-        (x) => {
-          x[field] = "a".repeat(201);
-        },
-      ],
-      [
-        `invalid ${field}`,
-        (x) => {
-          x[field] = "store with space";
-        },
-      ],
+      [`empty ${field}`, setField(field, "")],
+      [`oversize ${field}`, setField(field, "a".repeat(201))],
+      [`invalid ${field}`, setField(field, "store with space")],
     ]),
   ]);
   assert.equal(
