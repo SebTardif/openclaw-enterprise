@@ -74,6 +74,8 @@ export function bindPlatformUnitOfWork(
       "lockAgent",
       "updateConfiguration",
       "compareAndSetActiveRevision",
+      "compareAndClearActiveRevision",
+      "transitionAgentDesiredRuntimeState",
     ]),
     revisions: bindRepository(repositories.revisions, lifetime, [
       "findRevision",
