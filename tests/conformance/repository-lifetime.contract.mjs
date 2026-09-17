@@ -138,6 +138,78 @@ export async function verifyOwnerSettlement(t, store, method, effect) {
  * IAM callback contract only; it does not implement entitlement or policy fences.
  */
 export async function verifyAuthorityParticipants(t, store, foreignStore) {
+  await t.test(
+    "Agent stop methods respect participant closure while accepted work drains",
+    async () => {
+      const owner = await seedAuthority(store);
+      const args = [owner.namespace.id, owner.agent.id];
+      await store.transact(async (unit) => {
+        await unit.agents.transitionAgentDesiredRuntimeState(...args, "stopped", "running");
+        await unit.agents.compareAndSetActiveRevision(...args, undefined, owner.revision.id);
+      });
+      const drainGate = deferred();
+      const escapeGate = deferred();
+      let escaped;
+      let finished;
+      let retained;
+      const transaction = store.transact(async (unit) => {
+        retained = unit;
+        // This original participant stays live after the outer callback settles.
+        store.runAuthorityParticipantIn(unit, async () => {
+          await drainGate.promise;
+          const before = await unit.agents.findAgent(...args);
+          assert.equal(before.desiredRuntimeState, "running");
+          assert.equal(before.activeRevisionId, owner.revision.id);
+          const stopped = await unit.agents.transitionAgentDesiredRuntimeState(
+            ...args,
+            "running",
+            "stopped",
+          );
+          assert.equal(stopped.desiredRuntimeState, "stopped");
+          const cleared = await unit.agents.compareAndClearActiveRevision(
+            ...args,
+            owner.revision.id,
+          );
+          assert.equal(cleared.activeRevisionId, undefined);
+          assert.deepEqual(cleared.repositoryAccess, { schemaVersion: 1, repositories: [] });
+        });
+        finished = store.runAuthorityParticipantIn(unit, async () => {
+          // Inheriting a completed participant's async context grants no later stop authority.
+          escaped = (async () => {
+            await escapeGate.promise;
+            await assert.rejects(
+              unit.agents.transitionAgentDesiredRuntimeState(...args, "running", "stopped"),
+              ScopeViolationError,
+            );
+            await assert.rejects(
+              unit.agents.compareAndClearActiveRevision(...args, owner.revision.id),
+              ScopeViolationError,
+            );
+          })();
+        });
+      });
+      try {
+        await nextTurn();
+        await finished;
+        escapeGate.resolve();
+        await escaped;
+      } finally {
+        drainGate.resolve();
+        await transaction;
+      }
+      const saved = await store.read((view) => view.agents.findAgent(...args));
+      assert.equal(saved.desiredRuntimeState, "stopped");
+      assert.equal(saved.activeRevisionId, undefined);
+      await assert.rejects(
+        retained.agents.transitionAgentDesiredRuntimeState(...args, "stopped", "running"),
+        ScopeViolationError,
+      );
+      await assert.rejects(
+        retained.agents.compareAndClearActiveRevision(...args, owner.revision.id),
+        ScopeViolationError,
+      );
+    },
+  );
   await verifyOwnerSettlement(t, store, "transact", (unit, _queue, namespace, invoked) =>
     store.runAuthorityParticipantIn(unit, () => {
       invoked();
