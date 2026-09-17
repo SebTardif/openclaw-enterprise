@@ -63,6 +63,7 @@ export function createDriver({ id, implementation, configuration, getOperationAb
           async activateRevision() {},
           async deactivateRevision() {},
         }),
+    async stopRevision() {},
     async retireRevision() {},
   });
 }

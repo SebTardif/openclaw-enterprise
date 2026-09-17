@@ -347,6 +347,16 @@ test("production embedded and dedicated replacements preserve their active Servi
       assert.equal(received, claim);
       return claim;
     });
+    worker.state.read = async (read) =>
+      read({
+        agents: {
+          findAgent: async () => ({
+            id: agentId,
+            namespaceId,
+            desiredRuntimeState: "running",
+          }),
+        },
+      });
 
     // Preparation must leave each mode's currently serving selector untouched before CAS.
     const observation = await worker.observeRevision(claim, candidate, predecessor, predecessor.id);
@@ -359,6 +369,7 @@ test("production embedded and dedicated replacements preserve their active Servi
       namespaceId,
       servicePrincipalId,
       activeRevisionId: predecessor.id,
+      desiredRuntimeState: "running",
     };
     const retries = [];
     let compareAndSetAttempts = 0;

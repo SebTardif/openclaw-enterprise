@@ -64,7 +64,7 @@ graph TD
   C --> D["Selected Compose runs PostgreSQL, migrate, bootstrap, and driver-lifecycle"]
   D --> E["Selected Compose starts API and worker after lifecycle success"]
   E --> F["Copy bootstrap service-key response to private local file"]
-  F --> G["scripts/occ-api GET /installation proves authenticated access"]
+  F --> G["occ installation get proves authenticated access"]
   G --> T["Operator sends authenticated API provisioning and deploy calls"]
   T --> H["Worker claims durable Namespace and AgentRevision work"]
   H --> I["Docker driver ensures one network per Namespace"]
