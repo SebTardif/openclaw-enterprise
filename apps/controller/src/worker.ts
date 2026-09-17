@@ -1377,8 +1377,7 @@ export class ControllerWorker {
 
       if (resolved.outcome === "success") await queue.complete(claim);
       else if (resolved.outcome === "pending") await queue.defer(claim, { code: resolved.code });
-      else if (resolved.outcome === "permanent" || claim.attemptCount >= this.maxAttempts)
-        await queue.fail(claim, { code: resolved.code });
+      else if (resolved.outcome === "permanent") await queue.fail(claim, { code: resolved.code });
       else await queue.retry(claim, { code: resolved.code });
     }, this.queueOptions);
     if (stoppedCandidate !== undefined) {

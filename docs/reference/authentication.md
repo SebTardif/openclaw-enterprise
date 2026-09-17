@@ -98,10 +98,16 @@ header keep the documented sign-in/sign-out flow.
 
 `POST /api/auth/sign-in/email` runs through Better Auth's HTTP handler, including
 origin, form-CSRF, and sign-in rate-limit checks before password verification.
-The limit is three requests per 10-second window; a fourth request returns
-`429 TOO_MANY_REQUESTS`. The controller uses the server-observed Fastify socket
-address for the internal rate-limit IP header and ignores caller-supplied
-forwarded-IP headers. Better Auth's rate-limit response headers are preserved.
+Each controller instance keeps an in-memory allowance per server-observed peer
+socket address. The limiter admits three attempts, including failed passwords,
+and resets the allowance 10 seconds after the last admitted attempt. Each
+admitted attempt renews that expiry; attempts rejected with `429 TOO_MANY_REQUESTS`
+do not extend it. Better Auth's rate-limit response headers are preserved.
+
+The allowance resets when the controller restarts and is not shared between
+instances. Clients connecting through the same proxy peer can share an allowance.
+The controller derives its internal rate-limit IP header from the Fastify socket
+address and ignores caller-supplied forwarded-IP headers.
 
 ## Session lifecycle
 
@@ -175,8 +181,11 @@ headers and bearer credentials are not authorization evidence.
 | Authentication or IAM dependency unavailable                   | The request fails closed; dependency failures return `503 DEPENDENCY_UNAVAILABLE`. |
 
 Server-error responses from Better Auth's HTTP handler are normalized to
-`503 DEPENDENCY_UNAVAILABLE`; intended client-error statuses, including `429`,
-and response headers are preserved.
+`503 DEPENDENCY_UNAVAILABLE`. Intended client-error statuses, including `429`,
+are preserved in the controller's error envelope. The response contains a
+sanitized message rather than the upstream error body; throttle headers and
+session cookies are preserved, while the controller sets its own content type
+and length.
 
 The optional session-inspection route is not a protected resource operation:
 anonymous inspection returns `200` with `data: null`.

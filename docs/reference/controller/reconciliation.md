@@ -1,6 +1,10 @@
 # Namespace and Agent reconciliation
 
-The [controller worker](../controller.md) reconciles durable Namespace and AgentRevision operations. This reference defines lifecycle transitions, queue ownership, retries, and recovery.
+The [controller worker](../controller.md) reconciles durable Namespace,
+AgentRevision, and Agent stop operations. This reference defines lifecycle
+transitions, queue ownership, retries, and recovery. See
+[Stop and resume](../agents/deployment.md#stop-and-resume) for the Agent stop
+contract.
 
 ## Namespace lifecycle
 
@@ -102,7 +106,7 @@ following states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued: Namespace or AgentRevision operation committed
+    [*] --> queued: Operation committed
     queued --> claimed: Worker acquires claim and lease
     claimed --> claimed: Heartbeat renews lease
     claimed --> succeeded: Effect and lifecycle update commit
@@ -116,16 +120,16 @@ stateDiagram-v2
 - **`queued`:** The operation is durable and awaiting an eligible worker. New
   work becomes available immediately; retries wait until their persisted
   backoff expires. Both development and production workers process Namespace
-  operations and admitted AgentRevisions through the selected bundled or
-  installed Compute Driver. The bundled Kubernetes Driver supports embedded
-  OpenClaw and dedicated Codex in both modes.
+  operations, admitted AgentRevisions, and Agent stop requests through the
+  selected bundled or installed Compute Driver. The bundled Kubernetes Driver
+  supports embedded OpenClaw and dedicated Codex in both modes.
 - **`claimed`:** One worker owns a time-limited claim and increments the attempt
   count. It checks current authorization, calls the appropriate Compute Driver
   method, renews its lease before each effect, and keeps renewing while it runs.
   Consecutive short effects must not starve renewal. Only the current claim
   token can publish lifecycle state, cutover metadata, audit evidence, or completion.
-- **`succeeded`:** The exact Namespace or AgentRevision operation completed
-  successfully. Namespace transitions finalize with their audit; an Agent
+- **`succeeded`:** The exact Namespace, AgentRevision, or Agent stop operation
+  completed successfully. Namespace transitions finalize with their audit; an Agent
   revision publishes its production route, becomes active, then commits its
   activation audit and queue completion together. This terminal record remains
   available for idempotency.
@@ -149,9 +153,10 @@ worker can observe ordinary convergence repeatedly without exhausting its
 failure budget.
 
 Actual dependency failures instead use `retry()`, which also returns work to
-`queued` but retains the consumed attempt. Once `OCC_WORKER_MAX_ATTEMPTS` is
-exhausted, ordinary work becomes `failed_permanent`. Marked production cutover
-work remains claimable at the same configured limit. Pending convergence has
+`queued` but retains the consumed attempt. The queue applies
+`OCC_WORKER_MAX_ATTEMPTS`: exhausted ordinary work becomes `failed_permanent`,
+while marked production cutover work remains claimable at the same configured
+limit, including when recovery encounters another dependency failure. Pending convergence has
 its own limit: `OCC_WORKER_CONVERGENCE_TIMEOUT_MS`, measured from the original
 operation creation time. Exceeding it fails the operation with
 `CONVERGENCE_DEADLINE_EXCEEDED`. See the

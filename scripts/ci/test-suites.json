@@ -241,6 +241,7 @@
           "expectedTests": [
             "Drizzle generates repository schema migrations without redundant regeneration",
             "Agent stop migration rejects pre-existing active runtime state",
+            "Cutover migration preserves populated Agent stop schema and application queue access",
             "Drizzle second migration preserves the applied journal and PostgreSQL schema"
           ]
         },

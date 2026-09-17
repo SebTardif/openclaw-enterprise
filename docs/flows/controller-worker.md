@@ -1,7 +1,7 @@
 ---
 created: 2026-08-28
-updated: 2026-09-08
-last_updated_session: codex/01a07d92-d866-7731-afe5-abab67d8966c
+updated: 2026-09-17
+last_updated_session: authoring-run/30a9820a-936f-4833-98d8-a7eb096d1d74
 ---
 
 # Controller Worker Flow
@@ -220,15 +220,18 @@ state are not deleted.
 
 ### 7. Defer, retry, or stop and hand off the next iteration
 
+`apps/controller/src/worker.ts:ControllerWorker.finalizeRevision`,
 `apps/controller/src/worker.ts:ControllerWorker.finalizeActiveRevision`,
 `packages/occ/src/state/postgres-work-queue.ts:PostgresWorkQueue.defer`,
 `packages/occ/src/state/postgres-work-queue.ts:PostgresWorkQueue.retry`
 
 Pending convergence returns work to the queue with backoff and restores the
-attempt consumed by the claim. Real dependency failures retain that attempt and
-retry within the configured budget. Permanent failures, exhausted attempts, and
-the convergence deadline produce terminal failure for ordinary work. Unresolved
-production cutover remains claimable even after its attempt limit. It must
+attempt consumed by the claim. Revision dependency failures pass through
+`finalizeRevision()` to `PostgresWorkQueue.retry()`, which owns the retry limit:
+it terminalizes exhausted ordinary work but requeues work with unresolved
+cutover metadata, even when recovery encounters another dependency failure at
+the limit. Permanent failures and the convergence deadline also produce terminal
+failure for ordinary work. Unresolved production cutover must
 finish activation or compensate before permanent failure. See the
 [controller reference](../reference/controller.md) for the supported outcomes
 and the [settings reference](../reference/settings/operations.md#controller-worker-environment)
@@ -289,6 +292,8 @@ Unconfirmed compensation stays queued and blocks later same-Agent work.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-17 18:00: Trace the accompanying revision retry repair through queue-owned exhaustion and retained cutover recovery. (authoring-run/30a9820a-936f-4833-98d8-a7eb096d1d74 - 624cbe0271517614ad04bd6289bac8a9c4f1ae57)
 
 - 2026-09-08 07:53: Include optional development activation and retry in the post-commit handoff. (01a07d92-d866-7731-afe5-abab67d8966c - 4d83087229961f3665b923d2581c0b71b988cc9c)
 

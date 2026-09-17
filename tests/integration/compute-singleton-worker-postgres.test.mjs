@@ -927,14 +927,45 @@ test(
       await queue.defer(recovered, { code: "TEST_RESUME_CUTOVER" });
     }
     const activations = [];
+    let dependencyFailed = false;
     await fixture.start({
       ...fixture.compute,
       async preflight() {},
+      async prepareRevision(candidate) {
+        // Recovery can hit an ordinary dependency failure after exhausting the
+        // retry budget; the cutover must requeue without waiting for lease expiry.
+        if (candidate.id === queued.id && !dependencyFailed) {
+          dependencyFailed = true;
+          throw new Error("temporary preparation dependency failure");
+        }
+        return fixture.compute.prepareRevision(candidate);
+      },
       async deactivateRevision() {},
       async activateRevision(candidate) {
         activations.push(candidate.id);
       },
     });
+    const retryEvidence = await waitFor(
+      "the exhausted cutover to record its dependency retry",
+      async () => {
+        const evidence = await fixture.observerPool.query(
+          `SELECT details->>'reasonCode' AS reason
+         FROM occ.audit_events
+         WHERE resource_id = $1 AND action = 'reconcile' AND outcome = 'failure'`,
+          [queued.id],
+        );
+        return evidence.rows.length > 0 ? evidence.rows : undefined;
+      },
+    );
+    assert.deepEqual(retryEvidence, [{ reason: "DEPENDENCY_UNAVAILABLE" }]);
+
+    // The real retry already persisted its transition and evidence. Advance its
+    // randomized backoff so this case measures recovery, not scheduler delay.
+    await fixture.observerPool.query(
+      `UPDATE occ.controller_work SET available_at = clock_timestamp()
+       WHERE idempotency_key = $1 AND state = 'queued'`,
+      [queued.idempotencyKey],
+    );
     for (const candidate of [stale, queued, staleSuccessor, queuedSuccessor]) {
       const completed = await fixture.work(candidate);
       assert.equal(completed.cutover_started_at, null);
@@ -942,6 +973,12 @@ test(
     }
     assert.equal(await fixture.activeRevision(staleOwner), staleSuccessor.id);
     assert.equal(await fixture.activeRevision(queuedOwner), queuedSuccessor.id);
+    const expired = await fixture.observerPool.query(
+      `SELECT count(*)::integer AS count FROM occ.audit_events
+       WHERE resource_id = $1 AND details->>'reasonCode' = 'LEASE_EXPIRED'`,
+      [queued.id],
+    );
+    assert.equal(expired.rows[0].count, 0, "a dependency retry must not require lease expiry");
     for (const [candidate, successor] of [
       [stale, staleSuccessor],
       [queued, queuedSuccessor],
