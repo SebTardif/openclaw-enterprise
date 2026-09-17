@@ -18,7 +18,7 @@ import {
 const answerCases = [
   {
     name: "A plus AAAA selects frozen first A at port 443",
-    answers: publicAnswers,
+    answers: { A: [public4, "140.82.113.3"], AAAA: [public6, "2606:50c0:8001::153"] },
   },
   {
     name: "configured IPv6 loopback server and nondefault port",
@@ -31,8 +31,8 @@ const answerCases = [
     answers: { A: [public4], AAAA: [] },
   },
   {
-    name: "NOERROR empty opposite family selects AAAA",
-    answers: { A: [], AAAA: [public6] },
+    name: "NOERROR empty opposite family selects first AAAA",
+    answers: { A: [], AAAA: [public6, "2606:50c0:8001::153"] },
     expected: { address: public6, family: 6 },
   },
   {
