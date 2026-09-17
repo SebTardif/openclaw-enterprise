@@ -119,3 +119,23 @@ are defined by the [API reference](../api.md).
 Nonempty [repository drafts](../repository-drafts.md) block deployment with
 `REPOSITORY_VERIFICATION_UNAVAILABLE` before revision, queue, or Compute effects.
 Clear the selection to deploy.
+
+## Stop and resume
+
+`POST /namespaces/:namespaceId/agents/:agentId/stop` is bodyless and requires
+exact-Agent `operate`. A `202` response means OCC committed `desiredRuntimeState:
+"stopped"` and queued Agent-scoped work; it does not claim Compute has already
+finished. The worker reauthorizes the original actor, invokes the selected
+Compute Driver's idempotent `stopRevision`, and clears the exact
+`activeRevisionId` only after shutdown succeeds.
+
+Stop terminates inbound routing and execution while retaining the immutable
+revision, Agent credentials, gateway state, and workspace. It neither creates a
+revision nor calls destructive revision retirement. Repeated stop requests
+converge safely, and one Agent's stop does not affect siblings.
+
+Deployment is the resume operation. It admits the next immutable revision and
+sets desired state to `running`; OCC never restarts an old revision by mutating
+it. Revision preparation and maintenance recheck desired state before publication,
+so work that overlaps a stop shuts down its candidate instead of resurrecting the
+Agent.
