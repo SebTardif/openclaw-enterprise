@@ -19,13 +19,15 @@ import type {
 import type { CredentialInventoryTransactionV1 } from "../../src/credential-inventory-v1/ports.ts";
 import type { PostgresQueryClient } from "../../src/state/postgres-work-queue.ts";
 
-// These named receiving checkpoints compile original declared operands. They do
-// not supply downstream admission, accepting inventory or retention bodies.
-export function actualProducer(producer: PostgresPlatformState): OriginalCredentialStateBinderV1 {
+// Compile the original State contracts at admission, retention and inventory boundaries.
+// These fixtures provide no runtime implementations.
+export function originalStateBinder(
+  producer: PostgresPlatformState,
+): OriginalCredentialStateBinderV1 {
   return producer;
 }
 
-export function crd03AdmissionReceivingOperand<T>(
+export function admissionParticipant<T>(
   originalState: Pick<OriginalCredentialStateBinderV1, "bindCredentialUnitIn">,
   uow: PlatformUnitOfWork,
   consume: (unit: OriginalCredentialUnitV1) => Promise<T>,
@@ -36,7 +38,7 @@ export function crd03AdmissionReceivingOperand<T>(
   return unit.run(() => consume(unit));
 }
 
-export function crd04RetentionReceivingOperand(
+export function retentionTransaction(
   originalState: OriginalCredentialStateBinderV1,
   uow: PlatformUnitOfWork,
   issuance: IssuanceStateDependencies,
@@ -45,7 +47,7 @@ export function crd04RetentionReceivingOperand(
   return issuance.bindTransaction(unit.uow);
 }
 
-export function crd41InventoryReceivingOperand(
+export function inventoryParticipant(
   unit: OriginalCredentialUnitV1,
   repository: CredentialInventoryTransactionV1,
 ): ReturnType<CredentialInventoryTransactionV1["liveCounts"]> {

@@ -70,16 +70,13 @@ test(
             original = uow;
             unit = state.bindCredentialUnitIn(uow);
             assert.equal(state.bindCredentialUnitIn(uow), unit);
-            let synchronous = false;
             await unit.run(async () => {
-              synchronous = true;
               const written = await unit.query(insert, parameters(value));
               assert.equal(written.rowCount, 1);
               assert.equal(written.rows[0].id, value.id);
               await assert.rejects(state.recognizeCredentialCommit(unit), ScopeViolationError);
               assert.equal(await find(value.id), undefined);
             });
-            assert.equal(synchronous, true);
             await assert.rejects(state.recognizeCredentialCommit(unit), ScopeViolationError);
           });
           assert.equal((await find(value.id)).id, value.id);
