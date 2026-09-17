@@ -13,6 +13,12 @@ execution belongs in [flow docs](../docs/README.md#understand-the-code), and sta
 procedures belong in [quickstart](../docs/guides/quickstart.md) and
 [deployment](../docs/guides/deploy.md).
 
+## Proposed extensions
+
+- [Backend recipes and external brokers](backend-recipes/README.md): declarative
+  third-party provider contracts, private implementation boundaries, shared
+  credentials and authenticated external execution.
+
 ## Lifecycle
 
 New implementation specifications identify the current reference pages they will
