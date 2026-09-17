@@ -401,6 +401,12 @@ const failed = () => ({
   reason: "provider-outcome-unknown",
   nextAction: "retain-original-and-readback",
 });
+const effectRecord = (result) => ({
+  status: "effect-record",
+  original: reserve(),
+  result,
+  provenance: evidence("readback"),
+});
 const examples = () => ({
   target: target(),
   plan: plan(),
@@ -484,24 +490,7 @@ test("all eighteen exported Job schemas accept selected DATA and reject missing 
       name,
       failed(),
     ]),
-    [
-      "readResult",
-      {
-        status: "effect-record",
-        original: reserve(),
-        result: acknowledged(),
-        provenance: evidence("readback"),
-      },
-    ],
-    [
-      "readResult",
-      {
-        status: "effect-record",
-        original: reserve(),
-        result: failed(),
-        provenance: evidence("readback"),
-      },
-    ],
+    ...[acknowledged(), failed()].map((result) => ["readResult", effectRecord(result)]),
   ];
   for (const [name, value] of alternatives) {
     const schema = job.PreparationJobSchemasV1[name];
@@ -761,24 +750,8 @@ test("all closed failure arms retain original effect and prohibit replay or posi
   reject(job.PreparationJobMutationResultSchemaV1, acknowledged(), [
     ["ACK cannot prove stop", ["physicalOutcome"], "stopped"],
   ]);
-  assert.equal(
-    Check(job.PreparationJobReadResultSchemaV1, {
-      status: "effect-record",
-      original: reserve(),
-      result: acknowledged(),
-      provenance: evidence("readback"),
-    }),
-    true,
-  );
-  assert.equal(
-    Check(job.PreparationJobReadResultSchemaV1, {
-      status: "effect-record",
-      original: reserve(),
-      result: failed(),
-      provenance: evidence("readback"),
-    }),
-    true,
-  );
+  for (const result of [acknowledged(), failed()])
+    assert.equal(Check(job.PreparationJobReadResultSchemaV1, effectRecord(result)), true);
 });
 
 test("published finite ceilings and CI enrollment preserve the selected boundary", () => {
@@ -1196,14 +1169,15 @@ function compileNegatives(directory) {
 // These temporary projects exercise exports used by real workspace owners. Their
 // declared ports supply type proof only; no fake admission/receipt producer runs.
 test("strict real-package producers and OCC/Controller consumers preserve all signatures and original receipt identity", async () => {
-  for (const name of [
+  const moduleNames = [
     "preparation-job-v1",
     "repository-preparation-v1",
     "runtime-authority-v1",
     "runtime-effects-v1",
     "completed-state-v1",
     "credential-authority-v1",
-  ]) {
+  ];
+  for (const name of moduleNames) {
     const specifier = `@openclaw-enterprise/contracts/${name}`;
     const expected = realpathSync(join(root, "packages/contracts/src", `${name}.ts`));
     for (const owner of [contracts, occ, controller])
@@ -1224,14 +1198,7 @@ test("strict real-package producers and OCC/Controller consumers preserve all si
     compileNegatives(consumer);
     const emittedRoot = join(producer, "output");
     const emittedContracts = join(emittedRoot, "packages/contracts");
-    for (const name of [
-      "preparation-job-v1",
-      "repository-preparation-v1",
-      "runtime-authority-v1",
-      "runtime-effects-v1",
-      "completed-state-v1",
-      "credential-authority-v1",
-    ]) {
+    for (const name of moduleNames) {
       assert.ok(readFileSync(join(emittedContracts, "src", `${name}.d.ts`), "utf8").length > 0);
       assert.ok(readFileSync(join(emittedContracts, "src", `${name}.js`), "utf8").length > 0);
     }
@@ -1281,18 +1248,11 @@ test("strict real-package producers and OCC/Controller consumers preserve all si
       rewriteRelativeImportExtensions: false,
       listFiles: true,
     });
-    assert.ok(
-      listed.output.includes(join(emittedContracts, "src/preparation-job-v1.d.ts")),
-      listed.output,
-    );
-    assert.ok(
-      listed.output.includes(join(emittedContracts, "src/repository-preparation-v1.d.ts")),
-      listed.output,
-    );
-    assert.ok(
-      listed.output.includes(join(emittedContracts, "src/runtime-authority-v1.d.ts")),
-      listed.output,
-    );
+    for (const name of ["preparation-job-v1", "repository-preparation-v1", "runtime-authority-v1"])
+      assert.ok(
+        listed.output.includes(join(emittedContracts, "src", `${name}.d.ts`)),
+        listed.output,
+      );
     assert.doesNotMatch(
       listed.output,
       new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}packages/contracts/src/.*\\.ts`),
