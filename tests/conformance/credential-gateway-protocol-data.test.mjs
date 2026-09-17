@@ -165,53 +165,27 @@ test("154-byte canonical PR vector and stable creation identity across request/c
   assert.deepEqual(makePr(repository(), reversed), result);
 });
 
-const resourceMutations = [
-  (r) => {
-    r.appId = "8";
-  },
-  (r) => {
-    r.installationId = "10";
-  },
-  (r) => {
-    r.repositoryId = "43";
-  },
-  (r) => {
-    r.canonicalOwner = "Other";
-    r.repository.canonicalPathSegments[0] = "Other";
-  },
-  (r) => {
-    r.canonicalName = "Other";
-    r.repository.canonicalPathSegments[1] = "Other";
-  },
-  (r) => {
-    r.bindingGeneration = "2";
-  },
-  (r) => {
-    r.repository.upstreamInstanceId = "github-2";
-  },
-  (r) => {
-    r.repository.canonicalResourceId = "opaque-other";
-  },
-  (r) => {
-    r.repository.resourceSchema.namespace = "other";
-  },
-  (r) => {
-    r.repository.resourceSchema.name = "other";
-  },
-  (r) => {
-    r.repository.resourceSchema.version = 2;
-  },
-  (r) => {
-    r.repository.resourceSchema.digest = "b".repeat(64);
-  },
+const repositoryChanges = [
+  { appId: "8" },
+  { installationId: "10" },
+  { repositoryId: "43" },
+  { canonicalOwner: "Other", "repository.canonicalPathSegments.0": "Other" },
+  { canonicalName: "Other", "repository.canonicalPathSegments.1": "Other" },
+  { bindingGeneration: "2" },
+  { "repository.upstreamInstanceId": "github-2" },
+  { "repository.canonicalResourceId": "opaque-other" },
+  { "repository.resourceSchema.namespace": "other" },
+  { "repository.resourceSchema.name": "other" },
+  { "repository.resourceSchema.version": 2 },
+  { "repository.resourceSchema.digest": "b".repeat(64) },
 ];
 
 test("every adopted repository and schema field participates in original request facts", () => {
   const initialFetch = makeFetch();
   const initialPr = makePr();
-  for (const mutate of resourceMutations) {
+  for (const changes of repositoryChanges) {
     const r = repository();
-    mutate(r);
+    for (const [path, value] of Object.entries(changes)) setPath(r, path.split("."), value);
     const f = makeFetch(r);
     const p = makePr(r);
     assert.ok(f);
