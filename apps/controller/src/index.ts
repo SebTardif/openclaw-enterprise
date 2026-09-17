@@ -470,6 +470,7 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     ...(agent.plugins === undefined ? {} : { plugins: agent.plugins }),
     ...(agent.serviceAccountId === undefined ? {} : { serviceAccountId: agent.serviceAccountId }),
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
+    desiredRuntimeState: agent.desiredRuntimeState,
     createdAt: agent.createdAt,
   };
 }
@@ -1809,6 +1810,28 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           await rejectedMutation(operation, request, context, "NAMESPACE_NOT_READY");
         throw error;
       }
+    }
+
+    if (operation.operationId === "stopAgent") {
+      const stopped = await controller.transact(async (unit) => {
+        const agent = await controller!.stopAgent(context.actorId, namespaceId, agentId);
+        try {
+          await unit.audit.append(
+            event(
+              operation,
+              request,
+              { kind: "agent", id: agentId, namespaceId },
+              "mutation",
+              context,
+            ),
+          );
+        } catch {
+          throw dependencyUnavailable();
+        }
+        return clientAgent(agent);
+      });
+      reply.status(202).send({ data: stopped, meta: { requestId: request.id } });
+      return;
     }
 
     if (
