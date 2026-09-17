@@ -1,0 +1,19 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "rootDir": "../../..",
+    "types": ["node"]
+  },
+  "files": [
+    "producer.ts",
+    "negative-vectors.ts",
+    "../../../packages/occ/src/root-work-v1/selected-iam.ts",
+    "../../../packages/occ/src/credential-gateway-v1/schema.ts"
+  ]
+}

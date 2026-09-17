@@ -322,6 +322,8 @@ export class OriginalRegisteredGrantProjectionPeer implements OriginalGrantOpera
 }
 
 export function fixture(effect = "resource", options = {}) {
+  // Controlled GHA peer DATA only; production schemas and projection are unchanged.
+  const canonicalResource = options.canonicalResource ?? "github:repo";
   let time = 1000;
   const controller = new AbortController();
   const durationPolicy = {
@@ -361,7 +363,7 @@ export function fixture(effect = "resource", options = {}) {
     servicePolicyId: "service-policy",
     servicePolicyVersion: "service-policy-1",
     policyVersion: "policy-1",
-    scopeCeiling: [{ action: "github.read", canonicalResource: "github:repo" }],
+    scopeCeiling: [{ action: "github.read", canonicalResource }],
     eligibleDataDomains: ["source"],
     audienceRefs: ["github"],
     aggregateLimits: [{ name: "calls", maximum: 10 }],
@@ -369,7 +371,9 @@ export function fixture(effect = "resource", options = {}) {
     cancellation,
     immutableCeilingDigest: "a".repeat(64),
   };
-  const { registry, operationCodec, profileCodec, ...schemaData } = schemaTemplate();
+  const { registry, operationCodec, profileCodec, ...schemaData } = schemaTemplate(
+    options.canonicalResource,
+  );
   const { definition, schema, resourceSchema, profile, operationValue } =
     structuredClone(schemaData);
   const grantOperations = new OriginalRegisteredGrantProjectionPeer(
@@ -448,7 +452,7 @@ export function fixture(effect = "resource", options = {}) {
           callerServiceId: "broker",
           serviceId: "github",
           audienceRef: "github",
-          iam: { action: "github.read", canonicalResource: "github:repo" },
+          iam: { action: "github.read", canonicalResource },
           receiver: { kind: effect, receiverId: "receiver", incarnation: "incarnation-1" },
           ...(effect === "credential" ? { operation: "acquire" } : {}),
           ...(effect === "pr-create"
@@ -599,7 +603,7 @@ export function fixture(effect = "resource", options = {}) {
           serviceId: "github",
           audienceRef: "github",
           exactAction: "github.read",
-          canonicalResource: "github:repo",
+          canonicalResource,
           eligibleDataDomains: ["source"],
           requiredDataDomains: ["source"],
           aggregateCharges: [{ name: "calls", amount: 1 }],
@@ -665,8 +669,8 @@ export function fixture(effect = "resource", options = {}) {
 }
 
 let template;
-function schemaTemplate() {
-  if (template) return template;
+function schemaTemplate(canonicalResource?: string) {
+  if (canonicalResource === undefined && template) return template;
   const definition = {
     backendId: "github",
     recipeId: "github-read",
@@ -697,12 +701,15 @@ function schemaTemplate() {
         type: "object",
         properties: {
           action: { type: "string", maxLength: 256 },
-          canonicalResource: { type: "string", maxLength: 256 },
+          canonicalResource: {
+            type: "string",
+            maxLength: canonicalResource === undefined ? 256 : 4096,
+          },
         },
         required: ["action", "canonicalResource"],
         additionalProperties: false,
       },
-      { action: "github.read", canonicalResource: "github:repo" },
+      { action: "github.read", canonicalResource: canonicalResource ?? "github:repo" },
     ],
     [
       "credential-profile",
@@ -727,7 +734,7 @@ function schemaTemplate() {
       { canonicalResourceId: "owner/repo" },
     ],
   ]) {
-    const maxBytes = 1024,
+    const maxBytes = canonicalResource === undefined || role !== "operation" ? 1024 : 16384,
       maxDepth = 8,
       canonicalization = primitives.canonicalization;
     const digest =
@@ -762,7 +769,7 @@ function schemaTemplate() {
     registrations[1].codec.validate(registrations[1].value),
   );
   registrations[2].codec.retain(registrations[2].codec.validate(registrations[2].value));
-  template = {
+  const result = {
     registry,
     operationCodec: registrations[0].codec,
     profileCodec: registrations[1].codec,
@@ -772,5 +779,6 @@ function schemaTemplate() {
     profile: { schema: registrations[1].schema, selection, selectionDigest: selection.digest },
     operationValue,
   };
-  return template;
+  if (canonicalResource === undefined) template = result;
+  return result;
 }

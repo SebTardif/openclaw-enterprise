@@ -983,3 +983,102 @@ test("preparation detaches DATA before waits and requires separately enrolled re
   );
   await denyPrepared(wrongOwner, evidence);
 });
+
+// A valid original registered operation must reach the actual IAM projection guard.
+test("257-byte matching canonical resource retains original custody and admits", async () => {
+  for (const effect of ["credential", "resource", "pr-create"]) {
+    const canonicalResource = "r".repeat(257);
+    const f = fixture(effect, { canonicalResource });
+    assert.equal(Buffer.byteLength(canonicalResource, "utf8"), 257);
+    assert.equal(
+      JSON.parse(f.state.snapshot.entitlement.grant.operations.canonicalJson).canonicalResource,
+      canonicalResource,
+    );
+    await admission(f);
+    assert.equal(f.grantOperations.calls, 2);
+  }
+});
+
+test("canonical resource has its own byte bound while identifiers and aggregate remain bounded", async (t) => {
+  const vectors = [
+    ["ascii4096", "canonicalResource", "r".repeat(4096), true],
+    ["ascii4097", "canonicalResource", "r".repeat(4097), false],
+    ["utf84096", "canonicalResource", "é".repeat(2048), true],
+    ["utf84097", "canonicalResource", "é".repeat(2048) + "a", false],
+    ["empty", "canonicalResource", "", false],
+    ["wrongType", "canonicalResource", 7, false],
+  ];
+  for (const field of ["serviceId", "exactAction", "profileSelectionDigest"])
+    for (const length of [256, 257])
+      vectors.push([field + length, field, "i".repeat(length), length === 256]);
+  for (const [name, field, value, allowed] of vectors)
+    for (const phase of ["prepare", "consume"])
+      await t.test(name + ":" + phase, async () => {
+        const f = fixture();
+        const original = f.grantOperations.projectRegisteredGrant.bind(f.grantOperations);
+        let enabled = phase === "prepare";
+        f.owner = createNativeRootIamAdmissionV1({
+          ...f.dependencies,
+          grantOperations: {
+            projectRegisteredGrant(grant) {
+              const p = original(grant);
+              // Keep the real matching tuple small so the whole-facts envelope fits.
+              if (enabled)
+                p.permitted.push({ ...p.permitted[0], exactAction: "nonmatching", [field]: value });
+              return p;
+            },
+          },
+        });
+        if (phase === "prepare") {
+          if (allowed) await admission(f);
+          else await assert.rejects(f.owner.prepare(f.binding, 60000));
+        } else {
+          const evidence = await f.owner.prepare(f.binding, 60000);
+          enabled = true;
+          // Even individually valid changed projections invalidate prepared evidence.
+          await denyPrepared(f, evidence);
+        }
+      });
+  const aggregate = fixture();
+  const original = aggregate.grantOperations.projectRegisteredGrant.bind(aggregate.grantOperations);
+  aggregate.owner = createNativeRootIamAdmissionV1({
+    ...aggregate.dependencies,
+    grantOperations: {
+      projectRegisteredGrant(grant) {
+        const p = original(grant);
+        p.permitted.push(
+          ...Array.from({ length: 20 }, () => ({
+            ...p.permitted[0],
+            exactAction: "nonmatching",
+            canonicalResource: "r".repeat(4096),
+          })),
+        );
+        return p;
+      },
+    },
+  });
+  await assert.rejects(aggregate.owner.prepare(aggregate.binding, 60000));
+});
+
+test("matching UTF-8 and escaped resource strings survive original retain and restore", async () => {
+  for (const canonicalResource of [
+    "é".repeat(129),
+    JSON.stringify(["github", "upstream\\instance", "repository", "git", 'Nested/É\"opaque']) +
+      "r".repeat(220),
+  ]) {
+    const f = fixture("resource", { canonicalResource });
+    const retained = f.state.snapshot.entitlement.grant.operations;
+    const restored = f.grantOperations.operationCodec.retain(
+      f.grantOperations.operationCodec.restore(retained),
+    );
+    assert.equal(restored.canonicalJson, retained.canonicalJson);
+    assert.equal(restored.digest, retained.digest);
+    f.grantOperations.registry.assertCodec(f.grantOperations.operationCodec, {
+      definition: retained.definition,
+      role: retained.role,
+      schema: retained.schema,
+    });
+    assert.equal(JSON.parse(retained.canonicalJson).canonicalResource, canonicalResource);
+    await admission(f);
+  }
+});

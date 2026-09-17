@@ -30,8 +30,9 @@ Projection runs during preparation and again after the original consume fence
 and effect read. The full checked projection participates in the retained facts
 comparison. Core, original request bounds, abort and every applicable deadline
 are rechecked after projection and every wait. Output must be inert finite JSON
-within 64 KiB and depth 32, with 1–256 complete tuples and nonempty tuple strings
-of at most 256 UTF-8 bytes. Missing, asynchronous, malformed, hostile or refused
+within 64 KiB and depth 32, with 1–256 complete tuples. `canonicalResource` is
+a nonempty string of at most 4096 UTF-8 bytes and UTF-16 code units; the other
+tuple strings retain their 256-byte and 256-code-unit limits. Missing, asynchronous, malformed, hostile or refused
 projection denies; no default or predicate fallback exists.
 
 The original Work recognizer authenticates Core custody and returns the complete
@@ -96,3 +97,13 @@ permission or live-provider qualification. Projection types remain internal.
 A denial requires fresh original evidence and current authorized facts. Never retry
 an uncertain commit by recreating a handle. These checks do not establish installed
 Kubernetes/gVisor, live GitHub execution or release readiness.
+
+## Canonical resource bounds
+
+Original projected tuples require a nonempty string `canonicalResource` of at
+most 4096 UTF-8 bytes and 4096 UTF-16 code units. `serviceId`, `exactAction` and
+`profileSelectionDigest` retain their 256-byte and 256-code-unit limits. Exact
+resource equality, the 256-tuple cap and the 65536-byte canonical snapshot with
+depth 32 and its existing node cap remain enforced. Individually valid tuples
+can still exceed that aggregate envelope. Resource encoding retains complete
+opaque IDs; see [resource correspondence](backend-recipe-operations.md#resource-correspondence).

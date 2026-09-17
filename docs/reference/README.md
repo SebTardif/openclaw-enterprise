@@ -80,3 +80,5 @@ Change a reference in the same PR that changes its supported behavior. Keep
 proposal rationale, implementation tasks, and historical alternatives in
 [top-level implementation specs](../../specs/README.md); keep runtime traces in
 `docs/flows/`. Reference pages use stable feature names rather than milestone numbers.
+
+See [backend recipe operation declarations](backend-recipe-operations.md) for the supported registration and consumer contract.

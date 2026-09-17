@@ -25,6 +25,14 @@ function finite(value: number): boolean {
 function text(value: string): boolean {
   return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
+function canonicalResourceText(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 4096 &&
+    Buffer.byteLength(value, "utf8") <= 4096
+  );
+}
 function key(value: unknown): string {
   return snapshotCanonicalJsonV1(value, { maxBytes: 65536, maxDepth: 32 }).canonicalJson;
 }
@@ -596,12 +604,10 @@ export function createNativeRootIamAdmissionV1(
                 "profileSelectionDigest",
                 "serviceId",
               ]) &&
-              [
-                tuple.serviceId,
-                tuple.exactAction,
-                tuple.canonicalResource,
-                tuple.profileSelectionDigest,
-              ].every((value) => text(value) && Buffer.byteLength(value, "utf8") <= 256),
+              [tuple.serviceId, tuple.exactAction, tuple.profileSelectionDigest].every(
+                (value) => text(value) && Buffer.byteLength(value, "utf8") <= 256,
+              ) &&
+              canonicalResourceText(tuple.canonicalResource),
           ) &&
           projection.permitted.some(
             (tuple) =>

@@ -51,6 +51,7 @@
     "test:files": "node scripts/test-files.mjs"
   },
   "devDependencies": {
+    "@openclaw-enterprise/occ": "workspace:*",
     "@types/node": "26.5.0",
     "@types/pg": "8.23.1",
     "drizzle-kit": "0.31.10",
