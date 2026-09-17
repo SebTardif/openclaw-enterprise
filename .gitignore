@@ -5,6 +5,8 @@
 
 # Dependency trees and generated artifacts remain machine-local at every depth.
 node_modules/
+/bin/occ
+target/
 dist/
 coverage/
 *.log
@@ -24,6 +26,8 @@ output/playwright/
 !.agents/skills/deslop/
 !.agents/skills/enterprise-testing/
 !.agents/skills/mermaid-diagrams/
+!.agents/skills/local-dev/
+!.agents/skills/technical-writing/
 !.agents/skills/LICENSE.openclaw
 __pycache__/
 *.pyc

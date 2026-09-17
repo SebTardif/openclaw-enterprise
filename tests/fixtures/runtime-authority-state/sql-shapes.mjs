@@ -6,7 +6,7 @@ import { RuntimeAuthoritySchemasV1 } from "../../../packages/contracts/src/runti
 // PostgreSQL independently executes the validator in the limited-role integration suite.
 export async function verifySqlShapes() {
   const sql = await readFile(
-    new URL("../../../migrations/0017_runtime_authority.sql", import.meta.url),
+    new URL("../../../migrations/0018_runtime_authority.sql", import.meta.url),
     "utf8",
   );
   for (const [name, schema] of [
