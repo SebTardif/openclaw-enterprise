@@ -377,20 +377,21 @@ export function resultDataContract(
     },
   ];
   const observedPr: GitHubExchangeOutcomeV1 = { kind: "pr-created", status: 201, pullRequest };
+  const report: Extract<GitHubExchangeOutcomeV1, { kind: "push-report" }> = {
+    kind: "push-report",
+    status: 200,
+    unpack: "unknown",
+    refs: [ref],
+    upload,
+    reportComplete: false,
+  };
   const outcomes: readonly GitHubExchangeOutcomeV1[] = [
     { kind: "not-submitted", ...beforeSend },
     { kind: "local-probe" },
     { kind: "read-complete", status: 200, responseBytes: 1 },
     { kind: "provider-rejected", status: 500 },
     observedPr,
-    {
-      kind: "push-report",
-      status: 200,
-      unpack: "unknown",
-      refs: [ref],
-      upload,
-      reportComplete: false,
-    },
+    report,
     { kind: "unknown", stage: "submission" },
     { kind: "unknown", stage: "upload", upload },
     { kind: "unknown", stage: "response", refs: [ref] },
@@ -498,14 +499,6 @@ export function resultDataContract(
   upload.coverage = "complete";
   // @ts-expect-error Report fields are readonly.
   ref.reportedForcedUpdate = true;
-  const report: Extract<GitHubExchangeOutcomeV1, { kind: "push-report" }> = {
-    kind: "push-report",
-    status: 200,
-    unpack: "unknown",
-    refs: [ref],
-    upload,
-    reportComplete: false,
-  };
   // @ts-expect-error Reports retain readonly arrays.
   report.refs.push(minimalRef);
   // @ts-expect-error HTTP result envelopes are readonly.
