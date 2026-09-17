@@ -30,6 +30,10 @@ Read [current architecture](ARCHITECTURE.md) for implemented components and
 ownership. The [platform design](design.md) describes the authoritative target,
 including capabilities that have not shipped.
 
+The [GitHub access RFC series](../specs/github-access/README.md) proposes managed
+GitHub credentials, workload identity, Work authority, and runtime lifecycle.
+Its staged acceptance criteria distinguish design agreement from shipped behavior.
+
 ## Understand the code
 
 Start with [Docker or Podman Compose development](flows/docker-compose-development.md),

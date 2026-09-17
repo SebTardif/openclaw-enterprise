@@ -40,6 +40,10 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+The [GitHub access RFC series](github-access/README.md) proposes credentials,
+identity, Work authority, and runtime lifecycle contracts. Implementation and
+release acceptance follow its separate delivery stages.
+
 [Gateway–Harness storage split](28-gateway-harness-storage-split.md) — Proposed;
 #76/#89 draft covering storage ownership, live edits and first-start files.
 

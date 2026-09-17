@@ -24,6 +24,11 @@ sources accessed through one common Driver abstraction.
 The bundled platform deployment uses Kubernetes. An Installation can select its
 bundled or an installed Driver implementation in development and production.
 
+The [GitHub access, identity, Work, and lifecycle proposals](../specs/github-access/README.md)
+extend these primitives with mediated GitHub credentials and their execution
+boundaries. Their proposal status and staged acceptance criteria do not establish
+current feature availability.
+
 ## Motivation
 
 The existing OpenClaw gateway serves a single tenant. Operating agents for an
