@@ -230,10 +230,9 @@ declare const admission: Readonly<RuntimeSessionAdmissionV1>;
 function originalProducerImportFixture(nativeState: NativeIAMStateStore): void {
   const nativeIam = new NativeIAMDriver(nativeState);
   // @ts-expect-error An IAM Driver alone cannot authenticate whole-session authority.
-  const iamAsAuthority: RuntimeSessionAuthorityOwnerV1 = nativeIam;
+  nativeIam satisfies RuntimeSessionAuthorityOwnerV1;
   // @ts-expect-error Generic IAM does not provide retained whole-session entitlement.
-  const iamAsPolicy: RuntimeSessionEntitlementOwnerV1 = nativeIam;
-  void [iamAsAuthority, iamAsPolicy];
+  nativeIam satisfies RuntimeSessionEntitlementOwnerV1;
 }
 
 // Construct declared producer outputs using original nominal operands. This
@@ -308,33 +307,32 @@ async function downstreamConsumerImportFixture(): Promise<void> {
       }),
   );
   if (result === undefined) return;
-  const planned = await downstreamRuntimeConsumer.prepareAttachment({
+  await downstreamRuntimeConsumer.prepareAttachment({
     projection: result.projection,
     receiver,
     bounds,
   });
-  void planned;
 }
 
 // Known DATA and every other nominal family fail independently of missing fields.
 // @ts-expect-error Decoded ROOT DATA cannot mint a registered session authority.
-const rootAsAuthority: RuntimeSessionAuthorityV1 = root;
+root satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error Even a complete policy record remains DATA rather than authority.
-const policyAsAuthority: RuntimeSessionAuthorityV1 = entitlement;
+entitlement satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error Complete authenticated admission output is not its owner's handle.
-const admissionAsAuthority: RuntimeSessionAuthorityV1 = admission;
+admission satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error A Core grant handle has a distinct kind from session authority.
-const coreAsAuthority: RuntimeSessionAuthorityV1 = authentication;
+authentication satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error Projection custody is distinct from original Work/Core authority.
-const projectionAsAuthority: RuntimeSessionAuthorityV1 = projection;
+projection satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error An attachment represents cleanup, not authority for another session.
-const attachmentAsAuthority: RuntimeSessionAuthorityV1 = attachment;
+attachment satisfies RuntimeSessionAuthorityV1;
 // @ts-expect-error Original generic Core custody cannot be recreated by a session handle.
-const authorityAsCore: CoreAuthenticationBinding = authority;
+authority satisfies CoreAuthenticationBinding;
 // @ts-expect-error Runtime projection uses its original contracts registry/brand.
-const authorityAsProjection: RuntimeAuthenticationProjectionV1 = authority;
+authority satisfies RuntimeAuthenticationProjectionV1;
 // @ts-expect-error The original effect union has no runtime-session arm.
-const authorityAsRepositoryEffect: AuthorityBinding = admission;
+admission satisfies AuthorityBinding;
 // @ts-expect-error The existing Work effect checker cannot consume a session handle.
 originalWorkAdmission.checkIn(uow, authority);
 // @ts-expect-error The existing selected-IAM effect bridge cannot reinterpret session authority.
@@ -371,31 +369,31 @@ const { connectionGeneration: omittedGeneration, ...noGeneration } = {
 originalSelectedIamPolicyProducer.currentIn(uow, noGeneration);
 const { profile: omittedProfile, ...noProfile } = admission;
 // @ts-expect-error The original immutable profile cannot be omitted from admission output.
-const missingProfile: RuntimeSessionAdmissionV1 = noProfile;
+noProfile satisfies RuntimeSessionAdmissionV1;
 const { inputDigest: omittedDigest, ...noSessionDigest } = admission;
 // @ts-expect-error The original session operation digest is mandatory producer output.
-const missingSessionDigest: RuntimeSessionAdmissionV1 = noSessionDigest;
+noSessionDigest satisfies RuntimeSessionAdmissionV1;
 const { projection: omittedProjection, ...noProjection } = admission;
 // @ts-expect-error Original projection cannot be omitted from the admitted producer output.
-const missingProjection: RuntimeSessionAdmissionV1 = noProjection;
+noProjection satisfies RuntimeSessionAdmissionV1;
 const { policyVersion: omittedPolicyVersion, ...noPolicyVersion } = entitlement;
 // @ts-expect-error Current policy identity/version must be independently retained.
-const missingPolicyVersion: RuntimeSessionEntitlementV1 = noPolicyVersion;
+noPolicyVersion satisfies RuntimeSessionEntitlementV1;
 const { expiresAt: omittedExpiry, ...noExpiry } = entitlement;
 // @ts-expect-error Even uncapped ROOT requires a finite admitted session horizon.
-const missingExpiry: RuntimeSessionEntitlementV1 = noExpiry;
+noExpiry satisfies RuntimeSessionEntitlementV1;
 // @ts-expect-error Repository read permission does not confer whole-session authority.
-const repositoryPermission: RuntimeSessionEntitlementV1["permission"] = "read";
+"read" satisfies RuntimeSessionEntitlementV1["permission"];
 // @ts-expect-error Deployment permission does not confer whole-session authority.
-const deploymentPermission: RuntimeSessionEntitlementV1["permission"] = "deploy";
+"deploy" satisfies RuntimeSessionEntitlementV1["permission"];
 // @ts-expect-error Generic Agent operate does not confer whole-session authority.
-const operatePermission: RuntimeSessionEntitlementV1["permission"] = "operate";
+"operate" satisfies RuntimeSessionEntitlementV1["permission"];
 // @ts-expect-error Per-request mediation is a different policy contract.
-const perRequestPermission: RuntimeSessionEntitlementV1["permission"] = "request";
+"request" satisfies RuntimeSessionEntitlementV1["permission"];
 // @ts-expect-error Unbounded sessions are unsupported independently of ROOT duration.
-const unboundedLifetime: RuntimeSessionEntitlementV1["lifetime"] = "unbounded";
+"unbounded" satisfies RuntimeSessionEntitlementV1["lifetime"];
 // @ts-expect-error Receiver withdrawal cannot replace shared-source revocation.
-const sourceRevocation: RuntimeSessionEntitlementV1["withdrawal"] = "per-credential";
+"per-credential" satisfies RuntimeSessionEntitlementV1["withdrawal"];
 // @ts-expect-error The exact original profile reference is immutable producer output.
 admission.profile = profile;
 // @ts-expect-error Provider references cannot be extended by a consumer.
@@ -407,32 +405,12 @@ void [
   originalProducerImportFixture,
   originalProducerOutputFixture,
   downstreamConsumerImportFixture,
-  rootAsAuthority,
-  policyAsAuthority,
-  admissionAsAuthority,
-  coreAsAuthority,
-  projectionAsAuthority,
-  attachmentAsAuthority,
-  authorityAsCore,
-  authorityAsProjection,
-  authorityAsRepositoryEffect,
   omittedGeneration,
   omittedDigest,
-  missingSessionDigest,
   omittedProfile,
-  missingProfile,
   omittedProjection,
-  missingProjection,
   omittedPolicyVersion,
-  missingPolicyVersion,
   omittedExpiry,
-  missingExpiry,
-  repositoryPermission,
-  deploymentPermission,
-  operatePermission,
-  perRequestPermission,
-  unboundedLifetime,
-  sourceRevocation,
 ];
 export type {
   OriginalOperands,
