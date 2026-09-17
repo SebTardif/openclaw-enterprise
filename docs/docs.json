@@ -82,6 +82,7 @@
                   "reference/root-work",
                   "reference/credential-inventory-v1",
                   "reference/credential-gateway-v1",
+                  "reference/root-work-iam",
                   "reference/runtime-authority/contract",
                   "reference/providers",
                   "reference/github-app-token-issuer",

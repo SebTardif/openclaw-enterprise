@@ -18,6 +18,7 @@
   "dependencies": {
     "@azure/identity": "4.13.1",
     "@openclaw-enterprise/contracts": "workspace:*",
+    "@openclaw-enterprise/iam": "workspace:*",
     "@openclaw-enterprise/utils": "workspace:*",
     "ajv": "8.20.0",
     "drizzle-orm": "0.45.2",

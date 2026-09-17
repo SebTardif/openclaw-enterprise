@@ -2786,3 +2786,5 @@ export type {
   WorkAdmissionOwner,
   SelectedIamAdmissionOwner,
 } from "./root-work-v1/ports.ts";
+
+export { createNativeRootIamAdmissionV1 } from "./root-work-v1/selected-iam.ts";

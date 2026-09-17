@@ -49,6 +49,8 @@ behavioral rules such as cross-resource ownership, lifecycle ordering, and failu
 effects. Contributors updating routes or schemas should follow the
 [API generation checks](../testing/local.md#repository-and-tooling-configuration).
 
+- [Selected native ROOT IAM](root-work-iam.md): bounded effect participant; production owner composition remains pending.
+
 ## Token issuers
 
 - [GitHub App token issuer](github-app-token-issuer.md): single-repository read

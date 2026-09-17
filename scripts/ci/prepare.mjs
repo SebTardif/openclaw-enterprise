@@ -1149,6 +1149,20 @@ async function prepareFile({ lane, file, statePath }) {
   const env = baseEnv(resolvedStatePath, effectiveState);
   const resourceIds = [];
 
+  if (name === "checks-baseline" && relativeFile === "tests/conformance/root-work-iam.test.mjs") {
+    await execFile(
+      process.execPath,
+      [
+        join(repositoryRoot, "node_modules/typescript/bin/tsc"),
+        "--project",
+        "packages/occ/type-tests/root-work-iam/tsconfig.json",
+        "--pretty",
+        "false",
+      ],
+      { cwd: repositoryRoot },
+    );
+  }
+
   if (prepare.postgres) {
     const dbKind = prepare.k3d ? "k8s" : "ci";
     const database = await createAndMigrateDatabase(resolvedStatePath, effectiveState, {

@@ -30,6 +30,9 @@
           "path": "tests/conformance/iam.test.mjs"
         },
         {
+          "path": "tests/conformance/root-work-iam.test.mjs"
+        },
+        {
           "path": "tests/conformance/kubernetes-compute.test.mjs"
         },
         {
