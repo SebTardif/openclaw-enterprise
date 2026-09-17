@@ -1,7 +1,7 @@
 ---
 created: 2026-08-28
-updated: 2026-09-08
-last_updated_session: codex/01a07d92-d866-7731-afe5-abab67d8966c
+updated: 2026-09-17
+last_updated_session: authoring-run/7f41d6fb-cb1f-4f2f-a7ba-57f0139f2285
 ---
 
 # Controller Worker Flow
@@ -10,7 +10,7 @@ last_updated_session: codex/01a07d92-d866-7731-afe5-abab67d8966c
 
 The worker claims PostgreSQL work committed by the HTTP API, rechecks the
 original actor's authorization, invokes Compute, and persists results under its
-live claim. This trace follows Namespace and AgentRevision work through
+live claim. This trace follows Namespace, Agent-stop, and AgentRevision work through
 completion, deferral, retry, or permanent failure. The
 [controller reference](../reference/controller.md) owns the contract and the
 [deployment guide](../guides/deploy.md) owns process setup.
@@ -18,7 +18,7 @@ completion, deferral, retry, or permanent failure. The
 ## Entry Points
 
 - Trigger: Compose or Helm starts `apps/controller/src/worker.mjs`; an
-  authenticated API mutation commits Namespace or AgentRevision work.
+  authenticated API mutation commits Namespace, Agent-stop, or AgentRevision work.
 - Source: `apps/controller/src/worker.mjs:configuration`,
   `apps/controller/src/worker.ts:ControllerWorker.start`, and
   `packages/occ/src/state/postgres-state.ts:operations.append`.
@@ -39,7 +39,7 @@ graph TD
         B --> D
         D --> E["Reload exact resources and current IAM state"]
         E --> F{"Authorized and valid?"}
-        F -->|yes| G["Invoke Compute while renewing the claim lease"]
+        F -->|yes| G["Invoke Compute and configured runtime broker under the claim lease"]
         F -->|no| H["Persist permanent failure under the live claim"]
         G --> I{"Observed result"}
     end
@@ -85,12 +85,13 @@ Compose and Helm run it separately from the API.
 `packages/occ/src/state/postgres-state.ts:operations.append`
 
 The API authenticates and authorizes the caller before invoking controller
-operations such as `createNamespace`, `deleteNamespace`, or `deployAgent`.
+operations such as `createNamespace`, `deleteNamespace`, `deployAgent`, or `stopAgent`.
 `operations.append` verifies exact ownership and calls `PostgresWorkQueue.enqueue`
 within the transaction. State, admission audit, and work commit or roll back together.
 
 The queue freezes actor, Namespace owner, lifecycle target, and exact Agent and
-immutable AgentRevision for revision work. Its idempotency
+immutable AgentRevision for revision work. Stop work has an exact Agent owner and
+`stopped` target without inventing a revision. Its idempotency
 key identifies the operation. Reusing that key with a different actor, owner, or
 target is rejected. The API returns accepted lifecycle state without waiting for
 Compute; the next owner is the independent worker.
@@ -141,17 +142,33 @@ creation. A revision older than the current active revision completes as
 superseded; an already-active revision enters finalization or maintenance rather
 than changing the active pointer again.
 
+Agent-stop work rechecks current exact-Agent `operate`. Superseded desired state
+completes without shutdown; a stopped Agent with no active revision completes
+idempotently.
+
 ### 5. Invoke Compute while renewing the live claim
 
 `apps/controller/src/worker.ts:ControllerWorker.observe`,
 `apps/controller/src/worker.ts:ControllerWorker.observeRevision`,
-`apps/controller/src/worker.ts:ControllerWorker.withClaimHeartbeat`
+`apps/controller/src/worker.ts:ControllerWorker.withClaimHeartbeat`,
+`apps/controller/src/worker.ts:ControllerWorker.closeRevision`
 
 Namespace dispatch calls `ensureNamespace` or `deleteNamespace`. Revision
 dispatch optionally binds the exact Agent, then calls `prepareRevision` with its
 immutable snapshot. The worker validates the returned observation's owner and
 shape before treating it as ready. A pending observation defers convergence;
 an invalid observation fails permanently.
+
+Agent-stop dispatch calls `closeRevision` for the observed exact active revision.
+When a runtime authentication owner is configured, the worker requests withdrawal
+under independent finite bounds, then calls Compute `stopRevision` even if
+withdrawal is unresolved. Both must succeed before stop can complete. Retirement
+uses the same owner cleanup before Compute `retireRevision`, including retries
+that retire earlier revisions. Revision preparation and maintenance recheck
+`desiredRuntimeState`; a candidate that overlaps stop follows the same shutdown
+path instead of activating. See the
+[broker-owned runtime authentication contract](../reference/drivers/openshell-sandbox.md#broker-owned-runtime-authentication)
+for retained cleanup obligations and the current production-composition limit.
 
 `withClaimHeartbeat()` renews the claim before starting each effect and then
 roughly every third of its lease duration while the effect runs. The initial
@@ -192,6 +209,13 @@ revision and claim, appends activation evidence, and completes work in a second
 transaction. This deliberately does not claim that infrastructure effects and
 database state are one atomic transaction. Interrupted finalization is retried;
 the already-active branch finishes activation and retirement safely.
+
+Stop finalization rechecks the live claim and clears `activeRevisionId` only when
+it still equals the revision Compute stopped and configured broker withdrawal
+is confirmed. Pending or unknown withdrawal retains the pointer and retries within
+the existing failure budget, even after workload deletion. Success appends lifecycle-stop
+evidence and completes the same work item. Revision rows and persistent runtime
+state are not deleted.
 
 ### 7. Defer, retry, or stop and hand off the next iteration
 
@@ -258,6 +282,8 @@ aborts in-flight work, waits for the loop, closes PostgreSQL, and emits
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-17 07:28: Document broker withdrawal across Agent stop and retirement in the accompanying supplier merge. (authoring-run/7f41d6fb-cb1f-4f2f-a7ba-57f0139f2285 - f8bea11ec93a8ca1140816765fc3973104838618)
 
 - 2026-09-08 07:53: Include optional development activation and retry in the post-commit handoff. (01a07d92-d866-7731-afe5-abab67d8966c - 4d83087229961f3665b923d2581c0b71b988cc9c)
 
