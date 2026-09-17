@@ -24,6 +24,7 @@
                   "guides/concepts",
                   "guides/agent-workload-identity",
                   "guides/quickstart",
+                  "guides/cli",
                   "guides/deploy",
                   "guides/deploy/production-installation",
                   "guides/deploy/production-agents",
@@ -94,6 +95,7 @@
                 "group": "Drivers",
                 "pages": [
                   "reference/drivers/compute",
+                  "reference/drivers/compute-matrix",
                   "reference/drivers/configuration",
                   "reference/drivers/docker-compute",
                   "reference/drivers/iam",
