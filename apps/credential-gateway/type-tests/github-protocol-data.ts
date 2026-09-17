@@ -44,7 +44,7 @@ export function fetchRequestCallSite(
   return facts;
 }
 
-// The existing JSON parser supplies all six normalized fields and explicit defaults.
+// The integrating JSON parser must supply all six normalized fields and explicit defaults.
 export function prRequestCallSite(
   repository: GitHubProtocolRepositoryV1,
   requestId: string,
