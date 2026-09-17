@@ -94,7 +94,7 @@ declare const foreignBrand: unique symbol;
 type ForeignToken = { readonly [foreignBrand]: true };
 
 // Declared constructor operands are checked without invoking any factory. These
-// assignments exercise actual supplier projections, never fixture authority.
+// checks exercise actual supplier projections, never fixture authority.
 export async function producerProjectionCorrespondence(
   owner: OriginalGitHubIssuedMaterialOwnerV1,
   dependencies: SqlEnvelopeDependenciesV1,
@@ -106,33 +106,24 @@ export async function producerProjectionCorrespondence(
   original: EphemeralTokenHandleV1,
   foreign: ForeignToken,
 ): Promise<void> {
-  const issuerProjection: GitHubAppTokenIssuerOptionsV1 = { ...issuer, custody: owner.provider };
-  const revokerProjection: GitHubAppTokenRevokerOptionsV1 = { ...revoker, custody: owner.provider };
-  const sealProjection: SqlEnvelopeDependenciesV1 = { ...dependencies, custody: owner.material };
+  ({ ...issuer, custody: owner.provider }) satisfies GitHubAppTokenIssuerOptionsV1;
+  ({ ...revoker, custody: owner.provider }) satisfies GitHubAppTokenRevokerOptionsV1;
+  ({ ...dependencies, custody: owner.material }) satisfies SqlEnvelopeDependenciesV1;
   const seal: SealedMaterial = await envelopes.sealIssuedMaterialV1(context, original, bounds);
-  const result: number = await envelopes.withIssuedMaterialV1(context, seal, bounds, (material) =>
+  (await envelopes.withIssuedMaterialV1(context, seal, bounds, (material) =>
     owner.material.withCaptured(material, bounds, async (bytes) => bytes.byteLength),
-  );
+  )) satisfies number;
   // @ts-expect-error Revocation-only provider access is not serialization custody.
-  const wrongCustody: SqlEnvelopeDependenciesV1 = { ...dependencies, custody: owner.provider };
+  ({ ...dependencies, custody: owner.provider }) satisfies SqlEnvelopeDependenciesV1;
   // @ts-expect-error Serialization access is not provider capture/revocation.
-  const wrongProvider: GitHubAppTokenIssuerOptionsV1 = { ...issuer, custody: owner.material };
+  ({ ...issuer, custody: owner.material }) satisfies GitHubAppTokenIssuerOptionsV1;
   // @ts-expect-error Original custody does not accept a foreign nominal handle.
   owner.material.withCaptured(foreign, bounds, async (bytes) => bytes.byteLength);
   // @ts-expect-error Close requires the original bounded lifecycle operand.
   owner.close();
-  const fakeKeys: SqlEnvelopeDependenciesV1 = {
+  ({
     ...dependencies,
     // @ts-expect-error A serialized key digest is not an original key selection.
     retainedKeys: new Map([[context.keyId, context.keyDigest]]),
-  };
-  void [
-    issuerProjection,
-    revokerProjection,
-    sealProjection,
-    result,
-    wrongCustody,
-    wrongProvider,
-    fakeKeys,
-  ];
+  }) satisfies SqlEnvelopeDependenciesV1;
 }
