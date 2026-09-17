@@ -45,6 +45,8 @@ shapes, timestamps, canonical intent digests and internal relationships. IDs and
 original dispatch fields are historical observations. Decoding them never
 establishes current Runtime, principal, policy, provider or credential authority.
 `turnNotAfter: null` is retained as metadata; each recorded operation remains finite.
+The `credential-authority-v1` entry point shares this original-binding schema;
+its `leaseNotAfter` and `startNotAfter` observation bounds still require finite timestamps.
 
 Rows have Installation and Agent parents with restrictive deletion. There is no
 age eviction or cascade deletion. Outstanding and unknown responsibility remains

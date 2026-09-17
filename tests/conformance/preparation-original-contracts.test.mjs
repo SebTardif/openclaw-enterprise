@@ -22,6 +22,8 @@ const { AccountVersionVectorSchemaV1 } =
   await import("../../packages/contracts/src/account-authority-v1.ts");
 const { CredentialSecretBindingSchemaV1, CredentialRepositoryGrantSchemaV1 } =
   await import("../../packages/contracts/src/credential-storage-v1.ts");
+const { OriginalCredentialBindingSchemaV1: InventoryOriginalBindingSchemaV1 } =
+  await import("../../packages/contracts/src/credential-inventory-data-v1.ts");
 
 const versioned = (ref) => ({ ref, version: 1, digest });
 const accountVersions = () => ({
@@ -76,7 +78,7 @@ const repositoryGrant = () => ({
   permissions: [{ name: "contents", access: "read" }],
   permissionProfile: versioned("permission/read"),
 });
-const originalBinding = () => ({
+const originalBinding = (turnNotAfter = until) => ({
   schemaVersion: 1,
   scope: { ...scope },
   assignmentRef: { schemaVersion: 1, id: id(4) },
@@ -100,7 +102,7 @@ const originalBinding = () => ({
   policy: versioned("policy/original"),
   canonicalBindingDigest: digest,
   committedDispatchAt: now,
-  turnNotAfter: until,
+  turnNotAfter,
 });
 const originalObservation = () => ({
   schemaVersion: 1,
@@ -275,6 +277,20 @@ test("selected original preparation dictionaries require every field and stay cl
         assert.equal(Check(schema, missing), false, `required ${[...path, key].join(".")}`);
       }
     }
+  }
+});
+
+test("original binding horizons survive inventory to authority projection with finite use bounds", () => {
+  for (const turnNotAfter of [until, null]) {
+    const original = originalBinding(turnNotAfter);
+    const observation = { ...originalObservation(), original };
+    assert.equal(Check(InventoryOriginalBindingSchemaV1, original), true);
+    assert.equal(Check(authority.OriginalCredentialBindingSchemaV1, original), true);
+    assert.equal(Check(authority.CredentialAuthorityObservationSchemaV1, observation), true);
+    rejects(authority.CredentialAuthorityObservationSchemaV1, observation, [
+      ["finite credential lease", ["leaseNotAfter"], null],
+      ["finite operation start", ["startNotAfter"], null],
+    ]);
   }
 });
 
@@ -454,7 +470,10 @@ import {
   type RepositoryPreparationReceiptPortV1, type AuthorityCallV1,
 } from "@openclaw-enterprise/contracts/repository-preparation-v1";
 import type { AuthorityCallV1 as OriginalCall } from "@openclaw-enterprise/contracts/runtime-authority-v1";
-import type { EphemeralTokenHandleV1 } from "@openclaw-enterprise/contracts";
+import type {
+  EphemeralTokenHandleV1,
+  OriginalCredentialBindingV1 as InventoryOriginalBindingV1,
+} from "@openclaw-enterprise/contracts";
 `;
 function compilerProducer() {
   return (
@@ -516,6 +535,12 @@ type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<T extends true> = T;
 type OriginalCallIdentity = Assert<Equal<AuthorityCallV1, OriginalCall>>;
+type OriginalBindingCorrespondence = Assert<Equal<OriginalCredentialBindingV1, InventoryOriginalBindingV1>>;
+const uncappedInventoryBinding: InventoryOriginalBindingV1 = ${JSON.stringify(originalBinding(null))};
+const uncappedAuthorityBinding: OriginalCredentialBindingV1 = uncappedInventoryBinding;
+const uncappedObservation: CredentialAuthorityObservationV1 = {
+  ...${JSON.stringify(originalObservation())}, original: uncappedAuthorityBinding,
+};
 type ExactReadSignature = Assert<Equal<
   RepositoryPreparationReceiptPortV1["readReceiptV1"],
   (input: PreparationCheckoutRequestV1, call: OriginalCall) => Promise<PreparationReceiptResultV1>
@@ -573,7 +598,7 @@ function inspectDiagnostic(value: PreparationReceiptDiagnosticV1): void {
     default: { const exhaustive: never = value; void exhaustive; }
   }
 }
-void [originalCall, handle, both, inspectAuthority, consumeReceipt, inspectDiagnostic, token, subject, receipt];
+void [originalCall, handle, both, inspectAuthority, consumeReceipt, inspectDiagnostic, token, subject, receipt, uncappedObservation];
 `;
 
 function compile(directory, source, emit = false) {
@@ -661,6 +686,13 @@ test("strict real package producers and consumers preserve sole handles and comp
       assert.ok(readFileSync(join(output, `${name}.d.ts`), "utf8").length > 0);
     }
     const emitted = await import(pathToFileURL(join(output, "repository-preparation-v1.js")).href);
+    const emittedAuthority = await import(
+      pathToFileURL(join(output, "credential-authority-v1.js")).href
+    );
+    assert.equal(
+      Check(emittedAuthority.OriginalCredentialBindingSchemaV1, originalBinding(null)),
+      true,
+    );
     assert.equal(Check(emitted.PreparationCheckoutReceiptSchemaV1, receipt()), true);
     assert.equal(
       Check(emitted.RepositoryPreparationSubjectSchemaV1, {
