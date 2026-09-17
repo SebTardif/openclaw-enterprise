@@ -5,6 +5,7 @@ matching installed workspace dependencies:
 
 ```sh
 pnpm check:credential-gateway-types
+node --test tests/conformance/credential-custody-construction.test.mjs
 node --test tests/conformance/credential-gateway-protocol-data.test.mjs
 node --test tests/conformance/credential-gateway-metadata-data.test.mjs
 ```
@@ -38,7 +39,7 @@ UTF-8/JSON parsing, duplicate/unknown-field rejection, defaults and HTTP 400/413
 responses. Constructor refusal is `null`; it does not select an HTTP status.
 
 The push-result input type exposes only operation kind, destination ref names
-and capabilities. The existing observer owns their bounded snapshot and
+and capabilities. The integrating observer must own their bounded snapshot and
 response parsing. This type cannot construct an operation, capture or permit.
 
 ## Compiler and CI coverage
@@ -54,6 +55,13 @@ For a separately built OCC artifact, set the test-only
 The suite then executes those emitted constructors with the same vectors and
 hostile cases. Declaration consumers must use strict checking with
 `skipLibCheck: false` and the actual emitted root declarations.
+
+The custody construction test loads the controller facade through the gateway's
+package resolution and verifies its implemented exports. Deferred capture/open
+and SQL-envelope factories remain type-only; compiler fixtures check their
+construction signatures. Set `OCC_TEST_CUSTODY_CONSTRUCTION_ENTRY` to the absolute
+emitted controller facade path to repeat the module-loading check against JavaScript.
+This check constructs no owner and performs no credential operation.
 
 ## Qualification boundary
 
