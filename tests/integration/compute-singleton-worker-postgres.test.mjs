@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import { requiresPostgres, setup, waitFor } from "../helpers/compute-singleton-worker.mjs";
+import {
+  requiresPostgres,
+  setup,
+  waitFor,
+  hasCutover,
+  queuedCutover,
+  assertCutoverCleared,
+  sshDrivers,
+  revisionEffect,
+} from "../helpers/compute-singleton-worker.mjs";
 
 test(
   "a worker binds persisted Namespace, Agent, and service principal before provider effects",
@@ -15,10 +20,8 @@ test(
     const candidate = await fixture.revision(owner, 1);
     const effects = [];
 
-    await fixture.start({
-      ...fixture.compute,
+    await fixture.startWith({
       activationOrder: "beforeCommit",
-      async preflight() {},
       async bindAgent(binding) {
         effects.push({
           action: "bind",
@@ -61,73 +64,45 @@ test(
     const fixture = await setup(context);
     const owner = await fixture.agent();
     const first = await fixture.revision(owner, 1);
-    const effects = [];
 
-    async function record(action, candidate) {
-      effects.push({
-        action,
-        revisionId: candidate.id,
-        activeRevisionId: await fixture.activeRevision(owner),
-      });
-    }
-
-    await fixture.start(
-      {
-        ...fixture.compute,
-        activationOrder: "beforeCommit",
-        async preflight() {},
-        async prepareRevision(candidate) {
-          await record("prepare", candidate);
-          return fixture.compute.prepareRevision(candidate);
-        },
-        async activateRevision(candidate) {
-          await record("activate", candidate);
-          if (candidate.id === first.id) {
-            const original = await fixture.observerPool.query(
-              `SELECT claim_token, lease_expires_at::text AS expires_at
+    const { driver, effects } = fixture.recordEffects(owner, {
+      activationOrder: "beforeCommit",
+      async activateRevision(candidate) {
+        if (candidate.id === first.id) {
+          const original = await fixture.observerPool.query(
+            `SELECT claim_token, lease_expires_at::text AS expires_at
                FROM occ.controller_work WHERE idempotency_key = $1`,
-              [first.idempotencyKey],
-            );
-            assert.equal(original.rowCount, 1);
-            const claim = original.rows[0];
-            assert.ok(claim.claim_token);
-            assert.ok(claim.expires_at);
+            [first.idempotencyKey],
+          );
+          assert.equal(original.rowCount, 1);
+          const claim = original.rows[0];
+          assert.ok(claim.claim_token);
+          assert.ok(claim.expires_at);
 
-            // Keep activation open beyond its initial lease: the same claim must
-            // remain live because the real worker renewed it before publication.
-            await waitFor("the original activation claim to outlive its lease", async () => {
-              const current = await fixture.observerPool.query(
-                `SELECT state, claim_token, attempt_count,
+          // Keep activation open beyond its initial lease: the same claim must
+          // remain live because the real worker renewed it before publication.
+          await waitFor("the original activation claim to outlive its lease", async () => {
+            const current = await fixture.observerPool.query(
+              `SELECT state, claim_token, attempt_count,
                         lease_expires_at > clock_timestamp() AS live,
                         clock_timestamp() > $2::timestamptz AS original_expired,
                         lease_expires_at > $2::timestamptz AS renewed
                  FROM occ.controller_work WHERE idempotency_key = $1`,
-                [first.idempotencyKey, claim.expires_at],
-              );
-              assert.equal(current.rowCount, 1);
-              const work = current.rows[0];
-              assert.equal(work.state, "claimed");
-              assert.equal(work.claim_token, claim.claim_token);
-              assert.equal(work.attempt_count, 1);
-              assert.equal(
-                work.live,
-                true,
-                "the original claim must remain live during activation",
-              );
-              return work.original_expired && work.renewed ? work : undefined;
-            });
-          }
-        },
-        async deactivateRevision(candidate) {
-          await record("deactivate", candidate);
-        },
-        async retireRevision(candidate) {
-          await record("retire", candidate);
-          return fixture.compute.retireRevision(candidate);
-        },
+              [first.idempotencyKey, claim.expires_at],
+            );
+            assert.equal(current.rowCount, 1);
+            const work = current.rows[0];
+            assert.equal(work.state, "claimed");
+            assert.equal(work.claim_token, claim.claim_token);
+            assert.equal(work.attempt_count, 1);
+            assert.equal(work.live, true, "the original claim must remain live during activation");
+            return work.original_expired && work.renewed ? work : undefined;
+          });
+        }
       },
-      5_000,
-    );
+      async deactivateRevision() {},
+    });
+    await fixture.start(driver, 5_000);
     assert.equal((await fixture.work(first)).attempt_count, 1);
     assert.equal(await fixture.activeRevision(owner), first.id);
 
@@ -135,11 +110,11 @@ test(
     assert.equal((await fixture.work(second)).attempt_count, 1);
     assert.equal(await fixture.activeRevision(owner), second.id);
     assert.deepEqual(effects, [
-      { action: "prepare", revisionId: first.id, activeRevisionId: null },
-      { action: "activate", revisionId: first.id, activeRevisionId: null },
-      { action: "prepare", revisionId: second.id, activeRevisionId: first.id },
-      { action: "activate", revisionId: second.id, activeRevisionId: first.id },
-      { action: "retire", revisionId: first.id, activeRevisionId: second.id },
+      revisionEffect("prepare", first, null),
+      revisionEffect("activate", first, null),
+      revisionEffect("prepare", second, first),
+      revisionEffect("activate", second, first),
+      revisionEffect("retire", first, second),
     ]);
 
     const activation = await fixture.observerPool.query(
@@ -156,61 +131,57 @@ test(
   },
 );
 
-test(
-  "failed singleton activation retries without publishing or retiring the previous revision",
-  requiresPostgres,
-  async (context) => {
+for (const { name, compute, attemptCount, failureReasons } of [
+  {
+    name: "failed singleton activation retries without publishing or retiring the previous revision",
+    compute: { activationOrder: "beforeCommit" },
+    attemptCount: 2,
+    failureReasons: ["DEPENDENCY_UNAVAILABLE"],
+  },
+  {
+    name: "failed route-before-CAS cutover retries without committing or retiring the predecessor",
+    compute: { async deactivateRevision() {} },
+    // Durable cutover recovery defers its claim instead of spending another attempt.
+    attemptCount: 1,
+    failureReasons: [],
+  },
+]) {
+  test(name, requiresPostgres, async (context) => {
     const fixture = await setup(context);
     const owner = await fixture.agent();
     const first = await fixture.revision(owner, 1);
-    const activations = [];
-    const retirements = [];
     let failed = false;
-    let second;
-
-    await fixture.start({
-      ...fixture.compute,
-      activationOrder: "beforeCommit",
-      async preflight() {},
+    const { driver, effects } = fixture.recordEffects(owner, {
+      ...compute,
       async activateRevision(candidate) {
-        activations.push({
-          revisionId: candidate.id,
-          activeRevisionId: await fixture.activeRevision(owner),
-        });
         if (candidate.revision === 2 && !failed) {
           failed = true;
           throw new Error("provider readiness verification failed");
         }
       },
-      async retireRevision(candidate) {
-        retirements.push({
-          revisionId: candidate.id,
-          activeRevisionId: await fixture.activeRevision(owner),
-        });
-        return fixture.compute.retireRevision(candidate);
-      },
     });
+    await fixture.start(driver);
     await fixture.work(first);
+    assert.equal(await fixture.activeRevision(owner), first.id);
 
-    second = await fixture.revision(owner, 2);
-    assert.equal((await fixture.work(second)).attempt_count, 2);
+    const second = await fixture.revision(owner, 2);
+    assert.equal((await fixture.work(second, "succeeded", 30_000)).attempt_count, attemptCount);
     assert.equal(await fixture.activeRevision(owner), second.id);
-    assert.deepEqual(activations, [
-      { revisionId: first.id, activeRevisionId: null },
-      { revisionId: second.id, activeRevisionId: first.id },
-      { revisionId: second.id, activeRevisionId: first.id },
-    ]);
-    assert.deepEqual(retirements, [{ revisionId: first.id, activeRevisionId: second.id }]);
-
-    const failure = await fixture.observerPool.query(
-      `SELECT details->>'reasonCode' AS reason
-       FROM occ.audit_events
-       WHERE resource_id = $1 AND action = 'reconcile' AND outcome = 'failure'`,
-      [second.id],
+    assert.deepEqual(
+      effects.filter(({ action }) => action === "activate"),
+      [
+        revisionEffect("activate", first, null),
+        revisionEffect("activate", second, first),
+        revisionEffect("activate", second, first),
+      ],
     );
-    assert.deepEqual(failure.rows, [{ reason: "DEPENDENCY_UNAVAILABLE" }]);
-  },
-);
+    assert.deepEqual(
+      effects.filter(({ action }) => action === "retire"),
+      [revisionEffect("retire", first, second)],
+    );
+    assert.deepEqual(await fixture.reconcileReasons(second, "failure"), failureReasons);
+  });
+}
 
 for (const scenario of [
   { executionMode: "dedicated", initialDeactivatesCandidate: true },
@@ -223,105 +194,32 @@ for (const scenario of [
       const fixture = await setup(context);
       const owner = await fixture.agent(scenario.executionMode);
       const first = await fixture.revision(owner, 1);
-      const effects = [];
 
-      async function record(action, candidate) {
-        effects.push({
-          action,
-          revisionId: candidate.id,
-          activeRevisionId: await fixture.activeRevision(owner),
-        });
-      }
-
-      await fixture.start({
-        ...fixture.compute,
-        async preflight() {},
-        async prepareRevision(candidate) {
-          await record("prepare", candidate);
-          return fixture.compute.prepareRevision(candidate);
-        },
-        async deactivateRevision(candidate) {
-          await record("deactivate", candidate);
-        },
-        async activateRevision(candidate) {
-          await record("activate", candidate);
-        },
-        async retireRevision(candidate) {
-          await record("retire", candidate);
-          return fixture.compute.retireRevision(candidate);
-        },
+      const { driver, effects } = fixture.recordEffects(owner, {
+        async deactivateRevision() {},
+        async activateRevision() {},
       });
+      await fixture.start(driver);
       await fixture.work(first);
       const second = await fixture.revision(owner, 2);
       await fixture.work(second);
 
       assert.equal(await fixture.activeRevision(owner), second.id);
       assert.deepEqual(effects, [
-        { action: "prepare", revisionId: first.id, activeRevisionId: null },
+        revisionEffect("prepare", first, null),
         ...(scenario.initialDeactivatesCandidate
-          ? [{ action: "deactivate", revisionId: first.id, activeRevisionId: null }]
+          ? [revisionEffect("deactivate", first, null)]
           : []),
-        { action: "activate", revisionId: first.id, activeRevisionId: null },
-        { action: "prepare", revisionId: second.id, activeRevisionId: first.id },
-        { action: "activate", revisionId: second.id, activeRevisionId: first.id },
-        { action: "retire", revisionId: first.id, activeRevisionId: second.id },
+        revisionEffect("activate", first, null),
+        revisionEffect("prepare", second, first),
+        revisionEffect("activate", second, first),
+        revisionEffect("retire", first, second),
       ]);
       const completed = await fixture.work(second);
-      assert.equal(completed.cutover_started_at, null);
-      assert.equal(completed.cutover_expected_active_revision_id, null);
+      assertCutoverCleared(completed);
     },
   );
 }
-
-test(
-  "failed route-before-CAS cutover retries without committing or retiring the predecessor",
-  requiresPostgres,
-  async (context) => {
-    const fixture = await setup(context);
-    const owner = await fixture.agent();
-    const first = await fixture.revision(owner, 1);
-    const activations = [];
-    const retirements = [];
-    let failed = false;
-    let second;
-
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
-      async deactivateRevision() {},
-      async activateRevision(candidate) {
-        activations.push({
-          revisionId: candidate.id,
-          activeRevisionId: await fixture.activeRevision(owner),
-        });
-        if (second !== undefined && candidate.id === second.id && !failed) {
-          failed = true;
-          throw new Error("route readiness failed");
-        }
-      },
-      async retireRevision(candidate) {
-        retirements.push({
-          revisionId: candidate.id,
-          activeRevisionId: await fixture.activeRevision(owner),
-        });
-        return fixture.compute.retireRevision(candidate);
-      },
-    });
-
-    await fixture.work(first);
-    assert.equal(await fixture.activeRevision(owner), first.id);
-    second = await fixture.revision(owner, 2);
-    await fixture.work(second, "succeeded", 30_000);
-
-    assert.equal(await fixture.activeRevision(owner), second.id);
-    assert.deepEqual(activations, [
-      { revisionId: first.id, activeRevisionId: null },
-      { revisionId: second.id, activeRevisionId: first.id },
-      { revisionId: second.id, activeRevisionId: first.id },
-    ]);
-    assert.deepEqual(retirements, [{ revisionId: first.id, activeRevisionId: second.id }]);
-  },
-);
 
 test(
   "lost claim after route switch recovers before recording the active revision",
@@ -334,9 +232,7 @@ test(
     let stoleFirstSecondClaim = false;
     let second;
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision() {},
       async activateRevision(candidate) {
         activations.push({
@@ -382,9 +278,7 @@ test(
     const effects = [];
     let second;
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         effects.push({ action: "deactivate", revisionId: candidate.id });
         if (servingRevisionId === candidate.id) servingRevisionId = undefined;
@@ -405,21 +299,8 @@ test(
     await fixture.work(first);
     assert.equal(servingRevisionId, first.id);
     second = await fixture.revision(owner, 2);
-    await waitFor("the second cutover to start and fail confirmation", async () => {
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      return current.rows[0]?.cutover_started_at !== null ? current.rows[0] : undefined;
-    });
-    await fixture.observerPool.query(
-      `INSERT INTO occ.iam_restrictions
-         (id, namespace_id, action, resource_kind, resource_id, effect)
-       VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
-      [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
-    );
+    await fixture.waitForWork(second, hasCutover);
+    await fixture.revokeDeploy(owner);
 
     const failed = await fixture.work(second, "failed_permanent");
     assert.equal(await fixture.activeRevision(owner), first.id);
@@ -427,10 +308,7 @@ test(
     assert.equal(failed.cutover_started_at, null);
     assert.deepEqual(
       effects.filter(({ revisionId }) => revisionId === second.id),
-      [
-        { action: "activate", revisionId: second.id, activeRevisionId: first.id },
-        { action: "deactivate", revisionId: second.id },
-      ],
+      [revisionEffect("activate", second, first), { action: "deactivate", revisionId: second.id }],
     );
     assert.ok(
       effects.some(
@@ -451,9 +329,7 @@ test(
     let servingRevisionId;
     let second;
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         if (servingRevisionId === candidate.id) servingRevisionId = undefined;
       },
@@ -466,22 +342,11 @@ test(
 
     await fixture.work(first);
     second = await fixture.revision(owner, 2);
-    await waitFor("the second cutover to remain unresolved", async () => {
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      return row?.state === "queued" && row.cutover_started_at !== null ? row : undefined;
-    });
+    await fixture.waitForWork(second, queuedCutover);
     await fixture.stop();
 
-    await fixture.start(
+    await fixture.startWith(
       {
-        ...fixture.compute,
-        async preflight() {},
         async deactivateRevision(candidate) {
           if (servingRevisionId === candidate.id) servingRevisionId = undefined;
         },
@@ -510,9 +375,7 @@ test(
     let servingRevisionId;
     let second;
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         if (servingRevisionId === candidate.id) servingRevisionId = undefined;
       },
@@ -525,23 +388,12 @@ test(
 
     await fixture.work(first);
     second = await fixture.revision(owner, 2);
-    await waitFor("the second cutover to remain unresolved", async () => {
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      return row?.state === "queued" && row.cutover_started_at !== null ? row : undefined;
-    });
+    await fixture.waitForWork(second, queuedCutover);
     await fixture.stop();
 
     let compensationAttempts = 0;
-    await fixture.start(
+    await fixture.startWith(
       {
-        ...fixture.compute,
-        async preflight() {},
         async deactivateRevision(candidate) {
           if (candidate.id === second.id) compensationAttempts += 1;
           if (servingRevisionId === candidate.id) servingRevisionId = undefined;
@@ -555,31 +407,21 @@ test(
       1,
     );
 
-    await waitFor("failed compensation to preserve queued cutover", async () => {
-      const current = await fixture.observerPool.query(
-        `SELECT work.state, work.cutover_started_at, work.completed_at,
-                events.details->>'reasonCode' AS reason
-         FROM occ.controller_work AS work
-         JOIN occ.audit_events AS events ON events.resource_id = work.revision_id
-         WHERE work.idempotency_key = $1
-           AND events.action = 'reconcile'
-           AND events.details->>'reasonCode' = 'REVISION_CUTOVER_COMPENSATION_INCOMPLETE'
-         ORDER BY events.occurred_at DESC
-         LIMIT 1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      if (compensationAttempts === 0) return undefined;
-      return row?.state === "queued" && row.cutover_started_at !== null ? row : undefined;
-    });
+    await fixture.waitForWork(
+      second,
+      async (work) =>
+        compensationAttempts > 0 &&
+        queuedCutover(work) &&
+        (await fixture.reconcileReasons(second)).includes(
+          "REVISION_CUTOVER_COMPENSATION_INCOMPLETE",
+        ),
+    );
     assert.equal(await fixture.activeRevision(owner), first.id);
     assert.equal(servingRevisionId, undefined);
 
     await fixture.stop();
-    await fixture.start(
+    await fixture.startWith(
       {
-        ...fixture.compute,
-        async preflight() {},
         async deactivateRevision(candidate) {
           if (servingRevisionId === candidate.id) servingRevisionId = undefined;
         },
@@ -604,9 +446,7 @@ test(
     let second;
     const deactivations = [];
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         deactivations.push(candidate.id);
       },
@@ -618,51 +458,29 @@ test(
 
     await fixture.work(first);
     second = await fixture.revision(owner, 2);
-    await waitFor("the second cutover to remain unresolved", async () => {
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      return row?.state === "queued" && row.cutover_started_at !== null ? row : undefined;
-    });
+    await fixture.waitForWork(second, queuedCutover);
     await fixture.stop();
 
-    await fixture.start({
-      ...fixture.compute,
+    await fixture.startWith({
       id: `${fixture.compute.id}-other`,
       activationOrder: "beforeCommit",
-      async preflight() {},
       async deactivateRevision(candidate) {
         deactivations.push(candidate.id);
       },
       async activateRevision() {},
     });
 
-    await waitFor("the mismatched Driver to defer the marked cutover", async () => {
-      const deferred = await fixture.observerPool.query(
-        `SELECT work.state, work.cutover_started_at, events.details->>'reasonCode' AS reason
-         FROM occ.controller_work AS work
-         JOIN occ.audit_events AS events ON events.resource_id = work.revision_id
-         WHERE work.idempotency_key = $1
-           AND events.action = 'reconcile'
-           AND events.details->>'reasonCode' = 'COMPUTE_DRIVER_MISMATCH'
-         ORDER BY events.occurred_at DESC
-         LIMIT 1`,
-        [second.idempotencyKey],
-      );
-      const row = deferred.rows[0];
-      return row?.state === "queued" && row.cutover_started_at !== null ? row : undefined;
-    });
+    await fixture.waitForWork(
+      second,
+      async (work) =>
+        queuedCutover(work) &&
+        (await fixture.reconcileReasons(second)).includes("COMPUTE_DRIVER_MISMATCH"),
+    );
     assert.equal(await fixture.activeRevision(owner), first.id);
     assert.ok(!deactivations.includes(second.id));
 
     await fixture.stop();
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         deactivations.push(candidate.id);
       },
@@ -682,9 +500,7 @@ test(
     let allowRetirement = false;
     const retirements = [];
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision() {},
       async activateRevision() {},
       async retireRevision(candidate) {
@@ -701,26 +517,14 @@ test(
 
     await fixture.work(first);
     const second = await fixture.revision(owner, 2);
-    await waitFor("the second revision cleanup to fail after becoming active", async () => {
-      const active = await fixture.activeRevision(owner);
-      if (active !== second.id) return undefined;
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      return retirements.length === 1 && row?.state === "queued" && row.cutover_started_at !== null
-        ? row
-        : undefined;
-    });
-    await fixture.observerPool.query(
-      `INSERT INTO occ.iam_restrictions
-         (id, namespace_id, action, resource_kind, resource_id, effect)
-      VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
-      [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
+    await fixture.waitForWork(
+      second,
+      async (work) =>
+        queuedCutover(work) &&
+        retirements.length === 1 &&
+        (await fixture.activeRevision(owner)) === second.id,
     );
+    await fixture.revokeDeploy(owner);
     allowRetirement = true;
 
     await waitFor("the post-CAS cleanup retry to retire the predecessor", async () =>
@@ -748,9 +552,7 @@ test(
     const deactivations = [];
     let retirementAttempts = 0;
 
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         deactivations.push(candidate.id);
       },
@@ -766,19 +568,13 @@ test(
 
     await fixture.work(first);
     second = await fixture.revision(owner, 2);
-    await waitFor("the second revision cleanup to fail after becoming DB-active", async () => {
-      if ((await fixture.activeRevision(owner)) !== second.id) return undefined;
-      const current = await fixture.observerPool.query(
-        `SELECT state, cutover_started_at
-         FROM occ.controller_work
-         WHERE idempotency_key = $1`,
-        [second.idempotencyKey],
-      );
-      const row = current.rows[0];
-      return retirementAttempts === 1 && row?.state === "queued" && row.cutover_started_at !== null
-        ? row
-        : undefined;
-    });
+    await fixture.waitForWork(
+      second,
+      async (work) =>
+        queuedCutover(work) &&
+        retirementAttempts === 1 &&
+        (await fixture.activeRevision(owner)) === second.id,
+    );
 
     await fixture.stop();
     const queue = new fixture.PostgresWorkQueue(fixture.observerPool, {
@@ -792,20 +588,20 @@ test(
       30_000,
     );
     assert.equal(claim.idempotencyKey, second.idempotencyKey);
-    const boundaryWorker = fixture.createWorker({
-      ...fixture.compute,
-      async preflight() {},
-      async deactivateRevision(candidate) {
-        deactivations.push(candidate.id);
-      },
-      async activateRevision() {},
-      async retireRevision(candidate) {
-        if (candidate.id === first.id && !allowRetirement) {
-          throw new Error("retirement dependency unavailable");
-        }
-        return fixture.compute.retireRevision(candidate);
-      },
-    });
+    const boundaryWorker = fixture.createWorker(
+      fixture.driver({
+        async deactivateRevision(candidate) {
+          deactivations.push(candidate.id);
+        },
+        async activateRevision() {},
+        async retireRevision(candidate) {
+          if (candidate.id === first.id && !allowRetirement) {
+            throw new Error("retirement dependency unavailable");
+          }
+          return fixture.compute.retireRevision(candidate);
+        },
+      }),
+    );
     try {
       await boundaryWorker.compensateRevisionCutover(claim, second, second, {
         outcome: "permanent",
@@ -815,20 +611,13 @@ test(
       await boundaryWorker.stop();
     }
 
-    const guarded = await fixture.observerPool.query(
-      `SELECT state, cutover_started_at
-       FROM occ.controller_work
-       WHERE idempotency_key = $1`,
-      [second.idempotencyKey],
-    );
-    assert.equal(guarded.rows[0]?.state, "queued");
-    assert.notEqual(guarded.rows[0]?.cutover_started_at, null);
+    const guarded = await fixture.readWork(second);
+    assert.equal(guarded?.state, "queued");
+    assert.notEqual(guarded?.cutover_started_at, null);
     assert.equal(await fixture.activeRevision(owner), second.id);
     assert.ok(!deactivations.includes(second.id));
     allowRetirement = true;
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async deactivateRevision(candidate) {
         deactivations.push(candidate.id);
       },
@@ -928,9 +717,7 @@ test(
     }
     const activations = [];
     let dependencyFailed = false;
-    await fixture.start({
-      ...fixture.compute,
-      async preflight() {},
+    await fixture.startWith({
       async prepareRevision(candidate) {
         // Recovery can hit an ordinary dependency failure after exhausting the
         // retry budget; the cutover must requeue without waiting for lease expiry.
@@ -948,16 +735,11 @@ test(
     const retryEvidence = await waitFor(
       "the exhausted cutover to record its dependency retry",
       async () => {
-        const evidence = await fixture.observerPool.query(
-          `SELECT details->>'reasonCode' AS reason
-         FROM occ.audit_events
-         WHERE resource_id = $1 AND action = 'reconcile' AND outcome = 'failure'`,
-          [queued.id],
-        );
-        return evidence.rows.length > 0 ? evidence.rows : undefined;
+        const reasons = await fixture.reconcileReasons(queued, "failure");
+        return reasons.length > 0 ? reasons : undefined;
       },
     );
-    assert.deepEqual(retryEvidence, [{ reason: "DEPENDENCY_UNAVAILABLE" }]);
+    assert.deepEqual(retryEvidence, ["DEPENDENCY_UNAVAILABLE"]);
 
     // The real retry already persisted its transition and evidence. Advance its
     // randomized backoff so this case measures recovery, not scheduler delay.
@@ -968,17 +750,14 @@ test(
     );
     for (const candidate of [stale, queued, staleSuccessor, queuedSuccessor]) {
       const completed = await fixture.work(candidate);
-      assert.equal(completed.cutover_started_at, null);
-      assert.equal(completed.cutover_expected_active_revision_id, null);
+      assertCutoverCleared(completed);
     }
     assert.equal(await fixture.activeRevision(staleOwner), staleSuccessor.id);
     assert.equal(await fixture.activeRevision(queuedOwner), queuedSuccessor.id);
-    const expired = await fixture.observerPool.query(
-      `SELECT count(*)::integer AS count FROM occ.audit_events
-       WHERE resource_id = $1 AND details->>'reasonCode' = 'LEASE_EXPIRED'`,
-      [queued.id],
+    assert.ok(
+      !(await fixture.reconcileReasons(queued)).includes("LEASE_EXPIRED"),
+      "a dependency retry must not require lease expiry",
     );
-    assert.equal(expired.rows[0].count, 0, "a dependency retry must not require lease expiry");
     for (const [candidate, successor] of [
       [stale, staleSuccessor],
       [queued, queuedSuccessor],
@@ -1001,11 +780,9 @@ test(
     const preparations = [];
     const activations = [];
 
-    await fixture.start({
-      ...fixture.compute,
+    await fixture.startWith({
       activationOrder: "beforeCommit",
       maintenanceIntervalMs: 75,
-      async preflight() {},
       async prepareRevision(revision) {
         preparations.push({
           revisionId: revision.id,
@@ -1073,12 +850,10 @@ test(
     let available = false;
     let maintenanceAttempts = 0;
 
-    await fixture.start(
+    await fixture.startWith(
       {
-        ...fixture.compute,
         activationOrder: "beforeCommit",
         maintenanceIntervalMs: 75,
-        async preflight() {},
         async prepareRevision(revision) {
           const observation = await fixture.compute.prepareRevision(revision);
           if ((await fixture.activeRevision(owner)) === revision.id) {
@@ -1123,12 +898,7 @@ test(
 
     // Revoking the original actor must halt the chain before another provider
     // effect; maintenance never grants an Agent permission to deploy itself.
-    await fixture.observerPool.query(
-      `INSERT INTO occ.iam_restrictions
-         (id, namespace_id, action, resource_kind, resource_id, effect)
-       VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
-      [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
-    );
+    await fixture.revokeDeploy(owner);
     const effectsBeforeDenial = maintenanceAttempts;
     await waitFor("the denied maintenance pass to stop without a successor", async () => {
       const result = await fixture.observerPool.query(
@@ -1152,7 +922,7 @@ test(
     const owner = await fixture.agent();
     const first = await fixture.revision(owner, 1);
     let second;
-    const effects = [];
+
     let secondActivationAttempts = 0;
     let retryStarted = false;
     let releaseRetry;
@@ -1160,42 +930,19 @@ test(
       releaseRetry = resolve;
     });
 
-    async function record(action, candidate) {
-      effects.push({
-        action,
-        revisionId: candidate.id,
-        activeRevisionId: await fixture.activeRevision(owner),
-      });
-    }
-
-    await fixture.start(
-      {
-        ...fixture.compute,
-        async preflight() {},
-        async prepareRevision(candidate) {
-          await record("prepare", candidate);
-          return fixture.compute.prepareRevision(candidate);
-        },
-        async activateRevision(candidate) {
-          await record("activate", candidate);
-          if (candidate.id === second?.id) {
-            secondActivationAttempts += 1;
-            if (secondActivationAttempts === 1) {
-              throw new Error("development gateway did not start");
-            }
-            retryStarted = true;
-            await retryRelease;
+    const { driver, effects } = fixture.recordEffects(owner, {
+      async activateRevision(candidate) {
+        if (candidate.id === second?.id) {
+          secondActivationAttempts += 1;
+          if (secondActivationAttempts === 1) {
+            throw new Error("development gateway did not start");
           }
-        },
-        async retireRevision(candidate) {
-          await record("retire", candidate);
-          return fixture.compute.retireRevision(candidate);
-        },
+          retryStarted = true;
+          await retryRelease;
+        }
       },
-      30_000,
-      900_000,
-      "development",
-    );
+    });
+    await fixture.start(driver, 30_000, 900_000, "development");
     await fixture.work(first);
 
     try {
@@ -1216,12 +963,12 @@ test(
     assert.equal(secondActivationAttempts, 2);
     assert.equal(await fixture.activeRevision(owner), second.id);
     assert.deepEqual(effects, [
-      { action: "prepare", revisionId: first.id, activeRevisionId: null },
-      { action: "activate", revisionId: first.id, activeRevisionId: first.id },
-      { action: "prepare", revisionId: second.id, activeRevisionId: first.id },
-      { action: "activate", revisionId: second.id, activeRevisionId: second.id },
-      { action: "activate", revisionId: second.id, activeRevisionId: second.id },
-      { action: "retire", revisionId: first.id, activeRevisionId: second.id },
+      revisionEffect("prepare", first, null),
+      revisionEffect("activate", first, first),
+      revisionEffect("prepare", second, first),
+      revisionEffect("activate", second, second),
+      revisionEffect("activate", second, second),
+      revisionEffect("retire", first, second),
     ]);
   },
 );
@@ -1233,23 +980,15 @@ for (const phase of ["post-CAS", "revoked pre-CAS"]) {
     `a cold SSH worker recovers ${phase} cutover with persisted bindings`,
     requiresPostgres,
     async (context) => {
-      const { SshComputeDriver } =
-        await import("../../apps/controller/src/drivers/compute/ssh/index.ts");
       const fixture = await setup(context, { id: "compute-ssh", implementation: "occ/ssh" });
       const owner = await fixture.agent("embedded");
-      const directory = await mkdtemp(join(tmpdir(), "occ-worker-ssh-"));
-      context.after(() => rm(directory, { recursive: true, force: true }));
-      const identityFile = join(directory, "identity");
-      const knownHostsFile = join(directory, "known_hosts");
-      await Promise.all([writeFile(identityFile, "fixture"), writeFile(knownHostsFile, "fixture")]);
-      const operations = [];
       let interrupted = false;
       let recovering = false;
       let second;
-      const executor = {
-        async execute(command) {
-          const operation = JSON.parse(Buffer.from(command.operation, "base64").toString());
-          operations.push(operation);
+      const { operations, createDriver } = await sshDrivers(
+        context,
+        fixture.namespace,
+        async (operation) => {
           if (
             !recovering &&
             second !== undefined &&
@@ -1261,54 +1000,28 @@ for (const phase of ["post-CAS", "revoked pre-CAS"]) {
             interrupted = true;
             throw new Error("lost remote operation confirmation");
           }
-          return { code: 0, stdout: JSON.stringify({ ok: true, ready: true }), stderr: "" };
         },
-      };
-      const options = {
-        ssh: { identityFile, knownHostsFile },
-        hosts: { [fixture.namespace.name]: { address: "127.0.0.1", user: "root" } },
-        runtime: {
-          nodePath: process.execPath,
-          openclawPath: "/opt/openclaw/index.js",
-          user: "openclaw",
-          root: "/var/lib/openclaw-enterprise",
-        },
-        network: { gatewayPortRange: { start: 18800, end: 18899 } },
-      };
+      );
       const first = await fixture.revision(owner, 1);
-      await fixture.start(new SshComputeDriver(options, { executor }));
+      await fixture.start(createDriver());
       await fixture.work(first);
       second = await fixture.revision(owner, 2);
-      await waitFor("an interrupted durable cutover", async () => {
-        const result = await fixture.observerPool.query(
-          "SELECT state, cutover_started_at FROM occ.controller_work WHERE idempotency_key = $1",
-          [second.idempotencyKey],
-        );
-        const row = result.rows[0];
-        return interrupted && row?.state === "queued" && row.cutover_started_at !== null
-          ? row
-          : undefined;
-      });
+      await fixture.waitForWork(second, (work) => interrupted && queuedCutover(work));
       await fixture.stop();
       const activeId = phase === "post-CAS" ? second.id : first.id;
       assert.equal(await fixture.activeRevision(owner), activeId);
 
       // Revocation forbids a new deployment, but cannot abandon committed cleanup
       // or compensation for the already authorized durable attempt.
-      await fixture.observerPool.query(
-        `INSERT INTO occ.iam_restrictions (id, namespace_id, action, resource_kind, resource_id, effect)
-       VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
-        [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
-      );
+      await fixture.revokeDeploy(owner);
       operations.length = 0;
       recovering = true;
-      await fixture.start(new SshComputeDriver(options, { executor }));
+      await fixture.start(createDriver());
       const completed = await fixture.work(
         second,
         phase === "post-CAS" ? "succeeded" : "failed_permanent",
       );
-      assert.equal(completed.cutover_started_at, null);
-      assert.equal(completed.cutover_expected_active_revision_id, null);
+      assertCutoverCleared(completed);
       assert.equal(await fixture.activeRevision(owner), activeId);
       assert.deepEqual(
         operations
@@ -1345,24 +1058,16 @@ for (const phase of ["post-CAS", "revoked pre-CAS"]) {
 
 for (const phase of ["activation", "recovery", "revoked recovery", "retirement"]) {
   test(`production SSH cutover honors stop during ${phase}`, requiresPostgres, async (context) => {
-    const { SshComputeDriver } =
-      await import("../../apps/controller/src/drivers/compute/ssh/index.ts");
     const fixture = await setup(context, { id: "compute-ssh", implementation: "occ/ssh" });
     const owner = await fixture.agent("embedded");
-    const directory = await mkdtemp(join(tmpdir(), "occ-worker-ssh-stop-"));
-    context.after(() => rm(directory, { recursive: true, force: true }));
-    const identityFile = join(directory, "identity");
-    const knownHostsFile = join(directory, "known_hosts");
-    await Promise.all([writeFile(identityFile, "fixture"), writeFile(knownHostsFile, "fixture")]);
-    const operations = [];
     let second;
     let stop;
     let interrupted = false;
     let recovering = false;
-    const executor = {
-      async execute(command) {
-        const operation = JSON.parse(Buffer.from(command.operation, "base64").toString());
-        operations.push(operation);
+    const { operations, createDriver } = await sshDrivers(
+      context,
+      fixture.namespace,
+      async (operation) => {
         const boundary =
           phase === "retirement"
             ? operation.operation === "retire-revision"
@@ -1377,49 +1082,24 @@ for (const phase of ["activation", "recovery", "revoked recovery", "retirement"]
             throw new Error("interrupted SSH cutover confirmation");
           }
         }
-        return { code: 0, stdout: JSON.stringify({ ok: true, ready: true }), stderr: "" };
       },
-    };
-    const options = {
-      ssh: { identityFile, knownHostsFile },
-      hosts: { [fixture.namespace.name]: { address: "127.0.0.1", user: "root" } },
-      runtime: {
-        nodePath: process.execPath,
-        openclawPath: "/opt/openclaw/index.js",
-        user: "openclaw",
-        root: "/var/lib/openclaw-enterprise",
-      },
-      network: { gatewayPortRange: { start: 18800, end: 18899 } },
-    };
+    );
     const first = await fixture.revision(owner, 1);
-    await fixture.start(new SshComputeDriver(options, { executor }));
+    await fixture.start(createDriver());
     await fixture.work(first);
     second = await fixture.revision(owner, 2);
     if (phase !== "activation") {
-      await waitFor("the cutover recovery fence", async () => {
-        const result = await fixture.observerPool.query(
-          "SELECT state, cutover_started_at FROM occ.controller_work WHERE idempotency_key = $1",
-          [second.idempotencyKey],
-        );
-        const row = result.rows[0];
-        return interrupted && row?.state === "queued" && row.cutover_started_at !== null
-          ? row
-          : undefined;
-      });
+      await fixture.waitForWork(second, (work) => interrupted && queuedCutover(work));
       await fixture.stop();
       stop = await fixture.requestStop(owner);
       if (phase === "revoked recovery") {
-        await fixture.observerPool.query(
-          `INSERT INTO occ.iam_restrictions (id, namespace_id, action, resource_kind, resource_id, effect)
-             VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
-          [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
-        );
+        await fixture.revokeDeploy(owner);
       }
       operations.length = 0;
       recovering = true;
       // A fresh Driver must restore its persisted binding before the cutover
       // releases the same-Agent fence and the authorized stop claim proceeds.
-      await fixture.start(new SshComputeDriver(options, { executor }));
+      await fixture.start(createDriver());
     }
     const completed = await fixture.work(
       second,
@@ -1427,10 +1107,8 @@ for (const phase of ["activation", "recovery", "revoked recovery", "retirement"]
     );
     assert.ok(stop);
     const stopped = await fixture.work(stop);
-    assert.equal(completed.cutover_started_at, null);
-    assert.equal(completed.cutover_expected_active_revision_id, null);
-    assert.equal(stopped.cutover_started_at, null);
-    assert.equal(stopped.cutover_expected_active_revision_id, null);
+    assertCutoverCleared(completed);
+    assertCutoverCleared(stopped);
     assert.equal(await fixture.activeRevision(owner), null);
     const state = await fixture.observerPool.query(
       "SELECT desired_runtime_state FROM occ.agents WHERE namespace_id = $1 AND id = $2",

@@ -1585,21 +1585,13 @@ test("embedded replacement preparation recovers past an unready active gateway w
   assert.equal(patches.filter(({ kind }) => kind === "HTTPRoute").length, 2);
 
   // Ordinary stale activation remains blocked even if the failed gateway has been observed.
-  await assert.rejects(driver.activateRevision(oldRevision), /stale.*activation/i);
-  await assert.rejects(
-    driver.activateRevision(oldRevision, {
-      secretEnvironment: [],
-      rollbackFromRevisionId: `rev_${randomUUID()}`,
-    }),
-    /stale.*activation/i,
-  );
-  await assert.rejects(
-    driver.activateRevision(oldRevision, {
-      secretEnvironment: [],
-      rollbackFromRevisionId: replacement.id,
-    }),
-    /stale.*activation/i,
-  );
+  for (const context of [
+    undefined,
+    { secretEnvironment: [], rollbackFromRevisionId: `rev_${randomUUID()}` },
+    { secretEnvironment: [], rollbackFromRevisionId: replacement.id },
+  ]) {
+    await assert.rejects(driver.activateRevision(oldRevision, context), /stale.*activation/i);
+  }
 
   await driver.deactivateRevision(replacement);
   assert.equal(

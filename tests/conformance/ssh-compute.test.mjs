@@ -588,8 +588,7 @@ test("SSH rollback restores only the exact deactivated candidate's predecessor",
   const rollback = { secretEnvironment: [], rollbackFromRevisionId: second.id };
   await writeFile(join(dir, "state", "persisted"), "state survives");
   await writeFile(join(dir, "env"), "OPERATOR_OWNED=unchanged\n", { mode: 0o600 });
-  assert.equal((await f.driver.prepareRevision(second)).ready, true);
-  await f.driver.activateRevision(second);
+  await prepare(f, second);
 
   // A stale cleanup cannot stop a successor, and an active candidate cannot be rolled back.
   const pid = await readFile(join(f.state, `${f.unit(second)}.pid`), "utf8");
@@ -631,9 +630,7 @@ test("SSH rollback restores only the exact deactivated candidate's predecessor",
 test("SSH failed deactivation retains serving evidence and cannot authorize rollback", async (t) => {
   const f = await fixture(t);
   const first = await prepare(f);
-  const second = revision(f.driver, 2);
-  await f.driver.prepareRevision(second);
-  await f.driver.activateRevision(second);
+  const second = await prepare(f, revision(f.driver, 2));
   const dir = f.agentDir(second);
   const rollback = { secretEnvironment: [], rollbackFromRevisionId: second.id };
 

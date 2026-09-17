@@ -251,27 +251,26 @@ test("console email sign-in sanitizes adapter write failures and recovers", asyn
 test("console email sign-in rate limits repeated password failures by socket address", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const fixture = await createConsoleAppFixture(t, { autoSignIn: false });
-  const wrongPasswordBody = {
-    email: fixture.credentials.email,
-    password: "incorrect-password",
-  };
+  const attemptPassword = (forwardedFor) =>
+    fixture.request("POST", "/api/auth/sign-in/email", {
+      session: null,
+      headers: { "x-forwarded-for": forwardedFor },
+      body: { email: fixture.credentials.email, password: "incorrect-password" },
+    });
 
   // The limiter must use the server-observed socket address, not spoofable forwarding headers.
   const statuses = [];
   for (const forwardedFor of ["198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"]) {
-    const result = await fixture.rawRequest("POST", "/api/auth/sign-in/email", {
-      headers: { "x-forwarded-for": forwardedFor },
-      body: wrongPasswordBody,
-    });
-    statuses.push(result.response.status);
+    const result = await attemptPassword(forwardedFor);
+    statuses.push(result.status);
     assert.equal(
-      JSON.parse(result.text).error.code,
-      result.response.status === 429 ? "TOO_MANY_REQUESTS" : "UNAUTHENTICATED",
+      result.body.error.code,
+      result.status === 429 ? "TOO_MANY_REQUESTS" : "UNAUTHENTICATED",
     );
-    if (result.response.status === 429) {
+    if (result.status === 429) {
       // Better Auth supplies its retry delay as X-Retry-After.
-      assert.match(result.response.headers.get("x-retry-after") ?? "", /^\d+$/);
-      assert.ok(Number(result.response.headers.get("x-retry-after")) > 0);
+      assert.match(result.headers.get("x-retry-after") ?? "", /^\d+$/);
+      assert.ok(Number(result.headers.get("x-retry-after")) > 0);
     }
   }
   assert.deepEqual(statuses, [401, 401, 401, 429]);
@@ -279,20 +278,13 @@ test("console email sign-in rate limits repeated password failures by socket add
   // An expired window admits requests again; concurrent failures must consume one shared budget.
   t.mock.timers.tick(60_001);
   const concurrent = await Promise.all(
-    Array.from({ length: 4 }, (_, index) =>
-      fixture.rawRequest("POST", "/api/auth/sign-in/email", {
-        headers: { "x-forwarded-for": `198.51.100.${index + 10}` },
-        body: wrongPasswordBody,
-      }),
-    ),
+    ["198.51.100.10", "198.51.100.11", "198.51.100.12", "198.51.100.13"].map(attemptPassword),
   );
-  assert.deepEqual(concurrent.map(({ response }) => response.status).sort(), [401, 401, 401, 429]);
+  assert.deepEqual(concurrent.map(({ status }) => status).sort(), [401, 401, 401, 429]);
 
   const isolated = await createConsoleAppFixture(t);
   const session = await isolated.signIn();
-  const inspected = await isolated.rawRequest("GET", "/api/auth/session", {
-    headers: { cookie: session.cookie },
-  });
-  assert.equal(inspected.response.status, 200, inspected.text);
-  assert.equal(JSON.parse(inspected.text).data.authenticated, true);
+  const inspected = await isolated.request("GET", "/api/auth/session", { session });
+  assert.equal(inspected.status, 200);
+  assert.equal(inspected.data.authenticated, true);
 });
