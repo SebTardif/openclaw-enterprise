@@ -1305,3 +1305,122 @@ for (const phase of ["post-CAS", "revoked pre-CAS"]) {
     },
   );
 }
+
+for (const phase of ["activation", "recovery", "revoked recovery", "retirement"]) {
+  test(`production SSH cutover honors stop during ${phase}`, requiresPostgres, async (context) => {
+    const { SshComputeDriver } =
+      await import("../../apps/controller/src/drivers/compute/ssh/index.ts");
+    const fixture = await setup(context, { id: "compute-ssh", implementation: "occ/ssh" });
+    const owner = await fixture.agent("embedded");
+    const directory = await mkdtemp(join(tmpdir(), "occ-worker-ssh-stop-"));
+    context.after(() => rm(directory, { recursive: true, force: true }));
+    const identityFile = join(directory, "identity");
+    const knownHostsFile = join(directory, "known_hosts");
+    await Promise.all([writeFile(identityFile, "fixture"), writeFile(knownHostsFile, "fixture")]);
+    const operations = [];
+    let second;
+    let stop;
+    let interrupted = false;
+    let recovering = false;
+    const executor = {
+      async execute(command) {
+        const operation = JSON.parse(Buffer.from(command.operation, "base64").toString());
+        operations.push(operation);
+        const boundary =
+          phase === "retirement"
+            ? operation.operation === "retire-revision"
+            : operation.operation === "activate-revision" && operation.revision.id === second?.id;
+        if (second !== undefined && !recovering && boundary) {
+          if (phase === "activation") {
+            // Admission commits while provider activation is in flight, before
+            // the worker can lock the Agent and publish its candidate.
+            stop = await fixture.requestStop(owner);
+          } else {
+            interrupted = true;
+            throw new Error("interrupted SSH cutover confirmation");
+          }
+        }
+        return { code: 0, stdout: JSON.stringify({ ok: true, ready: true }), stderr: "" };
+      },
+    };
+    const options = {
+      ssh: { identityFile, knownHostsFile },
+      hosts: { [fixture.namespace.name]: { address: "127.0.0.1", user: "root" } },
+      runtime: {
+        nodePath: process.execPath,
+        openclawPath: "/opt/openclaw/index.js",
+        user: "openclaw",
+        root: "/var/lib/openclaw-enterprise",
+      },
+      network: { gatewayPortRange: { start: 18800, end: 18899 } },
+    };
+    const first = await fixture.revision(owner, 1);
+    await fixture.start(new SshComputeDriver(options, { executor }));
+    await fixture.work(first);
+    second = await fixture.revision(owner, 2);
+    if (phase !== "activation") {
+      await waitFor("the cutover recovery fence", async () => {
+        const result = await fixture.observerPool.query(
+          "SELECT state, cutover_started_at FROM occ.controller_work WHERE idempotency_key = $1",
+          [second.idempotencyKey],
+        );
+        const row = result.rows[0];
+        return interrupted && row?.state === "queued" && row.cutover_started_at !== null
+          ? row
+          : undefined;
+      });
+      await fixture.stop();
+      stop = await fixture.requestStop(owner);
+      if (phase === "revoked recovery") {
+        await fixture.observerPool.query(
+          `INSERT INTO occ.iam_restrictions (id, namespace_id, action, resource_kind, resource_id, effect)
+             VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
+          [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
+        );
+      }
+      operations.length = 0;
+      recovering = true;
+      // A fresh Driver must restore its persisted binding before the cutover
+      // releases the same-Agent fence and the authorized stop claim proceeds.
+      await fixture.start(new SshComputeDriver(options, { executor }));
+    }
+    const completed = await fixture.work(
+      second,
+      phase === "revoked recovery" ? "failed_permanent" : "succeeded",
+    );
+    assert.ok(stop);
+    const stopped = await fixture.work(stop);
+    assert.equal(completed.cutover_started_at, null);
+    assert.equal(completed.cutover_expected_active_revision_id, null);
+    assert.equal(stopped.cutover_started_at, null);
+    assert.equal(stopped.cutover_expected_active_revision_id, null);
+    assert.equal(await fixture.activeRevision(owner), null);
+    const state = await fixture.observerPool.query(
+      "SELECT desired_runtime_state FROM occ.agents WHERE namespace_id = $1 AND id = $2",
+      [fixture.namespace.id, owner.id],
+    );
+    assert.equal(state.rows[0].desired_runtime_state, "stopped");
+    const effects = operations.filter(({ operation }) => operation !== "probe");
+    if (phase !== "activation") {
+      assert.equal(
+        effects.some(({ operation }) => operation === "activate-revision"),
+        false,
+      );
+    }
+    assert.ok(effects.some(({ operation }) => operation === "stop-revision"));
+    if (phase === "retirement") {
+      assert.ok(
+        effects.some(
+          ({ operation, revision }) => operation === "retire-revision" && revision.id === first.id,
+        ),
+      );
+    } else {
+      const published = await fixture.observerPool.query(
+        `SELECT id FROM occ.audit_events WHERE namespace_id = $1 AND resource_id = $2
+           AND action = 'openclaw.agents.lifecycle.activate'`,
+        [fixture.namespace.id, second.id],
+      );
+      assert.equal(published.rowCount, 0);
+    }
+  });
+}

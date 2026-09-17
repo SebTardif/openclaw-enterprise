@@ -784,18 +784,26 @@ async function run(input) {
     if (input.operation === "prepare-revision") return await prepare(input, nsDir);
     const revision = input.revision;
     const agentDir = join(nsDir, "agents", hash(revision.agentId).slice(0, 12));
-    if (input.operation === "retire-revision" && inspect(agentDir) === undefined) return {};
+    if (
+      (input.operation === "stop-revision" || input.operation === "retire-revision") &&
+      inspect(agentDir) === undefined
+    )
+      return {};
     const agent = verifyAgent(input, agentDir);
     await verifyRuntimeIdentity(input, agent);
     const current = currentSnapshot(input, agentDir);
     const revisionDir = join(agentDir, "revisions", hash(revision.id).slice(0, 12));
-    if (input.operation === "retire-revision" && inspect(revisionDir) === undefined) return {};
+    if (
+      (input.operation === "stop-revision" || input.operation === "retire-revision") &&
+      inspect(revisionDir) === undefined
+    )
+      return {};
     snapshot(input, agentDir, revision.id, revisionMetadata(input));
     if (input.operation === "deactivate-revision")
       return await deactivate(input, agentDir, agent, current);
     if (input.operation === "activate-revision")
       return await activate(input, agentDir, agent, current);
-    if (input.operation === "retire-revision") {
+    if (input.operation === "stop-revision" || input.operation === "retire-revision") {
       if (current?.revisionId === revision.id) {
         const unit = unitName(revision.agentId);
         if (verifyUnit(input, agent) !== undefined) {
@@ -807,6 +815,7 @@ async function run(input) {
       }
       if (deactivatedRevision(input, agentDir) === revision.id)
         fs.rmSync(join(agentDir, "deactivated.json"), { force: true });
+      if (input.operation === "stop-revision") return {};
       fs.rmSync(revisionDir, { recursive: true });
       return {};
     }

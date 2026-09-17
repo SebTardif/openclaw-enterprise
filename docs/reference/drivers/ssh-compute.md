@@ -193,7 +193,11 @@ compensation as complete; success clears the stopped marker, and repeating the
 restored revision is safe. Otherwise durable cutover stays queued. See
 [controller recovery](../controller/reconciliation.md#deferred-namespace-and-agent-convergence).
 
-`retireRevision` invokes selected
+`stopRevision` invokes selected
+`beforeWorkloadStop` hooks, stops and disables the unit, and removes `current`
+and matching serving or stopped markers while retaining the immutable revision
+snapshot, home, state, and operator credentials. A later deployment can activate
+its newly admitted snapshot. `retireRevision` invokes selected
 `beforeWorkloadStop` hooks and removes only that snapshot. If it is still
 current, retirement stops/disables the unit and removes the pointer and matching
 serving or stopped markers first. Home, state, operator credentials, and other

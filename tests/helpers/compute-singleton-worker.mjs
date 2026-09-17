@@ -165,6 +165,12 @@ async function setup(context, computeDriver) {
     const idempotencyKey = `agent_revision:${candidate.id}:reconcile`;
     await state.transactWithQueue(async (unit, queue) => {
       await unit.revisions.createRevision(candidate);
+      await unit.agents.transitionAgentDesiredRuntimeState(
+        namespace.id,
+        owner.id,
+        ["stopped", "running"],
+        "running",
+      );
       await queue.enqueue({
         idempotencyKey,
         namespaceId: namespace.id,
@@ -175,6 +181,29 @@ async function setup(context, computeDriver) {
       });
     });
     return { ...candidate, idempotencyKey };
+  }
+
+  async function requestStop(owner) {
+    const idempotencyKey = `agent:${owner.id}:reconcile:stopped:${randomUUID()}`;
+    await state.transactWithQueue(async (unit, queue) => {
+      const current = await unit.agents.lockAgent(namespace.id, owner.id);
+      assert.ok(current);
+      await unit.agents.transitionAgentDesiredRuntimeState(
+        namespace.id,
+        owner.id,
+        current.desiredRuntimeState,
+        "stopped",
+      );
+      await queue.enqueue({
+        idempotencyKey,
+        namespaceId: namespace.id,
+        agentId: owner.id,
+        agentTarget: "stopped",
+        actorId: actor.id,
+        availableAt: new Date(0),
+      });
+    });
+    return { id: owner.id, idempotencyKey };
   }
 
   async function activeRevision(owner) {
@@ -258,6 +287,7 @@ async function setup(context, computeDriver) {
     agent,
     revision,
     activeRevision,
+    requestStop,
     work,
     createWorker,
     start,

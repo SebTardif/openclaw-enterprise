@@ -168,7 +168,11 @@ Current revocation, invalid state, or deadline failure after cutover starts
 must first compensate by deactivating the candidate and restoring the current
 active predecessor route, or leaving a first-deployment route disabled, where the selected Driver can confirm restoration. If
 compensation cannot be confirmed, the work stays queued rather than
-terminalizing with mismatched database and serving state.
+terminalizing with mismatched database and serving state. A stop admitted during
+activation prevents publishing the candidate. Recovery stops a committed candidate
+before predecessor cleanup; compensation does not restore a predecessor when the
+Agent is stopped. Clearing the cutover fence then allows the authorized Agent-stop
+operation to stop the retained active revision and clear its pointer.
 
 If a worker exits or stops renewing its lease, stale-claim recovery either
 requeues the operation or marks ordinary work `failed_permanent` after its final

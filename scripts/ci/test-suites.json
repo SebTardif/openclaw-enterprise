@@ -166,6 +166,9 @@
           "path": "tests/browser/console.test.mjs"
         },
         {
+          "path": "tests/browser/docs-compute-matrix.test.mjs"
+        },
+        {
           "path": "tests/integration/ci-logging.test.mjs"
         },
         {
@@ -230,9 +233,14 @@
           ]
         },
         {
+          "path": "tests/integration/postgres-controller-work-targets.test.mjs",
+          "expectedTests": ["PostgreSQL controller work requires exactly one complete target shape"]
+        },
+        {
           "path": "tests/integration/postgres-migration-compatibility.test.mjs",
           "expectedTests": [
             "Drizzle generates repository schema migrations without redundant regeneration",
+            "Agent stop migration rejects pre-existing active runtime state",
             "Drizzle second migration preserves the applied journal and PostgreSQL schema"
           ]
         },
@@ -332,7 +340,11 @@
             "active maintenance recovers after its convergence deadline and stops when its actor is denied",
             "development after-commit Drivers activate after CAS and retry before retiring the previous revision",
             "a cold SSH worker recovers post-CAS cutover with persisted bindings",
-            "a cold SSH worker recovers revoked pre-CAS cutover with persisted bindings"
+            "a cold SSH worker recovers revoked pre-CAS cutover with persisted bindings",
+            "production SSH cutover honors stop during activation",
+            "production SSH cutover honors stop during recovery",
+            "production SSH cutover honors stop during revoked recovery",
+            "production SSH cutover honors stop during retirement"
           ]
         },
         {

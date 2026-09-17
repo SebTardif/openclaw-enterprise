@@ -89,6 +89,11 @@ interface LoadedRevisionResources {
   readonly cutoverExpected: Readonly<AgentRevision> | undefined;
 }
 
+interface AgentStopDispatchResult extends DispatchResult {
+  readonly agent?: Readonly<Agent>;
+  readonly revision?: Readonly<AgentRevision>;
+}
+
 function positiveInteger(value: number, name: string): number {
   if (!isPositiveSafeInteger(value)) throw new Error(`${name} must be a positive safe integer.`);
   return value;
@@ -96,6 +101,7 @@ function positiveInteger(value: number, name: string): number {
 
 function workOperation(claim: ClaimedWork): string {
   if (claim.revisionId !== undefined) return "agent_revision.reconcile";
+  if (claim.agentTarget === "stopped") return "agent.stop";
   if (claim.namespaceTarget === "deleted") return "namespace.delete";
   if (claim.namespaceTarget === "ready") return "namespace.ensure";
   return "work.reconcile";
@@ -123,6 +129,7 @@ function validDriver(driver: ComputeDriver): boolean {
     typeof driver.ensureNamespace === "function" &&
     typeof driver.deleteNamespace === "function" &&
     typeof driver.prepareRevision === "function" &&
+    typeof driver.stopRevision === "function" &&
     typeof driver.retireRevision === "function"
   );
 }
@@ -547,6 +554,10 @@ export class ControllerWorker {
       await this.processRevision(claim);
       return;
     }
+    if (claim.agentTarget !== undefined) {
+      await this.processAgentStop(claim);
+      return;
+    }
     if (claim.agentId !== undefined || claim.namespaceTarget === undefined) {
       await this.finalize(claim, undefined, { outcome: "permanent", code: "INVALID_TARGET" });
       return;
@@ -572,6 +583,218 @@ export class ControllerWorker {
       result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
     }
     await this.finalize(claim, namespace, result);
+  }
+
+  private async processAgentStop(claim: ClaimedWork): Promise<void> {
+    let result: AgentStopDispatchResult;
+    try {
+      if (
+        claim.agentId === undefined ||
+        claim.agentTarget !== "stopped" ||
+        claim.namespaceTarget !== undefined
+      ) {
+        await this.finalizeAgentStop(claim, { outcome: "permanent", code: "INVALID_TARGET" });
+        return;
+      }
+      const authorizedAgent = await this.state.read((view) =>
+        view.agents.findAgent(claim.namespaceId, claim.agentId!),
+      );
+      if (authorizedAgent === undefined) {
+        await this.finalizeAgentStop(claim, {
+          outcome: "permanent",
+          code: "INVALID_AGENT_OWNER",
+        });
+        return;
+      }
+      const denied = await this.authorizeAgentStop(claim, authorizedAgent);
+      if (denied !== undefined) {
+        await this.finalizeAgentStop(claim, { ...denied, agent: authorizedAgent });
+        return;
+      }
+      // Admission may change desired state while IAM is consulted. Reload the exact
+      // Agent immediately before any provider effect so a later deployment wins.
+      const resources = await this.state.read(async (view) => {
+        const agent = await view.agents.findAgent(claim.namespaceId, claim.agentId!);
+        const revision =
+          agent?.activeRevisionId === undefined
+            ? undefined
+            : await view.revisions.findRevision(
+                claim.namespaceId,
+                claim.agentId!,
+                agent.activeRevisionId,
+              );
+        return { agent, revision };
+      });
+      const { agent, revision } = resources;
+      if (agent === undefined || agent.servicePrincipalId !== authorizedAgent.servicePrincipalId) {
+        await this.finalizeAgentStop(claim, {
+          outcome: "permanent",
+          code: "INVALID_AGENT_OWNER",
+        });
+        return;
+      }
+      if (agent.desiredRuntimeState !== "stopped") {
+        await this.finalizeAgentStop(claim, {
+          outcome: "success",
+          code: "STOP_SUPERSEDED",
+          agent,
+        });
+        return;
+      }
+      if (agent.activeRevisionId === undefined) {
+        await this.finalizeAgentStop(claim, {
+          outcome: "success",
+          code: "AGENT_ALREADY_STOPPED",
+          agent,
+        });
+        return;
+      }
+      if (
+        revision === undefined ||
+        revision.agentId !== agent.id ||
+        revision.namespaceId !== agent.namespaceId ||
+        revision.servicePrincipalId !== agent.servicePrincipalId
+      ) {
+        await this.finalizeAgentStop(claim, {
+          outcome: "permanent",
+          code: "INVALID_ACTIVE_REVISION",
+          agent,
+        });
+        return;
+      }
+      if (
+        revision.compute.id !== this.compute.id ||
+        revision.compute.implementation !== this.compute.implementation
+      ) {
+        await this.finalizeAgentStop(claim, {
+          outcome: "permanent",
+          code: "COMPUTE_DRIVER_MISMATCH",
+          agent,
+          revision,
+        });
+        return;
+      }
+      await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(revision));
+      result = { outcome: "success", code: "AGENT_STOPPED", agent, revision };
+    } catch (error) {
+      if (error instanceof WorkClaimLostError) throw error;
+      result = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
+    }
+    await this.finalizeAgentStop(claim, result);
+  }
+
+  private async authorizeAgentStop(
+    claim: ClaimedWork,
+    agent: Readonly<Agent>,
+  ): Promise<AgentStopDispatchResult | undefined> {
+    const authorization: AuthorizationRequest = {
+      principalId: claim.actorId,
+      action: "operate",
+      resource: { kind: "agent", id: agent.id, namespaceId: agent.namespaceId },
+    };
+    const state = await this.loadIAMState();
+    const decision = await this.iamDecision(this.iam, authorization);
+    if (!state.identities.some((identity) => identity.id === claim.actorId))
+      return { outcome: "permanent", code: "ACTOR_REVOKED", authorization, decision };
+    if (!decision.allowed)
+      return {
+        outcome: "permanent",
+        code: "AUTHORIZATION_DENIED",
+        authorization,
+        decision,
+      };
+    return undefined;
+  }
+
+  private async finalizeAgentStop(
+    claim: ClaimedWork,
+    result: AgentStopDispatchResult,
+  ): Promise<void> {
+    await this.state.transactWithQueue(async (unit, queue) => {
+      if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+      const terminalFailure =
+        result.outcome === "permanent" ||
+        (result.outcome === "retry" && claim.attemptCount >= this.maxAttempts);
+      if (result.outcome === "success" && result.revision !== undefined) {
+        const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+        if (agent?.activeRevisionId === result.revision.id) {
+          await unit.agents.compareAndClearActiveRevision(
+            claim.namespaceId,
+            agent.id,
+            result.revision.id,
+          );
+        }
+      }
+      if (result.decision !== undefined) await this.appendAgentStopDenial(unit, claim, result);
+      else if (result.outcome === "success" || terminalFailure)
+        await this.appendAgentStopOutcome(unit, claim, result);
+
+      if (result.outcome === "success") await queue.complete(claim);
+      else if (terminalFailure) await queue.fail(claim, { code: result.code });
+      else await queue.retry(claim, { code: result.code });
+    }, this.queueOptions);
+    this.emit({
+      event: "worker.completed",
+      ...workLogFields(claim),
+      namespaceId: claim.namespaceId,
+      agentId: claim.agentId,
+      revisionId: result.revision?.id,
+      result: result.outcome,
+      outcome: result.outcome,
+      code: result.code,
+    });
+  }
+
+  private async appendAgentStopOutcome(
+    unit: PlatformUnitOfWork,
+    claim: ClaimedWork,
+    result: AgentStopDispatchResult,
+  ): Promise<void> {
+    if (this.installation === undefined || claim.agentId === undefined)
+      throw new Error("The worker Agent stop audit context is unavailable.");
+    await unit.audit.append({
+      id: `aud_${randomUUID()}`,
+      installationId: this.installation.id,
+      namespaceId: claim.namespaceId,
+      occurredAt: new Date().toISOString(),
+      kind: "mutation",
+      actorId: claim.actorId,
+      source: "occ",
+      action: "openclaw.agents.lifecycle.stop",
+      resource: { kind: "agent", id: claim.agentId, namespaceId: claim.namespaceId },
+      iamDriverId: this.iamDriverId,
+      outcome: result.outcome === "success" ? "success" : "failure",
+      details: {
+        computeDriverId: this.compute.id,
+        reasonCode: result.code,
+        ...(result.revision === undefined ? {} : { revisionId: result.revision.id }),
+      },
+    });
+  }
+
+  private async appendAgentStopDenial(
+    unit: PlatformUnitOfWork,
+    claim: ClaimedWork,
+    result: AgentStopDispatchResult,
+  ): Promise<void> {
+    if (this.installation === undefined || claim.agentId === undefined)
+      throw new Error("The worker Agent stop authorization context is unavailable.");
+    await unit.audit.append({
+      id: `aud_${randomUUID()}`,
+      installationId: this.installation.id,
+      namespaceId: claim.namespaceId,
+      occurredAt: new Date().toISOString(),
+      kind: "authorization_denial",
+      actorId: claim.actorId,
+      source: "occ",
+      action: "openclaw.agents.stop",
+      resource: { kind: "agent", id: claim.agentId, namespaceId: claim.namespaceId },
+      iamDriverId: this.iamDriverId,
+      ...(result.authorization === undefined ? {} : { authorization: result.authorization }),
+      ...(result.decision === undefined ? {} : { decisionReason: result.decision.reason }),
+      reasonCode: result.code,
+      outcome: "denied",
+    });
   }
 
   private async processRevision(claim: ClaimedWork): Promise<void> {
@@ -705,6 +928,26 @@ export class ControllerWorker {
       }
       if (claim.cutoverStartedAt === undefined) {
         await this.bindRevisionAgent(claim, namespace, agent);
+      }
+      if (agent.desiredRuntimeState === "stopped") {
+        if (claim.idempotencyKey.startsWith(`agent_revision:${revision.id}:maintenance:`)) {
+          await this.completeStoppedRevisionWork(
+            claim,
+            revision,
+            "REVISION_MAINTENANCE_SUPERSEDED",
+          );
+          return;
+        }
+        await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(revision));
+        // Once this reconciliation has published its candidate, it owns retiring
+        // every predecessor even if stop admission clears the active pointer before
+        // a recovery attempt. A different active revision means this candidate was
+        // never published, so its authorized stop work remains solely responsible.
+        if (agent.activeRevisionId === revision.id || agent.activeRevisionId === undefined) {
+          await this.retireEarlierRevisions(claim, revision);
+        }
+        await this.completeStoppedRevisionWork(claim, revision, "REVISION_STOPPED");
+        return;
       }
       const secretContext = await this.resolveRevisionSecretContext(revision);
       if ("result" in secretContext) {
@@ -927,6 +1170,13 @@ export class ControllerWorker {
       if (!validRevisionObservation(observation, revision))
         return { outcome: "permanent", code: "INVALID_DRIVER_OBSERVATION" };
       if (!observation.ready) return { outcome: "pending", code: "REVISION_INCOMPLETE" };
+      const agent = await this.state.read((view) =>
+        view.agents.findAgent(revision.namespaceId, revision.agentId),
+      );
+      if (agent?.desiredRuntimeState !== "running") {
+        await this.compute.stopRevision(revision);
+        return { outcome: "success", code: "REVISION_STOPPED" };
+      }
       if (this.compute.activationOrder === "beforeCommit") {
         await this.stagedRevision("activateRevision", revision, context);
       } else if (
@@ -1090,6 +1340,7 @@ export class ControllerWorker {
       return;
     }
     let activated: Readonly<AgentRevision> | undefined;
+    let stoppedCandidate: Readonly<AgentRevision> | undefined;
     await this.state.transactWithQueue(async (unit, queue) => {
       if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
       if (resolved.supersededBy !== undefined && resolved.outcome === "success") {
@@ -1102,6 +1353,10 @@ export class ControllerWorker {
           current.activeRevisionId !== resolved.expectedActiveRevisionId
         ) {
           await queue.retry(claim, { code: "ACTIVE_REVISION_CHANGED" });
+          return;
+        }
+        if (current.desiredRuntimeState !== "running") {
+          stoppedCandidate = resolved.revision;
           return;
         }
         const activeAgent = await unit.agents.compareAndSetActiveRevision(
@@ -1126,17 +1381,29 @@ export class ControllerWorker {
         await queue.fail(claim, { code: resolved.code });
       else await queue.retry(claim, { code: resolved.code });
     }, this.queueOptions);
+    if (stoppedCandidate !== undefined) {
+      await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(stoppedCandidate!));
+      await this.completeStoppedRevisionWork(claim, stoppedCandidate, "REVISION_STOPPED");
+      return;
+    }
     const compute = this.compute;
     if (activated !== undefined) {
       try {
+        const current = await this.state.read((view) =>
+          view.agents.findAgent(claim.namespaceId, claim.agentId!),
+        );
+        if (current?.desiredRuntimeState !== "running") {
+          await this.withClaimHeartbeat(claim, () => compute.stopRevision(activated!));
+          await this.retireEarlierRevisions(claim, activated);
+          await this.completeStoppedRevisionWork(claim, activated, "REVISION_STOPPED");
+          return;
+        }
         if (this.shouldActivateAfterCommit(compute)) {
           await this.withClaimHeartbeat(claim, () =>
             this.stagedRevision("activateRevision", activated!, resolved.context),
           );
         }
-        if (resolved.previous !== undefined) {
-          await this.withClaimHeartbeat(claim, () => compute.retireRevision(resolved.previous!));
-        }
+        await this.retireEarlierRevisions(claim, activated);
       } catch (error) {
         if (error instanceof WorkClaimLostError) throw error;
         await this.finalizeRevision(claim, {
@@ -1167,6 +1434,7 @@ export class ControllerWorker {
     const revision = result.revision;
     if (revision === undefined) throw new Error("The revision cutover is unavailable.");
     let started: ClaimedWork | undefined;
+    let stopped = false;
     await this.state.transactWithQueue(async (unit, queue) => {
       if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
       const current = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
@@ -1178,8 +1446,16 @@ export class ControllerWorker {
         await queue.retry(claim, { code: "ACTIVE_REVISION_CHANGED" });
         return;
       }
+      if (current.desiredRuntimeState !== "running") {
+        stopped = true;
+        return;
+      }
       started = await queue.startRevisionCutover(claim, result.expectedActiveRevisionId);
     }, this.queueOptions);
+    if (stopped) {
+      await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(revision));
+      await this.completeStoppedRevisionWork(claim, revision, "REVISION_STOPPED");
+    }
     return started;
   }
 
@@ -1210,6 +1486,7 @@ export class ControllerWorker {
     }
 
     let activated = false;
+    let stopped = false;
     await this.state.transactWithQueue(async (unit, queue) => {
       if ((await queue.heartbeat(activeClaim!)) === undefined) throw new WorkClaimLostError();
       const current = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
@@ -1219,6 +1496,10 @@ export class ControllerWorker {
         current.activeRevisionId !== result.expectedActiveRevisionId
       ) {
         await queue.retry(activeClaim!, { code: "ACTIVE_REVISION_CHANGED" });
+        return;
+      }
+      if (current.desiredRuntimeState !== "running") {
+        stopped = true;
         return;
       }
       const activeAgent = await unit.agents.compareAndSetActiveRevision(
@@ -1233,6 +1514,11 @@ export class ControllerWorker {
       }
       activated = true;
     }, this.queueOptions);
+    if (stopped) {
+      await this.withClaimHeartbeat(activeClaim, () => this.compute.stopRevision(revision));
+      await this.completeStoppedRevisionWork(activeClaim, revision, "REVISION_STOPPED");
+      return;
+    }
     if (!activated) return;
     await this.finishActivatedRevision(activeClaim, revision, result.previous, result);
   }
@@ -1243,7 +1529,15 @@ export class ControllerWorker {
     previous: Readonly<AgentRevision> | undefined,
     result?: RevisionDispatchResult,
   ): Promise<void> {
+    let stopped = false;
     try {
+      const current = await this.state.read((view) =>
+        view.agents.findAgent(claim.namespaceId, claim.agentId!),
+      );
+      stopped = current?.desiredRuntimeState === "stopped";
+      if (stopped) {
+        await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(revision));
+      }
       if (previous !== undefined) {
         const compute = this.compute;
         await this.heartbeatClaim(claim);
@@ -1252,6 +1546,10 @@ export class ControllerWorker {
     } catch (error) {
       if (error instanceof WorkClaimLostError) throw error;
       await this.deferRevisionCutover(claim, "REVISION_FINALIZATION_INCOMPLETE");
+      return;
+    }
+    if (stopped) {
+      await this.completeStoppedRevisionWork(claim, revision, "REVISION_STOPPED");
       return;
     }
     await this.completeActivatedRevision(claim, {
@@ -1282,7 +1580,16 @@ export class ControllerWorker {
       await this.withClaimHeartbeat(activeClaim, () =>
         this.stagedRevision("deactivateRevision", revision),
       );
-      if (active !== undefined && active.id !== revision.id) {
+      // Stop admission supersedes restoration; its queued work owns stopping the
+      // predecessor after this cutover has released the same-Agent recovery fence.
+      const latest = await this.state.read((view) =>
+        view.agents.findAgent(claim.namespaceId, claim.agentId!),
+      );
+      if (
+        latest?.desiredRuntimeState === "running" &&
+        active !== undefined &&
+        active.id !== revision.id
+      ) {
         const restoredContext = await this.resolveRevisionSecretContext(active);
         if ("result" in restoredContext) {
           await this.deferRevisionCutover(activeClaim, "REVISION_CUTOVER_COMPENSATION_INCOMPLETE");
@@ -1341,6 +1648,41 @@ export class ControllerWorker {
       outcome: "pending",
       code,
     });
+  }
+
+  private async completeStoppedRevisionWork(
+    claim: ClaimedWork,
+    revision: Readonly<AgentRevision>,
+    code: string,
+  ): Promise<void> {
+    await this.state.transactWithQueue(async (_unit, queue) => {
+      if ((await queue.heartbeat(claim)) === undefined) throw new WorkClaimLostError();
+      await queue.complete(claim);
+    }, this.queueOptions);
+    this.emit({
+      event: "worker.completed",
+      ...workLogFields(claim),
+      namespaceId: claim.namespaceId,
+      agentId: claim.agentId,
+      revisionId: revision.id,
+      result: "success",
+      outcome: "success",
+      code,
+    });
+  }
+
+  private async retireEarlierRevisions(
+    claim: ClaimedWork,
+    revision: Readonly<AgentRevision>,
+  ): Promise<void> {
+    const earlier = await this.state.read(async (view) =>
+      (await view.revisions.listRevisions(revision.namespaceId, revision.agentId)).filter(
+        (candidate) => candidate.revision < revision.revision,
+      ),
+    );
+    for (const previous of earlier) {
+      await this.withClaimHeartbeat(claim, () => this.compute.retireRevision(previous));
+    }
   }
 
   private async completeActivatedRevision(
