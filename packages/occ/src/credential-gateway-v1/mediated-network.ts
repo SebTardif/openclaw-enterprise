@@ -201,10 +201,7 @@ function publicCidr(value: Json): string {
   const ip = address(parts[0]);
   if (isIP(ip) === 4) {
     literal(parts[1], "32");
-    const octets = ip.split(".").map(Number);
-    const a = octets[0];
-    const b = octets[1];
-    const c = octets[2];
+    const [a, b, c] = ip.split(".").map(Number);
     if (
       a === undefined ||
       b === undefined ||
@@ -279,9 +276,10 @@ function imageReference(value: Json | undefined): string {
 function peer(value: Json | undefined): MediatedNetworkPeerV1 {
   const data = record(value, ["namespace", "podLabels"]);
   const labels = record(data.podLabels);
-  if (Object.keys(labels).length < 1 || Object.keys(labels).length > 16) failure();
+  const keys = Object.keys(labels);
+  if (keys.length < 1 || keys.length > 16) failure();
   const copied: Record<string, string> = {};
-  for (const key of Object.keys(labels)) {
+  for (const key of keys) {
     labelKey(key);
     Object.defineProperty(copied, key, {
       value: labelValue(labels[key]),

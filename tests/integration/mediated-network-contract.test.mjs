@@ -31,6 +31,13 @@ function set(input, path, value) {
   const parent = keys.slice(0, -1).reduce((current, key) => current[key], input);
   parent[keys.at(-1)] = value;
 }
+function refuseValues(path, values) {
+  for (const value of values) {
+    const input = valid();
+    set(input, path, value);
+    refusal(input);
+  }
+}
 function frozen(value) {
   if (value === null || typeof value !== "object") return;
   assert.ok(Object.isFrozen(value));
@@ -64,9 +71,10 @@ test("public DATA boundary preserves independent field vectors, order and detach
     output.database.port = 1234;
   }, TypeError);
   assert.throws(() => output.upstreamHttpsCidrs.reverse(), TypeError);
-  assert.deepEqual(describeSelectedData(output).resolverPorts, [53]);
-  assert.equal(describeSelectedData(output).transportPort, 18790);
-  assert.equal(describeSelectedData(output).selectedProfile, MEDIATED_NETWORK_PROFILE);
+  const selected = describeSelectedData(output);
+  assert.deepEqual(selected.resolverPorts, [53]);
+  assert.equal(selected.transportPort, 18790);
+  assert.equal(selected.selectedProfile, MEDIATED_NETWORK_PROFILE);
   const ordinarySelector = ordinaryNetworkPolicySelector({ "openclaw.dev/workload-role": "agent" });
   assert.equal(NETWORK_PROFILE_LABEL, "openclaw.dev/network-profile");
   assert.equal(ORDINARY_NETWORK_PROFILE, "broad-egress-v1");
@@ -83,8 +91,9 @@ test("canonical IPv6 services and independently expected variable-port limits ar
   input.scopedDns.platformHosts[0].address = "fd00::14";
   input.database.port = 1;
   input.gatewayResolvers[0].port = 65535;
-  assert.equal(decode(input).database.port, 1);
-  assert.equal(decode(input).gatewayResolvers[0].port, 65535);
+  const output = decode(input);
+  assert.equal(output.database.port, 1);
+  assert.equal(output.gatewayResolvers[0].port, 65535);
 });
 
 test("all closed record positions reject unknown, missing and accessor fields without executing hooks", () => {
@@ -220,12 +229,7 @@ test("non-JSON values, sparse/cyclic/pathological data and proxies fail without 
 
 test("fixed ports, numeric domains, profile, Harness, CA and immutable image are exact", () => {
   const variablePorts = ["database.port", "gatewayResolvers.0.port", "platformFlows.0.port"];
-  for (const path of variablePorts)
-    for (const value of [0, -1, 1.5, 65536, "443", null, false]) {
-      const input = valid();
-      set(input, path, value);
-      refusal(input);
-    }
+  for (const path of variablePorts) refuseValues(path, [0, -1, 1.5, 65536, "443", null, false]);
   for (const [path, values] of [
     ["kind", ["other"]],
     ["profile", ["broad-egress-v1", "other"]],
@@ -248,11 +252,7 @@ test("fixed ports, numeric domains, profile, Harness, CA and immutable image are
       ],
     ],
   ])
-    for (const value of values) {
-      const input = valid();
-      set(input, path, value);
-      refusal(input);
-    }
+    refuseValues(path, values);
 });
 
 test("canonical address and public single-host routes reject private/default/special-use CIDRs", () => {
@@ -265,7 +265,7 @@ test("canonical address and public single-host routes reject private/default/spe
     "scopedDns.platformHosts.0.address",
   ];
   for (const path of paths)
-    for (const value of [
+    refuseValues(path, [
       "example.com",
       "01.2.3.4",
       "1.2.3",
@@ -275,11 +275,7 @@ test("canonical address and public single-host routes reject private/default/spe
       "fd00::10%eth0",
       "[fd00::10]",
       "::ffff:1.2.3.4",
-    ]) {
-      const input = valid();
-      set(input, path, value);
-      refusal(input);
-    }
+    ]);
   for (const value of [
     "0.0.0.0/0",
     "1.1.1.1/24",
@@ -320,7 +316,7 @@ test("names, exact selectors, role separation and caller purpose domains refuse 
     "publicCa.configMapName",
     "scopedDns.platformHosts.0.hostname",
   ])
-    for (const value of [
+    refuseValues(path, [
       "",
       "*",
       "*.example.com",
@@ -330,11 +326,7 @@ test("names, exact selectors, role separation and caller purpose domains refuse 
       "bad-",
       "bad_name",
       "a".repeat(64),
-    ]) {
-      const input = valid();
-      set(input, path, value);
-      refusal(input);
-    }
+    ]);
   for (const hostname of ["github.com", "api.github.com"]) {
     const input = valid();
     input.scopedDns.platformHosts[0].hostname = hostname;
@@ -405,9 +397,10 @@ test("names, exact selectors, role separation and caller purpose domains refuse 
     different[role].podLabels["openclaw.dev/agent"] = different.binding.agentId;
     different[role].podLabels["openclaw.dev/revision"] = different.binding.revisionId;
   }
-  assert.equal(decode(different).binding.revisionId, "rev-different");
-  assert.equal(decode(different).agent.namespace, "tenant");
-  assert.equal(decode(different).credentialGateway.namespace, "control-plane");
+  const output = decode(different);
+  assert.equal(output.binding.revisionId, "rev-different");
+  assert.equal(output.agent.namespace, "tenant");
+  assert.equal(output.credentialGateway.namespace, "control-plane");
 });
 
 test("canonical strings reject trailing line terminators and image-internal controls", () => {
@@ -439,8 +432,9 @@ test("DNS, namespace and label names accept exact Kubernetes bounds; digest imag
   input.publicCa.configMapName = longestDns;
   input.scopedDns.platformHosts[0].hostname = longestDns;
   input.scopedDns.peer.podLabels = { [labelPrefix]: "v".repeat(63) };
-  assert.equal(decode(input).publicCa.configMapName, longestDns);
-  assert.equal(Object.keys(decode(input).scopedDns.peer.podLabels)[0], labelPrefix);
+  const output = decode(input);
+  assert.equal(output.publicCa.configMapName, longestDns);
+  assert.equal(Object.keys(output.scopedDns.peer.podLabels)[0], labelPrefix);
   for (const path of ["publicCa.configMapName", "scopedDns.platformHosts.0.hostname"]) {
     const oversized = structuredClone(input);
     set(oversized, path, longestDns + "d");

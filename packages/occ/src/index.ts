@@ -2806,6 +2806,8 @@ export type {
 export {
   MEDIATED_NETWORK_PROFILE,
   decodeMediatedNetworkPacketV1,
-  type MediatedNetworkPeerV1,
-  type MediatedNetworkPacketV1,
+} from "./credential-gateway-v1/mediated-network.ts";
+export type {
+  MediatedNetworkPeerV1,
+  MediatedNetworkPacketV1,
 } from "./credential-gateway-v1/mediated-network.ts";
