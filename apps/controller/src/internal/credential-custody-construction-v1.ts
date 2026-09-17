@@ -1,9 +1,9 @@
 /** Curated trusted construction surface. Reexports perform no construction.
- * The two new factories remain declaration-only until their original source
- * implementations land; importing this facade is not runtime qualification. */
-export { createOriginalGitHubIssuedMaterialOwnerV1 } from "../providers/token/github/issued-material-custody.ts";
+ * Deferred factories are type-only until their implementations land. Loading
+ * the implemented exports does not qualify runtime custody or composition. */
+export type { createOriginalGitHubIssuedMaterialOwnerV1 } from "../providers/token/github/issued-material-custody.ts";
 export type { OriginalGitHubIssuedMaterialOwnerV1 } from "../providers/token/github/issued-material-custody.ts";
-export { createSqlEnvelopeOwnerV1 } from "../providers/token/github/sql-envelope.ts";
+export type { createSqlEnvelopeOwnerV1 } from "../providers/token/github/sql-envelope.ts";
 export type { SqlEnvelopeDependenciesV1 } from "../providers/token/github/sql-envelope.ts";
 export {
   createGitHubAppTokenIssuerV1,
