@@ -76,17 +76,29 @@ test("provider transport pins destination and exact issuance scope before receiv
     assert.throws(() =>
       createProviderTransport(fixture.origin, fixture.tls.ca, clock, { ...scope, installationId }),
     );
-  for (const changes of [{ repositoryId: "9007199254740992" }, { profile: "__proto__" }])
+  for (const changes of [
+    { repositoryId: "9007199254740992" },
+    { repositoryId: 73 },
+    { installationId: 41 },
+    { profile: "__proto__" },
+  ])
     assert.throws(() =>
       createProviderTransport(fixture.origin, fixture.tls.ca, clock, { ...scope, ...changes }),
     );
-  const transport = createProviderTransport(fixture.origin, fixture.tls.ca, clock, scope);
+  let installationReads = 0;
+  const transportScope = {
+    ...scope,
+    get installationId() {
+      return ++installationReads === 1 ? "41" : "42";
+    },
+  };
+  const transport = createProviderTransport(fixture.origin, fixture.tls.ca, clock, transportScope);
+  assert.equal(installationReads, 1);
   assert.deepEqual(Object.keys(transport).sort(), ["issue", "revoke"]);
   assert.ok(Object.isFrozen(transport));
   // A later caller cannot replace the URL, request body, or admitted permission map.
-  scope.installationId = "42";
-  scope.repositoryId = "74";
-  scope.profile = "git-full";
+  transportScope.repositoryId = "74";
+  transportScope.profile = "git-full";
   let dispatches = 0;
   let observations = 0;
   const attempt = (action) => ({

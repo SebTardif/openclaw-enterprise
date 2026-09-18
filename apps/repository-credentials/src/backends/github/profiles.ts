@@ -12,6 +12,7 @@ const profiles = Object.freeze({
 });
 
 export function permissionsForProfile(profile: GitHubProfile): Readonly<Record<string, string>> {
-  if (!Object.hasOwn(profiles, profile)) throw new Error("unsupported-profile");
+  if (typeof profile !== "string" || !Object.hasOwn(profiles, profile))
+    throw new Error("unsupported-profile");
   return profiles[profile];
 }

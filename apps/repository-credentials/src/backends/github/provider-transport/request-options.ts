@@ -8,6 +8,7 @@ type Scope = Readonly<{ origin: string; issuePath: string; issueBody: string }>;
 const scopes = new WeakMap<ProviderScope, Scope>();
 
 function numericId(value: string): number {
+  if (typeof value !== "string") throw new Error("invalid-provider-scope");
   const number = Number(value);
   if (!/^[1-9][0-9]{0,15}$/.test(value) || !Number.isSafeInteger(number))
     throw new Error("invalid-provider-scope");
@@ -21,17 +22,18 @@ export function prepareProviderScope(
   const url = new URL(origin);
   if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password)
     throw new Error("invalid-provider-origin");
-  numericId(scope.installationId);
-  const repositoryId = numericId(scope.repositoryId);
+  const { installationId, repositoryId: repository, profile } = scope;
+  numericId(installationId);
+  const repositoryId = numericId(repository);
   const ref = Object.freeze({}) as ProviderScope;
   scopes.set(
     ref,
     Object.freeze({
       origin,
-      issuePath: `/app/installations/${scope.installationId}/access_tokens`,
+      issuePath: `/app/installations/${installationId}/access_tokens`,
       issueBody: JSON.stringify({
         repository_ids: [repositoryId],
-        permissions: permissionsForProfile(scope.profile),
+        permissions: permissionsForProfile(profile),
       }),
     }),
   );
