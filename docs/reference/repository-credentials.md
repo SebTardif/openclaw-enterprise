@@ -18,8 +18,13 @@ Work/IAM integration.
 A protected JSON file supplies `gateway`, `sessionPolicy`, `backend`, and optional
 positive finite `limits`. The service validates configuration before listening.
 Private keys come from protected files, not environment variables or command
-arguments. The configuration file and private keys must be regular owned files
-with private permissions; symlinks and replacement during loading are rejected.
+arguments. The configuration file and private keys must be regular files owned
+by root or the service user, with private permissions. Every directory ancestor
+must have one of those owners and reject group/other writes. A root-owned sticky
+ancestor such as `/tmp` is allowed above the immediate parent; the immediate
+parent must always reject group/other writes. Symlinks and file replacement
+during loading are rejected. See the [configuration flow](../flows/repository-credential-configuration.md)
+for the validation and key-ownership sequence.
 
 ```json
 {
