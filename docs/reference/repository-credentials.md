@@ -185,7 +185,8 @@ listener, and 32 exchanges total and four per session. Headers are limited to 32
 request targets to 8 KiB. Git fetch input is 1 MiB; push input and Git output are
 256 MiB. API input is 1 MiB and response data 8 MiB. Git gzip input has independent
 wire and decoded limits. Exchanges have a five-minute total bound and 60-second
-credential margin; provider actions have at most 30 seconds. Shutdown allows
+credential margin. The response-header deadline starts after the upload finishes;
+connection, input and stall deadlines remain independent. Provider actions have at most 30 seconds. Shutdown allows
 60 seconds for cleanup before reporting unresolved obligations and terminating.
 Overrides remain positive and finite.
 

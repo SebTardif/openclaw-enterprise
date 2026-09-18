@@ -72,6 +72,7 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
     let upstream: IncomingMessage | undefined;
     let dispatched = false;
     let failed = false;
+    let receivedHeaders = false;
     const pending: Promise<unknown>[] = [];
     const cancel = () => {
       failed = true;
@@ -118,7 +119,11 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
                   : { ca: Buffer.from(options.upstreamCa) }),
                 rejectUnauthorized: true,
               },
-              resolve,
+              (response) => {
+                receivedHeaders = true;
+                stopHeaders?.();
+                resolve(response);
+              },
             );
             req.once("error", () => reject(new Error("upstream-failed")));
             req.once("close", () => resolveSocket());
@@ -140,7 +145,6 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
         cancel,
       );
       stopConnect = options.clock.schedule(plan.limits.connectMs, cancel);
-      stopHeaders = options.clock.schedule(plan.limits.firstHeaderMs, cancel);
       stopInput = options.clock.schedule(plan.limits.inputMs, cancel);
       if (!outbound) throw new Error("dispatch-denied");
       const wire = new ByteLimit(plan.limits.inputWireBytes, inputStall.reset);
@@ -153,6 +157,9 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
         () => {
           stopInput?.();
           inputStall.close();
+          // An upstream may need the complete upload before it can respond.
+          if (!failed && !receivedHeaders)
+            stopHeaders = options.clock.schedule(plan.limits.firstHeaderMs, cancel);
         },
         () => {
           cancel();
@@ -162,7 +169,6 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
       pending.push(inputDone);
       void inputDone.catch(() => {});
       upstream = await responseReady;
-      stopHeaders?.();
       stopConnect?.();
       responseStall = watchdog(options.clock, plan.limits.stallMs, cancel);
       const status = upstream.statusCode ?? 502;

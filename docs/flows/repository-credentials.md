@@ -184,7 +184,10 @@ to dispatch and join the actual request close event. An original
 dispatch gate rechecks admission synchronously after authentication preparation,
 registers cancellation and opens the exchange without an intervening await.
 The sender independently checks the fixed upstream origin. Credential bytes stay
-inside private adapter/sender callbacks.
+inside private adapter/sender callbacks. The sender's final-response-header wait
+starts after the bounded input pipeline finishes, unless headers have already
+arrived. Connection, upload, stall and total deadlines remain active in their
+respective phases.
 
 ### 5. Deliver an outcome and release ownership
 
@@ -263,6 +266,8 @@ A structural flow check does not establish any of those runtime results.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-18 03:33: Start upstream final-response-header deadlines after completed upload and preserve early-response handling. (authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115 - 7f2fd5988dfce4a485db48d33f0480b3f9485b86)
 
 - 2026-09-18 03:29: Preserve private control admission under public socket saturation. (authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115 - 0d34c2159d6a8fbec213cacf6ba42ca66aa9170a)
 
