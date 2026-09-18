@@ -317,7 +317,7 @@ test(
 );
 
 test(
-  "pre-authentication socket capacity rejects excess TLS connections and recovers",
+  "pre-authentication socket capacity preserves private control admission and recovers",
   { timeout: 15000 },
   async (t) => {
     const fixture = await startTransport(
@@ -339,6 +339,17 @@ test(
     assert.equal(fixture.service.status(fixture.opened.session.sessionId).activeUses, 0);
     assert.equal(fixture.github.issuesOfTokens.length, 0);
     assert.equal(fixture.received.length, 0);
+
+    // A full public listener cannot prevent the operator from closing authority
+    // through the production Unix-socket client and control handler.
+    const { callControl } = await appModule("client/operator");
+    const other = fixture.service.open({ durationSeconds: 300, profile: "git-write" });
+    const closed = await callControl(fixture.config.gateway.controlSocket, {
+      method: "POST",
+      path: `/v1/sessions/${other.session.sessionId}/close`,
+    });
+    assert.notEqual(closed.state, "OPEN");
+    assert.equal(admitted.closed, false);
 
     // The admitted socket remains usable after overload, including authentication.
     assert.deepEqual(await readDiscovery(fixture, { socket: admitted.socket }), {

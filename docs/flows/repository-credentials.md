@@ -1,7 +1,7 @@
 ---
 created: "2026-09-17"
 updated: "2026-09-18"
-last_updated_session: "01a0b098-e407-7d42-bc53-9bce979ac912"
+last_updated_session: "authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115"
 ---
 
 # Repository credential service flow
@@ -133,8 +133,9 @@ gateway API host. Absolute API destinations and unqualified commands refuse.
 
 ### 4. Reserve, acquire and dispatch
 
-`apps/repository-credentials/src/server.ts:startListeners` owns listeners and
-sockets. Its `apps/repository-credentials/src/transport/agent.ts:createAgentHandler`
+`apps/repository-credentials/src/server.ts:startListeners` bounds each listener's
+sockets independently, preserving private operator admission when the public
+listener is full. Its `apps/repository-credentials/src/transport/agent.ts:createAgentHandler`
 checks generic framing and delegates authentication to the bound factory. A valid
 Git route with no credentials receives the local Basic challenge. Authenticated
 requests reserve common exchange capacity before body forwarding. The GitHub
@@ -262,6 +263,8 @@ A structural flow check does not establish any of those runtime results.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-18 03:29: Preserve private control admission under public socket saturation. (authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115 - 0d34c2159d6a8fbec213cacf6ba42ca66aa9170a)
 
 - 2026-09-18 01:59: Document accompanying admission reconciliation, failed-construction drainage and separate use/cleanup deadlines. (01a0b098-e407-7d42-bc53-9bce979ac912 - 87e5c418d7a6c45688ce3be87c204660b431c703)
 

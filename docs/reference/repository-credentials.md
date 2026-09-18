@@ -180,8 +180,8 @@ metadata and human-authored content remain unchanged. Routing configuration is
 not network egress confinement.
 
 Default service bounds are 16 sessions including pending cleanup, two credential
-slots per session, one provider action and 64 queued actions, 64 sockets, 32
-exchanges total and four per session. Headers are limited to 32 KiB/64 pairs;
+slots per session, one provider action and 64 queued actions, 64 sockets per
+listener, and 32 exchanges total and four per session. Headers are limited to 32 KiB/64 pairs;
 request targets to 8 KiB. Git fetch input is 1 MiB; push input and Git output are
 256 MiB. API input is 1 MiB and response data 8 MiB. Git gzip input has independent
 wire and decoded limits. Exchanges have a five-minute total bound and 60-second
