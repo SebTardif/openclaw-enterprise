@@ -13,6 +13,14 @@ loses cleanup inventory; upstream tokens can remain valid until GitHub expires
 them. This service does not provide durable recovery, multiple replicas, or OCC
 Work/IAM integration.
 
+The application package exports `startCredentialService(configurationPath)` for
+trusted process launchers. It loads the same protected configuration as the CLI
+and returns the session controls and listener lifecycle. The session object
+contains only `open`, `status`, `close`, and `shutdown`; upstream authorization,
+driver construction, and request-sender callbacks remain inside the service.
+Package-name imports of those internal modules are rejected. Process shutdown
+continues to use `SIGTERM` or `SIGINT` for bounded cleanup and material disposal.
+
 ## Configuration
 
 A protected JSON file supplies `gateway`, `sessionPolicy`, `backend`, and optional
