@@ -186,7 +186,10 @@ uses `apps/repository-credentials/src/backends/github/provider-transport/request
 to dispatch and join the actual request close event. An original
 dispatch gate rechecks admission synchronously after authentication preparation,
 registers cancellation and opens the exchange without an intervening await.
-The sender independently checks the fixed upstream origin. Credential bytes stay
+The handler and sender independently capture their allowed upstream origins.
+`apps/repository-credentials/src/transport/request-headers.ts:createUpstreamHeaders`
+validates adapter fields, rejects case-insensitive duplicates and reconstructs
+bounded transport headers before dispatch. Credential bytes stay
 inside private adapter/sender callbacks. The sender's final-response-header wait
 starts after the bounded input pipeline finishes, unless headers have already
 arrived. Connection, upload, stall and total deadlines remain active in their
@@ -269,6 +272,8 @@ A structural flow check does not establish any of those runtime results.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-18 03:38: Capture upstream origin authority and construct canonical bounded private request headers before dispatch. (authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115 - 7c26fe8660e0af5d223baa2da83689974df36ebe)
 
 - 2026-09-18 03:33: Start upstream final-response-header deadlines after completed upload and preserve early-response handling. (authoring-run/2c59e207-660b-4e08-9ffa-8402a6ce2115 - 7f2fd5988dfce4a485db48d33f0480b3f9485b86)
 

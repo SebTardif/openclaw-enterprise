@@ -189,8 +189,11 @@ the configured repository ID and are rewritten to its admitted `/repos/OWNER/REP
 route. Issue collection pagination accepts bounded `after` and `before` cursors;
 direct requests to repository-ID routes remain unsupported.
 Informational labels, milestones, nested repository
-metadata and human-authored content remain unchanged. Routing configuration is
-not network egress confinement.
+metadata and human-authored content remain unchanged. Each listener and sender
+captures its permitted upstream origins at construction. The sender rejects
+ambiguous or malformed adapter headers before dispatch, then supplies canonical
+authority, framing and connection headers within the configured header bounds.
+Routing configuration is not network egress confinement.
 
 Default service bounds are 16 sessions including pending cleanup, two credential
 slots per session, one provider action and 64 queued actions, 64 sockets per

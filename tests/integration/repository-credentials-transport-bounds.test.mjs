@@ -78,6 +78,7 @@ async function startTransport(t, onRequest, limits = {}) {
     onRequest(incoming, outgoing);
   });
   const origin = await listen(resources, upstream);
+  const trustedOrigins = new Set([origin]);
   const key = createGitHubKeyOwner({ privateKey: github.privateKey, appId: fixtureAppId, clock });
   resources.after(() => key.close());
   const factory = createGitHubDriverFactory({
@@ -118,11 +119,11 @@ async function startTransport(t, onRequest, limits = {}) {
     service,
     factory,
     clock,
-    trustedUpstreamOrigins: new Set([origin, github.origin]),
+    trustedUpstreamOrigins: trustedOrigins,
     upstreamCa: tls.ca,
   });
   const opened = service.open({ durationSeconds: 300, profile: "git-write" });
-  return { config, tls, service, listeners, opened, github, received, resources };
+  return { config, tls, service, listeners, opened, github, received, resources, trustedOrigins };
 }
 
 function startRequest(
@@ -372,6 +373,28 @@ test(
     assert.equal(fixture.github.issuesOfTokens.length, 1);
   },
 );
+
+test("an Agent listener retains its original upstream origins", { timeout: 15000 }, async (t) => {
+  const fixture = await startTransport(t, (incoming, outgoing) => {
+    incoming.resume();
+    outgoing.writeHead(200, replyHeaders).end("0000");
+  });
+  const api = fixture.service.open({ durationSeconds: 300, profile: "git-full" });
+  // The listener was admitted with only the Git peer. Mutating its caller's
+  // configuration afterward must not authorize the separate API destination.
+  fixture.trustedOrigins.add(fixture.github.origin);
+  const target = `/repos/${fixtureRepository}`;
+  const client = startRequest(fixture, {
+    path: target,
+    opened: api,
+    headers: { authorization: `Bearer ${api.bearer}` },
+  });
+  client.outgoing.end();
+  assert.equal((await client.result).status, 503);
+  assert.equal(fixture.github.trace.filter((entry) => entry.target === target).length, 0);
+  assert.equal((await readDiscovery(fixture)).status, 200);
+  assert.deepEqual(fixture.received, [{ method: "GET", path: discovery }]);
+});
 
 const declaredInputCases = [
   {

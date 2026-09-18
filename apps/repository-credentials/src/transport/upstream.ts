@@ -2,10 +2,11 @@ import { request as httpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage, ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
-import type { Clock, RequestHead } from "../driver-contracts.ts";
+import type { Clock, HeaderFields, RequestHead } from "../driver-contracts.ts";
 import type { ExchangeSender } from "../internal-contracts.ts";
 import { ByteLimit, watchdog } from "./streams.ts";
 import { responseHeaders, safeResponseHeaders } from "./response-headers.ts";
+import { createUpstreamHeaders } from "./request-headers.ts";
 
 export interface UpstreamSenderOptions {
   readonly request: IncomingMessage;
@@ -20,6 +21,7 @@ export interface UpstreamSenderOptions {
 
 /** One sender owns exactly one exchange; it never retries an upstream request. */
 export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSender {
+  const trustedUpstreamOrigins = new Set(options.trustedUpstreamOrigins);
   let used = false;
   return async (privateRequest, context) => {
     if (used) return { kind: "not-dispatched", code: "sender-reused" };
@@ -33,7 +35,7 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
         origin.origin !== plan.origin ||
         origin.username ||
         origin.password ||
-        !options.trustedUpstreamOrigins.has(plan.origin) ||
+        !trustedUpstreamOrigins.has(plan.origin) ||
         !plan.target.startsWith("/") ||
         plan.target.startsWith("//") ||
         /[\x00-\x20\x7f#]/.test(plan.target)
@@ -44,30 +46,17 @@ export function createUpstreamSender(options: UpstreamSenderOptions): ExchangeSe
     }
     if ((options.head.framing.bytes ?? 0) > plan.limits.inputWireBytes)
       return { kind: "not-dispatched", code: "limit-exceeded" };
-    const headers: Record<string, string> = { ...privateRequest.headers };
-    for (const name of Object.keys(headers)) {
-      const lower = name.toLowerCase();
-      if (
-        [
-          "host",
-          "connection",
-          "content-length",
-          "content-encoding",
-          "transfer-encoding",
-          "expect",
-          "cookie",
-          "proxy-authorization",
-          "trailer",
-          "upgrade",
-        ].includes(lower)
-      )
-        delete headers[name];
+    let headers: HeaderFields;
+    try {
+      headers = createUpstreamHeaders(privateRequest.headers, {
+        authority: origin.host,
+        head: options.head,
+        maximumBytes: options.headerBytes ?? 32768,
+        maximumPairs: options.headerPairs ?? 64,
+      });
+    } catch {
+      return { kind: "not-dispatched", code: "invalid-upstream-headers" };
     }
-    headers.host = origin.host;
-    headers.connection = "close";
-    headers["accept-encoding"] = "identity";
-    if (options.head.framing.kind === "length" && options.head.contentEncoding === "identity")
-      headers["content-length"] = String(options.head.framing.bytes);
     let outbound: ClientRequest | undefined;
     let upstream: IncomingMessage | undefined;
     let dispatched = false;
