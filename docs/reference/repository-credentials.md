@@ -53,6 +53,12 @@ origins to `github.com` and `api.github.com`. An Agent cannot select an upstream
 repository, profile, or deadline after admission. Configuration changes apply to
 new composition and admission.
 
+The privileged GitHub transport captures the installation, repository and exact
+permission profile when the driver is constructed. Its only operations are issuance
+for that captured scope and revocation of an owned token; callers cannot supply an
+HTTP URL, method, path, request body, or extra headers. Extending those operations
+changes a credential boundary and requires security review.
+
 | Profile               | Exact requested GitHub permissions                                           | Supported work                                                           |
 | --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `git-read`            | `metadata: read`, `contents: read`                                           | Clone, fetch and branch checkout; no push or API calls                   |
