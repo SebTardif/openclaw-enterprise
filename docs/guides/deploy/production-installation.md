@@ -121,9 +121,10 @@ Edit the protected YAML copies before provisioning anything:
 
 - `$OCC_INPUT_DIRECTORY/values.yaml`: set `images.controller` to the
   controller digest, `auth.baseUrl` to the production OCC URL,
-  `bootstrap.adminEmail` to the first administrator, `database.cidr` to the
-  exact PostgreSQL endpoint CIDR, `cluster.cidr` to the Kubernetes API endpoint
-  CIDR, `api.clients` to approved client selectors, and
+  `bootstrap.adminEmail` to the first administrator, `database.cidrs` to every
+  current PostgreSQL endpoint IPv4 `/32`, `cluster.cidrs` to every current
+  Kubernetes API endpoint IPv4 `/32`, `controlPlane.nodeSelector` to the
+  reviewed control-node labels, `api.clients` to approved client selectors, and
   `bootstrap.password.claimName` to the bootstrap PVC name.
 - `$OCC_INPUT_DIRECTORY/installation.yaml`: set `occ.cluster`, `logging.level`,
   both `drivers.compute.configuration.images` digests, the DNS and gateway-client
@@ -147,7 +148,8 @@ image from the same Helm values file:
 yq e -e '.images.controller | test("@sha256:[a-f0-9]{64}$")' \
   "$OCC_INPUT_DIRECTORY/values.yaml" >/dev/null
 yq e -e '.auth.baseUrl != "" and .bootstrap.adminEmail != "" and
-  .database.cidr != "" and .cluster.cidr != "" and (.api.clients | length > 0)' \
+  (.database.cidrs | length > 0) and (.cluster.cidrs | length > 0) and
+  (.controlPlane.nodeSelector | length > 0) and (.api.clients | length > 0)' \
   "$OCC_INPUT_DIRECTORY/values.yaml" >/dev/null
 yq e -e '.drivers.compute.configuration.images.requireImmutableDigest == true and
   (.drivers.compute.configuration.images.gateway | test("@sha256:[a-f0-9]{64}$")) and

@@ -45,10 +45,13 @@ human administrator session path, not service keys. The
   the supported boundary.
 - Controller and runtime image digests (build them in the first step).
 - External PostgreSQL with separate migrator and application roles.
+- A Kubernetes node pool labeled for OCC control-plane Pods. The default Helm
+  values select nodes with `oce-role: control`; set
+  `controlPlane.nodeSelector` to the reviewed labels for your cluster.
 - Operator-managed HTTPS access for approved clients; the chart does not create
   TLS or Ingress.
 - Operator-created startup, database, authentication, optional Provider Secrets,
-  fresh bootstrap PVC, gateway storage, and exact egress destinations.
+  fresh bootstrap PVC, gateway storage, and exact `/32` egress destinations.
 
 ### Production installation sequence
 

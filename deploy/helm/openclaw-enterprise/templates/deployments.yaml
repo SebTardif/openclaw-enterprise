@@ -22,6 +22,8 @@ spec:
       automountServiceAccountToken: true
       securityContext:
         {{- include "openclaw.podSecurity" $ | nindent 8 }}
+      nodeSelector:
+        {{- toYaml $.Values.controlPlane.nodeSelector | nindent 8 }}
       volumes:
         - name: installation-startup
           secret:

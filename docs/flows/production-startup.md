@@ -1,7 +1,7 @@
 ---
 created: 2026-08-25
-updated: 2026-09-17
-last_updated_session: authoring-run/a6571e7c-996e-4f11-9c4c-f61418a8d109
+updated: 2026-09-18
+last_updated_session: authoring-run/6fe8e24c-8bd5-489b-b76c-ca7d0a22c14b
 ---
 
 # Production Startup Flow
@@ -30,7 +30,8 @@ prepare application Secrets automatically.
   `apps/controller/src/composition/production.ts:28`.
 - Assumptions: Explicit kubeconfig/context, enforcing NetworkPolicies, external
   PostgreSQL, approved immutable images, protected operator files, fresh
-  bootstrap PVC, exact API/client selectors, and an approved private OCC URL.
+  bootstrap PVC, exact API/client selectors, explicit `/32` egress hosts,
+  reviewed control-plane node labels, and an approved private OCC URL.
 
 ## Flow
 
@@ -74,9 +75,10 @@ for password and Azure workload-identity configuration.
 The operator copies and edits the production example values, Installation YAML,
 and bootstrap PVC manifest outside the checkout. Helm values select the
 controller image, API endpoint, Secret names, bootstrap claim, API-client
-selectors, and egress destinations. The Installation YAML selects IAM,
-Configuration, Compute, optional Provider, gateway/Agent images, projected
-workload identity, and runtime networking/storage.
+selectors, control-plane node selector, and egress destinations. The
+Installation YAML selects IAM, Configuration, Compute, optional Provider,
+gateway/Agent images, projected workload identity, and runtime
+networking/storage.
 
 The operator creates file-backed Kubernetes Secrets for Installation startup,
 database URLs, Better Auth signing material, and optional ChatGPT Provider
@@ -136,6 +138,17 @@ database access, trusted Installation YAML, selected Drivers, Provider
 membership, and Kubernetes Compute preflight before readiness. It serves private
 controller routes, `/healthz`, and database-backed `/readyz` behind the
 operator-managed endpoint.
+
+The chart places the API and worker Pods with `controlPlane.nodeSelector`. The
+same selector applies to the initialization Job that runs the migration init
+container and bootstrap container, so migration, bootstrap, API, and worker Pods
+stay on the reviewed control-plane node pool. Tenant gateway and Agent placement
+remain in the selected Compute Driver configuration.
+
+NetworkPolicies allow database egress to every `database.cidrs` host and
+Kubernetes API egress to every `cluster.cidrs` host. Each entry must be an
+explicit IPv4 `/32`; operators must refresh the values when a managed database
+or API endpoint resolves to a different address set.
 
 The Kubernetes Compute Driver queries the API server version and verifies
 authenticated Namespace access. Kubernetes 1.35 or later is the supported
@@ -209,6 +222,7 @@ tenant deployment and TUI procedures run.
 
 ## Changelog
 
+- 2026-09-18 17:09: Document multi-endpoint Helm egress values and control-plane node placement. (authoring-run/6fe8e24c-8bd5-489b-b76c-ca7d0a22c14b - 724dcb5cb80b5e76a62e8267a21185a2e91a85c2)
 - 2026-09-17 12:56: Trace the advisory Kubernetes 1.35 startup preflight and warning handoff. (authoring-run/a6571e7c-996e-4f11-9c4c-f61418a8d109 - 324fe2d17f3856cd1602a57e4d8aa99a34d6514c)
 - 2026-09-01 19:09: Document initial default Namespace creation and unchanged repeat-bootstrap behavior. (codex/01a05ef1-ee29-7941-80f2-448bb0789969 - 872fa544c98bb7ad11b2d92d777e49229ececbf5) (01a05f95-dd80-7011-990f-d1c46b5bb3cc - aa366c49c44834d59f74994c5fd37fb8096f169f)
 - 2026-09-01 12:58: Trace production bootstrap-volume preparation, Helm startup, and authenticated Installation proof. (codex/01a05e87-6c64-7960-b9c2-f444d4a3d737 - bdb846c38d5dae6085a8841f720c93068ba8ad15)

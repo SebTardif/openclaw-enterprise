@@ -78,7 +78,7 @@ database:
   secretName: occ-database
   appUrlKey: application-url
   migrationUrlKey: migration-url
-  cidr: ""
+  cidrs: []
   port: 5432
 
 api:
@@ -86,8 +86,12 @@ api:
   clients: []
 
 cluster:
-  cidr: ""
+  cidrs: []
   port: 443
+
+controlPlane:
+  nodeSelector:
+    oce-role: control
 
 dns:
   namespace: kube-system

@@ -32,11 +32,20 @@
 {{- if or (not .Values.dns.namespace) (not .Values.dns.podLabels) -}}
 {{- fail "dns requires an exact namespace and nonempty Pod selector" -}}
 {{- end -}}
-{{- range $name, $cidr := dict "database" .Values.database.cidr "cluster" .Values.cluster.cidr -}}
+{{- if hasKey .Values.database "cidr" -}}{{- fail "database.cidr is retired; configure database.cidrs with explicit IPv4 /32 hosts" -}}{{- end -}}
+{{- if hasKey .Values.cluster "cidr" -}}{{- fail "cluster.cidr is retired; configure cluster.cidrs with explicit IPv4 /32 hosts" -}}{{- end -}}
+{{- range $name, $cidrs := dict "database" .Values.database.cidrs "cluster" .Values.cluster.cidrs -}}
+{{- if or (not (kindIs "slice" $cidrs)) (eq (len $cidrs) 0) -}}
+{{- fail (printf "%s.cidrs must contain at least one explicit IPv4 /32 host" $name) -}}
+{{- end -}}
+{{- range $index, $cidr := $cidrs -}}
 {{- if not (regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+/32$" $cidr) -}}
-{{- fail (printf "%s.cidr must identify exactly one IPv4 host with /32" $name) -}}
+{{- fail (printf "%s.cidrs[%d] must identify exactly one IPv4 host with /32" $name $index) -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- if or (not .Values.controlPlane) (not .Values.controlPlane.nodeSelector) -}}{{- fail "controlPlane.nodeSelector must select the control-plane node pool" -}}{{- end -}}
+{{- if not (kindIs "map" .Values.controlPlane.nodeSelector) -}}{{- fail "controlPlane.nodeSelector must be a map of Kubernetes node labels" -}}{{- end -}}
 {{- if eq .Values.database.appUrlKey .Values.database.migrationUrlKey -}}
 {{- fail "database application and migration credentials must use different Secret keys" -}}
 {{- end -}}

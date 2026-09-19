@@ -25,8 +25,10 @@ const values = {
   "bootstrap.password.claimName": "occ-bootstrap-admin-password",
   "api.clients[0].namespace": "operator-tools",
   "api.clients[0].podLabels.app": "operator",
-  "database.cidr": "10.45.0.12/32",
-  "cluster.cidr": "10.43.0.1/32",
+  "database.cidrs[0]": "10.45.0.12/32",
+  "database.cidrs[1]": "10.45.0.13/32",
+  "cluster.cidrs[0]": "10.43.0.1/32",
+  "cluster.cidrs[1]": "10.43.0.2/32",
 };
 const chatgptValues = {
   "provider.chatgpt.enabled": "true",
@@ -179,6 +181,7 @@ test(
     assert.equal(initialization.spec.backoffLimit, 0);
     const pod = initialization.spec.template.spec;
     assert.equal(pod.automountServiceAccountToken, false);
+    assert.deepEqual(pod.nodeSelector, { "oce-role": "control" });
     assert.equal(pod.securityContext.fsGroupChangePolicy, "OnRootMismatch");
     assert.equal(pod.initContainers[0].name, "migration");
     assert.deepEqual(pod.initContainers[0].args, ["scripts/migrate-production.mjs"]);
@@ -322,6 +325,7 @@ test(
     for (const component of ["api", "worker"]) {
       const pod = selected("Deployment", component).spec.template.spec;
       const container = pod.containers[0];
+      assert.deepEqual(pod.nodeSelector, { "oce-role": "control" });
       assert.equal(pod.securityContext.runAsNonRoot, true);
       assert.equal(pod.securityContext.seccompProfile.type, "RuntimeDefault");
       assert.equal(container.securityContext.allowPrivilegeEscalation, false);
@@ -361,6 +365,18 @@ test(
       objects.some(
         ({ kind, metadata }) => kind === "NetworkPolicy" && metadata.name.endsWith("default-deny"),
       ),
+    );
+    const dependencyEgress = objects.find(
+      ({ kind, metadata }) =>
+        kind === "NetworkPolicy" && metadata.name === "openclaw-enterprise-dependency-egress",
+    );
+    assert.deepEqual(
+      dependencyEgress.spec.egress.find(({ ports }) => ports.some(({ port }) => port === 5432)).to,
+      [{ ipBlock: { cidr: "10.45.0.12/32" } }, { ipBlock: { cidr: "10.45.0.13/32" } }],
+    );
+    assert.deepEqual(
+      dependencyEgress.spec.egress.find(({ ports }) => ports.some(({ port }) => port === 443)).to,
+      [{ ipBlock: { cidr: "10.43.0.1/32" } }, { ipBlock: { cidr: "10.43.0.2/32" } }],
     );
     assert.ok(!objects.some(({ metadata }) => metadata.name.endsWith("-api-chatgpt-egress")));
   },
@@ -455,8 +471,13 @@ test(
         { "bootstrap.serviceKey.fileName": "initial-admin-password" },
       ],
       ["unrestricted client namespace", { "api.clients[0].namespace": "" }],
-      ["broad database egress", { "database.cidr": "0.0.0.0/0" }],
-      ["broad Kubernetes API egress", { "cluster.cidr": "10.43.0.0/16" }],
+      ["retired database egress key", { "database.cidr": "10.45.0.12/32" }],
+      ["retired Kubernetes API egress key", { "cluster.cidr": "10.43.0.1/32" }],
+      ["missing database egress list", { "database.cidrs": "" }],
+      ["missing Kubernetes API egress list", { "cluster.cidrs": "" }],
+      ["broad database egress", { "database.cidrs[0]": "0.0.0.0/0" }],
+      ["broad Kubernetes API egress", { "cluster.cidrs[0]": "10.43.0.0/16" }],
+      ["missing control-plane node selector", { "controlPlane.nodeSelector": "" }],
       ["shared migration database credentials", { "database.migrationUrlKey": "application-url" }],
       [
         "retired ChatGPT integration key",
