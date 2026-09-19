@@ -15,11 +15,19 @@ Both workflows reuse the [run-ci-lane action](../../.github/actions/run-ci-lane/
 
 The `checks-baseline` lane runs `pnpm docs:check`: pages above 1,500 visible words
 are flagged for review and pages above 2,500 fail, except the approved single-page
-[API reference](../reference/api.md). The generated API, site build, navigation,
+[API reference](../reference/api.md) and `AGENTS.md` instruction files (see the
+[length policy](../../AGENTS.md#documentation-length-budget)). The generated API, site build, navigation,
 and links must pass. Run `pnpm docs:check-length` for the word-count
 check alone.
 
 The PR workflow runs exactly five lanes on ephemeral runners: checks/baseline/browser, PostgreSQL, image/packaging, Kubernetes fixture/Configuration, and logging collector. Full Integration runs through manual dispatch using the immutable event commit. All lanes require `main` except `k3d-model`, which also accepts a branch explicitly allowed by the `integration-model` environment. Environment gates apply only to lanes that declare an environment; `helper-timeout` and standalone `logging-collector` declare none. The ChatGPT `provider-account` lane keeps its main-only credential environment without per-run approval. Other model, routing, Slack, OpenShell, and additional OpenTelemetry lanes require separately approved environments. A missing environment or selected prerequisite fails the run. A PR aggregate is not full credentialed coverage; targeted protected runs also report only their selected lanes.
+
+The Kubernetes fixture lane uses a server and worker node with shared test-owned
+local-path storage. Preparation registers and verifies the fixture image's digest
+on both nodes and derives the API server's proxy source `/32` from its route to
+the worker Pod network. It supplies that address to the
+[plugin status tests](plugins.md#local-and-integration-suites), which exercise
+the private status endpoint across nodes with NetworkPolicy enforcement.
 
 Implementation status: routing, OpenShell, and logging now have concrete CI preparation contracts. Routing installs pinned Gateway API, cert-manager v1.18.4, and Envoy Gateway v1.6.7 controller manifests and generates a private test CA. OpenShell creates an owned K3s v1.36.4 cluster, installs a matched kubectl, configures the selected RuntimeClass with the cluster's `runc` handler, verifies handler availability with a smoke Pod, installs OpenShell CLI/chart assets, imports gateway and supervisor images, and installs Agent Sandbox resources. Only the disposable CI OpenShell cluster exempts its selected RuntimeClass from Pod Security Admission. Preparation proves that a violating ordinary Pod is rejected in a restricted namespace and that the same Pod is admitted with the selected class. The full OpenShell suite proves provider-owned supervisor enforcement for filesystem, endpoint/L7 network, and process boundaries while preserving the current binary-unaware sidecar policy. Logging preparation owns a real OpenTelemetry Collector backend with JSONL evidence, and `OCC_TEST_OTEL_LOGS_URL` is no longer a required external input. The Collector and Docker-model jobs use the shared [setup-test-docker action](../../.github/actions/setup-test-docker/action.yml) to pin Docker 29.4.0, which supports the production `fluentd-write-timeout` logging option. The action stops the preinstalled daemon on the ephemeral runner, installs Docker 29.4.0 through the SHA-pinned official Docker setup action, and points `/var/run/docker.sock` at the action socket so the CLI, production Compose, and Driver use one daemon. Other jobs keep the runner Docker daemon. Full-suite acceptance remains incomplete until main-only protected hosted execution records every selected lane. See the [delivery status](../../specs/19-github-actions-test-coverage/delivery-status.md#delivery-status) for current proof boundaries and live gaps.
 
