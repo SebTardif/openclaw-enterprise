@@ -308,6 +308,11 @@ test(
         resources: ["secrets"],
         verbs: ["get", "create", "update", "patch", "delete"],
       },
+      {
+        apiGroups: ["apps"],
+        resources: ["deployments"],
+        verbs: ["list"],
+      },
     ]);
     // Only the unbound tenant-worker role can reconcile and remove an Agent-owned claim.
     assert.deepEqual(
@@ -480,6 +485,11 @@ test(
         apiGroups: [""],
         resources: ["secrets"],
         verbs: ["get", "create", "update", "patch", "delete"],
+      },
+      {
+        apiGroups: ["apps"],
+        resources: ["deployments"],
+        verbs: ["list"],
       },
     ]);
     assert.ok(
