@@ -350,6 +350,8 @@ const BEDROCK_PROVIDER_ID = "amazon-bedrock";
 const BEDROCK_MODEL_PREFIX = `${BEDROCK_PROVIDER_ID}/`;
 const BEDROCK_RUNTIME_API = "bedrock-converse-stream";
 const BEDROCK_RUNTIME_AUTH = "aws-sdk";
+const EKS_POD_IDENTITY_ENDPOINT_IP = "169.254.170.23";
+const EKS_POD_IDENTITY_ENDPOINT_PORT = 80;
 const SERVICE_ACCOUNT_TOKEN_KEY = "token";
 const SERVICE_ACCOUNT_WORKSPACE_KEY = "workspace-id";
 const CODEX_ACCESS_TOKEN = "CODEX_ACCESS_TOKEN";
@@ -672,6 +674,26 @@ function configuredHarnessModels(configuration: OpenClawConfigurationDocument): 
       ? [selection]
       : [value?.primary, ...(Array.isArray(value?.fallbacks) ? value.fallbacks : [])];
   });
+}
+
+function usesBedrockRuntimeAuth(
+  harness: RevisionHarnessDescriptor,
+  auth: HarnessAuthSnapshot,
+  configuration: OpenClawConfigurationDocument | undefined,
+): boolean {
+  if (harness.mode !== "embedded" || auth.method !== "runtime" || configuration === undefined) {
+    return false;
+  }
+  const models = configuredHarnessModels(configuration);
+  return (
+    models.length > 0 &&
+    models.every(
+      (model) =>
+        typeof model === "string" &&
+        model.startsWith(BEDROCK_MODEL_PREFIX) &&
+        model.length > BEDROCK_MODEL_PREFIX.length,
+    )
+  );
 }
 
 function containsSecretOrEnvironmentReference(value: unknown): boolean {
@@ -1211,15 +1233,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     const models = configuredHarnessModels(configuration);
     const runtimeAuth = embedded && auth.method === "runtime";
-    const runtimeBedrock =
-      runtimeAuth &&
-      models.length > 0 &&
-      models.every(
-        (model) =>
-          typeof model === "string" &&
-          model.startsWith(BEDROCK_MODEL_PREFIX) &&
-          model.length > BEDROCK_MODEL_PREFIX.length,
-      );
+    const runtimeBedrock = usesBedrockRuntimeAuth(harness, auth, configuration);
     if (runtimeAuth && !runtimeBedrock) {
       throw new ConfigurationFailure(
         "Harness authentication is incompatible with the selected topology.",
@@ -4763,12 +4777,24 @@ export class KubernetesComputeDriver implements ComputeDriver {
         ports: [{ protocol: "TCP", port: 443 }],
       },
     ];
+    const podIdentityEgress = usesBedrockRuntimeAuth(
+      revision.harness,
+      revision.harnessAuth,
+      revision.configuration,
+    )
+      ? [
+          {
+            to: [{ ipBlock: { cidr: `${EKS_POD_IDENTITY_ENDPOINT_IP}/32` } }],
+            ports: [{ protocol: "TCP", port: EKS_POD_IDENTITY_ENDPOINT_PORT }],
+          },
+        ]
+      : [];
     if (revision.harness.mode === "embedded") {
       return [
         policy("allow-agent-runtime", {
           podSelector: gateway,
           policyTypes: ["Egress"],
-          egress: modelEgress,
+          egress: [...modelEgress, ...podIdentityEgress],
         }),
         ...statusPolicies,
       ];

@@ -1527,6 +1527,17 @@ test("embedded replacement cuts over an unready shared gateway and waits for act
   for (const policy of driver.networkPolicies(tenantOwnership, namespace)) {
     save(policy);
   }
+  // The shared allow-agent-runtime policy name survives revision changes, so a
+  // Bedrock runtime-auth allowance must be removed by the next API-key revision.
+  const staleRuntimePolicy = driver.agentNetworkPolicies(
+    {
+      ...replacement,
+      harnessAuth: bedrockRuntimeAuth,
+      configuration: bedrockRuntimeConfiguration(),
+    },
+    namespace,
+  )[0];
+  save(staleRuntimePolicy);
   save({
     ...driver.manifest("v1", "ServiceAccount", agentName, agentOwnership, namespace),
     automountServiceAccountToken: false,
@@ -1779,6 +1790,11 @@ test("embedded replacement cuts over an unready shared gateway and waits for act
     ({ kind, name }) => kind === "Deployment" && name === gatewayName,
   );
   assert.ok(egressWrite >= 0 && egressWrite < gatewayWrite);
+  assert.deepEqual(
+    objects.get(key("NetworkPolicy", `allow-agent-runtime-${suffix}`)).spec.egress,
+    driver.agentNetworkPolicies(replacement, namespace)[0].spec.egress,
+    "reconciling back to managed API-key auth must remove stale Pod Identity egress",
+  );
 
   // Reconciliation observes readiness without replacing the Pod or retrying the
   // native model call; explicit deployment/restart owns recovery from bad auth.
@@ -3242,6 +3258,50 @@ test("embedded OpenClaw runtime auth admits only canonical Bedrock Pod Identity 
   ]) {
     assert.equal(environment[forbidden], undefined);
   }
+
+  const runtimePolicy = driver.agentNetworkPolicies(revision, namespace)[0];
+  assert.equal(runtimePolicy.metadata.name, `allow-agent-runtime-${digest(agentId, 12)}`);
+  assert.deepEqual(runtimePolicy.spec.podSelector.matchLabels, {
+    "openclaw.dev/workload-role": "gateway",
+    "openclaw.dev/agent": agentId,
+  });
+  assert.deepEqual(runtimePolicy.spec.egress, [
+    {
+      to: [
+        {
+          ipBlock: {
+            cidr: "0.0.0.0/0",
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"],
+          },
+        },
+      ],
+      ports: [{ protocol: "TCP", port: 443 }],
+    },
+    {
+      to: [{ ipBlock: { cidr: "169.254.170.23/32" } }],
+      ports: [{ protocol: "TCP", port: 80 }],
+    },
+  ]);
+  const apiKeyPolicy = driver.agentNetworkPolicies(
+    {
+      ...revision,
+      harnessAuth: apiKeyAuth,
+      configuration: { agents: { defaults: { model: "openai/gpt-5" } } },
+    },
+    namespace,
+  )[0];
+  assert.equal(apiKeyPolicy.metadata.name, runtimePolicy.metadata.name);
+  assert.deepEqual(
+    apiKeyPolicy.spec.egress.flatMap((rule) => rule.to ?? []),
+    [
+      {
+        ipBlock: {
+          cidr: "0.0.0.0/0",
+          except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"],
+        },
+      },
+    ],
+  );
 
   assert.throws(
     () =>
