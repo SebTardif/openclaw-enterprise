@@ -556,7 +556,7 @@ ${AUTH_PROBE_FAILURE_HELPER}
 function writeProbeConfiguration(fs, directory, configuration, options = {}) {
   configuration.agents.defaults.workspace = directory + "/workspace";
   if (options.denyTools === true) {
-    configuration.agents.defaults.tools = { deny: ["*"] };
+    configuration.tools = { deny: ["*"] };
   }
   fs.mkdirSync(directory + "/workspace", { mode: 0o700 });
   const configPath = directory + "/openclaw.json";

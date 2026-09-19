@@ -30,7 +30,14 @@ test("Kubernetes runtime auth probe preserves the bounded Bedrock Pod Identity c
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"--cwd", directory \+ "\/workspace"/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"--timeout", "15"/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /amazon-bedrock/);
-  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /deny: \["\*"\]/);
+  assert.match(
+    KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT,
+    /configuration\.tools = \{ deny: \["\*"\] \}/,
+  );
+  assert.doesNotMatch(
+    KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT,
+    /configuration\.agents\.defaults\.tools/,
+  );
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /169\.254\.170\.23/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_CONTAINER_CREDENTIALS_FULL_URI/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE/);
