@@ -48,6 +48,10 @@ human administrator session path, not service keys. The
 - A Kubernetes node pool labeled for OCC control-plane Pods. The default Helm
   values select nodes with `oce-role: control`; set
   `controlPlane.nodeSelector` to the reviewed labels for your cluster.
+- A Kubernetes node pool labeled for Agent runtime Pods. The production
+  Installation example selects nodes with `oce-role: agents`; set
+  `drivers.compute.configuration.runtime.nodeSelector` to the reviewed labels
+  for gateway and Agent scheduling.
 - Operator-managed HTTPS access for approved clients; the chart does not create
   TLS or Ingress.
 - Operator-created startup, database, authentication, optional Provider Secrets,

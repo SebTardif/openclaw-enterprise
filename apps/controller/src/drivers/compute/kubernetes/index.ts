@@ -195,6 +195,7 @@ export interface KubernetesComputeDriverOptions {
   readonly runtime?: {
     readonly transportSecretPrefix: string;
     readonly gatewayStorageClassName: string;
+    readonly nodeSelector?: Readonly<Record<string, string>>;
     readonly codexSeccompProfile?: string;
     readonly channels?: {
       readonly secretPrefix: string;
@@ -731,6 +732,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
         properties: {
           transportSecretPrefix: { type: "string" },
           gatewayStorageClassName: { type: "string", minLength: 1 },
+          nodeSelector: { type: "object", additionalProperties: { type: "string" } },
           codexSeccompProfile: { type: "string", minLength: 1 },
           channels: {
             type: "object",
@@ -4550,6 +4552,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
       role === "agent" && runtime !== undefined
         ? AGENT_TRANSPORT_PORT
         : this.options.network.gatewayPort;
+    const runtimeNodeSelector =
+      runtime?.nodeSelector === undefined || Object.keys(runtime.nodeSelector).length === 0
+        ? {}
+        : { nodeSelector: runtime.nodeSelector };
     const codexSeccompProfile =
       role === "agent" && runtime?.codexSeccompProfile !== undefined
         ? {
@@ -4586,6 +4592,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
           spec: {
             serviceAccountName,
             automountServiceAccountToken: false,
+            ...runtimeNodeSelector,
             ...(volumes.length === 0 ? {} : { volumes }),
             ...(initContainers.length === 0 ? {} : { initContainers }),
             securityContext: {

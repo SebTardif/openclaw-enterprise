@@ -119,17 +119,14 @@ yq -i '.drivers.compute.configuration.images.gateway = strenv(RUNTIME_IMAGE) |
 
 Edit the protected YAML copies before provisioning anything:
 
-- `$OCC_INPUT_DIRECTORY/values.yaml`: set `images.controller` to the
-  controller digest, `auth.baseUrl` to the production OCC URL,
-  `bootstrap.adminEmail` to the first administrator, `database.cidrs` to every
-  current PostgreSQL endpoint IPv4 `/32`, `cluster.cidrs` to every current
-  Kubernetes API endpoint IPv4 `/32`, `controlPlane.nodeSelector` to the
-  reviewed control-node labels, `api.clients` to approved client selectors, and
-  `bootstrap.password.claimName` to the bootstrap PVC name.
+- `$OCC_INPUT_DIRECTORY/values.yaml`: set `images.controller`,
+  `auth.baseUrl`, `bootstrap.adminEmail`, `database.cidrs`, `cluster.cidrs`,
+  `controlPlane.nodeSelector`, `api.clients`, and
+  `bootstrap.password.claimName` with reviewed site values.
 - `$OCC_INPUT_DIRECTORY/installation.yaml`: set `occ.cluster`, `logging.level`,
-  both `drivers.compute.configuration.images` digests, the DNS and gateway-client
-  selectors, the service-principal token settings, the runtime Secret prefixes,
-  and `runtime.gatewayStorageClassName`. Keep
+  `drivers.compute.configuration.images` digests, DNS and gateway-client
+  selectors, service-principal token settings, runtime selector, Secret
+  prefixes, and `runtime.gatewayStorageClassName`. Keep
   `drivers.compute.configuration.images.requireImmutableDigest: true`.
   If enabling Agent plugins, set one compatible bundled `drivers.plugin` selector
   and any required Codex catalog-reader configuration. See the
@@ -154,7 +151,8 @@ yq e -e '.auth.baseUrl != "" and .bootstrap.adminEmail != "" and
 yq e -e '.drivers.compute.configuration.images.requireImmutableDigest == true and
   (.drivers.compute.configuration.images.gateway | test("@sha256:[a-f0-9]{64}$")) and
   (.drivers.compute.configuration.images.agent | test("@sha256:[a-f0-9]{64}$")) and
-  .drivers.compute.configuration.runtime.gatewayStorageClassName != ""' \
+  .drivers.compute.configuration.runtime.gatewayStorageClassName != "" and
+  (.drivers.compute.configuration.runtime.nodeSelector | length > 0)' \
   "$OCC_INPUT_DIRECTORY/installation.yaml" >/dev/null
 yq e -e '.metadata.namespace == "openclaw-system" and .spec.storageClassName != ""' \
   "$OCC_INPUT_DIRECTORY/bootstrap-pvc.yaml" >/dev/null
