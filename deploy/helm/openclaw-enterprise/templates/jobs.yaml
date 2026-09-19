@@ -27,6 +27,14 @@ spec:
         - name: bootstrap-password-output
           persistentVolumeClaim:
             claimName: {{ .Values.bootstrap.password.claimName }}
+        {{- if .Values.database.caSecretName }}
+        - name: database-ca
+          secret:
+            secretName: {{ .Values.database.caSecretName | quote }}
+            items:
+              - key: {{ .Values.database.caKey | quote }}
+                path: {{ .Values.database.caKey | quote }}
+        {{- end }}
       initContainers:
         - name: migration
           image: {{ .Values.images.controller | quote }}
@@ -39,6 +47,12 @@ spec:
             - name: NODE_ENV
               value: production
             {{- include "openclaw.secretEnv" (dict "name" "OCC_MIGRATION_DATABASE_URL" "secretName" .Values.database.secretName "key" .Values.database.migrationUrlKey) | nindent 12 }}
+          {{- if .Values.database.caSecretName }}
+          volumeMounts:
+            - name: database-ca
+              mountPath: {{ .Values.database.caMountPath | quote }}
+              readOnly: true
+          {{- end }}
       containers:
         - name: bootstrap
           image: {{ .Values.images.controller | quote }}
@@ -65,3 +79,8 @@ spec:
           volumeMounts:
             - name: bootstrap-password-output
               mountPath: {{ .Values.bootstrap.password.mountPath }}
+            {{- if .Values.database.caSecretName }}
+            - name: database-ca
+              mountPath: {{ .Values.database.caMountPath | quote }}
+              readOnly: true
+            {{- end }}

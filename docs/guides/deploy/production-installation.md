@@ -121,7 +121,7 @@ Edit the protected YAML copies before provisioning anything:
 
 - `$OCC_INPUT_DIRECTORY/values.yaml`: set `images.controller`,
   `auth.baseUrl`, `bootstrap.adminEmail`, `database.cidrs`, `cluster.cidrs`,
-  `controlPlane.nodeSelector`, `api.clients`, and
+  `controlPlane.nodeSelector`, `database.caSecretName`, `api.clients`, and
   `bootstrap.password.claimName` with reviewed site values.
 - `$OCC_INPUT_DIRECTORY/installation.yaml`: set `occ.cluster`, `logging.level`,
   `drivers.compute.configuration.images` digests, DNS and gateway-client
@@ -146,7 +146,8 @@ yq e -e '.images.controller | test("@sha256:[a-f0-9]{64}$")' \
   "$OCC_INPUT_DIRECTORY/values.yaml" >/dev/null
 yq e -e '.auth.baseUrl != "" and .bootstrap.adminEmail != "" and
   (.database.cidrs | length > 0) and (.cluster.cidrs | length > 0) and
-  (.controlPlane.nodeSelector | length > 0) and (.api.clients | length > 0)' \
+  .database.caSecretName != "" and (.controlPlane.nodeSelector | length > 0) and
+  (.api.clients | length > 0)' \
   "$OCC_INPUT_DIRECTORY/values.yaml" >/dev/null
 yq e -e '.drivers.compute.configuration.images.requireImmutableDigest == true and
   (.drivers.compute.configuration.images.gateway | test("@sha256:[a-f0-9]{64}$")) and
@@ -174,11 +175,14 @@ or a variable name such as `OCC_DATABASE_URL=`.
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `occ-application-url` | PostgreSQL connection URL for the limited application role, used by bootstrap, the API, and the worker. Obtain it from your database administrator or provider. Example shape: `postgresql://occ_app:<url-encoded-password>@<postgres-host>:5432/<database>`.                   |
 | `occ-migration-url`   | Connection URL for a separate role allowed to apply schema migrations. It targets the same database. Example shape: `postgresql://occ_migrator:<url-encoded-password>@<postgres-host>:5432/<database>`. Obtain this credential separately; do not give it to the API or worker. |
+| `occ-rds-ca.pem`      | Optional PostgreSQL root CA bundle when the database root is not in the base image trust store. The production example mounts it from `occ-rds-ca` at `/etc/openclaw/database-ca/ca.pem`.                                                                                       |
 | `occ-auth-secret`     | A random secret used to sign and verify user sessions. Generate it once for this Installation with the command below, then retain it across redeployments. It is separate from the administrator password, service API key, and model-provider key.                             |
 
 Save the two complete database URLs using your secret manager or a protected
 editor, replacing the example placeholders and preserving provider-required TLS
-options. Generate the auth secret for a new Installation; this command refuses
+options. For managed PostgreSQL roots supplied through `database.caSecretName`,
+append `sslmode=verify-full&sslrootcert=/etc/openclaw/database-ca/ca.pem` to
+both URLs. Generate the auth secret for a new Installation; this command refuses
 to overwrite an existing file:
 
 ```bash
@@ -188,9 +192,10 @@ to overwrite an existing file:
   openssl rand -hex 32 > /secure/occ/occ-auth-secret
 )
 chmod 600 /secure/occ/occ-application-url /secure/occ/occ-migration-url \
-  /secure/occ/occ-auth-secret
+  /secure/occ/occ-rds-ca.pem /secure/occ/occ-auth-secret
 test -s /secure/occ/occ-application-url
 test -s /secure/occ/occ-migration-url
+test -s /secure/occ/occ-rds-ca.pem
 ```
 
 Keep these values out of Helm values, Installation YAML, Configurations, shell
@@ -211,11 +216,15 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" -n openclaw-system 
 kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" -n openclaw-system \
   create secret generic occ-database --from-file=application-url=/secure/occ/occ-application-url --from-file=migration-url=/secure/occ/occ-migration-url
 kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" -n openclaw-system \
+  create secret generic occ-rds-ca --from-file=ca.pem=/secure/occ/occ-rds-ca.pem
+kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" -n openclaw-system \
   create secret generic occ-auth --from-file=secret=/secure/occ/occ-auth-secret
 ```
 
 These commands provision operator-owned inputs; they are not a recurring Secret
-synchronizer.
+synchronizer. When `database.caSecretName` is set, the chart mounts that Secret
+read-only into migration, bootstrap, API, and worker containers at
+`database.caMountPath`; the PostgreSQL URLs still own `sslrootcert` selection.
 
 ### Azure PostgreSQL workload identity
 
@@ -251,12 +260,14 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
   -n openclaw-system apply -f "$OCC_INPUT_DIRECTORY/bootstrap-pvc.yaml"
 
 scripts/prepare-bootstrap-volume --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" \
-  --namespace openclaw-system --claim "$BOOTSTRAP_CLAIM" --image "$CONTROLLER_IMAGE"
+  --namespace openclaw-system --claim "$BOOTSTRAP_CLAIM" --image "$CONTROLLER_IMAGE" \
+  --node-selector pool=control
 ```
 
 The helper refuses any nonfresh mounted root except filesystem-owned
-`lost+found`, reports `Prepared bootstrap volume claim ... with UID/GID 1000
-mode 0700.` on success, and retains a failed Pod for diagnosis. If policy
+`lost+found`, schedules the preparation Pod with any supplied `--node-selector`
+labels before storage binds, reports `Prepared bootstrap volume claim ... with
+UID/GID 1000 mode 0700.` on success, and retains a failed Pod for diagnosis. If policy
 forbids the preparation Pod, have the storage administrator create the same root
 state through the approved storage workflow.
 

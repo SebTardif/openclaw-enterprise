@@ -14,6 +14,9 @@ bootstrap:
     claimName: occ-bootstrap-admin-password
 
 database:
+  caSecretName: occ-rds-ca
+  caKey: ca.pem
+  caMountPath: /etc/openclaw/database-ca
   cidrs:
     - 10.45.0.12/32
     - 10.45.0.13/32

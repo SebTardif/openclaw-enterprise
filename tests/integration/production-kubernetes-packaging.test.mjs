@@ -44,6 +44,11 @@ const externalGatewayRoutingValues = {
   "gatewayRouting.hostname": "agents.example.internal",
   "gatewayRouting.issuerRef.name": "occ-private-issuer",
 };
+const databaseCaValues = {
+  "database.caSecretName": "occ-rds-ca",
+  "database.caKey": "ca.pem",
+  "database.caMountPath": "/etc/openclaw/database-ca",
+};
 
 async function render(overrides = {}, options = {}) {
   const args = [
@@ -148,6 +153,15 @@ test("production Helm values example renders the providerless default chart", to
     objects.some(
       ({ kind, metadata }) =>
         kind === "Job" && metadata.labels?.["app.kubernetes.io/component"] === "initialization",
+    ),
+  );
+  const initialization = objects.find(
+    ({ kind, metadata }) =>
+      kind === "Job" && metadata.labels?.["app.kubernetes.io/component"] === "initialization",
+  );
+  assert.ok(
+    initialization.spec.template.spec.volumes.some(
+      ({ name, secret }) => name === "database-ca" && secret?.secretName === "occ-rds-ca",
     ),
   );
   assert.equal(objects.filter(({ kind }) => kind === "Secret").length, 0);
@@ -383,6 +397,51 @@ test(
 );
 
 test(
+  "optional database CA Secret mounts into every production database client",
+  tooling,
+  async () => {
+    const { stdout } = await render(databaseCaValues);
+    const objects = await resources(stdout);
+    const selected = (kind, component) =>
+      objects.find(
+        (object) =>
+          object.kind === kind &&
+          object.metadata.labels?.["app.kubernetes.io/component"] === component,
+      );
+
+    const initializationPod = selected("Job", "initialization").spec.template.spec;
+    assert.deepEqual(initializationPod.volumes.find(({ name }) => name === "database-ca")?.secret, {
+      secretName: "occ-rds-ca",
+      items: [{ key: "ca.pem", path: "ca.pem" }],
+    });
+    assert.deepEqual(
+      initializationPod.initContainers[0].volumeMounts.find(({ name }) => name === "database-ca"),
+      { name: "database-ca", mountPath: "/etc/openclaw/database-ca", readOnly: true },
+    );
+    assert.deepEqual(
+      initializationPod.containers[0].volumeMounts.find(({ name }) => name === "database-ca"),
+      { name: "database-ca", mountPath: "/etc/openclaw/database-ca", readOnly: true },
+    );
+
+    for (const component of ["api", "worker"]) {
+      const pod = selected("Deployment", component).spec.template.spec;
+      assert.deepEqual(pod.volumes.find(({ name }) => name === "database-ca")?.secret, {
+        secretName: "occ-rds-ca",
+        items: [{ key: "ca.pem", path: "ca.pem" }],
+      });
+      assert.deepEqual(
+        pod.containers[0].volumeMounts.find(({ name }) => name === "database-ca"),
+        {
+          name: "database-ca",
+          mountPath: "/etc/openclaw/database-ca",
+          readOnly: true,
+        },
+      );
+    }
+  },
+);
+
+test(
   "the optional ChatGPT Provider isolates admin credentials, tenant Secrets, and provider egress to the API",
   tooling,
   async () => {
@@ -478,6 +537,10 @@ test(
       ["broad database egress", { "database.cidrs[0]": "0.0.0.0/0" }],
       ["broad Kubernetes API egress", { "cluster.cidrs[0]": "10.43.0.0/16" }],
       ["missing control-plane node selector", { "controlPlane.nodeSelector": "" }],
+      [
+        "invalid database CA key",
+        { "database.caSecretName": "occ-rds-ca", "database.caKey": "../ca.pem" },
+      ],
       ["shared migration database credentials", { "database.migrationUrlKey": "application-url" }],
       [
         "retired ChatGPT integration key",

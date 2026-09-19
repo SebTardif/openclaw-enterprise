@@ -49,6 +49,14 @@
 {{- if eq .Values.database.appUrlKey .Values.database.migrationUrlKey -}}
 {{- fail "database application and migration credentials must use different Secret keys" -}}
 {{- end -}}
+{{- if .Values.database.caSecretName -}}
+{{- if or (not .Values.database.caKey) (not .Values.database.caMountPath) -}}
+{{- fail "database CA Secret mounts require database.caKey and database.caMountPath" -}}
+{{- end -}}
+{{- if or (eq .Values.database.caKey ".") (eq .Values.database.caKey "..") (not (regexMatch "^[A-Za-z0-9._-]+$" .Values.database.caKey)) -}}
+{{- fail "database.caKey must be a simple basename" -}}
+{{- end -}}
+{{- end -}}
 {{- if or (eq .Values.installation.secretName .Values.database.secretName) (eq .Values.installation.secretName .Values.auth.secretName) -}}
 {{- fail "installation startup configuration must use a dedicated Secret" -}}
 {{- end -}}

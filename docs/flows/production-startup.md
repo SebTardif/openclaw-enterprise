@@ -81,10 +81,10 @@ gateway/Agent images, projected workload identity, and runtime
 networking/storage.
 
 The operator creates file-backed Kubernetes Secrets for Installation startup,
-database URLs, Better Auth signing material, and optional ChatGPT Provider
-administrator credentials. These are prepared inputs, not recurring
-synchronization targets. The chart does not infer gateway/Agent images from Helm
-values or rewrite Driver configuration.
+database URLs, optional database CA bundles, Better Auth signing material, and
+optional ChatGPT Provider administrator credentials. These are prepared inputs,
+not recurring synchronization targets. The chart does not infer gateway/Agent
+images from Helm values or rewrite Driver configuration.
 
 ### 2. Prepare the fresh bootstrap volume
 
@@ -92,10 +92,11 @@ values or rewrite Driver configuration.
 
 Before the first install, the operator creates the bootstrap PVC named by
 `bootstrap.password.claimName` and runs the helper with explicit kubeconfig,
-context, namespace, claim, and approved Node-capable image. The helper launches a
-bounded preparation Pod, verifies the mounted root is fresh except for
-filesystem-owned `lost+found`, sets UID/GID `1000` with mode `0700`, and
-refuses to continue on any other entry.
+context, namespace, claim, approved Node-capable image, and optional repeated
+`--node-selector KEY=VALUE` labels. The helper launches a bounded preparation
+Pod, applies the selectors before WaitForFirstConsumer storage binds, verifies
+the mounted root is fresh except for filesystem-owned `lost+found`, sets UID/GID
+`1000` with mode `0700`, and refuses to continue on any other entry.
 
 If cluster policy forbids the helper Pod, storage administration owns the same
 state transition through an approved storage workflow. A preprepared claim goes
@@ -107,10 +108,11 @@ retrieve generated credentials, or change controller configuration.
 `deploy/helm/openclaw-enterprise/templates/jobs.yaml:8`
 
 `helm upgrade --install --wait --timeout 5m` renders the chart with native
-values. The initialization hook first runs migrations with the dedicated
-migrator credential, then runs bootstrap with the lower-privilege application
-credential, Better Auth settings, first administrator email, Installation name,
-and protected output paths.
+values. If `database.caSecretName` is set, the Pod mounts that CA Secret
+read-only into both containers before they connect. The initialization hook first
+runs migrations with the dedicated migrator credential, then runs bootstrap with
+the lower-privilege application credential, Better Auth settings, first
+administrator email, Installation name, and protected output paths.
 
 `scripts/bootstrap-installation.mjs` creates or verifies the singleton
 Installation, human administrator, service administrator, IAM seed, audit
@@ -142,8 +144,10 @@ operator-managed endpoint.
 The chart places the API and worker Pods with `controlPlane.nodeSelector`. The
 same selector applies to the initialization Job that runs the migration init
 container and bootstrap container, so migration, bootstrap, API, and worker Pods
-stay on the reviewed control-plane node pool. Tenant gateway and Agent placement
-remain in the selected Compute Driver configuration.
+stay on the reviewed control-plane node pool. When `database.caSecretName` is
+set, API and worker also mount the CA Secret read-only at `database.caMountPath`.
+Tenant gateway and Agent placement remain in the selected Compute Driver
+configuration.
 
 NetworkPolicies allow database egress to every `database.cidrs` host and
 Kubernetes API egress to every `cluster.cidrs` host. Each entry must be an

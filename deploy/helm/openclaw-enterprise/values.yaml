@@ -78,6 +78,9 @@ database:
   secretName: occ-database
   appUrlKey: application-url
   migrationUrlKey: migration-url
+  caSecretName: ""
+  caKey: ca.pem
+  caMountPath: /etc/openclaw/database-ca
   cidrs: []
   port: 5432
 
