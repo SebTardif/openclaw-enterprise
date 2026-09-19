@@ -24,11 +24,18 @@ const imageTestOptions =
     : {};
 
 test("Kubernetes runtime auth probe preserves the bounded Bedrock Pod Identity contract", () => {
-  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /--probe-provider", provider/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"models", "status"/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"agent", "exec", "Reply with READY\."/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"--config", configPath/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"--cwd", directory \+ "\/workspace"/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /"--timeout", "15"/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /amazon-bedrock/);
+  assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /deny: \["\*"\]/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /169\.254\.170\.23/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_CONTAINER_CREDENTIALS_FULL_URI/);
   assert.match(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE/);
+  assert.doesNotMatch(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /--isolated/);
+  assert.doesNotMatch(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /--auth-env-only/);
   assert.doesNotMatch(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_ACCESS_KEY_ID/);
   assert.doesNotMatch(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_SECRET_ACCESS_KEY/);
   assert.doesNotMatch(KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT, /AWS_SESSION_TOKEN/);
