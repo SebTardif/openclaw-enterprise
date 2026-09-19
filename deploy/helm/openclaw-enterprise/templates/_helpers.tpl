@@ -44,8 +44,7 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- if or (not .Values.controlPlane) (not .Values.controlPlane.nodeSelector) -}}{{- fail "controlPlane.nodeSelector must select the control-plane node pool" -}}{{- end -}}
-{{- if not (kindIs "map" .Values.controlPlane.nodeSelector) -}}{{- fail "controlPlane.nodeSelector must be a map of Kubernetes node labels" -}}{{- end -}}
+{{- if and (hasKey .Values.controlPlane "nodeSelector") (not (kindIs "invalid" .Values.controlPlane.nodeSelector)) (not (kindIs "map" .Values.controlPlane.nodeSelector)) -}}{{- fail "controlPlane.nodeSelector must be a map of Kubernetes node labels" -}}{{- end -}}
 {{- if eq .Values.database.appUrlKey .Values.database.migrationUrlKey -}}
 {{- fail "database application and migration credentials must use different Secret keys" -}}
 {{- end -}}

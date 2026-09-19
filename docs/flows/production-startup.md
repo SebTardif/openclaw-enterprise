@@ -1,7 +1,7 @@
 ---
 created: 2026-08-25
 updated: 2026-09-18
-last_updated_session: authoring-run/6fe8e24c-8bd5-489b-b76c-ca7d0a22c14b
+last_updated_session: authoring-run/23a79228-a1f4-4d9d-adb6-4c2a77d6b43f
 ---
 
 # Production Startup Flow
@@ -141,11 +141,13 @@ membership, and Kubernetes Compute preflight before readiness. It serves private
 controller routes, `/healthz`, and database-backed `/readyz` behind the
 operator-managed endpoint.
 
-The chart places the API and worker Pods with `controlPlane.nodeSelector`. The
-same selector applies to the initialization Job that runs the migration init
-container and bootstrap container, so migration, bootstrap, API, and worker Pods
-stay on the reviewed control-plane node pool. When `database.caSecretName` is
-set, API and worker also mount the CA Secret read-only at `database.caMountPath`.
+When `controlPlane.nodeSelector` is non-empty, the chart places the API and
+worker Pods with that selector. The same selector applies to the initialization
+Job that runs the migration init container and bootstrap container, so production
+operators can keep migration, bootstrap, API, and worker Pods on a reviewed
+control-plane node pool. Empty chart defaults omit the field for clusters that do
+not label a dedicated control-plane pool. When `database.caSecretName` is set,
+API and worker also mount the CA Secret read-only at `database.caMountPath`.
 Tenant gateway and Agent placement remain in the selected Compute Driver
 configuration.
 
@@ -226,6 +228,7 @@ tenant deployment and TUI procedures run.
 
 ## Changelog
 
+- 2026-09-18 21:48: Clarify that control-plane node placement is optional unless configured. (authoring-run/23a79228-a1f4-4d9d-adb6-4c2a77d6b43f - db8547ffe19cd3317309b526d80e1d19af4c8a9a)
 - 2026-09-18 17:09: Document multi-endpoint Helm egress values and control-plane node placement. (authoring-run/6fe8e24c-8bd5-489b-b76c-ca7d0a22c14b - 724dcb5cb80b5e76a62e8267a21185a2e91a85c2)
 - 2026-09-17 12:56: Trace the advisory Kubernetes 1.35 startup preflight and warning handoff. (authoring-run/a6571e7c-996e-4f11-9c4c-f61418a8d109 - 324fe2d17f3856cd1602a57e4d8aa99a34d6514c)
 - 2026-09-01 19:09: Document initial default Namespace creation and unchanged repeat-bootstrap behavior. (codex/01a05ef1-ee29-7941-80f2-448bb0789969 - 872fa544c98bb7ad11b2d92d777e49229ececbf5) (01a05f95-dd80-7011-990f-d1c46b5bb3cc - aa366c49c44834d59f74994c5fd37fb8096f169f)

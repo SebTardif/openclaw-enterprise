@@ -21,8 +21,10 @@ spec:
       securityContext:
         {{- include "openclaw.podSecurity" . | nindent 8 }}
         fsGroupChangePolicy: OnRootMismatch
+      {{- with .Values.controlPlane.nodeSelector }}
       nodeSelector:
-        {{- toYaml .Values.controlPlane.nodeSelector | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: bootstrap-password-output
           persistentVolumeClaim:

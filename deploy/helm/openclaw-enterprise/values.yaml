@@ -93,8 +93,7 @@ cluster:
   port: 443
 
 controlPlane:
-  nodeSelector:
-    oce-role: control
+  nodeSelector: {}
 
 dns:
   namespace: kube-system

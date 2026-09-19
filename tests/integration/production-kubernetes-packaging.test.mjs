@@ -49,6 +49,9 @@ const databaseCaValues = {
   "database.caKey": "ca.pem",
   "database.caMountPath": "/etc/openclaw/database-ca",
 };
+const controlPlaneSelectorValues = {
+  "controlPlane.nodeSelector.oce-role": "control",
+};
 
 async function render(overrides = {}, options = {}) {
   const args = [
@@ -149,16 +152,25 @@ test("production Helm values example renders the providerless default chart", to
     { cwd: repository, maxBuffer: 2_000_000 },
   );
   const objects = await resources(stdout);
+  const selected = (kind, component) =>
+    objects.find(
+      (object) =>
+        object.kind === kind &&
+        object.metadata.labels?.["app.kubernetes.io/component"] === component,
+    );
   assert.ok(
     objects.some(
       ({ kind, metadata }) =>
         kind === "Job" && metadata.labels?.["app.kubernetes.io/component"] === "initialization",
     ),
   );
-  const initialization = objects.find(
-    ({ kind, metadata }) =>
-      kind === "Job" && metadata.labels?.["app.kubernetes.io/component"] === "initialization",
-  );
+  const initialization = selected("Job", "initialization");
+  assert.deepEqual(initialization.spec.template.spec.nodeSelector, { "oce-role": "control" });
+  for (const component of ["api", "worker"]) {
+    assert.deepEqual(selected("Deployment", component).spec.template.spec.nodeSelector, {
+      "oce-role": "control",
+    });
+  }
   assert.ok(
     initialization.spec.template.spec.volumes.some(
       ({ name, secret }) => name === "database-ca" && secret?.secretName === "occ-rds-ca",
@@ -168,11 +180,27 @@ test("production Helm values example renders the providerless default chart", to
   assert.ok(!objects.some(({ metadata }) => metadata.name.endsWith("-api-chatgpt-egress")));
 });
 
+test("control-plane node selectors are optional unless configured", tooling, async () => {
+  const { stdout } = await render();
+  const objects = await resources(stdout);
+  const selected = (kind, component) =>
+    objects.find(
+      (object) =>
+        object.kind === kind &&
+        object.metadata.labels?.["app.kubernetes.io/component"] === component,
+    );
+
+  assert.equal(selected("Job", "initialization").spec.template.spec.nodeSelector, undefined);
+  for (const component of ["api", "worker"]) {
+    assert.equal(selected("Deployment", component).spec.template.spec.nodeSelector, undefined);
+  }
+});
+
 test(
   "the production Helm chart renders private least-privilege runtime and ordered bootstrap",
   tooling,
   async () => {
-    const { stdout } = await render();
+    const { stdout } = await render(controlPlaneSelectorValues);
     const objects = await resources(stdout);
     const selected = (kind, component) =>
       objects.find(
@@ -546,7 +574,8 @@ test(
       ["missing Kubernetes API egress list", { "cluster.cidrs": "" }],
       ["broad database egress", { "database.cidrs[0]": "0.0.0.0/0" }],
       ["broad Kubernetes API egress", { "cluster.cidrs[0]": "10.43.0.0/16" }],
-      ["missing control-plane node selector", { "controlPlane.nodeSelector": "" }],
+      ["invalid control-plane node selector", { "controlPlane.nodeSelector": "control" }],
+      ["false control-plane node selector", { "controlPlane.nodeSelector": false }],
       [
         "invalid database CA key",
         { "database.caSecretName": "occ-rds-ca", "database.caKey": "../ca.pem" },
