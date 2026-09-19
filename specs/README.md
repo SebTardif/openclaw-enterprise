@@ -40,6 +40,8 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+[Agent identity](basic-agent-identity-mvp.md) — Proposed; Stable Agent principals, execution identity, and protected operations.
+
 [Harness authentication bindings](30-harness-auth-binding.md) — Accepted for implementation;
 one Agent auth binding for supplied OpenAI keys and issued ChatGPT account credentials.
 
