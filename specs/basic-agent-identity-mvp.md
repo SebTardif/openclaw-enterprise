@@ -19,6 +19,50 @@ trusted Agent Gateway, qualified [gVisor](31-gvisor-container-support.md), verif
 Git/`gh`, protected model access and authorized replies. An optional embedded
 repository checkpoint can shorten delivery; it cannot replace that outcome.
 
+## Minimum release requirements
+
+The complete MVP must satisfy all seven requirements on one qualified deployment
+profile. The [delivery cuts](basic-agent-identity-mvp/delivery.md) identify smaller
+reviewable checkpoints; completing a component or the first Git read does not
+complete this release.
+
+1. **Stable Agent, replaceable execution.** Retain the existing Agent principal.
+   Bind each execution to its exact Agent, immutable revision, component and
+   independently observed incarnation; replacement gets a fresh generation and
+   retirement cannot be reversed.
+2. **One operator-managed SPIRE profile.** Constrain registration to the assigned
+   workload and use rotating X.509-SVIDs with protected key custody. Verify the
+   actual receiving connection and current execution before OCC admission or
+   repository credential acquisition/dispatch; retain exact-resource IAM.
+3. **Two concrete consumers.** An ordinary Agent must use managed Git/`gh` through
+   the existing repository service and a protected model route. The complete
+   profile uses dedicated Codex/Gateway and qualified gVisor. Keep workload keys
+   and long-lived provider credentials outside tools; independently enforced
+   private ingress must deny external and sibling off-Pod replay on every route.
+4. **Personal and team authority remain explicit.** Use the same workload model
+   for both. Bind each operation to one admitted human connection or team service
+   authority, retaining the requester and permitted audience separately. Identity
+   supplies neither provider consent nor additional permissions. Missing personal
+   authorization must deny, never switch to team authority.
+5. **Bounded withdrawal and recovery.** Deny stale, retired, expired or unavailable
+   authority; rotation/reconnect cannot extend its original lifetime. Measure
+   new-work refusal and active protected-traffic closure within 30 seconds,
+   including renewal loss, preserving applicable stricter five-second limits.
+   Keep independently authorized cleanup and truthful termination observations.
+6. **Explicit compatibility.** Preserve existing tools, authentication, IAM and
+   session checks when enforcement is not selected. Pin the operator's requirement
+   in each admitted revision/session; neither request input nor dependency failure
+   can downgrade enforcement or manufacture execution assurance.
+7. **Installed evidence.** Demonstrate successful ordinary-Agent work and the
+   consequential denials, lifecycle and outage cases in the acceptance matrix,
+   then complete security review and fixes. Source/fixture checks alone cannot
+   claim the protected release.
+
+Additional services, new human connectors, managed SPIRE installation,
+exact-container proof, mixed/narrowed delegation and independent outage-time
+physical termination are follow-ups. The required producer/consumer interfaces
+below do not require completion of every adjacent feature or UI.
+
 ## Current boundary and scope
 
 [Main](https://github.com/openclaw/openclaw-enterprise/blob/724dcb5cb80b5e76a62e8267a21185a2e91a85c2/packages/contracts/src/index.ts#L344-L745)
@@ -236,11 +280,11 @@ references need authorized owner lookup; serialized facts never authorize effect
 
 ## Acceptance and delivery
 
-| Increment                       | Required evidence and limit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First connected consumer        | One local-account requester distinct from deployer, supported connector, team Agent and approved repository; actual Harness managed Git with explicit `git-read`. Real State/Compute/registration/current-serving/receiving producers and immutable delivery; embedded is optional. Pin compatible SPIRE release, attestors, bundle, Workload API delivery, images and runtime/CNI tuple in a reproducible fixture.                                                                                                                                                                                                                                                                                   |
-| Complete contribution           | Real OCC API, State, worker, SPIRE, dedicated Codex/Gateway and repository service perform clone/fetch → edit → test → commit → push → same-repository PR. Explicit [git-full](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/docs/reference/repository-credentials.md#L102-L125) admits its actual broader Git/selected REST/GraphQL/PR/issue/comment ceiling, not a single-PR capability. GraphQL uses the installation-token grant without per-field authorization. Qualify installed gVisor and protected model/probe routes, authentic personal request or team mention, admitted connection, provider readback and authorized audience delivery. |
-| Exact composition qualification | Deny wrong Agent/Namespace/revision/component, copied session material, off-Pod replay and retired-but-unexpired certificates. Exercise rotation, restart, replacement, withdrawal, dependency outage, delayed positives, uncertain COMMIT/registration, delivery failure, recovery/cleanup and two requests sharing an execution while one loses authority. Measure both closure endpoints. Complete independent security review/fixes before support.                                                                                                                                                                                                                                               |
+Use the [dependency and delivery plan](basic-agent-identity-mvp/delivery.md) to
+review and land bounded changes. It names each required external interface,
+independent work, and the installed acceptance matrix. The first connected
+consumer is a team Agent's managed Git read; personal/provider delegation and the
+complete protected Git/model contribution remain separately visible acceptance.
 
 Preserve existing repository grants/profiles/deadlines, Git semantics, renewal,
 recovery, durable cleanup and uncertain outcomes. Retain reviewed checkpoints with
