@@ -646,17 +646,17 @@ test(
     );
     assert.deepEqual(migrated.rows, [
       {
-        idempotency_key: "legacy-namespace-reconciled",
-        state: "succeeded",
-        completed_at_is_null: false,
-        reason_code: "RECONCILE_SUCCEEDED",
-        result_data: null,
-      },
-      {
         idempotency_key: "legacy-namespace-pending",
         state: "queued",
         completed_at_is_null: true,
         reason_code: null,
+        result_data: null,
+      },
+      {
+        idempotency_key: "legacy-namespace-reconciled",
+        state: "succeeded",
+        completed_at_is_null: false,
+        reason_code: "RECONCILE_SUCCEEDED",
         result_data: null,
       },
       {
