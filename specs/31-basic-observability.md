@@ -60,6 +60,8 @@ Deliver optional filtered diagnostics first. Then deliver create, update, deploy
 
 The first serving History requires current account, IAM and State behavior, both retention modes, exact recovery, and restore continuity. The default expires records after 30 days and deletes them from the live ledger within another 24 hours. Explicit indefinite retention is also selected. Missing dependencies make protected History unavailable without automatic downgrade.
 
+The [MVP scope and dependencies](31-basic-observability/mvp-scope.md) checklist defines small delivery cuts for independent diagnostics, non-serving source slices, first serving lifecycle History and the complete selected MVP. The detailed contracts and pending owner decisions in the supporting pages remain authoritative.
+
 Pinned main contains transactional lifecycle audit and State append/list. The [History shapes](31-basic-observability/interfaces.md#facts-and-events) remain proposed. Existing audit establishes neither bounded serving History nor the repository join, installed enforcement or live-provider qualification. New routes and connections remain proposals until accepted owner contracts and connected evidence establish them. Current platform design and feature references remain authoritative.
 
 Personal and team Agents use the existing resource model. Ownership, membership, participation, deployment rights and known IDs confer no History access. Content permission remains separate. Transcripts, Installation-wide search, general policy editing, replay machinery and remote audit export are outside this selected scope.
