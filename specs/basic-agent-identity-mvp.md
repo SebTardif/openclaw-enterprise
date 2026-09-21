@@ -88,6 +88,52 @@ OCE-managed SPIRE packaging, and independent outage-time physical termination
 remain separate follow-ups. This proposal does not turn workload identity into
 human permission or a repository bearer into requester attribution.
 
+## Minimum release requirements
+
+The complete MVP must satisfy all seven requirements on one qualified deployment
+profile. The [delivery cuts](basic-agent-identity-mvp/delivery.md) identify smaller
+reviewable checkpoints; completing a component or the first Git read does not
+complete this release.
+
+1. **Stable Agent, replaceable execution.** Retain the existing Agent principal.
+   Bind each execution to its exact Agent, immutable revision, component and
+   independently observed incarnation; replacement gets a fresh generation and
+   retirement cannot be reversed.
+2. **One operator-managed SPIRE profile.** Constrain registration to the assigned
+   workload and use rotating X.509-SVIDs with protected key custody. Verify the
+   actual receiving connection and current execution before OCC admission or
+   repository credential acquisition/dispatch; retain exact-resource IAM.
+3. **Two concrete consumers.** An ordinary Agent must use managed Git/`gh` through
+   the existing repository service and a protected model route. The complete
+   profile uses dedicated Codex/Gateway and qualified gVisor. Keep workload keys
+   and long-lived provider credentials outside tools; independently enforced
+   private ingress must deny external and sibling off-Pod replay on every route.
+4. **Personal and team authority remain explicit.** Use the same workload model
+   for both. Bind each operation to one admitted human connection or team service
+   authority, retaining the requester and permitted audience separately. Identity
+   supplies neither provider consent nor additional permissions. Missing personal
+   authorization must deny, never switch to team authority.
+5. **Bounded withdrawal and recovery.** Deny stale, retired, expired or unavailable
+   authority; rotation/reconnect cannot extend its original lifetime. Measure
+   new-work refusal and active protected-traffic closure within 30 seconds,
+   including renewal loss, preserving applicable stricter five-second limits.
+   Keep independently authorized cleanup and truthful termination observations.
+6. **Explicit compatibility.** Preserve existing tools, authentication, IAM and
+   session checks when enforcement is not selected. Pin the operator's requirement
+   in each admitted revision/session; neither request input nor dependency failure
+   can downgrade enforcement or manufacture execution assurance.
+7. **Installed evidence.** Demonstrate successful ordinary-Agent work and the
+   consequential denials, lifecycle and outage cases in the
+   [acceptance matrix](basic-agent-identity-mvp/delivery.md#increments-and-qualification),
+   then complete security review and fixes. Source/fixture checks alone cannot
+   claim the protected release.
+
+Additional services, new human connectors, managed SPIRE installation,
+exact-container proof, mixed/narrowed delegation and independent outage-time
+physical termination are follow-ups. The required producer/consumer interfaces
+in the [delivery plan](basic-agent-identity-mvp/delivery.md) do not require
+completion of every adjacent feature or UI.
+
 ## Supporting design
 
 - [Architecture](basic-agent-identity-mvp/architecture.md) follows assignment,
@@ -101,9 +147,10 @@ human permission or a repository bearer into requester attribution.
   separate suppliers, and proposed extensions. It defines the local obligations
   for verified evidence, repository binding, expiry, and safe observations without
   inventing wire APIs.
-- [Delivery](basic-agent-identity-mvp/delivery.md) defines the first real consumer,
-  complete contribution, composition qualification, and remaining owner decisions.
-  It keeps reviewed checkpoints useful without treating them as completion.
+- [Delivery](basic-agent-identity-mvp/delivery.md) names the required interfaces,
+  six delivery checkpoints, separate personal/team authority acceptance, installed
+  qualification, and remaining owner decisions. It keeps the first protected Git
+  read useful without treating it as the complete release.
 
 ## References
 
