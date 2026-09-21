@@ -1,34 +1,32 @@
 # GitHub credential contract
 
-[RFC overview](../github-credentials.md). This companion specifies the proposed unmerged repository capability for admission, worker, Compute and credential-service implementers. Existing platform owners remain authoritative for their unchanged behavior.
+[Overview](../github-credentials.md) · [Architecture](architecture.md). This proposed, unmerged contract binds admission, worker, Compute and credential-service implementations.
 
 ## Admission and authority
 
-An Agent requests `repositoryRef` and an optional `profile`. Resolution supplies the selected profile, configured `providerId`, and grant identity `{providerInstanceId, repositoryId, grantId}`. These identify the upstream instance, native repository and authorized grant independently. Opaque grant identities are nonempty, at most 512 UTF-8 bytes, without ASCII controls.
+An Agent requests `repositoryRef` and optional `profile`. Resolution returns the profile, configured `providerId` and grant `{providerInstanceId, repositoryId, grantId}`, identifying upstream instance, repository and authority independently. Opaque identities are nonempty, at most 512 UTF-8 bytes, without ASCII controls.
 
-OCC checks Namespace policy and selected Driver/Provider membership. The immutable revision freezes Driver ID/implementation, resolved bindings and `deadlineWallMs`, an absolute deadline. Admission and queued work commit through State before external session creation. Later configuration cannot widen the revision. Revalidation rejects drift while retaining access to restrictive cleanup.
+OCC checks Namespace policy and Driver/Provider membership. State commits the immutable revision and queued work before session creation, freezing Driver ID/implementation, bindings and absolute `deadlineWallMs`. Configuration cannot widen admission. Revalidation rejects drift while preserving restrictive cleanup.
 
-The receiving credential service independently resolves Namespace/repository/profile policy from its registry and exactly compares the expected frozen grant. Before creating authority or files, it rejects binding/profile drift and invalid duration, enforces the registry and service duration ceilings, and bounds the session by the original absolute deadline.
+The receiving service independently resolves Namespace/repository/profile registry policy, matches the frozen grant and rejects drift or invalid duration before authority/files. Registry/service duration ceilings and the original deadline apply.
 
-One configured GitHub App installation supports at most sixteen distinct repository bindings per Agent. Each session fixes one repository, grant and deadline. Repository-set sessions remain an independent unselected alternative.
+One configured App installation supports at most sixteen distinct bindings per Agent. Each session fixes one repository/grant/deadline. Repository-set sessions remain unselected.
 
-| Profile             | Exact token permissions                                                  | Operations                                                                          |
-| ------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `git-read`          | `metadata:read`, `contents:read`                                         | Clone, fetch and checkout. Push discovery/RPC deny before mint or dispatch.         |
-| `git-write`         | `metadata:read`, `contents:write`                                        | Native Git writes subject to repository rules. This is the omitted-profile default. |
-| Explicit `git-full` | `metadata:read`, `contents:write`, `pull_requests:write`, `issues:write` | Git and the selected API routes below.                                              |
+| Profile             | Exact token permissions                                                  | Operations                                                            |
+| ------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `git-read`          | `metadata:read`, `contents:read`                                         | Clone, fetch, checkout. Push discovery/RPC deny before mint/dispatch. |
+| `git-write`         | `metadata:read`, `contents:write`                                        | Native writes subject to repository rules. Omitted-profile default.   |
+| Explicit `git-full` | `metadata:read`, `contents:write`, `pull_requests:write`, `issues:write` | Git and selected APIs below.                                          |
 
-Both Git-only profiles deny every API route. Reject `read-write`. Every issuance and replacement explicitly requests one repository and validates the complete permission map. Missing, surplus or inherited permissions fail without widening or ambient credentials. Selected read-first new assignments belong to later IAM work, not today's omission behavior.
+Git-only profiles deny all APIs. Reject `read-write`. Every issuance/replacement requests exactly one repository and validates complete permissions. Missing, surplus or inherited permissions refuse without widening or ambient credentials. Read-first new assignments belong to later IAM work.
 
-Current authority is the team's App installation, including one-to-one chat. GitHub attributes API actions to the App. OIDC sign-in and permission to invoke an Agent do not delegate a user's repositories.
+Team App authority applies even in one-to-one chat. GitHub attributes API actions to the App. OIDC login and Agent invocation do not delegate repositories.
 
-Later explicit personal mode uses the same repository App with service-owned user tokens and renewal secrets. Admission must bind consent, verified OCE/GitHub account, current requester and authority mode. Access intersects user, App, installation and OCE grants. OIDC/account, invocation, IAM and credential owners must qualify consent withdrawal, renewal/revocation, both modes and cross-user refusal. Personal failure must never silently fall back to team authority. Invocation/Audit and personal-mode owners must audit the current requester and selected authority separately from Git commit author metadata.
+Later personal mode uses the same App with service-owned user tokens/renewal secrets. OIDC/account, invocation, IAM and credential owners must bind consent, verified OCE/GitHub account, current requester and authority mode, intersect user/App/installation/OCE grants, and qualify both modes, consent withdrawal, renewal/revocation and cross-user refusal. Never fall back silently to team authority. Invocation/Audit records requester and authority separately from commit author metadata.
 
 ## RepoDriver operations
 
-`RepoDriver extends Driver` has capability `repo`. Composition supplies it to OCC and worker through the existing selected-Driver model. There is no repository CRUD, public issuance API or generic broker resource. Common session/custody/lifecycle owners must not branch on provider names or assume one-hour tokens. The emitted credential service starts independently of worker/database dependencies.
-
-The selected operations are:
+`RepoDriver extends Driver` has capability `repo`, supplied to OCC/worker through existing selection. No repository CRUD, public issuance or generic broker resource is introduced. Common session/custody/lifecycle owners must avoid provider-name branches and one-hour-token assumptions. The emitted service starts independently of worker/database dependencies.
 
 ```ts
 resolve(input: {
@@ -40,7 +38,7 @@ status(sessionId: string, signal: AbortSignal): Promise<RepositoryCredentialSess
 close(sessionId: string, signal: AbortSignal): Promise<RepositoryCredentialSessionStatus | undefined>;
 ```
 
-`resolve` returns admitted `bindings` and configured `sessionDurationSeconds`, bounded by registry policy. `open` takes `namespaceId`, immutable `admissionId`, admitted `binding`, `durationSeconds`, `deadlineWallMs` and optional `recoverOnly: true`. Cancellation uses the supplied signal. Duration cannot extend the admitted deadline.
+`resolve` returns admitted `bindings` and registry-bounded `sessionDurationSeconds`. `open` takes `namespaceId`, immutable `admissionId`, admitted `binding`, `durationSeconds`, `deadlineWallMs` and optional `recoverOnly: true`. The signal cancels. Duration cannot extend admission.
 
 ```ts
 type OpenRepositorySessionResult =
@@ -53,65 +51,49 @@ type OpenRepositorySessionResult =
   | { readonly kind: "missing" };
 ```
 
-Creation returns private files once. Recovery returns status only. `recoverOnly` can return recovered or missing and never creates authority. Missing is authoritative absence, distinct from unavailability. Missing `status` and `close` return `undefined`.
+Creation returns files once, recovery only status. `recoverOnly` never creates authority. Missing means authoritative absence, not unavailability. Missing `status`/`close` return `undefined`.
 
-Public status contains exactly `sessionId`, `state`, `deadlineWallMs` and `binding`. Its state is `OPEN`, `CLOSED` or `DISPOSED`. Validate the complete private response before constructing fresh public snapshots and bindings for all four result paths. Disposal rejects active uses, active/pending/uncertain cleanup or auxiliary obligations. Historical expired/revoked counters may remain.
+Validate complete private responses before fresh public snapshots/bindings across all four result paths. Public status has exactly `sessionId`, `state`, `deadlineWallMs`, `binding`. States are `OPEN`, `CLOSED`, `DISPOSED`. Disposal rejects active uses, active/pending/uncertain cleanup and auxiliary obligations. Historical expired/revoked counters may remain.
 
-Permanent control refusal maps to `ScopeViolationError`. Unavailable, retryable or inconsistent control results map to `DependencyUnavailableError`. Reject wrong bindings, extended deadlines, creation on recovery-only and an OPEN close response. `maintenanceIntervalMs` is 30000 in this implementation, not a withdrawal guarantee.
+Permanent refusal maps to `ScopeViolationError`, unavailable/retryable/inconsistent results to `DependencyUnavailableError`. Reject wrong bindings, extended deadlines, recovery-only creation and OPEN close responses. `maintenanceIntervalMs` is 30000, not a withdrawal guarantee.
 
-Compatibility preserves opaque Driver identities and persisted payloads without a rename migration. Keep private validators, closed material schemas and no emitted runtime dependency from the private client DTO. Source guards, entrypoints and build consumers must agree. Guards detect regressions, not malicious-code isolation.
+Preserve opaque Driver identities/persisted payloads without rename migration, private validators, closed material schemas and no emitted runtime dependency from private client DTOs. Source guards, entrypoints and build consumers must agree. Guards detect regressions, not malicious-code isolation.
 
-Custody retains separate issuance and streaming senders, original-object borrowing, disposal sealed before awaiting, and temporary-copy wiping before response disposal. Preserve retry semantics and introduce no test-only public API.
+Keep separate issuance/streaming senders, original-object borrowing, disposal sealed before awaiting, temporary-copy wiping before response disposal, and retry semantics. Introduce no test-only public API.
 
 ## Material delivery and recovery
 
-The worker persists attempt identity before `open`, then session identity before handing private files to Compute. Claim ownership and phase updates fence concurrent workers. These checkpoints surround an external effect and are not a distributed transaction. State stores safe correlations and cleanup work, not a durable provider-token journal.
+The worker persists attempts before `open` and session identity before Compute delivery. Claims/phases fence concurrent workers. State stores correlations/cleanup, not a durable provider-token journal.
 
-After a lost control response, reconcile the original admission. Recovery-only absence fences delayed creation. If matching material survives, retain it. Otherwise close known-undelivered authority before explicit replacement, preserving the original grant and deadline. Status cannot regenerate files. Outage cannot be treated as absence.
+Lost-response reconciliation requires the service to retain original admission/effect knowledge. Recovery-only absence then fences delayed creation. Retain matching material, or close known-undelivered authority before justified replacement under the original grant/deadline. Status cannot regenerate files. Outage is not absence. This promise excludes erased service history.
 
-`RepositoryCredentialSessionFiles` contains UTF-8 `bearer`, `client.json`, `gitconfig`, `gh/hosts.yml`, `gh/config.yml` and optional `ca.pem`. The bearer has at least 32 random bytes and service lookup uses its digest. `RepositoryCredentialRuntimeBinding` supplies `repositoryRef`, `sessionId` and `deadlineWallMs`, plus either `kind: "new"` with files or `kind: "retained"` without them.
+`RepositoryCredentialSessionFiles` contains UTF-8 `bearer`, `client.json`, `gitconfig`, `gh/hosts.yml`, `gh/config.yml` and optional `ca.pem`. Bearers have at least 32 random bytes, looked up by digest. `RepositoryCredentialRuntimeBinding` supplies `repositoryRef`, `sessionId`, `deadlineWallMs` and either `kind: "new"` with files or `kind: "retained"` without them.
 
-Compute validates the complete requested generation before publication. It owns immutable scoped Kubernetes Secrets, private 0700/0600 placement, atomic publication, complete-generation readiness, exact missing-subset repair and retirement using actual Pod references and UID/resourceVersion checks. A retained entry must match its original session.
+Compute validates complete generations, owns immutable scoped Kubernetes Secrets, private 0700/0600 placement, complete readiness, exact missing-subset repair and retirement through actual Pod references and UID/resourceVersion checks. Retained material must match its session. Atomic publication means runtime files become visible together. State transactions, sequential session opens, Kubernetes resources and GitHub effects remain separate.
 
-Stock Git uses native configuration and credential-helper selection from effective remotes. Bounded `gh` routing selects the actual target. Reject ambiguous or conflicting selection without mutating a global selected-repository file. This requires neither a custom Git grammar nor verified-checkout startup gating.
+Stock Git selects effective remotes through native configuration/helpers. Bounded `gh` routing selects actual targets. Ambiguous/conflicting selection rejects without global selected-repository mutation, custom Git grammar or verified-checkout startup gating.
 
 ## Request lifecycle
 
-![Proposed admission, material delivery, request and cleanup lifecycle](request-lifecycle.svg)
+![Proposed admission, delivery, request and cleanup lifecycle](request-lifecycle.svg)
 
-Proposed lifecycle. Time flows downward, with requests and replies using normal sequence notation. This is not runtime qualification. [Editable Mermaid source](request-lifecycle.mmd).
+Proposed lifecycle, not runtime qualification. Time flows downward with normal request/reply notation. [Editable source](request-lifecycle.mmd).
 
-1. The gateway resolves the bearer to a server-owned session and checks its exact repository/profile before acquisition. An exchange is one effective HTTP request, not an entire Git command.
-2. A provider attempt acquires credentials on demand under the original grant/deadline. Concurrent waiters share acquisition and its fixed budget. Individual cancellation does not extend that budget. Last-waiter cancellation still retains capture and settlement responsibility.
-3. Custody captures every observed token before scope/validity acceptance, including rejected and late material. Credential lifetime is independent of session lifetime. Renewal after idle expiry uses a fresh JWT and unchanged grant, retaining the same bearer/files beyond hour 13.
-4. Dispatch requires sufficient remaining validity.
-
-   - Validity covers the full remaining exchange budget plus margin. Trusted wall and monotonic time govern budgets. Backward wall time cannot extend authority or cleanup, and forward time alone cannot certify remote expiry.
-   - After asynchronous preparation, recheck authority/validity synchronously before dispatch, then join I/O before releasing custody.
-   - Drain-before rotation protects active pushes. Retiring a predecessor must preserve its replacement.
-
-5. Cancellation retains settlement responsibility.
-
-   - Timeout or cancellation requests a stop without proving settlement. Preserve original handles, outcomes and reservations. Unknown issuance blocks automatic remint.
-   - Possibly accepted writes and invoked uncertain cleanup are not automatically replayed. Pre-invocation queue rescheduling is different.
-   - Reconcile remote effects with bounded unique ownership markers. Report ambiguous, missing or truncated readback before separately authorized follow-up.
-
-6. Stop and provider settlement have separate completion conditions.
-
-   - The worker persists closing phases and registers owned cleanup before attempting closure. Close denies new use before cancelling exchanges. After the close attempt, the worker rechecks stop intent and retires exact owned runtime/material without waiting for provider settlement or `DISPOSED`. Unavailability or unsettled cleanup leaves work with the existing cleanup owner.
-   - `CLOSED` retains cleanup capacity until actions, captures and auxiliary renewal authority settle. `DISPOSED` requires resolved obligations and actual finalization, not just a status predicate. One session must not finalize the shared signing key.
-   - Confirmed GitHub revocation requires an observed HTTP 204. Other responses or lost acknowledgments remain uncertain. Runtime stop proves neither session closure, disposal nor provider revocation. Neither session state proves runtime termination.
-   - Finite shutdown may exit with unresolved obligations. Elapsed grace does not settle them.
+1. Resolve bearer to server-owned session. Check exact repository/profile before acquisition. One exchange means one effective HTTP request, not a Git command.
+2. Acquire on demand under the original grant/deadline. Concurrent waiters share acquisition and its fixed budget. Individual cancellation cannot extend it. Last-waiter cancellation retains capture/settlement responsibility.
+3. Capture every observed token before scope/validity acceptance, including rejected/late material. Credential and session lifetimes differ. Idle-expiry renewal uses fresh JWTs and unchanged grants, retaining bearer/files beyond hour 13.
+4. Require full remaining exchange validity plus margin. Trusted wall/monotonic time govern budgets. Backward wall time cannot extend authority/cleanup, and forward time alone cannot prove remote expiry. After asynchronous preparation, synchronously recheck authority/validity before dispatch. Join I/O before releasing custody. Drain-before rotation protects pushes and predecessor retirement preserves replacements.
+5. Timeout/cancellation requests stop, not settlement. Preserve original handles/outcomes/reservations. Unknown issuance blocks remint. Possibly accepted writes and invoked uncertain cleanup must not automatically replay. Pre-invocation queue rescheduling differs. Reconcile effects through bounded unique ownership markers, reporting ambiguous/missing/truncated readback before independently authorized follow-up.
+6. Persist closing phases and register owned cleanup before closure. Close denies use before cancellation. After attempting close, recheck owned stop intent and retire exact runtime/material without waiting for settlement or `DISPOSED`. Unavailability/unsettled cleanup retains the existing owner.
+7. `CLOSED` retains capacity until actions, captures and auxiliary renewal authority settle. `DISPOSED` requires resolved obligations and actual finalization, not a predicate. One session cannot finalize the shared signing key. Revocation requires observed GitHub HTTP 204, otherwise uncertainty remains. Runtime stop proves neither closure/disposal/revocation, nor does either session state prove runtime termination. Finite shutdown may leave obligations. Grace expiry never settles them.
 
 ## Security and request bounds
 
-App/TLS private material remains service-only, behind protected file ownership, permissions, ancestor and descriptor checks. Reject symlinks, nonregular/oversized inputs and replacement races. The Unix control channel is unavailable to Agents. Failed transfer must dispose still-owned candidate bytes, including failed descriptor close. Temporary-byte wiping is best effort, not forensic JavaScript erasure. Provider authentication is attached only by the upstream sender.
+App/TLS private material stays service-only. Enforce ownership, permissions, ancestor/descriptor checks, rejecting symlinks, nonregular/oversized inputs and replacement races. Agents cannot use Unix control. Failed transfers, including descriptor-close failure, dispose still-owned candidate bytes. Temporary wiping is best effort, not forensic JavaScript erasure. Only the upstream sender attaches provider authentication.
 
-The Agent holds a confidential gateway bearer and the selected Harness's model credential. This proposal therefore does not establish an all-Agent credential ban. Bearer possession proves neither originating workload nor current human. Routing is not network confinement. Ordinary process/container/filesystem separation is the present trust assumption.
+Agents hold gateway bearers and model credentials: this is not an all-Agent credential ban. Bearers prove neither workload origin nor current human. Routing is not confinement. Ordinary process/container/filesystem separation remains the trust assumption.
 
-Authorize every effective request. Reject ambiguous framing and noncanonical targets, including traversal and encoded aliases. Fixed origins, canonical `github.com` identity, verified TLS/SNI and gateway port 443 are required. Discard inbound credentials, cookies and hop-by-hop fields, plus upstream authentication challenges. Allowlisted headers, reconstructed framing and validated/rewritten follow-up links preserve body text. There is no ambient proxy, redirect, retry, login or PAT fallback.
-
-Selected routes use exact repository identity:
+Authorize each request. Reject ambiguous framing, noncanonical targets, traversal and encoded aliases. Require fixed origins, canonical `github.com` identity, verified TLS/SNI and gateway port 443. Discard incoming credentials/cookies/hop-by-hop fields and upstream authentication challenges. Allowlist headers, reconstruct framing, validate/rewrite follow-up links and preserve body text. No ambient proxy, redirect, retry, login or PAT fallback.
 
 | Target                                                                    | Methods            |
 | ------------------------------------------------------------------------- | ------------------ |
@@ -125,9 +107,13 @@ Selected routes use exact repository identity:
 | `/meta`                                                                   | GET                |
 | `/graphql`                                                                | POST               |
 
-API routes require `git-full`. Query, media and framing policy remain bounded, including pagination, repository-ID links and bodyless 204 responses. Every GraphQL POST is a possible write. There is no field or branch filtering, and GitHub may return permitted public information. Arbitrary API coverage, whole-command preflight, administration, extra workflow permissions, SSH, LFS and extra-repository submodules are excluded.
+APIs require `git-full`. Repository REST routes match exact repository identity. Query/media/framing policy bounds pagination, repository-ID links and bodyless 204 responses.
 
-These source defaults are observable limits, not final-artifact qualification:
+Explicit `git-full` permits `POST /graphql` queries and mutations within the admitted installation token's authority, without semantic operation, field or global-ID filtering. This is broader than the listed REST operations. Exact one-repository issuance, complete permissions, session/profile/deadline, custody and transport checks remain. Every GraphQL POST is a possible write. Filtering is outside MVP.
+
+GitHub may return permitted public information. There is no local branch authorization. Additional REST endpoints, whole-command preflight, administration, extra workflow permissions, SSH, LFS and extra-repository submodules remain excluded.
+
+Current [source defaults](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/apps/controller/src/drivers/repo/credentials/configuration.ts) are operational limits, not qualification:
 
 | Resource                               | Default                                   |
 | -------------------------------------- | ----------------------------------------- |
@@ -147,23 +133,33 @@ These source defaults are observable limits, not final-artifact qualification:
 | Validity margin / shutdown grace       | 60 seconds each                           |
 | Token / renewal material / PEM         | 16 KiB / 16 KiB / 64 KiB                  |
 
-Wire and decoded input bounds are independent. Queue/input time counts toward the original total budget, and push input uses the exchange deadline. Incoming header timing follows TLS handshake. Upstream response-header timing begins after upload unless headers already arrived. Overrides must be positive safe integers under tested policy. Unknown keys reject, zero is never unlimited, and hard material/action caps remain. Saturation and rejection cannot drain indefinitely or discard obligations. HTTP/1.1 is supported, with no CONNECT, HTTP/2, arbitrary forwarding or transparent interception. Node 24 and `gh` 2.100.0 define the source-qualified client profile, not universal CLI compatibility.
+Sixteen bindings/Agent and [registry capacity 128](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/apps/controller/src/drivers/repo/github/credentials/registry.ts) are hardcoded scale constraints requiring coordinated changes. Admission reserves no sessions. The shared sixteen-session budget includes CLOSED cleanup and failed construction. One fully bound Agent can exhaust sibling/replacement headroom. Credential slots and surviving upstream tokens measure different things.
+
+Git's 256 MiB bodies and 5-second inactivity/5-minute exchange budgets are operational choices. Proposed follow-up relaxes Git transfer/time budgets and qualifies deployment capacity, with no replacement values selected. Requests 32/4, sockets 64 and sessions 16 require capacity evidence. API 1 MiB/8 MiB buffers require memory accounting across copies/concurrency. Client/control/shutdown/Pod/provider ceilings may require coordinated changes.
+
+Provider concurrency one is hardcoded queue simplification. More queue capacity adds no concurrency. Separate lifecycle/concurrency work must preserve ownership, fairness, cancellation and finalization. The current rotation design requires at least two credential slots for replacement overlap. Full-exchange validity, original deadlines and unresolved obligations remain binding, without arbitrary cleanup TTLs.
+
+Wire/decoded bounds are independent. Queue/input time counts toward the original total budget. Push input uses the exchange deadline. Header timing follows TLS, upstream response-header timing follows upload unless headers arrive earlier. Overrides require positive safe integers under tested policy. Unknown keys/zero reject, hard material/action caps remain. Saturation cannot drain indefinitely or discard obligations.
+
+Compatibility is HTTP/1.1 without CONNECT, HTTP/2, arbitrary forwarding or interception, Node 24 and exactly `gh` 2.100.0. [Client commands](https://github.com/openclaw/openclaw-enterprise/blob/184270f12fd09c515af1f9afc06296baf2ae1ddf/apps/controller/src/drivers/repo/github/credentials/client/commands.ts) permit only `api` and `pr create` with restricted flags. `pr create` requires explicit `--head`. More commands require qualification, not larger budgets.
 
 ## Restart and future obligations
 
-Worker replacement may retain sessions when the credential service and delivered material survive. Service replacement loses sessions and provider inventory, requires a new material generation and can replace the Agent Pod. Issued tokens may survive until expiry. Repeated crashes defeat an aggregate outstanding-token bound derived from process-local limits. Invalidation is not disposal or revocation, and interrupted work is not seamless continuation.
+Worker process/container restart may retain sessions only if service/material survive. Replacing the selected Recreate worker Pod also replaces its credential sidecar. Service replacement loses sessions/provider inventory, needs new material and may replace the Agent Pod. Provider tokens can survive until expiry. Repeated crashes defeat aggregate token bounds derived from process-local capacity.
 
-Credential custody and State owners retain restart-safe issuance/custody/outcome accounting: preserve original obligations, fence predecessors and reconcile before issuance. Repeated-crash proof must demonstrate cleanup and refusal of unsafe remint/replay. Encrypted material recovery is a separate, deferred mechanism. No JWT/Postgres recovery design is selected, and persistence alone cannot guarantee exactly-once provider effects.
+Safe replacement after lost issuance/write knowledge is unfinished. Missing-session invalidation or locally settled results prove neither provider settlement nor safe remint/replay. State/custody/worker owners must select surviving evidence and enforcement before replacement. A reconciliation hold or minimum durable effect record remains unselected. Any hold must cover forgotten effects across the lost service generation, not just remembered uncertainty. Newer implementation-owner work is not adopted here.
 
-Worker, Compute and Harness owners separately retain safe material refresh or explicit resume, workspace ownership and observed predecessor writer termination. Ordinary-Agent model/tool and real-Git evidence must establish continuity without stale credentials, concurrent writers or uncertain-effect replay.
+Restart-safe issuance/custody/outcome accounting retains original obligations, predecessor fencing and reconciliation before issuance, with repeated-crash cleanup/no-unsafe-remint-or-replay proof. Full encrypted material recovery is separately deferred. No JWT/Postgres design is selected. Persistence alone cannot guarantee exactly-once effects. Invalidation is not disposal/revocation or seamless continuation.
 
-Other retained successors have distinct closure requirements:
+Worker/Compute/Harness separately own safe refresh or explicit resume, workspace ownership and observed predecessor writer termination. Actual ordinary-Agent model/tool and real-Git evidence must prove continuity without stale credentials, concurrent writers or uncertain-effect replay.
 
-- IAM/Work owns explicit read-first new assignments, root Work, fresh per-effect authorization, durable dispatch permits, PR submission identity/deduplication and unknown outcomes.
-- Identity/Compute and credential receivers own disabled preparation, independently observed execution, fresh immutable admission, delivery/recheck/enable and protected receiving evidence before acquisition or dispatch.
-- Egress owns mandatory routing and authenticated currentness ordered against withdrawal. Measure closure of new and active use within 30 seconds, including renewal loss and any selected tighter bound. Network, repository composition and protected currentness require separate evidence.
-- Custody/State owns encrypted inventory, canonical holds, original-key retirement and compatibility drains. Repository-publication owners retain per-ref receive-pack/receipts, approved retained candidates, branch policy and ownership/visibility protection.
-- Compute/Harness owns dedicated/gVisor delivery, readiness, retirement and retained-workspace writer exclusion. Runtime/Compute owns helper aggregation, independent children, stop/start/result delivery, compatible context restoration and host-loss recovery.
-- OIDC/account retains identity-only login and discarded login tokens. Invocation/Audit must distinguish the current requester from deployer and reader using safely observed or explicitly unknown facts. Native-token and offline-read modes require independent qualification and are never fallbacks.
+Retained successor owners:
 
-These later obligations do not become new gates for the narrow refinement. Their owners must update current documentation with exact-source evidence when each outcome is delivered.
+- IAM/Work: read-first assignments, root Work, fresh per-effect authorization, durable dispatch permits, PR submission identity/deduplication and unknown outcomes.
+- Identity/Compute/receivers: disabled preparation, independently observed execution, fresh immutable admission, delivery/recheck/enable and protected receiving evidence before acquisition/dispatch.
+- Egress: mandatory routing and authenticated currentness ordered against withdrawal. Measure new/active-use closure within 30 seconds, including renewal loss and selected tighter bounds. Network, repository composition and protected currentness need separate proof.
+- Custody/State: encrypted inventory, canonical holds, original-key retirement and compatibility drains. Repository publication: per-ref receive-pack/receipts, approved retained candidates, branch policy and ownership/visibility protection.
+- Compute/Harness: dedicated/gVisor delivery, readiness, retirement and retained-workspace writer exclusion. Runtime/Compute: helper aggregation, independent children, stop/start/result delivery, compatible context restoration and host-loss recovery.
+- OIDC/account: identity-only login with discarded login tokens. Invocation/Audit: current requester distinct from deployer/reader, using observed or explicitly unknown facts. Native-token/offline-read modes need independent qualification and are never fallbacks.
+
+These successors add no gates to this narrow refinement. Owners update current documentation with exact-source evidence upon delivery.

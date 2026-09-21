@@ -27,22 +27,24 @@ sequenceDiagram
   O->>O: Authorize and commit revision plus queued work
   O-->>W: Frozen binding and original deadline
   W->>O: Commit opening attempt before external effect
-  W->>S: Open through private Provider control
+  W->>S: Open session over private Unix control
   S->>S: Resolve Namespace, repository and profile policy
   S->>S: Match frozen grant, bound duration and original deadline
   alt Admission denied
     S-->>W: Refuse before authority or files
   else Created
     S-->>W: Session plus one-time private files
-  else Lost response or recovered status
+  else Lost response with surviving service knowledge
     W->>S: Reconcile original admission, recovery-only
-    S-->>W: Safe status or authoritative missing
-    Note over W,S: Outage is not absence. Retain matching files or close before explicit replacement.
+    S-->>W: Safe status or authoritative missing in surviving service
+    Note over W,S: Outage is not absence. Retain matching files or close known-undelivered authority before replacement.
+  else Admission or effect history lost
+    Note over W,S: Safe replacement remains unfinished. Missing status cannot prove provider settlement.
   end
   Note over O,G: 2. Publish a complete material generation
   W->>O: Commit session identity before delivery
   W->>C: New files or matching retained material
-  C->>C: Validate complete generation and publish atomically
+  C->>C: Validate complete generation, atomically publish runtime files
   C-->>A: Private bearer/client files and readiness
   Note over O,G: 3. Authorize one effective request
   A->>S: Git or selected gh request over verified HTTPS
@@ -83,4 +85,5 @@ sequenceDiagram
     S->>S: DISPOSED only after all obligations resolve
   end
   Note over O,C: Agent deletion and Namespace cleanup joins remain corrective work.
-  Note over O,G: Service loss can lose inventory and interrupt work. This proposal does not qualify restart.
+  Note over W,S: Worker-container restart may preserve service knowledge. Worker-Pod replacement loses the sidecar too.
+  Note over O,G: Lost effect-history recovery remains unfinished. No safe remint or replay follows from local absence.
