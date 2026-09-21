@@ -4,7 +4,9 @@
 
 An API-created ordinary Agent can contribute to approved repositories through Git and selected `gh` operations while GitHub App keys, JWTs, installation tokens and renewal secrets remain outside its workload.
 
-**Status: Proposed, unmerged and unqualified.** Start with the [architecture](github-credentials/architecture.md) for concepts and credential placement, then the [contract](github-credentials/contract.md) for interfaces, limits and recovery.
+**Status: Proposed, unmerged and unqualified.** The [inspected implementation baseline](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/packages/contracts/src/repo.ts) supplies source evidence, not installed availability. The [architecture](github-credentials/architecture.md) explains concepts and credential placement; the [contract](github-credentials/contract.md) defines interfaces, limits and recovery.
+
+The operator enables repository credentials and configures approved repositories. An Agent owner supplies `repositoryBindings` through the API or CLI, deploys the Agent, then uses ordinary Git and supported `gh` commands in its workload. Model authentication remains separately configured. The pinned [installation](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/docs/guides/repository-credentials/installation.md) and [Agent usage](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/docs/guides/repository-credentials.md) guides describe this path as unmerged implementation procedures.
 
 ## Deliverables and boundary
 
@@ -12,7 +14,7 @@ The first demonstration uses the Agent's actual model and tools to clone or fetc
 
 Selected delivery also includes all supported profiles/routes, concurrent repository use, renewal beyond twelve hours, uncertainty and cleanup. The demonstration alone does not complete that scope.
 
-The selected composition is Kubernetes Compute, embedded OpenClaw, `api_key` Harness authentication, no SandboxDriver and one worker/credential-service owner. Integration is opt-in. Unbound Agents retain their lifecycle. Unsupported repository-bearing compositions reject. Later runtime, personal-access and durable-recovery work has [separate owners](github-credentials/contract.md#restart-and-future-obligations).
+The selected composition is Kubernetes Compute, embedded OpenClaw, `api_key` Harness authentication, no SandboxDriver and one worker/credential-service owner. Integration is opt-in. Unbound Agents retain their lifecycle. Unsupported repository-bearing compositions reject. API/CLI binding creation does not include a console repository editor. Later runtime, personal-access and durable-recovery work has [separate owners](github-credentials/contract.md#restart-and-future-obligations).
 
 ## Components and architecture
 
@@ -63,9 +65,18 @@ flowchart TB
 
 Proposed architecture. Solid edges identify inspected source connections, not installed proof. Worker and service are separate containers in one Pod, with the Agent outside. The [lifecycle SVG](github-credentials/request-lifecycle.svg), [editable source](github-credentials/request-lifecycle.mmd) and [contract](github-credentials/contract.md#request-lifecycle) explain ordering and uncertainty.
 
-## Implementation and unresolved work
+<a id="implementation-and-unresolved-work"></a>
 
-State, worker and credential owners must align admission, claims and delivery, and resolve these deletion gaps: Agent deletion retires Compute without repository closure, cleanup admission lacks a deleted-Agent target, and immutable attempts restrict revision deletion even after disposal, conflicting with the Agent finalizer. Namespace soft deletion hides revisions needed by deferred cleanup. Initiating closure before infrastructure removal is insufficient. Select compatible retention/finalization and demonstrate intended deletion, executable cleanup, preserved history and sibling safety. No cascade, history waiver or permanent deletion deferral is selected.
+## Unresolved lifecycle decisions
+
+State, worker and credential owners must resolve four conflicts between deletion and cleanup:
+
+- Agent deletion retires Compute without closing repository sessions.
+- Cleanup admission lacks a target for a deleted Agent.
+- Retained immutable attempts restrict revision deletion even after disposal, conflicting with the Agent finalizer.
+- Namespace soft deletion hides revisions needed by deferred cleanup.
+
+Initiating closure before infrastructure removal is insufficient. Select compatible retention/finalization and demonstrate intended deletion, executable deferred cleanup, preserved history and sibling safety. No cascade, history waiver or permanent deletion deferral is selected.
 
 Safe replacement after lost issuance/write history is [unfinished](github-credentials/contract.md#restart-and-future-obligations).
 
@@ -80,7 +91,7 @@ Proposed feature-local divergence rule: ordinary implementation details remain o
 | Recovery and terminal cleanup     | Lost responses, partial delivery, real claim loss, worker-only restart, Pod replacement, missing-Secret repair and sibling safety. Abrupt service loss after issuance, uncertain issuance and possible writes must exercise production adapter/control, worker and delivery paths. Safe replacement remains unfinished. Proof must show old access refused, justify any bounded replacement and exclude unsafe remint/replay. No-token or graceful-drain restart is insufficient. |
 | Backend and packaging conformance | An alternate identity/auth/permission/expiry/renewal and drain-before backend exercises the same production owners. Run emitted service/client/controller artifacts with native clients and controlled peers, without source fallback. This selects no additional provider.                                                                                                                                                                                                       |
 
-An authorized live smoke checks real App scope and PR/issue/comment behavior separately from controlled expiry. Missing provider/model inputs or authorization leave that proof unavailable. Record exact base/head/tree, artifacts, images, clients, topology, configuration, skips and cleanup. Source, composition, installed, live-provider and release evidence remain separate. Disabled CodeQL is no scan. Owner acceptance is not release acceptance.
+An authorized live smoke checks real App scope and PR/issue/comment behavior separately from controlled expiry. Missing provider/model inputs or authorization leave that proof unavailable. Record exact base/head/tree, artifacts, images, clients, topology, configuration, skips and cleanup in implementation evidence. Keep changing run results and active progress there; retain decisions, acceptance outcomes and a bounded delivery record in this RFC. Missing acceptance evidence does not establish absent implementation. Source, composition, installed, live-provider and release evidence remain separate. Disabled CodeQL is no scan. Owner acceptance is not release acceptance.
 
 ## References
 

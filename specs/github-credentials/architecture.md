@@ -35,18 +35,25 @@ The [worker-Pod template](https://github.com/openclaw/openclaw-enterprise/blob/0
 
 Each issuance requests exactly one repository. Multiple bindings have separate sessions and client material. Demand renewal can produce successive or overlapping tokens within a session, so a binding does not mean one permanent token. [Custody and request bounds](contract.md#security-and-request-bounds) govern these transfers.
 
+State can retain a revision and cleanup records after the credential service loses its sessions and provider inventory. Those records cannot reconstruct lost authority or prove that GitHub effects settled. The [restart contract](contract.md#restart-and-future-obligations) distinguishes recovery with surviving service knowledge from replacement after that knowledge is lost.
+
 ## One contribution
 
-Illustrative bindings, not an executed result:
+The operator first enables repository credentials and configures approved repositories. The Agent owner includes separate contribution and read-only bindings in the Agent request. This fragment is illustrative, not an executed result:
 
 ```json
-[
-  { "repositoryRef": "contribution", "profile": "git-full" },
-  { "repositoryRef": "reference", "profile": "git-read" }
-]
+{
+  "repositoryBindings": [
+    { "repositoryRef": "contribution", "profile": "git-full" },
+    { "repositoryRef": "reference", "profile": "git-read" }
+  ]
+}
 ```
 
-Admission freezes two grants and their deadline. The worker records attempts, opens two sessions and records their identities. Compute publishes one complete runtime-file generation. The Agent reads reference material, edits/tests/commits in the contribution checkout, runs native `git push`, then pinned `gh pr create --head feature-branch` against that same repository. A reference push refuses before acquisition or dispatch.
+1. Create the Agent through the API or CLI with the requested repository bindings.
+2. Deploy the Agent. Revision admission freezes the two grants and their deadline. The worker records attempts, opens two sessions and records their identities. Compute publishes one complete runtime-file generation.
+3. Observe the admitted revision and deployment readiness before using its repository access. The pinned [Agent usage guide](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/docs/guides/repository-credentials.md) gives the unmerged implementation procedure.
+4. The Agent reads reference material, edits/tests/commits in the contribution checkout, runs native `git push`, then pinned `gh pr create --head feature-branch` against that same repository. A reference push refuses before acquisition or dispatch.
 
 Each effective request receives its own authorization check. `RepoDriver.open` opens a credential session, not a PR. `RepoDriver.close` withdraws session use, not the GitHub PR. Stop retires owned runtime material while unresolved provider cleanup retains its owner. See [interfaces](contract.md#repodriver-operations), [permissions](contract.md#admission-and-authority) and [cleanup](contract.md#request-lifecycle).
 
