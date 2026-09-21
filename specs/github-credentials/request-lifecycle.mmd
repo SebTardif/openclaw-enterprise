@@ -1,0 +1,86 @@
+---
+config:
+  theme: base
+  themeVariables:
+    fontSize: 14px
+    primaryColor: "#EDF2F7"
+    primaryTextColor: "#25364A"
+    primaryBorderColor: "#879AB0"
+    lineColor: "#8B949E"
+    noteBkgColor: "#F7F1E5"
+    noteTextColor: "#514532"
+  sequence:
+    mirrorActors: true
+    useMaxWidth: false
+    actorMargin: 28
+    messageMargin: 24
+    noteMargin: 12
+---
+sequenceDiagram
+  participant O as OCC / IAM / State
+  participant W as Worker / RepoDriver
+  participant C as Compute
+  participant A as Ordinary Agent
+  participant S as Credential process
+  participant G as GitHub
+  Note over O,G: 1. Admit immutable repository authority
+  O->>O: Authorize and commit revision plus queued work
+  O-->>W: Frozen binding and original deadline
+  W->>O: Commit opening attempt before external effect
+  W->>S: Open through private Provider control
+  S->>S: Resolve Namespace, repository and profile policy
+  S->>S: Match frozen grant, bound duration and original deadline
+  alt Admission denied
+    S-->>W: Refuse before authority or files
+  else Created
+    S-->>W: Session plus one-time private files
+  else Lost response or recovered status
+    W->>S: Reconcile original admission, recovery-only
+    S-->>W: Safe status or authoritative missing
+    Note over W,S: Outage is not absence. Retain matching files or close before explicit replacement.
+  end
+  Note over O,G: 2. Publish a complete material generation
+  W->>O: Commit session identity before delivery
+  W->>C: New files or matching retained material
+  C->>C: Validate complete generation and publish atomically
+  C-->>A: Private bearer/client files and readiness
+  Note over O,G: 3. Authorize one effective request
+  A->>S: Git or selected gh request over verified HTTPS
+  S->>S: Check session, repository, profile and deadline
+  alt Scope denied
+    S-->>A: Refuse before acquisition or dispatch
+  else Scope admitted
+    S->>G: Coalesced demand acquisition under original grant
+    G-->>S: Credential or uncertain outcome
+    S->>S: Capture before acceptance, retain original attempt
+    alt Credential accepted
+      S->>S: Recheck full remaining validity before dispatch
+      S->>G: Authenticate one bounded exchange
+      G-->>S: Response or possible-write uncertainty
+      S-->>A: Result or uncertainty without automatic write replay
+      Note over S,G: Join I/O before releasing custody. Renewal preserves bearer and deadline.
+    else Issuance unknown or credential rejected
+      S-->>A: Refuse dispatch and retain original obligations
+      Note over S,G: Unknown issuance blocks automatic remint.
+    end
+  end
+  Note over O,G: 4. Register closure, retire runtime and retain unsettled cleanup
+  W->>O: Persist closing phases and register owned cleanup
+  W->>S: Attempt session close
+  alt Service available
+    S->>S: Deny new use before cancellation
+    S-->>W: Status, possibly CLOSED with obligations
+  else Service unavailable
+    Note over W,S: Existing cleanup owner retains work
+  end
+  W->>O: Recheck owned stop intent
+  W->>C: Retire exact runtime and material without awaiting DISPOSED
+  Note over W,G: Runtime stop does not prove session closure, disposal or provider revocation.
+  opt Provider obligations remain, independent of runtime retirement
+    W->>S: Existing cleanup owner continues reconciliation
+    S->>G: Settle original owned provider obligations
+    G-->>S: Confirmed outcome or retained uncertainty
+    S->>S: DISPOSED only after all obligations resolve
+  end
+  Note over O,C: Agent deletion and Namespace cleanup joins remain corrective work.
+  Note over O,G: Service loss can lose inventory and interrupt work. This proposal does not qualify restart.
