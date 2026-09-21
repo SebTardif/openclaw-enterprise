@@ -1,20 +1,30 @@
 # RFC: Basic Agent observability
 
-## Problem and goal
-
-An operator can accept an Agent deployment without knowing which later human request caused a repository operation or what actually completed. OpenClaw Enterprise (OCE) needs a bounded History that lets an authorized reader follow reliable facts without receiving credentials or conversation content.
-
-The complete selected journey has three distinct people. A deploys a personal or team Agent. B asks that Agent to read an approved GitHub repository's HEAD. Separately granted audit-only reader C follows the original initiator, Agent/revision executor, exact authorization and resource, accepted work, and strongest observed result. Missing attribution stays unresolved. Uncertain execution stays unknown.
-
 **Date:** 2026-09-18
 
 **Status:** Proposed. Selected scope, implementation and qualification pending.
 
-**Owners:** OpenClaw Control Plane (OCC) lifecycle, Audit/State and selected IAM Driver. Authentication, runtime and credential owners supply their facts.
+<a id="decision"></a><a id="problem-and-goal"></a>
 
-**Historical source baseline:** `046e12b007bb1b4928bd3f7497a2353714be11a8`. Later source pins describe separate evidence, not a replacement historical baseline or a deployed feature.
+## Problem and proposal
 
-## Proposed journey
+Accepting an Agent deployment does not tell an operator what later ran, who requested it, or what completed. This RFC proposes a bounded History view for personal and team Agents, extending the existing audit ledger with safe facts, a paginated API and a small console. History distinguishes requested work, local acceptance, observed results and unknown outcomes without exposing credentials or conversation content. Missing attribution remains unresolved.
+
+Installation administrators explicitly grant `audit_reader` for an exact Agent or Namespace-wide Agents. Every page requires current `read_audit`; ownership, membership, participation and deployment rights confer no access. The separate `audit_retention_administrator` role manages Installation retention without granting History access. These grants use [common IAM policy administration](31-basic-observability/interfaces.md#authorization-and-policy-consumption).
+
+<a id="current-boundary-and-scope"></a><a id="mvp-boundary-and-present-evidence"></a><a id="acceptance-and-delivery"></a>
+
+## Scope and delivery
+
+The **first usable History milestone** covers create, update, deploy and stop, including retries, supersession and exact mutation recovery. It requires current account/IAM checks, atomic evidence in original State, acknowledged disclosure commits, both retention modes, installed durability, sweeper enforcement and restore continuity. Missing dependencies keep protected History unavailable. Recovery observes only the bound mutation result and creates no new work.
+
+[Retention](31-basic-observability/retention.md) defaults to expiry after 30 days and live-ledger deletion within another 24 hours; administrators may explicitly select indefinite retention. Expired evidence must not reappear after restore.
+
+The **complete selected MVP** also proves one [ordinary-Agent repository read](31-basic-observability/repository-read.md): deployer A deploys a personal or team Agent, different requester B asks it to read an approved GitHub repository's HEAD, and separately granted reader C follows B's request, the Agent/revision executor, exact authorization and resource, and the strongest observed result. Local accounts and one qualified execution profile suffice; every control required by that profile remains a dependency.
+
+Optional filtered diagnostics can ship independently. Preparatory source changes cannot enable History before its serving gates pass. The [MVP checklist](31-basic-observability/mvp-scope.md#required-outcomes) defines **twelve required outcomes** and [eight delivery cuts](31-basic-observability/mvp-scope.md#small-reviewable-deliverables), with [dependencies for each milestone](31-basic-observability/mvp-scope.md#dependency-cut-points).
+
+<a id="proposed-journey"></a>
 
 ```mermaid
 ---
@@ -52,33 +62,21 @@ flowchart TB
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-This is the proposed connected journey. Dashed edges remain unqualified joins even where endpoint components exist. History reports what each owner establishes. It does not perform the repository operation or turn a deployment actor into requester B.
+Dashed arrows show the proposed complete journey. History records each producer's facts; it does not execute the repository operation. See the [full request lifecycle](31-basic-observability/architecture.md#request-lifecycle).
 
-## MVP boundary and present evidence
-
-Deliver optional filtered diagnostics first. Then deliver create, update, deploy and stop History with a small console and exact mutation recovery. Complete the feature with the genuine ordinary-Agent repository read above. Local accounts and one qualified admission/runtime/channel profile suffice for that scenario.
-
-The first serving History requires current account, IAM and State behavior, both retention modes, exact recovery, and restore continuity. The default expires records after 30 days and deletes them from the live ledger within another 24 hours. Explicit indefinite retention is also selected. Missing dependencies make protected History unavailable without automatic downgrade.
-
-The [MVP scope and dependencies](31-basic-observability/mvp-scope.md) checklist defines small delivery cuts for independent diagnostics, non-serving source slices, first serving lifecycle History and the complete selected MVP. The detailed contracts and pending owner decisions in the supporting pages remain authoritative.
-
-Pinned main contains transactional lifecycle audit and State append/list. The [History shapes](31-basic-observability/interfaces.md#facts-and-events) remain proposed. Existing audit establishes neither bounded serving History nor the repository join, installed enforcement or live-provider qualification. New routes and connections remain proposals until accepted owner contracts and connected evidence establish them. Current platform design and feature references remain authoritative.
-
-Personal and team Agents use the existing resource model. Ownership, membership, participation, deployment rights and known IDs confer no History access. Content permission remains separate. Transcripts, Installation-wide search, general policy editing, replay machinery and remote audit export are outside this selected scope.
+<a id="design-and-failure-behavior"></a>
 
 ## Supporting design
 
-- [Architecture](31-basic-observability/architecture.md) explains existing owners, delivery order, diagnostics and dependency failure. Its [request lifecycle](31-basic-observability/architecture.md#request-lifecycle) and [SVG](31-basic-observability/request-lifecycle.svg) show why disclosure waits for acknowledged evidence.
-- [Security](31-basic-observability/security.md) explains fact authenticity, protected metadata, local integrity limits and the evidence needed to close threats.
-- [Interfaces](31-basic-observability/interfaces.md) separates producer facts from State-created events, defines exact authorization and known query shapes, and preserves unresolved recovery and release choices.
-- [Retention](31-basic-observability/retention.md) owns trusted time, non-resurrection, SQL privileges, live deletion and continuity across every restored replica.
-- [Repository read](31-basic-observability/repository-read.md) specifies the authentic A/B/C handoffs and acceptance on an ordinary Agent, managed Git child and live GitHub repository.
+- <a id="optional-diagnostics"></a>[Architecture](31-basic-observability/architecture.md) defines responsibilities, diagnostics and delivery gates.
+- <a id="facts-and-their-owners"></a><a id="access-and-disclosure"></a><a id="exact-mutation-recovery"></a>[Interfaces](31-basic-observability/interfaces.md) defines facts, authorization, queries, disclosure and exact recovery.
+- <a id="evidence-failure"></a>[Security](31-basic-observability/security.md) defines privacy, audit-failure behavior and local integrity limits.
+- [Open decisions](31-basic-observability/mvp-scope.md#decisions-still-required) cover event membership, expiry at disclosure, recovery keys, purge authority and restore custody.
 
-<a id="decision"></a><a id="current-boundary-and-scope"></a><a id="design-and-failure-behavior"></a>
-<a id="optional-diagnostics"></a><a id="facts-and-their-owners"></a><a id="access-and-disclosure"></a><a id="exact-mutation-recovery"></a><a id="evidence-failure"></a><a id="acceptance-and-delivery"></a><a id="alternatives-and-follow-ups"></a>
-The decision and scope are above. Earlier detailed sections now live at [diagnostics](31-basic-observability/architecture.md#optional-diagnostics), [facts](31-basic-observability/interfaces.md#facts-and-events), [access](31-basic-observability/interfaces.md#authorization-and-policy-consumption), [recovery](31-basic-observability/interfaces.md#mutation-outcomes), [evidence failure](31-basic-observability/security.md#audit-failure-and-protective-work), [delivery](31-basic-observability/architecture.md#availability-and-delivery) and [follow-ups](31-basic-observability/security.md#accepted-limits-and-closure).
+<a id="alternatives-and-follow-ups"></a>
+
+Transcripts, Installation-wide search, general policy editing, replay, richer retention and remote audit export are [deferred](31-basic-observability/security.md#accepted-limits-and-closure).
 
 ## References
 
-- [Platform design at pinned main](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/docs/design.md) and [State append/list](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/occ/src/state/platform-state.ts#L410).
-- [Existing filtered log export](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/docs/guides/observability.md). The [local diagnostic-file procedure](31-basic-observability/architecture.md#optional-diagnostics) is proposed here.
+The [source baseline](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/occ/src/state/platform-state.ts#L410) provides transactional lifecycle audit and State append/list. Serving History and the repository connection remain proposed. The [platform design](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/docs/design.md) remains authoritative. Historical source baseline: `046e12b007bb1b4928bd3f7497a2353714be11a8`; later pins describe separate evidence.
