@@ -1,29 +1,26 @@
 # RFC: Basic Agent identity MVP
 
-## Problem and goal
-
-A team member should be able to mention an Agent, ask it to change an approved
-repository, and receive a pull request through an authorized channel. Today, an
-Agent principal and a repository session do not establish that a protected request
-came from the currently admitted execution. The receiver also needs the original
-requester's authority and the intended response audience.
-
-The proposal connects those checks. An ordinary Agent in the enforced profile
-must present current verified execution evidence before acquiring repository
-credentials or dispatching protected work. The complete selected outcome uses
-dedicated Codex, a separate trusted Agent Gateway, qualified gVisor, verified
-Git/`gh`, protected model access, and authorized replies. A personal Agent uses
-one explicitly connected human's admitted integration, up to that connection's
-existing permissions. A team Agent uses its admitted team service integration.
-The requester remains distinct from the deployer, and Git author metadata supplies
-attribution only.
-
 **Status:** Proposed. Connected implementation and qualification remain pending.
-The recorded baseline is [main at `724dcb5`](https://github.com/openclaw/openclaw-enterprise/tree/724dcb5cb80b5e76a62e8267a21185a2e91a85c2).
-OCC/State, Compute, selected IAM, identity, egress, and credential owners retain
-their existing responsibilities.
+**Baseline:** [Public main at `724dcb5`](https://github.com/openclaw/openclaw-enterprise/tree/724dcb5cb80b5e76a62e8267a21185a2e91a85c2).
 
-## Proposed journey
+## Problem and proposal
+
+An Agent principal or repository session cannot establish whether a request came
+from the current execution. Protected services must also check the requester's
+operation permission and response audience.
+
+Use operator-managed [SPIRE](https://spiffe.io/docs/latest/deploying/registering/)
+and rotating [X.509-SVIDs](https://spiffe.io/docs/latest/spiffe-specs/spiffe_workload_api/)
+(workload certificates), retaining the existing Agent ServicePrincipal. Verify the
+actual receiving connection against the current execution before credential
+acquisition or protected work. Execution identity and requester authority remain
+separate checks.
+
+A personal Agent uses one explicitly connected human's admitted integration, within
+its existing permissions. A team Agent uses its admitted team service integration.
+The requester remains distinct from the deployer; Git author metadata supplies
+attribution only. Missing personal authorization must deny access, never select
+team credentials.
 
 ```mermaid
 ---
@@ -59,105 +56,62 @@ flowchart TB
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Proposed connections are dashed, including joins between existing components.
-Execution identity and ordinary invocation are independent inputs to the receiving
-decision. This picture establishes no composed, installed, or provider result.
+Dashed connections show the proposal. The [full lifecycle](basic-agent-identity-mvp/architecture.md#request-lifecycle)
+follows preparation, serving selection, requests, and withdrawal.
 
-## MVP boundary and present evidence
+## First usable milestone and complete scope
 
-Start with operator-managed SPIRE and rotating X.509-SVIDs, which are certificates
-carrying workload identity. Reuse the existing Agent ServicePrincipal. The first
-connected consumer proves a genuine approved repository read through the actual
-Harness. An embedded repository checkpoint is optional and cannot replace the
-complete dedicated contribution journey or its protected model path.
+The first usable milestone is a real team Agent's approved repository read through
+its actual Harness with explicit `git-read`. An embedded OpenClaw checkpoint is
+optional.
 
-Current source at [pinned main `e9766f3`](https://github.com/openclaw/openclaw-enterprise/tree/e9766f35a25afa240ee109b41a6ef821fb68687e)
-supplies Agent principals, immutable revisions, IAM, and Compute seams. The
-separate repository supplier remains embedded-only and bearer-based. Registration,
-Agent admission, current-serving resolution, execution-bound sessions, and protected
-consumers remain joins to build. Source definitions do not establish installed
-behavior, live-provider qualification, or release readiness.
-
-Omitted Installation configuration retains compatibility and its existing checks,
-without verified-execution assurance. Only an authorized operator selects
-enforcement. The admitted revision and operation/session retain that selection.
-Missing evidence and dependency loss deny protected use without downgrading.
-
-Off-Pod replay denial is required. Exact-container origin, stronger host assurance,
-OCE-managed SPIRE packaging, and independent outage-time physical termination
-remain separate follow-ups. This proposal does not turn workload identity into
-human permission or a repository bearer into requester attribution.
+The complete MVP must also let personal and team Agents clone, edit, test, commit,
+push, open a same-repository PR, and reply to an authorized audience. It requires
+dedicated Codex, a separate trusted Agent Gateway, qualified gVisor, managed Git/`gh`,
+and protected model access. The [six delivery checkpoints](basic-agent-identity-mvp/delivery.md#deliverable-cuts)
+run from compatibility through execution assignment, registration, the first Git
+read, complete contribution, and installed failure qualification.
 
 ## Minimum release requirements
 
-The complete MVP must satisfy all seven requirements on one qualified deployment
-profile. The [delivery cuts](basic-agent-identity-mvp/delivery.md) identify smaller
-reviewable checkpoints; completing a component or the first Git read does not
-complete this release.
+All seven requirements apply to one qualified deployment profile:
 
-1. **Stable Agent, replaceable execution.** Retain the existing Agent principal.
-   Bind each execution to its exact Agent, immutable revision, component and
-   independently observed incarnation; replacement gets a fresh generation and
-   retirement cannot be reversed.
-2. **One operator-managed SPIRE profile.** Constrain registration to the assigned
-   workload and use rotating X.509-SVIDs with protected key custody. Verify the
-   actual receiving connection and current execution before OCC admission or
-   repository credential acquisition/dispatch; retain exact-resource IAM.
-3. **Two concrete consumers.** An ordinary Agent must use managed Git/`gh` through
-   the existing repository service and a protected model route. The complete
-   profile uses dedicated Codex/Gateway and qualified gVisor. Keep workload keys
-   and long-lived provider credentials outside tools; independently enforced
-   private ingress must deny external and sibling off-Pod replay on every route.
-4. **Personal and team authority remain explicit.** Use the same workload model
-   for both. Bind each operation to one admitted human connection or team service
-   authority, retaining the requester and permitted audience separately. Identity
-   supplies neither provider consent nor additional permissions. Missing personal
-   authorization must deny, never switch to team authority.
-5. **Bounded withdrawal and recovery.** Deny stale, retired, expired or unavailable
-   authority; rotation/reconnect cannot extend its original lifetime. Measure
-   new-work refusal and active protected-traffic closure within 30 seconds,
-   including renewal loss, preserving applicable stricter five-second limits.
-   Keep independently authorized cleanup and truthful termination observations.
-6. **Explicit compatibility.** Preserve existing tools, authentication, IAM and
-   session checks when enforcement is not selected. Pin the operator's requirement
-   in each admitted revision/session; neither request input nor dependency failure
-   can downgrade enforcement or manufacture execution assurance.
-7. **Installed evidence.** Demonstrate successful ordinary-Agent work and the
-   consequential denials, lifecycle and outage cases in the
-   [acceptance matrix](basic-agent-identity-mvp/delivery.md#increments-and-qualification),
-   then complete security review and fixes. Source/fixture checks alone cannot
-   claim the protected release.
+1. **Stable Agent, replaceable execution.** Bind each execution to its exact Agent,
+   immutable revision, component, and independently observed incarnation. Replacement
+   gets a fresh generation; [retirement is irreversible](basic-agent-identity-mvp/architecture.md#assignment-and-serving).
+2. **Verified workload identity.** Constrain SPIRE registration to the assigned
+   workload. Check its actual connection and current execution before OCC admission,
+   credential acquisition, or dispatch; retain [exact-resource IAM checks](basic-agent-identity-mvp/interfaces.md#execution-and-registration).
+3. **Protected Git and model consumers.** Keep workload keys and long-lived
+   provider credentials outside tools. Independently enforced private ingress must
+   [deny external and sibling off-Pod replay](basic-agent-identity-mvp/security.md#receiving-and-custody-controls)
+   on every protected route.
+4. **Explicit personal and team authority.** Bind operations to one admitted human
+   connection or team authority, preserving requester and audience. Workload identity
+   grants no provider consent or additional permissions. Qualify
+   [both authority contexts](basic-agent-identity-mvp/delivery.md#authority-acceptance-cases).
+5. **Bounded withdrawal and recovery.** Deny stale, retired, expired, or unavailable
+   authority without extending its original lifetime. Measure new-work refusal and
+   active-traffic closure within 30 seconds, including renewal loss and applicable
+   [stricter five-second limits](basic-agent-identity-mvp/interfaces.md#currentness-and-expiry).
+   Retain authorized cleanup; local closure does not prove physical stop or provider revocation.
+6. **Explicit compatibility.** Omitted configuration preserves existing checks
+   without execution assurance. Pin the operator's enforcement selection in each
+   admitted revision/session. Requests and dependency failures cannot
+   [downgrade it](basic-agent-identity-mvp/architecture.md#availability-and-tradeoffs).
+7. **Installed acceptance.** Demonstrate ordinary-Agent success and consequential
+   denial, lifecycle, and outage cases; complete independent security review and
+   fixes. The [acceptance plan](basic-agent-identity-mvp/delivery.md#acceptance-evidence)
+   requires more than source or fixture checks.
 
-Additional services, new human connectors, managed SPIRE installation,
-exact-container proof, mixed/narrowed delegation and independent outage-time
-physical termination are follow-ups. The required producer/consumer interfaces
-in the [delivery plan](basic-agent-identity-mvp/delivery.md) do not require
-completion of every adjacent feature or UI.
+## Design and deferred work
 
-## Supporting design
+[Architecture](basic-agent-identity-mvp/architecture.md),
+[interfaces](basic-agent-identity-mvp/interfaces.md), and
+[security](basic-agent-identity-mvp/security.md) define the lifecycle and receiving
+contracts. [Delivery](basic-agent-identity-mvp/delivery.md) covers personal consent
+and trusted token custody; the first real human connection remains to be selected.
 
-- [Architecture](basic-agent-identity-mvp/architecture.md) follows assignment,
-  observation, registration, immutable session delivery, and serving selection.
-  Its [request lifecycle SVG](basic-agent-identity-mvp/request-lifecycle.svg)
-  shows the ordinary request and withdrawal across actual component boundaries.
-- [Security](basic-agent-identity-mvp/security.md) explains receiving custody,
-  off-Pod denial, protected key handling, and currentness controls. It separates
-  recorded trust limits from missing implementation and unresolved risk decisions.
-- [Interfaces](basic-agent-identity-mvp/interfaces.md) distinguishes main contracts,
-  separate suppliers, and proposed extensions. It defines the local obligations
-  for verified evidence, repository binding, expiry, and safe observations without
-  inventing wire APIs.
-- [Delivery](basic-agent-identity-mvp/delivery.md) names the required interfaces,
-  six delivery checkpoints, separate personal/team authority acceptance, installed
-  qualification, and remaining owner decisions. It keeps the first protected Git
-  read useful without treating it as the complete release.
-
-## References
-
-- [Agent, revision, and identity contracts at pinned main](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/contracts/src/index.ts#L344-L423)
-  and [ComputeDriver](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/contracts/src/index.ts#L714-L745).
-- [Separate repository credential supplier](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/docs/reference/repository-credentials.md)
-  describes its existing topology, profiles, and custody limits.
-- [SPIRE registration model](https://spiffe.io/docs/latest/deploying/registering/)
-  and [SPIFFE Workload API](https://spiffe.io/docs/latest/spiffe-specs/spiffe_workload_api/)
-  define workload identity issuance and delivery, not operation authorization.
+OCE-managed SPIRE, exact-container or stronger-host proof, independent outage-time
+physical termination, additional services/connectors, and mixed or narrower
+delegation are [follow-ups](basic-agent-identity-mvp/delivery.md#decisions-and-follow-ups).
