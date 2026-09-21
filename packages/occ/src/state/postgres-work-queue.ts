@@ -1,6 +1,31 @@
-import { isNonEmptyString, isPositiveSafeInteger } from "@openclaw-enterprise/utils";
+import { isPositiveSafeInteger } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
+import {
+  nonempty,
+  safeFailureCode,
+  validateFailureData,
+  validateSuccessResultData,
+  type ClaimedWork,
+  type ControllerWork,
+  type ControllerWorkState,
+  type EnqueueWork,
+  type PermanentFailure,
+  type RetryableFailure,
+  type WorkClaim,
+  type WorkResult,
+} from "./controller-work.ts";
+
+export type {
+  ClaimedWork,
+  ControllerWork,
+  ControllerWorkState,
+  EnqueueWork,
+  PermanentFailure,
+  RetryableFailure,
+  WorkClaim,
+  WorkResult,
+} from "./controller-work.ts";
 
 export interface PostgresQueryClient {
   query(
@@ -9,64 +34,8 @@ export interface PostgresQueryClient {
   ): Promise<{ rows: unknown[]; rowCount: number | null }>;
 }
 
-export type ControllerWorkState = "queued" | "claimed" | "succeeded" | "failed_permanent";
-
-export interface ControllerWork {
-  readonly idempotencyKey: string;
-  readonly namespaceId: string;
-  readonly agentId?: string;
-  readonly revisionId?: string;
-  readonly actorId: string;
-  readonly namespaceTarget?: "ready" | "deleted";
-  readonly agentTarget?: "stopped";
-  readonly state: ControllerWorkState;
-  readonly availableAt: Date;
-  readonly attemptCount: number;
-  readonly claimToken?: string;
-  readonly leaseExpiresAt?: Date;
-  readonly completedAt?: Date;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
-}
-
-export interface ClaimedWork extends ControllerWork {
-  readonly state: "claimed";
-  readonly claimToken: string;
-  readonly leaseExpiresAt: Date;
-}
-
-export interface EnqueueWork {
-  readonly idempotencyKey: string;
-  readonly namespaceId: string;
-  readonly agentId?: string;
-  readonly revisionId?: string;
-  readonly actorId: string;
-  readonly namespaceTarget?: "ready" | "deleted";
-  readonly agentTarget?: "stopped";
-  readonly availableAt?: Date | string;
-}
-
-export interface WorkClaim {
-  readonly idempotencyKey: string;
-  readonly claimToken: string;
-}
-
 export interface ClaimRequest {
   readonly claimToken?: string;
-}
-
-export interface WorkResult {
-  readonly details?: Readonly<Record<string, unknown>>;
-}
-
-export interface RetryableFailure {
-  readonly code: string;
-  readonly summary?: string;
-}
-
-export interface PermanentFailure {
-  readonly code: string;
-  readonly summary?: string;
 }
 
 export interface RecoveryRequest {
@@ -95,18 +64,21 @@ interface WorkRow {
   readonly revision_id: string | null;
   readonly actor_id: string;
   readonly namespace_target: "ready" | "deleted" | null;
-  readonly agent_target: "stopped" | null;
+  readonly agent_target: "stopped" | "deleted" | null;
   readonly state: ControllerWorkState;
   readonly available_at: Date | string;
   readonly attempt_count: number;
   readonly claim_token: string | null;
   readonly lease_expires_at: Date | string | null;
   readonly completed_at: Date | string | null;
+  readonly reason_code: string | null;
+  readonly result_data: Record<string, unknown> | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
 
 const MAX_BACKOFF_MS = 300_000;
+export const PENDING_WORK_PREDICATE = "state IN ('queued', 'claimed')";
 const INITIAL_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_ATTEMPTS = 10;
 const DEFAULT_LEASE_DURATION_MS = 60_000;
@@ -125,13 +97,6 @@ export class WorkClaimLostError extends Error {
 function positiveInteger(value: number, name: string): number {
   if (!isPositiveSafeInteger(value)) {
     throw new ScopeViolationError(`${name} must be a positive safe integer.`);
-  }
-  return value;
-}
-
-function nonempty(value: string, name: string): string {
-  if (!isNonEmptyString(value)) {
-    throw new ScopeViolationError(`${name} must be a nonempty string.`);
   }
   return value;
 }
@@ -169,6 +134,8 @@ function asWork(value: unknown): ControllerWork {
     ...(row.claim_token === null ? {} : { claimToken: row.claim_token }),
     ...(row.lease_expires_at === null ? {} : { leaseExpiresAt: asDate(row.lease_expires_at) }),
     ...(row.completed_at === null ? {} : { completedAt: asDate(row.completed_at) }),
+    ...(row.reason_code === null ? {} : { reasonCode: row.reason_code }),
+    ...(row.result_data === null ? {} : { resultData: Object.freeze({ ...row.result_data }) }),
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),
   });
@@ -198,16 +165,10 @@ function validateClaim(claim: WorkClaim): void {
   }
 }
 
-function safeFailureCode(value: string): string {
-  const normalized = nonempty(value, "Controller work failure code")
-    .toUpperCase()
-    .replace(/[^A-Z0-9_]/g, "_")
-    .slice(0, 64);
-  return normalized.length === 0 ? "UNKNOWN_FAILURE" : normalized;
-}
-
 function sqlState(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
   return typeof error.code === "string" ? error.code : undefined;
 }
 
@@ -267,8 +228,9 @@ export class PostgresWorkQueue {
     );
     this.random = options.random ?? Math.random;
     this.workKind = options.workKind ?? "all";
-    if (this.workKind !== "all" && this.workKind !== "namespace")
+    if (this.workKind !== "all" && this.workKind !== "namespace") {
       throw new ScopeViolationError("The controller work kind must be all or namespace.");
+    }
   }
 
   async enqueue(input: EnqueueWork): Promise<ControllerWork> {
@@ -284,6 +246,8 @@ export class PostgresWorkQueue {
       input.revisionId === undefined
         ? null
         : nonempty(input.revisionId, "Controller work revision ID");
+    // A revision still requires its owning Agent, but the converse no longer
+    // holds: Agent teardown is Agent-scoped and names no single revision.
     if (revisionId !== null && agentId === null) {
       throw new ScopeViolationError(
         "Controller work revisions require both their exact owning Agent and revision.",
@@ -298,12 +262,13 @@ export class PostgresWorkQueue {
           agentTarget !== null)) ||
       (agentId !== null &&
         revisionId === null &&
-        (namespaceTarget !== null || agentTarget !== "stopped")) ||
+        (namespaceTarget !== null || (agentTarget !== "stopped" && agentTarget !== "deleted"))) ||
       (revisionId !== null && (namespaceTarget !== null || agentTarget !== null))
-    )
+    ) {
       throw new ScopeViolationError(
         "Controller work requires one exact Namespace, Agent, or revision target shape.",
       );
+    }
     const availableAt = input.availableAt === undefined ? null : asDate(input.availableAt);
 
     const inserted = await this.client.query(
@@ -330,7 +295,9 @@ export class PostgresWorkQueue {
       ],
     );
 
-    if (inserted.rows[0] !== undefined) return asWork(inserted.rows[0]);
+    if (inserted.rows[0] !== undefined) {
+      return asWork(inserted.rows[0]);
+    }
 
     const existing = await this.client.query(
       `SELECT *,
@@ -400,8 +367,12 @@ export class PostgresWorkQueue {
         return claimed.rows[0] === undefined ? undefined : asClaimedWork(claimed.rows[0]);
       } catch (error) {
         const state = sqlState(error);
-        if (state === undefined || !CLAIM_RACE_CODES.has(state)) throw error;
-        if (attempt === this.claimRaceRetries - 1) throw error;
+        if (state === undefined || !CLAIM_RACE_CODES.has(state)) {
+          throw error;
+        }
+        if (attempt === this.claimRaceRetries - 1) {
+          throw error;
+        }
       }
     }
     return undefined;
@@ -427,7 +398,7 @@ export class PostgresWorkQueue {
     const pending = await this.client.query(
       `SELECT count(*)::integer AS count
        FROM occ.controller_work
-       WHERE state IN ('queued', 'claimed')
+       WHERE ${PENDING_WORK_PREDICATE}
          ${this.namespaceFilter()}`,
     );
     const count = (pending.rows[0] as { count?: unknown } | undefined)?.count;
@@ -437,8 +408,18 @@ export class PostgresWorkQueue {
     return count;
   }
 
-  async complete(claim: WorkClaim, _result: WorkResult = {}): Promise<void> {
+  async findWork(idempotencyKey: string): Promise<ControllerWork | undefined> {
+    const found = await this.client.query(
+      `SELECT * FROM occ.controller_work WHERE idempotency_key = $1`,
+      [nonempty(idempotencyKey, "Controller work idempotency key")],
+    );
+    return found.rows[0] === undefined ? undefined : asWork(found.rows[0]);
+  }
+
+  async complete(claim: WorkClaim, result: WorkResult = {}): Promise<void> {
     validateClaim(claim);
+    const reasonCode = safeFailureCode(result.code ?? "RECONCILE_SUCCEEDED");
+    const resultData = validateSuccessResultData(result.resultData);
     const completed = await this.client.query(
       `WITH transitioned AS (
          UPDATE occ.controller_work
@@ -446,6 +427,8 @@ export class PostgresWorkQueue {
              claim_token = NULL,
              lease_expires_at = NULL,
              completed_at = clock_timestamp(),
+             reason_code = $5::text,
+             result_data = $6::jsonb,
              updated_at = clock_timestamp()
          WHERE idempotency_key = $1
            AND state = 'claimed'
@@ -453,9 +436,35 @@ export class PostgresWorkQueue {
            AND lease_expires_at > clock_timestamp()
          RETURNING *
        ), ${INSERT_EVIDENCE_SQL}`,
-      [claim.idempotencyKey, claim.claimToken, "success", "RECONCILE_SUCCEEDED"],
+      [
+        claim.idempotencyKey,
+        claim.claimToken,
+        "success",
+        reasonCode,
+        reasonCode,
+        resultData === undefined ? null : JSON.stringify(resultData),
+      ],
     );
-    if (completed.rows.length === 0) throw new WorkClaimLostError();
+    if (completed.rows.length === 0) {
+      throw new WorkClaimLostError();
+    }
+  }
+
+  async completeAgentDeletion(
+    claim: WorkClaim,
+    namespaceId: string,
+    agentId: string,
+  ): Promise<void> {
+    validateClaim(claim);
+    nonempty(namespaceId, "Agent deletion Namespace ID");
+    nonempty(agentId, "Agent deletion Agent ID");
+    const completed = await this.client.query(
+      "SELECT occ.finalize_agent_deletion($1::text, $2::text, $3::text, $4::uuid) AS completed",
+      [namespaceId, agentId, claim.idempotencyKey, claim.claimToken],
+    );
+    if ((completed.rows[0] as { completed?: unknown } | undefined)?.completed !== true) {
+      throw new WorkClaimLostError();
+    }
   }
 
   async defer(claim: WorkClaim, pending: RetryableFailure): Promise<void> {
@@ -489,7 +498,9 @@ export class PostgresWorkQueue {
         this.nextRandom(),
       ],
     );
-    if (deferred.rows.length === 0) throw new WorkClaimLostError();
+    if (deferred.rows.length === 0) {
+      throw new WorkClaimLostError();
+    }
   }
 
   async retry(claim: WorkClaim, failure: RetryableFailure): Promise<void> {
@@ -517,6 +528,11 @@ export class PostgresWorkQueue {
                WHEN attempt_count >= $5::integer THEN clock_timestamp()
                ELSE NULL
              END,
+             reason_code = CASE
+               WHEN attempt_count >= $5::integer THEN $4::text
+               ELSE NULL
+             END,
+             result_data = NULL,
              updated_at = clock_timestamp()
          WHERE idempotency_key = $1
            AND state = 'claimed'
@@ -535,11 +551,15 @@ export class PostgresWorkQueue {
         jitter,
       ],
     );
-    if (retried.rows.length === 0) throw new WorkClaimLostError();
+    if (retried.rows.length === 0) {
+      throw new WorkClaimLostError();
+    }
   }
 
   async fail(claim: WorkClaim, failure: PermanentFailure): Promise<void> {
     validateClaim(claim);
+    const failureCode = safeFailureCode(failure.code);
+    const data = validateFailureData(failureCode, failure.data);
     const failed = await this.client.query(
       `WITH transitioned AS (
          UPDATE occ.controller_work
@@ -547,6 +567,8 @@ export class PostgresWorkQueue {
              claim_token = NULL,
              lease_expires_at = NULL,
              completed_at = clock_timestamp(),
+             reason_code = $5::text,
+             result_data = $6::jsonb,
              updated_at = clock_timestamp()
          WHERE idempotency_key = $1
            AND state = 'claimed'
@@ -554,9 +576,18 @@ export class PostgresWorkQueue {
            AND lease_expires_at > clock_timestamp()
          RETURNING *
        ), ${INSERT_EVIDENCE_SQL}`,
-      [claim.idempotencyKey, claim.claimToken, "failure", safeFailureCode(failure.code)],
+      [
+        claim.idempotencyKey,
+        claim.claimToken,
+        "failure",
+        failureCode,
+        failureCode,
+        data === undefined ? null : JSON.stringify(data),
+      ],
     );
-    if (failed.rows.length === 0) throw new WorkClaimLostError();
+    if (failed.rows.length === 0) {
+      throw new WorkClaimLostError();
+    }
   }
 
   async recoverStale(input: RecoveryRequest = {}): Promise<RecoverySummary> {
@@ -594,6 +625,11 @@ export class PostgresWorkQueue {
                WHEN work.attempt_count >= $2::integer THEN clock_timestamp()
                ELSE NULL
              END,
+             reason_code = CASE
+               WHEN work.attempt_count >= $2::integer THEN $4::text
+               ELSE NULL
+             END,
+             result_data = NULL,
              updated_at = clock_timestamp()
          FROM candidates
          WHERE work.idempotency_key = candidates.idempotency_key
@@ -624,6 +660,8 @@ export class PostgresWorkQueue {
          UPDATE occ.controller_work AS work
          SET state = 'failed_permanent',
              completed_at = clock_timestamp(),
+             reason_code = $4::text,
+             result_data = NULL,
              updated_at = clock_timestamp()
          FROM candidates
          WHERE work.idempotency_key = candidates.idempotency_key
@@ -635,8 +673,11 @@ export class PostgresWorkQueue {
     let requeued = 0;
     let failedPermanent = exhausted.rows.length;
     for (const row of stale.rows) {
-      if (asRow(row).state === "queued") requeued += 1;
-      else failedPermanent += 1;
+      if (asRow(row).state === "queued") {
+        requeued += 1;
+      } else {
+        failedPermanent += 1;
+      }
     }
     return Object.freeze({
       recovered: stale.rows.length,
@@ -655,7 +696,9 @@ export class PostgresWorkQueue {
   }
 
   private namespaceFilter(alias?: string): string {
-    if (this.workKind === "all") return "";
+    if (this.workKind === "all") {
+      return "";
+    }
     const prefix = alias === undefined ? "" : `${alias}.`;
     return `AND ${prefix}namespace_target IS NOT NULL
             AND ${prefix}agent_id IS NULL

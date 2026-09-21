@@ -31,6 +31,8 @@ export type CodexRuntimeResolvedArtifacts = {
 export type PluginRuntimeResolvedArtifacts =
   OpenClawRuntimeResolvedArtifacts | CodexRuntimeResolvedArtifacts;
 
+type PluginRuntimeFailureInput = readonly { readonly pluginId: string }[];
+
 export type CodexPluginCatalogReader = {
   listCatalog(signal?: AbortSignal): Promise<readonly PluginCatalogEntry[]>;
 };
@@ -89,14 +91,20 @@ export function createPluginRuntimeTranslator() {
   }
 
   function requiredArray(value: unknown, description: string): readonly unknown[] {
-    if (!Array.isArray(value)) throw new Error(description + " must be an array.");
+    if (!Array.isArray(value)) {
+      throw new Error(description + " must be an array.");
+    }
     return value;
   }
 
   function selectionEntries(selections: unknown): readonly [string, Record<string, unknown>][] {
-    if (!isRecord(selections)) throw new Error("Plugin selections must be an object.");
+    if (!isRecord(selections)) {
+      throw new Error("Plugin selections must be an object.");
+    }
     return Object.entries(selections).map(([pluginId, value]) => {
-      if (!isRecord(value)) throw new Error("Plugin selection must be an object.");
+      if (!isRecord(value)) {
+        throw new Error("Plugin selection must be an object.");
+      }
       return [pluginId, value];
     });
   }
@@ -111,15 +119,23 @@ export function createPluginRuntimeTranslator() {
 
   function reviewer(selection: Record<string, unknown>): string | undefined {
     const value = selection.approvalsReviewer;
-    if (value === undefined) return undefined;
-    if (value === "user" || value === "auto_review") return value;
+    if (value === undefined) {
+      return undefined;
+    }
+    if (value === "user" || value === "auto_review") {
+      return value;
+    }
     throw new Error("Plugin approvals reviewer is unsupported.");
   }
 
   function enabled(selection: Record<string, unknown>): boolean {
     const value = selection.enabled;
-    if (value === undefined) return true;
-    if (typeof value !== "boolean") throw new Error("Plugin enabled must be a boolean.");
+    if (value === undefined) {
+      return true;
+    }
+    if (typeof value !== "boolean") {
+      throw new Error("Plugin enabled must be a boolean.");
+    }
     return value;
   }
 
@@ -160,7 +176,9 @@ export function createPluginRuntimeTranslator() {
   }
 
   function codexPluginSummary(summary: unknown): Record<string, unknown> {
-    if (!isRecord(summary)) throw new Error("Codex plugin summary is missing.");
+    if (!isRecord(summary)) {
+      throw new Error("Codex plugin summary is missing.");
+    }
     return summary;
   }
 
@@ -199,7 +217,9 @@ export function createPluginRuntimeTranslator() {
     const curated = marketplaces.find(
       (marketplace) => isRecord(marketplace) && marketplace.name === CODEX_MARKETPLACE,
     );
-    if (!isRecord(curated)) return [];
+    if (!isRecord(curated)) {
+      return [];
+    }
     return array(curated.plugins).map(codexCatalogEntry);
   }
 
@@ -210,7 +230,9 @@ export function createPluginRuntimeTranslator() {
     const marketplaces = array(response.marketplaces);
     const entries = new Map<string, Record<string, unknown>>();
     for (const marketplace of marketplaces) {
-      if (!isRecord(marketplace) || marketplace.name !== CODEX_MARKETPLACE) continue;
+      if (!isRecord(marketplace) || marketplace.name !== CODEX_MARKETPLACE) {
+        continue;
+      }
       for (const summary of array(marketplace.plugins)) {
         const record = codexPluginSummary(summary);
         entries.set(codexSummaryNativeId(record), record);
@@ -239,12 +261,16 @@ export function createPluginRuntimeTranslator() {
 
   function detailRecord(value: unknown): Record<string, unknown> {
     const wrapped = isRecord(value) && isRecord(value.plugin) ? value.plugin : value;
-    if (!isRecord(wrapped)) throw new Error("Codex plugin detail is missing.");
+    if (!isRecord(wrapped)) {
+      throw new Error("Codex plugin detail is missing.");
+    }
     return wrapped;
   }
 
   function detailSummary(detail: Record<string, unknown>): Record<string, unknown> {
-    if (!isRecord(detail.summary)) throw new Error("Codex plugin detail summary is missing.");
+    if (!isRecord(detail.summary)) {
+      throw new Error("Codex plugin detail summary is missing.");
+    }
     return detail.summary;
   }
 
@@ -260,7 +286,9 @@ export function createPluginRuntimeTranslator() {
     details: readonly unknown[],
   ): ReadonlyMap<string, Record<string, unknown>> {
     const byNativeId = new Map<string, Record<string, unknown>>();
-    for (const detail of details.map(detailRecord)) byNativeId.set(detailNativeId(detail), detail);
+    for (const detail of details.map(detailRecord)) {
+      byNativeId.set(detailNativeId(detail), detail);
+    }
     return byNativeId;
   }
 
@@ -295,26 +323,57 @@ export function createPluginRuntimeTranslator() {
 
   function appIds(detail: Record<string, unknown>): readonly string[] {
     return requiredArray(detail.apps, "Codex plugin detail apps").map((app) => {
-      if (!isRecord(app)) throw new Error("Codex plugin app mapping is invalid.");
+      if (!isRecord(app)) {
+        throw new Error("Codex plugin app mapping is invalid.");
+      }
       return requiredString(app.id, "Codex plugin app ID");
     });
   }
 
+  function failedPluginIdSet(failures: unknown): ReadonlySet<string> {
+    if (!Array.isArray(failures)) {
+      return new Set();
+    }
+    return new Set(
+      failures
+        .map((failure) => (isRecord(failure) ? failure.pluginId : undefined))
+        .filter(
+          (pluginId): pluginId is string => typeof pluginId === "string" && pluginId.length > 0,
+        ),
+    );
+  }
+
+  function selectionEnabledAfterFailures(
+    pluginId: string,
+    selection: Record<string, unknown>,
+    failures: ReadonlySet<string>,
+  ): boolean {
+    return enabledByPolicy(selection) && !failures.has(pluginId);
+  }
+
   function codexOpenClawPluginEntry(
+    pluginId: string,
     selection: Record<string, unknown>,
     slug: string,
+    failures: ReadonlySet<string>,
   ): Record<string, unknown> {
     return {
-      enabled: enabledByPolicy(selection),
+      enabled: selectionEnabledAfterFailures(pluginId, selection, failures),
       marketplaceName: CODEX_MARKETPLACE,
       pluginName: slug,
       allow_destructive_actions: pluginApprovalMode(selection) === "always" ? true : "auto",
     };
   }
 
-  function codexOpenClawConfiguration(selections: unknown): Record<string, unknown> | undefined {
+  function codexOpenClawConfiguration(
+    selections: unknown,
+    failures: unknown = [],
+  ): Record<string, unknown> | undefined {
     const selected = selectionEntries(selections);
-    if (selected.length === 0) return undefined;
+    if (selected.length === 0) {
+      return undefined;
+    }
+    const failedPluginIds = failedPluginIdSet(failures);
     return {
       plugins: {
         entries: {
@@ -327,7 +386,10 @@ export function createPluginRuntimeTranslator() {
                 plugins: Object.fromEntries(
                   selected.map(([pluginId, selection]) => {
                     const slug = codexSlugFromNativeId(codexNativeIdFromPluginId(pluginId));
-                    return [slug, codexOpenClawPluginEntry(selection, slug)];
+                    return [
+                      slug,
+                      codexOpenClawPluginEntry(pluginId, selection, slug, failedPluginIds),
+                    ];
                   }),
                 ),
               },
@@ -341,13 +403,16 @@ export function createPluginRuntimeTranslator() {
   function codexRuntimeArtifact(
     selections: unknown,
     pluginReadResponses: readonly unknown[],
+    failures: unknown = [],
   ): Record<string, unknown> {
     const selected = selectionEntries(selections);
     if (selected.length === 0) {
       return { kind: "codex", configuration: CODEX_NO_PLUGIN_CONFIGURATION, installs: [] };
     }
     const byNativeId = detailsByNativeId(pluginReadResponses);
+    const failedPluginIds = failedPluginIdSet(failures);
     const appEntries = new Map<string, Record<string, unknown>>();
+    const disabledAppIds = new Set<string>();
     const installs: Record<string, unknown>[] = [];
     for (const [pluginId, selection] of selected) {
       const nativeId = codexNativeIdFromPluginId(pluginId);
@@ -358,8 +423,7 @@ export function createPluginRuntimeTranslator() {
       assertCodexDetailRepresentable(selection, detail);
       const pluginVersion = detailVersion(detail);
       const remotePluginId = detailRemotePluginId(detail);
-      const enterprisePluginId = codexPluginId(nativeId);
-      if (enabledByPolicy(selection)) {
+      if (selectionEnabledAfterFailures(pluginId, selection, failedPluginIds)) {
         const reviewerValue = reviewer(selection);
         const mode = pluginApprovalMode(selection);
         const defaultApprovalMode = mode === "always" ? "approve" : mode;
@@ -380,9 +444,13 @@ export function createPluginRuntimeTranslator() {
           }
           appEntries.set(appId, requested);
         }
+      } else if (failedPluginIds.has(pluginId) && enabledByPolicy(selection)) {
+        for (const appId of appIds(detail)) {
+          disabledAppIds.add(appId);
+        }
       }
       installs.push({
-        pluginId: enterprisePluginId,
+        pluginId,
         nativeId,
         remotePluginId,
         version: pluginVersion,
@@ -395,6 +463,11 @@ export function createPluginRuntimeTranslator() {
         ...CODEX_SELECTED_PLUGIN_BASE_CONFIGURATION,
         apps: {
           _default: { enabled: false },
+          ...Object.fromEntries(
+            [...disabledAppIds]
+              .filter((appId) => !appEntries.has(appId))
+              .map((appId) => [appId, { enabled: false }]),
+          ),
           ...Object.fromEntries(appEntries),
         },
       },
@@ -402,7 +475,11 @@ export function createPluginRuntimeTranslator() {
     };
   }
 
-  function openClawRuntimeArtifact(selections: unknown): Record<string, unknown> {
+  function openClawRuntimeArtifact(
+    selections: unknown,
+    failures: unknown = [],
+  ): Record<string, unknown> {
+    const failedPluginIds = failedPluginIdSet(failures);
     const entries: Record<string, unknown> = {};
     const installs: Record<string, unknown>[] = [];
     const alsoAllow: string[] = [];
@@ -410,7 +487,9 @@ export function createPluginRuntimeTranslator() {
       const nativeId = pluginId.startsWith(OCC_DRIVER_ID + ":")
         ? pluginId.slice((OCC_DRIVER_ID + ":").length)
         : pluginId;
-      if (nativeId !== "diffs") throw new Error("Unknown OpenClaw plugin selection.");
+      if (nativeId !== "diffs") {
+        throw new Error("Unknown OpenClaw plugin selection.");
+      }
       if (reviewer(selection) !== undefined) {
         throw new Error("OpenClaw plugin reviewer selection is unsupported.");
       }
@@ -424,15 +503,19 @@ export function createPluginRuntimeTranslator() {
       if (selection.tools !== undefined) {
         throw new Error("OpenClaw plugin tool policy is unavailable.");
       }
-      entries[nativeId] = { enabled: enabledByPolicy(selection) };
+      entries[nativeId] = {
+        enabled: selectionEnabledAfterFailures(pluginId, selection, failedPluginIds),
+      };
       installs.push({
-        pluginId: OCC_DRIVER_ID + ":" + nativeId,
+        pluginId,
         nativeId,
         packageName: "@openclaw/diffs",
         version: OCC_DIFFS_VERSION,
         integrity: OCC_DIFFS_INTEGRITY,
       });
-      if (enabledByPolicy(selection)) alsoAllow.push(nativeId);
+      if (selectionEnabledAfterFailures(pluginId, selection, failedPluginIds)) {
+        alsoAllow.push(nativeId);
+      }
     }
     return {
       kind: "openclaw",
@@ -475,25 +558,30 @@ export const pluginRuntimeTranslator: Translator = createPluginRuntimeTranslator
 export function codexRuntimeArtifact(
   selections: PluginDesiredState,
   pluginReadResponses: readonly unknown[],
+  failures: PluginRuntimeFailureInput = [],
 ): PluginRuntimeResolvedArtifacts {
   return pluginRuntimeTranslator.codexRuntimeArtifact(
     selections,
     pluginReadResponses,
+    failures,
   ) as PluginRuntimeResolvedArtifacts;
 }
 
 export function codexOpenClawConfiguration(
   selections: PluginDesiredState,
+  failures: PluginRuntimeFailureInput = [],
 ): OpenClawConfigurationDocument | undefined {
-  return pluginRuntimeTranslator.codexOpenClawConfiguration(selections) as
+  return pluginRuntimeTranslator.codexOpenClawConfiguration(selections, failures) as
     OpenClawConfigurationDocument | undefined;
 }
 
 export function openClawRuntimeArtifact(
   selections: PluginDesiredState,
+  failures: PluginRuntimeFailureInput = [],
 ): PluginRuntimeResolvedArtifacts {
   return pluginRuntimeTranslator.openClawRuntimeArtifact(
     selections,
+    failures,
   ) as PluginRuntimeResolvedArtifacts;
 }
 

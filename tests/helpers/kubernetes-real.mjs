@@ -36,7 +36,9 @@ export function createKubernetesClient({
   const kubectlArgumentsForSelection = (args) => kubectlArguments(selection, args);
   const resource = async (kind, name, namespace) => {
     const args = ["get", kind, name, "-o", "json"];
-    if (namespace !== undefined) args.push("--namespace", namespace);
+    if (namespace !== undefined) {
+      args.push("--namespace", namespace);
+    }
     return JSON.parse(await kubectl(...args));
   };
   const resources = async (kind, namespace, ...args) =>
@@ -45,7 +47,9 @@ export function createKubernetesClient({
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const result = await operation();
-      if (result !== undefined && result !== false) return result;
+      if (result !== undefined && result !== false) {
+        return result;
+      }
       await delay(waitIntervalMs);
     }
     assert.fail(`Timed out waiting for ${description}.`);
@@ -73,8 +77,11 @@ async function applyManifest(kubectlArgumentsForSelection, manifest, { redaction
     });
     child.once("error", reject);
     child.once("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`kubectl apply failed (${code}): ${redact(stderr, redactions)}`));
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`kubectl apply failed (${code}): ${redact(stderr, redactions)}`));
+      }
     });
     child.stdin.once("error", reject);
     child.stdin.end(manifest);
@@ -207,7 +214,9 @@ export function createKubernetesInstallationConfiguration({
   compute.authentication = structuredClone(authentication);
   compute.images.gateway = gatewayImage;
   compute.images.agent = codexImage;
-  if (codexSeccompProfile !== undefined) compute.runtime.codexSeccompProfile = codexSeccompProfile;
+  if (codexSeccompProfile !== undefined) {
+    compute.runtime.codexSeccompProfile = codexSeccompProfile;
+  }
   compute.resources.gateway = structuredClone(workload);
   compute.resources.agent = structuredClone(workload);
   compute.resources.namespace.containerDefaults = structuredClone(workload);
@@ -249,7 +258,13 @@ export async function createKubernetesFixtureHarnessAuth({ authentication, names
   };
 }
 
-export async function assertGatewayModelTurn({ gatewayUrl, gatewayToken, nonce, secrets = [] }) {
+export async function assertGatewayModelTurn({
+  gatewayUrl,
+  gatewayToken,
+  gatewayPassword,
+  nonce,
+  secrets = [],
+}) {
   const endpoint = `${gatewayUrl}/v1/chat/completions`;
   const denied = await fetch(endpoint, {
     method: "POST",
@@ -261,7 +276,7 @@ export async function assertGatewayModelTurn({ gatewayUrl, gatewayToken, nonce, 
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${gatewayToken}`,
+      authorization: `Bearer ${gatewayPassword ?? gatewayToken}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
@@ -274,13 +289,14 @@ export async function assertGatewayModelTurn({ gatewayUrl, gatewayToken, nonce, 
     signal: AbortSignal.timeout(180_000),
   });
   const body = await response.text();
-  for (const secret of [gatewayToken, ...secrets]) {
-    if (secret)
+  for (const secret of [gatewayToken, gatewayPassword, ...secrets]) {
+    if (secret) {
       assert.equal(
         body.includes(secret),
         false,
         "the gateway response must not expose credentials",
       );
+    }
   }
   assert.equal(response.status, 200, `real provider-backed model turn failed: ${body}`);
   assert.match(JSON.parse(body).choices?.[0]?.message?.content ?? "", new RegExp(nonce));
@@ -363,7 +379,12 @@ export function createRealKubernetesFixture({
     return configuration;
   }
 
-  async function provisionAgentTransportSecret(directory, namespace, agentId) {
+  async function provisionAgentTransportSecret(
+    directory,
+    namespace,
+    agentId,
+    { gatewayPassword } = {},
+  ) {
     const suffix = kubernetesHash(agentId);
     const tokenDirectory = join(directory, `tokens-${suffix}`);
     const transportToken = randomBytes(32).toString("hex");
@@ -373,6 +394,13 @@ export function createRealKubernetesFixture({
       await Promise.all([
         writeFile(join(tokenDirectory, "app-server-token"), transportToken, { mode: 0o600 }),
         writeFile(join(tokenDirectory, "gateway-token"), gatewayToken, { mode: 0o600 }),
+        ...(gatewayPassword === undefined
+          ? []
+          : [
+              writeFile(join(tokenDirectory, "gateway-password"), gatewayPassword, {
+                mode: 0o600,
+              }),
+            ]),
       ]);
       await kubectl(
         "create",
@@ -383,6 +411,9 @@ export function createRealKubernetesFixture({
         namespace,
         `--from-file=app-server-token=${join(tokenDirectory, "app-server-token")}`,
         `--from-file=gateway-token=${join(tokenDirectory, "gateway-token")}`,
+        ...(gatewayPassword === undefined
+          ? []
+          : [`--from-file=gateway-password=${join(tokenDirectory, "gateway-password")}`]),
       );
     } finally {
       await rm(tokenDirectory, { recursive: true, force: true });
@@ -422,7 +453,9 @@ export function createRealKubernetesFixture({
       }, 30_000);
       timer.unref();
       const settle = () => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         settled = true;
         clearTimeout(timer);
         child.stdout.off("data", onStdout);
@@ -431,11 +464,15 @@ export function createRealKubernetesFixture({
         return true;
       };
       const finish = (complete, value) => {
-        if (!settle()) return;
+        if (!settle()) {
+          return;
+        }
         complete(value);
       };
       const rejectAfterCleanup = async (reject, error) => {
-        if (!settle()) return;
+        if (!settle()) {
+          return;
+        }
         const cleanupFailures = [];
         if (child.pid !== undefined) {
           await stopPortForward(child, target).catch((cleanupError) => {
@@ -477,13 +514,21 @@ export function createRealKubernetesFixture({
   }
 
   async function stopPortForward(child, target) {
-    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
     const exited = once(child, "exit");
     child.kill("SIGTERM");
-    if (await waitForExit(exited, 2_000)) return;
-    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (await waitForExit(exited, 2_000)) {
+      return;
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
     child.kill("SIGKILL");
-    if (await waitForExit(exited, 2_000)) return;
+    if (await waitForExit(exited, 2_000)) {
+      return;
+    }
     throw new Error(`Timed out stopping Kubernetes port-forward for ${target}.`);
   }
 

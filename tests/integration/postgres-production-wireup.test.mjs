@@ -86,7 +86,9 @@ function memoryLog() {
       destination: {
         write(chunk) {
           for (const line of String(chunk).split("\n")) {
-            if (line.length > 0) lines.push(JSON.parse(line));
+            if (line.length > 0) {
+              lines.push(JSON.parse(line));
+            }
           }
           return true;
         },
@@ -389,6 +391,12 @@ test(
         databaseUrl,
         authSecret,
         authBaseURL,
+        // Leftover pilot settings must not change authentication when the feature is disabled.
+        nativeAdmin: {
+          enabled: false,
+          domain: "agents.example.test",
+          sharedCookieDomain: "example.test",
+        },
         drivers: await productionDrivers(),
         logger: apiLog.logger,
       });
@@ -430,7 +438,9 @@ test(
         email: adminEmail,
         password,
       });
-      assert.ok(session.cookie.includes("openclaw_occ"));
+      assert.match(session.cookie, /(?:^|; )openclaw_occ\.session_token=/);
+      assert.doesNotMatch(session.cookie, /openclaw_occ_shared/);
+      assert.doesNotMatch(session.setCookie.join("\n"), /Domain=/i);
 
       const anonymousSession = await fetch(`${endpoint}/api/auth/session`);
       assert.equal(anonymousSession.status, 200);
@@ -594,8 +604,12 @@ test(
       });
       assert.equal(publicSignup.status, 404);
     } finally {
-      if (app !== undefined) await app.close();
-      if (pool !== undefined) await pool.end();
+      if (app !== undefined) {
+        await app.close();
+      }
+      if (pool !== undefined) {
+        await pool.end();
+      }
       await rm(passwordDirectory, { recursive: true, force: true });
     }
   },

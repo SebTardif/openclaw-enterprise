@@ -9,9 +9,17 @@ import {
   type Group,
   type GroupMembership,
   type IAMDriver,
+  type IAMManagedAccessBindingInput,
+  type IAMManagedRoleInput,
+  type IAMPolicyManagementContext,
+  type IAMPolicyReadContext,
+  type IAMPolicyReadRepository,
+  type IAMPolicyRepository,
   type Identity,
   type IdentityLookup,
   type JSONSchema,
+  type ManagedIAMResourceKind,
+  type Permission,
   type PermissionAction,
   type Principal,
   type ResourceRef,
@@ -99,8 +107,9 @@ export function createAuthPrincipalSeed(
     subject: account.id,
   };
   const existingRoleId = options.roleId;
-  if (existingRoleId !== undefined && !isNonEmptyString(existingRoleId))
+  if (existingRoleId !== undefined && !isNonEmptyString(existingRoleId)) {
     throw new Error("Additional auth accounts require a Role id.");
+  }
 
   const roleId = existingRoleId ?? `role_admin_${randomUUID()}`;
   const administrator: Role = {
@@ -122,7 +131,7 @@ export function createAuthPrincipalSeed(
         })),
       ),
       { action: "operate", resourceKind: "secret" },
-      ...(["create", "read", "update", "deploy", "operate", "administer"] as const).map(
+      ...(["create", "read", "update", "delete", "deploy", "operate", "administer"] as const).map(
         (action) => ({
           action,
           resourceKind: "agent" as const,
@@ -154,14 +163,20 @@ export function validateAuthAccountPrincipalSeed(
   state: Pick<NativeIAMState, "roles">,
   installationId: string,
 ): void {
-  if (seed.roles.length !== 0) throw new Error("Auth account creation cannot create IAM Roles.");
-  if (seed.principal.kind !== "principal" || seed.principal.namespaceId !== undefined)
+  if (seed.roles.length !== 0) {
+    throw new Error("Auth account creation cannot create IAM Roles.");
+  }
+  if (seed.principal.kind !== "principal" || seed.principal.namespaceId !== undefined) {
     throw new Error("Auth account creation requires one Installation-scoped Principal.");
-  if (seed.bindings.length === 0)
+  }
+  if (seed.bindings.length === 0) {
     throw new Error("Auth account creation requires an existing IAM Role binding.");
+  }
   for (const binding of seed.bindings) {
     const role = state.roles.find((candidate) => candidate.id === binding.roleId);
-    if (role === undefined) throw new AuthAccountRoleNotFoundError(binding.roleId);
+    if (role === undefined) {
+      throw new AuthAccountRoleNotFoundError(binding.roleId);
+    }
     if (
       role.namespaceId !== undefined ||
       binding.namespaceId !== undefined ||
@@ -169,8 +184,9 @@ export function validateAuthAccountPrincipalSeed(
       binding.subjectId !== seed.principal.id ||
       binding.resourceKind !== "installation" ||
       binding.resourceId !== installationId
-    )
+    ) {
       throw new Error("Auth account creation must bind an existing Installation IAM Role.");
+    }
   }
 }
 
@@ -184,6 +200,14 @@ const ACTIONS: readonly PermissionAction[] = [
   "administer",
 ];
 
+const MANAGED_RESOURCE_KINDS: readonly ManagedIAMResourceKind[] = [
+  "agent",
+  "agent_revision",
+  "configuration",
+  "secret",
+  "service_account",
+];
+
 function optionalNonempty(value: unknown): value is string | undefined {
   return value === undefined || isNonEmptyString(value);
 }
@@ -193,7 +217,9 @@ function sameOptionalScope(left: string | undefined, right: string | undefined):
 }
 
 function assertCondition(condition: boolean, message: string): asserts condition {
-  if (!condition) throw new TypeError(`Invalid native IAM state: ${message}`);
+  if (!condition) {
+    throw new TypeError(`Invalid native IAM state: ${message}`);
+  }
 }
 
 function assertUniqueIds(values: readonly { readonly id: string }[], collection: string): void {
@@ -205,6 +231,22 @@ function assertUniqueIds(values: readonly { readonly id: string }[], collection:
   }
 }
 
+function exactKeys(value: object, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key)) && keys.every((key) => key in value);
+}
+
+function exactOptionalKeys(
+  value: object,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return (
+    Object.keys(value).every((key) => allowed.has(key)) && required.every((key) => key in value)
+  );
+}
+
 function assertScope(value: { readonly namespaceId?: string }, collection: string): void {
   assertCondition(
     !Object.hasOwn(value, "installationId"),
@@ -214,6 +256,113 @@ function assertScope(value: { readonly namespaceId?: string }, collection: strin
     optionalNonempty(value.namespaceId),
     `${collection} contains an invalid namespace`,
   );
+}
+
+function validatedManagedPermissions(permissions: readonly Permission[]): readonly Permission[] {
+  assertCondition(Array.isArray(permissions), "managed Role permissions must be an array");
+  assertCondition(permissions.length > 0, "managed Role permissions must be nonempty");
+  const keys = new Set<string>();
+  const saved: Permission[] = [];
+  for (const permission of permissions) {
+    assertCondition(
+      typeof permission === "object" &&
+        permission !== null &&
+        exactKeys(permission, ["action", "resourceKind"]),
+      "managed Role permissions must contain only action and resourceKind",
+    );
+    assertCondition(
+      ACTIONS.includes(permission.action),
+      "managed Role permission action is invalid",
+    );
+    assertCondition(
+      MANAGED_RESOURCE_KINDS.includes(permission.resourceKind as ManagedIAMResourceKind),
+      "managed Role permission resource kind is invalid",
+    );
+    const key = `${permission.action}\u0000${permission.resourceKind}`;
+    assertCondition(!keys.has(key), "managed Role permissions must be duplicate-free");
+    keys.add(key);
+    saved.push({
+      action: permission.action,
+      resourceKind: permission.resourceKind,
+    });
+  }
+  return Object.freeze(saved.map((permission) => Object.freeze({ ...permission })));
+}
+
+function managedRole(input: IAMManagedRoleInput): Role {
+  assertCondition(
+    typeof input === "object" &&
+      input !== null &&
+      exactOptionalKeys(input, ["id", "namespaceId", "permissions"], ["name"]),
+    "managed Role input contains unsupported fields",
+  );
+  assertCondition(isNonEmptyString(input.id), "managed Role identity is invalid");
+  assertCondition(isNonEmptyString(input.namespaceId), "managed Role requires a Namespace");
+  assertCondition(
+    input.name === undefined || isNonEmptyString(input.name),
+    "managed Role name is invalid",
+  );
+  return Object.freeze({
+    id: input.id,
+    namespaceId: input.namespaceId,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    permissions: validatedManagedPermissions(input.permissions),
+  });
+}
+
+function managedAccessBinding(input: IAMManagedAccessBindingInput): AccessBinding {
+  assertCondition(
+    typeof input === "object" &&
+      input !== null &&
+      exactKeys(input, [
+        "id",
+        "namespaceId",
+        "subjectKind",
+        "subjectId",
+        "roleId",
+        "resourceKind",
+        "resourceId",
+      ]),
+    "managed AccessBinding input contains unsupported fields",
+  );
+  assertCondition(isNonEmptyString(input.id), "managed AccessBinding identity is invalid");
+  assertCondition(
+    isNonEmptyString(input.namespaceId),
+    "managed AccessBinding requires a Namespace",
+  );
+  assertCondition(
+    input.subjectKind === "identity",
+    "managed AccessBinding supports only identity subjects",
+  );
+  assertCondition(isNonEmptyString(input.subjectId), "managed AccessBinding subject is invalid");
+  assertCondition(isNonEmptyString(input.roleId), "managed AccessBinding Role is invalid");
+  assertCondition(
+    MANAGED_RESOURCE_KINDS.includes(input.resourceKind),
+    "managed AccessBinding resource kind is invalid",
+  );
+  assertCondition(isNonEmptyString(input.resourceId), "managed AccessBinding resource is invalid");
+  return Object.freeze({
+    id: input.id,
+    namespaceId: input.namespaceId,
+    subjectKind: "identity",
+    subjectId: input.subjectId,
+    roleId: input.roleId,
+    resourceKind: input.resourceKind,
+    resourceId: input.resourceId,
+  });
+}
+
+function immutableRole(role: Readonly<Role>): Readonly<Role> {
+  return Object.freeze({
+    ...role,
+    permissions: Object.freeze(
+      role.permissions.map((permission) => Object.freeze({ ...permission })),
+    ),
+  });
+}
+
+function immutableBinding(binding: Readonly<AccessBinding>): Readonly<AccessBinding> {
+  return Object.freeze({ ...binding });
 }
 
 export function validateNativeIAMState(state: NativeIAMState): void {
@@ -398,16 +547,17 @@ export function validateNativeIAMState(state: NativeIAMState): void {
       subject !== undefined,
       `AccessBinding ${binding.id} references an unknown subject`,
     );
-    if (binding.subjectKind === "group")
+    if (binding.subjectKind === "group") {
       assertCondition(
         subject.namespaceId === binding.namespaceId,
         `AccessBinding ${binding.id} and Group subject have different scopes`,
       );
-    else
+    } else {
       assertCondition(
         subject.namespaceId === undefined || subject.namespaceId === binding.namespaceId,
         `AccessBinding ${binding.id} and subject cross a Namespace`,
       );
+    }
   }
 
   for (const restriction of state.restrictions) {
@@ -505,7 +655,9 @@ function validRequest(request: AuthorizationRequest): boolean {
 }
 
 function sameResource(binding: AccessBinding, resource: ResourceRef): boolean {
-  if (binding.resourceKind === undefined) return true;
+  if (binding.resourceKind === undefined) {
+    return true;
+  }
   return binding.resourceKind === resource.kind && binding.resourceId === resource.id;
 }
 
@@ -531,30 +683,36 @@ function evaluateValidatedAuthorization(
   state: Readonly<NativeIAMState>,
   driverId: string,
 ): AuthorizationDecision {
-  if (!validRequest(request))
+  if (!validRequest(request)) {
     return decision(driverId, false, "The exact authorization request is invalid.");
+  }
 
   const identities = state.identities.filter((identity) => identity.id === request.principalId);
-  if (identities.length === 0)
+  if (identities.length === 0) {
     return decision(
       driverId,
       false,
       "The identity is not explicitly provisioned for the singleton Installation.",
     );
-  if (identities.length !== 1)
+  }
+  if (identities.length !== 1) {
     return decision(driverId, false, "The provisioned identity is ambiguous.");
+  }
 
   const identity = identities[0];
-  if (!identity) return decision(driverId, false, "The provisioned identity is unavailable.");
+  if (!identity) {
+    return decision(driverId, false, "The provisioned identity is unavailable.");
+  }
 
   const identityEvidence = { identityId: identity.id };
-  if (identity.namespaceId !== undefined && identity.namespaceId !== request.resource.namespaceId)
+  if (identity.namespaceId !== undefined && identity.namespaceId !== request.resource.namespaceId) {
     return decision(
       driverId,
       false,
       "The identity cannot access another namespace.",
       evidence(identityEvidence),
     );
+  }
 
   const applicableGroupIds = new Set(
     identity.kind !== "principal"
@@ -576,7 +734,9 @@ function evaluateValidatedAuthorization(
     const subjectMatches =
       (binding.subjectKind === "identity" && binding.subjectId === identity.id) ||
       (binding.subjectKind === "group" && applicableGroupIds.has(binding.subjectId));
-    if (!subjectMatches || !bindingScopeMatches(binding, request.resource)) continue;
+    if (!subjectMatches || !bindingScopeMatches(binding, request.resource)) {
+      continue;
+    }
 
     const role = state.roles.find((candidate) => candidate.id === binding.roleId);
     if (
@@ -586,12 +746,15 @@ function evaluateValidatedAuthorization(
         (permission) =>
           permission.action === request.action && permission.resourceKind === request.resource.kind,
       )
-    )
+    ) {
       continue;
+    }
 
     matchedBindingIds.add(binding.id);
     matchedRoleIds.add(role.id);
-    if (binding.subjectKind === "group") grantingGroupIds.add(binding.subjectId);
+    if (binding.subjectKind === "group") {
+      grantingGroupIds.add(binding.subjectId);
+    }
   }
 
   const applicableRestrictionIds = state.restrictions
@@ -605,21 +768,23 @@ function evaluateValidatedAuthorization(
     restrictionIds: applicableRestrictionIds,
   });
 
-  if (matchedBindingIds.size === 0)
+  if (matchedBindingIds.size === 0) {
     return decision(
       driverId,
       false,
       "No explicit scoped binding grants the exact action and resource.",
       authorizationEvidence,
     );
+  }
 
-  if (applicableRestrictionIds.length > 0)
+  if (applicableRestrictionIds.length > 0) {
     return decision(
       driverId,
       false,
       "An applicable Restriction denies the exact action and resource.",
       authorizationEvidence,
     );
+  }
 
   return decision(
     driverId,
@@ -634,8 +799,9 @@ export function evaluateAuthorization(
   state: NativeIAMState,
   driverId = "occ-native-iam",
 ): AuthorizationDecision {
-  if (!isNonEmptyString(driverId))
+  if (!isNonEmptyString(driverId)) {
     return decision("occ-native-iam", false, "The selected IAM Driver is invalid.");
+  }
 
   try {
     validateNativeIAMState(state);
@@ -673,11 +839,15 @@ export class NativeIAMDriver implements IAMDriver {
   constructor(state: NativeIAMStateStore, options: NativeIAMDriverOptions = {}) {
     this.id = options.id ?? "occ-native-iam";
     this.implementation = options.implementation ?? "native";
-    if (!isNonEmptyString(this.id)) throw new TypeError("Native IAM Driver id must be nonempty.");
-    if (!isNonEmptyString(this.implementation))
+    if (!isNonEmptyString(this.id)) {
+      throw new TypeError("Native IAM Driver id must be nonempty.");
+    }
+    if (!isNonEmptyString(this.implementation)) {
       throw new TypeError("Native IAM Driver implementation must be nonempty.");
-    if (!state || typeof state.loadNativeIAMState !== "function")
+    }
+    if (!state || typeof state.loadNativeIAMState !== "function") {
       throw new TypeError("Native IAM Driver requires a platform state store.");
+    }
     this.state = state;
   }
 
@@ -691,9 +861,12 @@ export class NativeIAMDriver implements IAMDriver {
         : !isNonEmptyString(input.servicePrincipalId) ||
           input.issuer !== undefined ||
           input.subject !== undefined)
-    )
+    ) {
       return undefined;
-    if (!optionalNonempty(input.namespaceId)) return undefined;
+    }
+    if (!optionalNonempty(input.namespaceId)) {
+      return undefined;
+    }
 
     const state = await this.state.loadNativeIAMState();
     try {
@@ -703,11 +876,15 @@ export class NativeIAMDriver implements IAMDriver {
     }
 
     const matches = state.identities.filter((identity) => {
-      if (identity.namespaceId !== undefined && identity.namespaceId !== input.namespaceId)
+      if (identity.namespaceId !== undefined && identity.namespaceId !== input.namespaceId) {
         return false;
-      if (input.servicePrincipalId !== undefined)
+      }
+      if (input.servicePrincipalId !== undefined) {
         return identity.kind === "service_principal" && identity.id === input.servicePrincipalId;
-      if (!("issuer" in identity) || !("subject" in identity)) return false;
+      }
+      if (!("issuer" in identity) || !("subject" in identity)) {
+        return false;
+      }
       return identity.issuer === input.issuer && identity.subject === input.subject;
     });
 
@@ -723,6 +900,126 @@ export class NativeIAMDriver implements IAMDriver {
       return decision(this.id, false, "The native IAM policy is invalid.");
     }
     return evaluateValidatedAuthorization(request, state, this.id);
+  }
+
+  async listNamespaceRoles(
+    context: IAMPolicyReadContext,
+    namespaceId: string,
+  ): Promise<readonly Readonly<Role>[]> {
+    const repository = this.policyRepository(context, ["listRoles"]);
+    this.assertNamespace(namespaceId);
+    return Object.freeze((await repository.listRoles(namespaceId)).map(immutableRole));
+  }
+
+  async getNamespaceRole(
+    context: IAMPolicyReadContext,
+    namespaceId: string,
+    roleId: string,
+  ): Promise<Readonly<Role> | undefined> {
+    const repository = this.policyRepository(context, ["getRole"]);
+    this.assertNamespace(namespaceId);
+    this.assertIdentifier(roleId, "Role");
+    const role = await repository.getRole(namespaceId, roleId);
+    return role === undefined ? undefined : immutableRole(role);
+  }
+
+  async createNamespaceRole(
+    context: IAMPolicyManagementContext,
+    input: IAMManagedRoleInput,
+  ): Promise<Readonly<Role>> {
+    const repository = this.managementPolicyRepository(context, ["createRole"]);
+    return immutableRole(await repository.createRole(managedRole(input)));
+  }
+
+  async deleteNamespaceRole(
+    context: IAMPolicyManagementContext,
+    namespaceId: string,
+    roleId: string,
+  ): Promise<boolean> {
+    const repository = this.managementPolicyRepository(context, ["deleteRole"]);
+    this.assertNamespace(namespaceId);
+    this.assertIdentifier(roleId, "Role");
+    return repository.deleteRole(namespaceId, roleId);
+  }
+
+  async listNamespaceAccessBindings(
+    context: IAMPolicyReadContext,
+    namespaceId: string,
+  ): Promise<readonly Readonly<AccessBinding>[]> {
+    const repository = this.policyRepository(context, ["listAccessBindings"]);
+    this.assertNamespace(namespaceId);
+    return Object.freeze((await repository.listAccessBindings(namespaceId)).map(immutableBinding));
+  }
+
+  async getNamespaceAccessBinding(
+    context: IAMPolicyReadContext,
+    namespaceId: string,
+    bindingId: string,
+  ): Promise<Readonly<AccessBinding> | undefined> {
+    const repository = this.policyRepository(context, ["getAccessBinding"]);
+    this.assertNamespace(namespaceId);
+    this.assertIdentifier(bindingId, "AccessBinding");
+    const binding = await repository.getAccessBinding(namespaceId, bindingId);
+    return binding === undefined ? undefined : immutableBinding(binding);
+  }
+
+  async createNamespaceAccessBinding(
+    context: IAMPolicyManagementContext,
+    input: IAMManagedAccessBindingInput,
+  ): Promise<Readonly<AccessBinding>> {
+    const repository = this.managementPolicyRepository(context, ["createAccessBinding"]);
+    return immutableBinding(await repository.createAccessBinding(managedAccessBinding(input)));
+  }
+
+  async deleteNamespaceAccessBinding(
+    context: IAMPolicyManagementContext,
+    namespaceId: string,
+    bindingId: string,
+  ): Promise<boolean> {
+    const repository = this.managementPolicyRepository(context, ["deleteAccessBinding"]);
+    this.assertNamespace(namespaceId);
+    this.assertIdentifier(bindingId, "AccessBinding");
+    return repository.deleteAccessBinding(namespaceId, bindingId);
+  }
+
+  private policyRepository(
+    context: IAMPolicyReadContext,
+    methods: readonly (keyof IAMPolicyReadRepository)[],
+  ): IAMPolicyReadRepository {
+    const repository = context?.policy;
+    if (
+      typeof repository !== "object" ||
+      repository === null ||
+      !methods.every((method) => typeof repository[method] === "function")
+    ) {
+      throw new TypeError("Native IAM management requires a policy repository.");
+    }
+    return repository;
+  }
+
+  private managementPolicyRepository(
+    context: IAMPolicyManagementContext,
+    methods: readonly (keyof IAMPolicyRepository)[],
+  ): IAMPolicyRepository {
+    const repository = context?.policy;
+    if (
+      typeof repository !== "object" ||
+      repository === null ||
+      !methods.every((method) => typeof repository[method] === "function")
+    ) {
+      throw new TypeError("Native IAM management requires a policy repository.");
+    }
+    return repository;
+  }
+
+  private assertNamespace(namespaceId: string): void {
+    this.assertIdentifier(namespaceId, "Namespace");
+  }
+
+  private assertIdentifier(value: string, label: string): void {
+    if (!isNonEmptyString(value)) {
+      throw new TypeError(`Native IAM management requires an exact ${label} identity.`);
+    }
   }
 }
 

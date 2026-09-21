@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { composePostgresDevelopment } from "../../apps/controller/src/composition/development-postgres.ts";
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";
-import { KubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
 import { createInstallationDriverConfiguration } from "../helpers/installation-driver-configuration.mjs";
 import { createTestSecretDriver } from "../helpers/secret-driver.mjs";
 import { admittedLoggingLevel } from "../../packages/contracts/src/index.ts";
 import { createTestConfigurationDriver } from "../helpers/configuration-driver.mjs";
+import { createTestKubernetesComputeDriver } from "../helpers/kubernetes-compute.mjs";
 import {
   developmentBootstrapEnvironment,
   productionBootstrapEnvironment,
@@ -182,7 +182,9 @@ async function exists(path) {
     await stat(path);
     return true;
   } catch (error) {
-    if (error?.code === "ENOENT") return false;
+    if (error?.code === "ENOENT") {
+      return false;
+    }
     throw error;
   }
 }
@@ -247,11 +249,15 @@ function sha256(value) {
 }
 
 function passiveComputeDriver() {
+  const harnessAuthDriver = createTestKubernetesComputeDriver(
+    "compute-bootstrap-failure-passive-auth",
+  );
+
   return {
     id: "compute-bootstrap-failure-passive",
     capability: "compute",
     implementation: "bootstrap-failure-passive",
-    validateHarnessAuth: KubernetesComputeDriver.prototype.validateHarnessAuth,
+    validateHarnessAuth: harnessAuthDriver.validateHarnessAuth.bind(harnessAuthDriver),
     async preflight() {},
     async ensureNamespace(namespace) {
       return { namespaceId: namespace.id, status: "ready" };
@@ -360,7 +366,9 @@ for (const sharedOutput of [false, true]) {
       assert.equal(output.data.id, winner.serviceKeyId);
 
       for (const [index, environment] of environments.entries()) {
-        if (index === winnerIndex || sharedOutput) continue;
+        if (index === winnerIndex || sharedOutput) {
+          continue;
+        }
         assert.equal(await exists(environment.OCC_BOOTSTRAP_PASSWORD_FILE), loserCreatedServiceKey);
         assert.equal(
           await exists(environment.OCC_BOOTSTRAP_SERVICE_KEY_FILE),

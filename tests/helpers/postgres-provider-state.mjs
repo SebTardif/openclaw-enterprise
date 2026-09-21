@@ -11,13 +11,13 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { NativeIAMDriver, createAuthPrincipalSeed } from "../../packages/iam/src/index.ts";
 import { OpenClawController, PostgresPlatformState } from "../../packages/occ/src/index.ts";
-import { KubernetesComputeDriver } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { createControllerWorker } from "../../apps/controller/src/worker.ts";
 import { createDevelopmentComputeDriver } from "./development.mjs";
 import { createDevelopmentIAMState } from "./development-iam-state.mjs";
 import { createInstallationDriverConfiguration } from "./installation-driver-configuration.mjs";
 import { createTestConfigurationDriver } from "./configuration-driver.mjs";
 import { createTestSecretDriver } from "./secret-driver.mjs";
+import { createTestKubernetesComputeDriver } from "./kubernetes-compute.mjs";
 import { ensureDevelopmentBootstrap } from "./bootstrap-installation.mjs";
 
 const repository = fileURLToPath(new URL("../..", import.meta.url));
@@ -52,7 +52,9 @@ export async function waitFor(description, read, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await read();
-    if (value !== undefined) return value;
+    if (value !== undefined) {
+      return value;
+    }
     await delay(20);
   }
   assert.fail(`Timed out waiting for ${description}.`);
@@ -87,7 +89,9 @@ export function authorizedPrincipal(iam, required = [["deploy", "agent"]]) {
 
 export async function ensureInstallation(state, label) {
   const existing = await state.loadInstallation();
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) {
+    return existing;
+  }
 
   const installation = {
     id: `ins_${randomUUID()}`,
@@ -119,12 +123,15 @@ async function inTransaction(pool, operation) {
 }
 
 export async function cleanupNamespaces(pool, namespaceIds) {
-  if (namespaceIds.length === 0) return;
+  if (namespaceIds.length === 0) {
+    return;
+  }
   await inTransaction(pool, async (client) => {
     await client.query(
       `UPDATE occ.controller_work
        SET state = 'failed_permanent',
            completed_at = clock_timestamp(),
+           reason_code = 'TEST_FIXTURE_CLEANUP',
            claim_token = NULL,
            lease_expires_at = NULL,
            updated_at = clock_timestamp()
@@ -150,8 +157,9 @@ export async function cleanupProviderFixtures(pool, namespaceId, cleanup) {
     [cleanup.serviceAccountIds, cleanup.agentIds, cleanup.revisionIds].every(
       (ids) => ids.length === 0,
     )
-  )
+  ) {
     return;
+  }
   await inTransaction(pool, async (client) => {
     await client.query(
       `UPDATE occ.controller_work
@@ -159,6 +167,7 @@ export async function cleanupProviderFixtures(pool, namespaceId, cleanup) {
            claim_token = NULL,
            lease_expires_at = NULL,
            completed_at = clock_timestamp(),
+           reason_code = 'TEST_FIXTURE_CLEANUP',
            updated_at = clock_timestamp()
        WHERE namespace_id = $1
          AND revision_id = ANY($2::text[])
@@ -181,7 +190,9 @@ export async function cleanupProviderFixtures(pool, namespaceId, cleanup) {
 function trackNamespaces(context, pool, close) {
   const namespaceIds = new Set();
   context.after(async () => {
-    if (close !== undefined) await close();
+    if (close !== undefined) {
+      await close();
+    }
     await cleanupNamespaces(pool, [...namespaceIds]);
     await pool.end();
   });
@@ -193,7 +204,9 @@ function trackNamespaces(context, pool, close) {
     async cleanup(...namespaces) {
       const ids = namespaces.filter(Boolean).map(({ id }) => id);
       await cleanupNamespaces(pool, ids);
-      for (const id of ids) namespaceIds.delete(id);
+      for (const id of ids) {
+        namespaceIds.delete(id);
+      }
     },
   };
 }
@@ -236,9 +249,10 @@ export async function seedProviderBinding(pool, account, options = {}) {
 
 export function registerCoreDrivers(controller, state, options = {}) {
   const iam = new NativeIAMDriver(state, { id: "native-iam", implementation: "native" });
+  const harnessAuthDriver = createTestKubernetesComputeDriver("provider-state-harness-auth");
   const compute = {
     ...createDevelopmentComputeDriver(),
-    validateHarnessAuth: KubernetesComputeDriver.prototype.validateHarnessAuth,
+    validateHarnessAuth: harnessAuthDriver.validateHarnessAuth.bind(harnessAuthDriver),
   };
   const configuration = createTestConfigurationDriver();
   controller.registerDriver(iam);
@@ -276,7 +290,9 @@ export function createProviderWorkerDrivers(
   const installation = createInstallationDriverConfiguration();
   installation.provider = providers;
   installation.drivers.compute.id = computeDriver.id;
-  if (options.secretDriver !== undefined) installation.drivers.secret.id = options.secretDriver.id;
+  if (options.secretDriver !== undefined) {
+    installation.drivers.secret.id = options.secretDriver.id;
+  }
   if (providers.length > 0) {
     installation.drivers.service_account = {
       id: providers[0]?.drivers.service_account ?? serviceAccountDriverId,
@@ -317,8 +333,11 @@ export async function createProviderFixture(context) {
   const state = new PostgresPlatformState(pool);
   let worker;
   const namespaces = trackNamespaces(context, pool, async () => {
-    if (worker === undefined) await workerPool.end();
-    else await worker.stop();
+    if (worker === undefined) {
+      await workerPool.end();
+    } else {
+      await worker.stop();
+    }
   });
 
   const installation = await ensureInstallation(state, "provider-ownership");
@@ -335,9 +354,10 @@ export async function createProviderFixture(context) {
 
   function startWorker(options = {}) {
     const calls = [];
+    const harnessAuthDriver = createTestKubernetesComputeDriver("provider-worker-harness-auth");
     const compute = {
       ...createDevelopmentComputeDriver(),
-      validateHarnessAuth: KubernetesComputeDriver.prototype.validateHarnessAuth,
+      validateHarnessAuth: harnessAuthDriver.validateHarnessAuth.bind(harnessAuthDriver),
     };
     const providers = options.providers ?? [providerDefinition()];
     const drivers = createProviderWorkerDrivers(
@@ -434,7 +454,9 @@ export async function availablePort() {
 }
 
 export async function stopProcess(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
   const exited = once(child, "exit");
   child.kill("SIGTERM");
   const force = setTimeout(() => child.kill("SIGKILL"), 2_000);

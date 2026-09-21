@@ -87,7 +87,9 @@ function sanitize(text, secrets) {
 function assertNoSecretMaterial(value, secrets, description) {
   const serialized = JSON.stringify(value);
   for (const secret of secrets) {
-    if (secret === undefined || secret.length === 0) continue;
+    if (secret === undefined || secret.length === 0) {
+      continue;
+    }
     assert.equal(serialized.includes(secret), false, description);
   }
 }
@@ -145,7 +147,9 @@ async function waitFor(description, operation, timeoutMs = 180_000) {
   while (Date.now() < deadline) {
     try {
       const value = await operation();
-      if (value !== undefined && value !== false) return value;
+      if (value !== undefined && value !== false) {
+        return value;
+      }
     } catch (error) {
       lastError = error;
     }
@@ -161,6 +165,7 @@ async function waitFor(description, operation, timeoutMs = 180_000) {
 function composeArguments(project, commandName, args = [], { withLogging = false } = {}) {
   const files = [
     COMPOSE_FILE,
+    "deploy/metrics/listeners.compose.yaml",
     ...(withLogging ? [LOGGING_COMPOSE_FILE] : []),
     ...(podmanSelected
       ? [PODMAN_COMPOSE_FILE, "tests/fixtures/docker-compute/compose.podman.yaml"]
@@ -194,7 +199,9 @@ async function composeProjectGatewayTokens(project) {
     "-aq",
     ...labelFilters([[LABEL_COMPOSE_PROJECT, project]]),
   ]).catch(() => []);
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    return [];
+  }
   const inspected = await dockerJson(["inspect", ...ids]).catch(() => []);
   return inspected
     .flatMap((container) => (Array.isArray(container?.Config?.Env) ? container.Config.Env : []))
@@ -244,7 +251,9 @@ async function cleanupProject(project, env, namespaceIds = [], options = {}) {
     timeoutMs: 120_000,
   }).catch(() => {});
   const containers = await idsByNamespace(namespaceIds, ["ps", "-aq"]);
-  if (containers.length > 0) await docker(["rm", "-f", ...containers]).catch(() => {});
+  if (containers.length > 0) {
+    await docker(["rm", "-f", ...containers]).catch(() => {});
+  }
 
   const networks = await idsByNamespace(namespaceIds, ["network", "ls", "-q"]);
   for (const network of networks) {
@@ -257,7 +266,9 @@ async function cleanupProject(project, env, namespaceIds = [], options = {}) {
     "-q",
     ...labelFilters([[LABEL_COMPOSE_PROJECT, project]]),
   ]).catch(() => []);
-  if (volumes.length > 0) await docker(["volume", "rm", ...volumes]).catch(() => {});
+  if (volumes.length > 0) {
+    await docker(["volume", "rm", ...volumes]).catch(() => {});
+  }
 
   const applicationImage = `${project}-application`;
   if (options.removeApplicationImage === true) {
@@ -517,7 +528,9 @@ async function inspectContainers(filters = []) {
     "-aq",
     ...labelFilters([[LABEL_MANAGED, "true"], [LABEL_DRIVER, "docker"], ...filters]),
   ]);
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    return [];
+  }
   return dockerJson(["inspect", ...ids]);
 }
 
@@ -532,7 +545,9 @@ async function inspectNetworks(namespaceId) {
     "-q",
     ...labelFilters(managedNamespaceLabels(namespaceId)),
   ]);
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    return [];
+  }
   return dockerJson(["network", "inspect", ...ids]);
 }
 
@@ -560,9 +575,13 @@ function containerSecretValues(containers) {
     .flatMap((container) => container.Config?.Env ?? [])
     .map((entry) => {
       const separator = entry.indexOf("=");
-      if (separator === -1) return undefined;
+      if (separator === -1) {
+        return undefined;
+      }
       const name = entry.slice(0, separator);
-      if (!secretNames.has(name)) return undefined;
+      if (!secretNames.has(name)) {
+        return undefined;
+      }
       return entry.slice(separator + 1);
     })
     .filter((value) => typeof value === "string" && value.length > 0);
@@ -837,7 +856,9 @@ async function assertCollectorOutageDoesNotBlockDockerOperations({
       restartError = error;
     });
   }
-  if (restartError !== undefined) throw restartError;
+  if (restartError !== undefined) {
+    throw restartError;
+  }
 }
 
 async function deleteEmptyNamespace({ request, cleanupNamespace, requestOptions }) {
@@ -866,7 +887,9 @@ async function interruptDedicatedPreparation(project, namespaceId, agentId, revi
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     [survivingAgent] = await inspectContainers([...filters, [LABEL_ROLE, "agent"]]);
-    if (survivingAgent?.State?.Running) break;
+    if (survivingAgent?.State?.Running) {
+      break;
+    }
     await delay(25);
   }
   assert.ok(survivingAgent?.State?.Running, "Codex must start before worker interruption");
@@ -1089,7 +1112,9 @@ test(
           const listed = await apiClient(baseUrl, cleanupServiceKey)("GET", "/namespaces");
           assert.equal(listed.status, 200, JSON.stringify(listed.error));
           assert.ok(Array.isArray(listed.data), "Namespace cleanup discovery must return a list");
-          for (const namespace of listed.data) cleanupNamespaceIds.add(namespace.id);
+          for (const namespace of listed.data) {
+            cleanupNamespaceIds.add(namespace.id);
+          }
         } catch (error) {
           namespaceDiscoveryError = error;
         }
@@ -1098,7 +1123,9 @@ test(
         ...composeOptions,
         verify: podmanSelected,
       });
-      if (namespaceDiscoveryError !== undefined) throw namespaceDiscoveryError;
+      if (namespaceDiscoveryError !== undefined) {
+        throw namespaceDiscoveryError;
+      }
     });
     const bootstrapDirectory = await mkdtemp(
       join(tmpdir(), `openclaw-${engineBinary}-bootstrap-key-`),
@@ -1227,7 +1254,8 @@ test(
       namespaceIds.push(created.data.id);
       namespaces.push(created.data);
     }
-    namespaces.push(helperNamespace.data);
+    // The CLI emits the Namespace itself; HTTP responses retain the data envelope.
+    namespaces.push(helperNamespace);
     await Promise.all(
       namespaces.map((namespace) =>
         waitFor(`Namespace ${namespace.id} to become ready`, async () => {
@@ -1243,7 +1271,7 @@ test(
     const dedicatedNamespace = namespaces.find((namespace) =>
       namespace.name.startsWith("dedicated-"),
     );
-    const cleanupNamespace = helperNamespace.data;
+    const cleanupNamespace = helperNamespace;
     assert.ok(embeddedNamespace, "embedded Namespace must be provisioned");
     assert.ok(dedicatedNamespace, "dedicated Namespace must be provisioned");
     const embeddedNetwork = await waitForNamespaceNetwork(embeddedNamespace.id);
@@ -1291,6 +1319,34 @@ test(
       );
       throw new Error(`${error.message}\n${logs}`, { cause: error });
     });
+
+    // Scrape the real API/worker processes after the regular Agent deployment
+    // workflow. Loopback metrics remain private inside each container.
+    const scrape = async (service) => {
+      const container = await composeServiceContainer(project, service);
+      const { stdout } = await docker([
+        "exec",
+        container.Id,
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:9464/metrics').then(async r=>{if(!r.ok)process.exit(1);process.stdout.write(await r.text())}).catch(()=>process.exit(1))",
+      ]);
+      return stdout;
+    };
+    const workerMetrics = await scrape("worker");
+    assert.match(
+      workerMetrics,
+      new RegExp(
+        `occ_agents\\{[^\\n]*lifecycle_state="running"[^\\n]*\\} ${executionModes.length}(?:\\n|$)`,
+      ),
+    );
+    assert.match(
+      workerMetrics,
+      /occ_agent_operation_duration_seconds_count\{[^\n]*operation="deploy"/,
+    );
+    assert.match(workerMetrics, /occ_work_oldest_pending_age_seconds/);
+    assert.match(workerMetrics, /occ_reconciliation_attempts_total\{[^\n]*outcome="success"/);
+    assert.match(await scrape("controller"), /occ_http_request_duration_seconds_bucket/);
 
     await assertRuntimeDatabaseEvidence({
       project,
@@ -1413,6 +1469,32 @@ test(
           [LABEL_ROLE, "gateway"],
         ]),
         1,
+      );
+      const stopped = await request(
+        "POST",
+        `/namespaces/${embeddedNamespace.id}/agents/${embedded.agent.id}/stop`,
+      );
+      assert.equal(stopped.status, 202, JSON.stringify(stopped.error));
+      await waitFor("stopped Agent and completed stop metrics", async () => {
+        const current = await request(
+          "GET",
+          `/namespaces/${embeddedNamespace.id}/agents/${embedded.agent.id}`,
+        );
+        if (current.data.activeRevisionId !== undefined) {
+          return false;
+        }
+        const body = await scrape("worker");
+        return (
+          /occ_agents\{[^\n]*lifecycle_state="stopped"[^\n]*\} 1(?:\n|$)/.test(body) &&
+          /occ_agent_operation_duration_seconds_count\{[^\n]*operation="stop"[^\n]*\} 1(?:\n|$)/.test(
+            body,
+          )
+        );
+      });
+      assert.equal(
+        await containerCount([[LABEL_AGENT, embedded.agent.id]]),
+        0,
+        "supported stop must remove the Agent workload before reporting completion",
       );
       await assertComposeLogsDoNotLeakBootstrapServiceKey({ project, env, serviceKey });
       return;

@@ -21,12 +21,15 @@ export class AuthorizationDeniedError extends Error {
   ) {
     super(message);
     this.name = "AuthorizationDeniedError";
-    if (evidence !== undefined) this.evidence = evidence;
-    if (authorization !== undefined)
+    if (evidence !== undefined) {
+      this.evidence = evidence;
+    }
+    if (authorization !== undefined) {
       this.authorization = Object.freeze({
         action: authorization.action,
         resource: Object.freeze({ ...authorization.resource }),
       });
+    }
   }
 }
 
@@ -52,6 +55,13 @@ export class ResourceConflictError extends ScopeViolationError {
   constructor(message: string) {
     super(message);
     this.name = "ResourceConflictError";
+  }
+}
+
+export class AgentDeletingError extends ResourceConflictError {
+  constructor(message = "The Agent is being deleted.") {
+    super(message);
+    this.name = "AgentDeletingError";
   }
 }
 

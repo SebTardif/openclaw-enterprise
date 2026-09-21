@@ -1,10 +1,47 @@
 import "./compute-matrix-browser.mjs";
 
 const menu = document.querySelector("#menu");
+const sidebar = document.querySelector("#sidebar");
+const mobileNavigation = window.matchMedia("(max-width: 760px)");
+document.documentElement.dataset.docsNavigation = "interactive";
 menu.addEventListener("click", () => {
-  const open = document.querySelector("#sidebar").classList.toggle("open");
+  const open = sidebar.classList.toggle("open");
   menu.setAttribute("aria-expanded", String(open));
 });
+sidebar.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && mobileNavigation.matches && sidebar.classList.contains("open")) {
+    sidebar.classList.remove("open");
+    menu.setAttribute("aria-expanded", "false");
+    menu.focus();
+  }
+});
+const activeTab = document.querySelector(".tabs [aria-current]");
+function revealCurrentTab() {
+  const tabs = activeTab.parentElement;
+  const bounds = tabs.getBoundingClientRect();
+  const current = (tabs.querySelector(":focus") ?? activeTab).getBoundingClientRect();
+  const styles = getComputedStyle(tabs);
+  const start = parseFloat(styles.paddingInlineStart);
+  const end = parseFloat(styles.paddingInlineEnd);
+  if (current.left < bounds.left + start) {
+    tabs.scrollLeft += current.left - bounds.left - start;
+  } else if (current.right > bounds.right - end) {
+    tabs.scrollLeft += current.right - bounds.right + end;
+  }
+}
+let currentTabFrame;
+function scheduleCurrentTab() {
+  if (currentTabFrame !== undefined) {
+    return;
+  }
+  currentTabFrame = requestAnimationFrame(() => {
+    currentTabFrame = undefined;
+    revealCurrentTab();
+  });
+}
+revealCurrentTab();
+document.fonts.ready.then(scheduleCurrentTab);
+window.addEventListener("resize", scheduleCurrentTab);
 const themeButton = document.querySelector("#theme");
 let theme = localStorage.getItem("enterprise-docs-theme") ?? "dark";
 document.documentElement.dataset.theme = theme;
@@ -17,9 +54,12 @@ themeButton.addEventListener("click", () => {
 const dialog = document.querySelector("#search-dialog");
 let search;
 function openSearch() {
-  if (!dialog.open) dialog.showModal();
-  if (!search && window.PagefindUI)
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  if (!search && window.PagefindUI) {
     search = new window.PagefindUI({ element: "#search", showSubResults: true, showImages: false });
+  }
   dialog.querySelector("input")?.focus();
 }
 document.querySelector("#search-open").addEventListener("click", openSearch);
@@ -51,7 +91,9 @@ document.querySelector("#diagram-close").addEventListener("click", () => diagram
 let diagramVersion = 0;
 async function renderDiagrams() {
   const diagrams = document.querySelectorAll("[data-mermaid]");
-  if (!diagrams.length) return;
+  if (!diagrams.length) {
+    return;
+  }
   const version = ++diagramVersion;
   const { default: mermaid } = await import("./mermaid/mermaid.esm.min.mjs");
   mermaid.initialize({
@@ -67,7 +109,9 @@ async function renderDiagrams() {
         "diagram-" + version + "-" + index,
         diagram.dataset.mermaid,
       );
-      if (version !== diagramVersion) return;
+      if (version !== diagramVersion) {
+        return;
+      }
       diagram.innerHTML =
         '<button type="button" class="diagram-expand">Expand diagram</button>' + svg;
       diagram.querySelector(".diagram-expand").addEventListener("click", () => {
@@ -75,7 +119,9 @@ async function renderDiagrams() {
         expanded.style.width = expanded.getAttribute("viewBox").split(" ")[2] + "px";
         expanded.style.maxWidth = "none";
         document.querySelector("#diagram-canvas").replaceChildren(expanded);
-        if (!diagramDialog.open) diagramDialog.showModal();
+        if (!diagramDialog.open) {
+          diagramDialog.showModal();
+        }
       });
     } catch (error) {
       console.error("Mermaid rendering failed", error);

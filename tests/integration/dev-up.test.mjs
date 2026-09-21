@@ -676,6 +676,14 @@ test("Kubernetes dev-up authenticates the Installation and cleanup uses its save
     config,
     /gateway: docker.io\/library\/openclaw-enterprise-runtime@sha256:[a-f0-9]{64}/,
   );
+  assert.match(config, /transportSecretPrefix: openclaw-agent-transport/);
+  assert.doesNotMatch(config, /modelSecretPrefix/);
+  const startupCommands = await readJsonLines(fixture.env.SAFETY_LOG);
+  const clusterCreate = startupCommands.find(
+    (entry) => entry.command === "k3d" && entry.args[0] === "cluster" && entry.args[1] === "create",
+  );
+  assert.ok(clusterCreate, "Kubernetes development must create its owned k3d cluster");
+  assert.equal(clusterCreate.args[clusterCreate.args.indexOf("--image") + 1], "+v1.35");
 
   const duplicate = fixture.start();
   assert.notEqual(duplicate.status, 0);
@@ -756,9 +764,12 @@ for (const scenario of [
       clusters: ["occ-dev-unrelated"],
       compose: false,
     });
-    if (scenario === "compose-up-failed") assert.match(result.stderr, /partial compose startup/);
-    if (scenario === "cluster-create-failed")
+    if (scenario === "compose-up-failed") {
+      assert.match(result.stderr, /partial compose startup/);
+    }
+    if (scenario === "cluster-create-failed") {
       assert.match(result.stderr, /partial cluster creation/);
+    }
     if (scenario.startsWith("api-")) {
       await assert.rejects(stat(keyOutput), { code: "ENOENT" });
       assert.match(
@@ -808,7 +819,9 @@ test("cancelling Kubernetes startup during readiness rolls back its owned resour
   });
   const exited = once(child, "close");
   t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+    }
     await exited;
   });
   // Wait for the real client to reach readiness, after all owned resources

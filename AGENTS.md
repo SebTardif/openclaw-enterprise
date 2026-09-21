@@ -2,11 +2,10 @@
 
 ## Active workspace boundary
 
-Approved milestones permit the active TypeScript/pnpm workspace, its selected
-controller and Driver implementations, reviewed PostgreSQL persistence, and
-production Kubernetes packaging described in the current implementation specs.
-Do not introduce platform resources or deployment behavior outside those
-approved milestones.
+Stay within approved implementation milestones: the active TypeScript/pnpm
+workspace, selected controller and Drivers, reviewed PostgreSQL persistence, and
+production Kubernetes packaging. Do not add platform resources or deployment
+behavior outside those milestones.
 
 The development API must bind only to loopback, reject nondevelopment
 configuration, admit only explicitly provisioned development identities,
@@ -22,6 +21,13 @@ The authoritative architecture is the repository's
 Read its [implementation status](docs/design.md#implementation-status) before
 treating a target-design capability as implemented; verify current code and tests.
 Do not create a competing architecture specification in this checkout.
+
+## Repository layout
+
+Follow [Repository layout and conventions](docs/layout.md) before adding or
+moving files. Preserve existing ownership and workspace/package boundaries.
+Update the guide and navigation when directories, ownership, or placement
+conventions change.
 
 ## Keep agents in their lane
 
@@ -46,26 +52,20 @@ Follow these rules when developing or changing code.
 
 ### Build platform capabilities
 
-We are developing a platform. Every new capability must belong to a platform
-primitive, rather than exist as a one-off implementation. First identify the
-existing primitive that owns the capability. Extend that primitive when its
-contract is insufficient, or introduce a new primitive when none fits, within
-the approved architecture and milestone scope.
+Every new capability must belong to a platform primitive. Identify its existing
+owner, extend that contract when insufficient, or introduce a primitive only
+when none fits and the approved architecture and milestones permit it.
 
-Implement the owning primitive's contract and connect the capability to its
-platform lifecycle and composition. A standalone helper or a class named after
-a primitive does not establish that integration. Internal helpers may support
-the implementation, but must not substitute for the platform capability.
+Implement the primitive's contract and integrate it with platform lifecycle and
+composition. Internal helpers may support this work; a standalone helper or
+suitably named class does not establish platform integration.
 
-In general, do not add a capability without a caller in the regular Agent
-workflow. Deliver the capability with that caller; defer speculative components
-until a real workflow needs them. A test-only caller does not satisfy this rule.
+Deliver capabilities with callers in the regular Agent workflow. Defer
+speculative components; test-only callers do not satisfy this requirement.
 
-For example, GitHub App token issuance should belong to an appropriate platform
-primitive. If implemented as a Provider, it must conform to the
-[Provider contract](docs/reference/providers.md) and participate in Provider
-composition; exposing only token minting and revocation methods is insufficient.
-This is the design concern illustrated by
+For example, GitHub App token issuance implemented as a Provider must follow the
+[Provider contract](docs/reference/providers.md) and participate in composition.
+Token minting and revocation alone are insufficient; see
 [PR #136](https://github.com/openclaw/openclaw-enterprise/pull/136).
 
 ### Require integration tests; reject low-value tests
@@ -149,23 +149,54 @@ Use the [documentation map](docs/README.md) and keep these ownership boundaries:
   configuration and operator verification remain in the feature references and guides.
 - `docs/flows/` explains runtime execution through the current source. Link to
   reference for normative behavior and to guides for operator procedures.
-- `docs/guides/` owns operator procedures. Keep overview pages concise and
+- `docs/guides/` owns procedures for product users and operators, including
+  people using the console, CLI, or HTTP API. Keep overview pages concise and
   split coherent tasks into named child pages linked from their overview.
+- `docs/contributing/` owns onboarding and workflows for people changing the
+  platform. Link the root `CONTRIBUTING.md` for contribution policy and the
+  relevant reference, flow, or testing page for detailed behavior.
+- The site has six menu sections: **Getting Started**, **Topics**, **Integrations**,
+  **Operate**, and **Reference** serve people using or administering the product;
+  **Contribute** serves people changing the platform. Each menu switches sidebars.
+  Register each Markdown page once in `docs/docs.json`; put deep implementation
+  and testing pages in the owning tab's `hidden` list when an index links them.
+  Hidden pages keep their routes and search entries. Cross-link shared subjects;
+  keep existing file paths and heading anchors when changing navigation.
+- Use short Title Case sidebar labels and descriptive sentence-case article
+  titles. Use nested groups when they clarify the reader's task; give menus a
+  useful overview and list prerequisite steps before actions that need them.
 - Top-level `specs/` records implementation proposals, milestones, and delivery
   history. Completed specifications do not override current feature reference.
 
-Keep `docs/design.md` and `docs/ARCHITECTURE.md` focused on system-level
-structure, ownership, trust boundaries, and major interactions. Update them only
-when a change alters that architectural understanding. Put feature details,
-configuration, edge cases, and delivery history in their owning reference, guide,
-flow, or specification. Add a concise link when needed; do not append an entry
-for every feature or PR.
+Keep `docs/design.md` and `docs/ARCHITECTURE.md` about system structure, ownership,
+trust boundaries, and major interactions; update them only for architectural
+changes. Put feature details, configuration, edge cases, and delivery history in
+their owning reference, guide, flow, or spec. Link as needed, without per-PR entries.
 
 Document new components under `docs/` in the same change: purpose, setup,
 boundaries, verification, and troubleshooting. Update navigation and affected
 adjacent pages.
 Do not add migration documentation, migration-specific rollout instructions,
 or per-migration database preparation guidance unless explicitly requested.
+
+### Keep reference cheat sheets current
+
+When adding or changing documentation in one of the areas below, check every
+affected [Reference cheat sheet](docs/reference/README.md#cheat-sheets) and
+update it in the same change if its inventory or short descriptions change.
+Link to the owning documentation for detail instead of copying it.
+
+- [API](docs/reference/cheatsheets/api.md): public operations and their summaries.
+  Update the owning route or OpenAPI schema, then run `pnpm openapi:generate`
+  and `pnpm openapi:check`. Do not edit the generated sheet by hand.
+- [Permissions](docs/reference/cheatsheets/permissions.md): IAM actions, resource
+  kinds, scopes, and required grants.
+- [Database entities](docs/reference/cheatsheets/database-entities.md): PostgreSQL
+  tables, their purpose, and columns.
+- [Environment variables](docs/reference/cheatsheets/environment-variables.md):
+  supported configuration variables; test-only variables stay in `docs/testing/`.
+
+Check the manually maintained sheets against their owning sources and run `pnpm docs:check`.
 
 ## Documentation length budget
 
@@ -194,6 +225,11 @@ The user approved keeping the complete generated HTTP API reference in one page
 for browsing and search. Keep it generated from the OpenAPI contract; the checker
 reports its word count without requiring a split. This exception covers no other
 page.
+
+Files named exactly `AGENTS.md`, including nested instruction documents, are
+also exempt from the length thresholds. The checker still reports their word
+counts. Exemptions follow the resolved file: an `AGENTS.md` symlink pointing to
+an ordinary document does not exempt that document.
 
 ## Documentation editing
 
@@ -333,6 +369,14 @@ actual translated `/32` endpoint and port. The fixture suite's scoped RBAC does
 not verify shared-cluster admission guardrails.
 
 ## TypeScript style and verification
+
+- Separate imports from following code with a blank line, declare one variable
+  per declaration, and use braces for control-flow bodies. Apply these rules with
+  `pnpm lint:fix`, then run `pnpm format:fix` for Prettier layout.
+- Run `pnpm lint` for JavaScript and TypeScript changes; `pnpm lint:fix` applies
+  supported automatic fixes. Follow `eslint.config.mjs` and the
+  [linting guide](docs/testing/local.md#linting-and-formatting). Do not expand
+  `eslint-suppressions.json` to admit new findings; prune entries as they are fixed.
 
 - Use `ts-pattern` for tagged unions and branches that would otherwise become
   nested ternaries. Prefer `match(value).with(...).exhaustive()` so every case

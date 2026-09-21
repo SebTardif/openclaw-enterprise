@@ -43,13 +43,19 @@ export function collectMarkdownFiles({ root = process.cwd(), files } = {}) {
   const byRealPath = new Map();
   for (const file of files ?? gitMarkdownFiles(absoluteRoot)) {
     const relativePath = file.split(path.sep).join("/");
-    if (seenPaths.has(relativePath)) continue;
+    if (seenPaths.has(relativePath)) {
+      continue;
+    }
     seenPaths.add(relativePath);
     const absolutePath = path.resolve(absoluteRoot, relativePath);
-    if (!fs.existsSync(absolutePath)) continue;
+    if (!fs.existsSync(absolutePath)) {
+      continue;
+    }
     const realPath = fs.realpathSync.native(absolutePath);
     const stat = fs.statSync(realPath);
-    if (!stat.isFile()) continue;
+    if (!stat.isFile()) {
+      continue;
+    }
     const existing = byRealPath.get(realPath);
     if (existing) {
       existing.aliases.push(relativePath);
@@ -128,11 +134,8 @@ export function checkMarkdownWordCounts({
 } = {}) {
   const md = createDocsMarkdown();
   const markdownFiles = collectMarkdownFiles({ root, files });
-  // The approved exception belongs to this file, not aliases pointing elsewhere.
-  const apiReference = path.join(
-    fs.realpathSync.native(path.resolve(root)),
-    "docs/reference/api.md",
-  );
+  const absoluteRoot = fs.realpathSync.native(path.resolve(root));
+  const apiReference = path.join(absoluteRoot, "docs/reference/api.md");
   const rows = markdownFiles.map((file) => {
     const markdown = fs.readFileSync(file.absolutePath, "utf8");
     const counts = countMarkdownWords(markdown, {
@@ -140,16 +143,25 @@ export function checkMarkdownWordCounts({
       sourceFile: file.absolutePath,
       root: path.dirname(file.absolutePath),
     });
-    const isApiReference = file.realPath === apiReference;
+    // Exceptions belong to the resolved file, not aliases pointing elsewhere.
+    let lengthException;
+    if (file.realPath === apiReference) {
+      lengthException = "User-approved single-page API reference";
+    } else if (path.basename(file.realPath) === "AGENTS.md") {
+      lengthException = "Agent instruction document";
+    }
+    const reportPath = lengthException
+      ? path.relative(absoluteRoot, file.realPath).split(path.sep).join("/")
+      : file.path;
     return {
       ...file,
       ...counts,
-      path: isApiReference ? "docs/reference/api.md" : file.path,
-      aliases: isApiReference
-        ? [file.path, ...file.aliases].filter((alias) => alias !== "docs/reference/api.md")
+      path: reportPath,
+      aliases: lengthException
+        ? [file.path, ...file.aliases].filter((alias) => alias !== reportPath)
         : file.aliases,
       lineCount: markdown.split("\n").length,
-      lengthException: isApiReference ? "User-approved single-page API reference" : undefined,
+      lengthException,
     };
   });
   const exceptions = rows.filter((row) => row.lengthException);
@@ -238,10 +250,13 @@ function parseCliArgs(argv) {
   };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
-    if (arg === "--json") options.json = true;
-    else if (arg === "--root") options.root = argv[++index];
-    else if (arg === "--max") options.maxWords = Number(argv[++index]);
-    else {
+    if (arg === "--json") {
+      options.json = true;
+    } else if (arg === "--root") {
+      options.root = argv[++index];
+    } else if (arg === "--max") {
+      options.maxWords = Number(argv[++index]);
+    } else {
       throw new Error("Usage: word-count.mjs [--root <path>] [--max <words>] [--json]");
     }
   }

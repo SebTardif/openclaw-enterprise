@@ -157,7 +157,9 @@ async function request(app, method, pathname, options = {}) {
     ...options.headers,
   };
   const hasBody = Object.hasOwn(options, "body");
-  if (hasBody) headers["content-type"] ??= "application/json";
+  if (hasBody) {
+    headers["content-type"] ??= "application/json";
+  }
   const response = await app.fetch(
     new Request(`http://127.0.0.1${pathname}`, {
       method,
@@ -413,12 +415,12 @@ test("Secret API denial and storage failures return value-free errors", async ()
 // These tests exercise API validation, Native IAM, OCC admission, and state ownership.
 // Passive Secret storage does not establish provider login or model execution proof.
 test("Harness Secret binding preserves draft semantics, exact delivery grants, and revision source retention", async () => {
+  const harnessAuthDriver = createTestKubernetesComputeDriver("compute-harness-auth");
   const fixture = await createFixture({
     recordOperations: true,
     computeDriver: {
       ...createTestComputeDriver(),
-      validateHarnessAuth:
-        createTestKubernetesComputeDriver("compute-harness-auth").validateHarnessAuth,
+      validateHarnessAuth: harnessAuthDriver.validateHarnessAuth.bind(harnessAuthDriver),
     },
   });
   const { namespace, configuration, agent } = await bootstrapAgent(fixture, {

@@ -28,7 +28,9 @@ test("owned reads preserve missing resources and reject mismatched workload iden
   driver.apiClients = Promise.resolve({
     apps: {
       async readNamespacedDeployment() {
-        if (observed === undefined) throw Object.assign(new Error("Not found"), { code: 404 });
+        if (observed === undefined) {
+          throw Object.assign(new Error("Not found"), { code: 404 });
+        }
         return structuredClone(observed);
       },
     },
@@ -124,7 +126,7 @@ test("gateway readiness rejects a foreign Service before accepting endpoint read
   assert.equal(endpointReads, 0);
 });
 
-test("gateway deletion rejects foreign resources and retains exact UID preconditions", async () => {
+test("runtime resource deletion rejects foreign resources and retains exact UID preconditions", async () => {
   const driver = createTestKubernetesComputeDriver();
   const service = driver.service("gateway", ownership, namespace, { app: "gateway" });
   service.metadata.uid = "service-uid";
@@ -147,11 +149,14 @@ test("gateway deletion rejects foreign resources and retains exact UID precondit
   });
 
   observed.metadata.annotations["openclaw.dev/agent-id"] = "another-agent";
-  await assert.rejects(driver.deleteGateway("gateway", ownership, namespace), /Refusing unowned/);
+  await assert.rejects(
+    driver.deleteNamedRuntimeResources("gateway", ownership, namespace),
+    /Refusing unowned/,
+  );
   assert.equal(deletions.length, 0);
 
   observed = service;
-  await driver.deleteGateway("gateway", ownership, namespace);
+  await driver.deleteNamedRuntimeResources("gateway", ownership, namespace);
   assert.deepEqual(deletions, [
     { name: "gateway", namespace, body: { preconditions: { uid: "service-uid" } } },
   ]);

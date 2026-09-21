@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const envoyGateway = Object.freeze({
   name: "Envoy Gateway",
@@ -106,13 +106,19 @@ async function downloadPinnedArtifact({ artifact, directory }) {
   assertInsideDirectory(directory, destination, `${artifact.name} manifest`);
   try {
     const existing = await readFile(destination);
-    if (sha256(existing) === artifact.sha256) return destination;
+    if (sha256(existing) === artifact.sha256) {
+      return destination;
+    }
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
   }
 
   const response = await fetch(artifact.url, { signal: AbortSignal.timeout(60_000) });
-  if (!response.ok) throw new Error(`${artifact.name} download failed: HTTP ${response.status}.`);
+  if (!response.ok) {
+    throw new Error(`${artifact.name} download failed: HTTP ${response.status}.`);
+  }
   const data = Buffer.from(await response.arrayBuffer());
   const actual = sha256(data);
   if (actual !== artifact.sha256) {
@@ -191,7 +197,23 @@ async function applyControllers({ cluster, execFile, certManagerManifest, envoyG
   await waitForCrds(cluster, execFile, certManagerCrds);
   await rolloutDeployments(cluster, execFile, certManager.namespace, certManager.deployments);
 
-  await kubectl(cluster, execFile, "apply", "--server-side", "-f", envoyGatewayManifest);
+  const envoyControllerManifest = join(
+    dirname(envoyGatewayManifest),
+    `${basename(envoyGatewayManifest, ".yaml")}-controller.yaml`,
+  );
+  const envoyDocuments = (await readFile(envoyGatewayManifest, "utf8"))
+    .split(/^---\s*$/mu)
+    .filter((document) => {
+      if (!/^kind:\s*CustomResourceDefinition\s*$/mu.test(document)) {
+        return true;
+      }
+      const specOffset = document.search(/^spec:\s*$/mu);
+      const metadata = specOffset === -1 ? document : document.slice(0, specOffset);
+      const name = /^ {2}name:\s*(\S+)\s*$/mu.exec(metadata)?.[1];
+      return !name?.endsWith(".gateway.networking.k8s.io");
+    });
+  await writePrivateFile(envoyControllerManifest, `${envoyDocuments.join("\n---\n")}\n`);
+  await kubectl(cluster, execFile, "apply", "--server-side", "-f", envoyControllerManifest);
   await waitForCrds(cluster, execFile, [...gatewayApiCrds, ...envoyGatewayCrds]);
   await rolloutDeployments(cluster, execFile, envoyGateway.namespace, [envoyGateway.deployment]);
 }

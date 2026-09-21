@@ -8,6 +8,8 @@ import {
 import { composeProduction } from "./composition/production.ts";
 import { validateWorkspaceFilesApiKeyPath } from "./composition/workspace-files.ts";
 import { createOccLogger, emitOccLogEvent } from "./logging.ts";
+import { createOccMetrics } from "./metrics/index.ts";
+import { metricsConfiguration, startMetricsListener } from "./metrics/listener.ts";
 
 const loopbackHosts = new Set(["127.0.0.1", "::1", "[::1]"]);
 const developmentBindHosts = new Set(["127.0.0.1", "::1", "0.0.0.0"]);
@@ -15,8 +17,12 @@ const DEFAULT_BETTER_AUTH_BASE_URL = "http://127.0.0.1:3000";
 
 function startupFailureCode(error) {
   const message = error instanceof Error ? error.message : "";
-  if (/OCC_AUTH_SECRET/.test(message)) return "AUTH_SECRET_INVALID";
-  if (/OCC_AUTH_BASE_URL|loopback host|loopback HTTP\(S\) URL/.test(message)) {
+  if (/OCC_AUTH_SECRET/.test(message)) {
+    return "AUTH_SECRET_INVALID";
+  }
+  if (
+    /OCC_AUTH_BASE_URL|OCC_AUTH_COOKIE_DOMAIN|loopback host|loopback HTTP\(S\) URL/.test(message)
+  ) {
     return "AUTH_BASE_URL_INVALID";
   }
   if (/OCC_WORKSPACE_FILES_CONFIG_PATH.*removed/.test(message)) {
@@ -25,7 +31,12 @@ function startupFailureCode(error) {
   if (/OCC_GATEWAY_API_KEY_PATH|gateway API key file/i.test(message)) {
     return "GATEWAY_API_KEY_UNAVAILABLE";
   }
-  if (/ChatGPT admin-key Secret/.test(message)) return "CHATGPT_ADMIN_KEY_UNAVAILABLE";
+  if (/OCC_AGENT_NATIVE_ADMIN|Native admin UI access|Native admin Agent domain/.test(message)) {
+    return "AGENT_NATIVE_ADMIN_INVALID";
+  }
+  if (/ChatGPT admin-key Secret/.test(message)) {
+    return "CHATGPT_ADMIN_KEY_UNAVAILABLE";
+  }
   if (/ServiceAccounts require PostgreSQL persistence/.test(message)) {
     return "SERVICE_ACCOUNT_REQUIRES_POSTGRES";
   }
@@ -59,10 +70,25 @@ function optionalEnvironment(name, fallback) {
   return value;
 }
 
+function optionalBooleanEnvironment(name) {
+  const value = process.env[name];
+  if (value === undefined || value.trim().length === 0) {
+    return false;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${name} must be true or false.`);
+}
+
 function configuration() {
   const mode = process.env.NODE_ENV;
-  if (mode !== "development" && mode !== "production")
+  if (mode !== "development" && mode !== "production") {
     throw new Error("NODE_ENV must explicitly select development or production mode.");
+  }
 
   const host = requiredEnvironment("OCC_HOST");
   const trustedDevelopmentBridgeCidr = process.env.OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR;
@@ -86,8 +112,9 @@ function configuration() {
       host === "::1" ||
       /^127\./.test(host) ||
       /^::ffff:127\./i.test(host))
-  )
+  ) {
     throw new Error("Production OCC_HOST must identify one explicit Pod interface address.");
+  }
 
   const rawPort = requiredEnvironment("OCC_PORT");
   if (!/^\d+$/.test(rawPort)) {
@@ -99,8 +126,9 @@ function configuration() {
   }
 
   const databaseUrl = process.env.OCC_DATABASE_URL;
-  if (mode === "production" && databaseUrl === undefined)
+  if (mode === "production" && databaseUrl === undefined) {
     throw new Error("OCC_DATABASE_URL must be explicitly configured in production.");
+  }
   if (databaseUrl !== undefined) {
     let parsed;
     try {
@@ -141,6 +169,18 @@ function configuration() {
     }
   }
 
+  const nativeAdminEnabled = optionalBooleanEnvironment("OCC_AGENT_NATIVE_ADMIN_ENABLED");
+  const nativeAdminDomain = process.env.OCC_AGENT_NATIVE_ADMIN_DOMAIN;
+  const authCookieDomain = process.env.OCC_AUTH_COOKIE_DOMAIN;
+  const nativeAdmin =
+    nativeAdminEnabled || (nativeAdminDomain !== undefined && nativeAdminDomain.trim().length > 0)
+      ? {
+          enabled: nativeAdminEnabled,
+          ...(nativeAdminDomain === undefined ? {} : { domain: nativeAdminDomain }),
+          ...(authCookieDomain === undefined ? {} : { sharedCookieDomain: authCookieDomain }),
+        }
+      : undefined;
+
   const configuredAuthBaseURL =
     mode === "production"
       ? requiredEnvironment("OCC_AUTH_BASE_URL")
@@ -161,6 +201,7 @@ function configuration() {
       authSecret: requiredEnvironment("OCC_AUTH_SECRET"),
       authBaseURL,
       ...(gatewayApiKeyPath === undefined ? {} : { gatewayApiKeyPath }),
+      ...(nativeAdmin === undefined ? {} : { nativeAdmin }),
     });
   }
 
@@ -176,6 +217,7 @@ function configuration() {
     authSecret,
     authBaseURL,
     ...(gatewayApiKeyPath === undefined ? {} : { gatewayApiKeyPath }),
+    ...(nativeAdmin === undefined ? {} : { nativeAdmin }),
     ...(trustedDevelopmentBridgeCidr === undefined ? {} : { trustedDevelopmentBridgeCidr }),
     ...(trustedDevelopmentForwarderCidr === undefined || trustedDevelopmentForwarderCidr === ""
       ? {}
@@ -185,13 +227,15 @@ function configuration() {
 
 async function start() {
   const settings = configuration();
+  const metricsSettings = metricsConfiguration(process.env, settings.mode, settings.port);
+  const metrics = metricsSettings === undefined ? undefined : createOccMetrics("api");
   const startupConfiguration = await loadStartupConfigurationSnapshot({ mode: settings.mode });
   const logging = startupConfiguration.logging;
   const logger = createOccLogger({ component: "occ-api", level: logging.level });
   if (settings.gatewayApiKeyPath !== undefined) {
     await validateWorkspaceFilesApiKeyPath(settings.gatewayApiKeyPath);
   }
-  const compositionSettings = { ...settings, logger, logging };
+  const compositionSettings = { ...settings, logger, logging, metrics };
   const drivers = await loadInstallationConfiguration({
     mode: settings.mode,
     startupConfiguration,
@@ -248,7 +292,9 @@ async function start() {
   }
   let app;
   if (settings.mode === "production") {
-    if (drivers === undefined) throw new Error("Production Driver configuration is unavailable.");
+    if (drivers === undefined) {
+      throw new Error("Production Driver configuration is unavailable.");
+    }
     app = await composeProduction({
       ...compositionSettings,
       drivers,
@@ -265,8 +311,14 @@ async function start() {
   }
 
   let closing = false;
+  let metricsListener;
+  app.addHook("onClose", async () => {
+    await metricsListener?.close();
+  });
   async function shutdown() {
-    if (closing) return;
+    if (closing) {
+      return;
+    }
     closing = true;
     try {
       await app.close();
@@ -280,6 +332,9 @@ async function start() {
   process.once("SIGINT", shutdown);
 
   try {
+    if (metrics !== undefined) {
+      metricsListener = await startMetricsListener(metrics, metricsSettings);
+    }
     await app.listen({ host: settings.host, port: settings.port });
   } catch (error) {
     await app.close();

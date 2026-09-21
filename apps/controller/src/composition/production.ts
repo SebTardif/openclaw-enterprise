@@ -19,9 +19,15 @@ import { providerSummariesFromDefinitions } from "./installation-config.ts";
 import { emitOccLogEvent, type OccLogger } from "../logging.ts";
 import { resolveApprovedProductionHarness } from "./production-harness.ts";
 import type { ControllerWorkspaceFilesAccess } from "../gateway/contracts.ts";
-import { createWorkspaceFilesAccess, validateWorkspaceFilesApiKeyPath } from "./workspace-files.ts";
+import type { NativeAdminAccessConfig } from "../gateway/native-admin.ts";
+import {
+  createWorkspaceFilesAccess,
+  readWorkspaceFilesApiKey,
+  validateWorkspaceFilesApiKeyPath,
+} from "./workspace-files.ts";
 
 export interface ProductionConfig {
+  readonly metrics?: import("../metrics/index.ts").OccMetrics;
   readonly mode: "production";
   readonly host: string;
   readonly databaseUrl: string;
@@ -33,11 +39,13 @@ export interface ProductionConfig {
   readonly serviceAccountDriverFactory?: ServiceAccountDriverFactory;
   readonly workspaceFilesAccess?: ControllerWorkspaceFilesAccess;
   readonly gatewayApiKeyPath?: string;
+  readonly nativeAdmin?: NativeAdminAccessConfig;
 }
 
 export async function composeProduction(config: ProductionConfig) {
-  if (config.mode !== "production")
+  if (config.mode !== "production") {
     throw new Error("Production OCC composition requires explicit production mode.");
+  }
   const {
     installation,
     computeDriver,
@@ -72,6 +80,9 @@ export async function composeProduction(config: ProductionConfig) {
       installationId: persistedInstallation.id,
       secret: config.authSecret,
       baseURL: config.authBaseURL,
+      ...(config.nativeAdmin?.enabled === true
+        ? { sharedCookieDomain: config.nativeAdmin.sharedCookieDomain }
+        : {}),
       pool,
     });
 
@@ -98,8 +109,9 @@ export async function composeProduction(config: ProductionConfig) {
       issuer: principal.issuer,
       subject: principal.subject,
     });
-    if (!resolved || resolved.kind !== "principal" || resolved.id !== principal.id)
+    if (!resolved || resolved.kind !== "principal" || resolved.id !== principal.id) {
       throw new Error("The persisted IAM Principal cannot be resolved uniquely.");
+    }
 
     const preflight = computeDriver.preflight;
     if (preflight !== undefined && typeof preflight !== "function") {
@@ -131,11 +143,13 @@ export async function composeProduction(config: ProductionConfig) {
       loggingLevel: config.drivers.installation.logging.level,
     });
     controller.registerDriver(iamDriver);
-    if (controller.selectDriver("iam", driverId) !== iamDriver)
+    if (controller.selectDriver("iam", driverId) !== iamDriver) {
       throw new Error("The server-owned IAM Driver was not selected correctly.");
+    }
     controller.registerDriver(computeDriver);
-    if (controller.selectDriver("compute", computeDriver.id) !== computeDriver)
+    if (controller.selectDriver("compute", computeDriver.id) !== computeDriver) {
       throw new Error("The configured Compute Driver was not selected correctly.");
+    }
     controller.registerDriver(secretDriver);
     if (controller.selectDriver("secret", secretDriver.id) !== secretDriver) {
       throw new Error("The configured Secret Driver was not selected correctly.");
@@ -165,14 +179,22 @@ export async function composeProduction(config: ProductionConfig) {
       await validateWorkspaceFilesApiKeyPath(gatewayApiKeyPath);
       workspaceFilesAccess = createWorkspaceFilesAccess(computeDriver, gatewayApiKeyPath);
     }
+    if (config.nativeAdmin?.enabled === true && config.gatewayApiKeyPath === undefined) {
+      throw new Error("Native admin UI access requires OCC_GATEWAY_API_KEY_PATH.");
+    }
 
     const app = createFastifyApp({
+      ...(config.metrics === undefined ? {} : { metrics: config.metrics }),
       controller,
       iamDriver,
       computeDriver,
       configurationDriver,
       secretDriver,
       publicOrigin: config.authBaseURL,
+      ...(config.nativeAdmin === undefined ? {} : { nativeAdmin: config.nativeAdmin }),
+      ...(config.nativeAdmin?.enabled === true && config.gatewayApiKeyPath !== undefined
+        ? { nativeAdminGatewayApiKey: () => readWorkspaceFilesApiKey(config.gatewayApiKeyPath!) }
+        : {}),
       ...(sandboxDriver === undefined ? {} : { sandboxDriver }),
       resolveHarness: resolveApprovedProductionHarness,
       auditSink: state.auditSink,
