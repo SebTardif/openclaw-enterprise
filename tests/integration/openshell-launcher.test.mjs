@@ -40,7 +40,7 @@ async function prepareFakeEnvironment(context, { foreignState = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "oce-openshell-launcher-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
-  const stateDirectory = join(root, "state", "openclaw-enterprise", "openshell-docker-pre5");
+  const stateDirectory = join(root, "state", "openclaw-enterprise", "openshell-docker-pre7");
   const prepareLog = join(root, "prepare.log");
   const testRecord = join(root, "test-record.txt");
   await mkdir(bin);
@@ -132,7 +132,7 @@ test("OpenShell launcher prepares one owned reusable development environment", a
     env: fixture.env,
   });
   assert.match(first.stdout, /OpenShell development environment is ready/);
-  assert.match(first.stdout, /v0\.1\.0-pre\.5 compatibility bridge/);
+  assert.match(first.stdout, /v0\.1\.0-pre\.7 compatibility bridge/);
   assert.equal(
     await readFile(fixture.prepareLog, "utf8"),
     [
