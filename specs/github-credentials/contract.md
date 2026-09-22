@@ -75,9 +75,9 @@ Stock Git selects effective remotes through native configuration/helpers. Bounde
 
 ## Request lifecycle
 
-![Proposed admission, delivery, request and cleanup lifecycle](request-lifecycle.svg)
+![Original proposed admission, delivery, request and cleanup lifecycle](request-lifecycle.svg)
 
-Proposed lifecycle, not runtime qualification. Time flows downward with normal request/reply notation. [Editable source](request-lifecycle.mmd).
+Original inspection lifecycle (`06d441b`), not current delivery status or runtime qualification. Its unresolved-work notes are historical; see [landed lifecycle delivery](../github-credentials.md#lifecycle-delivery) and [current restart limits](#restart-and-future-obligations). Time flows downward. [Editable source](request-lifecycle.mmd).
 
 1. Resolve bearer to server-owned session. Check exact repository/profile before acquisition. One exchange means one effective HTTP request, not a Git command.
 2. Acquire on demand under the original grant/deadline. Concurrent waiters share acquisition and its fixed budget. Individual cancellation cannot extend it. Last-waiter cancellation retains capture/settlement responsibility.
