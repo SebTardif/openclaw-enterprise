@@ -7,7 +7,7 @@ and use the suite-specific infrastructure below.
 ## Start a reusable development environment
 
 From the repository root, use the developer launcher to prepare a private,
-reusable OpenShell `v0.1.0-pre.5` environment:
+reusable OpenShell `v0.1.0-pre.7` environment:
 
 ```sh
 ./scripts/openshell up
@@ -54,7 +54,7 @@ version-manager shim, set `OCC_OPENSHELL_K3D_BIN` to an absolute working
 executable. Use `OCC_OPENSHELL_COREPACK_BIN` for the same problem with corepack.
 
 This launcher does not start a supported production Installation or an
-interactive OCC Agent. Stock pre.5 still lacks the workload projections needed
+interactive OCC Agent. Stock pre.7 still lacks the workload projections needed
 by the regular Agent path.
 
 ## OpenShell Sandbox
@@ -94,7 +94,7 @@ OCC_TEST_OPENSHELL_K3D_REAL=1 \
 ```
 
 Set `OCC_TEST_OPENSHELL_SECRET_PROJECTION=0` for the stock fail-closed proof. It
-passes the production requirements to pre.5 unchanged and expects the Driver to
+passes the production requirements to pre.7 unchanged and expects the Driver to
 reject unsupported Secret projection before the candidate can activate. This
 does not prove provider authentication or model execution.
 
@@ -103,18 +103,19 @@ strict CI runner forwards the selector and accounts for one stable test identity
 in either mode. The positive scenario uses a test-only operator Job to stage the
 exact Secret values, plugin-runtime files, and projected workload token in
 revision-specific PVC subpaths before OpenShell starts the provider-owned
-Harness. It requires a real model turn over the app-server's Pod-loopback
-WebSocket, exact workload identity claims, approved mounts and privileges, denied secret exposure,
-allowed and denied tool egress, replacement, and cleanup. It separately checks
-the OCC Agent Service selector, but it does not prove that pre.5 can route the
-app-server WebSocket through that Service. Missing prerequisites fail rather
-than skip.
+Harness. The Driver asks OpenShell to expose the app-server port in the original
+Sandbox Create request, and the test performs the real model turn through the
+returned gateway-routed WebSocket URL. The scenario also requires exact workload
+identity claims, approved mounts and privileges, denied secret exposure, allowed
+and denied tool egress, replacement, and cleanup. It separately checks the OCC
+Agent Service selector; that Service is not the path used for the exposed model
+turn. Missing prerequisites fail rather than skip.
 
 ### Test bridge and upstream prerequisite
 
 The integration uses an operator-owned Helm wrapper to install the OpenShell
 gateway before delegating to the Driver. The bundled Driver does not install
-that gateway. Stock OpenShell `v0.1.0-pre.5` cannot receive the required exact
+that gateway. Stock OpenShell `v0.1.0-pre.7` cannot receive the required exact
 `secretKeyRef` environment entries, plugin-runtime ConfigMap, or projected
 workload identity through its gateway configuration.
 
@@ -142,7 +143,7 @@ scoped environment file for this suite.
 | Variable                               | Requirement or default                                                                                                                              |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `OCC_TEST_OPENSHELL_K3D_REAL`          | Set to `1` to explicitly opt into the real OpenShell integration.                                                                                   |
-| `OCC_TEST_OPENSHELL_SECRET_PROJECTION` | `0` selects stock fail-closed proof; `1` selects the verification-only pre.5 compatibility proof with a real in-Sandbox model turn.                 |
+| `OCC_TEST_OPENSHELL_SECRET_PROJECTION` | `0` selects stock fail-closed proof; `1` selects the verification-only pre.7 compatibility proof with a gateway-routed real model turn.             |
 | `OPENAI_API_KEY`                       | Existing authorized provider credential for the required real model turn.                                                                           |
 | `OCC_TEST_OPENAI_MODEL`                | Authorized provider model; defaults to `gpt-6-astra`.                                                                                               |
 | `OCC_TEST_KUBERNETES_KUBECONFIG`       | Absolute kubeconfig path for the dedicated disposable k3d cluster.                                                                                  |
@@ -155,7 +156,7 @@ scoped environment file for this suite.
 | `OCC_TEST_OPENSHELL_GATEWAY_IMAGE`     | Imported immutable OpenShell gateway image pinned by SHA-256 digest.                                                                                |
 | `OCC_TEST_OPENSHELL_SANDBOX_IMAGE`     | Imported immutable OpenShell sandbox runtime image pinned by SHA-256 digest.                                                                        |
 | `OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE`  | Imported immutable OpenShell supervisor image pinned by SHA-256 digest.                                                                             |
-| `OCC_TEST_OPENSHELL_CHART_VERSION`     | Optional OpenShell chart version; defaults to `0.1.0-pre.5`.                                                                                        |
+| `OCC_TEST_OPENSHELL_CHART_VERSION`     | Optional OpenShell chart version; defaults to `0.1.0-pre.7`.                                                                                        |
 | `OCC_TEST_OPENSHELL_RUNTIME_CLASS`     | Existing RuntimeClass used by Agent Sandbox Pods; CI creates the selected RuntimeClass, defaulting to `openshell-sandbox`, with the `runc` handler. |
 
 The selected cluster must already expose the Agent Sandbox CRD and a ready Agent
@@ -163,7 +164,7 @@ Sandbox controller. See the
 [OpenShell SandboxDriver testing guide](#openshell-sandbox) for
 the required cluster, image, database, RuntimeClass, and chart setup.
 
-The CI bootstrap verifies the `v0.1.0-pre.5` source archive checksum, packages
+The CI bootstrap verifies the `v0.1.0-pre.7` source archive checksum, packages
 the chart from that tag, and imports gateway, sandbox runtime, and supervisor
 images published under the tag's commit SHA. It does not depend on prerelease
 GitHub Release assets or a semver-tagged chart.

@@ -48,8 +48,10 @@ prepared values rather than guessing login mode or resolving another credential.
 ### Sandbox resource identity
 
 `SandboxResourceRef` contains `namespaceName`, `resourceName`, `agentId`, and
-`revisionId`. It stays stable when a controller replaces the underlying Pod;
-retirement must find the provider resource even if that Pod is already gone.
+`revisionId`. A provider may also return `harnessEndpointUrl` when it creates a
+gateway-managed WebSocket route to the Harness. The identity stays stable when
+a controller replaces the underlying Pod; retirement must find the provider
+resource even if that Pod is already gone.
 
 ## IAM
 

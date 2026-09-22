@@ -32,7 +32,7 @@ const openShellSandboxImage = process.env.OCC_TEST_OPENSHELL_SANDBOX_IMAGE;
 const openShellSupervisorImage = process.env.OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE;
 const openShellHelmPath = process.env.OCC_TEST_OPENSHELL_HELM;
 const openShellHelmChart = process.env.OCC_TEST_OPENSHELL_HELM_CHART;
-const openShellChartVersion = process.env.OCC_TEST_OPENSHELL_CHART_VERSION ?? "0.1.0-pre.5";
+const openShellChartVersion = process.env.OCC_TEST_OPENSHELL_CHART_VERSION ?? "0.1.0-pre.7";
 const openShellRuntimeClass = process.env.OCC_TEST_OPENSHELL_RUNTIME_CLASS ?? "openshell-sandbox";
 const providerModel = (process.env.OCC_TEST_OPENAI_MODEL ?? defaultAgentModel).replace(
   /^(?:openai|codex)\//,
@@ -128,6 +128,7 @@ const {
   assertGatewayBootstrapPolicies,
   assertNoSecretBytes,
   requestCodexTurnFromOpenShellHarnessPod,
+  requestCodexTurnFromOpenShellService,
 } = fixture;
 
 async function createScopedController(context, identifier, platformNamespace, kubeconfig) {
@@ -488,6 +489,10 @@ function credentialBridgeResource(context, claimName, subPath) {
                   "mkdir -p /bootstrap/plugin-runtime",
                   `mkdir -p /bootstrap/service-principal/${tokenParent}`,
                   "mkdir -p /workspace-home/.codex",
+                  "chmod 0700 /bootstrap/plugin-runtime /bootstrap/service-principal",
+                  "chmod 0600 /bootstrap/app-server-token /bootstrap/openai-api-key 2>/dev/null || true",
+                  "chmod 0600 /bootstrap/plugin-runtime/runtime.json /bootstrap/plugin-runtime/config.toml 2>/dev/null || true",
+                  `chmod 0600 /bootstrap/service-principal/${servicePrincipalToken.path} 2>/dev/null || true`,
                   'printf "%s" "$APP_SERVER_TOKEN" > /bootstrap/app-server-token',
                   'printf "%s" "$OPENAI_API_KEY" > /bootstrap/openai-api-key',
                   "cp /source-plugin-runtime/runtime.json /bootstrap/plugin-runtime/runtime.json",
@@ -835,6 +840,7 @@ function createIntegrationSandboxDriverFactory(
 ) {
   const gatewayState = new Map();
   const provisioningFailures = new Map();
+  const harnessEndpoints = new Map();
   const credentialBridges = new Map();
 
   async function stopGatewayForward(namespaceName, expectedState) {
@@ -980,11 +986,13 @@ function createIntegrationSandboxDriverFactory(
             });
             // The stock proof hands the real Driver exactly what Compute rendered so unsupported
             // projection shapes fail closed before OpenShell creates provider resources.
-            return await delegate(
+            const provisioned = await delegate(
               context.requirements,
               context.namespace.name,
               endpoint,
             ).provisionHarness(context);
+            harnessEndpoints.set(context.revision.id, provisioned.harnessEndpointUrl);
+            return provisioned;
           }
 
           const claimName = context.requirements.workspaceMounts[0]?.claimName;
@@ -1004,13 +1012,20 @@ function createIntegrationSandboxDriverFactory(
             sandboxServiceAccountName: requirements.serviceAccountName,
           });
           const provisioning = { ...context, requirements };
-          return await delegate(
+          const provisioned = await delegate(
             requirements,
             context.namespace.name,
             endpoint,
             provisioning,
           ).provisionHarness(provisioning);
+          harnessEndpoints.set(context.revision.id, provisioned.harnessEndpointUrl);
+          return provisioned;
         } catch (error) {
+          if (!provisioningFailures.has(context.revision.id)) {
+            process.stderr.write(
+              `OpenShell first provisioning failure for ${context.revision.id}: ${error.message}\n`,
+            );
+          }
           provisioningFailures.set(context.revision.id, error);
           if (bridge !== undefined) {
             await deleteCredentialJob(operatorKubernetes, context, bridge.metadata.name).catch(
@@ -1083,6 +1098,7 @@ function createIntegrationSandboxDriverFactory(
   };
   createDriver.disposeGatewayForwards = disposeGatewayForwards;
   createDriver.provisioningFailures = provisioningFailures;
+  createDriver.harnessEndpoints = harnessEndpoints;
   return createDriver;
 }
 
@@ -1468,6 +1484,8 @@ async function prepareProductionInstallation(
     revision: deployed.data,
     harnessPod,
     sandbox,
+    harnessEndpointUrl: createSandboxDriver.harnessEndpoints.get(deployed.data.id),
+    appServerToken: transport.appServerToken,
   };
 }
 
@@ -1685,39 +1703,6 @@ async function assertEmbeddedOpenShellFailsClosed(topology) {
   );
 }
 
-async function waitForCodexHarnessEndpoint(topology) {
-  const script = [
-    'const net = require("node:net");',
-    'const socket = net.connect(18790, "127.0.0.1");',
-    "socket.setTimeout(1000);",
-    'socket.once("connect", () => { socket.destroy(); process.exit(0); });',
-    'socket.once("timeout", () => { socket.destroy(); process.exit(1); });',
-    'socket.once("error", () => process.exit(1));',
-  ].join(" ");
-  await waitFor(
-    `Codex Harness loopback endpoint in ${topology.harnessPod.metadata.name}`,
-    async () => {
-      try {
-        await kubectl(
-          "exec",
-          topology.harnessPod.metadata.name,
-          "--namespace",
-          topology.placement,
-          "--container=agent",
-          "--",
-          "node",
-          "-e",
-          script,
-        );
-        return true;
-      } catch {
-        return undefined;
-      }
-    },
-    240_000,
-  );
-}
-
 const secretProjectionMode = process.env.OCC_TEST_OPENSHELL_SECRET_PROJECTION ?? "0";
 assert.match(
   secretProjectionMode,
@@ -1740,13 +1725,25 @@ test(
       process.stderr.write(
         "OpenShell integration: starting authenticated real in-Sandbox model turn.\n",
       );
-      await waitForCodexHarnessEndpoint(topology);
+      assert.match(topology.harnessEndpointUrl, /^wss?:\/\//);
+      // Prove the create-time endpoint routes through the OpenShell gateway before relying on it
+      // for the authenticated WebSocket model turn. The app server may reject plain HTTP.
+      await waitFor("OpenShell create-time Harness service exposure", async () => {
+        try {
+          const response = await fetch(topology.harnessEndpointUrl.replace(/^ws/, "http"), {
+            headers: { authorization: `Bearer ${topology.appServerToken}` },
+            signal: AbortSignal.timeout(2_000),
+          });
+          return response.status < 500 ? true : undefined;
+        } catch {
+          return undefined;
+        }
+      });
       const nonce = `OCC-OPENSHELL-${randomUUID()}`;
-      const modelTurn = await requestCodexTurnFromOpenShellHarnessPod({
-        namespace: topology.placement,
-        harnessPod: topology.harnessPod.metadata.name,
+      const modelTurn = await requestCodexTurnFromOpenShellService({
+        appServerUrl: topology.harnessEndpointUrl,
+        appServerToken: topology.appServerToken,
         providerModel,
-        appServerTokenPath: `${credentialMountPath}/app-server-token`,
         prompt: `Reply with exactly ${nonce}.`,
       });
       assert.match(modelTurn.assistant, new RegExp(nonce));
