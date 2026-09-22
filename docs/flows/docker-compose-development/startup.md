@@ -171,7 +171,9 @@ rejects external or unscoped networks and volumes through
 `internal/occdev/up.go:validateResourceOwnership`. It then claims the state directory with an exclusive `0700` creation. It writes the
 rendered Compose snapshot privately before creating resources. Startup and
 cleanup both use that snapshot, so later `.env` edits cannot change the saved
-project configuration.
+project configuration. `internal/occdev/state.go:beginLifecycle` writes
+`subprocess-outcome-uncertain` before the first resource-mutating helper. The
+file survives abrupt CLI death even when the state lock is released.
 
 ### 13. Bootstrap OCC, create k3d, and prepare runtime configuration
 
@@ -214,17 +216,20 @@ response before the final key file is written exclusively and readiness is
 reported. This hands an initialized profile to the operator; it does not prove
 Agent deployment or a model turn.
 
-On failure, startup attempts resource cleanup. Explicit Kubernetes shutdown
-validates the state, snapshot, and resource claims. Cleanup stops reconcilers,
+On a settled failure, startup attempts resource cleanup. Explicit Kubernetes
+shutdown validates the state, snapshot, and resource claims, refuses an existing
+lifecycle marker, and writes its own marker before cleanup. Cleanup stops reconcilers,
 then checks the k3d inventory and engine resources. It deletes a cluster only
 when its server's runtime ownership label matches the recorded owner. A failed
 create or same-name replacement cannot authorize deletion. Cleanup continues
-after individual errors and retains state and claims until resources are gone.
+after settled errors and retains state and claims until resources are gone.
 
 `internal/occdev/command.go:command` bounds captured pipe waits and cancels owned
 Unix process groups. An escaped descendant or engine-side operation can remain
-uncertain; the lifecycle records `subprocess-outcome-uncertain` and requires the
-operator to settle surviving helpers before retrying. Complete cleanup removes
+uncertain; the lifecycle stops further cleanup and keeps its marker. A later
+invocation requires the operator to settle surviving helpers and explicitly
+remove the marker before retrying. A successful startup or a settled cleanup
+attempt clears the marker. Complete cleanup removes
 private state, its helper-owned key, and the resource claims. An external
 `--key-output` file remains operator-owned.
 

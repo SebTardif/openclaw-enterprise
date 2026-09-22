@@ -25,7 +25,8 @@ On macOS, follow the Podman prerequisite in the
 
 The development-helper suite builds the real CLI and renders real Compose
 configuration, while container and k3d mutations use inert commands. It covers
-resource claims, ownership-mismatch recovery, and bounded subprocess waits.
+resource claims, ownership-mismatch recovery, bounded subprocess waits, and
+SIGKILL during startup and cleanup while a mutating helper remains alive.
 These results do not establish live-engine or installed Kubernetes behavior.
 
 This verification does not prove an Agent model turn. Follow the exact cleanup

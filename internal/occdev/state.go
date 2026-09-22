@@ -52,12 +52,14 @@ func (s *developmentState) save() error {
 	return os.Rename(file.Name(), filepath.Join(s.directory, "state.json"))
 }
 
-func (s *developmentState) retainUncertainCommand() error {
-	err := exclusiveWrite(filepath.Join(s.directory, uncertainCommandMarker), []byte("Stop and verify any surviving container-engine, Compose, or k3d helpers before removing this file and retrying occ dev down.\n"), 0600)
-	if os.IsExist(err) {
-		return nil
-	}
-	return err
+func (s *developmentState) beginLifecycle() error {
+	// Persist this before launching helpers: process death skips Go defers and
+	// releases the state lock while a subprocess can still mutate the engine.
+	return exclusiveWrite(filepath.Join(s.directory, uncertainCommandMarker), []byte("Stop and verify any surviving container-engine, Compose, or k3d helpers before removing this file and retrying occ dev down.\n"), 0600)
+}
+
+func (s *developmentState) completeLifecycle() error {
+	return os.Remove(filepath.Join(s.directory, uncertainCommandMarker))
 }
 
 func (s *developmentState) composeCommand() []string {

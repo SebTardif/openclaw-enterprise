@@ -82,9 +82,14 @@ func Down(ctx context.Context, opts Options) error {
 			r.env["PODMAN_COMPOSE_PROVIDER"] = provider
 		}
 		r.useEndpoint(state.DockerHost)
+		if err := state.beginLifecycle(); err != nil {
+			return err
+		}
 		cleanupErr := r.cleanup(ctx, state)
 		if r.unsettled {
-			cleanupErr = errors.Join(cleanupErr, state.retainUncertainCommand(), fmt.Errorf("subprocess outcome is uncertain"))
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("subprocess outcome is uncertain"))
+		} else {
+			cleanupErr = errors.Join(cleanupErr, state.completeLifecycle())
 		}
 		if cleanupErr != nil {
 			return fmt.Errorf("cleanup incomplete; preserving %s for recovery: %w", directory, cleanupErr)
@@ -103,14 +108,20 @@ func Down(ctx context.Context, opts Options) error {
 }
 func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 	var failures []error
-	// Stop reconcilers before removing their cluster and database. Continue after failures to reclaim what we can.
+	// Continue after settled failures, but never overlap an uncertain helper.
 	if err := r.compose(ctx, s, "stop", "controller", "worker-kubernetes"); err != nil {
 		failures = append(failures, err)
+	}
+	if r.unsettled {
+		return errors.Join(failures...)
 	}
 	if s.ClusterAttempted {
 		if err := r.deleteOwnedCluster(ctx, s); err != nil {
 			failures = append(failures, err)
 		}
+	}
+	if r.unsettled {
+		return errors.Join(failures...)
 	}
 	if err := r.compose(ctx, s, "down", "--volumes"); err != nil {
 		failures = append(failures, err)

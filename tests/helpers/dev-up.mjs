@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   chmod,
   copyFile,
@@ -532,6 +533,60 @@ if (command === "docker") {
   }
 }
 
+// Pause one inert mutation while the real CLI and its filesystem remain live.
+async function pauseLifecycleCommand(fixture, command, operation, afterCommand = false) {
+  const executable = join(fixture.directory, "bin", command);
+  const original = executable + "-unpaused";
+  const ready = join(fixture.directory, "mutation-ready");
+  const gate = join(fixture.directory, "mutation-release");
+  const done = join(fixture.directory, "mutation-done");
+  await rename(executable, original);
+  await writeExecutable(
+    executable,
+    `#!${nodeExecutable}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const operation = ${JSON.stringify(operation)};
+const matches = args[0] === operation[0] && args.includes(operation[1]);
+function run() {
+  return spawnSync(${JSON.stringify(original)}, args, { stdio: "inherit", env: process.env }).status ?? 1;
+}
+if (!matches || fs.existsSync(${JSON.stringify(ready)})) process.exit(run());
+const status = ${JSON.stringify(afterCommand)} ? run() : null;
+fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(gate)})) return;
+  clearInterval(timer);
+  const result = status ?? run();
+  fs.writeFileSync(${JSON.stringify(done)}, String(result));
+  process.exit(result);
+}, 10);
+`,
+  );
+  async function waitForFile(path) {
+    const deadline = Date.now() + 20_000;
+    while (true) {
+      try {
+        return await readFile(path, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      }
+      assert.ok(Date.now() < deadline, `timed out waiting for ${path}`);
+      await delay(20);
+    }
+  }
+  return {
+    waitUntilPaused: async () => Number(await waitForFile(ready)),
+    release: async () => {
+      await writeFile(gate, "settle");
+      assert.equal(await waitForFile(done), "0");
+    },
+  };
+}
+
 async function writeOverride(fixture, name, lines) {
   const path = join(fixture.directory, name);
   await writeFile(path, [...lines, ""].join("\n"));
@@ -626,6 +681,7 @@ export {
   matchingInstallationId,
   mismatchedInstallationId,
   perImageOverride,
+  pauseLifecycleCommand,
   prepareLifecycleCommands,
   publicControllerOverride,
   readJsonLines,

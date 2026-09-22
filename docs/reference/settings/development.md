@@ -51,6 +51,12 @@ trusted only for the development stack's internal controller and worker path;
 workload containers do not receive the container-engine socket, controller
 credentials, the configuration volume, or sibling Namespace network access.
 
+The Kubernetes development lifecycle records an in-progress marker in
+`OCC_DEVELOPMENT_STATE_DIRECTORY` before changing engine resources. If the CLI
+dies abruptly or cannot establish subprocess settlement, subsequent cleanup
+preserves state and resource claims until the operator acknowledges settlement.
+Follow the [Kubernetes recovery procedure](../../guides/deploy/local-kubernetes-development.md#stop-and-clean-up).
+
 ## Optional controller environment
 
 | Variable                   | Default or behavior when omitted                                                                     | Validation and scope                                                                                                          |

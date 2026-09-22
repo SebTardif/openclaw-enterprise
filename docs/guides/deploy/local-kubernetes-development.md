@@ -279,13 +279,18 @@ profile volumes, then removes the state directory. This permanently deletes the
 development Installation, service keys, Namespaces, Agents, audit history, and
 queued work stored by this profile. Incomplete cleanup preserves the state for
 recovery; restore access to the recorded engine and rerun the same command.
-A failed startup attempts the same cleanup and preserves state if it fails.
+A failed startup attempts the same cleanup when its helpers have settled and
+preserves state if cleanup fails.
 An ownership mismatch leaves the other cluster untouched. Let its owner dispose
 of it, then retry. Older development state without resource claims is rejected;
 inspect and dispose its recorded resources manually before starting a new profile.
-If cleanup reports `subprocess-outcome-uncertain`, stop and verify any surviving
-Compose, engine, or k3d helpers first. Remove that named file from the recorded
-state directory only after those operations have settled, then retry cleanup.
+Startup and cleanup write `subprocess-outcome-uncertain` before changing engine
+resources. If either command dies abruptly, or cleanup reports that marker,
+stop and verify any surviving Compose, engine, or k3d helpers and their engine-side
+operations first. An absent cluster is insufficient while a previous helper can
+still finish. Remove that named file from the recorded state directory only
+after those operations have settled, then retry cleanup. Keep the state and
+resource claims until cleanup completes.
 An interrupted initial setup can leave a claim in
 `~/.openclaw-development-claims` before state is complete. The claim records its
 endpoint, project, cluster, and state path. Remove only that stack's claim files,

@@ -145,14 +145,16 @@ func Up(ctx context.Context, opts Options) (result error) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		var cleanupErr error
-		if started {
+		if started && !r.unsettled {
 			cleanupErr = r.cleanup(cleanupCtx, state)
 		}
 		if clusterCreationFailed {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cluster creation failed; verify and retry recorded cleanup"))
 		}
 		if r.unsettled && started {
-			cleanupErr = errors.Join(cleanupErr, state.retainUncertainCommand(), fmt.Errorf("subprocess outcome is uncertain; verify surviving helpers before retrying cleanup"))
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("subprocess outcome is uncertain; verify surviving helpers before retrying cleanup"))
+		} else if started {
+			cleanupErr = errors.Join(cleanupErr, state.completeLifecycle())
 		}
 		if cleanupErr == nil {
 			cleanupErr = os.RemoveAll(directory)
@@ -172,6 +174,9 @@ func Up(ctx context.Context, opts Options) (result error) {
 		return err
 	}
 	fmt.Fprintln(r.opts.Out, "Starting the Compose database, migration, and bootstrap services...")
+	if err := state.beginLifecycle(); err != nil {
+		return err
+	}
 	started = true
 	if err := r.compose(ctx, state, "up", "--build", "-d", "postgres", "migrate", "bootstrap"); err != nil {
 		return err
@@ -209,6 +214,9 @@ func Up(ctx context.Context, opts Options) (result error) {
 	}
 	installation, err := r.copyAndVerifyKey(ctx, state, apiURL)
 	if err != nil {
+		return err
+	}
+	if err := state.completeLifecycle(); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.opts.Out, "OpenClaw Enterprise development stack is ready.\nContainer engine: %s\nCompute Driver: Kubernetes\nAPI URL: %s\nInstallation ID: %s\nService key file: %s\nKubeconfig: %s\nKubernetes context: k3d-%s\n\nCleanup:\n  env OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes OCC_DEVELOPMENT_STATE_DIRECTORY=%s %s dev down\n", r.engine, apiURL, installation, state.KeyPath, filepath.Join(directory, "kubeconfig"), state.Cluster, shellQuote(directory), shellQuote(filepath.Join(opts.Repository, "bin", "occ")))

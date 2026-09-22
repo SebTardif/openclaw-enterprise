@@ -1,7 +1,7 @@
 ---
 created: 2026-08-24
 updated: 2026-09-22
-last_updated_session: authoring-run/6e5d1288-491b-499b-8597-47a5787fba27
+last_updated_session: authoring-run/fb7eab38-3647-49c9-af80-7d3a90173b7f
 ---
 
 # Compose development flow
@@ -49,16 +49,22 @@ graph TD
   Profile -->|Docker| B["Preflight host tools, resolve Podman machine connection,<br/>and inspect Compose config"]
   Profile -->|Kubernetes| KPre["Pin local engine endpoint, claim project and cluster,<br/>and reject existing resources"]
   KPre --> KConfig["Validate Compose and claim<br/>private state with snapshot"]
-  KConfig --> KStart["Bootstrap OCC and create<br/>the owned k3d cluster"]
+  KConfig --> KMark["Persist lifecycle marker"]
+  KMark --> KStart["Bootstrap OCC and create<br/>the owned k3d cluster"]
   KStart --> KReady["Import runtime and start<br/>API and Kubernetes worker"]
   KReady --> KProof["Prove authenticated<br/>Installation access"]
-  KProof --> KDown["./bin/occ dev down reuses<br/>recorded endpoint and project"]
-  KStart -->|failure| KRollback["Roll back owned resources<br/>retain state if cleanup fails"]
-  KReady -->|failure| KRollback
-  KProof -->|failure| KRollback
-  KDown --> KRemove["Verify claims and cluster label;<br/>stop reconcilers and delete owned resources"]
+  KProof --> KSettled["Clear startup marker"]
+  KSettled --> KDown["./bin/occ dev down reuses<br/>recorded endpoint and project"]
+  KStart -->|settled failure| KRollback["Roll back owned resources<br/>retain state if cleanup fails"]
+  KReady -->|settled failure| KRollback
+  KProof -->|settled failure| KRollback
+  KDown --> KCheck{"Previous lifecycle marker?"}
+  KCheck -->|yes| KRetain["Keep state and claims;<br/>require settlement acknowledgement"]
+  KCheck -->|no| KRemove["Persist marker; verify cluster label;<br/>stop reconcilers and delete owned resources"]
   KRemove -->|success| KDone["Remove private state and release claims"]
-  KRemove -->|failure or uncertain subprocess| KRetain["Keep state and claims for recovery"]
+  KRemove -->|settled failure| KRecover["Clear marker; keep state<br/>and claims for retry"]
+  KRemove -->|uncertain subprocess| KRetain
+  KStart -->|abrupt exit| KRetain
   B --> C["Select quickstart runtime image or validate custom images"]
   C --> D["Selected Compose starts PostgreSQL, migrate, bootstrap, API, and worker"]
   D --> E["Copy bootstrap service-key response to private local file"]
@@ -160,6 +166,8 @@ import, authenticated readiness, and cleanup through the recorded engine.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-22 23:14: Persist lifecycle markers before Kubernetes resource mutations and require settlement after abrupt CLI death. (authoring-run/fb7eab38-3647-49c9-af80-7d3a90173b7f - a44c467b2807e1c9b7b6e1aad26cc38b9ab26108)
 
 - 2026-09-22 22:42: Bind Kubernetes cleanup to durable resource claims and native cluster ownership, preserve uncertain subprocess recovery, and align Docker capability selection. (authoring-run/6e5d1288-491b-499b-8597-47a5787fba27 - f0147ea18a4d46f69580ffc83b8b296ca835775b)
 

@@ -16,6 +16,7 @@ import {
   defaultRuntimeImage,
   matchingInstallationId,
   mismatchedInstallationId,
+  pauseLifecycleCommand,
   perImageOverride,
   prepareLifecycleCommands,
   publicControllerOverride,
@@ -954,6 +955,101 @@ test("different Kubernetes state directories cannot share a claimed Compose proj
   await assert.rejects(stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY), { code: "ENOENT" });
 });
 
+for (const { name, lifecycle, command, operation, afterCommand } of [
+  {
+    name: "first startup mutation",
+    lifecycle: "up",
+    command: "docker",
+    operation: ["compose", "up"],
+  },
+  { name: "cluster creation", lifecycle: "up", command: "k3d", operation: ["cluster", "create"] },
+  {
+    name: "first cleanup mutation",
+    lifecycle: "down",
+    command: "docker",
+    operation: ["compose", "stop"],
+  },
+  {
+    name: "cluster deletion",
+    lifecycle: "down",
+    command: "k3d",
+    operation: ["cluster", "delete"],
+    afterCommand: true,
+  },
+]) {
+  test(`abrupt CLI death during ${name} preserves recovery until settlement`, async (t) => {
+    const fixture = await kubernetesFixture(t);
+    if (lifecycle === "down") {
+      const started = fixture.start();
+      assert.equal(started.status, 0, started.stderr);
+    }
+    const paused = await pauseLifecycleCommand(fixture, command, operation, afterCommand);
+    const args = lifecycle === "up" ? ["--", "--env-file", fixture.emptyEnv] : [];
+    const child = spawn(fixture.cli, ["dev", lifecycle, ...args], {
+      cwd: fixture.fixtureRepository,
+      env: fixture.env,
+      stdio: "ignore",
+    });
+    const exited = once(child, "exit");
+    const directory = fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY;
+    const marker = join(directory, "subprocess-outcome-uncertain");
+    let helperPID;
+    let released = false;
+    try {
+      helperPID = await paused.waitUntilPaused();
+      const saved = await readFile(join(directory, "state.json"), "utf8");
+      child.kill("SIGKILL");
+      await exited;
+      process.kill(helperPID, 0);
+
+      // The old CLI cannot run defers after SIGKILL. A new process must neither
+      // replay cleanup nor release names while its previous helper can finish.
+      const before = await readJsonLines(fixture.env.SAFETY_LOG);
+      const refused = runDevDown(fixture.env);
+      assert.notEqual(refused.status, 0, "cleanup accepted an unsettled lifecycle");
+      assert.match(refused.stderr, /stop and verify surviving helpers/);
+      assert.equal(await readFile(join(directory, "state.json"), "utf8"), saved);
+      assert.ok((await stat(marker)).isFile());
+      assert.deepEqual(await readJsonLines(fixture.env.SAFETY_LOG), before);
+      process.kill(helperPID, 0);
+      const competing = runDevUp(["--", "--env-file", fixture.emptyEnv], {
+        ...fixture.env,
+        OCC_DEVELOPMENT_STATE_DIRECTORY: join(fixture.directory, "competing-state"),
+      });
+      assert.notEqual(competing.status, 0);
+      assert.match(competing.stderr, /resource is already claimed/);
+
+      // Even an already-absent cluster is insufficient while the delete helper
+      // remains alive. Only explicit settlement acknowledgement unlocks retry.
+      if (afterCommand) {
+        const resources = JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8"));
+        assert.equal(resources.clusters.includes("occ-dev-owned"), false);
+      }
+      await paused.release();
+      released = true;
+      assert.notEqual(runDevDown(fixture.env).status, 0);
+      await rm(marker);
+      const disposed = runDevDown(fixture.env);
+      assert.equal(disposed.status, 0, disposed.stderr);
+      await assert.rejects(stat(directory), { code: "ENOENT" });
+      assert.deepEqual(JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")), {
+        clusters: ["occ-dev-unrelated"],
+        compose: false,
+      });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await exited;
+      if (helperPID && !released) {
+        await paused.release();
+      }
+      await rm(marker, { force: true });
+      runDevDown(fixture.env);
+    }
+  });
+}
+
 test("captured helper pipes have a bounded wait and preserve uncertain recovery", async (t) => {
   const fixture = await kubernetesFixture(t, "migration-pipe-held");
   const startedAt = Date.now();
@@ -972,6 +1068,13 @@ test("captured helper pipes have a bounded wait and preserve uncertain recovery"
   assert.notEqual(result.status, 0);
   assert.ok(elapsed < 5_000, `captured pipe held startup for ${elapsed}ms`);
   assert.match(result.stderr, /subprocess outcome is uncertain/);
+  assert.equal(
+    (await readJsonLines(fixture.env.SAFETY_LOG)).some(
+      (entry) => entry.args.includes("stop") || entry.args.includes("down"),
+    ),
+    false,
+    "rollback must wait for the escaped helper to settle",
+  );
   const directory = fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY;
   const marker = join(directory, "subprocess-outcome-uncertain");
   assert.ok((await stat(marker)).isFile());
