@@ -151,10 +151,12 @@ func Up(ctx context.Context, opts Options) (result error) {
 		if clusterCreationFailed {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cluster creation failed; verify and retry recorded cleanup"))
 		}
-		if r.unsettled && started {
-			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("subprocess outcome is uncertain; verify surviving helpers before retrying cleanup"))
-		} else if started {
-			cleanupErr = errors.Join(cleanupErr, state.completeLifecycle())
+		if started {
+			if r.unsettled {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("subprocess outcome is uncertain; verify surviving helpers before retrying cleanup"))
+			} else {
+				cleanupErr = errors.Join(cleanupErr, state.completeLifecycle())
+			}
 		}
 		if cleanupErr == nil {
 			cleanupErr = os.RemoveAll(directory)

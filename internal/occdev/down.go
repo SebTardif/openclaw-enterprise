@@ -108,7 +108,8 @@ func Down(ctx context.Context, opts Options) error {
 }
 func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 	var failures []error
-	// Continue after settled failures, but never overlap an uncertain helper.
+	// Stop reconcilers before removing their cluster and database. Continue after
+	// settled failures, but never overlap an uncertain helper.
 	if err := r.compose(ctx, s, "stop", "controller", "worker-kubernetes"); err != nil {
 		failures = append(failures, err)
 	}
