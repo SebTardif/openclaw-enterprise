@@ -20,6 +20,10 @@ import { AuditEventFactory, type AuditSink } from "@openclaw-enterprise/audit";
 import { AuthAccountRoleNotFoundError, type AuthPrincipalSeed } from "@openclaw-enterprise/iam";
 import {
   harnessAuthBindingFromSnapshot,
+  WORKSPACE_DEFAULTS_ID,
+  normalizeInitialWorkspaceFiles,
+  type InitialWorkspaceFiles,
+  PresetValidationError,
   ErrorResponse,
   AgentRuntimeCredentialResponse,
   JsonValue,
@@ -44,7 +48,9 @@ import {
   type OccApiRoute,
   type OpenClawConfigurationDocument,
   type PermissionAction,
+  type PresetTemplate,
   type ProviderSummary,
+  type RepositoryBindingRequest,
   type ResourceKind,
   type ResourceRef,
   type Role,
@@ -223,6 +229,8 @@ class RequestFailure extends Error {
 }
 
 const DEFAULT_BODY_LIMIT = 64 * 1024;
+// Four 16 KiB documents can expand sixfold in JSON, plus the ordinary create fields.
+const AGENT_CREATE_BODY_LIMIT = 448 * 1024;
 const WORKSPACE_FILE_BODY_LIMIT = 48 * 1024;
 const WORKSPACE_FILE_CONTENT_LIMIT = 16 * 1024;
 const NATIVE_ADMIN_PROXY_ADMISSION_TIMEOUT_MS = 5_000;
@@ -231,6 +239,7 @@ const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 const RESOURCE_ID = {
   namespaceId: /^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  presetId: /^pre_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   configurationId: /^cfg_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   serviceAccountId: /^sa_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   secretId: /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -369,11 +378,15 @@ function operationTarget(
     typeof params.configurationId === "string" ? params.configurationId : undefined;
   const serviceAccountId =
     typeof params.serviceAccountId === "string" ? params.serviceAccountId : undefined;
+  const presetId = typeof params.presetId === "string" ? params.presetId : undefined;
   const secretId = typeof params.secretId === "string" ? params.secretId : undefined;
   const agentId = typeof params.agentId === "string" ? params.agentId : undefined;
   const revisionId = typeof params.revisionId === "string" ? params.revisionId : undefined;
   if (operation.operationId === "createNamespace") {
     return { kind: "namespace", id: installationId };
+  }
+  if (operation.resourceKind === "preset" && namespaceId) {
+    return { kind: "preset", id: presetId ?? namespaceId, namespaceId };
   }
   if (operation.operationId === "createConfiguration" && namespaceId) {
     return { kind: "configuration", id: namespaceId, namespaceId };
@@ -533,6 +546,7 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
   switch (operation.authorizationTarget) {
     case "namespace_collection":
       return [{ ...permission, scope: "namespace" }];
+    case "preset_candidates":
     case "namespace_candidates":
       return [{ ...permission, scope: "each_returned" }];
     case "namespace_and_agent_candidates":
@@ -563,6 +577,7 @@ function permissionDescription(
     installation: "Installation",
     namespace: "Namespace",
     configuration: "Configuration",
+    preset: "Preset",
     service_account: "ServiceAccount",
     secret: "Secret",
     agent: "Agent",
@@ -649,6 +664,9 @@ function clientAgent(agent: Readonly<Agent>): Record<string, unknown> {
     providerId: agent.providerId,
     executionMode: agent.executionMode,
     ...(agent.plugins === undefined ? {} : { plugins: agent.plugins }),
+    ...(agent.repositoryBindings === undefined
+      ? {}
+      : { repositoryBindings: agent.repositoryBindings }),
     harnessAuth: agent.harnessAuth,
     ...(agent.activeRevisionId === undefined ? {} : { activeRevisionId: agent.activeRevisionId }),
     desiredRuntimeState: agent.desiredRuntimeState,
@@ -682,6 +700,18 @@ function clientRevision(revision: Readonly<AgentRevision>): Record<string, unkno
     ...(revision.secretDriverId === undefined ? {} : { secretDriverId: revision.secretDriverId }),
     ...(revision.secretBindings === undefined ? {} : { secretBindings: revision.secretBindings }),
     ...(revision.plugins === undefined ? {} : { plugins: revision.plugins }),
+    ...(revision.repositoryCredentials === undefined
+      ? {}
+      : {
+          repositoryCredentials: {
+            driver: revision.repositoryCredentials.driver,
+            deadlineWallMs: revision.repositoryCredentials.deadlineWallMs,
+            bindings: revision.repositoryCredentials.bindings.map(({ repositoryRef, profile }) => ({
+              repositoryRef,
+              profile,
+            })),
+          },
+        }),
     harnessAuth: harnessAuthBindingFromSnapshot(revision.harnessAuth),
     createdAt: revision.createdAt,
   };
@@ -774,6 +804,9 @@ function isDependencyUnavailable(error: unknown): boolean {
 function requestFailure(error: unknown): RequestFailure {
   if (error instanceof RequestFailure) {
     return error;
+  }
+  if (error instanceof PresetValidationError) {
+    return failure(400, "INVALID_REQUEST", "The supplied Preset template is invalid.");
   }
   if (error instanceof ConfigurationValidationError) {
     return failure(400, "INVALID_REQUEST", "The supplied configuration is invalid.");
@@ -1679,7 +1712,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       return;
     }
     const contentLength = request.headers["content-length"];
-    if (typeof contentLength === "string" && Number(contentLength) > bodyLimit) {
+    if (
+      typeof contentLength === "string" &&
+      Number(contentLength) > (request.routeOptions.bodyLimit ?? bodyLimit)
+    ) {
       throw failure(413, "PAYLOAD_TOO_LARGE", "The request body exceeds the permitted size.");
     }
   });
@@ -2125,6 +2161,84 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       return;
     }
 
+    if (operation.operationId === "createPreset") {
+      const preset = await controller.transact(async (unit) => {
+        const created = await controller!.createPreset(context.actorId, {
+          namespaceId,
+          name: body?.name as string,
+          template: body?.template as PresetTemplate,
+        });
+        await unit.audit.append(
+          event(
+            operation,
+            request,
+            { kind: "preset", id: created.id, namespaceId },
+            "mutation",
+            context,
+          ),
+        );
+        return created;
+      });
+      reply.status(201).send({ data: preset, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (operation.operationId === "listPresets") {
+      const presets = await controller.listPresets(context.actorId, namespaceId);
+      reply.send({ data: presets, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (operation.operationId === "getPreset") {
+      const preset = await controller.getPreset(
+        context.actorId,
+        namespaceId,
+        params.presetId as string,
+      );
+      reply.send({ data: preset, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (operation.operationId === "updatePreset") {
+      const preset = await controller.transact(async (unit) => {
+        const updated = await controller!.updatePreset(context.actorId, {
+          namespaceId,
+          presetId: params.presetId as string,
+          ...(body?.name === undefined ? {} : { name: body.name as string }),
+          ...(body?.template === undefined ? {} : { template: body.template as PresetTemplate }),
+        });
+        await unit.audit.append(
+          event(
+            operation,
+            request,
+            { kind: "preset", id: updated.id, namespaceId },
+            "mutation",
+            context,
+          ),
+        );
+        return updated;
+      });
+      reply.send({ data: preset, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (operation.operationId === "deletePreset") {
+      await controller.transact(async (unit) => {
+        await controller!.deletePreset(context.actorId, namespaceId, params.presetId as string);
+        await unit.audit.append(
+          event(
+            operation,
+            request,
+            { kind: "preset", id: params.presetId as string, namespaceId },
+            "mutation",
+            context,
+          ),
+        );
+      });
+      reply.status(204).send();
+      return;
+    }
+
     if (operation.operationId === "createSecret") {
       const secret = await controller.transact(async (unit) => {
         const created = await controller!.createSecret(context.actorId, {
@@ -2427,9 +2541,34 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     }
 
     if (operation.operationId === "createAgent") {
+      try {
+        normalizeInitialWorkspaceFiles(body?.initialWorkspaceFiles);
+      } catch {
+        throw failure(
+          400,
+          "INVALID_REQUEST",
+          "Initial workspace files must use the four allowed names and valid Unicode without NUL, within 16 KiB per file.",
+        );
+      }
+      if (
+        body?.workspaceDefaultsId !== undefined &&
+        body.workspaceDefaultsId !== WORKSPACE_DEFAULTS_ID
+      ) {
+        throw failure(
+          409,
+          "RESOURCE_CONFLICT",
+          "Workspace defaults changed. Reload the create form before submitting.",
+        );
+      }
       const agent = await controller.transact(async (unit) => {
         const created = await controller!.createAgent(context.actorId, {
           namespaceId,
+          ...(body?.initialWorkspaceFiles === undefined
+            ? {}
+            : { initialWorkspaceFiles: body.initialWorkspaceFiles as InitialWorkspaceFiles }),
+          ...(body?.workspaceDefaultsId === undefined
+            ? {}
+            : { workspaceDefaultsId: body.workspaceDefaultsId as string }),
           name: body?.name as string,
           configurationId: body?.configurationId as string,
           ...(body?.providerId === undefined
@@ -2442,6 +2581,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             ? {}
             : { harnessAuth: body.harnessAuth as HarnessAuthBinding | null }),
           ...(body?.plugins === undefined ? {} : { plugins: body.plugins as never }),
+          ...(body?.repositoryBindings === undefined
+            ? {}
+            : {
+                repositoryBindings: body.repositoryBindings as readonly RepositoryBindingRequest[],
+              }),
         });
         await unit.audit.append(
           event(
@@ -2492,6 +2636,11 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
             ? {}
             : { harnessAuth: body.harnessAuth as HarnessAuthBinding | null }),
           ...(body?.plugins === undefined ? {} : { plugins: body.plugins as never }),
+          ...(body?.repositoryBindings === undefined
+            ? {}
+            : {
+                repositoryBindings: body.repositoryBindings as readonly RepositoryBindingRequest[],
+              }),
         });
         await unit.audit.append(
           event(
@@ -2850,7 +2999,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     readonly target: NativeAdminTarget;
   };
   type NativeAdminAvailability =
-    | { readonly status: "disabled" | "unavailable" }
+    | { readonly status: "disabled" | "stopped" | "unavailable" }
     | ({ readonly status: "stopped" | "unsupported" } & NativeAdminTargetStatus)
     | ({ readonly status: "available"; readonly gatewayBase: string } & NativeAdminTargetStatus);
 
@@ -2877,6 +3026,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         input.agentId,
       );
     } catch (error) {
+      // This administering lookup conflicts only when the authorized Agent is stopped without an active revision.
+      if (error instanceof ResourceConflictError) {
+        return { status: "stopped" };
+      }
       if (isDependencyUnavailable(error)) {
         return { status: "unavailable" };
       }
@@ -3447,7 +3600,9 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         url: operation.path,
         ...(operation.operationId === "putAgentWorkspaceFile"
           ? { bodyLimit: WORKSPACE_FILE_BODY_LIMIT }
-          : {}),
+          : operation.operationId === "createAgent"
+            ? { bodyLimit: options.maxBodyBytes ?? AGENT_CREATE_BODY_LIMIT }
+            : {}),
         schema,
         onRequest: async (request) => admit(request, operation),
         preValidation: async (request) => {

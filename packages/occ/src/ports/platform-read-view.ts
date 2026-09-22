@@ -18,12 +18,14 @@ export function createPlatformReadView(
       "listNamespaces",
     ]),
     configurations: bindRepository(repositories.configurations, lifetime, ["findConfiguration"]),
+    presets: bindRepository(repositories.presets, lifetime, ["findPreset", "listPresets"]),
     secrets: bindRepository(repositories.secrets, lifetime, ["findSecret"]),
     serviceAccounts: bindRepository(repositories.serviceAccounts, lifetime, [
       "findServiceAccount",
       "listServiceAccounts",
       "findServiceAccountProviderBinding",
     ]),
+    workspaceSetups: bindRepository(repositories.workspaceSetups, lifetime, ["find"]),
     agents: bindRepository(repositories.agents, lifetime, ["findAgent", "listAgents"]),
     revisions: bindRepository(repositories.revisions, lifetime, ["findRevision", "listRevisions"]),
     iamPolicy: bindRepository(repositories.iamPolicy, lifetime, [
@@ -31,6 +33,11 @@ export function createPlatformReadView(
       "getRole",
       "listAccessBindings",
       "getAccessBinding",
+    ]),
+    repositorySessions: bindRepository(repositories.repositorySessions, lifetime, [
+      "findAttempt",
+      "listRevisionAttempts",
+      "listNamespaceAttempts",
     ]),
   });
 }
