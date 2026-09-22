@@ -1,7 +1,7 @@
 ---
 created: "2026-09-21"
 updated: "2026-09-21"
-last_updated_session: "authoring-run/09cfddeb-9530-40a4-9247-b093d2270929"
+last_updated_session: "authoring-run/b80fed05-5371-4bb4-90ec-601221ec9daf"
 ---
 
 # OpenShell Sandbox provisioning flow
@@ -109,6 +109,10 @@ NetworkPolicies after revision resources are gone.
 
 ## Debugging and Verification
 
+- `./scripts/openshell test` prepares or reuses the owned pre.5 environment and
+  runs the verification-only compatibility path. `./scripts/openshell info`
+  reports its non-secret cluster state, and `./scripts/openshell down` removes
+  only resources recorded by that helper.
 - `node --test tests/integration/ci-openshell.test.mjs` checks bootstrap safety
   and immutable Helm image value rendering without selecting a real cluster.
 - `node --test tests/integration/sandbox-driver-startup.test.mjs` checks Driver
@@ -117,11 +121,11 @@ NetworkPolicies after revision resources are gone.
   exercises the selected real gateway and cluster prerequisites. Set
   `OCC_TEST_OPENSHELL_SECRET_PROJECTION=0` for stock `v0.1.0-pre.5`; the expected
   result is Secret-projection rejection before activation, which does not prove
-  a model turn. Mode `1` selects a CI-only compatibility path: an operator Job
-  stages the exact Secret values, plugin-runtime files, and projected workload
-  token in revision-specific PVC subpaths. The provider-owned Sandbox then runs
-  the real model and tool checks over Pod loopback. This mode proves pre.5
-  containment and lifecycle behavior, not native workload projection or
+  a model turn. Mode `1` selects a verification-only compatibility path: an
+  operator Job stages the exact Secret values, plugin-runtime files, and
+  projected workload token in revision-specific PVC subpaths. The provider-owned
+  Sandbox then runs the real model and tool checks over Pod loopback. This mode
+  proves pre.5 containment and lifecycle behavior, not native workload projection or
   production gateway-to-agent WebSocket routing.
 - `OpenShell v0.1.0-pre.5 cannot receive secretKeyRef environment ...` identifies
   the current fail-closed boundary.
@@ -139,6 +143,7 @@ NetworkPolicies after revision resources are gone.
 
 ## Changelog
 
+- 2026-09-21 15:56: Added the reusable local OpenShell verification launcher and clarified that the compatibility bridge is verification-only rather than CI-only. (authoring-run/b80fed05-5371-4bb4-90ec-601221ec9daf - 18c5be736414ec2a040b7fa17534299092e19166)
 - 2026-09-21 15:05: Documented binary-scoped pre.5 network policy and the CI-only bootstrap for Secret, plugin-runtime, and workload-identity files. (authoring-run/09cfddeb-9530-40a4-9247-b093d2270929 - 946f5b52587be2720e2a8d3aaf74712f89088d5f)
 - 2026-09-21 12:41: Documented own-key network enum validation, the rejected pre.5 `passthrough` alias, and explicit CI projection-mode selection. (authoring-run/180c9046-1da2-444d-ab1d-7d5cf04532e2 - b3a4c00462163edb81cb0588b59a6be8722ffe40)
 - 2026-09-21 08:56: Documented the `v0.1.0-pre.5` workspace-scoped provisioning, fail-closed projection boundary, and cleanup flow. (authoring-run/a16c607b-1ddd-4146-a4c7-05b900b65be7 - aa6dd7415d65ffba5fa40098b2142eb2a7d73df4)

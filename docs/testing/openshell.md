@@ -4,6 +4,59 @@ Verify provider-owned Codex execution and OpenShell filesystem and network
 enforcement. Prepare [credentials](README.md#requirements-and-credentials)
 and use the suite-specific infrastructure below.
 
+## Start a reusable development environment
+
+From the repository root, use the developer launcher to prepare a private,
+reusable OpenShell `v0.1.0-pre.5` environment:
+
+```sh
+./scripts/openshell up
+```
+
+The launcher detects Docker or Podman, builds the current runtime image, creates
+an owned loopback-only k3d cluster and migrated PostgreSQL database, downloads
+and verifies the pinned OpenShell prerequisites, imports immutable images, and
+leaves the environment running. You need Node.js 24 or newer with Corepack,
+k3d, Helm, OpenSSL, and a running Docker daemon or Podman API socket. The helper
+downloads its matched kubectl binary without changing your default kubeconfig
+or context.
+
+Export `OPENAI_API_KEY`, enter it at the interactive prompt, or point
+`OCC_OPENSHELL_ENV_FILE` to an absolute mode-`0600` dotenv file that contains
+the key. The helper passes the credential only to its child processes; it does
+not write the key into its prepared state. `OCC_TEST_OPENAI_MODEL` defaults to
+`gpt-6-astra`.
+
+Run the real model and containment proof against the prepared environment:
+
+```sh
+./scripts/openshell test
+```
+
+The command uses the verification-only compatibility bridge described below.
+It leaves the cluster, database service, and imported images available for
+repeat runs and debugging. Inspect non-secret state with
+`./scripts/openshell info`, or print only the kubeconfig path or context with
+`./scripts/openshell get kubeconfig` and `./scripts/openshell get context`.
+
+Remove the owned environment when finished:
+
+```sh
+./scripts/openshell down
+```
+
+Cleanup permanently deletes this helper's cluster and test database. A partial
+setup remains recorded for safe cleanup; run `down` before retrying. Set the
+absolute `OCC_OPENSHELL_STATE_DIR` before every command to keep multiple
+checkouts separate. Set `OCC_OPENSHELL_CONTAINER_ENGINE=docker` or `podman` when
+automatic engine selection is ambiguous. If `k3d` on `PATH` is an inactive
+version-manager shim, set `OCC_OPENSHELL_K3D_BIN` to an absolute working
+executable. Use `OCC_OPENSHELL_COREPACK_BIN` for the same problem with corepack.
+
+This launcher does not start a supported production Installation or an
+interactive OCC Agent. Stock pre.5 still lacks the workload projections needed
+by the regular Agent path.
+
 ## OpenShell Sandbox
 
 This suite needs the owned OpenShell CI recipe: a disposable K3s v1.36.4 k3d
@@ -45,13 +98,13 @@ passes the production requirements to pre.5 unchanged and expects the Driver to
 reject unsupported Secret projection before the candidate can activate. This
 does not prove provider authentication or model execution.
 
-Set the selector to `1` for the CI compatibility proof. The strict CI runner
-forwards the selector and accounts for one stable test identity in either mode.
-The positive scenario uses a test-only operator Job to stage the exact Secret
-values, plugin-runtime files, and projected workload token in revision-specific
-PVC subpaths before OpenShell starts the provider-owned Harness. It requires a
-real model turn over the app-server's Pod-loopback WebSocket, exact workload
-identity claims, approved mounts and privileges, denied secret exposure,
+Set the selector to `1` for the verification-only compatibility proof. The
+strict CI runner forwards the selector and accounts for one stable test identity
+in either mode. The positive scenario uses a test-only operator Job to stage the
+exact Secret values, plugin-runtime files, and projected workload token in
+revision-specific PVC subpaths before OpenShell starts the provider-owned
+Harness. It requires a real model turn over the app-server's Pod-loopback
+WebSocket, exact workload identity claims, approved mounts and privileges, denied secret exposure,
 allowed and denied tool egress, replacement, and cleanup. It separately checks
 the OCC Agent Service selector, but it does not prove that pre.5 can route the
 app-server WebSocket through that Service. Missing prerequisites fail rather
@@ -89,7 +142,7 @@ scoped environment file for this suite.
 | Variable                               | Requirement or default                                                                                                                              |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `OCC_TEST_OPENSHELL_K3D_REAL`          | Set to `1` to explicitly opt into the real OpenShell integration.                                                                                   |
-| `OCC_TEST_OPENSHELL_SECRET_PROJECTION` | `0` selects stock fail-closed proof; `1` selects the CI-only pre.5 compatibility proof with a real in-Sandbox model turn.                           |
+| `OCC_TEST_OPENSHELL_SECRET_PROJECTION` | `0` selects stock fail-closed proof; `1` selects the verification-only pre.5 compatibility proof with a real in-Sandbox model turn.                 |
 | `OPENAI_API_KEY`                       | Existing authorized provider credential for the required real model turn.                                                                           |
 | `OCC_TEST_OPENAI_MODEL`                | Authorized provider model; defaults to `gpt-6-astra`.                                                                                               |
 | `OCC_TEST_KUBERNETES_KUBECONFIG`       | Absolute kubeconfig path for the dedicated disposable k3d cluster.                                                                                  |

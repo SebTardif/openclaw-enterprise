@@ -1592,16 +1592,31 @@ async function assertDuplicateReconciliationDoesNotDuplicateOpenShell(topology) 
   const retiredSandboxName = `os-${hash(topology.revision.id, 16)}`;
   // The revision becomes active before the worker finishes retiring its predecessor. Observe the
   // provider resources themselves so the assertion stays at the supported lifecycle boundary.
-  const activeService = await resource(
-    "service",
-    openShellAgentName(topology.agent.id),
-    topology.placement,
-  );
-  assert.deepEqual(activeService.spec.selector, {
+  const expectedActiveSelector = {
     "openclaw.dev/agent": topology.agent.id,
     "openclaw.dev/revision": redeployed.data.id,
     "openclaw.dev/workload-role": "agent",
-  });
+  };
+  // The API can publish the new active revision before Kubernetes reconciliation updates the
+  // stable Agent Service. Wait at the routing boundary instead of sampling the old selector.
+  const activeService = await waitFor(
+    `OpenShell Agent Service routing to replacement revision ${redeployed.data.id}`,
+    async () => {
+      const observed = await resource(
+        "service",
+        openShellAgentName(topology.agent.id),
+        topology.placement,
+      );
+      const selector = observed.spec.selector;
+      return selector?.["openclaw.dev/agent"] === expectedActiveSelector["openclaw.dev/agent"] &&
+        selector?.["openclaw.dev/revision"] === expectedActiveSelector["openclaw.dev/revision"] &&
+        selector?.["openclaw.dev/workload-role"] ===
+          expectedActiveSelector["openclaw.dev/workload-role"]
+        ? observed
+        : undefined;
+    },
+  );
+  assert.deepEqual(activeService.spec.selector, expectedActiveSelector);
   const sandboxes = await waitFor(
     `retired OpenShell Sandbox ${retiredSandboxName} deletion`,
     async () => {
