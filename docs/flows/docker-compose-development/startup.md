@@ -224,9 +224,14 @@ when its server's runtime ownership label matches the recorded owner. A failed
 create or same-name replacement cannot authorize deletion. Cleanup continues
 after settled errors and retains state and claims until resources are gone.
 
-`internal/occdev/command.go:command` bounds captured pipe waits and cancels owned
-Unix process groups. An escaped descendant or engine-side operation can remain
-uncertain; the lifecycle stops further cleanup and keeps its marker. A later
+`internal/occdev/command.go:capturedOutput` observes captured-output EOF separately
+from the process exit, with a bounded wait. `recordCommandOutcome` requires a
+successful mutating command; a failed started mutation remains uncertain even
+when it exits normally. Read-only probes may exit nonzero if they exit normally
+and their output has drained. Preflight failures do not affect a later lifecycle.
+Signals, cancellation, and unsettled output trigger cancellation of the owned
+Unix process group. An escaped descendant or engine-side operation can remain
+active; the lifecycle stops further cleanup and keeps its marker. A later
 invocation requires the operator to settle surviving helpers and explicitly
 remove the marker before retrying. A successful startup or a settled cleanup
 attempt clears the marker. Complete cleanup removes

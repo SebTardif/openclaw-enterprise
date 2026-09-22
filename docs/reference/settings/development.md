@@ -53,7 +53,7 @@ credentials, the configuration volume, or sibling Namespace network access.
 
 The Kubernetes development lifecycle records an in-progress marker in
 `OCC_DEVELOPMENT_STATE_DIRECTORY` before changing engine resources. If the CLI
-dies abruptly or cannot establish subprocess settlement, subsequent cleanup
+dies abruptly, a started mutating helper fails, or captured output cannot settle, subsequent cleanup
 preserves state and resource claims until the operator acknowledges settlement.
 Follow the [Kubernetes recovery procedure](../../guides/deploy/local-kubernetes-development.md#stop-and-clean-up).
 

@@ -179,6 +179,7 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err := state.beginLifecycle(); err != nil {
 		return err
 	}
+	r.lifecycle = true
 	started = true
 	if err := r.compose(ctx, state, "up", "--build", "-d", "postgres", "migrate", "bootstrap"); err != nil {
 		return err
@@ -400,6 +401,9 @@ func (r *runner) waitReady(ctx context.Context, s *developmentState, url string,
 			return false, nil
 		}
 		_, err = r.composeOutput(ctx, s, "exec", "-T", "worker-kubernetes", "node", "scripts/production-healthcheck.mjs", "worker", "ready")
+		if r.unsettled {
+			return false, err
+		}
 		return err == nil, nil
 	})
 }

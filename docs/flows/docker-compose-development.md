@@ -167,6 +167,8 @@ import, authenticated readiness, and cleanup through the recorded engine.
 
 ## Changelog
 
+- 2026-09-22 23:45: Require successful mutating helpers and independently drained captured output before clearing lifecycle protection. (843154d6710e1e572263be15637e18f8ca5d51f1)
+
 - 2026-09-22 23:14: Persist lifecycle markers before Kubernetes resource mutations and require settlement after abrupt CLI death. (authoring-run/fb7eab38-3647-49c9-af80-7d3a90173b7f - a44c467b2807e1c9b7b6e1aad26cc38b9ab26108)
 
 - 2026-09-22 22:42: Bind Kubernetes cleanup to durable resource claims and native cluster ownership, preserve uncertain subprocess recovery, and align Docker capability selection. (authoring-run/6e5d1288-491b-499b-8597-47a5787fba27 - f0147ea18a4d46f69580ffc83b8b296ca835775b)

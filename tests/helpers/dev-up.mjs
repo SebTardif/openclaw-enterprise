@@ -552,6 +552,7 @@ const matches = args[0] === operation[0] && args.includes(operation[1]);
 function run() {
   return spawnSync(${JSON.stringify(original)}, args, { stdio: "inherit", env: process.env }).status ?? 1;
 }
+
 if (!matches || fs.existsSync(${JSON.stringify(ready)})) process.exit(run());
 const status = ${JSON.stringify(afterCommand)} ? run() : null;
 fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
@@ -580,6 +581,70 @@ const timer = setInterval(() => {
   }
   return {
     waitUntilPaused: async () => Number(await waitForFile(ready)),
+    release: async () => {
+      await writeFile(gate, "settle");
+      assert.equal(await waitForFile(done), "0");
+    },
+  };
+}
+
+// Leave an independent child alive after its direct helper fails. The child can
+// still finish the inert operation, including while holding a captured pipe.
+async function failLifecycleCommand(fixture, command, operation, mode) {
+  const executable = join(fixture.directory, "bin", command);
+  const original = executable + "-settled";
+  const ready = join(fixture.directory, "failure-ready");
+  const gate = join(fixture.directory, "failure-release");
+  const done = join(fixture.directory, "failure-done");
+  await rename(executable, original);
+  const descendant = `
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = JSON.parse(process.argv[1]);
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(gate)})) return;
+  clearInterval(timer);
+  const result = spawnSync(${JSON.stringify(original)}, args, { stdio: "ignore", env: process.env });
+  fs.writeFileSync(${JSON.stringify(done)}, String(result.status));
+  process.exit(result.status ?? 1);
+}, 10);`;
+  await writeExecutable(
+    executable,
+    `#!${nodeExecutable}
+const fs = require("node:fs");
+const { spawn, spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const operation = ${JSON.stringify(operation)};
+const matches = args[0] === operation[0] && args.includes(operation[1]);
+if (!matches || fs.existsSync(${JSON.stringify(ready)})) {
+  process.exit(spawnSync(${JSON.stringify(original)}, args, { stdio: "inherit", env: process.env }).status ?? 1);
+}
+const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}, JSON.stringify(args)], {
+  detached: true,
+  stdio: ["ignore", ${mode === "nonzero-pipe" ? "process.stdout" : '"ignore"'}, "ignore"],
+  env: process.env,
+});
+child.unref();
+fs.writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ helper: process.pid, descendant: child.pid }));
+${mode === "nonzero-pipe" ? "process.exit(77);" : "setInterval(() => {}, 1000);"}
+`,
+  );
+  async function waitForFile(path) {
+    const deadline = Date.now() + 20_000;
+    while (true) {
+      try {
+        return await readFile(path, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      }
+      assert.ok(Date.now() < deadline, `timed out waiting for ${path}`);
+      await delay(20);
+    }
+  }
+  return {
+    waitUntilStarted: async () => JSON.parse(await waitForFile(ready)),
     release: async () => {
       await writeFile(gate, "settle");
       assert.equal(await waitForFile(done), "0");
@@ -678,6 +743,7 @@ export {
   createFixture,
   customRuntimeOverride,
   defaultRuntimeImage,
+  failLifecycleCommand,
   matchingInstallationId,
   mismatchedInstallationId,
   perImageOverride,

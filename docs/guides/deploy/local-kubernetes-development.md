@@ -285,8 +285,10 @@ An ownership mismatch leaves the other cluster untouched. Let its owner dispose
 of it, then retry. Older development state without resource claims is rejected;
 inspect and dispose its recorded resources manually before starting a new profile.
 Startup and cleanup write `subprocess-outcome-uncertain` before changing engine
-resources. If either command dies abruptly, or cleanup reports that marker,
-stop and verify any surviving Compose, engine, or k3d helpers and their engine-side
+resources. The marker also remains when a started resource-changing helper exits
+unsuccessfully, is killed by a signal, or leaves captured output unsettled.
+If either command dies abruptly, or cleanup reports that marker, stop and verify
+any surviving Compose, engine, or k3d helpers and their engine-side
 operations first. An absent cluster is insufficient while a previous helper can
 still finish. Remove that named file from the recorded state directory only
 after those operations have settled, then retry cleanup. Keep the state and

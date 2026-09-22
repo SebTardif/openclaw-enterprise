@@ -85,6 +85,7 @@ func Down(ctx context.Context, opts Options) error {
 		if err := state.beginLifecycle(); err != nil {
 			return err
 		}
+		r.lifecycle = true
 		cleanupErr := r.cleanup(ctx, state)
 		if r.unsettled {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("subprocess outcome is uncertain"))

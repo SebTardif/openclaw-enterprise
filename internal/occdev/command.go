@@ -29,6 +29,7 @@ type runner struct {
 	opts      Options
 	env       map[string]string
 	engine    string
+	lifecycle bool
 	unsettled bool
 }
 
@@ -57,35 +58,81 @@ func (r *runner) command(ctx context.Context, name string, args ...string) *exec
 	return cmd
 }
 func (r *runner) output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if r.unsettled {
+		return nil, fmt.Errorf("subprocess outcome is uncertain")
+	}
 	cmd := r.command(ctx, name, args...)
-	cmd.Stderr = io.Discard
-	data, err := cmd.Output()
-	r.recordCommandOutcome(ctx, cmd, err)
+	data, settled, err := capturedOutput(cmd)
+	r.recordCommandOutcome(ctx, cmd, err, false, settled)
 	// Never include subprocess output here: bootstrap/config output can contain credentials.
 	if err != nil {
 		return nil, fmt.Errorf("%s %s failed: %w", name, strings.Join(args, " "), err)
 	}
 	return bytes.TrimSpace(data), nil
 }
+
+// Own the captured pipe so its EOF is independent of Wait's exit error.
+// Cmd.Wait can hide ErrWaitDelay behind a nonzero process exit.
+func capturedOutput(cmd *exec.Cmd) ([]byte, bool, error) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, true, err
+	}
+	defer reader.Close()
+	cmd.Stdout = writer
+	err = cmd.Start()
+	writer.Close()
+	if err != nil {
+		return nil, true, err
+	}
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(reader)
+		done <- result{data, err}
+	}()
+	err = cmd.Wait()
+	timer := time.NewTimer(cmd.WaitDelay)
+	defer timer.Stop()
+	select {
+	case output := <-done:
+		return output.data, output.err == nil, errors.Join(err, output.err)
+	case <-timer.C:
+		reader.Close()
+		<-done
+		return nil, false, errors.Join(err, exec.ErrWaitDelay)
+	}
+}
+
+// run is for commands that can change engine resources or local lifecycle files.
 func (r *runner) run(ctx context.Context, name string, args ...string) error {
+	if r.unsettled {
+		return fmt.Errorf("subprocess outcome is uncertain")
+	}
 	cmd := r.command(ctx, name, args...)
 	cmd.Stdout = r.opts.Out
 	cmd.Stderr = r.opts.Err
 	err := cmd.Run()
-	r.recordCommandOutcome(ctx, cmd, err)
+	r.recordCommandOutcome(ctx, cmd, err, true, !errors.Is(err, exec.ErrWaitDelay))
 	if err != nil {
 		return fmt.Errorf("%s failed: %w", name, err)
 	}
 	return nil
 }
-func (r *runner) recordCommandOutcome(ctx context.Context, cmd *exec.Cmd, err error) {
-	// Killing the owned process group and closing its pipes does not prove that
-	// an escaped descendant or an engine-side operation has settled.
-	if cmd.Process != nil && err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+func (r *runner) recordCommandOutcome(ctx context.Context, cmd *exec.Cmd, err error, mutates, outputSettled bool) {
+	// A failed mutation needs independent settlement evidence before recovery.
+	// Read-only probes may fail normally, but require a normal process exit and
+	// fully drained output. Neither a signal nor a closed pipe proves settlement.
+	if cmd.Process != nil && err != nil && (mutates || ctx.Err() != nil || !outputSettled || cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
 		// WaitDelay can expire after the direct child exits. Its remaining group
 		// still belongs to this command, even though the direct child is reaped.
 		_ = cmd.Cancel()
-		r.unsettled = true
+		if r.lifecycle {
+			r.unsettled = true
+		}
 	}
 }
 func (r *runner) compose(ctx context.Context, state *developmentState, args ...string) error {

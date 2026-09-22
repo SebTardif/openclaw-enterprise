@@ -14,6 +14,7 @@ import {
   createFixture,
   customRuntimeOverride,
   defaultRuntimeImage,
+  failLifecycleCommand,
   matchingInstallationId,
   mismatchedInstallationId,
   pauseLifecycleCommand,
@@ -777,11 +778,13 @@ for (const scenario of [
     const result = fixture.start(["--key-output", keyOutput]);
     assert.notEqual(result.status, 0);
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(serviceKey));
-    if (scenario === "cluster-create-failed") {
-      // k3d can fail with partial resources absent from its inventory. Retain
-      // the recovery record until the operator explicitly retries cleanup.
+    if (scenario === "cluster-create-failed" || scenario === "compose-up-failed") {
+      // A failed mutating command can leave engine-side work active. This inert
+      // fixture has finished; acknowledge settlement before attempting cleanup.
       assert.match(result.stderr, /rollback incomplete; preserving/);
       assert.ok((await stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY)).isDirectory());
+      assert.notEqual(runDevDown(fixture.env).status, 0);
+      await rm(join(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY, "subprocess-outcome-uncertain"));
       const cleaned = runDevDown(fixture.env);
       assert.equal(cleaned.status, 0, cleaned.stderr);
     }
@@ -818,8 +821,10 @@ test("Kubernetes dev-down preserves recovery state after incomplete cleanup and 
   assert.equal(await readFile(join(directory, "state.json"), "utf8"), state);
   assert.deepEqual(JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")), {
     clusters: ["occ-dev-unrelated", "occ-dev-owned"],
-    compose: false,
+    compose: true,
   });
+  assert.notEqual(runDevDown(fixture.env).status, 0);
+  await rm(join(directory, "subprocess-outcome-uncertain"));
   const retried = runDevDown({ ...fixture.env, DEV_UP_LIFECYCLE_SCENARIO: "success" });
   assert.equal(retried.status, 0, retried.stderr);
   await assert.rejects(stat(directory), { code: "ENOENT" });
@@ -836,6 +841,8 @@ test("failed Kubernetes creation and later recovery preserve an unowned cluster"
   assert.match(started.stderr, /cluster name already occupied/);
   // The competing cluster appears after preflight. A failed create is not
   // authority to delete it, including in a later CLI process reading state.
+  assert.notEqual(runDevDown(fixture.env).status, 0);
+  await rm(join(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY, "subprocess-outcome-uncertain"));
   const recovered = runDevDown(fixture.env);
   assert.notEqual(recovered.status, 0);
   assert.match(recovered.stderr, /ownership label does not match/);
@@ -869,10 +876,12 @@ test("failed Kubernetes creation retains responsibility for resources absent fro
   assert.notEqual(failed.status, 0);
   assert.match(failed.stderr, /partial cluster creation/);
   assert.deepEqual(JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")), {
-    clusters: ["occ-dev-unrelated"],
-    compose: false,
+    clusters: ["occ-dev-unrelated", "occ-dev-owned"],
+    compose: true,
   });
   assert.ok((await stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY)).isDirectory());
+  assert.notEqual(runDevDown(fixture.env).status, 0);
+  await rm(join(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY, "subprocess-outcome-uncertain"));
   const disposed = runDevDown(fixture.env);
   assert.equal(disposed.status, 0, disposed.stderr);
 });
@@ -881,6 +890,7 @@ test("Kubernetes cleanup refuses a same-name replacement after an earlier cleanu
   const fixture = await kubernetesFixture(t, "cluster-delete-failed");
   assert.equal(fixture.start().status, 0);
   assert.notEqual(runDevDown(fixture.env).status, 0);
+  await rm(join(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY, "subprocess-outcome-uncertain"));
   await writeFile(
     fixture.env.DEV_UP_RESOURCE_STATE + ".owners",
     JSON.stringify({ "occ-dev-owned": "replacement-owner" }),
@@ -1043,6 +1053,82 @@ for (const { name, lifecycle, command, operation, afterCommand } of [
       await exited;
       if (helperPID && !released) {
         await paused.release();
+      }
+      await rm(marker, { force: true });
+      runDevDown(fixture.env);
+    }
+  });
+}
+
+for (const { lifecycle, command, operation, mode } of [
+  { lifecycle: "up", command: "k3d", operation: ["cluster", "create"], mode: "signal" },
+  { lifecycle: "down", command: "docker", operation: ["compose", "stop"], mode: "signal" },
+  { lifecycle: "up", command: "docker", operation: ["compose", "ps"], mode: "nonzero-pipe" },
+  { lifecycle: "down", command: "k3d", operation: ["cluster", "list"], mode: "nonzero-pipe" },
+]) {
+  test(`${mode} helper failure during ${lifecycle} preserves recovery until settlement`, async (t) => {
+    const fixture = await kubernetesFixture(t);
+    if (lifecycle === "down") {
+      const started = fixture.start();
+      assert.equal(started.status, 0, started.stderr);
+    }
+    const failed = await failLifecycleCommand(fixture, command, operation, mode);
+    const args = lifecycle === "up" ? ["--", "--env-file", fixture.emptyEnv] : [];
+    const child = spawn(fixture.cli, ["dev", lifecycle, ...args], {
+      cwd: fixture.fixtureRepository,
+      env: fixture.env,
+      stdio: "ignore",
+    });
+    const exited = once(child, "exit");
+    const directory = fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY;
+    const marker = join(directory, "subprocess-outcome-uncertain");
+    let pids;
+    let released = false;
+    try {
+      pids = await failed.waitUntilStarted();
+      const saved = await readFile(join(directory, "state.json"), "utf8");
+      const before = await readJsonLines(fixture.env.SAFETY_LOG);
+      if (mode === "signal") {
+        process.kill(pids.helper, "SIGKILL");
+      }
+      const [status] = await exited;
+      assert.notEqual(status, 0);
+      process.kill(pids.descendant, 0);
+
+      // Neither a signal nor an exit code establishes settlement. The separate
+      // child still holds the ability to finish, and no cleanup may overtake it.
+      const refused = runDevDown(fixture.env);
+      assert.notEqual(refused.status, 0, "cleanup accepted an unsettled helper");
+      assert.match(refused.stderr, /stop and verify surviving helpers/);
+      assert.equal(await readFile(join(directory, "state.json"), "utf8"), saved);
+      assert.ok((await stat(marker)).isFile());
+      assert.deepEqual(await readJsonLines(fixture.env.SAFETY_LOG), before);
+      const competing = runDevUp(["--", "--env-file", fixture.emptyEnv], {
+        ...fixture.env,
+        OCC_DEVELOPMENT_STATE_DIRECTORY: join(fixture.directory, "competing-state"),
+      });
+      assert.notEqual(competing.status, 0);
+      assert.match(competing.stderr, /resource is already claimed/);
+      process.kill(pids.descendant, 0);
+
+      await failed.release();
+      released = true;
+      assert.notEqual(runDevDown(fixture.env).status, 0);
+      await rm(marker);
+      const disposed = runDevDown(fixture.env);
+      assert.equal(disposed.status, 0, disposed.stderr);
+      await assert.rejects(stat(directory), { code: "ENOENT" });
+      assert.deepEqual(JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")), {
+        clusters: ["occ-dev-unrelated"],
+        compose: false,
+      });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      await exited;
+      if (pids && !released) {
+        await failed.release();
       }
       await rm(marker, { force: true });
       runDevDown(fixture.env);
