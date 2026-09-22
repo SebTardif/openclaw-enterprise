@@ -330,6 +330,16 @@
     },
     {
       "path": "tests/integration/repository-runtime-materialization.test.mjs"
+    },
+    {
+      "path": "tests/integration/openshell-launcher.test.mjs",
+      "expectedTests": [
+        "OpenShell launcher prepares one owned reusable development environment",
+        "OpenShell launcher runs the positive compatibility proof with the selected credential",
+        "OpenShell launcher accepts a private credential file without persisting it",
+        "OpenShell launcher reports non-secret state and cleans only its recorded resources",
+        "OpenShell launcher rejects prepared state from another checkout"
+      ]
     }
   ]
 }
