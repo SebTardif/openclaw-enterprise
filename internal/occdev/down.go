@@ -62,6 +62,16 @@ func Down(ctx context.Context, opts Options) error {
 		if err != nil {
 			return err
 		}
+		claims, err := claimsFor(state)
+		if err != nil {
+			return err
+		}
+		if err := claims.verify(); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(filepath.Join(directory, uncertainCommandMarker)); !os.IsNotExist(err) {
+			return fmt.Errorf("subprocess outcome is uncertain; stop and verify surviving helpers, then remove %s and retry", filepath.Join(directory, uncertainCommandMarker))
+		}
 		r.env["KUBECONFIG"] = filepath.Join(directory, "kubeconfig")
 		r.engine = state.ContainerEngine
 		if r.engine == "podman" {
@@ -72,10 +82,17 @@ func Down(ctx context.Context, opts Options) error {
 			r.env["PODMAN_COMPOSE_PROVIDER"] = provider
 		}
 		r.useEndpoint(state.DockerHost)
-		if err := r.cleanup(ctx, state, true); err != nil {
-			return fmt.Errorf("cleanup incomplete; preserving %s for recovery: %w", directory, err)
+		cleanupErr := r.cleanup(ctx, state)
+		if r.unsettled {
+			cleanupErr = errors.Join(cleanupErr, state.retainUncertainCommand(), fmt.Errorf("subprocess outcome is uncertain"))
+		}
+		if cleanupErr != nil {
+			return fmt.Errorf("cleanup incomplete; preserving %s for recovery: %w", directory, cleanupErr)
 		}
 		if err := os.RemoveAll(directory); err != nil {
+			return err
+		}
+		if err := claims.release(); err != nil {
 			return err
 		}
 		fmt.Fprintf(r.opts.Out, "Stopped Kubernetes development stack %s.\n", state.Cluster)
@@ -84,19 +101,25 @@ func Down(ctx context.Context, opts Options) error {
 		return fmt.Errorf("OCC_DEVELOPMENT_COMPUTE_DRIVER must be docker or kubernetes")
 	}
 }
-func (r *runner) cleanup(ctx context.Context, s *developmentState, clusterAttempted bool) error {
+func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 	var failures []error
 	// Stop reconcilers before removing their cluster and database. Continue after failures to reclaim what we can.
 	if err := r.compose(ctx, s, "stop", "controller", "worker-kubernetes"); err != nil {
 		failures = append(failures, err)
 	}
-	if clusterAttempted {
-		exists, err := r.clusterExists(ctx, s.Cluster)
+	if s.ClusterAttempted {
+		exists, err := r.clusterResourcesExist(ctx, s.Cluster)
 		if err != nil {
 			failures = append(failures, err)
 		} else if exists {
-			if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
+			if err := r.verifyClusterOwnership(ctx, s); err != nil {
 				failures = append(failures, err)
+			} else if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
+				failures = append(failures, err)
+			} else if remains, err := r.clusterResourcesExist(ctx, s.Cluster); err != nil {
+				failures = append(failures, err)
+			} else if remains {
+				failures = append(failures, fmt.Errorf("cluster %s still has resources after deletion", s.Cluster))
 			}
 		}
 	}
@@ -104,6 +127,38 @@ func (r *runner) cleanup(ctx context.Context, s *developmentState, clusterAttemp
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
+}
+
+func (r *runner) clusterResourcesExist(ctx context.Context, cluster string) (bool, error) {
+	exists, err := r.clusterExists(ctx, cluster)
+	if err != nil {
+		return false, err
+	}
+	nodes, err := r.output(ctx, r.engine, "ps", "--all", "--quiet", "--filter", "label=k3d.cluster="+cluster)
+	if err != nil {
+		return false, err
+	}
+	// k3d can leave an image volume even when its cluster inventory is empty.
+	volume := "k3d-" + cluster + "-images"
+	volumes, err := r.output(ctx, r.engine, "volume", "ls", "--quiet", "--filter", "name="+volume)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range strings.Fields(string(volumes)) {
+		exists = exists || name == volume
+	}
+	return exists || len(nodes) != 0, nil
+}
+
+func (r *runner) verifyClusterOwnership(ctx context.Context, s *developmentState) error {
+	label, err := r.output(ctx, r.engine, "inspect", "--format", `{{index .Config.Labels "`+ownershipLabel+`"}}`, "k3d-"+s.Cluster+"-server-0")
+	if err != nil {
+		return fmt.Errorf("cannot establish ownership of cluster %s: %w", s.Cluster, err)
+	}
+	if string(label) != s.Owner {
+		return fmt.Errorf("refusing to delete cluster %s: ownership label does not match recorded state", s.Cluster)
+	}
+	return nil
 }
 
 func podmanComposeArgs(args []string, files, separator string) []string {

@@ -23,6 +23,11 @@ node --test tests/integration/dev-up.test.mjs
 On macOS, follow the Podman prerequisite in the
 [startup flow](../flows/docker-compose-development/startup.md).
 
+The development-helper suite builds the real CLI and renders real Compose
+configuration, while container and k3d mutations use inert commands. It covers
+resource claims, ownership-mismatch recovery, and bounded subprocess waits.
+These results do not establish live-engine or installed Kubernetes behavior.
+
 This verification does not prove an Agent model turn. Follow the exact cleanup
 command printed by `dev-up` to preserve the development database and credentials.
 

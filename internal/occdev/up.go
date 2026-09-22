@@ -40,7 +40,7 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err != nil {
 		return err
 	}
-	state := &developmentState{Repository: opts.Repository, Version: 2, ComputeDriver: "kubernetes", ComposeProject: r.setting("OCC_DEVELOPMENT_COMPOSE_PROJECT", "openclaw-enterprise-development-kubernetes"), Cluster: r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])), directory: directory, KeyPath: opts.KeyOutput, KeyOwned: opts.KeyOutput == ""}
+	state := &developmentState{Repository: opts.Repository, Version: 3, ComputeDriver: "kubernetes", ComposeProject: r.setting("OCC_DEVELOPMENT_COMPOSE_PROJECT", "openclaw-enterprise-development-kubernetes"), Cluster: r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])), directory: directory, KeyPath: opts.KeyOutput, KeyOwned: opts.KeyOutput == "", Owner: strings.ToLower(rand.Text()[:26])}
 
 	if !clusterName.MatchString(state.Cluster) || !projectName.MatchString(state.ComposeProject) {
 		return fmt.Errorf("invalid Kubernetes cluster or Compose project name")
@@ -66,6 +66,19 @@ func Up(ctx context.Context, opts Options) (result error) {
 	}
 	state.ContainerEngine = r.engine
 	state.DockerHost = r.env["DOCKER_HOST"]
+	claims, err := claimsFor(state)
+	if err != nil {
+		return err
+	}
+	if err := claims.acquire(); err != nil {
+		return err
+	}
+	retainClaims := false
+	defer func() {
+		if !retainClaims {
+			result = errors.Join(result, claims.release())
+		}
+	}()
 	if err := r.ensureAbsent(ctx, state); err != nil {
 		return err
 	}
@@ -103,7 +116,8 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err != nil {
 		return err
 	}
-	// The exclusive directory claim is the ownership boundary, including concurrent starts.
+	// The resource claims already exclude competing state directories. This lock
+	// also prevents startup and recovery from using this state concurrently.
 	if err := os.Mkdir(directory, 0700); err != nil {
 		return err
 	}
@@ -111,36 +125,37 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err != nil {
 		return err
 	}
-	started, clusterAttempted, clusterCreationFailed := false, false, false
+	started, clusterCreationFailed := false, false
 	defer func() {
 		defer lock.Close()
 		if result == nil {
+			retainClaims = true
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		var cleanupErr error
 		if started {
-			cleanupErr = r.cleanup(cleanupCtx, state, clusterAttempted)
+			cleanupErr = r.cleanup(cleanupCtx, state)
 		}
 		if clusterCreationFailed {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("cluster creation failed; verify and retry recorded cleanup"))
+		}
+		if r.unsettled && started {
+			cleanupErr = errors.Join(cleanupErr, state.retainUncertainCommand(), fmt.Errorf("subprocess outcome is uncertain; verify surviving helpers before retrying cleanup"))
 		}
 		if cleanupErr == nil {
 			cleanupErr = os.RemoveAll(directory)
 		}
 		if cleanupErr != nil {
+			retainClaims = true
 			result = errors.Join(result, fmt.Errorf("rollback incomplete; preserving %s for occ dev down: %w", directory, cleanupErr))
 		}
 	}()
 	if err := exclusiveWrite(filepath.Join(directory, ".openclaw-development"), []byte(stateMarker), 0600); err != nil {
 		return err
 	}
-	stateData, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	if err := exclusiveWrite(filepath.Join(directory, "state.json"), stateData, 0600); err != nil {
+	if err := state.save(); err != nil {
 		return err
 	}
 	if err := exclusiveWrite(filepath.Join(directory, "compose.yaml"), snapshot, 0600); err != nil {
@@ -157,8 +172,11 @@ func Up(ctx context.Context, opts Options) (result error) {
 		}
 	}
 	fmt.Fprintf(r.opts.Out, "Creating k3d cluster %s...\n", state.Cluster)
-	clusterAttempted = true
-	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--image", "+v1.35", "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
+	state.ClusterAttempted = true
+	if err := state.save(); err != nil {
+		return err
+	}
+	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--no-rollback", "--runtime-label", ownershipLabel+"="+state.Owner+"@server:0", "--image", "+v1.35", "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
 		clusterCreationFailed = true
 		return err
 	}
@@ -273,7 +291,7 @@ func escapeInterpolation(value any) any {
 	return value
 }
 func (r *runner) ensureAbsent(ctx context.Context, s *developmentState) error {
-	exists, err := r.clusterExists(ctx, s.Cluster)
+	exists, err := r.clusterResourcesExist(ctx, s.Cluster)
 	if err != nil {
 		return err
 	}

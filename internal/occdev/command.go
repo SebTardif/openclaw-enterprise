@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Options selects the checkout and output destinations for a development command.
@@ -23,9 +26,10 @@ type Options struct {
 }
 
 type runner struct {
-	opts   Options
-	env    map[string]string
-	engine string
+	opts      Options
+	env       map[string]string
+	engine    string
+	unsettled bool
 }
 
 func newRunner(opts Options) *runner {
@@ -44,6 +48,8 @@ func newRunner(opts Options) *runner {
 }
 func (r *runner) command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 250 * time.Millisecond
+	ownCommand(cmd)
 	cmd.Dir = r.opts.Repository
 	for key, value := range r.env {
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -54,6 +60,7 @@ func (r *runner) output(ctx context.Context, name string, args ...string) ([]byt
 	cmd := r.command(ctx, name, args...)
 	cmd.Stderr = io.Discard
 	data, err := cmd.Output()
+	r.recordCommandOutcome(ctx, cmd, err)
 	// Never include subprocess output here: bootstrap/config output can contain credentials.
 	if err != nil {
 		return nil, fmt.Errorf("%s %s failed: %w", name, strings.Join(args, " "), err)
@@ -64,10 +71,22 @@ func (r *runner) run(ctx context.Context, name string, args ...string) error {
 	cmd := r.command(ctx, name, args...)
 	cmd.Stdout = r.opts.Out
 	cmd.Stderr = r.opts.Err
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	r.recordCommandOutcome(ctx, cmd, err)
+	if err != nil {
 		return fmt.Errorf("%s failed: %w", name, err)
 	}
 	return nil
+}
+func (r *runner) recordCommandOutcome(ctx context.Context, cmd *exec.Cmd, err error) {
+	// Killing the owned process group and closing its pipes does not prove that
+	// an escaped descendant or an engine-side operation has settled.
+	if cmd.Process != nil && err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+		// WaitDelay can expire after the direct child exits. Its remaining group
+		// still belongs to this command, even though the direct child is reaped.
+		_ = cmd.Cancel()
+		r.unsettled = true
+	}
 }
 func (r *runner) compose(ctx context.Context, state *developmentState, args ...string) error {
 	return r.run(ctx, r.engine, append(state.composeCommand(), args...)...)
@@ -87,26 +106,12 @@ func (r *runner) selectEngine(ctx context.Context, requested string) error {
 			continue
 		}
 		if engine == "docker" {
-			data, err := r.output(ctx, "docker", "version", "--format", "{{json .Server}}")
-			if err != nil {
+			platform, _ := r.output(ctx, "docker", "version", "--format", "{{.Server.Platform.Name}}")
+			if string(platform) == "Podman Engine" {
 				continue
 			}
-			var server struct {
-				Platform struct {
-					Name string `json:"Name"`
-				} `json:"Platform"`
-				Components []struct {
-					Name string `json:"Name"`
-				} `json:"Components"`
-			}
-			if json.Unmarshal(data, &server) != nil {
-				continue
-			}
-			genuine := strings.Contains(strings.ToLower(server.Platform.Name), "docker")
-			for _, component := range server.Components {
-				genuine = genuine || component.Name == "Engine"
-			}
-			if !genuine {
+			root, err := r.output(ctx, "docker", "info", "--format", "{{.DockerRootDir}}")
+			if err != nil || len(root) == 0 {
 				continue
 			}
 		}
@@ -123,10 +128,29 @@ func (r *runner) selectEngine(ctx context.Context, requested string) error {
 		if _, err := r.output(ctx, engine, "compose", "version"); err != nil {
 			continue
 		}
+		if engine == "docker" {
+			if err := r.dockerComposeCapability(ctx); err != nil {
+				continue
+			}
+		}
 		r.engine = engine
 		return nil
 	}
 	return fmt.Errorf("a running %s container engine with its Compose provider is required", requested)
+}
+
+func (r *runner) dockerComposeCapability(ctx context.Context) error {
+	directory, err := os.MkdirTemp("", "occ-compose-capability-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(directory)
+	path := filepath.Join(directory, "compose-capability.yaml")
+	if err := exclusiveWrite(path, []byte("services:\n  probe:\n    image: busybox:latest\n"), 0600); err != nil {
+		return err
+	}
+	_, err = r.output(ctx, "docker", "compose", "-f", path, "config", "--format", "json")
+	return err
 }
 func (r *runner) pinEndpoint(ctx context.Context) error {
 	endpoint := r.env["DOCKER_HOST"]
@@ -164,6 +188,9 @@ func (r *runner) pinEndpoint(ctx context.Context) error {
 	}
 	if !strings.HasPrefix(endpoint, "unix:///") {
 		return fmt.Errorf("local Kubernetes development requires a unix container-engine socket")
+	}
+	if canonical, err := filepath.EvalSymlinks(strings.TrimPrefix(endpoint, "unix://")); err == nil {
+		endpoint = "unix://" + canonical
 	}
 	r.useEndpoint(endpoint)
 	return nil

@@ -9,7 +9,7 @@ quickstart](../quickstart.md).
 ## Start the profile
 
 You need Docker Engine with Docker Compose, or Podman with `podman-compose`,
-plus k3d and kubectl. Build the checkout-local [OCC CLI](../cli.md) with the
+plus k3d with `--runtime-label` support and kubectl. Build the checkout-local [OCC CLI](../cli.md) with the
 Go version in `go.mod`, Node.js 24 or newer, and the repository-pinned pnpm.
 Compose runs PostgreSQL, migration, bootstrap, controller, and worker processes.
 
@@ -46,6 +46,9 @@ used to host the Compose services and to import the runtime image into k3d.
 The selected engine must expose a local Unix socket. Startup records that
 endpoint so cleanup addresses the same engine even if your active Docker
 context changes.
+The helper claims the selected project and cluster across all state directories
+for your user. Separate stacks need distinct project and cluster names. Keep the
+state directory until cleanup succeeds; do not manually reuse claimed names.
 
 The k3d API is published on `127.0.0.1:6443` by default. Override conflicts
 with `OCC_DEVELOPMENT_KUBERNETES_API_PORT`. The disposable cluster lowers
@@ -270,13 +273,23 @@ OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes ./bin/occ dev down
 ```
 
 `./bin/occ dev down` defaults to Docker Compute even when Kubernetes state exists.
-For explicitly selected Kubernetes mode, it reads the private recorded state
-and removes only the named `occ-dev-*` cluster and its Compose project, deletes
+For explicitly selected Kubernetes mode, it verifies the recorded resource claims
+and cluster ownership label, removes the owned cluster and Compose project, deletes
 profile volumes, then removes the state directory. This permanently deletes the
 development Installation, service keys, Namespaces, Agents, audit history, and
 queued work stored by this profile. Incomplete cleanup preserves the state for
 recovery; restore access to the recorded engine and rerun the same command.
 A failed startup attempts the same cleanup and preserves state if it fails.
+An ownership mismatch leaves the other cluster untouched. Let its owner dispose
+of it, then retry. Older development state without resource claims is rejected;
+inspect and dispose its recorded resources manually before starting a new profile.
+If cleanup reports `subprocess-outcome-uncertain`, stop and verify any surviving
+Compose, engine, or k3d helpers first. Remove that named file from the recorded
+state directory only after those operations have settled, then retry cleanup.
+An interrupted initial setup can leave a claim in
+`~/.openclaw-development-claims` before state is complete. The claim records its
+endpoint, project, cluster, and state path. Remove only that stack's claim files,
+after verifying that its helpers and resources have been disposed.
 A key written outside the state directory with `--key-output` remains
 operator-owned; remove that local copy separately.
 

@@ -1,7 +1,7 @@
 ---
 created: 2026-08-24
-updated: 2026-09-17
-last_updated_session: authoring-run/b044b43c-e713-4006-93a0-c129cdf5578e
+updated: 2026-09-22
+last_updated_session: authoring-run/6e5d1288-491b-499b-8597-47a5787fba27
 ---
 
 # Compose development flow
@@ -47,7 +47,7 @@ owns the operator procedure and destructive cleanup boundary.
 graph TD
   A["./bin/occ dev up"] --> Profile{"Compute profile"}
   Profile -->|Docker| B["Preflight host tools, resolve Podman machine connection,<br/>and inspect Compose config"]
-  Profile -->|Kubernetes| KPre["Pin local engine endpoint<br/>and reject existing resources"]
+  Profile -->|Kubernetes| KPre["Pin local engine endpoint, claim project and cluster,<br/>and reject existing resources"]
   KPre --> KConfig["Validate Compose and claim<br/>private state with snapshot"]
   KConfig --> KStart["Bootstrap OCC and create<br/>the owned k3d cluster"]
   KStart --> KReady["Import runtime and start<br/>API and Kubernetes worker"]
@@ -56,9 +56,9 @@ graph TD
   KStart -->|failure| KRollback["Roll back owned resources<br/>retain state if cleanup fails"]
   KReady -->|failure| KRollback
   KProof -->|failure| KRollback
-  KDown --> KRemove["Stop reconcilers and delete<br/>owned cluster and volumes"]
-  KRemove -->|success| KDone["Remove private state"]
-  KRemove -->|failure| KRetain["Keep state for recovery"]
+  KDown --> KRemove["Verify claims and cluster label;<br/>stop reconcilers and delete owned resources"]
+  KRemove -->|success| KDone["Remove private state and release claims"]
+  KRemove -->|failure or uncertain subprocess| KRetain["Keep state and claims for recovery"]
   B --> C["Select quickstart runtime image or validate custom images"]
   C --> D["Selected Compose starts PostgreSQL, migrate, bootstrap, API, and worker"]
   D --> E["Copy bootstrap service-key response to private local file"]
@@ -103,6 +103,8 @@ options, including after partial startup. Podman retains the caller's selected
 connection. Its reported API socket supplies `OCC_CONTAINER_ENGINE_SOCKET` only
 to resolve the worker mount; a socket inside a macOS VM is not substituted for
 the host connection. An unavailable engine or invalid socket fails cleanup.
+Docker selection checks the required engine and Compose capabilities; missing
+optional version metadata does not prevent the printed cleanup command from working.
 
 Compose removes its project containers and network. Named database,
 Configuration, and bootstrap volumes remain unless `--volumes` is explicit.
@@ -158,6 +160,8 @@ import, authenticated readiness, and cleanup through the recorded engine.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-22 22:42: Bind Kubernetes cleanup to durable resource claims and native cluster ownership, preserve uncertain subprocess recovery, and align Docker capability selection. (authoring-run/6e5d1288-491b-499b-8597-47a5787fba27 - f0147ea18a4d46f69580ffc83b8b296ca835775b)
 
 - 2026-09-17 17:42: Pin Kubernetes development to the supported 1.35 family and emit only runtime settings accepted by the current Kubernetes Compute Driver schema. (authoring-run/b044b43c-e713-4006-93a0-c129cdf5578e - 9310d5b025e84f885e4f7facae2e2906b50d58f8)
 

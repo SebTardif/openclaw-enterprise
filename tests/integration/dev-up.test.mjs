@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { once } from "node:events";
@@ -455,7 +455,7 @@ test("dev-up preserves Compose files selected through COMPOSE_FILE for Podman", 
 test("dev-up accepts Docker when its server omits the platform name", async (t) => {
   // Docker-compatible server metadata may omit Platform.Name while the required
   // engine and Compose capabilities remain available.
-  const fixture = await createFixture(t, { dockerPlatformName: "" });
+  const fixture = await createFixture(t, { dockerPlatformName: "", dockerComponents: [] });
   const keyOutput = join(fixture.directory, "docker-no-platform-service-key.json");
 
   const result = runDevUp(
@@ -466,6 +466,15 @@ test("dev-up accepts Docker when its server omits the platform name", async (t) 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Container engine: Docker/);
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(serviceKey));
+  const cleanup = result.stdout.split("\n").find((line) => line.includes(" dev down"));
+  assert.ok(cleanup, "startup must print its supported cleanup command");
+  const stopped = spawnSync("/bin/bash", ["-c", cleanup.trim()], {
+    cwd: fixture.fixtureRepository,
+    env: fixture.env,
+    encoding: "utf8",
+  });
+  assert.equal(stopped.status, 0, stopped.stderr);
+  assert.ok((await readJsonLines(fixture.dockerLog)).some((entry) => entry.args.includes("down")));
 });
 
 test("dev-up recognizes a docker command backed by Podman and uses the Podman path", async (t) => {
@@ -662,7 +671,7 @@ test("Kubernetes dev-up authenticates the Installation and cleanup uses its save
   assert.doesNotMatch(result.stdout + result.stderr, new RegExp(serviceKey));
   const directory = fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY;
   const state = JSON.parse(await readFile(join(directory, "state.json"), "utf8"));
-  assert.equal(state.dockerHost, "unix:///fixture/owned-docker.sock");
+  assert.equal(state.dockerHost, fixture.engineEndpoint);
   assert.equal((await stat(directory)).mode & 0o777, 0o700);
   assert.equal((await stat(state.keyPath)).mode & 0o777, 0o600);
   assert.deepEqual(
@@ -695,6 +704,11 @@ test("Kubernetes dev-up authenticates the Installation and cleanup uses its save
   );
   assert.ok(clusterCreate, "Kubernetes development must create its owned k3d cluster");
   assert.equal(clusterCreate.args[clusterCreate.args.indexOf("--image") + 1], "+v1.35");
+  assert.ok(clusterCreate.args.includes("--no-rollback"), "OCC must own failed-create cleanup");
+  assert.equal(
+    clusterCreate.args[clusterCreate.args.indexOf("--runtime-label") + 1],
+    `io.openclaw.development.owner=${state.owner}@server:0`,
+  );
 
   const duplicate = fixture.start();
   assert.notEqual(duplicate.status, 0);
@@ -812,6 +826,172 @@ test("Kubernetes dev-down preserves recovery state after incomplete cleanup and 
     clusters: ["occ-dev-unrelated"],
     compose: false,
   });
+});
+
+test("failed Kubernetes creation and later recovery preserve an unowned cluster", async (t) => {
+  const fixture = await kubernetesFixture(t, "cluster-create-collision");
+  const started = fixture.start();
+  assert.notEqual(started.status, 0);
+  assert.match(started.stderr, /cluster name already occupied/);
+  // The competing cluster appears after preflight. A failed create is not
+  // authority to delete it, including in a later CLI process reading state.
+  const recovered = runDevDown(fixture.env);
+  assert.notEqual(recovered.status, 0);
+  assert.match(recovered.stderr, /ownership label does not match/);
+  assert.equal(
+    (await readJsonLines(fixture.env.SAFETY_LOG)).some(
+      (entry) => entry.command === "k3d" && entry.args[1] === "delete",
+    ),
+    false,
+  );
+  assert.ok((await stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY)).isDirectory());
+  assert.ok(
+    JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")).clusters.includes(
+      "occ-dev-owned",
+    ),
+  );
+
+  // Simulate the other owner disposing its cluster. The retained claim can now
+  // be released without ever issuing a deletion against that cluster.
+  await writeFile(
+    fixture.env.DEV_UP_RESOURCE_STATE,
+    JSON.stringify({ clusters: ["occ-dev-unrelated"], compose: false }),
+  );
+  const disposed = runDevDown(fixture.env);
+  assert.equal(disposed.status, 0, disposed.stderr);
+  await assert.rejects(stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY), { code: "ENOENT" });
+});
+
+test("failed Kubernetes creation retains responsibility for resources absent from k3d inventory", async (t) => {
+  const fixture = await kubernetesFixture(t, "cluster-create-hidden");
+  const failed = fixture.start();
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /partial cluster creation/);
+  assert.deepEqual(JSON.parse(await readFile(fixture.env.DEV_UP_RESOURCE_STATE, "utf8")), {
+    clusters: ["occ-dev-unrelated"],
+    compose: false,
+  });
+  assert.ok((await stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY)).isDirectory());
+  const disposed = runDevDown(fixture.env);
+  assert.equal(disposed.status, 0, disposed.stderr);
+});
+
+test("Kubernetes cleanup refuses a same-name replacement after an earlier cleanup failure", async (t) => {
+  const fixture = await kubernetesFixture(t, "cluster-delete-failed");
+  assert.equal(fixture.start().status, 0);
+  assert.notEqual(runDevDown(fixture.env).status, 0);
+  await writeFile(
+    fixture.env.DEV_UP_RESOURCE_STATE + ".owners",
+    JSON.stringify({ "occ-dev-owned": "replacement-owner" }),
+  );
+  const before = (await readJsonLines(fixture.env.SAFETY_LOG)).length;
+  const retried = runDevDown({ ...fixture.env, DEV_UP_LIFECYCLE_SCENARIO: "success" });
+  assert.notEqual(retried.status, 0);
+  assert.match(retried.stderr, /ownership label does not match/);
+  assert.equal(
+    (await readJsonLines(fixture.env.SAFETY_LOG))
+      .slice(before)
+      .some((entry) => entry.command === "k3d" && entry.args[1] === "delete"),
+    false,
+  );
+  await writeFile(
+    fixture.env.DEV_UP_RESOURCE_STATE,
+    JSON.stringify({ clusters: ["occ-dev-unrelated"], compose: false }),
+  );
+  assert.equal(runDevDown({ ...fixture.env, DEV_UP_LIFECYCLE_SCENARIO: "success" }).status, 0);
+});
+
+test("different Kubernetes state directories cannot share a claimed Compose project", async (t) => {
+  const fixture = await kubernetesFixture(t, "readiness-blocked");
+  const first = spawn(fixture.cli, ["dev", "up", "--", "--env-file", fixture.emptyEnv], {
+    cwd: fixture.fixtureRepository,
+    env: { ...fixture.env, OCC_DEVELOPMENT_STARTUP_TIMEOUT_SECONDS: "60" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  first.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  first.stderr.on("data", (chunk) => {
+    output += chunk;
+  });
+  const exited = once(first, "close");
+  t.after(async () => {
+    if (first.exitCode === null && first.signalCode === null) {
+      first.kill("SIGTERM");
+    }
+    await exited;
+  });
+  const deadline = Date.now() + 15_000;
+  while (
+    !(await readJsonLines(fixture.requestLog)).some((row) => row.url === "/api/auth/session")
+  ) {
+    assert.ok(
+      Date.now() < deadline && first.exitCode === null,
+      output || "first startup did not reach readiness",
+    );
+    await delay(20);
+  }
+  const before = (await readJsonLines(fixture.env.SAFETY_LOG)).length;
+  // A separate state path and cluster avoid both old guards. The engine/project
+  // claim must reject the second process before it can touch Compose resources.
+  const second = runDevUp(["--", "--env-file", fixture.emptyEnv], {
+    ...fixture.env,
+    OCC_DEVELOPMENT_STATE_DIRECTORY: join(fixture.directory, "other-state"),
+    OCC_DEVELOPMENT_KUBERNETES_CLUSTER: "occ-dev-other",
+    DEV_UP_LIFECYCLE_SCENARIO: "compose-up-failed",
+  });
+  assert.notEqual(second.status, 0);
+  assert.match(second.stderr, /resource is already claimed/);
+  assert.equal(
+    (await readJsonLines(fixture.env.SAFETY_LOG))
+      .slice(before)
+      .some((entry) => entry.args.includes("up") || entry.args.includes("down")),
+    false,
+  );
+  first.kill("SIGTERM");
+  await exited;
+  await assert.rejects(stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY), { code: "ENOENT" });
+});
+
+test("captured helper pipes have a bounded wait and preserve uncertain recovery", async (t) => {
+  const fixture = await kubernetesFixture(t, "migration-pipe-held");
+  const startedAt = Date.now();
+  const result = fixture.start();
+  const elapsed = Date.now() - startedAt;
+  const childPID = Number(await readFile(fixture.env.DEV_UP_RESOURCE_STATE + ".child", "utf8"));
+  t.after(() => {
+    try {
+      process.kill(childPID, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") {
+        throw error;
+      }
+    }
+  });
+  assert.notEqual(result.status, 0);
+  assert.ok(elapsed < 5_000, `captured pipe held startup for ${elapsed}ms`);
+  assert.match(result.stderr, /subprocess outcome is uncertain/);
+  const directory = fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY;
+  const marker = join(directory, "subprocess-outcome-uncertain");
+  assert.ok((await stat(marker)).isFile());
+  const refused = runDevDown(fixture.env);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /stop and verify surviving helpers/);
+
+  // The fixture owns this deliberately escaped, inert child. Settling it and
+  // acknowledging the recorded uncertainty permits a fresh cleanup attempt.
+  try {
+    process.kill(childPID, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+  await rm(marker);
+  const disposed = runDevDown({ ...fixture.env, DEV_UP_LIFECYCLE_SCENARIO: "success" });
+  assert.equal(disposed.status, 0, disposed.stderr);
+  await assert.rejects(stat(directory), { code: "ENOENT" });
 });
 
 test("cancelling Kubernetes startup during readiness rolls back its owned resources", async (t) => {
