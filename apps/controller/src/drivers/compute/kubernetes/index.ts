@@ -3574,9 +3574,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       sandbox.agentId !== revision.agentId ||
       sandbox.revisionId !== revision.id ||
       typeof sandbox.resourceName !== "string" ||
-      sandbox.resourceName.trim().length === 0 ||
-      (sandbox.harnessEndpointUrl !== undefined &&
-        !/^wss?:\/\/[^/]+\/$/.test(sandbox.harnessEndpointUrl))
+      sandbox.resourceName.trim().length === 0
     ) {
       throw new OwnershipFailure("SandboxDriver returned an ambiguous Sandbox identity.");
     }

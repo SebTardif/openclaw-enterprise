@@ -30,7 +30,7 @@ before changing shared dependencies or hook configuration.
 - [Testing](../testing/README.md) covers isolated PostgreSQL, Docker, Kubernetes,
   and browser checks. Use the environment required by the behavior you changed.
 - [OpenShell tests](../testing/openshell.md#start-a-reusable-development-environment)
-  provide an owned, reusable pre.7 cluster for Sandbox Driver development and
+  provide an owned, reusable pre.5 cluster for Sandbox Driver development and
   its real model and containment proof. This verification environment does not
   make OpenShell a supported production Agent runtime.
 

@@ -631,7 +631,6 @@ export interface SandboxResourceRef {
   readonly resourceName: string;
   readonly agentId: string;
   readonly revisionId: string;
-  readonly harnessEndpointUrl?: string;
 }
 
 export interface SandboxNamespaceContext {
