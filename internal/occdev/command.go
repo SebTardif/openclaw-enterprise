@@ -123,16 +123,20 @@ func (r *runner) run(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 func (r *runner) recordCommandOutcome(ctx context.Context, cmd *exec.Cmd, err error, mutates, outputSettled bool) {
+	if cmd.Process == nil || err == nil {
+		return
+	}
 	// A failed mutation needs independent settlement evidence before recovery.
 	// Read-only probes may fail normally, but require a normal process exit and
 	// fully drained output. Neither a signal nor a closed pipe proves settlement.
-	if cmd.Process != nil && err != nil && (mutates || ctx.Err() != nil || !outputSettled || cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
-		// WaitDelay can expire after the direct child exits. Its remaining group
-		// still belongs to this command, even though the direct child is reaped.
-		_ = cmd.Cancel()
-		if r.lifecycle {
-			r.unsettled = true
-		}
+	if !mutates && ctx.Err() == nil && outputSettled && cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		return
+	}
+	// WaitDelay can expire after the direct child exits. Its remaining group
+	// still belongs to this command, even though the direct child is reaped.
+	_ = cmd.Cancel()
+	if r.lifecycle {
+		r.unsettled = true
 	}
 }
 func (r *runner) compose(ctx context.Context, state *developmentState, args ...string) error {
