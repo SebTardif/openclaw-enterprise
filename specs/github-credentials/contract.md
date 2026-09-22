@@ -1,6 +1,6 @@
 # GitHub credential contract
 
-[Overview](../github-credentials.md) · [Architecture](architecture.md). This proposed, unmerged contract binds admission, worker, Compute and credential-service implementations.
+[Overview](../github-credentials.md) · [Architecture](architecture.md). This contract binds admission, worker, Compute and credential-service implementations. The overview's delivery record distinguishes merged source from runtime qualification.
 
 ## Admission and authority
 
@@ -113,7 +113,7 @@ Explicit `git-full` permits `POST /graphql` queries and mutations within the adm
 
 GitHub may return permitted public information. There is no local branch authorization. Additional REST endpoints, whole-command preflight, administration, extra workflow permissions, SSH, LFS and extra-repository submodules remain excluded.
 
-The inspected [implementation baseline](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/apps/controller/src/drivers/repo/credentials/configuration.ts) selects these operational defaults. They remain in force; source inspection does not qualify deployment capacity:
+The [landed configuration](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/apps/controller/src/drivers/repo/credentials/configuration.ts) retains these operational defaults. Source inspection does not qualify deployment capacity:
 
 | Resource                               | Default                                   |
 | -------------------------------------- | ----------------------------------------- |
@@ -133,17 +133,17 @@ The inspected [implementation baseline](https://github.com/openclaw/openclaw-ent
 | Validity margin / shutdown grace       | 60 seconds each                           |
 | Token / renewal material / PEM         | 16 KiB / 16 KiB / 64 KiB                  |
 
-Sixteen bindings/Agent and [registry capacity 128](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/apps/controller/src/drivers/repo/github/credentials/registry.ts) are hardcoded scale constraints requiring coordinated changes. Admission reserves no sessions. The shared sixteen-session budget includes CLOSED cleanup and failed construction. One fully bound Agent can exhaust sibling/replacement headroom. Credential slots and surviving upstream tokens measure different things.
+Sixteen bindings/Agent and [registry capacity 128](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/apps/controller/src/drivers/repo/github/credentials/registry.ts) are hardcoded scale constraints requiring coordinated changes. Admission reserves no sessions. The shared sixteen-session budget includes CLOSED cleanup and failed construction. One fully bound Agent can exhaust sibling/replacement headroom. Credential slots and surviving upstream tokens measure different things.
 
 Git's 256 MiB bodies and 5-second inactivity/5-minute exchange budgets are operational choices. Requests 32/4, sockets 64 and sessions 16 require capacity evidence. API 1 MiB/8 MiB buffers require memory accounting across copies/concurrency. Client/control/shutdown/Pod/provider ceilings may require coordinated changes.
 
-Proposed follow-up would relax Git transfer/time budgets and qualify deployment capacity; no replacement values are selected. Provider concurrency one is a hardcoded queue simplification, and more queue capacity adds no concurrency. Separate lifecycle/concurrency work must preserve ownership, fairness, cancellation and finalization.
+Operators can already override operational budgets through the protected service configuration. Git byte limits are separate from API byte limits; exchange and stall timeouts are shared. Overrides apply at service startup, subject to credential validity, original deadlines and transport/deployment ceilings. No replacement defaults or qualified capacity are selected. Provider concurrency one is a hardcoded queue simplification; more queue capacity adds no concurrency. Changing it requires separate lifecycle/scheduling work.
 
 The current rotation design requires at least two credential slots for replacement overlap. Full-exchange validity, original deadlines and unresolved obligations remain binding, without arbitrary cleanup TTLs.
 
 Wire/decoded bounds are independent. Queue/input time counts toward the original total budget. Push input uses the exchange deadline. Header timing follows TLS, upstream response-header timing follows upload unless headers arrive earlier. Overrides require positive safe integers under tested policy. Unknown keys/zero reject, hard material/action caps remain. Saturation cannot drain indefinitely or discard obligations.
 
-Compatibility is HTTP/1.1 without CONNECT, HTTP/2, arbitrary forwarding or interception, Node 24 and exactly `gh` 2.100.0. [Client commands](https://github.com/openclaw/openclaw-enterprise/blob/184270f12fd09c515af1f9afc06296baf2ae1ddf/apps/controller/src/drivers/repo/github/credentials/client/commands.ts) permit only `api` and `pr create` with restricted flags. `pr create` requires explicit `--head`. More commands require qualification, not larger budgets.
+Compatibility is HTTP/1.1 without CONNECT, HTTP/2, arbitrary forwarding or interception, Node 24 and exactly `gh` 2.100.0. [Client commands](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/apps/controller/src/drivers/repo/github/credentials/client/commands.ts) permit only `api` and `pr create` with restricted flags. `pr create` requires explicit `--head`. More commands require qualification, not larger budgets.
 
 ## Restart and future obligations
 
@@ -151,9 +151,9 @@ Compatibility is HTTP/1.1 without CONNECT, HTTP/2, arbitrary forwarding or inter
 
 **Lost service knowledge.** Replacing the selected Recreate worker Pod also replaces its credential sidecar. Service replacement loses sessions/provider inventory, needs new material and may replace the Agent Pod. State's persisted correlations and cleanup records do not restore that inventory. Provider tokens can survive until expiry. Repeated crashes defeat aggregate token bounds derived from process-local capacity.
 
-Safe replacement after lost issuance/write knowledge is unfinished. Missing-session invalidation or locally settled results prove neither provider settlement nor safe remint/replay. State/custody/worker owners must select surviving evidence and enforcement before replacement. A reconciliation hold or minimum durable effect record remains unselected. Any hold must cover forgotten effects across the lost service generation, not just remembered uncertainty. Newer implementation-owner work is not adopted here.
+The [landed worker](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/apps/controller/src/worker/repository-credentials.ts#L150) invalidates a missing recorded session, fails the affected revision with `REPOSITORY_SESSION_RECOVERY_UNSAFE`, blocks automatic same-revision replacement and queues exact runtime retirement while retaining cleanup. A user may explicitly deploy a new authorized revision; this neither settles old obligations nor replays Git/API operations. This revision-level refusal is not a service-generation-wide issuance fence.
 
-Restart-safe issuance/custody/outcome accounting retains original obligations, predecessor fencing and reconciliation before issuance, with repeated-crash cleanup/no-unsafe-remint-or-replay proof. Full encrypted material recovery is separately deferred. No JWT/Postgres design is selected. Persistence alone cannot guarantee exactly-once effects. Invalidation is not disposal/revocation or seamless continuation.
+Durable issuance/custody/outcome accounting and reconciliation of forgotten effects remain deferred, as does full encrypted material recovery. Any successor must retain original obligations and fence predecessors before issuance, with repeated-crash cleanup/no-unsafe-remint-or-replay proof. No JWT/Postgres design is selected. Persistence alone cannot guarantee exactly-once effects. Invalidation is not disposal/revocation or seamless continuation.
 
 **Runtime continuation.** Worker/Compute/Harness separately own safe refresh or explicit resume, workspace ownership and observed predecessor writer termination. Actual ordinary-Agent model/tool and real-Git evidence must prove continuity without stale credentials, concurrent writers or uncertain-effect replay.
 

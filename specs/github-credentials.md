@@ -4,9 +4,9 @@
 
 An API-created ordinary Agent can contribute to approved repositories through Git and selected `gh` operations while GitHub App keys, JWTs, installation tokens and renewal secrets remain outside its workload.
 
-**Status: Proposed, unmerged and unqualified.** The [inspected implementation baseline](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/packages/contracts/src/repo.ts) supplies source evidence, not installed availability. The [architecture](github-credentials/architecture.md) explains concepts and credential placement; the [contract](github-credentials/contract.md) defines interfaces, limits and recovery.
+**Status: RFC proposed; implementation landed.** Delivery record, 22 September 2026: PRs #221, #223, #224 and #235 are merged. Current implementation references use main `48ec47c`; `06d441b` remains the original inspection baseline. Source landing does not establish installed, live-provider or release qualification. The [architecture](github-credentials/architecture.md) explains concepts and credential placement; the [contract](github-credentials/contract.md) defines interfaces, limits and recovery.
 
-The operator enables repository credentials and configures approved repositories. An Agent owner supplies `repositoryBindings` through the API or CLI, deploys the Agent, then uses ordinary Git and supported `gh` commands in its workload. Model authentication remains separately configured. The pinned [installation](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/docs/guides/repository-credentials/installation.md) and [Agent usage](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/docs/guides/repository-credentials.md) guides describe this path as unmerged implementation procedures.
+The operator enables repository credentials and configures approved repositories. An Agent owner supplies `repositoryBindings` through the API or CLI, deploys the Agent, then uses ordinary Git and supported `gh` commands in its workload. Model authentication remains separately configured. The pinned [installation](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/docs/guides/repository-credentials/installation.md) and [Agent usage](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/docs/guides/repository-credentials.md) guides describe the merged implementation.
 
 ## Deliverables and boundary
 
@@ -63,22 +63,17 @@ flowchart TB
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Proposed architecture. Solid edges identify inspected source connections, not installed proof. Worker and service are separate containers in one Pod, with the Agent outside. The [lifecycle SVG](github-credentials/request-lifecycle.svg), [editable source](github-credentials/request-lifecycle.mmd) and [contract](github-credentials/contract.md#request-lifecycle) explain ordering and uncertainty.
+Implemented source topology, not installed proof. Worker and service are separate containers in one Pod, with the Agent outside. The [lifecycle SVG](github-credentials/request-lifecycle.svg), [editable source](github-credentials/request-lifecycle.mmd) and [contract](github-credentials/contract.md#request-lifecycle) explain ordering and uncertainty.
 
 <a id="implementation-and-unresolved-work"></a>
 
-## Unresolved lifecycle decisions
+## Lifecycle delivery
 
-State, worker and credential owners must resolve four conflicts between deletion and cleanup:
+The original inspection identified four deletion/cleanup conflicts. The [landed lifecycle](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/docs/flows/agent-repository-credentials.md#6-maintain-recover-and-retire-ownership) now closes each revision's repository sessions, records exact-owner cleanup and retires Compute during Agent deletion. Physical deletion waits for disposal, then removes live records while preserving immutable nonsecret evidence. Cleanup remains executable after Namespace soft deletion.
 
-- Agent deletion retires Compute without closing repository sessions.
-- Cleanup admission lacks a target for a deleted Agent.
-- Retained immutable attempts restrict revision deletion even after disposal, conflicting with the Agent finalizer.
-- Namespace soft deletion hides revisions needed by deferred cleanup.
+CLOSED, missing inventory and invalidation do not establish disposal; cleanup and physical deletion can remain pending indefinitely. Evidence pruning remains deferred.
 
-Initiating closure before infrastructure removal is insufficient. Select compatible retention/finalization and demonstrate intended deletion, executable deferred cleanup, preserved history and sibling safety. No cascade, history waiver or permanent deletion deferral is selected.
-
-Safe replacement after lost issuance/write history is [unfinished](github-credentials/contract.md#restart-and-future-obligations).
+Lost known sessions block automatic same-revision replacement and queue runtime retirement. Durable recovery of forgotten provider effects remains [deferred](github-credentials/contract.md#restart-and-future-obligations).
 
 Proposed feature-local divergence rule: ordinary implementation details remain owner work, and bugs require correction. Changes to scope, authority, ownership, interfaces, defaults, guarantees or acceptance require a short decision delta and affected-owner/human agreement before conformance claims.
 
@@ -88,7 +83,7 @@ Proposed feature-local divergence rule: ordinary implementation details remain o
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Ordinary contribution and custody | Helm-installed API, PostgreSQL, worker and actual Agent model/tools, independent commit/PR readback, running-container custody inspection and normal stop. Ready Pods, fixtures, host Git and pod-exec Git do not substitute.                                                                                                                                                                                                                                                     |
 | Exact scope and renewal           | All profiles/routes, immutable grants, concurrent bindings and refusal. Controlled hour-13 push/API with unchanged bearer/files and no expired-credential authentication. Platform hour-13 fetch is separate proof.                                                                                                                                                                                                                                                               |
-| Recovery and terminal cleanup     | Lost responses, partial delivery, real claim loss, worker-only restart, Pod replacement, missing-Secret repair and sibling safety. Abrupt service loss after issuance, uncertain issuance and possible writes must exercise production adapter/control, worker and delivery paths. Safe replacement remains unfinished. Proof must show old access refused, justify any bounded replacement and exclude unsafe remint/replay. No-token or graceful-drain restart is insufficient. |
+| Recovery and terminal cleanup     | Lost responses, partial delivery, real claim loss, worker-only restart, Pod replacement, missing-Secret repair and sibling safety. Qualify missing-session refusal, retained cleanup and exact runtime retirement. Existing controlled platform coverage includes SIGKILL after confirmed issuance; combined crash-during-uncertain-issuance/write qualification remains required. Show old access refused, justify any replacement and exclude unsafe remint/replay. No-token or graceful-drain restart is insufficient. |
 | Backend and packaging conformance | An alternate identity/auth/permission/expiry/renewal and drain-before backend exercises the same production owners. Run emitted service/client/controller artifacts with native clients and controlled peers, without source fallback. This selects no additional provider.                                                                                                                                                                                                       |
 
 An authorized live smoke checks real App scope and PR/issue/comment behavior separately from controlled expiry. Missing provider/model inputs or authorization leave that proof unavailable. Record exact base/head/tree, artifacts, images, clients, topology, configuration, skips and cleanup in implementation evidence. Keep changing run results and active progress there; retain decisions, acceptance outcomes and a bounded delivery record in this RFC. Missing acceptance evidence does not establish absent implementation. Source, composition, installed, live-provider and release evidence remain separate. Disabled CodeQL is no scan. Owner acceptance is not release acceptance.
@@ -96,4 +91,4 @@ An authorized live smoke checks real App scope and PR/issue/comment behavior sep
 ## References
 
 - [Driver model](../docs/design/drivers.md), [Providers](../docs/reference/providers.md), [IAM](../docs/reference/authorization.md), [SecretDriver](../docs/reference/drivers/secret.md) and [Harness authentication](30-harness-auth-binding.md) own existing platform behavior.
-- Immutable unmerged sources: [RepoDriver interface](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/packages/contracts/src/repo.ts) and [worker-Pod template](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/deploy/helm/openclaw-enterprise/templates/deployments.yaml). These are file-specific references, not main or adoption of later implementation work.
+- Landed sources: [RepoDriver interface](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/packages/contracts/src/repo.ts) and [worker-Pod template](https://github.com/openclaw/openclaw-enterprise/blob/48ec47c0c7f105d32b09ac87b29b2666749503ef/deploy/helm/openclaw-enterprise/templates/deployments.yaml). [Original inspection](https://github.com/openclaw/openclaw-enterprise/blob/06d441b73e6fc3dd6e04096afae6f34f7c09ddf3/packages/contracts/src/repo.ts) remains historical source evidence.
