@@ -14,6 +14,7 @@ const uncertainCommandMarker = "subprocess-outcome-uncertain"
 
 var clusterName = regexp.MustCompile(`^occ-dev-[a-z0-9][a-z0-9-]*$`)
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var ownerID = regexp.MustCompile(`^[a-z2-7]{26}$`)
 
 type developmentState struct {
 	Version          int    `json:"version"`
@@ -148,7 +149,7 @@ func readState(directory string) (*developmentState, error) {
 	if err := json.Unmarshal(data, &state, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("invalid development state: %w", err)
 	}
-	if !filepath.IsAbs(state.Repository) || state.Version != 3 || state.ComputeDriver != "kubernetes" || (state.ContainerEngine != "docker" && state.ContainerEngine != "podman") || !projectName.MatchString(state.ComposeProject) || !clusterName.MatchString(state.Cluster) || !strings.HasPrefix(state.DockerHost, "unix:///") || !filepath.IsAbs(state.KeyPath) || !regexp.MustCompile(`^[a-z2-7]{26}$`).MatchString(state.Owner) {
+	if !filepath.IsAbs(state.Repository) || state.Version != 3 || state.ComputeDriver != "kubernetes" || (state.ContainerEngine != "docker" && state.ContainerEngine != "podman") || !projectName.MatchString(state.ComposeProject) || !clusterName.MatchString(state.Cluster) || !strings.HasPrefix(state.DockerHost, "unix:///") || !filepath.IsAbs(state.KeyPath) || !ownerID.MatchString(state.Owner) {
 		return nil, fmt.Errorf("unsupported development state")
 	}
 	if state.KeyOwned && state.KeyPath != filepath.Join(directory, "initial-admin-service-key.json") {

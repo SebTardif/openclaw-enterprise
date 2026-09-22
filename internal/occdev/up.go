@@ -40,7 +40,17 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err != nil {
 		return err
 	}
-	state := &developmentState{Repository: opts.Repository, Version: 3, ComputeDriver: "kubernetes", ComposeProject: r.setting("OCC_DEVELOPMENT_COMPOSE_PROJECT", "openclaw-enterprise-development-kubernetes"), Cluster: r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])), directory: directory, KeyPath: opts.KeyOutput, KeyOwned: opts.KeyOutput == "", Owner: strings.ToLower(rand.Text()[:26])}
+	state := &developmentState{
+		Repository:     opts.Repository,
+		Version:        3,
+		ComputeDriver:  "kubernetes",
+		ComposeProject: r.setting("OCC_DEVELOPMENT_COMPOSE_PROJECT", "openclaw-enterprise-development-kubernetes"),
+		Cluster:        r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])),
+		directory:      directory,
+		KeyPath:        opts.KeyOutput,
+		KeyOwned:       opts.KeyOutput == "",
+		Owner:          strings.ToLower(rand.Text()[:26]),
+	}
 
 	if !clusterName.MatchString(state.Cluster) || !projectName.MatchString(state.ComposeProject) {
 		return fmt.Errorf("invalid Kubernetes cluster or Compose project name")

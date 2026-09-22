@@ -108,25 +108,35 @@ func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 		failures = append(failures, err)
 	}
 	if s.ClusterAttempted {
-		exists, err := r.clusterResourcesExist(ctx, s.Cluster)
-		if err != nil {
+		if err := r.deleteOwnedCluster(ctx, s); err != nil {
 			failures = append(failures, err)
-		} else if exists {
-			if err := r.verifyClusterOwnership(ctx, s); err != nil {
-				failures = append(failures, err)
-			} else if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
-				failures = append(failures, err)
-			} else if remains, err := r.clusterResourcesExist(ctx, s.Cluster); err != nil {
-				failures = append(failures, err)
-			} else if remains {
-				failures = append(failures, fmt.Errorf("cluster %s still has resources after deletion", s.Cluster))
-			}
 		}
 	}
 	if err := r.compose(ctx, s, "down", "--volumes"); err != nil {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
+}
+
+func (r *runner) deleteOwnedCluster(ctx context.Context, s *developmentState) error {
+	exists, err := r.clusterResourcesExist(ctx, s.Cluster)
+	if err != nil || !exists {
+		return err
+	}
+	if err := r.verifyClusterOwnership(ctx, s); err != nil {
+		return err
+	}
+	if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
+		return err
+	}
+	remains, err := r.clusterResourcesExist(ctx, s.Cluster)
+	if err != nil {
+		return err
+	}
+	if remains {
+		return fmt.Errorf("cluster %s still has resources after deletion", s.Cluster)
+	}
+	return nil
 }
 
 func (r *runner) clusterResourcesExist(ctx context.Context, cluster string) (bool, error) {
