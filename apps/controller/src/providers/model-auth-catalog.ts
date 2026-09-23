@@ -45,7 +45,7 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         label: "Sign in with ChatGPT (Responses)",
         credentialKind: "oauth",
         nativeProviderId: "openai",
-        nativeMethodId: "token-sharing",
+        nativeMethodId: "siwc",
         nativeVersion: null,
         deploymentAuthMethod: null,
         unavailableReason: "Not available in the bundled OpenClaw version.",

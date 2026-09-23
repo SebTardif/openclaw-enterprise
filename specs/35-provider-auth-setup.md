@@ -35,7 +35,8 @@ uses native OpenClaw provider and method IDs:
 | `vllm`      | `custom`                                           | Embedded OpenClaw               |
 
 Mappings are source-checked against OpenClaw `2026.9.1`. The pending SIWC
-`token-sharing` method has no recorded native release; its version is null.
+`token-sharing` connection method maps to native `siwc` in the pending provider
+implementation. It has no recorded native release; its version is null.
 `nativeVersion` is evidence of the inspected mapping, not a minimum version,
 compatible-image guarantee, or live verification. `deploymentAuthMethod` and
 `unavailableReason` separately describe OCE availability.
