@@ -15,28 +15,74 @@ runtime compatibility or a real Agent turn.
 
 ## Plugin policies
 
-**Translated** means accepted and emitted by this implementation. It does not
-mean the final Agent thread has been live-verified. Codex scope is concrete
-hosted apps from `plugin/read` in the curated marketplace. Native OpenClaw scope
-is the admitted catalog, currently Diffs. Neither column covers arbitrary plugin
-packages.
+Each Agent selects plugins. Each plugin has its own defaults and may contain
+policy overrides for individual tools:
 
-| OCE policy                             | Codex plugins                                                 | Native OpenClaw plugins            | Remaining boundary                                                                                                 |
-| -------------------------------------- | ------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Plugin enable/disable                  | Translated                                                    | Translated                         | Explicit disablement remains terminal.                                                                             |
-| `always`: no added approval            | Translated to `approve`, including with `auto_review`         | Translated                         | Other workload/runtime restrictions still apply.                                                                   |
-| `never`: default denial                | Translated; explicit tool/category exceptions can allow calls | Translated by disabling the plugin | Native OpenClaw tool exceptions are deferred.                                                                      |
-| `auto`: native decision about review   | Translated                                                    | Rejected                           | OC needs generic trigger and remembered-grant semantics.                                                           |
-| `prompt`: every-call review            | Translated                                                    | Rejected                           | Codex bridge must preserve the mode and avoid approval bypass; OC can integrate existing human approval transport. |
-| Plugin reviewer `user` / `auto_review` | Translated; inherited by tools                                | Rejected                           | Generic automatic review of OC plugin tools needs runtime work.                                                    |
-| Per-tool enable/disable and modes      | Translated from authenticated tool identities                 | Rejected                           | OC tool policy work is deferred.                                                                                   |
-| `writes` / `destructiveActions`        | Compiled into per-tool settings from annotations              | Rejected                           | Native OC tool metadata does not supply these classifications.                                                     |
-| Tool exceptions to defaults/categories | Translated with OCE precedence                                | Rejected                           | Explicit disablement and installation failure remain terminal.                                                     |
+```text
+Agent.plugins[pluginId]
+  enabled
+  approvalMode
+  approvalsReviewer
+  writes
+  destructiveActions
+  tools[toolName]
+    enabled
+    approvalMode
+```
+
+The tables describe OCE translation in this implementation, including
+[PR #340](https://github.com/openclaw/openclaw-enterprise/pull/340).
+**Translated** means accepted and emitted; **Inherited** means resolved from
+plugin policy; **Rejected** means the requested policy is unsupported by the
+translator. Translation does not establish live deployment enforcement.
+
+Codex scope is concrete hosted apps from `plugin/read` in the curated
+marketplace. Native OpenClaw scope is the admitted catalog, currently Diffs.
+The runtime prerequisites above apply to all translated rows.
+
+### Plugin level: `plugins[pluginId]`
+
+These fields control the plugin and provide defaults for its tools.
+`writes` and `destructiveActions` belong here: each selects an approval mode
+for a category of tools within this plugin.
+
+| Policy                                               | Meaning                                      | Codex translation                                             | Native OpenClaw translation             |
+| ---------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
+| `enabled: true / false`                              | Enable or disable the plugin                 | Translated; `false` blocks every tool                         | Translated; `false` disables the plugin |
+| `approvalMode: always`                               | Default to no added approval                 | Translated to `approve`                                       | Translated                              |
+| `approvalMode: never`                                | Default to denying calls                     | Translated; explicit tool/category exceptions can allow calls | Translated by disabling the plugin      |
+| `approvalMode: auto`                                 | Let the runtime decide when review is needed | Translated                                                    | Rejected                                |
+| `approvalMode: prompt`                               | Request review for every call                | Translated; bridge preservation required                      | Rejected                                |
+| `approvalsReviewer: user`                            | Use human review when review is required     | Translated; inherited by tools                                | Rejected                                |
+| `approvalsReviewer: auto_review`                     | Use automatic review when review is required | Translated; inherited by tools                                | Rejected                                |
+| `writes: always / never / auto / prompt`             | Set the mode for write tools                 | Translated from tool annotations                              | Rejected; classifications unavailable   |
+| `destructiveActions: always / never / auto / prompt` | Set the mode for destructive tools           | Translated from tool annotations                              | Rejected; classifications unavailable   |
 
 `auto` selects **when** review is needed; `auto_review` selects **who** reviews.
-Codex native `approve` skips review even when the app reviewer is `auto_review`.
-There is no OCE per-tool reviewer field. An omitted plugin reviewer inherits
-native behavior, subject to managed requirements.
+Codex accepts `always` with either reviewer: native `approve` skips the added
+review, subject to managed requirements. An omitted plugin reviewer inherits
+native settings.
+
+### Tool level within a plugin: `plugins[pluginId].tools[toolName]`
+
+A tool entry overrides policy for one tool in its parent plugin. It contains
+`enabled`, `approvalMode`, or both. Native OpenClaw tool-level translation is
+deferred; its translator currently rejects any `tools` map.
+
+| Policy                 | Meaning                                                       | Codex translation                               | Native OpenClaw translation            |
+| ---------------------- | ------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------- |
+| `enabled: false`       | Disable this tool regardless of its approval mode             | Translated                                      | Rejected; deferred                     |
+| `enabled: true`        | Permit availability subject to the effective approval policy  | Translated; does not override `never` by itself | Rejected; deferred                     |
+| `approvalMode: always` | Override category/default mode with no added approval         | Translated to `approve`                         | Rejected; deferred                     |
+| `approvalMode: never`  | Deny this tool                                                | Translated by disabling the tool                | Rejected; deferred                     |
+| `approvalMode: auto`   | Override category/default mode with runtime-selected review   | Translated                                      | Rejected; deferred                     |
+| `approvalMode: prompt` | Override category/default mode with every-call review         | Translated; bridge preservation required        | Rejected; deferred                     |
+| `approvalMode` omitted | Use the stricter applicable category, then the plugin default | Inherited; resolved by the translator           | Rejected when a tool entry is supplied |
+
+Tools inherit the plugin reviewer. There is no tool-level `approvalsReviewer`,
+`writes`, or `destructiveActions` field. An omitted tool `enabled` does not
+add a disable, but inherited `never` still denies the tool. A tool override
+cannot re-enable an explicitly disabled plugin or bypass installation failure.
 
 [OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and a
 compatible runtime image remain prerequisites for preserving the translated
