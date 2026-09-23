@@ -292,8 +292,10 @@ verification requirements.
 
 Optional member Drivers, per-Agent Driver selection, automatic account creation,
 clientless Providers, installed Provider loading/injection, and Installation
-Provider mutation remain out of scope. Saved connections do not yet implement
-OAuth login, refresh, revocation, or additional inference transports.
+Provider mutation remain out of scope. Production OAuth acquisition, workload
+delivery, refresh, and upstream revocation remain unqualified; the Agent-bound
+acquisition API does not enable these runtime capabilities. Additional inference
+transports are not implemented.
 
 ## Related
 
