@@ -692,6 +692,7 @@ test("Providers setup saves API-key and local connections for Agent drafts", asy
   assert.equal((await savedResponse).status(), 200);
   await page.reload();
   await page.getByLabel("Provider connection", { exact: true }).waitFor();
+  await page.getByLabel("Provider connection", { exact: true }).scrollIntoViewIfNeeded();
   assert.equal(
     await page.getByLabel("Provider connection", { exact: true }).inputValue(),
     sharedConnection.id,
@@ -712,7 +713,7 @@ test("Providers setup identifies missing credential storage without reporting an
   const fixture = await createConsoleAppFixture(t, { secretDriver: null });
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Provider storage missing", { ready: true });
-  const { page } = await newPage(t, fixture);
+  const { page } = await newPage(t, fixture, { recording: "provider-storage-unconfigured" });
   const path = `/namespaces/${namespace.id}/provider-connections`;
   await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
   await page.getByLabel("Connection name").fill("Unsaved API key");
