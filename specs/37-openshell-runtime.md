@@ -87,7 +87,7 @@ The first deliverable is an explicitly selected compatibility mode. Protected mo
 
 Each checkpoint needs read-only push denial, exact-grant refusal, sibling isolation, Secret rotation, startup failure, restart/replacement, delayed/unknown effects and cleanup checks for owned resources. Source acceptance, composition, installation, live operation and release remain separate. Preparation helpers alone do not complete the API/worker path.
 
-Before release, complete independent security review and prove stock OpenShell meets the active-model closure bound; otherwise separately review a minimal upstream patch/fork. The bound cannot be waived. Additional authentication profiles, SSH/LFS and stronger isolation remain deferred.
+Complete independent security review before each release. Before releasing protected mode, prove stock OpenShell meets the active-model closure bound; otherwise separately review a minimal upstream patch/fork. The protected-mode bound cannot be waived. Additional authentication profiles, SSH/LFS and stronger isolation remain deferred.
 
 ## References
 
