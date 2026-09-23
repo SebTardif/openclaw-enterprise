@@ -611,8 +611,9 @@ if (command === "docker") {
       nodes[cluster] = nodes[cluster].filter(node => node.Config.Labels["k3d.role"] !== "noRole"); saveNodes();
     }
   } else fail("unexpected k3d: " + args.join(" "));
-} else if (command === "kubectl" && !args.includes("get")) {
-  fail("unexpected kubectl: " + args.join(" "));
+} else if (command === "kubectl") {
+  if (!args.includes("get")) fail("unexpected kubectl: " + args.join(" "));
+  output(JSON.stringify({ gitVersion: scenario === "unsupported-kubernetes-version" ? "v1.34.9+k3s1" : "v1.35.8+k3s1" }));
 }
 `,
     );

@@ -24,6 +24,10 @@ func Up(ctx context.Context, opts Options) (result error) {
 		return err
 	}
 	r := newRunner(opts)
+	image := r.setting("OCC_DEVELOPMENT_KUBERNETES_IMAGE", "+v1.35")
+	if r.env["OCC_DEVELOPMENT_KUBERNETES_IMAGE"] != "" && !kubernetesImageReference.MatchString(image) {
+		return fmt.Errorf("OCC_DEVELOPMENT_KUBERNETES_IMAGE must be an immutable image@sha256 reference")
+	}
 	timeout, err := positiveSetting(r, "OCC_DEVELOPMENT_STARTUP_TIMEOUT_SECONDS", 300, 86400)
 	if err != nil {
 		return err
@@ -54,6 +58,9 @@ func Up(ctx context.Context, opts Options) (result error) {
 
 	if !clusterName.MatchString(state.Cluster) || !projectName.MatchString(state.ComposeProject) {
 		return fmt.Errorf("invalid Kubernetes cluster or Compose project name")
+	}
+	if len(state.Cluster) > 32 {
+		return fmt.Errorf("Kubernetes cluster name must be at most 32 characters")
 	}
 	if state.KeyOwned {
 		state.KeyPath = filepath.Join(directory, "initial-admin-service-key.json")
@@ -202,7 +209,7 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err := r.verifyResourceOwner(ctx, state, "volume", "k3d-"+state.Cluster+"-images"); err != nil {
 		return err
 	}
-	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--no-rollback", "--runtime-label", ownershipLabel+"="+state.Owner+"@all", "--image", "+v1.35", "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
+	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--no-rollback", "--runtime-label", ownershipLabel+"="+state.Owner+"@all", "--image", image, "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
 		clusterCreationFailed = true
 		return err
 	}

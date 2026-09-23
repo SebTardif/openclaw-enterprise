@@ -663,6 +663,45 @@ async function kubernetesFixture(t, scenario = "success") {
   return fixture;
 }
 
+test("Kubernetes dev-up selects an immutable node image and rejects invalid selection before mutation", async (t) => {
+  const fixture = await kubernetesFixture(t);
+  for (const invalid of [
+    "rancher/k3s:latest",
+    "--help",
+    "rancher/k3s@sha256:bad",
+    `https://registry.example/k3s@sha256:${"a".repeat(64)}`,
+  ]) {
+    fixture.env.OCC_DEVELOPMENT_KUBERNETES_IMAGE = invalid;
+    const rejected = fixture.start();
+    // A regression that starts the profile must still dispose its inert resources
+    // and real claims before the rejection assertion reports failure.
+    if (rejected.status === 0) {
+      assert.equal(runDevDown(fixture.env).status, 0);
+    }
+    assert.notEqual(rejected.status, 0, "invalid image must fail before startup");
+    assert.match(rejected.stderr, /OCC_DEVELOPMENT_KUBERNETES_IMAGE must be an immutable/);
+    await assert.rejects(stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY), { code: "ENOENT" });
+    assert.deepEqual(await readJsonLines(fixture.env.SAFETY_LOG), []);
+  }
+  for (const repository of [
+    "rancher/k3s",
+    "Registry.example:5000/team__mirror/k3s--custom:v1.35.8",
+    "[2001:db8::1]:5000/team__mirror/k3s--custom:v1.35.8",
+  ]) {
+    const image = `${repository}@sha256:${"a".repeat(64)}`;
+    fixture.env.OCC_DEVELOPMENT_KUBERNETES_IMAGE = image;
+    const started = fixture.start();
+    assert.equal(started.status, 0, started.stderr);
+    const commands = await readJsonLines(fixture.env.SAFETY_LOG);
+    const create = commands.findLast(
+      (entry) => entry.command === "k3d" && entry.args[1] === "create",
+    );
+    assert.equal(create.args[create.args.indexOf("--image") + 1], image);
+    const cleaned = runDevDown(fixture.env);
+    assert.equal(cleaned.status, 0, cleaned.stderr);
+  }
+});
+
 test("Kubernetes dev-up authenticates the Installation and cleanup uses its saved endpoint and Compose configuration", async (t) => {
   const fixture = await kubernetesFixture(t);
   delete fixture.env.DOCKER_HOST;
@@ -771,6 +810,7 @@ for (const scenario of [
   "cluster-create-failed",
   "api-mismatch",
   "api-unauthorized",
+  "unsupported-kubernetes-version",
 ]) {
   test(`Kubernetes dev-up rolls back owned resources after ${scenario}`, async (t) => {
     const fixture = await kubernetesFixture(t, scenario);
@@ -1514,4 +1554,17 @@ test("Kubernetes development uses a canonical default state directory through a 
   assert.equal(stopped.status, 0, stopped.stderr);
   await assert.rejects(stat(directory), { code: "ENOENT" });
   assert.ok((await stat(temporary)).isDirectory());
+});
+
+test("Kubernetes dev-up rejects an overlong cluster name before mutation", async (t) => {
+  const fixture = await kubernetesFixture(t);
+  fixture.env.OCC_DEVELOPMENT_KUBERNETES_CLUSTER = `occ-dev-${"a".repeat(26)}`;
+  const rejected = fixture.start();
+  if (rejected.status === 0) {
+    assert.equal(runDevDown(fixture.env).status, 0);
+  }
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /cluster.*32/);
+  await assert.rejects(stat(fixture.env.OCC_DEVELOPMENT_STATE_DIRECTORY), { code: "ENOENT" });
+  assert.deepEqual(await readJsonLines(fixture.env.SAFETY_LOG), []);
 });

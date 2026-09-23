@@ -9,7 +9,7 @@ quickstart](../quickstart.md).
 ## Start the profile
 
 You need Docker Engine with Docker Compose, or Podman with `podman-compose`,
-plus k3d with `--runtime-label` support and kubectl. Build the checkout-local [OCC CLI](../cli.md) with the
+plus k3d 5.9.0 or newer with `--runtime-label` support and kubectl. Build the checkout-local [OCC CLI](../cli.md) with the
 Go version in `go.mod`, Node.js 24 or newer, and the repository-pinned pnpm.
 Compose runs PostgreSQL, migration, bootstrap, controller, and worker processes.
 
@@ -57,6 +57,13 @@ remain schedulable on constrained workstations. Set
 `OCC_DEVELOPMENT_KUBERNETES_DISK_THRESHOLD_PERCENT` to an integer from 1
 through 20 to override it; production Kubernetes settings are unaffected.
 
+By default k3d resolves the `+v1.35` K3s channel online. Set
+`OCC_DEVELOPMENT_KUBERNETES_IMAGE` to an approved immutable
+`image@sha256:<64 lowercase hexadecimal digits>` reference to select a node image
+without channel lookup. Mutable tags and malformed references fail before resource
+creation. Startup checks that the running server is Kubernetes 1.35.x, including
+when you select an explicit image. Image availability is still required.
+
 The default runtime image is built from `deploy/runtime/Dockerfile`. Set
 `OCC_KUBERNETES_RUNTIME_IMAGE` to an existing local image reference to use it
 instead; startup fails if that explicit image is missing. The helper imports
@@ -75,7 +82,7 @@ remain inaccessible to other host users through that private directory. The
 helper does not modify the default kubeconfig or current kubectl context.
 
 For separate stacks, select distinct state directories, Compose projects,
-cluster names, and published API ports. Set an unused, non-overlapping
+cluster names (an `occ-dev-` prefix and at most 32 characters), and published API ports. Set an unused, non-overlapping
 `OCC_DEVELOPMENT_TRUSTED_BRIDGE_CIDR` and a distinct `OCC_POSTGRES_PORT` for each
 stack. Keep each stack's resources under the helper's lifecycle until cleanup;
 do not reuse its names for unrelated resources.

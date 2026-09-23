@@ -1,7 +1,7 @@
 ---
 created: 2026-08-24
-updated: 2026-09-22
-last_updated_session: authoring-run/fb7eab38-3647-49c9-af80-7d3a90173b7f
+updated: 2026-09-23
+last_updated_session: authoring-run/9a6190e4-c1e1-4558-9d33-f1f607e97ed9
 ---
 
 # Compose development flow
@@ -124,6 +124,11 @@ their platform deletion workflows; follow [safe development shutdown](../guides/
 [The Kubernetes startup and cleanup trace](docker-compose-development/startup.md#12-select-kubernetes-development-and-preserve-cleanup-ownership)
 follows profile selection, the private Compose snapshot, k3d creation, runtime
 import, authenticated readiness, and cleanup through the recorded engine.
+`internal/occdev/up.go:Up` validates an explicit immutable K3s image and the 32-character cluster-name
+limit before acquiring claims or mutating resources; otherwise k3d resolves `+v1.35`.
+`internal/occdev/kubernetes.go:writeKubeconfigs` checks the actual server belongs
+to the tested 1.35 series before runtime import or controller startup. A version
+failure follows the existing owned-resource rollback.
 
 ## Debugging and Verification
 
@@ -166,6 +171,8 @@ import, authenticated readiness, and cleanup through the recorded engine.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 06:45: Add immutable node-image selection and running-server validation to the Kubernetes development lifecycle. (authoring-run/9a6190e4-c1e1-4558-9d33-f1f607e97ed9 - 9fd571c903db203a231823c9d49597d0d0702f85)
 
 - 2026-09-22 23:45: Require successful mutating helpers and independently drained captured output before clearing lifecycle protection. (843154d6710e1e572263be15637e18f8ca5d51f1)
 
