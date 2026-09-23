@@ -1,0 +1,12 @@
+{
+  "requiredEnv": ["OCC_TEST_DEV_UP_OPENSHELL_REAL"],
+  "env": {
+    "OCC_TEST_DEV_UP_OPENSHELL_REAL": "1"
+  },
+  "files": [
+    {
+      "path": "tests/integration/dev-up-openshell-k3d-real.test.mjs",
+      "expectedTests": ["dev-up installs the pinned OpenShell profile in its owned k3d cluster"]
+    }
+  ]
+}

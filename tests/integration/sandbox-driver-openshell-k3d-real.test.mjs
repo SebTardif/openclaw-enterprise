@@ -721,6 +721,15 @@ function integrationGatewayClient(
     health(signal) {
       return gateway.health(signal);
     },
+    getWorkspace(name, signal) {
+      return gateway.getWorkspace(name, signal);
+    },
+    createWorkspace(name, labels, signal) {
+      return gateway.createWorkspace(name, labels, signal);
+    },
+    deleteWorkspace(name, signal) {
+      return gateway.deleteWorkspace(name, signal);
+    },
     async createSandbox(request, signal) {
       const compatible = enableCompatibilityBridge
         ? removeStockUnsupportedTokenProjection(request, context.requirements)
@@ -1049,14 +1058,10 @@ function createIntegrationSandboxDriverFactory(
           throw error;
         }
       },
-      async cleanup(context) {
-        if (context.revision === undefined) {
-          await stopGatewayForward(context.namespace.name);
-          return;
-        }
+      async cleanupRevision(context) {
         try {
           const endpoint = existingEndpointForNamespace(context);
-          await delegate(undefined, context.namespace.name, endpoint).cleanup(context);
+          await delegate(undefined, context.namespace.name, endpoint).cleanupRevision(context);
         } finally {
           if (enableCompatibilityBridges) {
             const bridge = credentialBridges.get(context.revision.id);
@@ -1106,6 +1111,14 @@ function createIntegrationSandboxDriverFactory(
               context.namespace.name,
             ).catch(() => undefined);
           }
+        }
+      },
+      async cleanupNamespace(context) {
+        try {
+          const endpoint = existingEndpointForNamespace(context);
+          await delegate(undefined, context.namespace.name, endpoint).cleanupNamespace(context);
+        } finally {
+          await stopGatewayForward(context.namespace.name);
         }
       },
     };

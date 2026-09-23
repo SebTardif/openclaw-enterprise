@@ -155,7 +155,8 @@ function createSandboxDriver(options = {}) {
         revisionId: context.revision.id,
       };
     },
-    async cleanup() {},
+    async cleanupRevision() {},
+    async cleanupNamespace() {},
   };
 }
 
@@ -330,7 +331,12 @@ test("the controller selects explicitly registered Sandbox Drivers with closed f
       }),
     DriverSelectionError,
   );
-  for (const hook of ["ensureNamespace", "provisionHarness"]) {
+  for (const hook of [
+    "ensureNamespace",
+    "provisionHarness",
+    "cleanupRevision",
+    "cleanupNamespace",
+  ]) {
     assert.throws(
       () =>
         controller.registerDriver({

@@ -901,7 +901,8 @@ function validateCreatedSandboxDriver(
     created.facets.length === 0 ||
     (created.ensureNamespace !== undefined && typeof created.ensureNamespace !== "function") ||
     (created.provisionHarness !== undefined && typeof created.provisionHarness !== "function") ||
-    typeof created.cleanup !== "function"
+    typeof created.cleanupRevision !== "function" ||
+    typeof created.cleanupNamespace !== "function"
   ) {
     throw new Error("drivers.sandbox factory returned an invalid Driver contract.");
   }

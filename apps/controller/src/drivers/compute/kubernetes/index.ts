@@ -678,14 +678,7 @@ function channelProxy(value: unknown): { address: string; port: number } {
 
 export function kubernetesNamespaceName(namespaceId: string): string {
   const id = required(namespaceId, "Platform Namespace ID");
-  const slug =
-    id
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 46)
-      .replace(/-+$/g, "") || "ns";
-  return `oce-${slug}-${sha256Hex(id, 12)}`;
+  return `oce-${sha256Hex(id, 15)}`;
 }
 
 export function kubernetesGatewayNamespaceName(namespaceId: string): string {
@@ -1861,7 +1854,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       await this.lifecycle.beforeNamespaceDelete(namespace);
       if (this.sandboxDriver !== undefined) {
-        await this.sandboxDriver.cleanup(await this.sandboxNamespaceContext(namespace, name));
+        await this.sandboxDriver.cleanupNamespace(
+          await this.sandboxNamespaceContext(namespace, name),
+        );
       }
       if (!(await this.deleteGatewayNamespace(ownership))) {
         return result;
@@ -2997,7 +2992,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       await this.waitForRevisionPodsToTerminate(revision, namespace, "agent");
     }
     if (sandboxDriver !== undefined) {
-      await sandboxDriver.cleanup({
+      await sandboxDriver.cleanupRevision({
         ...(await this.sandboxNamespaceContext(
           this.sandboxNamespaceForRevision(revision, namespace),
           namespace,

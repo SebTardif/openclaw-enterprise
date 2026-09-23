@@ -656,6 +656,10 @@ export interface SandboxHarnessContext extends SandboxNamespaceContext {
   readonly requirements: HarnessWorkloadRequirements;
 }
 
+export interface SandboxRevisionContext extends SandboxNamespaceContext {
+  readonly revision: Readonly<AgentRevision>;
+}
+
 export interface ComputeLifecycleHooks {
   afterNamespacePrepared?(namespace: Readonly<Namespace>, signal: AbortSignal): Promise<void>;
   beforeWorkloadStart?(
@@ -787,10 +791,10 @@ export interface SandboxDriver extends Driver {
   ): OpenClawConfigurationDocument;
   ensureNamespace?(context: SandboxNamespaceContext): Promise<void>;
   provisionHarness?(context: SandboxHarnessContext): Promise<SandboxResourceRef>;
-  /** Required for revision stop, retirement, and Namespace cleanup, independent of Harness ownership. */
-  cleanup(
-    context: SandboxNamespaceContext & { readonly revision?: Readonly<AgentRevision> },
-  ): Promise<void>;
+  /** Required for revision stop and retirement, independent of Harness ownership. */
+  cleanupRevision(context: SandboxRevisionContext): Promise<void>;
+  /** Required before the Compute Driver releases its Namespace infrastructure. */
+  cleanupNamespace(context: SandboxNamespaceContext): Promise<void>;
 }
 
 export interface PluginDriverContext {

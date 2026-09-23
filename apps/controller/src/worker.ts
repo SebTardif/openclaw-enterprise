@@ -180,7 +180,8 @@ function validSandboxDriver(driver: SandboxDriver): boolean {
     driver.facets.every(isSandboxFacet) &&
     (driver.ensureNamespace === undefined || typeof driver.ensureNamespace === "function") &&
     (driver.provisionHarness === undefined || typeof driver.provisionHarness === "function") &&
-    typeof driver.cleanup === "function"
+    typeof driver.cleanupRevision === "function" &&
+    typeof driver.cleanupNamespace === "function"
   );
 }
 

@@ -226,18 +226,18 @@ function routedRevision(driver, overrides = {}) {
   };
 }
 
-test("Kubernetes namespace names are deterministic, DNS-safe, distinct, and bounded", () => {
+test("Kubernetes namespace names are deterministic, DNS-safe, distinct, and OpenShell-routable", () => {
   for (const id of ["Namespace_With.UPPERCASE!punctuation", "x".repeat(250), "---"]) {
     const name = kubernetesNamespaceName(id);
-    const suffix = createHash("sha256").update(id).digest("hex").slice(0, 12);
+    const suffix = createHash("sha256").update(id).digest("hex").slice(0, 15);
 
     assert.equal(name, kubernetesNamespaceName(id));
     assert.match(name, /^oce-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
-    assert.ok(name.length <= 63);
+    assert.ok(name.length <= 19);
     assert.ok(name.endsWith(suffix));
   }
 
-  // Distinct tenant identifiers must not collide when their readable names normalize equally.
+  // Distinct tenant identifiers retain distinct opaque placements.
   assert.notEqual(kubernetesNamespaceName("Team A"), kubernetesNamespaceName("Team-A"));
 });
 
@@ -761,6 +761,83 @@ test("namespace resolver selects exact, secure external ownership using a transp
     mutate(invalid);
     await assert.rejects(discover([invalid]), expected);
   }
+});
+
+test("Kubernetes namespace deletion waits for Sandbox namespace cleanup", async () => {
+  const calls = [];
+  let cleanupAttempts = 0;
+  let present = true;
+  const namespaceName = kubernetesNamespaceName(tenant.id);
+  const namespaceResource = {
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: {
+      name: namespaceName,
+      uid: "namespace-cleanup-uid",
+      labels: {
+        "app.kubernetes.io/managed-by": "openclaw-enterprise",
+        "openclaw.dev/namespace": tenant.id,
+      },
+      annotations: { "openclaw.dev/namespace-id": tenant.id },
+    },
+    status: { phase: "Active" },
+  };
+  const sandboxDriver = {
+    id: "sandbox-namespace-cleanup",
+    implementation: "test/namespace-cleanup",
+    capability: "sandbox",
+    facets: ["networking"],
+    async cleanupRevision() {},
+    async cleanupNamespace(context) {
+      calls.push("sandbox-cleanup");
+      assert.equal(context.namespace.id, tenant.id);
+      assert.equal(context.namespace.name, namespaceName);
+      cleanupAttempts += 1;
+      if (cleanupAttempts === 1) {
+        throw new Error("workspace remains nonempty");
+      }
+    },
+  };
+  const driver = new KubernetesComputeDriver(options(), { sandboxDriver });
+  const notFound = () => Object.assign(new Error("Not found"), { code: 404 });
+  driver.apiClients = Promise.resolve({
+    core: {
+      async listNamespace() {
+        return { items: present ? [structuredClone(namespaceResource)] : [] };
+      },
+      async readNamespace({ name }) {
+        if (!present || name !== namespaceName) {
+          throw notFound();
+        }
+        return structuredClone(namespaceResource);
+      },
+      async deleteNamespace(request) {
+        calls.push("kubernetes-delete");
+        assert.equal(cleanupAttempts, 2);
+        assert.deepEqual(request, {
+          name: namespaceName,
+          body: { preconditions: { uid: namespaceResource.metadata.uid } },
+        });
+        present = false;
+      },
+    },
+    objects: {},
+  });
+
+  // A provider cleanup failure must leave the Kubernetes Namespace intact for a safe retry.
+  assert.deepEqual(await driver.deleteNamespace({ ...tenant, status: "deleting" }), {
+    namespaceId: tenant.id,
+    namespaceDeleted: false,
+    failure: "retryable",
+  });
+  assert.equal(present, true);
+  assert.deepEqual(calls, ["sandbox-cleanup"]);
+
+  assert.deepEqual(await driver.deleteNamespace({ ...tenant, status: "deleting" }), {
+    namespaceId: tenant.id,
+    namespaceDeleted: true,
+  });
+  assert.deepEqual(calls, ["sandbox-cleanup", "sandbox-cleanup", "kubernetes-delete"]);
 });
 
 test("explicit existing namespace adoption claims tenant identity only after security checks", async () => {
@@ -3520,13 +3597,14 @@ test("containment-only Sandbox cleanup retries after its Compute-owned workload 
     implementation: "test/containment-only",
     capability: "sandbox",
     facets: ["networking"],
-    async cleanup(context) {
+    async cleanupRevision(context) {
       assert.equal(deploymentPresent, false);
       cleanupCalls.push(context);
       if (cleanupCalls.length === 1) {
         throw new Error("sandbox cleanup failed");
       }
     },
+    async cleanupNamespace() {},
   };
   const driver = new KubernetesComputeDriver(options(), { sandboxDriver });
   const revision = routedRevision(driver, {
@@ -5452,7 +5530,7 @@ test("stopping a containment-only Kubernetes revision removes its workload befor
     implementation: "test/containment-only",
     capability: "sandbox",
     facets: ["networking"],
-    async cleanup(context) {
+    async cleanupRevision(context) {
       assert.equal(deploymentPresent, false);
       assert.ok(podObservations >= 2, "cleanup must wait for the exact workload Pod to terminate");
       cleanupCalls.push(context);
@@ -5460,6 +5538,7 @@ test("stopping a containment-only Kubernetes revision removes its workload befor
         throw new Error("sandbox cleanup failed");
       }
     },
+    async cleanupNamespace() {},
   };
   const driver = new KubernetesComputeDriver(options(), { sandboxDriver });
   const revision = routedRevision(driver, {
@@ -5602,9 +5681,10 @@ test("stopping a provider-owned Kubernetes revision waits for Sandbox workload t
     async provisionHarness() {
       assert.fail("stop must not provision a Harness workload");
     },
-    async cleanup() {
+    async cleanupRevision() {
       cleanupComplete = true;
     },
+    async cleanupNamespace() {},
   };
   const driver = new KubernetesComputeDriver(options(), { sandboxDriver });
   const revision = routedRevision(driver, {

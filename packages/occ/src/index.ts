@@ -449,7 +449,8 @@ function driverHasCapabilityContract(driver: Driver): boolean {
         typeof candidate.ensureNamespace === "function") &&
       (candidate.provisionHarness === undefined ||
         typeof candidate.provisionHarness === "function") &&
-      typeof candidate.cleanup === "function"
+      typeof candidate.cleanupRevision === "function" &&
+      typeof candidate.cleanupNamespace === "function"
     );
   }
   if (driver.capability === "plugin") {

@@ -544,7 +544,8 @@ test("deployment admission stamps immutable native logging after sandbox policy"
     configureAgent(values) {
       return { ...values, sandboxed: true, logging: { ...values.logging, level: "error" } };
     },
-    async cleanup() {},
+    async cleanupRevision() {},
+    async cleanupNamespace() {},
   };
   controller.registerDriver(sandbox);
   controller.selectDriver("sandbox", sandbox.id);
