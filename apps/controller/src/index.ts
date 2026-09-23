@@ -75,6 +75,7 @@ import {
   NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
+  SecretDriverUnavailableError,
   type DeploymentStatusResult,
   type HarnessResolver,
   type OpenClawController,
@@ -865,6 +866,13 @@ function requestFailure(error: unknown): RequestFailure {
   }
   if (error instanceof NotImplementedError) {
     return failure(501, "NOT_IMPLEMENTED", error.message);
+  }
+  if (error instanceof SecretDriverUnavailableError) {
+    return failure(
+      503,
+      "SECRET_DRIVER_UNAVAILABLE",
+      "Credential storage is not configured for this Installation. Ask the Installation operator to configure a Secret Driver.",
+    );
   }
   if (isDependencyUnavailable(error)) {
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");

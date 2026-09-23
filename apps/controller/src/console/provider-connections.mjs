@@ -312,13 +312,21 @@ export async function renderProviderConnections(context) {
           if (error.status === 401) {
             context.onExpired();
           } else {
-            feedback.textContent =
-              error.status === 409
-                ? "A provider connection with this name already exists. Choose another name."
-                : message(error, true);
+            if (error.code === "SECRET_DRIVER_UNAVAILABLE") {
+              feedback.textContent =
+                "Credential storage is not configured for this Installation. Ask the Installation operator to configure a Secret Driver. No provider connection was saved.";
+            } else {
+              feedback.textContent =
+                error.status === 409
+                  ? "A provider connection with this name already exists. Choose another name."
+                  : message(error, true);
+            }
             // An uncertain save may already have created the Secret and connection.
             // Require a fresh read before allowing another credential creation.
-            if ([400, 403, 404, 409, 429].includes(error.status)) {
+            if (
+              error.code === "SECRET_DRIVER_UNAVAILABLE" ||
+              [400, 403, 404, 409, 429].includes(error.status)
+            ) {
               setPending(false);
             }
           }

@@ -18,6 +18,7 @@ import { createConsoleAppFixture, providerFixtures } from "../helpers/console-ap
 import { authenticatedHeaders } from "../helpers/auth-session.mjs";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
 import { createTestKubernetesComputeDriver } from "../helpers/kubernetes-compute.mjs";
+import { createTestSecretDriver } from "../helpers/secret-driver.mjs";
 
 async function artifactDirectory(t) {
   const configured = process.env.OCC_TEST_CONSOLE_ARTIFACT_DIR;
@@ -705,6 +706,35 @@ test("Providers setup saves API-key and local connections for Agent drafts", asy
   });
 });
 
+test("Providers setup identifies missing credential storage without reporting an uncertain save", async (t) => {
+  // Default Docker development has no Secret Driver. Do not replace that missing
+  // dependency with the fixture's usual passive Secret store.
+  const fixture = await createConsoleAppFixture(t, { secretDriver: null });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Provider storage missing", { ready: true });
+  const { page } = await newPage(t, fixture);
+  const path = `/namespaces/${namespace.id}/provider-connections`;
+  await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
+  await page.getByLabel("Connection name").fill("Unsaved API key");
+  await page.getByLabel("API key", { exact: true }).fill("synthetic-unsaved-provider-key");
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().endsWith(path) && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  const response = await responsePromise;
+  assert.equal(response.status(), 503);
+  assert.equal((await response.json()).error.code, "SECRET_DRIVER_UNAVAILABLE");
+  await page
+    .getByText(/Credential storage is not configured.*No provider connection was saved/)
+    .waitFor();
+  assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "");
+  assert.equal(
+    await page.getByRole("button", { name: "Save provider connection" }).isEnabled(),
+    true,
+  );
+  assert.deepEqual((await fixture.request("GET", path)).data, []);
+});
+
 test("Providers setup requires refresh after losing a successful credential save response", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
@@ -736,6 +766,34 @@ test("Providers setup requires refresh after losing a successful credential save
   assert.equal((await fixture.request("GET", path)).data.length, 1);
   assert.equal(
     await page.getByRole("button", { name: "Save provider connection" }).isEnabled(),
+    true,
+  );
+});
+
+test("Providers setup keeps a failed Secret write uncertain and redacts the backend error", async (t) => {
+  const fixture = await createConsoleAppFixture(t, {
+    secretDriver: createTestSecretDriver({ createError: new Error("private-backend-error") }),
+  });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Provider write failed", { ready: true });
+  const { page } = await newPage(t, fixture);
+  const path = `/namespaces/${namespace.id}/provider-connections`;
+  await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
+  await page.getByLabel("Connection name").fill("Uncertain API key");
+  await page.getByLabel("API key", { exact: true }).fill("synthetic-unsaved-provider-key");
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().endsWith(path) && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  const response = await responsePromise;
+  assert.equal(response.status(), 503);
+  const body = await response.json();
+  assert.equal(body.error.code, "DEPENDENCY_UNAVAILABLE");
+  assert.doesNotMatch(JSON.stringify(body), /private-backend-error|synthetic-unsaved-provider-key/);
+  await page.getByText(/Outcome unknown/).waitFor();
+  assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "");
+  assert.equal(
+    await page.getByRole("button", { name: "Save provider connection" }).isDisabled(),
     true,
   );
 });

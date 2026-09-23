@@ -31,6 +31,10 @@ a Secret. Only supported API-key and local-server methods are offered.
 
 Native mappings are checked against OpenClaw `2026.9.1`. OAuth and other login
 methods are deferred to separate work and are not offered by this catalog.
+Saving an API key requires a configured Secret Driver. The default Docker
+development stack has no Secret Driver and cannot deploy managed authentication
+bindings. Use the Kubernetes Installation path for saved provider credentials;
+the bundled catalog alone does not establish Installation support.
 Ollama uses its native protocol
 and a nonsecret local marker; vLLM uses its OpenAI-compatible completions protocol.
 The Agent's native Configuration must select a model from the connection's provider.

@@ -26,6 +26,10 @@ export function createApiClient({ lifetime, hasSession, onExpired }) {
     if (!response.ok || payload === null || !Object.hasOwn(payload, "data")) {
       const error = new Error("The request could not be completed.");
       error.status = response.status;
+      // Only this closed, pre-write failure proves that credential creation did not start.
+      if (response.status === 503 && payload?.error?.code === "SECRET_DRIVER_UNAVAILABLE") {
+        error.code = "SECRET_DRIVER_UNAVAILABLE";
+      }
       const requestId = payload?.meta?.requestId;
       if (
         typeof requestId === "string" &&

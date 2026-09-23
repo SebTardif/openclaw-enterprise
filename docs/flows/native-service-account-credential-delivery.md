@@ -69,6 +69,10 @@ inputs. Credential entry creates an OCC Secret and connection in one transaction
 with separate create authorization and audit events. Failed creation cleans up
 only its own staged Secret, except when commit outcome is unknown. An existing
 Secret instead requires exact `operate`. Responses contain only references.
+When no Secret Driver is selected, credential creation stops before any storage
+write and returns `SECRET_DRIVER_UNAVAILABLE`. The Console reports the missing
+storage configuration. Backend failures and lost responses still require a
+fresh read before retrying because their write outcome may be unknown.
 Local endpoints require
 separately configured network access; saving never probes or opens access.
 

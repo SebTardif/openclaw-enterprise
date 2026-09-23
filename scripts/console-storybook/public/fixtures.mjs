@@ -255,7 +255,13 @@ export function installFixture(scenario, evidence) {
       JSON.stringify({ data, meta: { requestId: "req_00000000-0000-4000-8000-000000000001" } }),
       { status, headers: { "content-type": "application/json" } },
     );
-  const error = (status) => response(null, status);
+  const error = (status, code) =>
+    code === undefined
+      ? response(null, status)
+      : new Response(JSON.stringify({ error: { code } }), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
   window.fetch = async (input, options = {}) => {
     const url = new URL(typeof input === "string" ? input : input.url, location.origin);
     const path = url.pathname;
@@ -283,7 +289,7 @@ export function installFixture(scenario, evidence) {
           }
         });
       }
-      return error(rule.status);
+      return error(rule.status, rule.code);
     }
     const body = options.body ? JSON.parse(options.body) : {};
     if (path === "/api/auth/session") {

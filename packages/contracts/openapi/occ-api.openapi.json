@@ -118,7 +118,8 @@
                   { "const": "UNKNOWN_OUTCOME", "type": "string" },
                   { "const": "NOT_IMPLEMENTED", "type": "string" },
                   { "const": "INTERNAL_ERROR", "type": "string" },
-                  { "const": "DEPENDENCY_UNAVAILABLE", "type": "string" }
+                  { "const": "DEPENDENCY_UNAVAILABLE", "type": "string" },
+                  { "const": "SECRET_DRIVER_UNAVAILABLE", "type": "string" }
                 ]
               },
               "details": {

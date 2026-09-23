@@ -85,6 +85,7 @@ import {
   NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
+  SecretDriverUnavailableError,
 } from "./errors.ts";
 import {
   assertConfiguredProvider,
@@ -122,6 +123,7 @@ export {
   NotImplementedError,
   ResourceConflictError,
   ScopeViolationError,
+  SecretDriverUnavailableError,
 } from "./errors.ts";
 export {
   providerDefinitionMap,
@@ -3305,6 +3307,9 @@ export class OpenClawController {
   }
 
   private secretDriver(expectedId?: string): SecretDriver {
+    if (!this.selections.has("secret")) {
+      throw new SecretDriverUnavailableError();
+    }
     try {
       const driver = this.selectedDriver("secret");
       if (expectedId !== undefined && driver.id !== expectedId) {

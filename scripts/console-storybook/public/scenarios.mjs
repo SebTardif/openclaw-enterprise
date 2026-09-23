@@ -156,6 +156,27 @@ export const scenarios = {
     actions: [{ selector: "#connection-provider", value: "anthropic" }],
     description: "Save an Anthropic API key as a Namespace Secret with its provider connection.",
   },
+  providersWithoutStorage: {
+    group: "Pages/Providers",
+    name: "Credential storage not configured",
+    path: "/console/providers",
+    emptyConnections: true,
+    rules: [
+      {
+        suffix: "/provider-connections",
+        method: "POST",
+        status: 503,
+        code: "SECRET_DRIVER_UNAVAILABLE",
+      },
+    ],
+    actions: [
+      { selector: "#connection-name", value: "Unsaved API key" },
+      { selector: "#connection-credential-value", value: "synthetic-unsaved-key" },
+      click("Save provider connection"),
+    ],
+    description:
+      "A missing Secret Driver is a known pre-save failure; uncertain backend writes still require refresh.",
+  },
   providersExistingSecret: {
     group: "Pages/Providers",
     name: "Existing Secret",
