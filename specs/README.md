@@ -43,9 +43,9 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
-[Provider setup and revision authentication](35-provider-auth-setup.md) — Proposed;
-native provider/auth choices, version-qualified runtime mappings, and reusable
-OAuth connections authenticated during Providers setup.
+[Provider setup and revision authentication](35-provider-auth-setup.md) — In progress;
+native provider/auth choices, saved Namespace connections, and Agent selection.
+OAuth authentication and credential lifecycle remain separate work.
 
 [Initial Agent workspace files](34-agent-workspace-files-setup.md) — Proposed;
 create-only Console and API input, applied once before first runtime execution.
