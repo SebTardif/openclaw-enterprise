@@ -45,7 +45,11 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 [Provider setup and revision authentication](35-provider-auth-setup.md) — In progress;
 native provider/auth choices, saved Namespace connections, and Agent selection.
-OAuth authentication and credential lifecycle remain separate work.
+OAuth acquisition is integrated; production runtime delivery remains separate work.
+
+[Native OpenClaw plugin tool policies](35-native-plugin-tool-policy.md) — Proposed;
+enforce Agent plugin policies through a managed native policy plugin and existing
+approval transport.
 
 [Initial Agent workspace files](34-agent-workspace-files-setup.md) — Proposed;
 create-only Console and API input, applied once before first runtime execution.
