@@ -43,8 +43,8 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
-[OpenShell runtime integration](37-openshell-runtime.md) — Proposed; connect the existing
-OpenShell, dedicated Codex and credential components through ordinary Agent deployment.
+[OpenShell runtime integration](37-openshell-runtime.md) — Proposed; compose stock
+OpenShell pre.5, dedicated Codex and protected Git/model access through ordinary Agent deployment.
 
 [Native OpenClaw plugin tool policies](35-native-plugin-tool-policy.md) — Proposed;
 enforce Agent plugin policies through a managed native policy plugin and existing
