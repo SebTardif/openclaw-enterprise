@@ -2,11 +2,13 @@ package occdev
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -132,15 +134,88 @@ func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 }
 
 func (r *runner) deleteOwnedCluster(ctx context.Context, s *developmentState) error {
-	exists, err := r.clusterResourcesExist(ctx, s.Cluster)
-	if err != nil || !exists {
+	nodes, volumes, err := r.clusterResources(ctx, s.Cluster)
+	if err != nil {
 		return err
 	}
-	if err := r.verifyClusterOwnership(ctx, s); err != nil {
+	// Check the whole scope before removing anything. In particular, an owned
+	// server cannot authorize deletion of an explicitly foreign sibling.
+	for _, volume := range volumes {
+		if err := r.verifyResourceOwner(ctx, s, "volume", volume); err != nil {
+			return err
+		}
+	}
+	containers := make([]clusterContainer, 0, len(nodes))
+	witness := ""
+	for _, id := range nodes {
+		data, err := r.output(ctx, r.engine, "container", "inspect", "--format", "{{json .}}", id)
+		if err != nil {
+			return err
+		}
+		var container clusterContainer
+		if err := json.Unmarshal(data, &container); err != nil {
+			return fmt.Errorf("invalid cluster container inspection: %w", err)
+		}
+		if container.ID != id || container.Config.Labels["k3d.cluster"] != s.Cluster {
+			return fmt.Errorf("cluster container identity changed during cleanup")
+		}
+		if strings.TrimPrefix(container.Name, "/") == "k3d-"+s.Cluster+"-server-0" && container.Config.Labels[ownershipLabel] == s.Owner {
+			witness = id
+		}
+		containers = append(containers, container)
+	}
+	for _, container := range containers {
+		owner := container.Config.Labels[ownershipLabel]
+		if owner == s.Owner {
+			continue
+		}
+		// k3d v5.9 does not pass runtime labels to its tools node. Its native
+		// membership is usable only while our owned server remains present.
+		if owner != "" || witness == "" || !container.isClusterTools(s, volumes) {
+			return fmt.Errorf("refusing to delete container %s: ownership label does not match recorded state", container.ID)
+		}
+	}
+	for _, container := range containers {
+		if container.ID == witness {
+			continue
+		}
+		if witness != "" {
+			if err := r.verifyResourceOwner(ctx, s, "container", witness); err != nil {
+				return err
+			}
+		}
+		// Never let k3d remove the ownership witness while an auxiliary remains.
+		// Immutable IDs prevent a same-name replacement from being targeted.
+		if err := r.run(ctx, r.engine, "container", "rm", "--force", "--volumes", container.ID); err != nil {
+			return err
+		}
+	}
+	remainingNodes, remainingVolumes, err := r.clusterResources(ctx, s.Cluster)
+	if err != nil {
 		return err
 	}
-	if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
-		return err
+	if (witness == "" && len(remainingNodes) != 0) || (witness != "" && (len(remainingNodes) != 1 || remainingNodes[0] != witness)) {
+		return fmt.Errorf("cluster resources changed during cleanup; preserving ownership witness")
+	}
+	for _, volume := range remainingVolumes {
+		if err := r.verifyResourceOwner(ctx, s, "volume", volume); err != nil {
+			return err
+		}
+	}
+	if witness != "" {
+		if err := r.verifyResourceOwner(ctx, s, "container", witness); err != nil {
+			return err
+		}
+		if err := r.run(ctx, "k3d", "cluster", "delete", s.Cluster); err != nil {
+			return err
+		}
+	} else {
+		// Without nodes k3d cannot discover the cluster's remaining volumes.
+		for _, volume := range remainingVolumes {
+			if err := r.run(ctx, r.engine, "volume", "rm", volume); err != nil {
+				return err
+			}
+		}
 	}
 	remains, err := r.clusterResourcesExist(ctx, s.Cluster)
 	if err != nil {
@@ -152,34 +227,86 @@ func (r *runner) deleteOwnedCluster(ctx context.Context, s *developmentState) er
 	return nil
 }
 
+// Only the native fields needed to recognize k3d's unlabeled tools node.
+type clusterContainer struct {
+	ID     string `json:"Id"`
+	Name   string `json:"Name"`
+	Config struct {
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
+	Mounts []struct {
+		Name        string `json:"Name"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
+	NetworkSettings struct {
+		Networks map[string]any `json:"Networks"`
+	} `json:"NetworkSettings"`
+}
+
+func (c clusterContainer) isClusterTools(s *developmentState, volumes []string) bool {
+	if strings.TrimPrefix(c.Name, "/") != "k3d-"+s.Cluster+"-tools" || c.Config.Labels["app"] != "k3d" || c.Config.Labels["k3d.role"] != "noRole" {
+		return false
+	}
+	if _, ok := c.NetworkSettings.Networks[s.ComposeProject+"_development"]; !ok {
+		return false
+	}
+	imageVolume := "k3d-" + s.Cluster + "-images"
+	if !slices.Contains(volumes, imageVolume) {
+		return false
+	}
+	for _, mount := range c.Mounts {
+		if mount.Name == imageVolume && mount.Destination == "/k3d/images" {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *runner) clusterResourcesExist(ctx context.Context, cluster string) (bool, error) {
 	exists, err := r.clusterExists(ctx, cluster)
 	if err != nil {
 		return false, err
 	}
-	nodes, err := r.output(ctx, r.engine, "ps", "--all", "--quiet", "--filter", "label=k3d.cluster="+cluster)
-	if err != nil {
-		return false, err
-	}
-	// k3d can leave an image volume even when its cluster inventory is empty.
-	volume := "k3d-" + cluster + "-images"
-	volumes, err := r.output(ctx, r.engine, "volume", "ls", "--quiet", "--filter", "name="+volume)
-	if err != nil {
-		return false, err
-	}
-	for _, name := range strings.Fields(string(volumes)) {
-		exists = exists || name == volume
-	}
-	return exists || len(nodes) != 0, nil
+	nodes, volumes, err := r.clusterResources(ctx, cluster)
+	return exists || len(nodes) > 0 || len(volumes) > 0, err
 }
 
-func (r *runner) verifyClusterOwnership(ctx context.Context, s *developmentState) error {
-	label, err := r.output(ctx, r.engine, "inspect", "--format", `{{index .Config.Labels "`+ownershipLabel+`"}}`, "k3d-"+s.Cluster+"-server-0")
+func (r *runner) clusterResources(ctx context.Context, cluster string) ([]string, []string, error) {
+	nodes, err := r.output(ctx, r.engine, "ps", "--all", "--quiet", "--no-trunc", "--filter", "label=k3d.cluster="+cluster)
 	if err != nil {
-		return fmt.Errorf("cannot establish ownership of cluster %s: %w", s.Cluster, err)
+		return nil, nil, err
+	}
+	// Include every volume k3d can select, plus its conventional image volume
+	// even if another owner replaced it without k3d labels.
+	volumes, err := r.output(ctx, r.engine, "volume", "ls", "--quiet", "--filter", "label=k3d.cluster="+cluster)
+	if err != nil {
+		return nil, nil, err
+	}
+	imageVolume := "k3d-" + cluster + "-images"
+	named, err := r.output(ctx, r.engine, "volume", "ls", "--quiet", "--filter", "name="+imageVolume)
+	if err != nil {
+		return nil, nil, err
+	}
+	result := strings.Fields(string(volumes))
+	for _, volume := range strings.Fields(string(named)) {
+		if volume == imageVolume && !slices.Contains(result, volume) {
+			result = append(result, volume)
+		}
+	}
+	return strings.Fields(string(nodes)), result, nil
+}
+
+func (r *runner) verifyResourceOwner(ctx context.Context, s *developmentState, kind, resource string) error {
+	labels := ".Config.Labels"
+	if kind == "volume" {
+		labels = ".Labels"
+	}
+	label, err := r.output(ctx, r.engine, kind, "inspect", "--format", `{{index `+labels+` "`+ownershipLabel+`"}}`, resource)
+	if err != nil {
+		return fmt.Errorf("cannot establish ownership of %s %s: %w", kind, resource, err)
 	}
 	if string(label) != s.Owner {
-		return fmt.Errorf("refusing to delete cluster %s: ownership label does not match recorded state", s.Cluster)
+		return fmt.Errorf("refusing to delete %s %s: ownership label does not match recorded state", kind, resource)
 	}
 	return nil
 }

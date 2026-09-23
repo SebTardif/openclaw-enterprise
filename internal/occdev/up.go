@@ -42,7 +42,7 @@ func Up(ctx context.Context, opts Options) (result error) {
 	}
 	state := &developmentState{
 		Repository:     opts.Repository,
-		Version:        3,
+		Version:        4,
 		ComputeDriver:  "kubernetes",
 		ComposeProject: r.setting("OCC_DEVELOPMENT_COMPOSE_PROJECT", "openclaw-enterprise-development-kubernetes"),
 		Cluster:        r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])),
@@ -194,7 +194,15 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if err := state.save(); err != nil {
 		return err
 	}
-	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--no-rollback", "--runtime-label", ownershipLabel+"="+state.Owner+"@server:0", "--image", "+v1.35", "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
+	// k3d does not propagate runtime labels to its image volume. Create it
+	// with ownership first; a same-name foreign volume must never be adopted.
+	if err := r.run(ctx, r.engine, "volume", "create", "--label", ownershipLabel+"="+state.Owner, "--label", "k3d.cluster="+state.Cluster, "--label", "app=k3d", "k3d-"+state.Cluster+"-images"); err != nil {
+		return err
+	}
+	if err := r.verifyResourceOwner(ctx, state, "volume", "k3d-"+state.Cluster+"-images"); err != nil {
+		return err
+	}
+	if err := r.run(ctx, "k3d", "cluster", "create", state.Cluster, "--no-rollback", "--runtime-label", ownershipLabel+"="+state.Owner+"@all", "--image", "+v1.35", "--servers", "1", "--agents", "0", "--network", state.ComposeProject+"_development", "--api-port", fmt.Sprintf("127.0.0.1:%d", port), "--k3s-arg", "--tls-san=k3d-"+state.Cluster+"-serverlb@server:*", "--k3s-arg", fmt.Sprintf("--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<%d%%,nodefs.inodesFree<5%%,imagefs.available<%d%%,imagefs.inodesFree<5%%@server:*", threshold, threshold), "--kubeconfig-update-default=false", "--kubeconfig-switch-context=false"); err != nil {
 		clusterCreationFailed = true
 		return err
 	}

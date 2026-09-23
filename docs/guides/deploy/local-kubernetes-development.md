@@ -274,16 +274,22 @@ OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes ./bin/occ dev down
 
 `./bin/occ dev down` defaults to Docker Compute even when Kubernetes state exists.
 For explicitly selected Kubernetes mode, it verifies the recorded resource claims
-and cluster ownership label, removes the owned cluster and Compose project, deletes
-profile volumes, then removes the state directory. This permanently deletes the
+and native cluster ownership evidence, removes the owned cluster and Compose
+project, deletes profile volumes, then removes the state directory. This permanently deletes the
 development Installation, service keys, Namespaces, Agents, audit history, and
 queued work stored by this profile. Incomplete cleanup preserves the state for
 recovery; restore access to the recorded engine and rerun the same command.
 A failed startup attempts the same cleanup when its helpers have settled and
-preserves state if cleanup fails.
+preserves state if cleanup fails. Cleanup can recover when only the load
+balancer or image volume remains; those survivors must still carry their recorded
+owner label. Cleanup preserves the owned server until auxiliary containers are
+removed. If creation fails before a server exists and leaves an unlabeled k3d
+tools container, automatic cleanup cannot establish ownership. Inspect that
+container and dispose it manually only after verifying its owner, then retry.
 An ownership mismatch leaves the other cluster untouched. Let its owner dispose
-of it, then retry. Older development state without resource claims is rejected;
-inspect and dispose its recorded resources manually before starting a new profile.
+of it, then retry. State older than version 4 is rejected because it does not
+establish ownership of each surviving resource. Inspect and dispose its recorded resources manually
+before starting a new profile.
 Startup and cleanup write `subprocess-outcome-uncertain` before changing engine
 resources. The marker also remains when a started resource-changing helper exits
 unsuccessfully, is killed by a signal, or leaves captured output unsettled.

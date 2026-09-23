@@ -161,7 +161,7 @@ The Kubernetes lifecycle selects Docker or Podman and resolves the selected
 local Unix socket. `internal/occdev/claims.go:claimsFor` derives separate project
 and cluster claims from that endpoint. The private, per-user claim registry is
 shared across state directories and retains each claim until disposal. Startup
-acquires both claims before checking resources. Version-3 state records their
+acquires both claims before checking resources. Version-4 state records their
 random owner, endpoint, project, and cluster. Cleanup verifies the claims and
 reuses that endpoint; changing the active Docker context cannot redirect it.
 
@@ -184,10 +184,12 @@ file survives abrupt CLI death even when the state lock is released.
 
 Compose starts PostgreSQL, migration, and bootstrap. The lifecycle waits for
 successful migration and bootstrap exits before creating the dedicated k3d
-cluster on the Compose network. Before creation, state records the attempt;
-k3d receives the recorded owner as a native runtime label on its server node.
-Its automatic rollback is disabled so only OCC's ownership-checked cleanup can
-remove resources after a failed create.
+cluster on the Compose network. Before creation, state records the attempt.
+The helper creates k3d's image volume with the recorded native owner label
+and verifies that ownership before invoking k3d. k3d receives the same owner
+label for all configured nodes, including its load balancer. Its automatic
+rollback is disabled so only OCC's ownership-checked cleanup can remove
+resources after a failed create.
 k3d resolves the latest K3s patch in the 1.35
 family, which matches the supported Kubernetes minimum. The cluster API binds
 host loopback; creation leaves the default kubeconfig and current context
@@ -219,10 +221,19 @@ Agent deployment or a model turn.
 On a settled failure, startup attempts resource cleanup. Explicit Kubernetes
 shutdown validates the state, snapshot, and resource claims, refuses an existing
 lifecycle marker, and writes its own marker before cleanup. Cleanup stops reconcilers,
-then checks the k3d inventory and engine resources. It deletes a cluster only
-when its server's runtime ownership label matches the recorded owner. A failed
-create or same-name replacement cannot authorize deletion. Cleanup continues
-after settled errors and retains state and claims until resources are gone.
+then checks the engine's cluster containers, cluster-labelled volumes, and
+conventional image-volume name. Configured nodes and volumes must carry the
+recorded native owner label.
+k3d's unlabeled tools node additionally requires a live owned server, its native
+cluster membership and role, the owned image-volume mount, and the recorded
+Compose network. Cleanup removes auxiliary containers by immutable ID first,
+stopping on any failure before deleting the server that supplies that ownership
+witness. It checks the remaining scope again before letting k3d delete the last
+server. If the last node has disappeared, cleanup verifies and removes the surviving volumes directly because k3d cannot
+discover a cluster without nodes. Each retry checks current resources again;
+a prior deletion attempt cannot authorize a same-name replacement or foreign
+sibling. Cleanup continues after settled errors and retains state and claims
+until resources are gone.
 
 `internal/occdev/command.go:capturedOutput` observes captured-output EOF separately
 from the process exit, with a bounded wait. `recordCommandOutcome` requires a

@@ -446,6 +446,8 @@ async function prepareLifecycleCommands(fixture, scenario = "success") {
     JSON.stringify({ clusters: ["occ-dev-unrelated"], compose: false }),
   );
   await writeFile(fixture.env.DEV_UP_RESOURCE_STATE + ".owners", "{}");
+  await writeFile(fixture.env.DEV_UP_RESOURCE_STATE + ".nodes", "{}");
+  await writeFile(fixture.env.DEV_UP_RESOURCE_STATE + ".volumes", "{}");
   for (const command of ["docker", "k3d", "kubectl"]) {
     await writeExecutable(
       join(bin, command),
@@ -459,6 +461,12 @@ const statePath = process.env.DEV_UP_RESOURCE_STATE;
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 const ownersPath = statePath + ".owners";
 const owners = JSON.parse(fs.readFileSync(ownersPath, "utf8"));
+const nodesPath = statePath + ".nodes";
+const nodes = JSON.parse(fs.readFileSync(nodesPath, "utf8"));
+const volumesPath = statePath + ".volumes";
+const volumes = JSON.parse(fs.readFileSync(volumesPath, "utf8"));
+function saveNodes() { fs.writeFileSync(nodesPath, JSON.stringify(nodes)); }
+function saveVolumes() { fs.writeFileSync(volumesPath, JSON.stringify(volumes)); }
 function save() { fs.writeFileSync(statePath, JSON.stringify(state)); }
 function saveOwners() { fs.writeFileSync(ownersPath, JSON.stringify(owners)); }
 function output(value) { process.stdout.write(value + "\\n"); }
@@ -472,15 +480,56 @@ if (command === "docker") {
   if (args[0] === "context" && args[1] === "show") output("fixture-context");
   else if (args[0] === "context" && args[1] === "inspect") output(JSON.stringify([{ Endpoints: { docker: { Host: ${JSON.stringify(fixture.engineEndpoint)} } } }]));
   else if (args[0] === "info") output("/var/lib/docker");
-  else if (["volume", "network", "image"].includes(args[0]) && args[1] === "inspect") process.exit(1);
+  else if (args[0] === "volume" && args[1] === "create") {
+    const name = args.at(-1);
+    // Docker VolumeCreate preserves an existing volume's labels.
+    if (!volumes[name]) {
+      volumes[name] = Object.fromEntries(args.flatMap((arg, i) => arg === "--label" ? [args[i + 1].split("=")] : []));
+      saveVolumes();
+    }
+    output(name);
+  } else if (args[0] === "volume" && args[1] === "inspect") {
+    if (!volumes[args.at(-1)]) process.exit(1);
+    output(volumes[args.at(-1)]["io.openclaw.development.owner"] || "");
+  } else if (args[0] === "volume" && args[1] === "ls") {
+    const filter = args[args.indexOf("--filter") + 1] || "";
+    for (const [name, labels] of Object.entries(volumes)) {
+      if (filter.startsWith("name=") ? name.includes(filter.slice(5)) : labels["k3d.cluster"] === filter.slice("label=k3d.cluster=".length)) output(name);
+    }
+  } else if (args[0] === "volume" && args[1] === "rm") {
+    delete volumes[args.at(-1)]; saveVolumes();
+  } else if (["network", "image"].includes(args[0]) && args[1] === "inspect") process.exit(1);
+  else if (args[0] === "container" && args[1] === "inspect") {
+    const node = Object.values(nodes).flat().find(node => node.Id === args.at(-1) || node.Name === "/" + args.at(-1));
+    if (!node || !state.clusters.includes(node.Config.Labels["k3d.cluster"])) process.exit(1);
+    const cluster = node.Config.Labels["k3d.cluster"];
+    const name = node.Name.slice(1);
+    const owner = owners[name] ?? (node.Config.Labels["k3d.role"] === "noRole" ? "" : owners[cluster]) ?? "";
+    node.Config.Labels["io.openclaw.development.owner"] = owner;
+    output(args.includes("{{json .}}") ? JSON.stringify(node) : owner);
+  } else if (args[0] === "container" && args[1] === "rm") {
+    const node = Object.values(nodes).flat().find(node => node.Id === args.at(-1));
+    if (!node) process.exit(1);
+    if (scenario === "cluster-delete-partial-node" && node.Name.endsWith("-serverlb")) fail("auxiliary deletion unavailable");
+    const cluster = node.Config.Labels["k3d.cluster"];
+    nodes[cluster] = nodes[cluster].filter(item => item.Id !== node.Id); saveNodes();
+    if (nodes[cluster].length === 0) { state.clusters = state.clusters.filter(name => name !== cluster); save(); }
+  }
   else if (args[0] === "ps") {
     const clusterFilter = args.find(arg => arg.startsWith("label=k3d.cluster="));
-    if (clusterFilter && state.clusters.includes(clusterFilter.slice("label=k3d.cluster=".length))) output("cluster-container-id");
+    if (clusterFilter) {
+      const cluster = clusterFilter.slice("label=k3d.cluster=".length);
+      if (state.clusters.includes(cluster)) for (const node of nodes[cluster] || []) output(node.Id);
+    }
   } else if ((["volume", "network"].includes(args[0]) && args[1] === "ls") || args[0] === "build") {}
   else if (args[0] === "inspect") {
     if (args.includes("{{.State.Status}}")) output("exited");
     else if (args.includes("{{.State.ExitCode}}")) output("0");
-    else if (args.some(arg => arg.includes("io.openclaw.development.owner"))) output(owners[args.at(-1).replace(/^k3d-/, "").replace(/-server-0$/, "")] || "");
+    else if (args.some(arg => arg.includes("io.openclaw.development.owner"))) {
+      const node = Object.values(nodes).flat().find(node => node.Name === "/" + args.at(-1));
+      if (!node || !state.clusters.includes(node.Config.Labels["k3d.cluster"])) process.exit(1);
+      output(owners[node.Name.slice(1)] ?? owners[node.Config.Labels["k3d.cluster"]] ?? "");
+    }
     else fail("unexpected inspect: " + args.join(" "));
   } else if (args[0] === "exec" && args.includes("images")) {
     if (args.includes("list")) output("docker.io/library/openclaw-enterprise-runtime:kubernetes-quickstart application/vnd.oci.image.manifest.v1+json sha256:" + "a".repeat(64));
@@ -506,16 +555,48 @@ if (command === "docker") {
 } else if (command === "k3d") {
   if (args[0] === "cluster" && args[1] === "list") output(JSON.stringify(state.clusters.filter(name => scenario !== "cluster-create-hidden" || name !== "occ-dev-owned").map(name => ({ name }))));
   else if (args[0] === "cluster" && args[1] === "create") {
+    const imageVolume = "k3d-" + args[2] + "-images";
+    volumes[imageVolume] ??= { "k3d.cluster": args[2], app: "k3d" }; saveVolumes();
+    if (scenario === "cluster-create-before-tools") fail("creation failed before cluster preparation");
     state.clusters.push(args[2]); save();
+    const label = args[args.indexOf("--runtime-label") + 1] || "";
+    const owner = label.split("=")[1]?.split("@")[0] || "";
+    const { createHash } = require("node:crypto");
+    function node(suffix, role) {
+      const name = "k3d-" + args[2] + "-" + suffix;
+      return {
+        Id: createHash("sha256").update(name + owner).digest("hex"), Name: "/" + name,
+        Config: { Labels: { app: "k3d", "k3d.cluster": args[2], "k3d.role": role } },
+        Mounts: [{ Name: imageVolume, Destination: "/k3d/images" }],
+        NetworkSettings: { Networks: { [process.env.OCC_DEVELOPMENT_COMPOSE_PROJECT + "_development"]: {} } },
+      };
+    }
+    // The native tools node exists independently of configured nodes and never
+    // inherits --runtime-label, including with @all.
+    nodes[args[2]] = [node("tools", "noRole")]; saveNodes();
+    if (scenario === "cluster-create-before-server") fail("creation failed before first server");
+    nodes[args[2]].push(node("server-0", "server"), node("serverlb", "loadbalancer")); saveNodes();
     if (scenario === "cluster-create-collision") {
       owners[args[2]] = "another-invocation"; saveOwners();
       fail("cluster name already occupied");
     }
-    const label = args[args.indexOf("--runtime-label") + 1] || "";
-    owners[args[2]] = label.split("=")[1]?.split("@")[0] || ""; saveOwners();
+    owners[args[2]] = label.split("=")[1]?.split("@")[0] || "";
+    // v5.9.0 @server:0 excludes the proxy; @all includes both prepared nodes.
+    if (!label.endsWith("@all")) owners["k3d-" + args[2] + "-serverlb"] = "";
+    saveOwners();
     if (scenario === "cluster-create-failed" || scenario === "cluster-create-hidden") fail("partial cluster creation");
   } else if (args[0] === "cluster" && args[1] === "delete") {
     if (scenario === "cluster-delete-failed") fail("cluster cleanup unavailable");
+    if (scenario === "cluster-delete-partial-node" || scenario === "cluster-delete-partial-volume") {
+      nodes[args[2]] = scenario === "cluster-delete-partial-node" ? nodes[args[2]].filter(node => node.Name.endsWith("-serverlb")) : [];
+      saveNodes();
+      if (nodes[args[2]].length === 0) { state.clusters = state.clusters.filter(name => name !== args[2]); save(); }
+      fail("partial cluster deletion");
+    }
+    for (const [name, labels] of Object.entries(volumes)) {
+      if (labels["k3d.cluster"] === args[2] && labels.app === "k3d") delete volumes[name];
+    }
+    saveVolumes();
     state.clusters = state.clusters.filter(name => name !== args[2]); save();
     delete owners[args[2]]; saveOwners();
   } else if (args[0] === "kubeconfig" && args[1] === "get") output(JSON.stringify({
@@ -524,7 +605,12 @@ if (command === "docker") {
     clusters: [{ name: "k3d-occ-dev-owned", cluster: { server: "https://127.0.0.1:6443", "certificate-authority-data": "fixture-ca" } }],
     users: [{ name: "admin", user: { token: "fixture-kubernetes-token" } }]
   }));
-  else if (args[0] !== "image") fail("unexpected k3d: " + args.join(" "));
+  else if (args[0] === "image") {
+    if (scenario !== "cluster-delete-tools") {
+      const cluster = args[args.indexOf("-c") + 1];
+      nodes[cluster] = nodes[cluster].filter(node => node.Config.Labels["k3d.role"] !== "noRole"); saveNodes();
+    }
+  } else fail("unexpected k3d: " + args.join(" "));
 } else if (command === "kubectl" && !args.includes("get")) {
   fail("unexpected kubectl: " + args.join(" "));
 }
