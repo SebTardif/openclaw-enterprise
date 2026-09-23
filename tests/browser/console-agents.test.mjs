@@ -16,6 +16,7 @@ import { InMemoryPlatformState } from "../../packages/occ/src/index.ts";
 import { createConsoleAppFixture, providerFixtures } from "../helpers/console-app.mjs";
 import { authenticatedHeaders } from "../helpers/auth-session.mjs";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
+import { createTestSecretDriver } from "../helpers/secret-driver.mjs";
 import { createTestKubernetesComputeDriver } from "../helpers/kubernetes-compute.mjs";
 
 async function artifactDirectory(t) {
@@ -569,7 +570,7 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
   await page.getByLabel("Connection name").fill("Personal login");
   await page.getByLabel("Authentication method").selectOption("oauth");
   assert.equal(await page.getByLabel("Secret ID", { exact: true }).isVisible(), false);
-  await page.getByText(/Authentication not implemented yet/).waitFor();
+  await page.getByText(/sign in from the saved Agent/i).waitFor();
   assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0);
   await page.getByRole("button", { name: "Save provider connection" }).click();
   await page
@@ -636,7 +637,7 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
 
   await page.getByRole("button", { name: "Credentials", exact: true }).click();
   await page.getByLabel("Provider connection", { exact: true }).selectOption(oauthConnection.id);
-  await page.getByText(/Authentication not implemented yet/).waitFor();
+  await page.getByText(/sign in from the saved Agent/i).waitFor();
   const savedResponse = page.waitForResponse(
     (response) =>
       response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents/${created.data.id}` &&
@@ -645,7 +646,7 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
   await page.getByRole("button", { name: "Save authentication source" }).click();
   assert.equal((await savedResponse).status(), 200);
   await page.reload();
-  await page.getByText(/Authentication not implemented yet/).waitFor();
+  await page.getByText(/sign in from the saved Agent/i).waitFor();
   assert.equal(
     await page.getByLabel("Provider connection", { exact: true }).inputValue(),
     oauthConnection.id,
@@ -1912,4 +1913,240 @@ test("Agent tab switches ignore late configuration reads and keep direct workspa
   await page.getByRole("button", { name: "Channels", exact: true }).click();
   await page.getByRole("button", { name: "Configure Slack", exact: true }).waitFor();
   assert.equal(requests.filter((request) => request.path === configurationPath).length, 1);
+});
+
+async function oauthAgentFixture(t, method) {
+  const storage = createTestSecretDriver();
+  const references = new Map();
+  // Only native provider acquisition is substituted; the browser uses actual
+  // authenticated HTTP/WebSocket routes, IAM, custody, and private Secret staging.
+  const fixture = await createConsoleAppFixture(t, {
+    publicOrigin: true,
+    secretDriver: {
+      ...storage,
+      async stage(identity, value) {
+        const reference = await storage.create(identity, value);
+        references.set(identity.id, reference);
+        return reference;
+      },
+      async findStaged(identity) {
+        return references.get(identity.id);
+      },
+    },
+    agentOAuthMethods: [{ providerId: "openai", methodId: "oauth", acquire: method }],
+  });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Agent sign-in", { ready: true });
+  const saved = await fixture.request("POST", `/namespaces/${namespace.id}/provider-connections`, {
+    body: { name: "Browser login", providerId: "openai", authMethodId: "oauth" },
+  });
+  assert.equal(saved.status, 201);
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "OAuth Agent",
+    createHarnessConfiguration("openclaw", "gpt-4.1"),
+    {
+      harnessAuth: { method: "provider_connection", connectionId: saved.data.id },
+    },
+  );
+  const path = `/namespaces/${namespace.id}/agents/${agent.id}`;
+  const consolePath = `/console/agents/${agent.id}?namespace=${namespace.id}&revision=draft&tab=credentials`;
+  return { fixture, agent, path, consolePath, connection: saved.data };
+}
+
+test("Agent OAuth uses the authenticated socket and keeps completed consent separate from deployment", async (t) => {
+  let acquisitions = 0;
+  const redirect =
+    "http://localhost:1455/auth/callback?code=browser-fixture-code&state=browser-fixture-state";
+  const { fixture, path, consolePath, connection } = await oauthAgentFixture(
+    t,
+    async ({ binding, assertCurrent, onInstructions, requestRedirect, stage }) => {
+      acquisitions++;
+      await assertCurrent();
+      await onInstructions({
+        kind: "browser",
+        authorizationUrl: "https://auth.openai.com/oauth/authorize?state=browser-fixture-state",
+        input: "redirect-url",
+      });
+      assert.equal(await requestRedirect(), redirect);
+      await assertCurrent();
+      await stage({
+        ...binding,
+        profileId: `openai:oce:${binding.connectionId}:g${binding.generation}`,
+        credential: {
+          type: "oauth",
+          provider: "openai",
+          access: "fixture-browser-access",
+          refresh: "fixture-browser-refresh",
+          expires: Date.now() + 60_000,
+        },
+      });
+    },
+  );
+  const { page, artifacts } = await newPage(t, fixture);
+  const sockets = [];
+  page.on("websocket", (socket) => sockets.push(socket.url()));
+  await login(page, fixture, consolePath);
+  await page.getByText("Not signed in.", { exact: true }).waitFor();
+  assert.equal(acquisitions, 0);
+  assert.deepEqual(sockets, []);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const providerLink = page.getByRole("link", { name: "Open provider sign-in" });
+  await providerLink.waitFor();
+  assert.equal(await providerLink.getAttribute("target"), "_blank");
+  assert.equal(await providerLink.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(new URL(await providerLink.getAttribute("href")).protocol, "https:");
+  assert.deepEqual(sockets, [fixture.origin.replace(/^http/, "ws") + path + "/oauth/acquire"]);
+  await page.screenshot({
+    path: join(artifacts, "oauth-browser-instructions.png"),
+    fullPage: true,
+  });
+  await page.getByLabel("Redirect URL", { exact: true }).fill(redirect);
+  await page.getByRole("button", { name: "Submit redirect URL" }).click();
+  await page
+    .getByText("Sign-in complete. Model access has not been checked.", { exact: true })
+    .waitFor();
+  assert.equal(await page.getByLabel("Redirect URL", { exact: true }).count(), 0);
+  assert.equal(await providerLink.count(), 0);
+  await page.reload();
+  await page
+    .getByText("Sign-in complete. Model access has not been checked.", { exact: true })
+    .waitFor();
+  assert.equal(acquisitions, 1);
+  assert.equal(sockets.length, 1, "Reload reads status without starting another login");
+  const current = await fixture.request("GET", path);
+  assert.deepEqual(current.data.harnessAuth, {
+    method: "provider_connection",
+    connectionId: connection.id,
+  });
+  assert.equal(current.data.desiredRuntimeState, "stopped");
+  assert.doesNotMatch(
+    JSON.stringify((await fixture.request("GET", `${path}/oauth`)).body),
+    /browser-fixture|fixture-browser|backendRef/,
+  );
+  assert.doesNotMatch(
+    await page.evaluate(() =>
+      JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
+    ),
+    /browser-fixture|fixture-browser/,
+  );
+
+  // Status access remains valid, but a later upgrade loses operate permission.
+  // A previously completed status must not conceal the failed new action.
+  fixture.policy.restrictions.push({
+    id: "deny-oauth-upgrade",
+    namespaceId: current.data.namespaceId,
+    resourceKind: "agent",
+    resourceId: current.data.id,
+    action: "operate",
+    effect: "deny",
+  });
+  await page.getByRole("button", { name: "Sign in again", exact: true }).click();
+  await page.getByText(/The sign-in connection failed or closed before completion/).waitFor();
+  await page
+    .getByText("Sign-in complete. Model access has not been checked.", { exact: true })
+    .waitFor();
+  assert.equal(acquisitions, 1);
+});
+
+test("Agent OAuth clears device instructions on tab exit and ignores an old status read", async (t) => {
+  let acquisitions = 0;
+  const aborted = Promise.withResolvers();
+  const { fixture, path, consolePath } = await oauthAgentFixture(
+    t,
+    async ({ signal, onInstructions }) => {
+      acquisitions++;
+      await onInstructions({
+        kind: "device-code",
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "BROWSER-CODE",
+        expiresInMinutes: 5,
+      });
+      await new Promise((_, reject) => {
+        const abort = () => {
+          aborted.resolve();
+          reject(new Error("Acquisition cancelled"));
+        };
+        if (signal.aborted) {
+          abort();
+        } else {
+          signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+    },
+  );
+  const { page } = await newPage(t, fixture);
+  await login(page, fixture, consolePath);
+  await page.getByText("Not signed in.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByText("BROWSER-CODE", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  await aborted.promise;
+  assert.equal(await page.getByText("BROWSER-CODE", { exact: true }).count(), 0);
+
+  // Hold an actual read response while leaving its tab; releasing it must not
+  // attach stale OAuth controls or instructions to the newly selected panel.
+  const held = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  await page.route(
+    `${fixture.origin}${path}/oauth`,
+    async (route) => {
+      const response = await route.fetch();
+      held.resolve();
+      await release.promise;
+      await route.fulfill({ response });
+      released.resolve();
+    },
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "Credentials", exact: true }).click();
+  await held.promise;
+  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  release.resolve();
+  await released.promise;
+  await page.getByRole("heading", { name: "Editable Configuration" }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: "Model provider sign-in" }).count(), 0);
+  await page.getByRole("button", { name: "Credentials", exact: true }).click();
+  await page.getByText("Sign-in cancelled.", { exact: true }).waitFor();
+  assert.equal(acquisitions, 1, "Tab return reads status without reacquiring credentials");
+  assert.equal(await page.getByText("BROWSER-CODE", { exact: true }).count(), 0);
+
+  // A second browser has only persisted status, so its cancellation must use
+  // HTTP with the exact attempt. The late reply cannot update a different tab.
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByText("BROWSER-CODE", { exact: true }).waitFor();
+  const { page: observer } = await newPage(t, fixture);
+  await login(observer, fixture, consolePath);
+  await observer.getByText(/Waiting for sign-in/).waitFor();
+  const cancelHeld = Promise.withResolvers();
+  const cancelRelease = Promise.withResolvers();
+  const cancelReleased = Promise.withResolvers();
+  const current = (await fixture.request("GET", `${path}/oauth`)).data;
+  await observer.route(
+    `${fixture.origin}${path}/oauth/attempts/${current.attemptId}/cancel`,
+    async (route) => {
+      assert.deepEqual(route.request().postDataJSON(), {
+        connectionId: current.connectionId,
+        generation: current.generation,
+      });
+      const response = await route.fetch();
+      assert.equal(response.status(), 200);
+      cancelHeld.resolve();
+      await cancelRelease.promise;
+      await route.fulfill({ response });
+      cancelReleased.resolve();
+    },
+    { times: 1 },
+  );
+  await observer.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
+  await cancelHeld.promise;
+  await observer.getByRole("button", { name: "Configuration", exact: true }).click();
+  cancelRelease.resolve();
+  await cancelReleased.promise;
+  await observer.getByRole("heading", { name: "Editable Configuration" }).waitFor();
+  assert.equal(await observer.getByRole("heading", { name: "Model provider sign-in" }).count(), 0);
+  await observer.getByRole("button", { name: "Credentials", exact: true }).click();
+  await observer.getByText("Sign-in cancelled.", { exact: true }).waitFor();
+  assert.equal(acquisitions, 2);
 });

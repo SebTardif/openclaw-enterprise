@@ -26,7 +26,7 @@ const providerCatalog = [
         nativeMethodId: "oauth",
         nativeVersion: "2026.9.1",
         deploymentAuthMethod: null,
-        unavailableReason: "OAuth login and credential deployment are not available yet.",
+        unavailableReason: "OAuth sign-in and credential deployment are not enabled.",
       },
     ],
   },
@@ -449,6 +449,24 @@ export function installFixture(scenario, evidence) {
             deleted.add(id);
             return response(saved, 202);
           }
+        }
+        if (suffix === "/oauth" && method === "GET") {
+          return response(
+            scenario.oauthPhase
+              ? {
+                  providerConnectionId: connections[0].id,
+                  connectionId: "aoc_00000000-0000-4000-8000-000000000001",
+                  generation: 1,
+                  attemptId: "00000000-0000-4000-8000-000000000001",
+                  providerId: "openai",
+                  methodId: "oauth",
+                  profileId: null,
+                  phase: scenario.oauthPhase,
+                  deadlineAt: null,
+                  failureCode: null,
+                }
+              : null,
+          );
         }
         if (suffix === "/native-admin" && method === "GET") {
           return response({

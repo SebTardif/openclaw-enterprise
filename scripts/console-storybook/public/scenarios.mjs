@@ -20,7 +20,7 @@ export const scenarios = {
     path: "/console/agents",
     description:
       "Browse pages, component states, and guided Agent workflows. Every preview mounts the production console modules and styles in its own frame. Reset story discards all local changes.",
-    gap: "There is no Stop button; the stop API is available and deployment resumes an Agent. General Configuration JSON editing after creation, model-Secret creation, Namespace provisioning, Preset management, and Installation Provider setup require an API, CLI, or operator workflow. OAuth connections save setup metadata only. Serving health and model responses require separate runtime verification.",
+    gap: "There is no Stop button; the stop API is available and deployment resumes an Agent. General Configuration JSON editing after creation, model-Secret creation, Namespace provisioning, Preset management, and Installation Provider setup require an API, CLI, or operator workflow. OAuth connections save setup metadata; sign-in belongs to a saved Agent. Serving health and model responses require separate runtime verification.",
   },
   login: {
     group: "Pages/Sign in",
@@ -126,7 +126,7 @@ export const scenarios = {
     name: "Configured",
     path: "/console/providers",
     description: "Namespace provider connections and separate Installation Provider discovery.",
-    gap: "Enter an API key or token, or use an existing Secret ID. Saving does not test inference access. OAuth login is not implemented yet.",
+    gap: "Enter an API key or token, or use an existing Secret ID. Saving does not test inference access. OAuth login starts from a saved Agent’s Credentials tab.",
   },
   providersEmpty: {
     group: "Pages/Providers",
@@ -144,7 +144,7 @@ export const scenarios = {
     oauthConnection: true,
     description: "A saved OAuth connection remains unauthenticated and cannot be deployed.",
     actions: [{ selector: "#connection-auth", value: "oauth" }],
-    gap: "Authentication not implemented yet. There is no functional Connect action.",
+    gap: "Provider setup stores metadata. Start sign-in from a saved Agent’s Credentials tab.",
   },
   providersToken: {
     group: "Pages/Providers",
@@ -587,7 +587,35 @@ export const scenarios = {
     auth: "connection",
     oauthConnection: true,
     description:
-      "The draft can retain a pending OAuth connection, with an explicit deployment warning.",
+      "The saved draft offers explicit sign-in and status refresh. This preview does not connect to a provider.",
+  },
+  authOAuthComplete: {
+    group: "Components/Credentials",
+    name: "OAuth sign-in complete",
+    path: `${draft}&tab=credentials`,
+    auth: "connection",
+    oauthConnection: true,
+    oauthPhase: "authenticated",
+    description: "Completed consent is separate from runtime delivery and model access.",
+  },
+  authOAuthReady: {
+    group: "Components/Credentials",
+    name: "OAuth runtime retirement required",
+    path: `${draft}&tab=credentials`,
+    auth: "connection",
+    oauthConnection: true,
+    oauthPhase: "ready",
+    description:
+      "Credential delivery state disables sign-in until the current runtime is retired. Presentation only; runtime handoff is not enabled.",
+  },
+  authOAuthDenied: {
+    group: "Components/Credentials",
+    name: "OAuth status denied",
+    path: `${draft}&tab=credentials`,
+    auth: "connection",
+    oauthConnection: true,
+    rules: [{ suffix: "/oauth", status: 403 }],
+    description: "A denied read leaves sign-in disabled and offers status refresh.",
   },
   nativeAdmin: {
     group: "Components/Native admin",

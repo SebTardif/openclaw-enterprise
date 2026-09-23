@@ -141,7 +141,7 @@ export function createHarnessAuthFields(context, binding = null) {
           : "No provider connections saved in this Namespace.";
   }
   connection.addEventListener("change", updateConnection);
-  Promise.all([
+  const savedConnection = Promise.all([
     context.request(`${namespacePath(context.namespaceId)}/provider-connections`),
     context.request("/provider-catalog"),
   ])
@@ -165,6 +165,11 @@ export function createHarnessAuthFields(context, binding = null) {
       }
       connection.value = selected;
       updateConnection();
+      const saved =
+        binding?.method === "provider_connection"
+          ? items.find((item) => item.id === binding.connectionId)
+          : null;
+      return saved ? { connection: saved, method: connectionAuth(catalog, saved).method } : null;
     })
     .catch((error) => {
       if (!context.isCurrent()) {
@@ -210,6 +215,7 @@ export function createHarnessAuthFields(context, binding = null) {
     });
   return {
     section,
+    savedConnection,
     setDisabled(value) {
       disabled = value;
       method.disabled = value;

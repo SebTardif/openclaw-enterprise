@@ -67,11 +67,23 @@ server separately, and select a matching model in the Agent Configuration. Savin
 neither probes the URL nor changes network policies. Verify connectivity and
 authentication from the deployed runtime.
 
-Saving does not test credentials or model access. OAuth choices show that login
-is not implemented; they save metadata without starting consent or storing
-tokens. To use a saved key, token, or local-server connection, choose **Saved
-provider connection** in the Agent authentication controls. See
+Saving does not test credentials or model access. OAuth choices save metadata
+without starting consent or storing tokens. To use a saved connection, choose
+**Saved provider connection** in the Agent authentication controls. See
 [connection permissions and limits](providers.md#model-authentication-catalog-and-saved-connections).
+
+For an OAuth connection supported by the installed authentication runtime, save
+an Agent, open its draft **Credentials** tab, and select **Sign in**. Follow the
+provider link in a separate tab. For browser consent, paste the resulting
+**Redirect URL** and submit it; for device login, enter the displayed code on
+the provider page. Links, codes, and redirect input stay in the current browser
+view and are cleared when the attempt ends or the tab closes.
+
+**Cancel sign-in** stops an unfinished attempt. Leaving the Credentials tab or
+closing the socket also interrupts pending acquisition; completed consent
+survives navigation. **Refresh sign-in status** rereads the exact Agent without
+starting another login. Authentication does not deploy the Agent or establish
+model access. Catalog warnings still describe deployment or runtime limits.
 
 Connections have no edit action. **Remove** deletes unused connection metadata;
 an Agent draft, active revision, or pending deployment prevents removal. The

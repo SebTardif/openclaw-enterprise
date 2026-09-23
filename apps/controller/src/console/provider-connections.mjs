@@ -19,7 +19,9 @@ export function connectionStatus(method) {
     return "Provider authentication method unavailable.";
   }
   if (method.credentialKind === "oauth") {
-    return "Authentication not implemented yet. This connection cannot be deployed.";
+    return method.nativeVersion === null
+      ? method.unavailableReason
+      : `Sign-in requires an enabled authentication runtime. Once enabled, sign in from the saved Agent's Credentials tab. Saving this connection does not sign in.${method.unavailableReason ? ` ${method.unavailableReason}` : ""}`;
   }
   return (
     method.unavailableReason ??

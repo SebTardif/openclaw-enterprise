@@ -1,5 +1,6 @@
 import { element, button } from "../dom.mjs";
 import { createHarnessAuthFields, harnessAuthDescription } from "./harness-auth.mjs";
+import { createAgentOAuthPanel } from "./oauth.mjs";
 import { renderNativeAdminAccess } from "./native-admin.mjs";
 import { createAgentDeletion } from "./deletion.mjs";
 import { renderChannels } from "../channels.mjs";
@@ -184,8 +185,10 @@ export async function renderAgentDetail(context) {
     ),
   );
   const identity = element("p", { className: "resource-id" }, agent.id);
+  let tabLifetime = new AbortController();
   const deletion = createAgentDeletion(context, path, agent, showDeleting);
   function showDeleting() {
+    tabLifetime.abort();
     deleting = true;
     header.lastChild.textContent = "Deleting";
     view.replaceChildren(header, identity, deletion);
@@ -500,10 +503,14 @@ export async function renderAgentDetail(context) {
   }
 
   async function renderTab() {
+    tabLifetime.abort();
+    tabLifetime = new AbortController();
     const activeTab = ++tabGeneration;
     const tabContext = {
       ...context,
-      isCurrent: () => context.isCurrent() && activeTab === tabGeneration,
+      signal: AbortSignal.any([context.signal, tabLifetime.signal]),
+      isCurrent: () =>
+        context.isCurrent() && activeTab === tabGeneration && !tabLifetime.signal.aborted,
     };
     const tab = selectedTab;
     for (const [index, id] of tabsForSelection.entries()) {
@@ -666,7 +673,22 @@ export async function renderAgentDetail(context) {
           }
         }
       });
-      content.append(form);
+      const oauth = element("div");
+      content.append(form, oauth);
+      void auth.savedConnection.then((saved) => {
+        if (
+          !context.isCurrent() ||
+          context.signal.aborted ||
+          saved?.method?.credentialKind !== "oauth"
+        ) {
+          return;
+        }
+        if (saved.method.nativeVersion === null) {
+          oauth.append(element("p", { className: "hint" }, saved.method.unavailableReason));
+        } else {
+          oauth.append(createAgentOAuthPanel(context, path, saved.connection.id));
+        }
+      });
       if (credentials) {
         content.append(credentials.section);
       }

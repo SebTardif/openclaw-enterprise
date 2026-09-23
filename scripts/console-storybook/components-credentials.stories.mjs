@@ -21,3 +21,11 @@ export const AuthOAuthConnection = {
   ...story("authOAuthConnection"),
   name: "OAuth connection pending",
 };
+
+export const AuthOAuthComplete = { ...story("authOAuthComplete"), name: "OAuth sign-in complete" };
+export const AuthOAuthDenied = { ...story("authOAuthDenied"), name: "OAuth status denied" };
+
+export const AuthOAuthReady = {
+  ...story("authOAuthReady"),
+  name: "OAuth runtime retirement required",
+};

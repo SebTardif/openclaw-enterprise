@@ -1,7 +1,7 @@
 ---
 created: 2026-09-09
-updated: 2026-09-21
-last_updated_session: codex/01a0c76f-2534-7991-932a-345782408759
+updated: 2026-09-23
+last_updated_session: codex/01a0cb30-109d-7520-b27c-ace1d03ac751
 ---
 
 # Console Agent editing and runtime requests
@@ -101,6 +101,23 @@ server, and preserves existing matching groups on retry. Neither Configuration
 nor the audit event receives credential bytes. External Secret creation cannot
 be rolled back by a failed database transaction, so errors require readback.
 
+`apps/controller/src/console/agents/oauth.mjs:createAgentOAuthPanel` handles
+OAuth separately from runtime credential provisioning. The saved draft binding
+selects a `pco_` connection; catalog metadata selects whether to show sign-in.
+The panel reads the exact Agent's `/oauth` status. Only **Sign in** opens the
+same-origin authenticated `occ.agent-oauth.v1` socket and sends the saved
+connection plus the last observed generation. Provider instructions and redirect
+input remain browser-local until explicit submission on that socket.
+
+The page and Credentials tab share an abort lifetime. Changing tabs, navigating,
+or deleting the Agent closes the socket, clears instructions and inputs, and
+prevents awaited status or cancellation responses from updating another view.
+The controller owns durable acquisition state; socket closure interrupts pending
+acquisition but preserves completed consent. The panel rereads status after an
+unexpected close without reconnecting. HTTP cancellation uses the exact private
+connection, attempt, and generation from that status. It never replaces the
+Agent's public provider connection binding or starts deployment.
+
 ### 6. Read and replace live workspace files
 
 `apps/controller/src/console/agents/workspace.mjs:renderWorkspaceFiles` opens from
@@ -163,5 +180,7 @@ subsequent worker cleanup and the Namespace-owned resources it preserves.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 04:27: Trace Agent OAuth console acquisition and tab lifetime cleanup. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 3bd863bbc01bf61d17f98d1ff4317b9cea540258)
 
 - 2026-09-21 21:46: Trace Agent deletion, readback, and recovery from denied or uncertain requests. (01a0c76f-2534-7991-932a-345782408759 - b61c3cae6c35e28db4153eaee9b477e8f5637894)

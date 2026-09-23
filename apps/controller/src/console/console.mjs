@@ -238,6 +238,7 @@ async function loadPage({ fromNavigation = false } = {}) {
       return;
     }
     const agentContext = {
+      signal: lifetime.signal,
       view: shell.view,
       namespaceId,
       request,

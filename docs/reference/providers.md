@@ -34,7 +34,11 @@ saved but cannot be used to deploy an Agent.
 
 Native mappings are checked against OpenClaw `2026.9.1`; SIWC has no supported
 bundled release recorded yet. Saving an OAuth choice records setup metadata only:
-it starts no login and stores no access or refresh token. Anthropic setup tokens
+it starts no login and stores no access or refresh token. The Agent Credentials
+tab uses the [Agent OAuth acquisition API](../flows/agent-oauth-custody.md) for
+per-Agent consent when an authentication runtime is configured. Production
+acquisition composition and OAuth workload delivery remain unqualified; no OAuth
+method is enabled for deployment. Anthropic setup tokens
 are static credentials, not an OAuth login method. Ollama uses its native protocol
 and a nonsecret local marker; vLLM uses its OpenAI-compatible completions protocol.
 The Agent's native Configuration must select a model from the connection's provider.

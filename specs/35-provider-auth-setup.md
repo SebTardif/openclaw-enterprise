@@ -107,8 +107,10 @@ OAuth acquisition and runtime custody remain with the separate login owner;
 OpenClaw SIWC retains its native implementation owner. Reusable connection
 metadata is distinct from one OAuth credential profile per Agent across revisions.
 Cross-Agent OAuth sharing and a credential broker are outside this implementation.
-The Console will consume an authenticated, exact-Agent socket for login and
-private redirect input, with HTTP status and cancellation. Runtime enablement
+The Console consumes an authenticated, exact-Agent socket for login and private
+redirect input, with HTTP status and cancellation. Acquisition/custody endpoints
+are integrated, but production acquisition composition remains unqualified.
+Runtime enablement
 requires qualified generation, PVC, execution ownership, and refresh behavior.
 SIWC additionally requires a qualified native image pin. Pending catalog methods
 must become functional before the completion target is met.

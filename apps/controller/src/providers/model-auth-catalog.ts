@@ -18,7 +18,7 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         deploymentAuthMethod: "provider_connection",
         unavailableReason: null,
       },
-      // TODO(provider OAuth integration): enable after login and credential deployment are wired.
+      // TODO(provider OAuth integration): enable after production acquisition and runtime delivery qualify.
       {
         id: "oauth",
         label: "ChatGPT / Codex login",
@@ -27,7 +27,7 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeMethodId: "oauth",
         nativeVersion: "2026.9.1",
         deploymentAuthMethod: null,
-        unavailableReason: "OAuth login and credential deployment are not available yet.",
+        unavailableReason: "OAuth sign-in and credential deployment are not enabled.",
       },
       {
         id: "device-code",
@@ -37,7 +37,7 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeMethodId: "device-code",
         nativeVersion: "2026.9.1",
         deploymentAuthMethod: null,
-        unavailableReason: "Device pairing and credential deployment are not available yet.",
+        unavailableReason: "OAuth sign-in and credential deployment are not enabled.",
       },
       // TODO(OpenAI auth integration): use the SIWC owner's release once login and deployment ship.
       {
