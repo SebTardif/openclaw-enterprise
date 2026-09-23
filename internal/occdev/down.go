@@ -134,46 +134,9 @@ func (r *runner) cleanup(ctx context.Context, s *developmentState) error {
 }
 
 func (r *runner) deleteOwnedCluster(ctx context.Context, s *developmentState) error {
-	nodes, volumes, err := r.clusterResources(ctx, s.Cluster)
+	containers, witness, err := r.inspectOwnedCluster(ctx, s)
 	if err != nil {
 		return err
-	}
-	// Check the whole scope before removing anything. In particular, an owned
-	// server cannot authorize deletion of an explicitly foreign sibling.
-	for _, volume := range volumes {
-		if err := r.verifyResourceOwner(ctx, s, "volume", volume); err != nil {
-			return err
-		}
-	}
-	containers := make([]clusterContainer, 0, len(nodes))
-	witness := ""
-	for _, id := range nodes {
-		data, err := r.output(ctx, r.engine, "container", "inspect", "--format", "{{json .}}", id)
-		if err != nil {
-			return err
-		}
-		var container clusterContainer
-		if err := json.Unmarshal(data, &container); err != nil {
-			return fmt.Errorf("invalid cluster container inspection: %w", err)
-		}
-		if container.ID != id || container.Config.Labels["k3d.cluster"] != s.Cluster {
-			return fmt.Errorf("cluster container identity changed during cleanup")
-		}
-		if strings.TrimPrefix(container.Name, "/") == "k3d-"+s.Cluster+"-server-0" && container.Config.Labels[ownershipLabel] == s.Owner {
-			witness = id
-		}
-		containers = append(containers, container)
-	}
-	for _, container := range containers {
-		owner := container.Config.Labels[ownershipLabel]
-		if owner == s.Owner {
-			continue
-		}
-		// k3d v5.9 does not pass runtime labels to its tools node. Its native
-		// membership is usable only while our owned server remains present.
-		if owner != "" || witness == "" || !container.isClusterTools(s, volumes) {
-			return fmt.Errorf("refusing to delete container %s: ownership label does not match recorded state", container.ID)
-		}
 	}
 	for _, container := range containers {
 		if container.ID == witness {
@@ -225,6 +188,51 @@ func (r *runner) deleteOwnedCluster(ctx context.Context, s *developmentState) er
 		return fmt.Errorf("cluster %s still has resources after deletion", s.Cluster)
 	}
 	return nil
+}
+
+// Check the whole scope before removing anything. In particular, an owned
+// server cannot authorize deletion of an explicitly foreign sibling.
+func (r *runner) inspectOwnedCluster(ctx context.Context, s *developmentState) ([]clusterContainer, string, error) {
+	nodes, volumes, err := r.clusterResources(ctx, s.Cluster)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, volume := range volumes {
+		if err := r.verifyResourceOwner(ctx, s, "volume", volume); err != nil {
+			return nil, "", err
+		}
+	}
+	containers := make([]clusterContainer, 0, len(nodes))
+	witness := ""
+	for _, id := range nodes {
+		data, err := r.output(ctx, r.engine, "container", "inspect", "--format", "{{json .}}", id)
+		if err != nil {
+			return nil, "", err
+		}
+		var container clusterContainer
+		if err := json.Unmarshal(data, &container); err != nil {
+			return nil, "", fmt.Errorf("invalid cluster container inspection: %w", err)
+		}
+		if container.ID != id || container.Config.Labels["k3d.cluster"] != s.Cluster {
+			return nil, "", fmt.Errorf("cluster container identity changed during cleanup")
+		}
+		if strings.TrimPrefix(container.Name, "/") == "k3d-"+s.Cluster+"-server-0" && container.Config.Labels[ownershipLabel] == s.Owner {
+			witness = id
+		}
+		containers = append(containers, container)
+	}
+	for _, container := range containers {
+		owner := container.Config.Labels[ownershipLabel]
+		if owner == s.Owner {
+			continue
+		}
+		// k3d v5.9 does not pass runtime labels to its tools node. Its native
+		// membership is usable only while our owned server remains present.
+		if owner != "" || witness == "" || !container.isClusterTools(s, volumes) {
+			return nil, "", fmt.Errorf("refusing to delete container %s: ownership label does not match recorded state", container.ID)
+		}
+	}
+	return containers, witness, nil
 }
 
 // Only the native fields needed to recognize k3d's unlabeled tools node.
