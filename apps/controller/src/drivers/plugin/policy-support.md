@@ -69,20 +69,27 @@ A tool entry overrides policy for one tool in its parent plugin. It contains
 `enabled`, `approvalMode`, or both. Native OpenClaw tool-level translation is
 deferred; its translator currently rejects any `tools` map.
 
-| Policy                 | Meaning                                                       | Codex translation                               | Native OpenClaw translation            |
-| ---------------------- | ------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------- |
-| `enabled: false`       | Disable this tool regardless of its approval mode             | Translated                                      | Rejected; deferred                     |
-| `enabled: true`        | Permit availability subject to the effective approval policy  | Translated; does not override `never` by itself | Rejected; deferred                     |
-| `approvalMode: always` | Override category/default mode with no added approval         | Translated to `approve`                         | Rejected; deferred                     |
-| `approvalMode: never`  | Deny this tool                                                | Translated by disabling the tool                | Rejected; deferred                     |
-| `approvalMode: auto`   | Override category/default mode with runtime-selected review   | Translated                                      | Rejected; deferred                     |
-| `approvalMode: prompt` | Override category/default mode with every-call review         | Translated; bridge preservation required        | Rejected; deferred                     |
-| `approvalMode` omitted | Use the stricter applicable category, then the plugin default | Inherited; resolved by the translator           | Rejected when a tool entry is supplied |
+| Policy                 | Meaning                                                       | Codex translation                          | Native OpenClaw translation            |
+| ---------------------- | ------------------------------------------------------------- | ------------------------------------------ | -------------------------------------- |
+| `enabled: false`       | Disable this tool regardless of its approval mode             | Translated                                 | Rejected; deferred                     |
+| `enabled: true`        | Permit availability subject to the effective approval policy  | Translated; effective `never` still blocks | Rejected; deferred                     |
+| `approvalMode: always` | Override category/default mode with no added approval         | Translated to `approve`                    | Rejected; deferred                     |
+| `approvalMode: never`  | Deny this tool                                                | Translated by disabling the tool           | Rejected; deferred                     |
+| `approvalMode: auto`   | Override category/default mode with runtime-selected review   | Translated                                 | Rejected; deferred                     |
+| `approvalMode: prompt` | Override category/default mode with every-call review         | Translated; bridge preservation required   | Rejected; deferred                     |
+| `approvalMode` omitted | Use the stricter applicable category, then the plugin default | Inherited; resolved by the translator      | Rejected when a tool entry is supplied |
 
 Tools inherit the plugin reviewer. There is no tool-level `approvalsReviewer`,
 `writes`, or `destructiveActions` field. An omitted tool `enabled` does not
 add a disable, but inherited `never` still denies the tool. A tool override
 cannot re-enable an explicitly disabled plugin or bypass installation failure.
+
+OCE resolves approval policy before emitting native tool enablement. For example,
+`destructiveActions: never` plus tool `enabled: true` still blocks a destructive
+tool; adding tool `approvalMode: prompt` permits it with review. The same rule
+applies to plugin `approvalMode: never`. Native Codex's `destructive_enabled: false`
+is a different setting: its tool `enabled: true` overrides that category Boolean.
+OCE does not pass requested tool enablement through unchanged.
 
 [OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and a
 compatible runtime image remain prerequisites for preserving the translated

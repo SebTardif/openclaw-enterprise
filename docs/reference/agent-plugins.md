@@ -131,7 +131,7 @@ complete requested selection against the selected Driver and native runtime.
 | `destructiveActions`          | Optional mode                    | Category override applied at startup when native metadata supports it.     |
 | `writes`                      | Optional mode                    | Category override applied at startup when native metadata supports it.     |
 | `tools`                       | Optional object keyed by tool ID | Tool overrides applied at startup when authoritative metadata supports it. |
-| `tools.<toolId>.enabled`      | Optional Boolean                 | Explicit tool enablement override.                                         |
+| `tools.<toolId>.enabled`      | Optional Boolean                 | Tool availability; `true` still requires a non-`never` effective mode.     |
 | `tools.<toolId>.approvalMode` | Optional mode                    | Explicit tool approval override.                                           |
 
 Each supplied tool override must contain `enabled`, `approvalMode`, or both.
