@@ -1,7 +1,4 @@
 import { MODEL_AUTH_CATALOG } from "./providers/model-auth-catalog.ts";
-import { createAgentOAuthSocketServer } from "./providers/agent-oauth/socket.mjs";
-import { nativeOAuthProfileId } from "./providers/agent-oauth/native-profile.mjs";
-import type { createNativeOAuthAcquisition } from "./providers/agent-oauth/native-acquisition.mjs";
 import { isNonEmptyString } from "@openclaw-enterprise/utils";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -144,12 +141,6 @@ export interface ControllerAppOptions {
   readonly nativeAdmin?: NativeAdminAccessConfig;
   readonly nativeAdminGatewayApiKey?: () => Promise<string>;
   readonly publicOrigin?: string;
-  /** Image-qualified native adapters supplied by controller composition. Never request input. */
-  readonly agentOAuthMethods?: readonly {
-    readonly providerId: string;
-    readonly methodId: string;
-    readonly acquire: ReturnType<typeof createNativeOAuthAcquisition>;
-  }[];
   readonly provisionAuthAccount?: (
     seed: AuthPrincipalSeed,
     auditEvent: AuditEvent,
@@ -2808,47 +2799,6 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
       return;
     }
 
-    if (operation.operationId === "getAgentOAuthStatus") {
-      const status = await controller.agentOAuth.get(context.actorId, namespaceId, agentId);
-      reply.send({ data: status ?? null, meta: { requestId: request.id } });
-      return;
-    }
-
-    if (operation.operationId === "cancelAgentOAuthAttempt") {
-      requireWorkspaceFileCsrf(request, true);
-      const status = await controller.transact(async (unit) => {
-        // Read and cancellation share the Agent lock, so a replacement cannot
-        // change the exact connection between comparison and mutation.
-        const current = await controller!.agentOAuth.get(context.actorId, namespaceId, agentId);
-        if (current?.connectionId !== body?.connectionId) {
-          throw new ResourceConflictError("The OAuth connection is no longer current.");
-        }
-        const cancelled = await controller!.agentOAuth.cancel(
-          context.actorId,
-          namespaceId,
-          agentId,
-          params.attemptId as string,
-          body?.generation as number,
-        );
-        try {
-          await unit.audit.append(
-            event(
-              operation,
-              request,
-              { kind: "agent", id: agentId, namespaceId },
-              "mutation",
-              context,
-            ),
-          );
-        } catch {
-          throw dependencyUnavailable();
-        }
-        return cancelled;
-      });
-      reply.send({ data: status, meta: { requestId: request.id } });
-      return;
-    }
-
     if (operation.operationId === "provisionAgentRuntimeCredentials") {
       requireWorkspaceFileCsrf(request, true);
       const status = await controller.transact(async (unit) => {
@@ -3800,15 +3750,10 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
   });
 
   app.server.on("upgrade", (request, socket, head) => {
-    if (request.url?.startsWith("/namespaces/")) {
-      void agentOAuthSockets.upgrade(request, socket as Socket, head);
-      return;
-    }
     void handleNativeAdminUpgrade(request, socket as Socket, head);
   });
 
   app.addHook("preClose", async () => {
-    await agentOAuthSockets.close();
     nativeAdminShuttingDown = true;
     await Promise.all(
       [...nativeAdminSockets].map(
@@ -3821,189 +3766,6 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     );
     nativeAdminSockets.clear();
     await drainNativeAdminCloseAudits();
-  });
-
-  const agentOAuthSockets = createAgentOAuthSocketServer({
-    async admit(request, { namespaceId, agentId }) {
-      const currentController = controller;
-      // WebSocket upgrades bypass Fastify hooks. Apply the same direct-request
-      // boundary and require an exact browser Origin before reading session cookies.
-      const forwarded = Object.keys(request.headers).some(
-        (name) => name === "forwarded" || name === "x-real-ip" || name.startsWith("x-forwarded-"),
-      );
-      if (
-        !currentController ||
-        !publicOrigin ||
-        request.headers.origin !== publicOrigin ||
-        request.headers.host?.toLowerCase() !== new URL(publicOrigin).host.toLowerCase() ||
-        request.headers["sec-fetch-site"] === "cross-site" ||
-        forwarded ||
-        request.headers[OCC_SERVICE_KEY_HEADER] !== undefined ||
-        request.headers.authorization !== undefined ||
-        (development.enabled &&
-          (!LOOPBACK_HOSTNAMES.has(new URL(publicOrigin).hostname) ||
-            !trustedDevelopmentAddress(development, request.socket.remoteAddress ?? "")))
-      ) {
-        throw failure(403, "FORBIDDEN", "The OAuth socket was not authorized.");
-      }
-      const resolve = async () => {
-        const admitted = await options.auth.admissionVerifier.verify({
-          requestId: `aoa_${randomUUID()}`,
-          method: "GET",
-          routeId: "acquireAgentOAuth",
-          requestedScope: { installationId, namespaceId },
-          transport: {
-            remoteAddress: request.socket.remoteAddress ?? "",
-            trustProxy: false,
-          },
-          headers: request.headers,
-        });
-        if (
-          admitted.method !== "session" ||
-          admitted.admittedScope.installationId !== installationId ||
-          admitted.session.userId !== admitted.externalIdentity.subject ||
-          Date.parse(admitted.session.expiresAt) <= Date.now()
-        ) {
-          throw failure(401, "UNAUTHENTICATED", "A current human session is required.");
-        }
-        const actorId = await resolveNativeAdminActor({
-          actorIssuer: admitted.externalIdentity.issuer,
-          actorSubject: admitted.externalIdentity.subject,
-        });
-        if (!actorId) {
-          throw failure(403, "FORBIDDEN", "The OAuth actor was not authorized.");
-        }
-        return { admitted, actorId };
-      };
-      const initial = await resolve();
-      const resource: ResourceRef = { kind: "agent", id: agentId, namespaceId };
-      const assertAuthorized = async () => {
-        const current = await resolve();
-        if (
-          current.actorId !== initial.actorId ||
-          current.admitted.session.id !== initial.admitted.session.id
-        ) {
-          throw failure(401, "UNAUTHENTICATED", "The OAuth session changed.");
-        }
-        const iam = selectedIAMDriver();
-        for (const action of ["administer", "operate"] as const) {
-          const decision = await iam.authorize({ principalId: initial.actorId, action, resource });
-          if (decision.driverId !== iam.id || !validAuthorizationEvidence(decision.evidence)) {
-            throw dependencyUnavailable();
-          }
-          if (!decision.allowed) {
-            await options.auditSink.append(
-              factory.create({
-                installationId,
-                namespaceId,
-                kind: "authorization_denial",
-                source: "occ",
-                actor: { principalId: initial.actorId, ...initial.admitted.externalIdentity },
-                iamDriverId: iam.id,
-                authorization: { principalId: initial.actorId, action, resource },
-                action: "openclaw.agents.oauth.acquire",
-                resource,
-                outcome: "denied",
-                reasonCode: "FORBIDDEN",
-              }),
-            );
-            throw failure(403, "FORBIDDEN", "The OAuth operation was not authorized.");
-          }
-        }
-        await currentController.agentOAuth.get(initial.actorId, namespaceId, agentId);
-      };
-      await assertAuthorized();
-      const auditedDenials = new WeakSet<Error>();
-      return {
-        controller: currentController,
-        actorId: initial.actorId,
-        assertAuthorized,
-        async auditDenial(error: unknown) {
-          if (
-            !(error instanceof AuthorizationDeniedError) ||
-            !error.authorization ||
-            auditedDenials.has(error)
-          ) {
-            return;
-          }
-          const authorization = error.authorization;
-          await options.auditSink.append(
-            factory.create({
-              installationId,
-              namespaceId,
-              kind: "authorization_denial",
-              source: "occ",
-              actor: { principalId: initial.actorId, ...initial.admitted.externalIdentity },
-              iamDriverId: selectedIAMDriver().id,
-              authorization: { principalId: initial.actorId, ...authorization },
-              action: "openclaw.agents.oauth.acquire",
-              resource: authorization.resource,
-              outcome: "denied",
-              reasonCode: "FORBIDDEN",
-            }),
-          );
-          auditedDenials.add(error);
-        },
-        async audit(eventName, status, writer) {
-          await writer.append(
-            factory.create({
-              installationId,
-              namespaceId,
-              kind: "mutation",
-              source: "occ",
-              actor: { principalId: initial.actorId, ...initial.admitted.externalIdentity },
-              iamDriverId: selectedIAMDriver().id,
-              authorization: { principalId: initial.actorId, action: "administer", resource },
-              action: `openclaw.agents.oauth.${eventName}`,
-              resource,
-              outcome: "success",
-              details: {
-                oauth: {
-                  connectionId: status.connectionId,
-                  attemptId: status.attemptId,
-                  generation: status.generation,
-                  phase: status.phase,
-                },
-              },
-            }),
-          );
-        },
-      };
-    },
-    async selectMethod({ controller: owner, actorId, namespaceId, providerConnectionId }) {
-      const connection = await owner.getProviderConnection(
-        actorId,
-        namespaceId,
-        providerConnectionId,
-      );
-      const catalog = MODEL_AUTH_CATALOG.find(
-        (provider) => provider.id === connection.providerId,
-      )?.authMethods.find((method) => method.id === connection.authMethodId);
-      const selected =
-        catalog?.credentialKind === "oauth"
-          ? options.agentOAuthMethods?.find(
-              (method) =>
-                method.providerId === catalog.nativeProviderId &&
-                method.methodId === catalog.nativeMethodId,
-            )
-          : undefined;
-      if (!selected) {
-        throw new DependencyUnavailableError("The qualified OAuth runtime is unavailable.");
-      }
-      return {
-        method: {
-          providerId: selected.providerId,
-          methodId: selected.methodId,
-          profileId: (connectionId: string, generation: number) =>
-            nativeOAuthProfileId({
-              provider: selected.providerId,
-              connectionId,
-              generation,
-            }),
-        },
-        acquire: selected.acquire,
-      };
-    },
   });
 
   async function resolveNativeAdminActor(input: {

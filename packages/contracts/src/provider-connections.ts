@@ -25,13 +25,7 @@ export type ProviderConnectionReferenceSnapshot = Pick<
 export interface ModelAuthCatalogMethod {
   readonly id: string;
   readonly label: string;
-  readonly credentialKind: "secret" | "oauth" | "none";
-  readonly nativeProviderId: string;
-  readonly nativeMethodId: string;
-  /** OpenClaw version checked for this mapping, not a minimum supported version. */
-  readonly nativeVersion: string | null;
-  readonly deploymentAuthMethod: "provider_connection" | null;
-  readonly unavailableReason: string | null;
+  readonly credentialKind: "secret" | "none";
 }
 
 export interface ModelAuthCatalogProvider {

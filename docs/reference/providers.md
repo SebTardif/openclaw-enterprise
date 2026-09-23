@@ -19,27 +19,19 @@ endpoint. It does not create or change an Installation Provider.
 ## Model authentication catalog and saved connections
 
 `GET /provider-catalog` requires Installation `read` and returns the bundled
-model-provider choices. Each method reports its native OpenClaw mapping,
-`nativeVersion`, `credentialKind`, `deploymentAuthMethod`, and `unavailableReason`.
-The version identifies the source checked for the mapping, not a minimum runtime
-version or live verification result. A null deployment method means setup can be
-saved but cannot be used to deploy an Agent.
+model-provider choices. Each method reports its ID, label, and whether it needs
+a Secret. Only supported API-key and local-server methods are offered.
 
-| Model provider | Saved authentication choices                                         | Kubernetes deployment through a connection    |
-| -------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| OpenAI         | API key, ChatGPT/Codex OAuth, device pairing, SIWC through Responses | API key: embedded OpenClaw or dedicated Codex |
-| Anthropic      | API key, Claude setup token                                          | Embedded OpenClaw                             |
-| Ollama         | Local server without a credential                                    | Embedded OpenClaw                             |
-| vLLM           | Server endpoint and API-key Secret                                   | Embedded OpenClaw                             |
+| Model provider | Saved authentication choices | Kubernetes deployment through a connection |
+| -------------- | ---------------------------- | ------------------------------------------ |
+| OpenAI         | API key                      | Embedded OpenClaw or dedicated Codex       |
+| Anthropic      | API key                      | Embedded OpenClaw                          |
+| Ollama         | Local server, no credential  | Embedded OpenClaw                          |
+| vLLM           | Self-hosted server, API key  | Embedded OpenClaw                          |
 
-Native mappings are checked against OpenClaw `2026.9.1`; SIWC has no supported
-bundled release recorded yet. Saving an OAuth choice records setup metadata only:
-it starts no login and stores no access or refresh token. The Agent Credentials
-tab uses the [Agent OAuth acquisition API](../flows/agent-oauth-custody.md) for
-per-Agent consent when an authentication runtime is configured. Production
-acquisition composition and OAuth workload delivery remain unqualified; no OAuth
-method is enabled for deployment. Anthropic setup tokens
-are static credentials, not an OAuth login method. Ollama uses its native protocol
+Native mappings are checked against OpenClaw `2026.9.1`. OAuth and other login
+methods are deferred to separate work and are not offered by this catalog.
+Ollama uses its native protocol
 and a nonsecret local marker; vLLM uses its OpenAI-compatible completions protocol.
 The Agent's native Configuration must select a model from the connection's provider.
 
@@ -292,10 +284,9 @@ verification requirements.
 
 Optional member Drivers, per-Agent Driver selection, automatic account creation,
 clientless Providers, installed Provider loading/injection, and Installation
-Provider mutation remain out of scope. Production OAuth acquisition, workload
-delivery, refresh, and upstream revocation remain unqualified; the Agent-bound
-acquisition API does not enable these runtime capabilities. Additional inference
-transports are not implemented.
+Provider mutation remain out of scope. OAuth acquisition, refresh, and upstream
+revocation belong to a separate implementation. Additional inference transports
+are not implemented.
 
 ## Related
 

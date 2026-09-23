@@ -2597,13 +2597,6 @@ test("embedded replacement cuts over an unready shared gateway and waits for act
       api: "anthropic-messages",
     },
     {
-      providerId: "anthropic",
-      authMethodId: "setup-token",
-      model: "claude-sonnet-4-5",
-      environmentName: "ANTHROPIC_OAUTH_TOKEN",
-      api: "anthropic-messages",
-    },
-    {
       providerId: "ollama",
       authMethodId: "local",
       model: "llama3.2",
@@ -3883,6 +3876,10 @@ test("revision lifecycle rejects another driver or missing identity before clust
   );
   for (const unsupported of [
     { ...anthropicConnection, credential: undefined },
+    {
+      ...anthropicConnection,
+      connection: { ...anthropicConnection.connection, authMethodId: "setup-token" },
+    },
     {
       ...anthropicConnection,
       connection: {

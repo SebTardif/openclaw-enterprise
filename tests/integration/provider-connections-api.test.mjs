@@ -7,19 +7,22 @@ import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
 import { InMemoryPlatformState } from "../../packages/occ/src/index.ts";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
 
-test("provider setup persists safe references, admits API keys, and keeps OAuth configuration non-deployable", async (t) => {
+test("provider setup admits API-key and local connections and rejects unsupported authentication methods", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Provider setup", { ready: true });
   const base = `/namespaces/${namespace.id}/provider-connections`;
   const catalog = await fixture.request("GET", "/provider-catalog");
   assert.equal(catalog.status, 200);
-  const openai = catalog.data.find((item) => item.id === "openai");
-  assert.equal(
-    openai.authMethods.find((item) => item.id === "api-key").deploymentAuthMethod,
-    "provider_connection",
+  assert.deepEqual(
+    catalog.data.map(({ id, authMethods }) => [id, authMethods.map((method) => method.id)]),
+    [
+      ["openai", ["api-key"]],
+      ["anthropic", ["api-key"]],
+      ["ollama", ["local"]],
+      ["vllm", ["custom"]],
+    ],
   );
-  assert.equal(openai.authMethods.find((item) => item.id === "token-sharing").nativeVersion, null);
 
   const secret = await fixture.createSecret(namespace.id, "Model key", "synthetic-provider-key");
   const created = await fixture.request("POST", base, {
@@ -81,41 +84,34 @@ test("provider setup persists safe references, admits API keys, and keeps OAuth 
     409,
   );
 
-  const oauth = await fixture.request("POST", base, {
-    body: { name: "Future OAuth", providerId: "openai", authMethodId: "oauth" },
-  });
-  assert.equal(oauth.status, 201);
-  await fixture.updateAgent(namespace.id, agent.id, {
-    configurationId: agent.configurationId,
-    harnessAuth: { method: "provider_connection", connectionId: oauth.data.id },
-  });
-  fixture.policy.bindings.push({
-    id: "consume-oauth",
-    namespaceId: namespace.id,
-    subjectKind: "identity",
-    subjectId: agent.servicePrincipalId,
-    roleId: "provider-consumer",
-    resourceKind: "provider_connection",
-    resourceId: oauth.data.id,
-  });
-  const blocked = await fixture.request("POST", deployPath);
-  assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
   const historical = await fixture.request(
     "GET",
     `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${revision.id}`,
   );
   assert.deepEqual(historical.data.harnessAuth, binding);
 
-  // OAuth setup never accepts token bytes or arbitrary native auth methods.
+  // The public catalog is closed: setup cannot admit a hidden native method.
   for (const body of [
     { name: "Unknown", providerId: "openai", authMethodId: "arbitrary-command" },
+    ...["oauth", "device-code", "token-sharing"].map((authMethodId) => ({
+      name: "Unsupported OpenAI authentication",
+      providerId: "openai",
+      authMethodId,
+    })),
+    { name: "Unsupported Claude token", providerId: "anthropic", authMethodId: "setup-token" },
     {
       name: "Injected token",
       providerId: "openai",
-      authMethodId: "oauth",
+      authMethodId: "api-key",
       accessToken: "synthetic-token",
     },
-    { name: "Wrong source", providerId: "openai", authMethodId: "oauth", source: secret.ref },
+    {
+      name: "Wrong source",
+      providerId: "ollama",
+      authMethodId: "local",
+      baseUrl: "http://models.example.test:11434",
+      source: secret.ref,
+    },
   ]) {
     assert.equal(
       (await fixture.request("POST", base, { body })).status,
@@ -132,7 +128,7 @@ test("provider setup persists safe references, admits API keys, and keeps OAuth 
   });
   assert.equal(local.status, 201);
   assert.equal((await fixture.request("DELETE", `${base}/${local.data.id}`)).status, 204);
-  assert.equal((await fixture.request("GET", base)).data.length, 2);
+  assert.equal((await fixture.request("GET", base)).data.length, 1);
 });
 
 test("provider connection lookup, source selection, and consumption cannot cross Namespaces", async (t) => {
@@ -224,7 +220,7 @@ test("provider setup creates its credential atomically and never returns or audi
 
   for (const invalid of [
     { ...body, name: "Mixed credential", source: response.data.source },
-    { ...body, name: "OAuth credential", authMethodId: "oauth" },
+    { ...body, name: "Local credential", providerId: "ollama", authMethodId: "local" },
   ]) {
     assert.equal((await fixture.request("POST", path, { body: invalid })).status, 404);
   }
@@ -258,7 +254,7 @@ test("provider setup creates its credential atomically and never returns or audi
   assert.equal(driver.calls.filter((call) => call.operation === "create").length, 2);
 });
 
-test("Anthropic key and setup-token connections admit embedded revisions with private Secret custody", async (t) => {
+test("Anthropic API-key connections admit embedded revisions with private Secret custody", async (t) => {
   const state = new InMemoryPlatformState();
   const fixture = await createConsoleAppFixture(t, { state });
   await fixture.bootstrap();
@@ -271,58 +267,57 @@ test("Anthropic key and setup-token connections admit embedded revisions with pr
       { action: "operate", resourceKind: "secret" },
     ],
   });
-  for (const authMethodId of ["api-key", "setup-token"]) {
-    const connection = await fixture.request(
-      "POST",
-      `/namespaces/${namespace.id}/provider-connections`,
-      {
-        body: {
-          name: `Claude ${authMethodId}`,
-          providerId: "anthropic",
-          authMethodId,
-          secretValue: `synthetic-${authMethodId}`,
-        },
+  const authMethodId = "api-key";
+  const connection = await fixture.request(
+    "POST",
+    `/namespaces/${namespace.id}/provider-connections`,
+    {
+      body: {
+        name: `Claude ${authMethodId}`,
+        providerId: "anthropic",
+        authMethodId,
+        secretValue: `synthetic-${authMethodId}`,
       },
-    );
-    assert.equal(connection.status, 201);
-    const model = "claude-sonnet-4-5";
-    const modelRef = `anthropic/${model}`;
-    const configuration = createHarnessConfiguration("openclaw", model);
-    configuration.agents.defaults.model = modelRef;
-    configuration.agents.defaults.models = { [modelRef]: { agentRuntime: { id: "openclaw" } } };
-    configuration.models.providers = {
-      anthropic: {
-        baseUrl: "https://api.anthropic.com",
-        api: "anthropic-messages",
-        models: [{ id: model, name: model }],
-      },
-    };
-    const binding = { method: "provider_connection", connectionId: connection.data.id };
-    const agent = await fixture.createAgent(namespace.id, `Claude ${authMethodId}`, configuration, {
-      harnessAuth: binding,
-    });
-    fixture.policy.identities.push({
-      id: agent.servicePrincipalId,
-      kind: "service_principal",
-      namespaceId: namespace.id,
-      agentId: agent.id,
-    });
-    fixture.policy.bindings.push({
-      id: `grant-${authMethodId}`,
-      namespaceId: namespace.id,
-      subjectKind: "identity",
-      subjectId: agent.servicePrincipalId,
-      roleId: "anthropic-consumer",
-    });
-    const revision = await fixture.deployAgent(namespace.id, agent.id);
-    assert.deepEqual(revision.harnessAuth, binding);
-    const admitted = await state.read((view) =>
-      view.revisions.findRevision(namespace.id, agent.id, revision.id),
-    );
-    assert.deepEqual(admitted.harnessAuth, {
-      method: "provider_connection",
-      connection: { id: connection.data.id, providerId: "anthropic", authMethodId },
-      credential: { source: connection.data.source, secretDriverId: "console-secret" },
-    });
-  }
+    },
+  );
+  assert.equal(connection.status, 201);
+  const model = "claude-sonnet-4-5";
+  const modelRef = `anthropic/${model}`;
+  const configuration = createHarnessConfiguration("openclaw", model);
+  configuration.agents.defaults.model = modelRef;
+  configuration.agents.defaults.models = { [modelRef]: { agentRuntime: { id: "openclaw" } } };
+  configuration.models.providers = {
+    anthropic: {
+      baseUrl: "https://api.anthropic.com",
+      api: "anthropic-messages",
+      models: [{ id: model, name: model }],
+    },
+  };
+  const binding = { method: "provider_connection", connectionId: connection.data.id };
+  const agent = await fixture.createAgent(namespace.id, `Claude ${authMethodId}`, configuration, {
+    harnessAuth: binding,
+  });
+  fixture.policy.identities.push({
+    id: agent.servicePrincipalId,
+    kind: "service_principal",
+    namespaceId: namespace.id,
+    agentId: agent.id,
+  });
+  fixture.policy.bindings.push({
+    id: `grant-${authMethodId}`,
+    namespaceId: namespace.id,
+    subjectKind: "identity",
+    subjectId: agent.servicePrincipalId,
+    roleId: "anthropic-consumer",
+  });
+  const revision = await fixture.deployAgent(namespace.id, agent.id);
+  assert.deepEqual(revision.harnessAuth, binding);
+  const admitted = await state.read((view) =>
+    view.revisions.findRevision(namespace.id, agent.id, revision.id),
+  );
+  assert.deepEqual(admitted.harnessAuth, {
+    method: "provider_connection",
+    connection: { id: connection.data.id, providerId: "anthropic", authMethodId },
+    credential: { source: connection.data.source, secretDriverId: "console-secret" },
+  });
 });

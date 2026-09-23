@@ -32,7 +32,7 @@ export const scenarios = {
     path: "/console/agents",
     description:
       "Browse pages, component states, and guided Agent workflows. Every preview mounts the production console modules and styles in its own frame. Reset story discards all local changes.",
-    gap: "Stop Agent requests the stopped desired state; deployment resumes an Agent. General Configuration JSON editing after creation, Namespace provisioning, Preset management, and Installation Provider setup require an API, CLI, or operator workflow. OAuth connections save setup metadata; sign-in belongs to a saved Agent. Serving health and model responses require separate runtime verification.",
+    gap: "Stop Agent requests the stopped desired state; deployment resumes an Agent. General Configuration JSON editing after creation, Namespace provisioning, Preset management, and Installation Provider setup require an API, CLI, or operator workflow. Serving health and model responses require separate runtime verification.",
   },
   login: {
     group: "Pages/Sign in",
@@ -138,7 +138,7 @@ export const scenarios = {
     name: "Configured",
     path: "/console/providers",
     description: "Namespace provider connections and separate Installation Provider discovery.",
-    gap: "Enter an API key or token, or use an existing Secret ID. Saving does not test inference access. OAuth login starts from a saved Agent’s Credentials tab.",
+    gap: "Enter an API key or use an existing Secret ID. Saving does not test inference access.",
   },
   providersEmpty: {
     group: "Pages/Providers",
@@ -149,24 +149,12 @@ export const scenarios = {
     description:
       "Add the first Namespace provider connection. No Installation Providers are configured.",
   },
-  providersOAuth: {
+  providersAnthropic: {
     group: "Pages/Providers",
-    name: "OAuth setup pending",
+    name: "Anthropic API key",
     path: "/console/providers",
-    oauthConnection: true,
-    description: "A saved OAuth connection remains unauthenticated and cannot be deployed.",
-    actions: [{ selector: "#connection-auth", value: "oauth" }],
-    gap: "Provider setup stores metadata. Start sign-in from a saved Agent’s Credentials tab.",
-  },
-  providersToken: {
-    group: "Pages/Providers",
-    name: "Static token entry",
-    path: "/console/providers",
-    actions: [
-      { selector: "#connection-provider", value: "anthropic" },
-      { selector: "#connection-auth", value: "setup-token" },
-    ],
-    description: "Save a static token as a Namespace Secret with its provider connection.",
+    actions: [{ selector: "#connection-provider", value: "anthropic" }],
+    description: "Save an Anthropic API key as a Namespace Secret with its provider connection.",
   },
   providersExistingSecret: {
     group: "Pages/Providers",
@@ -616,43 +604,6 @@ export const scenarios = {
     path: `${draft}&tab=credentials`,
     auth: "connection",
     description: "Select a connection configured on the Providers page.",
-  },
-  authOAuthConnection: {
-    group: "Components/Credentials",
-    name: "OAuth connection pending",
-    path: `${draft}&tab=credentials`,
-    auth: "connection",
-    oauthConnection: true,
-    description:
-      "The saved draft offers explicit sign-in and status refresh. This preview does not connect to a provider.",
-  },
-  authOAuthComplete: {
-    group: "Components/Credentials",
-    name: "OAuth sign-in complete",
-    path: `${draft}&tab=credentials`,
-    auth: "connection",
-    oauthConnection: true,
-    oauthPhase: "authenticated",
-    description: "Completed consent is separate from runtime delivery and model access.",
-  },
-  authOAuthReady: {
-    group: "Components/Credentials",
-    name: "OAuth runtime retirement required",
-    path: `${draft}&tab=credentials`,
-    auth: "connection",
-    oauthConnection: true,
-    oauthPhase: "ready",
-    description:
-      "Credential delivery state disables sign-in until the current runtime is retired. Presentation only; runtime handoff is not enabled.",
-  },
-  authOAuthDenied: {
-    group: "Components/Credentials",
-    name: "OAuth status denied",
-    path: `${draft}&tab=credentials`,
-    auth: "connection",
-    oauthConnection: true,
-    rules: [{ suffix: "/oauth", status: 403 }],
-    description: "A denied read leaves sign-in disabled and offers status refresh.",
   },
   nativeAdmin: {
     group: "Components/Native admin",

@@ -3,9 +3,6 @@
   "lanes": {
     "checks-baseline": {
       "files": [
-        { "path": "tests/conformance/agent-oauth-memory.test.mjs" },
-        { "path": "tests/conformance/agent-oauth-custody.test.mjs" },
-        { "path": "tests/conformance/native-agent-oauth-acquisition.test.mjs" },
         {
           "path": "tests/conformance/audit.test.mjs"
         },
@@ -123,9 +120,6 @@
         {
           "path": "tests/integration/provider-connections-api.test.mjs"
         },
-        { "path": "tests/integration/agent-oauth-api.test.mjs" },
-        { "path": "tests/integration/agent-oauth-socket-api.test.mjs" },
-        { "path": "tests/integration/agent-oauth-socket.test.mjs" },
         {
           "path": "tests/integration/secret-api.test.mjs"
         },
@@ -345,8 +339,6 @@
         "requiresPreparedStateForFile": true
       },
       "files": [
-        { "path": "tests/integration/postgres-agent-oauth.test.mjs" },
-        { "path": "tests/integration/postgres-agent-oauth-socket.test.mjs" },
         {
           "path": "tests/integration/postgres-connection-auth.test.mjs",
           "expectedTests": [

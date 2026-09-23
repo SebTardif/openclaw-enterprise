@@ -165,55 +165,6 @@ export const AgentRuntimeCredentialStatusSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const AgentOAuthConnectionId = Type.String({
-  pattern: "^aoc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-});
-
-export const AgentOAuthStatusSchema = Type.Object(
-  {
-    connectionId: AgentOAuthConnectionId,
-    providerConnectionId: ProviderConnectionId,
-    generation: ConfigurationGeneration,
-    attemptId: Type.String({ format: "uuid" }),
-    providerId: Type.String({ minLength: 1, maxLength: 512 }),
-    methodId: Type.String({ minLength: 1, maxLength: 512 }),
-    profileId: Type.String({ minLength: 1, maxLength: 512 }),
-    phase: Type.Union([
-      Type.Literal("authorizing"),
-      Type.Literal("staging"),
-      Type.Literal("authenticated"),
-      Type.Literal("handoff_pending"),
-      Type.Literal("ready"),
-      Type.Literal("reconnect_required"),
-      Type.Literal("cancelled"),
-      Type.Literal("superseded"),
-    ]),
-    deadlineAt: Timestamp,
-    failureCode: Type.Union([
-      Type.Null(),
-      Type.Literal("OAUTH_FAILED"),
-      Type.Literal("OAUTH_EXPIRED"),
-      Type.Literal("OAUTH_CANCELLED"),
-      Type.Literal("CREDENTIAL_STAGING_FAILED"),
-      Type.Literal("NATIVE_STORE_MISSING"),
-      Type.Literal("NATIVE_IMPORT_FAILED"),
-      Type.Literal("MODEL_ACCESS_DENIED"),
-      Type.Literal("RUNTIME_UNSUPPORTED"),
-    ]),
-  },
-  { additionalProperties: false },
-);
-
-export const AgentOAuthStatusResponse = Type.Object(
-  { data: Type.Union([AgentOAuthStatusSchema, Type.Null()]), meta: Meta },
-  { additionalProperties: false },
-);
-
-export const AgentOAuthCancelResponse = Type.Object(
-  { data: AgentOAuthStatusSchema, meta: Meta },
-  { additionalProperties: false },
-);
-
 export const IAMPermissionSchema = Type.Object(
   { action: PermissionActionSchema, resourceKind: ResourceKindSchema },
   { additionalProperties: false },
@@ -606,19 +557,7 @@ export const ProviderCatalogResponse = Type.Object(
               {
                 id: ProviderId,
                 label: Name,
-                credentialKind: Type.Union([
-                  Type.Literal("secret"),
-                  Type.Literal("oauth"),
-                  Type.Literal("none"),
-                ]),
-                nativeProviderId: ProviderId,
-                nativeMethodId: ProviderId,
-                nativeVersion: Type.Union([Type.String(), Type.Null()]),
-                deploymentAuthMethod: Type.Union([
-                  Type.Literal("provider_connection"),
-                  Type.Null(),
-                ]),
-                unavailableReason: Type.Union([Type.String(), Type.Null()]),
+                credentialKind: Type.Union([Type.Literal("secret"), Type.Literal("none")]),
               },
               { additionalProperties: false },
             ),

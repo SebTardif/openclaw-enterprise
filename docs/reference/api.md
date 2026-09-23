@@ -45,7 +45,7 @@ Each operation lists its supported status codes.
 | [Authentication](#authentication) | 6 operations |
 | [Installation](#installation) | 2 operations |
 | [Namespaces](#namespaces) | 4 operations |
-| [Agents](#agents) | 14 operations |
+| [Agents](#agents) | 12 operations |
 | [Agent deployments](#agent-deployments) | 1 operation |
 | [Agent revisions](#agent-revisions) | 2 operations |
 | [Configurations](#configurations) | 4 operations |
@@ -607,8 +607,6 @@ Get an exact Installation-owned Namespace
 | [`PATCH /namespaces/{namespaceId}/agents/{agentId}`](#patch-namespacesnamespaceidagentsagentid) | Replace an exact Namespace-owned Agent's editable draft |
 | [`POST /namespaces/{namespaceId}/agents/{agentId}/deploy`](#post-namespacesnamespaceidagentsagentiddeploy) | Admit an immutable revision from the Agent's saved draft |
 | [`GET /namespaces/{namespaceId}/agents/{agentId}/native-admin`](#get-namespacesnamespaceidagentsagentidnativeadmin) | Resolve native admin UI launch availability for one Agent |
-| [`GET /namespaces/{namespaceId}/agents/{agentId}/oauth`](#get-namespacesnamespaceidagentsagentidoauth) | Get redacted OAuth status for one Agent, or null before its first attempt |
-| [`POST /namespaces/{namespaceId}/agents/{agentId}/oauth/attempts/{attemptId}/cancel`](#post-namespacesnamespaceidagentsagentidoauthattemptsattemptidcancel) | Cancel the initiating actor's exact current OAuth attempt |
 | [`GET /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`](#get-namespacesnamespaceidagentsagentidruntimecredentials) | Get metadata for one Agent's provisioned runtime credentials |
 | [`POST /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`](#post-namespacesnamespaceidagentsagentidruntimecredentials) | Provision initial runtime credentials for one undeployed Agent |
 | [`POST /namespaces/{namespaceId}/agents/{agentId}/stop`](#post-namespacesnamespaceidagentsagentidstop) | Stop one Agent while retaining its revision and persistent state |
@@ -1074,112 +1072,6 @@ Resolve native admin UI launch availability for one Agent
 | `data.url` | `string (uri)` | No | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | — |
-
-#### `GET /namespaces/{namespaceId}/agents/{agentId}/oauth`
-
-<span id="get-namespacesnamespaceidagentsagentidoauth"></span>
-
-Get redacted OAuth status for one Agent, or null before its first attempt
-
-**Operation ID:** `getAgentOAuthStatus`
-
-**Permissions:** Requires administer permission on the requested Agent.
-
-| Action | Resource | Scope |
-| --- | --- | --- |
-| `administer` | `agent` | `requested` |
-
-##### Parameters
-
-| Name | In | Type | Required | Constraints |
-| --- | --- | --- | --- | --- |
-| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-
-##### Responses
-
-| Status | Meaning |
-| --- | --- |
-| `200` | OK |
-| `400` | Bad Request |
-| `401` | Unauthorized |
-| `403` | Forbidden |
-| `404` | Not Found |
-| `409` | Conflict |
-| `500` | Internal Server Error |
-| `503` | Service Unavailable |
-
-**`200` response body:** `application/json`
-
-| Field | Type | Required | Constraints |
-| --- | --- | --- | --- |
-| `data` | `object or null` | Yes | — |
-| `meta` | `object` | Yes | — |
-| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-
-#### `POST /namespaces/{namespaceId}/agents/{agentId}/oauth/attempts/{attemptId}/cancel`
-
-<span id="post-namespacesnamespaceidagentsagentidoauthattemptsattemptidcancel"></span>
-
-Cancel the initiating actor's exact current OAuth attempt
-
-**Operation ID:** `cancelAgentOAuthAttempt`
-
-**Permissions:** Requires administer permission on the requested Agent.
-
-| Action | Resource | Scope |
-| --- | --- | --- |
-| `administer` | `agent` | `requested` |
-
-##### Parameters
-
-| Name | In | Type | Required | Constraints |
-| --- | --- | --- | --- | --- |
-| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `attemptId` | path | `string (uuid)` | Yes | — |
-
-##### Request body
-
-**Required:** Yes
-
-**Content type:** `application/json`
-
-| Field | Type | Required | Constraints |
-| --- | --- | --- | --- |
-| `connectionId` | `string` | Yes | pattern: `^aoc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `generation` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
-
-##### Responses
-
-| Status | Meaning |
-| --- | --- |
-| `200` | OK |
-| `400` | Bad Request |
-| `401` | Unauthorized |
-| `403` | Forbidden |
-| `404` | Not Found |
-| `409` | Conflict |
-| `500` | Internal Server Error |
-| `503` | Service Unavailable |
-
-**`200` response body:** `application/json`
-
-| Field | Type | Required | Constraints |
-| --- | --- | --- | --- |
-| `data` | `object` | Yes | — |
-| `data.attemptId` | `string (uuid)` | Yes | — |
-| `data.connectionId` | `string` | Yes | pattern: `^aoc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.deadlineAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
-| `data.failureCode` | `null or "OAUTH_FAILED" or "OAUTH_EXPIRED" or "OAUTH_CANCELLED" or "CREDENTIAL_STAGING_FAILED" or "NATIVE_STORE_MISSING" or "NATIVE_IMPORT_FAILED" or "MODEL_ACCESS_DENIED" or "RUNTIME_UNSUPPORTED"` | Yes | — |
-| `data.generation` | `integer` | Yes | minimum: 1; maximum: 9007199254740991 |
-| `data.methodId` | `string` | Yes | min length: 1; max length: 512 |
-| `data.phase` | `"authorizing" or "staging" or "authenticated" or "handoff_pending" or "ready" or "reconnect_required" or "cancelled" or "superseded"` | Yes | — |
-| `data.profileId` | `string` | Yes | min length: 1; max length: 512 |
-| `data.providerConnectionId` | `string` | Yes | pattern: `^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
-| `data.providerId` | `string` | Yes | min length: 1; max length: 512 |
-| `meta` | `object` | Yes | — |
-| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
 #### `GET /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`
 
@@ -2833,14 +2725,9 @@ List native model providers and authentication method availability
 | --- | --- | --- | --- |
 | `data` | `array<object>` | Yes | — |
 | `data[].authMethods` | `array<object>` | Yes | — |
-| `data[].authMethods[].credentialKind` | `"secret" or "oauth" or "none"` | Yes | — |
-| `data[].authMethods[].deploymentAuthMethod` | `"provider_connection" or null` | Yes | — |
+| `data[].authMethods[].credentialKind` | `"secret" or "none"` | Yes | — |
 | `data[].authMethods[].id` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].authMethods[].label` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
-| `data[].authMethods[].nativeMethodId` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
-| `data[].authMethods[].nativeProviderId` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
-| `data[].authMethods[].nativeVersion` | `string or null` | Yes | — |
-| `data[].authMethods[].unavailableReason` | `string or null` | Yes | — |
 | `data[].id` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].label` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].requiresBaseUrl` | `boolean` | Yes | — |

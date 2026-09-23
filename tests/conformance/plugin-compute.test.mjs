@@ -1635,7 +1635,6 @@ test("Kubernetes startup failure evidence requires the exact runtime Pod report"
 test("OpenClaw startup probes the selected provider with only its credential and gates readiness", async (t) => {
   for (const scenario of [
     { provider: "anthropic", credential: "ANTHROPIC_API_KEY", ready: true },
-    { provider: "anthropic", credential: "ANTHROPIC_OAUTH_TOKEN", ready: true },
     { provider: "ollama", credential: "OLLAMA_API_KEY", value: "ollama-local", ready: true },
     { provider: "vllm", credential: "VLLM_API_KEY", ready: true },
     {

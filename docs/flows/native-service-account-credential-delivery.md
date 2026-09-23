@@ -69,7 +69,7 @@ inputs. Credential entry creates an OCC Secret and connection in one transaction
 with separate create authorization and audit events. Failed creation cleans up
 only its own staged Secret, except when commit outcome is unknown. An existing
 Secret instead requires exact `operate`. Responses contain only references.
-OAuth selections save no tokens and start no login. Local endpoints require
+Local endpoints require
 separately configured network access; saving never probes or opens access.
 
 `packages/occ/src/index.ts:OpenClawController.createAgent`, `updateAgent`,
@@ -154,8 +154,8 @@ One internal workload-rendering step converts validated references to supported
 Secret projections and a closed login mode. Embedded OpenClaw receives the key
 in its combined workload. Dedicated Codex receives the key or the directly
 projected account token/workspace; its separate gateway receives neither.
-Connection-backed OpenAI keys use that same delivery boundary. Anthropic keys
-and setup tokens, Ollama, and vLLM require embedded OpenClaw. Compute overlays
+Connection-backed OpenAI keys use that same delivery boundary. Anthropic keys,
+Ollama, and vLLM require embedded OpenClaw. Compute overlays
 the selected native provider endpoint, API, and credential environment reference
 onto the runtime configuration. Conflicting model-auth configuration is rejected.
 Configuration secret bindings remain gateway-only and cannot choose model auth.

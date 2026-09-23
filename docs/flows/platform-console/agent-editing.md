@@ -1,7 +1,7 @@
 ---
 created: 2026-09-09
-updated: 2026-09-23
-last_updated_session: codex/01a0cb30-109d-7520-b27c-ace1d03ac751
+updated: 2026-09-22
+last_updated_session: codex/01a0cc48-2eda-7fc2-a19e-096b68fccb7b
 ---
 
 # Console Agent editing and runtime requests
@@ -103,23 +103,6 @@ Kubernetes creates only missing whole Secrets, generates transport tokens on the
 server, and preserves existing matching groups on retry. Neither Configuration
 nor the audit event receives credential bytes. External Secret creation cannot
 be rolled back by a failed database transaction, so errors require readback.
-
-`apps/controller/src/console/agents/oauth.mjs:createAgentOAuthPanel` handles
-OAuth separately from runtime credential provisioning. The saved draft binding
-selects a `pco_` connection; catalog metadata selects whether to show sign-in.
-The panel reads the exact Agent's `/oauth` status. Only **Sign in** opens the
-same-origin authenticated `occ.agent-oauth.v1` socket and sends the saved
-connection plus the last observed generation. Provider instructions and redirect
-input remain browser-local until explicit submission on that socket.
-
-The page and Credentials tab share an abort lifetime. Changing tabs, navigating,
-or deleting the Agent closes the socket, clears instructions and inputs, and
-prevents awaited status or cancellation responses from updating another view.
-The controller owns durable acquisition state; socket closure interrupts pending
-acquisition but preserves completed consent. The panel rereads status after an
-unexpected close without reconnecting. HTTP cancellation uses the exact private
-connection, attempt, and generation from that status. It never replaces the
-Agent's public provider connection binding or starts deployment.
 
 Slack fields separately derive bound state from Configuration `secretBindings`.
 Each bound field renders a synthetic password mask, never a saved Secret value.
@@ -224,8 +207,6 @@ subsequent worker cleanup and the Namespace-owned resources it preserves.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
-
-- 2026-09-23 04:27: Trace Agent OAuth console acquisition and tab lifetime cleanup. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 3bd863bbc01bf61d17f98d1ff4317b9cea540258)
 
 - 2026-09-22 20:56: Rename the deployment-facing Console view to New revision. (01a0cc48-2eda-7fc2-a19e-096b68fccb7b - 081bccfcf3f5b114588dde1b42a0deb07f326017)
 

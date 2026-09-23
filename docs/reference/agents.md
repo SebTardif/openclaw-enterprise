@@ -135,7 +135,7 @@ valid binding in either topology. Managed sources belong to the Agent's Namespac
 Use `{ "method": "provider_connection", "connectionId": "pco_123e4567-e89b-42d3-a456-426614174000" }`
 for a [saved provider connection](providers.md#model-authentication-catalog-and-saved-connections).
 OpenAI API keys support either topology; Anthropic, Ollama, and vLLM require
-embedded OpenClaw. OAuth remains unavailable. Binding requires the actor's exact
+embedded OpenClaw. Binding requires the actor's exact
 connection and any source Secret `operate`; deployment requires these grants for
 the Agent principal too.
 

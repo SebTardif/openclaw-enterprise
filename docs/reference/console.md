@@ -57,8 +57,8 @@ authorization decisions; the selector does not broaden access.
 ## Save a provider connection
 
 In **Providers**, select a Namespace and fill **Add provider** with a connection
-name, provider, and authentication method. For a key or setup token, enter an
-**API key** or **Setup token**, or choose **Use an existing Secret ID** under
+name, provider, and authentication method. For an API key, enter the
+**API key**, or choose **Use an existing Secret ID** under
 **Credential source** to reuse a Secret from that Namespace. **Save provider
 connection** stores a new credential and its connection together. The response
 contains a Secret reference, not the credential value. Entered credentials are
@@ -70,23 +70,10 @@ server separately, and select a matching model in the Agent Configuration. Savin
 neither probes the URL nor changes network policies. Verify connectivity and
 authentication from the deployed runtime.
 
-Saving does not test credentials or model access. OAuth choices save metadata
-without starting consent or storing tokens. To use a saved connection, choose
-**Saved provider connection** in the Agent authentication controls. See
+Saving does not test credentials or model access. To use a saved key or local
+server connection, choose **Saved provider connection** in the Agent
+authentication controls. See
 [connection permissions and limits](providers.md#model-authentication-catalog-and-saved-connections).
-
-For an OAuth connection supported by the installed authentication runtime, save
-an Agent, open its draft **Credentials** tab, and select **Sign in**. Follow the
-provider link in a separate tab. For browser consent, paste the resulting
-**Redirect URL** and submit it; for device login, enter the displayed code on
-the provider page. Links, codes, and redirect input stay in the current browser
-view and are cleared when the attempt ends or the tab closes.
-
-**Cancel sign-in** stops an unfinished attempt. Leaving the Credentials tab or
-closing the socket also interrupts pending acquisition; completed consent
-survives navigation. **Refresh sign-in status** rereads the exact Agent without
-starting another login. Authentication does not deploy the Agent or establish
-model access. Catalog warnings still describe deployment or runtime limits.
 
 Connections have no edit action. **Remove** deletes unused connection metadata;
 an Agent draft, active revision, or pending deployment prevents removal. The

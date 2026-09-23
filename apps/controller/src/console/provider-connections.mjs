@@ -18,15 +18,7 @@ export function connectionStatus(method) {
   if (!method) {
     return "Provider authentication method unavailable.";
   }
-  if (method.credentialKind === "oauth") {
-    return method.nativeVersion === null
-      ? method.unavailableReason
-      : `Sign-in requires an enabled authentication runtime. Once enabled, sign in from the saved Agent's Credentials tab. Saving this connection does not sign in.${method.unavailableReason ? ` ${method.unavailableReason}` : ""}`;
-  }
-  return (
-    method.unavailableReason ??
-    "Model access has not been tested. Verify connectivity and authentication from the deployed runtime."
-  );
+  return "Model access has not been tested. Verify connectivity and authentication from the deployed runtime.";
 }
 
 export async function renderProviderConnections(context) {
@@ -237,8 +229,6 @@ export async function renderProviderConnections(context) {
         credentialField.hidden = credentialFields.hidden || credentialSource.value !== "new";
         secret.required = !secretField.hidden;
         credentialValue.required = !credentialField.hidden;
-        credentialField.querySelector("label").textContent =
-          method?.id === "setup-token" ? "Setup token" : "API key";
         urlField.hidden = !selected?.requiresBaseUrl;
         baseUrl.required = selected?.requiresBaseUrl ?? false;
         status.textContent = connectionStatus(method);

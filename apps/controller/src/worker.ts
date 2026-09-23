@@ -39,7 +39,6 @@ import {
   PostgresPlatformState,
   PostgresWorkQueue,
   WorkClaimLostError,
-  cleanupAgentOAuthForDeletion,
   isRepositoryCleanupWork,
   isRepositoryRuntimeRetirementWork,
   type ClaimedWork,
@@ -360,7 +359,6 @@ export class ControllerWorker {
   private readonly iamDriverId: string;
   private readonly iam: IAMDriver;
   private readonly secretDriverId: string | undefined;
-  private readonly secretDriver: SecretDriver | undefined;
   private readonly sandbox: SandboxDriver | undefined;
   private readonly providers: readonly ProviderDefinition[];
   private readonly providerMap: ReadonlyMap<string, ProviderDefinition>;
@@ -430,7 +428,6 @@ export class ControllerWorker {
     }
     this.compute = computeDriver;
     const selectedSecretDriver = drivers?.secretDriver;
-    this.secretDriver = selectedSecretDriver;
     const selectedSecretConfiguration = drivers?.installation.drivers.secret;
     this.secretDriverId = selectedSecretDriver?.id ?? selectedSecretConfiguration?.id;
     if (selectedSecretConfiguration !== undefined) {
@@ -1278,39 +1275,6 @@ export class ControllerWorker {
           this.compute.deleteAgentRuntimeCredentials!({ namespace, agent }),
         );
       }
-      const cleanupDenied = await this.authorizeAgentDeletion(claim, agent);
-      if (cleanupDenied !== undefined) {
-        await this.finalizeAgentDeletion(claim, { ...cleanupDenied, namespace, agent, revisions });
-        return;
-      }
-      await this.state.transactWithQueue(
-        (unit, queue) =>
-          this.withClaimHeartbeat(
-            claim,
-            async (signal) => {
-              const assertAuthority = async () => {
-                if (signal.aborted) {
-                  throw new WorkClaimLostError();
-                }
-                const currentClaim = await queue.heartbeat(claim);
-                if (signal.aborted || currentClaim === undefined) {
-                  throw new WorkClaimLostError();
-                }
-              };
-              await assertAuthority();
-              // Use the transaction's queue while holding the Agent lock: the work
-              // lease cannot be reclaimed between Secret cleanup and metadata removal.
-              await cleanupAgentOAuthForDeletion({
-                state: unit,
-                agent,
-                secretDriver: this.secretDriver,
-                assertAuthority,
-              });
-            },
-            queue,
-          ),
-        this.queueOptions,
-      );
       result = {
         outcome: "success",
         code: "AGENT_DELETED",
@@ -2245,14 +2209,13 @@ export class ControllerWorker {
   private async withClaimHeartbeat<T>(
     claim: ClaimedWork,
     effect: (signal: AbortSignal) => Promise<T>,
-    queue: Pick<PostgresWorkQueue, "heartbeat"> = this.queue,
   ): Promise<T> {
     if (this.stopping || this.abort.signal.aborted) {
       throw new WorkClaimLostError();
     }
     // Consecutive short effects can each finish before their timer fires while
     // the whole sequence outlives the lease. Renew before every external effect.
-    if ((await queue.heartbeat(claim)) === undefined) {
+    if ((await this.queue.heartbeat(claim)) === undefined) {
       throw new WorkClaimLostError();
     }
     let lost = false;
@@ -2269,7 +2232,7 @@ export class ControllerWorker {
     const heartbeat = setInterval(
       () => {
         pending = pending.then(async () => {
-          if ((await queue.heartbeat(claim)) === undefined) {
+          if ((await this.queue.heartbeat(claim)) === undefined) {
             abandon();
           } else if (!lost) {
             void this.health(false);

@@ -12,21 +12,6 @@ const providerCatalog = [
         id: "api-key",
         label: "API key",
         credentialKind: "secret",
-        nativeProviderId: "openai",
-        nativeMethodId: "api-key",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "provider_connection",
-        unavailableReason: null,
-      },
-      {
-        id: "oauth",
-        label: "ChatGPT / Codex login",
-        credentialKind: "oauth",
-        nativeProviderId: "openai",
-        nativeMethodId: "oauth",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "OAuth sign-in and credential deployment are not enabled.",
       },
     ],
   },
@@ -39,21 +24,6 @@ const providerCatalog = [
         id: "api-key",
         label: "API key",
         credentialKind: "secret",
-        nativeProviderId: "anthropic",
-        nativeMethodId: "api-key",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "provider_connection",
-        unavailableReason: null,
-      },
-      {
-        id: "setup-token",
-        label: "Claude setup token",
-        credentialKind: "secret",
-        nativeProviderId: "anthropic",
-        nativeMethodId: "setup-token",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "provider_connection",
-        unavailableReason: null,
       },
     ],
   },
@@ -66,11 +36,6 @@ const providerCatalog = [
         id: "local",
         label: "Local server",
         credentialKind: "none",
-        nativeProviderId: "ollama",
-        nativeMethodId: "local",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "provider_connection",
-        unavailableReason: null,
       },
     ],
   },
@@ -83,11 +48,6 @@ const providerCatalog = [
         id: "custom",
         label: "Self-hosted server",
         credentialKind: "secret",
-        nativeProviderId: "vllm",
-        nativeMethodId: "custom",
-        nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "provider_connection",
-        unavailableReason: null,
       },
     ],
   },
@@ -155,8 +115,8 @@ export function installFixture(scenario, evidence) {
           namespaceId,
           name: "Team OpenAI",
           providerId: "openai",
-          authMethodId: scenario.oauthConnection ? "oauth" : "api-key",
-          ...(scenario.oauthConnection ? {} : { source: secretRef("sec_demo_model") }),
+          authMethodId: "api-key",
+          source: secretRef("sec_demo_model"),
           createdAt,
         },
       ];
@@ -469,24 +429,6 @@ export function installFixture(scenario, evidence) {
             return response(saved, 202);
           }
         }
-        if (suffix === "/oauth" && method === "GET") {
-          return response(
-            scenario.oauthPhase
-              ? {
-                  providerConnectionId: connections[0].id,
-                  connectionId: "aoc_00000000-0000-4000-8000-000000000001",
-                  generation: 1,
-                  attemptId: "00000000-0000-4000-8000-000000000001",
-                  providerId: "openai",
-                  methodId: "oauth",
-                  profileId: null,
-                  phase: scenario.oauthPhase,
-                  deadlineAt: null,
-                  failureCode: null,
-                }
-              : null,
-          );
-        }
         if (suffix === "/stop" && method === "POST") {
           saved.desiredRuntimeState = "stopped";
           return response(saved, 202);
@@ -512,10 +454,7 @@ export function installFixture(scenario, evidence) {
           const authMethod = providerCatalog
             .find((item) => item.id === connection?.providerId)
             ?.authMethods.find((item) => item.id === connection?.authMethodId);
-          if (
-            saved.harnessAuth?.method === "provider_connection" &&
-            !authMethod?.deploymentAuthMethod
-          ) {
+          if (saved.harnessAuth?.method === "provider_connection" && !authMethod) {
             return error(400);
           }
           const next = snapshot(

@@ -1,5 +1,3 @@
-import type { AgentOAuthReadRepository, AgentOAuthRepository } from "../ports/agent-oauth.ts";
-import { memoryAgentOAuth } from "./memory-agent-oauth.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
 import { createPlatformReadView } from "../ports/platform-read-view.ts";
@@ -16,7 +14,6 @@ import {
 import type {
   AccessBinding,
   Agent,
-  AgentOAuthAttempt,
   WorkspaceSetup,
   AgentDesiredRuntimeState,
   AgentStatus,
@@ -622,7 +619,6 @@ export interface PlatformReadView {
   readonly secrets: SecretReadRepository;
   readonly serviceAccounts: ServiceAccountReadRepository;
   readonly agents: AgentReadRepository;
-  readonly agentOAuth: AgentOAuthReadRepository;
   readonly workspaceSetups: WorkspaceSetupReadRepository;
   readonly revisions: AgentRevisionReadRepository;
   readonly iamPolicy: IAMPolicyReadRepository;
@@ -639,7 +635,6 @@ export interface PlatformUnitOfWork extends PlatformReadView {
   readonly secrets: SecretRepository;
   readonly serviceAccounts: ServiceAccountRepository;
   readonly agents: AgentRepository;
-  readonly agentOAuth: AgentOAuthRepository;
   readonly workspaceSetups: WorkspaceSetupRepository;
   readonly revisions: AgentRevisionRepository;
   readonly iamPolicy: IAMPolicyRepository;
@@ -679,7 +674,6 @@ interface PlatformSnapshot {
   readonly secrets: Map<string, Readonly<Secret>>;
   readonly serviceAccounts: Map<string, Readonly<ServiceAccount>>;
   readonly agents: Map<string, Readonly<Agent>>;
-  readonly agentOAuth: Map<string, Readonly<AgentOAuthAttempt>>;
   readonly workspaceSetups: Map<string, Readonly<WorkspaceSetup>>;
   readonly revisions: Map<string, readonly Readonly<AgentRevision>[]>;
   readonly roles: Map<string, Readonly<Role>>;
@@ -727,9 +721,6 @@ function cloneSnapshot(snapshot: PlatformSnapshot): PlatformSnapshot {
       Array.from(snapshot.serviceAccounts, ([key, account]) => [key, immutableCopy(account)]),
     ),
     agents: new Map(Array.from(snapshot.agents, ([key, agent]) => [key, immutableCopy(agent)])),
-    agentOAuth: new Map(
-      Array.from(snapshot.agentOAuth, ([key, attempt]) => [key, immutableCopy(attempt)]),
-    ),
     workspaceSetups: new Map(
       Array.from(snapshot.workspaceSetups, ([key, setup]) => [key, immutableCopy(setup)]),
     ),
@@ -2014,9 +2005,6 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     secrets,
     serviceAccounts,
     agents,
-    agentOAuth: memoryAgentOAuth(snapshot.agentOAuth, (namespaceId, agentId) =>
-      snapshot.agents.get(agentKey(namespaceId, agentId)),
-    ),
     workspaceSetups,
     revisions,
     iamPolicy,
@@ -2152,7 +2140,6 @@ export class InMemoryPlatformState implements PlatformStateStore {
     secrets: new Map(),
     serviceAccounts: new Map(),
     agents: new Map(),
-    agentOAuth: new Map(),
     workspaceSetups: new Map(),
     revisions: new Map(),
     roles: new Map(),

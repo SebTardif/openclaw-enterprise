@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   KubernetesSecretDriver,
   SecretBackendUnavailableError,
-  SecretConflictError,
   SecretOwnershipError,
   SecretValidationError,
 } from "../../apps/controller/src/drivers/secret/kubernetes/index.ts";
@@ -32,7 +31,6 @@ class FakeCoreV1Api {
   deletes = [];
   readSecretFailureCodes = [];
   readSecretTimesOut = false;
-  loseNextCreateResponse = false;
 
   addNamespace(namespaceId) {
     const name = kubernetesNamespaceName(namespaceId);
@@ -88,10 +86,6 @@ class FakeCoreV1Api {
     };
     delete stored.stringData;
     this.secrets.set(key, stored);
-    if (this.loseNextCreateResponse) {
-      this.loseNextCreateResponse = false;
-      throw new Error(`create response lost after storing ${body.stringData.value}`);
-    }
     return clone(stored);
   }
 
@@ -245,114 +239,6 @@ test("kubernetes-secret-driver stores, verifies, updates, resolves, and deletes 
     backendRef: { ...backendRef, uid: updated.metadata.uid },
     createdAt: new Date().toISOString(),
   });
-});
-
-test("staged Secrets recover unknown writes without exposing or replacing immutable material", async () => {
-  const client = new FakeCoreV1Api();
-  const nsId = namespaceId();
-  const namespace = client.addNamespace(nsId);
-  const identity = { id: secretId(), namespaceId: nsId, name: "pending-generation" };
-  const value = JSON.stringify({ access: "test-access", refresh: "test-refresh", expires: 12345 });
-  const driver = driverWithClient(client);
-  assert.equal(await driver.findStaged(identity), undefined);
-
-  // Kubernetes committed the create but the caller never received its backend identity.
-  client.loseNextCreateResponse = true;
-  await assert.rejects(driver.stage(identity, value), (error) => {
-    assert.ok(error instanceof SecretBackendUnavailableError);
-    assert.equal(error.message.includes("test-access"), false);
-    assert.equal(error.message.includes("test-refresh"), false);
-    return true;
-  });
-  assert.equal(client.secrets.size, 1);
-
-  // A fresh controller recovers with just the persisted immutable identity, not token bytes.
-  const recovered = driverWithClient(client);
-  const backendRef = await recovered.findStaged(identity);
-  assert.deepEqual(Object.keys(backendRef).sort(), ["key", "name", "namespaceName", "uid"]);
-  assert.equal(backendRef.namespaceName, namespace);
-  assert.deepEqual(await recovered.stage(identity, value), backendRef);
-  assert.equal(client.secrets.size, 1);
-  const stored = client.secrets.get(`${namespace}/${backendRef.name}`);
-  assert.equal(stored.immutable, true);
-  assert.equal(Buffer.from(stored.data.value, "base64").toString("utf8"), value);
-
-  const secret = {
-    ...identity,
-    driverId: recovered.id,
-    backendRef,
-    createdAt: new Date().toISOString(),
-  };
-  assert.deepEqual(await recovered.resolve(secret), backendRef);
-  await assert.rejects(recovered.update(secret, "replacement"), SecretOwnershipError);
-  assert.equal(client.secrets.get(`${namespace}/${backendRef.name}`).data.value, stored.data.value);
-
-  await assert.rejects(
-    recovered.delete({ ...secret, backendRef: { ...backendRef, uid: "another-object" } }),
-    SecretOwnershipError,
-  );
-  assert.deepEqual(client.deletes, []);
-  await recovered.delete(secret);
-  assert.deepEqual(client.deletes, [
-    { uid: backendRef.uid, resourceVersion: stored.metadata.resourceVersion },
-  ]);
-  assert.equal(await recovered.findStaged(identity), undefined);
-  await recovered.delete(secret);
-});
-
-test("staged Secret retries reject replacement bytes and foreign or mutable backend identities", async () => {
-  for (const scenario of [
-    "different value",
-    "foreign owner",
-    "foreign driver",
-    "different name",
-    "mutable backend",
-  ]) {
-    const client = new FakeCoreV1Api();
-    const nsId = namespaceId();
-    const namespace = client.addNamespace(nsId);
-    const driver = driverWithClient(client);
-    const identity = { id: secretId(), namespaceId: nsId, name: "pending-generation" };
-    const backendRef = await driver.stage(identity, "original-material");
-    const stored = client.secrets.get(`${namespace}/${backendRef.name}`);
-    if (scenario === "foreign owner") {
-      stored.metadata.labels["openclaw.dev/secret"] = secretId();
-    }
-    if (scenario === "foreign driver") {
-      stored.metadata.annotations["openclaw.dev/secret-driver-id"] = "other";
-    }
-    if (scenario === "different name") {
-      stored.metadata.annotations["openclaw.dev/secret-name"] = "other";
-    }
-    if (scenario === "mutable backend") {
-      stored.immutable = false;
-    }
-    const expected = scenario === "different value" ? SecretConflictError : SecretOwnershipError;
-    await assert.rejects(
-      driver.stage(
-        identity,
-        scenario === "different value" ? "replacement-material" : "original-material",
-      ),
-      expected,
-      scenario,
-    );
-    if (scenario !== "different value") {
-      await assert.rejects(driver.findStaged(identity), SecretOwnershipError);
-    }
-    assert.equal(client.secrets.size, 1);
-    assert.equal(Buffer.from(stored.data.value, "base64").toString("utf8"), "original-material");
-  }
-});
-
-test("staged Secret recovery distinguishes missing material from denied access", async () => {
-  const client = new FakeCoreV1Api();
-  const nsId = namespaceId();
-  client.addNamespace(nsId);
-  const driver = driverWithClient(client);
-  const identity = { id: secretId(), namespaceId: nsId, name: "pending-generation" };
-  client.readSecretFailureCodes.push(403);
-  await assert.rejects(driver.findStaged(identity), SecretBackendUnavailableError);
-  assert.equal(await driver.findStaged(identity), undefined);
 });
 
 test("kubernetes-secret-driver fails closed on missing placement, invalid values, and foreign backends", async () => {

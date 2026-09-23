@@ -29,15 +29,3 @@ export const AuthMissing = { ...story("authMissing"), name: "No authentication s
 export const AuthRuntime = { ...story("authRuntime"), name: "Operator-managed authentication" };
 export const AuthService = { ...story("authService"), name: "ChatGPT service account" };
 export const AuthConnection = { ...story("authConnection"), name: "Saved provider connection" };
-export const AuthOAuthConnection = {
-  ...story("authOAuthConnection"),
-  name: "OAuth connection pending",
-};
-
-export const AuthOAuthComplete = { ...story("authOAuthComplete"), name: "OAuth sign-in complete" };
-export const AuthOAuthDenied = { ...story("authOAuthDenied"), name: "OAuth status denied" };
-
-export const AuthOAuthReady = {
-  ...story("authOAuthReady"),
-  name: "OAuth runtime retirement required",
-};

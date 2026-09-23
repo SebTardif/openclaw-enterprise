@@ -1,4 +1,3 @@
-import { postgresAgentOAuth } from "./postgres-agent-oauth.ts";
 import { RepositoryTransactionLifetime } from "../ports/transaction.ts";
 import { bindRepository } from "../ports/repository-factory.ts";
 import { bindPlatformUnitOfWork } from "../ports/platform-unit-of-work.ts";
@@ -2551,7 +2550,6 @@ export class PostgresPlatformState implements PlatformStateStore {
       secrets,
       serviceAccounts,
       agents,
-      agentOAuth: postgresAgentOAuth(client),
       workspaceSetups,
       revisions,
       iamPolicy,

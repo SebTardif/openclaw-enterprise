@@ -3610,7 +3610,7 @@ test(
   requiresPostgres,
   async (context) => {
     for (const options of [
-      { providerId: "anthropic", authMethodId: "setup-token", credential: true },
+      { providerId: "anthropic", authMethodId: "api-key", credential: true },
       {
         providerId: "ollama",
         authMethodId: "local",

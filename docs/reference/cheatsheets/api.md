@@ -35,10 +35,8 @@
 
 - [`listAgents`](../api.md#get-namespacesnamespaceidagents): List authorized Agents in one exact Namespace.
 - [`getAgent`](../api.md#get-namespacesnamespaceidagentsagentid): Get an exact Namespace-owned Agent.
-- [`getAgentOAuthStatus`](../api.md#get-namespacesnamespaceidagentsagentidoauth): Get redacted OAuth status for one Agent, or null before its first attempt.
 - [`createAgent`](../api.md#post-namespacesnamespaceidagents): Create a Namespace-owned Agent.
 - [`updateAgent`](../api.md#patch-namespacesnamespaceidagentsagentid): Replace an exact Namespace-owned Agent's editable draft.
-- [`cancelAgentOAuthAttempt`](../api.md#post-namespacesnamespaceidagentsagentidoauthattemptsattemptidcancel): Cancel the initiating actor's exact current OAuth attempt.
 - [`deployAgent`](../api.md#post-namespacesnamespaceidagentsagentiddeploy): Admit an immutable revision from the Agent's saved draft.
 - [`stopAgent`](../api.md#post-namespacesnamespaceidagentsagentidstop): Stop one Agent while retaining its revision and persistent state.
 - [`getAgentNativeAdmin`](../api.md#get-namespacesnamespaceidagentsagentidnativeadmin): Resolve native admin UI launch availability for one Agent.

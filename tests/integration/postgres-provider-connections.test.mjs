@@ -234,7 +234,7 @@ async function exerciseConnections(store, reopened = store) {
     namespaceId: namespace.id,
     name: "Local Ollama",
     providerId: "ollama",
-    authMethodId: "none",
+    authMethodId: "local",
     baseUrl: "http://ollama.models.svc.cluster.local:11434",
     createdAt,
   };
@@ -297,17 +297,18 @@ async function exerciseConnections(store, reopened = store) {
     );
   }
 
-  // A metadata-only OAuth choice can be saved, and alone prevents Namespace deletion.
-  const oauth = {
+  // A local endpoint needs no Secret, but its saved connection still prevents Namespace deletion.
+  const endpoint = {
     id: identifier("pco"),
     namespaceId: other.id,
-    name: "OAuth choice",
-    providerId: "openai",
-    authMethodId: "oauth",
+    name: "Ollama endpoint",
+    providerId: "ollama",
+    authMethodId: "local",
+    baseUrl: "http://ollama.models.svc.cluster.local:11434",
     createdAt,
   };
   await store.transact(async (state) => {
-    await state.providerConnections.createProviderConnection(oauth);
+    await state.providerConnections.createProviderConnection(endpoint);
     assert.equal(await state.namespaces.hasProviderConnections(other.id), true);
     await state.namespaces.transitionNamespaceStatus(other.id, "ready", "deleting");
   });
@@ -318,7 +319,7 @@ async function exerciseConnections(store, reopened = store) {
   await assert.rejects(
     store.transact((state) =>
       state.providerConnections.createProviderConnection({
-        ...oauth,
+        ...endpoint,
         id: identifier("pco"),
         name: "Too late",
       }),
@@ -327,11 +328,11 @@ async function exerciseConnections(store, reopened = store) {
   );
   await store.transact(async (state) => {
     assert.equal(
-      await state.providerConnections.deleteProviderConnection(namespace.id, oauth.id),
+      await state.providerConnections.deleteProviderConnection(namespace.id, endpoint.id),
       false,
     );
     assert.equal(
-      await state.providerConnections.deleteProviderConnection(other.id, oauth.id),
+      await state.providerConnections.deleteProviderConnection(other.id, endpoint.id),
       true,
     );
     assert.equal(await state.namespaces.hasProviderConnections(other.id), false);

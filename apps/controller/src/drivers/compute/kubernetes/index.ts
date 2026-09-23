@@ -332,10 +332,6 @@ function nativeModelAuthentication(auth: HarnessAuthSnapshot): NativeModelAuthen
     const methods: Readonly<Record<string, NativeModelAuthentication>> = {
       "openai/api-key": { providerId: "openai", environmentName: MODEL_API_KEY },
       "anthropic/api-key": { providerId: "anthropic", environmentName: "ANTHROPIC_API_KEY" },
-      "anthropic/setup-token": {
-        providerId: "anthropic",
-        environmentName: "ANTHROPIC_OAUTH_TOKEN",
-      },
       "ollama/local": {
         providerId: "ollama",
         environmentName: "OLLAMA_API_KEY",

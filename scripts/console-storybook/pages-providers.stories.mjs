@@ -5,8 +5,7 @@ export default { title: "Pages/Providers" };
 export const Providers = { ...story("providers"), name: "Configured" };
 export const ProvidersEmpty = { ...story("providersEmpty"), name: "Empty" };
 export const ProvidersError = { ...story("providersError"), name: "Discovery unavailable" };
-export const ProvidersOAuth = { ...story("providersOAuth"), name: "OAuth setup pending" };
-export const ProvidersToken = { ...story("providersToken"), name: "Static token entry" };
+export const ProvidersAnthropic = { ...story("providersAnthropic"), name: "Anthropic API key" };
 export const ProvidersExistingSecret = {
   ...story("providersExistingSecret"),
   name: "Existing Secret",

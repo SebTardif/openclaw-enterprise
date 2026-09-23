@@ -1,7 +1,7 @@
 # Provider authentication setup
 
 **Date:** 2026-09-23\
-**Status:** Implementation in progress; non-OAuth delivery implemented, OAuth integration pending\
+**Status:** Implementation in progress; API-key and local endpoint setup\
 **Owner:** OCE provider integration and Agent authentication\
 **Tracking:** [Provider expansion #84](https://github.com/openclaw/openclaw-enterprise/issues/84)
 
@@ -9,11 +9,10 @@
 
 OpenClaw Enterprise (OCE) lets operators save a model provider and authentication
 method before creating an Agent, then reuse that connection within its Namespace.
-The completion target includes working setup and deployment for every offered
-provider/auth method. The current checkpoint implements credential entry and
-native OpenAI API-key, Anthropic, and local-provider delivery. OAuth acquisition
-and runtime ownership have a separate implementation owner; their integration
-is required before this work is complete. No new inference transport is needed.
+The first milestone supports OpenAI API keys, Anthropic API keys, Ollama, and
+vLLM. OAuth acquisition, credential custody, refresh, and Console sign-in belong
+to a separate PR. Anthropic setup tokens are deferred. No new inference
+transport is needed.
 
 An Installation [Provider](../docs/reference/providers.md) remains startup-loaded
 configuration for related Drivers. `Agent.providerId` retains its existing
@@ -27,24 +26,17 @@ operator-managed runtime bindings remain available where supported.
 The bundled [catalog](../apps/controller/src/providers/model-auth-catalog.ts)
 uses native OpenClaw provider and method IDs:
 
-| Provider    | Methods                                            | Deployable through a connection |
-| ----------- | -------------------------------------------------- | ------------------------------- |
-| `openai`    | `api-key`, `oauth`, `device-code`, `token-sharing` | `api-key`                       |
-| `anthropic` | `api-key`, `setup-token`                           | Both, embedded OpenClaw         |
-| `ollama`    | `local`                                            | Embedded OpenClaw               |
-| `vllm`      | `custom`                                           | Embedded OpenClaw               |
+| Provider    | Method                 | Harness                              |
+| ----------- | ---------------------- | ------------------------------------ |
+| `openai`    | `api-key`              | Embedded OpenClaw or dedicated Codex |
+| `anthropic` | `api-key`              | Embedded OpenClaw                    |
+| `ollama`    | `local`, no credential | Embedded OpenClaw                    |
+| `vllm`      | `custom`, API key      | Embedded OpenClaw                    |
 
-Mappings are source-checked against OpenClaw `2026.9.1`. The pending SIWC
-`token-sharing` connection method maps to native `siwc` in the pending provider
-implementation. It has no recorded native release; its version is null.
-`nativeVersion` is evidence of the inspected mapping, not a minimum version,
-compatible-image guarantee, or live verification. `deploymentAuthMethod` and
-`unavailableReason` separately describe OCE availability.
-
-Anthropic setup tokens are static credentials, not browser OAuth. Ollama setup
-records an endpoint without a credential. vLLM's pinned native setup requires a
-nonempty API key, represented by a Secret reference. Neither local choice
-provisions a server, changes egress, or adds an inference adapter.
+Mappings are source-checked against OpenClaw `2026.9.1`. Source compatibility
+is separate from live verification. Ollama records an endpoint without a
+credential; the pinned vLLM setup requires a nonempty API key. Neither local
+choice provisions a server or grants network access.
 
 ## Implemented contracts
 
@@ -68,23 +60,11 @@ Key design decisions remain:
   Historical snapshots do not retain old credential values; changing a Secret
   uses the existing explicit redeployment workflow.
 
-## Remaining integration and proof
+## Verification
 
-OAuth acquisition and runtime custody remain with the separate login owner;
-OpenClaw SIWC retains its native implementation owner. Reusable connection
-metadata is distinct from one OAuth credential profile per Agent across revisions.
-Cross-Agent OAuth sharing and a credential broker are outside this implementation.
-The Console consumes an authenticated, exact-Agent socket for login and private
-redirect input, with HTTP status and cancellation. Acquisition/custody endpoints
-are integrated, but production acquisition composition remains unqualified.
-Runtime enablement requires qualified generation, PVC, execution ownership, and refresh behavior.
-SIWC additionally requires a qualified native image pin. Pending catalog methods
-must become functional before the completion target is met.
-
-Validation must exercise catalog and connection API permissions, foreign-Namespace
-denial, immutable storage, source deletion guards, unavailable-method admission,
-connection-backed Agent deployment snapshots, and worker reauthorization. Console
-coverage must distinguish saved setup from authenticated or deployable state.
-PostgreSQL and HTTP integration establish their respective persistence and API
-behavior; source mappings and browser fixtures do not prove live provider login
-or model execution. Record actual checks and remaining runtime proof at handoff.
+Validation exercises connection API permissions, foreign-Namespace denial,
+immutable storage, Secret deletion guards, unsupported-method rejection,
+connection-backed deployment snapshots, and worker reauthorization. Console
+coverage follows saving a connection and selecting it for an Agent. PostgreSQL
+and HTTP integration establish persistence and API behavior; source mappings
+and browser fixtures do not establish live upstream model execution.
