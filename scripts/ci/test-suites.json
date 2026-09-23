@@ -483,6 +483,7 @@
             "a deployment during candidate cleanup supersedes the remaining Agent stop effects",
             "maintenance retains its real lease across consecutive short predecessor retirements",
             "the revision worker activates admitted candidates, retires predecessors, and rejects revoked, malformed, and wrong-owner effects",
+            "the revision worker forwards connection metadata and optional Secret delivery references before activation",
             "the revision worker rechecks operator and Agent connection permissions while retaining Secret access",
             "the revision worker rejects associated-account access revoked after admission before invoking Compute",
             "the revision worker rejects managed ServiceAccount issuance revoked after admission before Compute",

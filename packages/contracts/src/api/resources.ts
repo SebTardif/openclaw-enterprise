@@ -529,7 +529,7 @@ export type PresetListResponse = Type.Static<typeof PresetListResponse>;
 
 export const ProviderConnectionSchema = Type.Object(
   {
-    ...CreateProviderConnectionBody.properties,
+    ...Type.Omit(CreateProviderConnectionBody, ["secretValue"]).properties,
     id: ProviderConnectionId,
     namespaceId: NamespaceId,
     createdAt: Timestamp,
@@ -565,7 +565,10 @@ export const ProviderCatalogResponse = Type.Object(
                 nativeProviderId: ProviderId,
                 nativeMethodId: ProviderId,
                 nativeVersion: Type.Union([Type.String(), Type.Null()]),
-                deploymentAuthMethod: Type.Union([Type.Literal("api_key"), Type.Null()]),
+                deploymentAuthMethod: Type.Union([
+                  Type.Literal("provider_connection"),
+                  Type.Null(),
+                ]),
                 unavailableReason: Type.Union([Type.String(), Type.Null()]),
               },
               { additionalProperties: false },

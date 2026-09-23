@@ -15,7 +15,7 @@ const providerCatalog = [
         nativeProviderId: "openai",
         nativeMethodId: "api-key",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "api_key",
+        deploymentAuthMethod: "provider_connection",
         unavailableReason: null,
       },
       {
@@ -42,8 +42,18 @@ const providerCatalog = [
         nativeProviderId: "anthropic",
         nativeMethodId: "api-key",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "Anthropic credential deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
+      },
+      {
+        id: "setup-token",
+        label: "Claude setup token",
+        credentialKind: "secret",
+        nativeProviderId: "anthropic",
+        nativeMethodId: "setup-token",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
     ],
   },
@@ -59,8 +69,25 @@ const providerCatalog = [
         nativeProviderId: "ollama",
         nativeMethodId: "local",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "Ollama endpoint deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
+      },
+    ],
+  },
+  {
+    id: "vllm",
+    label: "vLLM",
+    requiresBaseUrl: true,
+    authMethods: [
+      {
+        id: "custom",
+        label: "Self-hosted server",
+        credentialKind: "secret",
+        nativeProviderId: "vllm",
+        nativeMethodId: "custom",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
     ],
   },
@@ -322,7 +349,14 @@ export function installFixture(scenario, evidence) {
           return response(connections);
         }
         if (method === "POST") {
-          const saved = { ...body, id: nextId("pco"), namespaceId, createdAt };
+          const { secretValue, ...metadata } = body;
+          const saved = {
+            ...metadata,
+            ...(secretValue === undefined ? {} : { source: secretRef(nextId("sec")) }),
+            id: nextId("pco"),
+            namespaceId,
+            createdAt,
+          };
           connections.push(saved);
           return response(saved, 201);
         }

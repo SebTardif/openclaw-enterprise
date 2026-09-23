@@ -338,6 +338,42 @@ export function validHarnessAuthSnapshot(value: HarnessAuthSnapshot, namespaceId
     if (value.method === "runtime") {
       return normalizeHarnessAuthBinding(value) !== null;
     }
+    if (value.method === "provider_connection") {
+      const connection = value.connection;
+      if (
+        Object.keys(value).length !== (value.credential === undefined ? 2 : 3) ||
+        connection === null ||
+        typeof connection !== "object" ||
+        Array.isArray(connection) ||
+        Object.keys(connection).length !== (connection.baseUrl === undefined ? 3 : 4) ||
+        !/^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          connection.id,
+        ) ||
+        !isNonEmptyString(connection.providerId) ||
+        !isNonEmptyString(connection.authMethodId) ||
+        (connection.baseUrl !== undefined &&
+          (!isNonEmptyString(connection.baseUrl) ||
+            connection.baseUrl.length > 2048 ||
+            connection.baseUrl !== connection.baseUrl.trim() ||
+            Array.from(connection.baseUrl).some((character) => {
+              const code = character.charCodeAt(0);
+              return code < 32 || code === 127;
+            })))
+      ) {
+        return false;
+      }
+      if (value.credential === undefined) {
+        return true;
+      }
+      const credential = value.credential;
+      const binding = normalizeHarnessAuthBinding({ method: "api_key", source: credential.source });
+      return (
+        Object.keys(credential).length === 2 &&
+        binding?.method === "api_key" &&
+        binding.source.namespaceId === namespaceId &&
+        isNonEmptyString(credential.secretDriverId)
+      );
+    }
     const binding =
       value.method === "api_key"
         ? normalizeHarnessAuthBinding({ method: value.method, source: value.source })
@@ -347,18 +383,7 @@ export function validHarnessAuthSnapshot(value: HarnessAuthSnapshot, namespaceId
           });
     if (binding?.method === "api_key") {
       return (
-        Object.keys(value).length ===
-          (value.method === "api_key" && value.providerConnection !== undefined ? 4 : 3) &&
-        (value.method !== "api_key" ||
-          value.providerConnection === undefined ||
-          (typeof value.providerConnection === "object" &&
-            value.providerConnection !== null &&
-            Object.keys(value.providerConnection).length === 3 &&
-            /^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-              value.providerConnection.id,
-            ) &&
-            isNonEmptyString(value.providerConnection.providerId) &&
-            isNonEmptyString(value.providerConnection.authMethodId))) &&
+        Object.keys(value).length === 3 &&
         binding.source.namespaceId === namespaceId &&
         value.method === "api_key" &&
         isNonEmptyString(value.secretDriverId)
@@ -394,14 +419,10 @@ export function harnessAuthMatches(
 ): boolean {
   if (binding?.method === "provider_connection") {
     return (
-      snapshot.method === "api_key" && snapshot.providerConnection?.id === binding.connectionId
+      snapshot.method === "provider_connection" && snapshot.connection.id === binding.connectionId
     );
   }
-  if (
-    binding === null ||
-    binding.method !== snapshot.method ||
-    (snapshot.method === "api_key" && snapshot.providerConnection !== undefined)
-  ) {
+  if (binding === null || binding.method !== snapshot.method) {
     return false;
   }
   if (binding.method === "runtime") {
@@ -416,19 +437,21 @@ export function harnessAuthMatches(
 }
 
 function harnessSecretReference(
-  binding: HarnessAuthBinding | undefined | null,
+  binding: HarnessAuthBinding | HarnessAuthSnapshot | undefined | null,
   namespaceId: string,
   secretId: string,
 ): boolean {
-  return (
-    binding?.method === "api_key" &&
-    binding.source.namespaceId === namespaceId &&
-    binding.source.id === secretId
-  );
+  const source =
+    binding?.method === "api_key"
+      ? binding.source
+      : binding?.method === "provider_connection" && "connection" in binding
+        ? binding.credential?.source
+        : undefined;
+  return source?.namespaceId === namespaceId && source.id === secretId;
 }
 
 function harnessAccountReference(
-  binding: HarnessAuthBinding | undefined | null,
+  binding: HarnessAuthBinding | HarnessAuthSnapshot | undefined | null,
   serviceAccountId: string,
 ): boolean {
   return (
@@ -1062,11 +1085,8 @@ function repositories(snapshot: PlatformSnapshot): PlatformUnitOfWork {
     lockProviderConnection: findProviderConnection,
     hasReferences: async (namespaceId, connectionId) => {
       const references = (auth: HarnessAuthBinding | HarnessAuthSnapshot | null | undefined) =>
-        auth?.method === "provider_connection"
-          ? auth.connectionId === connectionId
-          : auth?.method === "api_key" &&
-            "providerConnection" in auth &&
-            auth.providerConnection?.id === connectionId;
+        auth?.method === "provider_connection" &&
+        ("connectionId" in auth ? auth.connectionId : auth.connection.id) === connectionId;
       return (
         Array.from(snapshot.agents.values()).some(
           (agent) =>

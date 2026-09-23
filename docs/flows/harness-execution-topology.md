@@ -61,9 +61,10 @@ selection, and Agent ServicePrincipal. Production admits both approved
 `access_token` additionally requires dedicated Codex; the frozen account
 contains only its OCC identity, credential kind, and opaque Secret reference.
 An Agent may select a saved provider connection. Admission checks its method's
-deployment capability and resolves supported OpenAI API-key connections to the
-existing Secret snapshot, retaining safe connection metadata. This adds no
-Harness or inference transport; see the [binding flow](native-service-account-credential-delivery.md).
+deployment capability and freezes the connection metadata, endpoint, and optional
+Secret source. OpenAI API keys support both approved topologies; Anthropic and
+local connections require embedded OpenClaw. Compute applies their native provider
+configuration without adding an inference transport; see the [binding flow](native-service-account-credential-delivery.md).
 
 ### 2. Claim work and realize the approved topology
 
@@ -199,6 +200,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 04:16: Describe native provider connection snapshots and embedded-only compatibility for Anthropic/local methods. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 30547beeda9e413de5b7c4bf6c9f3b10f58c5fcb)
 
 - 2026-09-23 03:20: Link provider-connection admission to existing API-key execution in the accompanying implementation. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 762c0e1361c63bf925768977fb0d9fde7e6719b3)
 

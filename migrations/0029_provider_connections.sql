@@ -39,16 +39,46 @@ RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
     AND jsonb_typeof(binding->'method') = 'string'
     AND CASE binding->>'method'
       WHEN 'runtime' THEN binding = '{"method":"runtime"}'::jsonb
-      WHEN 'provider_connection' THEN
-        NOT resolved
-        AND (binding ?& ARRAY['method', 'connectionId'])
+      WHEN 'provider_connection' THEN CASE WHEN resolved THEN
+        (binding ?& ARRAY['method', 'connection'])
+        AND (binding - 'method' - 'connection' - 'credential') = '{}'::jsonb
+        AND jsonb_typeof(binding->'connection') = 'object'
+        AND ((binding->'connection') ?& ARRAY['id', 'providerId', 'authMethodId'])
+        AND ((binding->'connection') - 'id' - 'providerId' - 'authMethodId' - 'baseUrl') = '{}'::jsonb
+        AND jsonb_typeof(binding #> '{connection,id}') = 'string'
+        AND (binding #>> '{connection,id}') ~ '^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        AND jsonb_typeof(binding #> '{connection,providerId}') = 'string'
+        AND btrim(binding #>> '{connection,providerId}') <> ''
+        AND jsonb_typeof(binding #> '{connection,authMethodId}') = 'string'
+        AND btrim(binding #>> '{connection,authMethodId}') <> ''
+        AND (NOT ((binding->'connection') ? 'baseUrl') OR (
+          jsonb_typeof(binding #> '{connection,baseUrl}') = 'string'
+          AND char_length(binding #>> '{connection,baseUrl}') BETWEEN 1 AND 2048
+          AND (binding #>> '{connection,baseUrl}') = btrim(binding #>> '{connection,baseUrl}')
+          AND (binding #>> '{connection,baseUrl}') !~ '[[:cntrl:]]'
+        ))
+        AND (NOT (binding ? 'credential') OR (
+          jsonb_typeof(binding->'credential') = 'object'
+          AND ((binding->'credential') ?& ARRAY['source', 'secretDriverId'])
+          AND ((binding->'credential') - 'source' - 'secretDriverId') = '{}'::jsonb
+          AND jsonb_typeof(binding #> '{credential,source}') = 'object'
+          AND ((binding #> '{credential,source}') ?& ARRAY['kind', 'namespaceId', 'id'])
+          AND ((binding #> '{credential,source}') - 'kind' - 'namespaceId' - 'id') = '{}'::jsonb
+          AND binding #>> '{credential,source,kind}' = 'secret'
+          AND binding #>> '{credential,source,namespaceId}' = owner_namespace
+          AND (binding #>> '{credential,source,id}') ~ '^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          AND jsonb_typeof(binding #> '{credential,secretDriverId}') = 'string'
+          AND btrim(binding #>> '{credential,secretDriverId}') <> ''
+        ))
+      ELSE
+        (binding ?& ARRAY['method', 'connectionId'])
         AND (binding - 'method' - 'connectionId') = '{}'::jsonb
         AND jsonb_typeof(binding->'connectionId') = 'string'
         AND (binding->>'connectionId') ~ '^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      END
       WHEN 'api_key' THEN
         (binding ?& ARRAY['method', 'source'])
-        AND (binding - 'method' - 'source' - CASE WHEN resolved THEN 'secretDriverId' ELSE 'method' END
-          - CASE WHEN resolved THEN 'providerConnection' ELSE 'method' END) = '{}'::jsonb
+        AND (binding - 'method' - 'source' - CASE WHEN resolved THEN 'secretDriverId' ELSE 'method' END) = '{}'::jsonb
         AND jsonb_typeof(binding->'source') = 'object'
         AND ((binding->'source') ?& ARRAY['kind', 'namespaceId', 'id'])
         AND ((binding->'source') - 'kind' - 'namespaceId' - 'id') = '{}'::jsonb
@@ -56,17 +86,6 @@ RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
         AND binding #>> '{source,namespaceId}' = owner_namespace
         AND (binding #>> '{source,id}') ~ '^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
         AND (NOT resolved OR (jsonb_typeof(binding->'secretDriverId') = 'string' AND btrim(binding->>'secretDriverId') <> ''))
-        AND (NOT (binding ? 'providerConnection') OR (
-          resolved AND jsonb_typeof(binding->'providerConnection') = 'object'
-          AND ((binding->'providerConnection') ?& ARRAY['id', 'providerId', 'authMethodId'])
-          AND ((binding->'providerConnection') - 'id' - 'providerId' - 'authMethodId') = '{}'::jsonb
-          AND jsonb_typeof(binding #> '{providerConnection,id}') = 'string'
-          AND (binding #>> '{providerConnection,id}') ~ '^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-          AND jsonb_typeof(binding #> '{providerConnection,providerId}') = 'string'
-          AND btrim(binding #>> '{providerConnection,providerId}') <> ''
-          AND jsonb_typeof(binding #> '{providerConnection,authMethodId}') = 'string'
-          AND btrim(binding #>> '{providerConnection,authMethodId}') <> ''
-        ))
       WHEN 'chatgpt_service_account' THEN
         (binding ?& ARRAY['method', 'serviceAccountId'])
         AND (binding - 'method' - 'serviceAccountId'

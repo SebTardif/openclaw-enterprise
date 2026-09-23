@@ -12,11 +12,14 @@ export interface ProviderConnection {
   readonly createdAt: string;
 }
 
-export type CreateProviderConnectionInput = Omit<ProviderConnection, "id" | "createdAt">;
+export type CreateProviderConnectionInput = Omit<ProviderConnection, "id" | "createdAt"> & {
+  /** Write-only credential input; mutually exclusive with an existing Secret reference. */
+  readonly secretValue?: string;
+};
 
 export type ProviderConnectionReferenceSnapshot = Pick<
   ProviderConnection,
-  "id" | "providerId" | "authMethodId"
+  "id" | "providerId" | "authMethodId" | "baseUrl"
 >;
 
 export interface ModelAuthCatalogMethod {
@@ -27,7 +30,7 @@ export interface ModelAuthCatalogMethod {
   readonly nativeMethodId: string;
   /** OpenClaw version checked for this mapping, not a minimum supported version. */
   readonly nativeVersion: string | null;
-  readonly deploymentAuthMethod: "api_key" | null;
+  readonly deploymentAuthMethod: "provider_connection" | null;
   readonly unavailableReason: string | null;
 }
 

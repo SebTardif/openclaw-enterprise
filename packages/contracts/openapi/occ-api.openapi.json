@@ -8893,7 +8893,7 @@
         ]
       },
       "post": {
-        "description": "Requires create permission for ProviderConnection resources in the requested Namespace.",
+        "description": "Requires create permission for ProviderConnection resources in the requested Namespace. Requires Secret create permission in the Namespace when supplying a new credential value. Requires operate permission on each bound Secret when Secret bindings are present or selected.",
         "operationId": "createProviderConnection",
         "parameters": [
           {
@@ -8929,6 +8929,13 @@
                     "maxLength": 200,
                     "minLength": 1,
                     "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001f\\u007f]).+$",
+                    "type": "string"
+                  },
+                  "secretValue": {
+                    "description": "Protected Secret value. It must be nonempty UTF-8 without NUL; OCC accepts at most 65,536 UTF-8 bytes and still enforces the route request body limit.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000]*$",
                     "type": "string"
                   },
                   "source": {
@@ -9103,7 +9110,19 @@
         "summary": "Save provider and authentication configuration without authenticating",
         "tags": ["Providers"],
         "x-openclaw-permissions": [
-          { "action": "create", "resourceKind": "provider_connection", "scope": "namespace" }
+          { "action": "create", "resourceKind": "provider_connection", "scope": "namespace" },
+          {
+            "action": "create",
+            "condition": "new_provider_secret",
+            "resourceKind": "secret",
+            "scope": "namespace"
+          },
+          {
+            "action": "operate",
+            "condition": "bound_secret",
+            "resourceKind": "secret",
+            "scope": "request_body"
+          }
         ]
       }
     },
@@ -10560,7 +10579,7 @@
                                 },
                                 "deploymentAuthMethod": {
                                   "anyOf": [
-                                    { "const": "api_key", "type": "string" },
+                                    { "const": "provider_connection", "type": "string" },
                                     { "type": "null" }
                                   ]
                                 },

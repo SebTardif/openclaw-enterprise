@@ -169,6 +169,50 @@ async function setup(context, { leaseDurationMs = 30_000, onHealthy, metrics, re
     return owner;
   }
 
+  async function connectedAgent(
+    label,
+    { providerId = "openai", authMethodId = "api-key", baseUrl, credential = true } = {},
+  ) {
+    const owner = await agent(label, "embedded", undefined, null, true, !credential);
+    const connection = {
+      id: `pco_${randomUUID()}`,
+      namespaceId: namespace.id,
+      name: label,
+      providerId,
+      authMethodId,
+      ...(credential ? { source: owner.harnessAuth.source } : {}),
+      ...(baseUrl === undefined ? {} : { baseUrl }),
+      createdAt: new Date().toISOString(),
+    };
+    const boundOwner = await state.transact(async (unit) => {
+      await unit.providerConnections.createProviderConnection(connection);
+      return unit.agents.updateConfiguration(
+        namespace.id,
+        owner.id,
+        owner.configurationId,
+        undefined,
+        {
+          method: "provider_connection",
+          connectionId: connection.id,
+        },
+      );
+    });
+    const roleId = `role-${randomUUID()}`;
+    const bindingId = `binding-${randomUUID()}`;
+    await observerPool.query(
+      `INSERT INTO occ.iam_roles (id, namespace_id, name, permissions)
+      VALUES ($1, $2, 'Use connection', '[{"action":"operate","resourceKind":"provider_connection"}]'::jsonb)`,
+      [roleId, namespace.id],
+    );
+    await observerPool.query(
+      `INSERT INTO occ.iam_access_bindings
+      (id, namespace_id, identity_subject_id, role_id, resource_kind, resource_id)
+      VALUES ($1, $2, $3, $4, 'provider_connection', $5)`,
+      [bindingId, namespace.id, owner.servicePrincipalId, roleId, connection.id],
+    );
+    return { owner: boundOwner, connection, bindingId };
+  }
+
   async function revision(
     owner,
     number,
@@ -186,13 +230,17 @@ async function setup(context, { leaseDurationMs = 30_000, onHealthy, metrics, re
         ),
       );
       harnessAuth = {
-        method: "api_key",
-        source: connection.source,
-        secretDriverId: secretDriver.id,
-        providerConnection: {
+        method: "provider_connection",
+        ...(connection.source === undefined
+          ? {}
+          : {
+              credential: { source: connection.source, secretDriverId: secretDriver.id },
+            }),
+        connection: {
           id: connection.id,
           providerId: connection.providerId,
           authMethodId: connection.authMethodId,
+          ...(connection.baseUrl === undefined ? {} : { baseUrl: connection.baseUrl }),
         },
       };
     } else if (owner.harnessAuth.method === "runtime") {
@@ -326,6 +374,7 @@ async function setup(context, { leaseDurationMs = 30_000, onHealthy, metrics, re
     productionHarness: PRODUCTION_HARNESS_DESCRIPTOR,
     PostgresWorkQueue,
     agent,
+    connectedAgent,
     revision,
     requestDeletion,
     requestStop,
@@ -3557,44 +3606,92 @@ test(
 );
 
 test(
+  "the revision worker forwards connection metadata and optional Secret delivery references before activation",
+  requiresPostgres,
+  async (context) => {
+    for (const options of [
+      { providerId: "anthropic", authMethodId: "setup-token", credential: true },
+      {
+        providerId: "ollama",
+        authMethodId: "local",
+        credential: false,
+        baseUrl: "http://ollama.models.svc.cluster.local:11434",
+      },
+    ]) {
+      await context.test(options.providerId, async (child) => {
+        const fixture = await setup(child);
+        const { owner, connection } = await fixture.connectedAgent(
+          `dispatch-${options.providerId}`,
+          options,
+        );
+        const candidate = await fixture.revision(owner, 1);
+        const secret =
+          connection.source === undefined
+            ? undefined
+            : await fixture.state.read((view) =>
+                view.secrets.findSecret(fixture.namespace.id, connection.source.id),
+              );
+        const expected =
+          secret === undefined
+            ? candidate.harnessAuth
+            : {
+                ...candidate.harnessAuth,
+                credential: { ...candidate.harnessAuth.credential, backendRef: secret.backendRef },
+              };
+        const storageCalls = fixture.secretDriver.calls.length;
+        const contexts = [];
+        await fixture.start({
+          ...fixture.compute,
+          async prepareRevision(revision, computeContext) {
+            assert.equal(revision.id, candidate.id);
+            // Dispatch must deliver references before Compute can create the workload.
+            contexts.push(structuredClone(computeContext));
+            return fixture.compute.prepareRevision(revision, computeContext);
+          },
+        });
+        await fixture.work(candidate, "succeeded");
+        assert.equal(contexts.length, 1);
+        assert.deepEqual(contexts[0].harnessAuth, expected);
+        assert.deepEqual(contexts[0].secretEnvironment, []);
+        assert.equal(
+          fixture.secretDriver.calls.length,
+          storageCalls,
+          "the worker projects metadata without reading credential values",
+        );
+        if (!options.credential) {
+          assert.equal(storageCalls, 0, "the local endpoint needs no Secret backend operation");
+          assert.equal(Object.hasOwn(contexts[0].harnessAuth, "credential"), false);
+        }
+        assert.equal(
+          (
+            await fixture.state.read((view) =>
+              view.agents.findAgent(fixture.namespace.id, owner.id),
+            )
+          ).activeRevisionId,
+          candidate.id,
+        );
+        assert.deepEqual(
+          (
+            await fixture.state.read((view) =>
+              view.revisions.findRevision(fixture.namespace.id, owner.id, candidate.id),
+            )
+          ).harnessAuth,
+          candidate.harnessAuth,
+        );
+      });
+    }
+  },
+);
+
+test(
   "the revision worker rechecks operator and Agent connection permissions while retaining Secret access",
   requiresPostgres,
   async (context) => {
     for (const revokedPrincipal of ["operator", "agent"]) {
       await context.test(revokedPrincipal, async (child) => {
         const fixture = await setup(child);
-        const owner = await fixture.agent(`connection-${revokedPrincipal}`);
-        const connection = {
-          id: `pco_${randomUUID()}`,
-          namespaceId: fixture.namespace.id,
-          name: "Worker connection",
-          providerId: "openai",
-          authMethodId: "api-key",
-          source: owner.harnessAuth.source,
-          createdAt: new Date().toISOString(),
-        };
-        const boundOwner = await fixture.state.transact(async (unit) => {
-          await unit.providerConnections.createProviderConnection(connection);
-          return unit.agents.updateConfiguration(
-            fixture.namespace.id,
-            owner.id,
-            owner.configurationId,
-            undefined,
-            { method: "provider_connection", connectionId: connection.id },
-          );
-        });
-        const roleId = `role-${randomUUID()}`;
-        const bindingId = `binding-${randomUUID()}`;
-        await fixture.observerPool.query(
-          `INSERT INTO occ.iam_roles (id, namespace_id, name, permissions)
-          VALUES ($1, $2, 'Use connection', '[{"action":"operate","resourceKind":"provider_connection"}]'::jsonb)`,
-          [roleId, fixture.namespace.id],
-        );
-        await fixture.observerPool.query(
-          `INSERT INTO occ.iam_access_bindings
-          (id, namespace_id, identity_subject_id, role_id, resource_kind, resource_id)
-          VALUES ($1, $2, $3, $4, 'provider_connection', $5)`,
-          [bindingId, fixture.namespace.id, owner.servicePrincipalId, roleId, connection.id],
+        const { owner, connection, bindingId } = await fixture.connectedAgent(
+          `connection-${revokedPrincipal}`,
         );
         const iam = createProviderWorkerDrivers(fixture.compute, []).createIAMDriver(fixture.state);
         const resource = {
@@ -3608,7 +3705,7 @@ test(
             true,
           );
         }
-        const candidate = await fixture.revision(boundOwner, 1);
+        const candidate = await fixture.revision(owner, 1);
         // Revoke only connection use after queuing; Secret authority remains independently valid.
         if (revokedPrincipal === "operator") {
           await fixture.observerPool.query(

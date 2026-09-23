@@ -138,10 +138,9 @@ async function exerciseConnections(store, reopened = store) {
     servicePrincipalId: agent.servicePrincipalId,
     createdAt,
     harnessAuth: {
-      method: "api_key",
-      source,
-      secretDriverId: secret.driverId,
-      providerConnection: {
+      method: "provider_connection",
+      credential: { source, secretDriverId: secret.driverId },
+      connection: {
         id: connection.id,
         providerId: connection.providerId,
         authMethodId: connection.authMethodId,
@@ -196,7 +195,7 @@ async function exerciseConnections(store, reopened = store) {
     revision: 2,
     harnessAuth: {
       ...revision.harnessAuth,
-      providerConnection: { ...revision.harnessAuth.providerConnection, id: queued.id },
+      connection: { ...revision.harnessAuth.connection, id: queued.id },
     },
   };
   await store.transact(async (state) => {
@@ -229,6 +228,74 @@ async function exerciseConnections(store, reopened = store) {
     ),
     { name: "ScopeViolationError" },
   );
+
+  const local = {
+    id: identifier("pco"),
+    namespaceId: namespace.id,
+    name: "Local Ollama",
+    providerId: "ollama",
+    authMethodId: "none",
+    baseUrl: "http://ollama.models.svc.cluster.local:11434",
+    createdAt,
+  };
+  const localRevision = {
+    ...revision,
+    id: identifier("rev"),
+    revision: 3,
+    harnessAuth: {
+      method: "provider_connection",
+      connection: {
+        id: local.id,
+        providerId: local.providerId,
+        authMethodId: local.authMethodId,
+        baseUrl: local.baseUrl,
+      },
+    },
+  };
+  await store.transact(async (state) => {
+    await state.providerConnections.createProviderConnection(local);
+    await state.agents.updateConfiguration(namespace.id, agent.id, configuration.id, undefined, {
+      method: "provider_connection",
+      connectionId: local.id,
+    });
+    await state.revisions.createRevision(localRevision);
+  });
+  assert.deepEqual(
+    (
+      await reopened.read((state) =>
+        state.revisions.findRevision(namespace.id, agent.id, localRevision.id),
+      )
+    ).harnessAuth,
+    localRevision.harnessAuth,
+  );
+  const invalidSnapshots = [
+    { ...localRevision.harnessAuth, secretValue: "must-not-be-persisted" },
+    {
+      ...localRevision.harnessAuth,
+      credential: { source, secretDriverId: secret.driverId, backendRef: secret.backendRef },
+    },
+    {
+      ...localRevision.harnessAuth,
+      credential: { source: { ...source, namespaceId: other.id }, secretDriverId: secret.driverId },
+    },
+    {
+      ...localRevision.harnessAuth,
+      connection: { ...localRevision.harnessAuth.connection, baseUrl: " " },
+    },
+  ];
+  for (const harnessAuth of invalidSnapshots) {
+    await assert.rejects(
+      store.transact((state) =>
+        state.revisions.createRevision({
+          ...localRevision,
+          id: identifier("rev"),
+          revision: 4,
+          harnessAuth,
+        }),
+      ),
+      { name: "ScopeViolationError" },
+    );
+  }
 
   // A metadata-only OAuth choice can be saved, and alone prevents Namespace deletion.
   const oauth = {
@@ -270,7 +337,7 @@ async function exerciseConnections(store, reopened = store) {
     assert.equal(await state.namespaces.hasProviderConnections(other.id), false);
     assert.ok(await state.namespaces.markNamespaceDeleted(other.id, createdAt));
   });
-  return { namespace, other, connection, secret, agent };
+  return { namespace, other, connection, secret, agent, localRevision, invalidSnapshots };
 }
 
 test("in-memory ProviderConnections preserve setup, source ownership, and live revision references", async () => {
@@ -292,10 +359,25 @@ test(
     const pool = new Pool({ connectionString: databaseUrl });
     const secondPool = new Pool({ connectionString: databaseUrl });
     context.after(() => Promise.all([pool.end(), secondPool.end()]));
-    const { namespace, other, connection, secret, agent } = await exerciseConnections(
-      new PostgresPlatformState(pool),
-      new PostgresPlatformState(secondPool),
-    );
+    const { namespace, other, connection, secret, agent, localRevision, invalidSnapshots } =
+      await exerciseConnections(
+        new PostgresPlatformState(pool),
+        new PostgresPlatformState(secondPool),
+      );
+    // Bypass the repository validator to prove PostgreSQL protects the same private snapshot.
+    for (const harnessAuth of invalidSnapshots) {
+      await assert.rejects(
+        pool.query(
+          `INSERT INTO occ.agent_revisions
+        (id, namespace_id, agent_id, revision_number, provider_id, admitted_spec, admitted_at)
+        SELECT $1, namespace_id, agent_id, 4, provider_id,
+          jsonb_set(admitted_spec, '{harness_auth}', $2::jsonb), admitted_at
+        FROM occ.agent_revisions WHERE id = $3`,
+          [identifier("rev"), JSON.stringify(harnessAuth), localRevision.id],
+        ),
+        { code: "23514" },
+      );
+    }
     await assert.rejects(
       pool.query("UPDATE occ.provider_connections SET name = 'Changed' WHERE id = $1", [
         connection.id,

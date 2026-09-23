@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
+import { createTestSecretDriver } from "../helpers/secret-driver.mjs";
+import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
+import { InMemoryPlatformState } from "../../packages/occ/src/index.ts";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
 
 test("provider setup persists safe references, admits API keys, and keeps OAuth configuration non-deployable", async (t) => {
@@ -14,7 +17,7 @@ test("provider setup persists safe references, admits API keys, and keeps OAuth 
   const openai = catalog.data.find((item) => item.id === "openai");
   assert.equal(
     openai.authMethods.find((item) => item.id === "api-key").deploymentAuthMethod,
-    "api_key",
+    "provider_connection",
   );
   assert.equal(openai.authMethods.find((item) => item.id === "token-sharing").nativeVersion, null);
 
@@ -103,7 +106,7 @@ test("provider setup persists safe references, admits API keys, and keeps OAuth 
   );
   assert.deepEqual(historical.data.harnessAuth, binding);
 
-  // Configuration APIs never accept token bytes or arbitrary native auth methods.
+  // OAuth setup never accepts token bytes or arbitrary native auth methods.
   for (const body of [
     { name: "Unknown", providerId: "openai", authMethodId: "arbitrary-command" },
     {
@@ -169,4 +172,157 @@ test("provider connection lookup, source selection, and consumption cannot cross
     (await fixture.request("DELETE", `${base}/${created.data.id}`, { session })).status,
     403,
   );
+});
+
+test("provider setup creates its credential atomically and never returns or audits its value", async (t) => {
+  const driver = createTestSecretDriver();
+  const audit = new InMemoryAuditSink();
+  const state = new InMemoryPlatformState({ auditSink: audit });
+  const fixture = await createConsoleAppFixture(t, { secretDriver: driver, state });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Credential setup", { ready: true });
+  const path = `/namespaces/${namespace.id}/provider-connections`;
+  const secretValue = "synthetic-provider-credential";
+  const body = {
+    name: "New model key",
+    providerId: "openai",
+    authMethodId: "api-key",
+    secretValue,
+  };
+  const response = await fixture.request("POST", path, { body });
+  assert.equal(response.status, 201, JSON.stringify(response.body));
+  assert.equal(driver.valueFor(response.data.source), secretValue);
+  assert.doesNotMatch(
+    JSON.stringify(response.body),
+    /synthetic-provider-credential|secretValue|backendRef/,
+  );
+  const persisted = await state.read((view) =>
+    view.providerConnections.findProviderConnection(namespace.id, response.data.id),
+  );
+  assert.equal(Object.hasOwn(persisted, "secretValue"), false);
+  assert.equal(
+    audit.events.filter((event) => event.action === "openclaw.secrets.create").length,
+    1,
+  );
+  assert.doesNotMatch(JSON.stringify(audit.events), /synthetic-provider-credential/);
+
+  // Duplicate configuration rejects the transaction and removes only its newly-created Secret.
+  const conflict = await fixture.request("POST", path, { body });
+  assert.equal(conflict.status, 409);
+  const creates = driver.calls.filter((call) => call.operation === "create");
+  assert.equal(creates.length, 2);
+  assert.equal(driver.has(creates[0].identity), true);
+  assert.equal(driver.has(creates[1].identity), false);
+  assert.equal(
+    await state.read((view) => view.secrets.findSecret(namespace.id, creates[1].identity.id)),
+    undefined,
+  );
+  assert.equal(
+    audit.events.filter((event) => event.action === "openclaw.secrets.create").length,
+    1,
+  );
+
+  for (const invalid of [
+    { ...body, name: "Mixed credential", source: response.data.source },
+    { ...body, name: "OAuth credential", authMethodId: "oauth" },
+  ]) {
+    assert.equal((await fixture.request("POST", path, { body: invalid })).status, 404);
+  }
+  assert.equal(driver.calls.filter((call) => call.operation === "create").length, 2);
+  const limited = await fixture.createAccountWithPolicy(
+    "provider-without-secret-create",
+    (principal) => {
+      fixture.policy.roles.push({
+        id: "connection-creator",
+        namespaceId: namespace.id,
+        permissions: [
+          { action: "create", resourceKind: "provider_connection" },
+          { action: "operate", resourceKind: "secret" },
+        ],
+      });
+      fixture.policy.bindings.push({
+        id: "connection-creator-binding",
+        namespaceId: namespace.id,
+        subjectKind: "identity",
+        subjectId: principal.id,
+        roleId: "connection-creator",
+      });
+    },
+  );
+  const session = await fixture.signIn(limited.credentials);
+  const denied = await fixture.request("POST", path, {
+    session,
+    body: { ...body, name: "Unauthorized new Secret" },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(driver.calls.filter((call) => call.operation === "create").length, 2);
+});
+
+test("Anthropic key and setup-token connections admit embedded revisions with private Secret custody", async (t) => {
+  const state = new InMemoryPlatformState();
+  const fixture = await createConsoleAppFixture(t, { state });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Anthropic agents", { ready: true });
+  fixture.policy.roles.push({
+    id: "anthropic-consumer",
+    namespaceId: namespace.id,
+    permissions: [
+      { action: "operate", resourceKind: "provider_connection" },
+      { action: "operate", resourceKind: "secret" },
+    ],
+  });
+  for (const authMethodId of ["api-key", "setup-token"]) {
+    const connection = await fixture.request(
+      "POST",
+      `/namespaces/${namespace.id}/provider-connections`,
+      {
+        body: {
+          name: `Claude ${authMethodId}`,
+          providerId: "anthropic",
+          authMethodId,
+          secretValue: `synthetic-${authMethodId}`,
+        },
+      },
+    );
+    assert.equal(connection.status, 201);
+    const model = "claude-sonnet-4-5";
+    const modelRef = `anthropic/${model}`;
+    const configuration = createHarnessConfiguration("openclaw", model);
+    configuration.agents.defaults.model = modelRef;
+    configuration.agents.defaults.models = { [modelRef]: { agentRuntime: { id: "openclaw" } } };
+    configuration.models.providers = {
+      anthropic: {
+        baseUrl: "https://api.anthropic.com",
+        api: "anthropic-messages",
+        models: [{ id: model, name: model }],
+      },
+    };
+    const binding = { method: "provider_connection", connectionId: connection.data.id };
+    const agent = await fixture.createAgent(namespace.id, `Claude ${authMethodId}`, configuration, {
+      harnessAuth: binding,
+    });
+    fixture.policy.identities.push({
+      id: agent.servicePrincipalId,
+      kind: "service_principal",
+      namespaceId: namespace.id,
+      agentId: agent.id,
+    });
+    fixture.policy.bindings.push({
+      id: `grant-${authMethodId}`,
+      namespaceId: namespace.id,
+      subjectKind: "identity",
+      subjectId: agent.servicePrincipalId,
+      roleId: "anthropic-consumer",
+    });
+    const revision = await fixture.deployAgent(namespace.id, agent.id);
+    assert.deepEqual(revision.harnessAuth, binding);
+    const admitted = await state.read((view) =>
+      view.revisions.findRevision(namespace.id, agent.id, revision.id),
+    );
+    assert.deepEqual(admitted.harnessAuth, {
+      method: "provider_connection",
+      connection: { id: connection.data.id, providerId: "anthropic", authMethodId },
+      credential: { source: connection.data.source, secretDriverId: "console-secret" },
+    });
+  }
 });

@@ -272,7 +272,7 @@ test("Agent creation saves native Configuration JSON and a draft Agent without a
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
-  await page.getByText("Choose an installed Provider.").waitFor();
+  await page.getByText("Choose an installed control-plane Provider if needed.").waitFor();
   await page.getByLabel("Authentication source").selectOption("api_key");
   const secretInput = page.getByLabel("OpenAI API key Secret ID");
   assert.equal(await secretInput.getAttribute("type"), "password");
@@ -400,7 +400,7 @@ test("Agent creation saves native Configuration JSON and a draft Agent without a
   await page.goto(`${fixture.origin}/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
-  await page.getByText("Choose an installed Provider.").waitFor();
+  await page.getByText("Choose an installed control-plane Provider if needed.").waitFor();
   await page.getByLabel("Agent name").fill("Denied Agent");
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
   const deniedResponse = page.waitForResponse(
@@ -456,10 +456,10 @@ test("Agent creation renders provider and service account choices and saves sele
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
-  const provider = page.getByLabel("Provider (optional)");
+  const provider = page.getByLabel("Control-plane Provider (optional)");
   await page.getByLabel("Authentication source").selectOption("chatgpt_service_account");
   const account = page.getByLabel("Issued ChatGPT service account");
-  await page.getByText("Choose an installed Provider.").waitFor();
+  await page.getByText("Choose an installed control-plane Provider if needed.").waitFor();
   await page.getByText("Issued accounts in this Namespace are available.").waitFor();
   assert.equal(await provider.isDisabled(), false);
   assert.equal(await account.isDisabled(), false);
@@ -537,15 +537,33 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
     "provider-setup-secret-value",
   );
   const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
   const path = `/namespaces/${namespace.id}/provider-connections`;
   await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Add provider" }).waitFor();
   await page.getByLabel("Connection name").fill("Team API key");
   await page.getByLabel("Provider", { exact: true }).selectOption("openai");
   await page.getByLabel("Authentication method").selectOption("api-key");
-  await page.getByLabel("Secret ID", { exact: true }).fill(secret.id);
+  await page.getByLabel("API key", { exact: true }).fill("new-provider-api-key");
   await page.getByRole("button", { name: "Save provider connection" }).click();
   await page.getByText("OpenAI / API key / Team API key", { exact: true }).waitFor();
+  assert.equal(pathRequests(requests, "POST", path).length, 1);
+  assert.equal(pathRequests(requests, "POST", path)[0].body.secretValue, "new-provider-api-key");
+  assert.equal(pathRequests(requests, "POST", `/namespaces/${namespace.id}/secrets`).length, 0);
+  assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "");
+
+  await page.getByLabel("Connection name").fill("Shared API key");
+  await page.getByLabel("Credential source").selectOption("existing");
+  await page.getByLabel("Secret ID", { exact: true }).fill(secret.id);
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page.getByText("OpenAI / API key / Shared API key", { exact: true }).waitFor();
+
+  await page.getByLabel("Connection name").fill("Claude token");
+  await page.getByLabel("Provider", { exact: true }).selectOption("anthropic");
+  await page.getByLabel("Authentication method").selectOption("setup-token");
+  await page.getByLabel("Setup token", { exact: true }).fill("new-provider-setup-token");
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page.getByText("Anthropic / Claude setup token / Claude token", { exact: true }).waitFor();
 
   // OAuth setup stores only the chosen method. It must never look like a completed login.
   await page.getByLabel("Connection name").fill("Personal login");
@@ -569,9 +587,19 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
   const saved = await fixture.request("GET", path);
   assert.equal(saved.status, 200);
   const keyConnection = saved.data.find((item) => item.name === "Team API key");
+  const sharedConnection = saved.data.find((item) => item.name === "Shared API key");
+  const tokenConnection = saved.data.find((item) => item.name === "Claude token");
   const oauthConnection = saved.data.find((item) => item.name === "Personal login");
   const localConnection = saved.data.find((item) => item.name === "Local models");
-  assert.deepEqual(keyConnection.source, secret.ref);
+  assert.equal(keyConnection.source.kind, "secret");
+  assert.equal(keyConnection.source.namespaceId, namespace.id);
+  assert.notEqual(keyConnection.source.id, secret.id);
+  assert.equal(tokenConnection.source.kind, "secret");
+  assert.deepEqual(sharedConnection.source, secret.ref);
+  assert.doesNotMatch(
+    JSON.stringify(saved.data),
+    /secretValue|new-provider-api-key|new-provider-setup-token/,
+  );
   assert.equal(oauthConnection.source, undefined);
   assert.equal(localConnection.source, undefined);
   assert.equal(localConnection.baseUrl, "http://model-server:11434");
@@ -582,7 +610,7 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
   await page
     .getByText("Ollama / Local server / Local models", { exact: true })
     .waitFor({ state: "detached" });
-  assert.equal((await fixture.request("GET", path)).data.length, 2);
+  assert.equal((await fixture.request("GET", path)).data.length, 4);
 
   await page.goto(`${fixture.origin}/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("button", { name: "Start without Preset" }).click();
@@ -632,10 +660,58 @@ test("Providers setup saves reusable connections and keeps OAuth visibly unauthe
   });
 });
 
+test("Providers setup requires refresh after losing a successful credential save response", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Uncertain provider save", { ready: true });
+  const { page } = await newPage(t, fixture);
+  const path = `/namespaces/${namespace.id}/provider-connections`;
+  await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
+  await page.getByLabel("Connection name").fill("Saved before disconnect");
+  await page.getByLabel("API key", { exact: true }).fill("uncertain-provider-key");
+  // Commit through the real API, then lose its response. The UI must not repeat creation.
+  await page.route(`**${path}`, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    assert.equal(response.status(), 201);
+    await route.abort("failed");
+  });
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page.getByText(/Outcome unknown/).waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "Save provider connection" }).isDisabled(),
+    true,
+  );
+  assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "");
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByText("OpenAI / API key / Saved before disconnect", { exact: true }).waitFor();
+  assert.equal((await fixture.request("GET", path)).data.length, 1);
+  assert.equal(
+    await page.getByRole("button", { name: "Save provider connection" }).isEnabled(),
+    true,
+  );
+});
+
 test("Agent creation leaves optional lists disabled when discovery is inaccessible", async (t) => {
   const fixture = await createConsoleAppFixture(t, { providerSummaries: undefined });
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Unavailable lists", { ready: true });
+  const connection = await fixture.request(
+    "POST",
+    `/namespaces/${namespace.id}/provider-connections`,
+    {
+      body: {
+        name: "Available model",
+        providerId: "openai",
+        authMethodId: "api-key",
+        secretValue: "available-model-key",
+      },
+    },
+  );
+  assert.equal(connection.status, 201);
   const { page } = await newPage(t, fixture);
   const serviceAccounts = `**/namespaces/${namespace.id}/service-accounts`;
   await page.route(serviceAccounts, async (route) => {
@@ -645,12 +721,16 @@ test("Agent creation leaves optional lists disabled when discovery is inaccessib
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
-  await page.getByText(/Providers unavailable\./).waitFor();
+  await page.getByText(/Control-plane Providers unavailable\./).waitFor();
   await page.getByText(/Service accounts unavailable\./).waitFor();
-  assert.equal(await page.getByLabel("Provider (optional)").isDisabled(), true);
+  assert.equal(await page.getByLabel("Control-plane Provider (optional)").isDisabled(), true);
   assert.equal(await page.getByLabel("Issued ChatGPT service account").isDisabled(), true);
-  assert.equal(await page.getByLabel("Provider (optional)").inputValue(), "");
+  assert.equal(await page.getByLabel("Control-plane Provider (optional)").inputValue(), "");
   assert.equal(await page.getByLabel("Issued ChatGPT service account").inputValue(), "");
+  // Installation Provider discovery does not own the Namespace's model connections.
+  await page.getByLabel("Authentication source").selectOption("provider_connection");
+  await page.getByLabel("Provider connection", { exact: true }).selectOption(connection.data.id);
+  assert.equal(await page.getByLabel("Provider connection", { exact: true }).isEnabled(), true);
 });
 
 test("Agent creation reuses the saved Configuration after an Agent creation conflict", async (t) => {
@@ -665,7 +745,7 @@ test("Agent creation reuses the saved Configuration after an Agent creation conf
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
-  await page.getByText("Choose an installed Provider.").waitFor();
+  await page.getByText("Choose an installed control-plane Provider if needed.").waitFor();
   requests.length = 0;
   await page.getByLabel("SOUL.md", { exact: true }).fill("# Keep this draft\n");
   await page.getByLabel("Agent name").fill("Retry Agent");

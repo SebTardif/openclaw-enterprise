@@ -15,7 +15,7 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeProviderId: "openai",
         nativeMethodId: "api-key",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: "api_key",
+        deploymentAuthMethod: "provider_connection",
         unavailableReason: null,
       },
       // TODO(provider OAuth integration): enable after login and credential deployment are wired.
@@ -56,7 +56,6 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
     id: "anthropic",
     label: "Anthropic",
     requiresBaseUrl: false,
-    // TODO(runtime capabilities): enable these methods when Anthropic credential deployment ships.
     authMethods: [
       {
         id: "api-key",
@@ -65,8 +64,8 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeProviderId: "anthropic",
         nativeMethodId: "api-key",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "Anthropic credential deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
       {
         id: "setup-token",
@@ -75,8 +74,8 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeProviderId: "anthropic",
         nativeMethodId: "setup-token",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "Claude setup-token deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
     ],
   },
@@ -84,7 +83,6 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
     id: "ollama",
     label: "Ollama",
     requiresBaseUrl: true,
-    // TODO(runtime capabilities): enable after deployment supports the configured Ollama endpoint.
     authMethods: [
       {
         id: "local",
@@ -93,8 +91,8 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeProviderId: "ollama",
         nativeMethodId: "local",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "Ollama endpoint deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
     ],
   },
@@ -102,7 +100,6 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
     id: "vllm",
     label: "vLLM",
     requiresBaseUrl: true,
-    // TODO(runtime capabilities): enable after deployment supports the configured vLLM endpoint.
     authMethods: [
       {
         id: "custom",
@@ -111,8 +108,8 @@ export const MODEL_AUTH_CATALOG: readonly ModelAuthCatalogProvider[] = [
         nativeProviderId: "vllm",
         nativeMethodId: "custom",
         nativeVersion: "2026.9.1",
-        deploymentAuthMethod: null,
-        unavailableReason: "vLLM endpoint deployment is not available yet.",
+        deploymentAuthMethod: "provider_connection",
+        unavailableReason: null,
       },
     ],
   },

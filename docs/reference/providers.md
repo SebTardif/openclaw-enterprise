@@ -25,18 +25,24 @@ The version identifies the source checked for the mapping, not a minimum runtime
 version or live verification result. A null deployment method means setup can be
 saved but cannot be used to deploy an Agent.
 
-| Model provider | Saved authentication choices                                         | Deployment through a connection |
-| -------------- | -------------------------------------------------------------------- | ------------------------------- |
-| OpenAI         | API key, ChatGPT/Codex OAuth, device pairing, SIWC through Responses | API key only                    |
-| Anthropic      | API key, Claude setup token                                          | Unavailable                     |
-| Ollama         | Local server without a credential                                    | Unavailable                     |
-| vLLM           | Server endpoint and API-key Secret                                   | Unavailable                     |
+| Model provider | Saved authentication choices                                         | Kubernetes deployment through a connection    |
+| -------------- | -------------------------------------------------------------------- | --------------------------------------------- |
+| OpenAI         | API key, ChatGPT/Codex OAuth, device pairing, SIWC through Responses | API key: embedded OpenClaw or dedicated Codex |
+| Anthropic      | API key, Claude setup token                                          | Embedded OpenClaw                             |
+| Ollama         | Local server without a credential                                    | Embedded OpenClaw                             |
+| vLLM           | Server endpoint and API-key Secret                                   | Embedded OpenClaw                             |
 
 Native mappings are checked against OpenClaw `2026.9.1`; SIWC has no supported
 bundled release recorded yet. Saving an OAuth choice records setup metadata only:
 it starts no login and stores no access or refresh token. Anthropic setup tokens
-are static credentials, not an OAuth login method. Local endpoint setup neither
-starts a model server nor changes network policy or inference transport.
+are static credentials, not an OAuth login method. Ollama uses its native protocol
+and a nonsecret local marker; vLLM uses its OpenAI-compatible completions protocol.
+The Agent's native Configuration must select a model from the connection's provider.
+
+Local servers require separately configured network access from the Agent workload.
+Saving a connection neither starts a model server nor changes Kubernetes network
+policy. OCC does not contact the endpoint; the deployed OpenClaw runtime probes
+the selected model and credential before becoming ready.
 
 Use `GET` or `POST /namespaces/:namespaceId/provider-connections` to list or create
 connections, and `GET` or `DELETE` the same path with `/:connectionId` for one
@@ -45,19 +51,24 @@ in that Namespace. Reads filter by exact connection `read`; deletion requires
 exact connection `delete`. Connections are immutable: create a replacement to
 change the name, provider, method, source, or endpoint.
 
-The creation body contains `name`, `providerId`, `authMethodId`, and, where the
-catalog requires them, `source` and `baseUrl`. `source` is an existing
-same-Namespace Secret reference and requires the creator's exact Secret
-`operate`; credential values stay in the selected Secret Driver. Endpoint URLs
+The creation body contains `name`, `providerId`, `authMethodId`, and any required
+`baseUrl`. For credential methods, supply either write-only `secretValue` to create
+a Secret or `source` to reuse a same-Namespace Secret reference. New credentials
+require Secret `create`; binding requires the creator's exact Secret `operate`.
+Credential values stay in the selected Secret Driver. Endpoint URLs
 must use HTTP or HTTPS and contain no credentials, query, or fragment. OpenAI
 and Anthropic do not accept an endpoint override through this API. Responses
-contain safe metadata and references only, and make no upstream request.
+contain safe metadata and references only; setup makes no model-provider request.
 
 Select a saved connection with [Agent `harnessAuth`](agents.md#harness-authentication).
 Binding requires the actor's exact connection and source Secret `operate`.
 Deployment requires those grants for both the actor and Agent service principal;
-the worker repeats the checks. OpenAI API-key connections resolve to the existing
-Secret-backed deployment path and do not change model or Harness selection.
+the worker repeats the checks. Ollama requires no Secret grant. The revision
+freezes connection metadata and any credential source; Compute projects the
+credential only into the workload that runs the model. For embedded OpenClaw,
+Compute applies the selected endpoint and credential reference to both the mounted
+Configuration and isolated startup probe. Connections do not change model or
+Harness selection.
 
 Draft, active-revision, and pending-deployment references block deletion. Inactive
 historical revisions retain their saved metadata after an unused connection is

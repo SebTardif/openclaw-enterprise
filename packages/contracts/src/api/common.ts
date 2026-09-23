@@ -623,6 +623,7 @@ export const CreateProviderConnectionBody = Type.Object(
     providerId: ProviderId,
     authMethodId: ProviderId,
     source: Type.Optional(SecretReference),
+    secretValue: Type.Optional(SecretValue),
     baseUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
   },
   { additionalProperties: false },

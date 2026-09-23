@@ -23,7 +23,7 @@ export function connectionStatus(method) {
   }
   return (
     method.unavailableReason ??
-    "Credentials are checked during deployment. Model access has not been tested."
+    "Model access has not been tested. Verify connectivity and authentication from the deployed runtime."
   );
 }
 
@@ -97,7 +97,7 @@ export async function renderProviderConnections(context) {
       let pending = false;
       function setPending(value) {
         pending = value;
-        for (const action of setup.querySelectorAll("button")) {
+        for (const action of setup.querySelectorAll("button, input, select")) {
           action.disabled = value;
         }
       }
@@ -159,6 +159,19 @@ export async function renderProviderConnections(context) {
         ...catalog.map((item) => element("option", { value: item.id }, item.label)),
       );
       const auth = element("select", { id: "connection-auth", required: true });
+      const credentialSource = element(
+        "select",
+        { id: "connection-credential-source" },
+        element("option", { value: "new" }, "Enter a new credential"),
+        element("option", { value: "existing" }, "Use an existing Secret ID"),
+      );
+      const credentialValue = element("input", {
+        id: "connection-credential-value",
+        type: "password",
+        autocomplete: "off",
+        spellcheck: "false",
+        maxlength: "65536",
+      });
       const secret = element("input", {
         id: "connection-secret",
         type: "password",
@@ -188,13 +201,42 @@ export async function renderProviderConnections(context) {
           "Use an existing Secret in this Namespace. Secret values are never shown.",
         ),
       );
-      const urlField = field("Base URL", baseUrl);
+      const credentialField = field(
+        "API key",
+        credentialValue,
+        element(
+          "p",
+          { className: "hint" },
+          "Stored as a Secret in this Namespace. The value is never returned.",
+        ),
+      );
+      const credentialFields = element(
+        "div",
+        {},
+        field("Credential source", credentialSource),
+        credentialField,
+        secretField,
+      );
+      const urlField = field(
+        "Base URL",
+        baseUrl,
+        element(
+          "p",
+          { className: "hint" },
+          "Configure network access from the runtime to this server and select a matching model in the Agent Configuration. Saving does not probe the URL or change network access.",
+        ),
+      );
       const status = element("p", { className: "hint", role: "status" });
       function updateAuth() {
         const selected = catalog.find((item) => item.id === provider.value);
         const method = selected?.authMethods.find((item) => item.id === auth.value);
-        secretField.hidden = method?.credentialKind !== "secret";
-        secret.required = method?.credentialKind === "secret";
+        credentialFields.hidden = method?.credentialKind !== "secret";
+        secretField.hidden = credentialFields.hidden || credentialSource.value !== "existing";
+        credentialField.hidden = credentialFields.hidden || credentialSource.value !== "new";
+        secret.required = !secretField.hidden;
+        credentialValue.required = !credentialField.hidden;
+        credentialField.querySelector("label").textContent =
+          method?.id === "setup-token" ? "Setup token" : "API key";
         urlField.hidden = !selected?.requiresBaseUrl;
         baseUrl.required = selected?.requiresBaseUrl ?? false;
         status.textContent = connectionStatus(method);
@@ -207,12 +249,18 @@ export async function renderProviderConnections(context) {
           ),
         );
         secret.value = "";
+        credentialValue.value = "";
         baseUrl.value = "";
         updateAuth();
       }
       provider.addEventListener("change", updateProvider);
       auth.addEventListener("change", () => {
         secret.value = "";
+        credentialValue.value = "";
+        updateAuth();
+      });
+      credentialSource.addEventListener("change", () => {
+        credentialValue.value = "";
         updateAuth();
       });
       updateProvider();
@@ -228,7 +276,7 @@ export async function renderProviderConnections(context) {
         field("Connection name", name),
         field("Provider", provider),
         field("Authentication method", auth),
-        secretField,
+        credentialFields,
         urlField,
         status,
         submit,
@@ -252,15 +300,20 @@ export async function renderProviderConnections(context) {
             id: secret.value.trim(),
           };
         }
+        if (!credentialField.hidden) {
+          body.secretValue = credentialValue.value;
+        }
         if (!urlField.hidden) {
           body.baseUrl = baseUrl.value.trim();
         }
         try {
           await context.request(path, { method: "POST", body });
+          credentialValue.value = "";
           if (context.isCurrent()) {
             await loadConnections();
           }
         } catch (error) {
+          credentialValue.value = "";
           if (!context.isCurrent()) {
             return;
           }
@@ -271,7 +324,11 @@ export async function renderProviderConnections(context) {
               error.status === 409
                 ? "A provider connection with this name already exists. Choose another name."
                 : message(error, true);
-            setPending(false);
+            // An uncertain save may already have created the Secret and connection.
+            // Require a fresh read before allowing another credential creation.
+            if ([400, 403, 404, 409, 429].includes(error.status)) {
+              setPending(false);
+            }
           }
         }
       });

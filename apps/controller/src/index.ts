@@ -207,7 +207,11 @@ interface RequiredPermission {
   readonly resourceKind: ResourceKind;
   readonly scope: "requested" | "installation" | "namespace" | "each_returned" | "request_body";
   readonly condition?:
-    "associated_service_account" | "existing_namespace" | "bound_secret" | "iam_binding_target";
+    | "associated_service_account"
+    | "existing_namespace"
+    | "bound_secret"
+    | "iam_binding_target"
+    | "new_provider_secret";
 }
 
 interface DocumentedFastifySchema extends FastifySchema {
@@ -470,6 +474,23 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
   if (operation.operationId === "createSecret") {
     return [{ ...permission, scope: "namespace" }];
   }
+  if (operation.operationId === "createProviderConnection") {
+    return [
+      { ...permission, scope: "namespace" },
+      {
+        action: "create",
+        resourceKind: "secret",
+        scope: "namespace",
+        condition: "new_provider_secret",
+      },
+      {
+        action: "operate",
+        resourceKind: "secret",
+        scope: "request_body",
+        condition: "bound_secret",
+      },
+    ];
+  }
 
   if (operation.operationId === "createIAMAccessBinding") {
     return [
@@ -616,6 +637,9 @@ function permissionDescription(
       }
       if (condition === "iam_binding_target") {
         return `Requires ${action} permission on the request body ${name} when the AccessBinding targets that resource kind.`;
+      }
+      if (condition === "new_provider_secret") {
+        return "Requires Secret create permission in the Namespace when supplying a new credential value.";
       }
       switch (scope) {
         case "installation":
@@ -2283,6 +2307,17 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           ...body,
           namespaceId,
         } as CreateProviderConnectionInput);
+        if (body?.secretValue !== undefined && created.source !== undefined) {
+          await unit.audit.append(
+            event(
+              occApiRoutes.find((route) => route.operationId === "createSecret")!,
+              request,
+              created.source,
+              "mutation",
+              context,
+            ),
+          );
+        }
         await unit.audit.append(
           event(
             operation,

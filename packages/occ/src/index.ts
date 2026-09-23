@@ -51,6 +51,7 @@ import type {
   SecretBindings,
   SecretDriver,
   SecretMetadata,
+  SecretReference,
   ServiceAccount,
   ServiceAccountCredential,
   ServiceAccountDriver,
@@ -1589,7 +1590,11 @@ export class OpenClawController {
       throw new ScopeViolationError("The provider connection name is invalid.");
     }
     const { provider, method } = this.providerAuthMethod(input.providerId, input.authMethodId);
-    if ((method.credentialKind === "secret") !== (input.source !== undefined)) {
+    if (
+      (input.source !== undefined && input.secretValue !== undefined) ||
+      (method.credentialKind === "secret") !==
+        (input.source !== undefined || input.secretValue !== undefined)
+    ) {
       throw new ScopeViolationError(
         "This authentication method requires its exact credential source.",
       );
@@ -1626,19 +1631,35 @@ export class OpenClawController {
       if (namespace.status !== "ready") {
         throw new NamespaceNotReadyError();
       }
-      if (input.source !== undefined) {
+      const connectionId = this.nextIdentifier("provider_connection");
+      // Share the enclosing transaction so a rejected connection rolls back its new Secret.
+      const source =
+        input.secretValue === undefined
+          ? input.source
+          : {
+              kind: "secret" as const,
+              namespaceId: namespace.id,
+              id: (
+                await this.createSecret(principalId, {
+                  namespaceId: namespace.id,
+                  name: `Provider credential ${connectionId}`,
+                  value: input.secretValue,
+                })
+              ).id,
+            };
+      if (source !== undefined) {
         await this.authorizeHarnessAuthSource(state, principalId, namespace.id, {
           method: "api_key",
-          source: input.source,
+          source,
         });
       }
       const connection: ProviderConnection = {
-        id: this.nextIdentifier("provider_connection"),
+        id: connectionId,
         namespaceId: namespace.id,
         name: input.name,
         providerId: input.providerId,
         authMethodId: input.authMethodId,
-        ...(input.source === undefined ? {} : { source: input.source }),
+        ...(source === undefined ? {} : { source }),
         ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
         createdAt: this.timestamp(),
       };
@@ -3136,14 +3157,13 @@ export class OpenClawController {
     principalId: string,
     agent: Readonly<Agent>,
   ): Promise<HarnessAuthSnapshot> {
-    let binding = this.harnessAuthBinding(agent.harnessAuth);
+    const binding = this.harnessAuthBinding(agent.harnessAuth);
     if (binding === null) {
       throw new ResourceConflictError(
         "Deployment requires an explicit Harness authentication binding.",
       );
     }
     await this.authorizeHarnessAuthSource(state, principalId, agent.namespaceId, binding);
-    let providerConnection: { id: string; providerId: string; authMethodId: string } | undefined;
     if (binding.method === "provider_connection") {
       await this.authorizeHarnessAuthSource(
         state,
@@ -3160,42 +3180,33 @@ export class OpenClawController {
       }
       const { method } = this.providerAuthMethod(connection.providerId, connection.authMethodId);
       // Configuration-only methods remain selectable in drafts; admission must not imply login.
-      if (method.deploymentAuthMethod !== "api_key" || !connection.source) {
+      if (method.deploymentAuthMethod !== "provider_connection") {
         throw new ResourceConflictError(
           method.unavailableReason ?? "This provider authentication method cannot be deployed yet.",
         );
       }
-      providerConnection = {
-        id: connection.id,
-        providerId: connection.providerId,
-        authMethodId: connection.authMethodId,
-      };
-      binding = { method: "api_key", source: connection.source };
+      const credential =
+        connection.source === undefined
+          ? undefined
+          : await this.admitHarnessSecret(state, agent, connection.source);
+      return immutableCopy({
+        method: "provider_connection" as const,
+        connection: {
+          id: connection.id,
+          providerId: connection.providerId,
+          authMethodId: connection.authMethodId,
+          ...(connection.baseUrl === undefined ? {} : { baseUrl: connection.baseUrl }),
+        },
+        ...(credential === undefined ? {} : { credential }),
+      });
     }
     if (binding.method === "runtime") {
       return immutableCopy(binding);
     }
     if (binding.method === "api_key") {
-      await this.authorize(agent.servicePrincipalId, "operate", binding.source);
-      const source = await state.secrets.lockSecret(agent.namespaceId, binding.source.id);
-      if (source === undefined) {
-        throw new ScopeViolationError("The Harness Secret is unavailable.");
-      }
-      const driver = this.secretDriver(source.driverId);
-      const resolved = await this.secretOperation(() => driver.resolve(source));
-      if (
-        Object.keys(source.backendRef).some(
-          (key) =>
-            resolved[key as keyof typeof resolved] !==
-            source.backendRef[key as keyof typeof source.backendRef],
-        )
-      ) {
-        throw new DependencyUnavailableError("The Harness Secret backend identity changed.");
-      }
       return immutableCopy({
-        ...binding,
-        secretDriverId: driver.id,
-        ...(providerConnection === undefined ? {} : { providerConnection }),
+        method: "api_key" as const,
+        ...(await this.admitHarnessSecret(state, agent, binding.source)),
       });
     }
     const account = await state.serviceAccounts.lockServiceAccount(
@@ -3264,6 +3275,30 @@ export class OpenClawController {
     return Object.freeze({
       transportConfigured: status.transportConfigured,
     });
+  }
+
+  private async admitHarnessSecret(
+    state: PlatformUnitOfWork,
+    agent: Readonly<Agent>,
+    reference: SecretReference,
+  ): Promise<{ source: SecretReference; secretDriverId: string }> {
+    await this.authorize(agent.servicePrincipalId, "operate", reference);
+    const source = await state.secrets.lockSecret(agent.namespaceId, reference.id);
+    if (source === undefined) {
+      throw new ScopeViolationError("The Harness Secret is unavailable.");
+    }
+    const driver = this.secretDriver(source.driverId);
+    const resolved = await this.secretOperation(() => driver.resolve(source));
+    if (
+      Object.keys(source.backendRef).some(
+        (key) =>
+          resolved[key as keyof typeof resolved] !==
+          source.backendRef[key as keyof typeof source.backendRef],
+      )
+    ) {
+      throw new DependencyUnavailableError("The Harness Secret backend identity changed.");
+    }
+    return { source: reference, secretDriverId: driver.id };
   }
 
   private secretMetadata(secret: Secret): Readonly<SecretMetadata> {

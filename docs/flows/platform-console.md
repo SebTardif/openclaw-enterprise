@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
-updated: 2026-09-22
-last_updated_session: codex/01a0c73a-cdc5-7e81-8c14-f1b59251894f
+updated: 2026-09-23
+last_updated_session: codex/01a0cb30-109d-7520-b27c-ace1d03ac751
 ---
 
 # Platform console request flow
@@ -85,7 +85,8 @@ graph TD
 `apps/controller/src/composition/development-postgres.ts:composePostgresDevelopment`
 
 Startup projects validated Provider definitions into safe `{id,type}` summaries
-and passes them to `createFastifyApp`. This is a startup snapshot, not a live
+and passes them to `createFastifyApp`. Development without an Installation
+configuration supplies an empty list. This is a startup snapshot, not a live
 configuration scan. The request path never reads credentials or contacts a
 Provider. The existing [Provider-managed credential delivery](service-account-driver-credential-delivery.md) owns
 client construction and Driver activation.
@@ -261,6 +262,8 @@ refreshes and inspects the Agent and revision history.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 04:18: Return an empty Provider inventory in development without an Installation configuration. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 30547beeda9e413de5b7c4bf6c9f3b10f58c5fcb)
 
 - 2026-09-22 04:31: Trace initial workspace inputs separately from Configuration creation and link setup before execution. (01a0c755-0518-7502-a533-64cd7465de15 - f3dbdd41c8f3b49573d1353a4b06ce510ee43a56)
 

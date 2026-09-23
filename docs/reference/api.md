@@ -2541,11 +2541,13 @@ Save provider and authentication configuration without authenticating
 
 **Operation ID:** `createProviderConnection`
 
-**Permissions:** Requires create permission for ProviderConnection resources in the requested Namespace.
+**Permissions:** Requires create permission for ProviderConnection resources in the requested Namespace. Requires Secret create permission in the Namespace when supplying a new credential value. Requires operate permission on each bound Secret when Secret bindings are present or selected.
 
 | Action | Resource | Scope |
 | --- | --- | --- |
 | `create` | `provider_connection` | `namespace` |
+| `create` | `secret` | `namespace` |
+| `operate` | `secret` | `request_body` (when bound) |
 
 ##### Parameters
 
@@ -2565,6 +2567,7 @@ Save provider and authentication configuration without authenticating
 | `baseUrl` | `string` | No | min length: 1; max length: 2048 |
 | `name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `providerId` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
+| `secretValue` | `string` | No | min length: 1; max length: 65536; pattern: `^[^\u0000]*$`; Protected Secret value. It must be nonempty UTF-8 without NUL; OCC accepts at most 65,536 UTF-8 bytes and still enforces the route request body limit. |
 | `source` | `object` | No | Exact OCC Secret reference. Shape: `{ "kind": "secret", "namespaceId": "ns_...", "id": "sec_..." }`. |
 | `source.id` | `string` | Yes | pattern: `^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `source.kind` | `"secret"` | Yes | — |
@@ -2723,7 +2726,7 @@ List native model providers and authentication method availability
 | `data` | `array<object>` | Yes | — |
 | `data[].authMethods` | `array<object>` | Yes | — |
 | `data[].authMethods[].credentialKind` | `"secret" or "oauth" or "none"` | Yes | — |
-| `data[].authMethods[].deploymentAuthMethod` | `"api_key" or null` | Yes | — |
+| `data[].authMethods[].deploymentAuthMethod` | `"provider_connection" or null` | Yes | — |
 | `data[].authMethods[].id` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].authMethods[].label` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
 | `data[].authMethods[].nativeMethodId` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |

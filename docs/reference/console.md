@@ -55,15 +55,23 @@ authorization decisions; the selector does not broaden access.
 
 In **Providers**, select a Namespace and fill **Add provider** with a connection
 name, provider, and authentication method. For a key or setup token, enter an
-existing Secret ID from that Namespace. Local-server choices also require a
-base URL. Select **Save provider connection** to record the setup.
+**API key** or **Setup token**, or choose **Use an existing Secret ID** under
+**Credential source** to reuse a Secret from that Namespace. **Save provider
+connection** stores a new credential and its connection together. The response
+contains a Secret reference, not the credential value. Entered credentials are
+cleared after a save attempt. If the outcome is unknown, select **Refresh** and
+check the saved connections before trying again.
+
+Local-server choices require a base URL. Configure runtime network access to that
+server separately, and select a matching model in the Agent Configuration. Saving
+neither probes the URL nor changes network policies. Verify connectivity and
+authentication from the deployed runtime.
 
 Saving does not test credentials or model access. OAuth choices show that login
 is not implemented; they save metadata without starting consent or storing
-tokens. Anthropic and local-server connections also show their deployment
-limitation. Only OpenAI API-key connections currently support Agent deployment.
-Choose an available saved connection in the Agent authentication controls to
-reuse it. See [connection permissions and limits](providers.md#model-authentication-catalog-and-saved-connections).
+tokens. To use a saved key, token, or local-server connection, choose **Saved
+provider connection** in the Agent authentication controls. See
+[connection permissions and limits](providers.md#model-authentication-catalog-and-saved-connections).
 
 Connections have no edit action. **Remove** deletes unused connection metadata;
 an Agent draft, active revision, or pending deployment prevents removal. The
@@ -80,6 +88,11 @@ workflow, channel constraints, and recovery after partial or uncertain writes.
 Plugin selections use the same Agent create/update contract as the API: omitted
 updates preserve the map, `{}` clears it, and deployment startup reports
 unsupported catalog or policy choices.
+
+**Model provider and authentication** selects model credentials. **Control-plane
+Provider (optional)** is a separate Installation service-account association.
+A failure to load that optional directory leaves saved model connections available;
+the console displays the directory error beside its field.
 
 ## Inspect detail, revisions, and channel drafts
 

@@ -6,3 +6,10 @@ export const Providers = { ...story("providers"), name: "Configured" };
 export const ProvidersEmpty = { ...story("providersEmpty"), name: "Empty" };
 export const ProvidersError = { ...story("providersError"), name: "Discovery unavailable" };
 export const ProvidersOAuth = { ...story("providersOAuth"), name: "OAuth setup pending" };
+export const ProvidersToken = { ...story("providersToken"), name: "Static token entry" };
+export const ProvidersExistingSecret = {
+  ...story("providersExistingSecret"),
+  name: "Existing Secret",
+};
+export const ProvidersLocal = { ...story("providersLocal"), name: "Local server" };
+export const ProvidersVllm = { ...story("providersVllm"), name: "Self-hosted server" };

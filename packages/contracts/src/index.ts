@@ -232,10 +232,17 @@ export type HarnessAuthBinding =
 export type HarnessAuthSnapshot =
   | { readonly method: "runtime" }
   | {
+      readonly method: "provider_connection";
+      readonly connection: ProviderConnectionReferenceSnapshot;
+      readonly credential?: {
+        readonly source: SecretReference;
+        readonly secretDriverId: string;
+      };
+    }
+  | {
       readonly method: "api_key";
       readonly source: SecretReference;
       readonly secretDriverId: string;
-      readonly providerConnection?: ProviderConnectionReferenceSnapshot;
     }
   | {
       readonly method: "chatgpt_service_account";
@@ -251,6 +258,15 @@ export type HarnessAuthSnapshot =
 
 /** Authoritative delivery references, resolved again at dispatch; never secret values. */
 export type ResolvedHarnessAuth =
+  | {
+      readonly method: "provider_connection";
+      readonly connection: ProviderConnectionReferenceSnapshot;
+      readonly credential?: {
+        readonly source: SecretReference;
+        readonly secretDriverId: string;
+        readonly backendRef: SecretBackendRef;
+      };
+    }
   | (Extract<HarnessAuthSnapshot, { method: "api_key" }> & {
       readonly backendRef: SecretBackendRef;
     })

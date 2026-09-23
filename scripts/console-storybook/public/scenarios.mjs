@@ -126,7 +126,7 @@ export const scenarios = {
     name: "Configured",
     path: "/console/providers",
     description: "Namespace provider connections and separate Installation Provider discovery.",
-    gap: "Use an existing Secret ID. OAuth login and additional provider deployment methods are not implemented yet.",
+    gap: "Enter an API key or token, or use an existing Secret ID. Saving does not test inference access. OAuth login is not implemented yet.",
   },
   providersEmpty: {
     group: "Pages/Providers",
@@ -146,12 +146,45 @@ export const scenarios = {
     actions: [{ selector: "#connection-auth", value: "oauth" }],
     gap: "Authentication not implemented yet. There is no functional Connect action.",
   },
+  providersToken: {
+    group: "Pages/Providers",
+    name: "Static token entry",
+    path: "/console/providers",
+    actions: [
+      { selector: "#connection-provider", value: "anthropic" },
+      { selector: "#connection-auth", value: "setup-token" },
+    ],
+    description: "Save a static token as a Namespace Secret with its provider connection.",
+  },
+  providersExistingSecret: {
+    group: "Pages/Providers",
+    name: "Existing Secret",
+    path: "/console/providers",
+    actions: [{ selector: "#connection-credential-source", value: "existing" }],
+    description: "Reuse an existing Secret instead of entering another credential.",
+  },
   providersError: {
     group: "Pages/Providers",
     name: "Discovery unavailable",
     path: "/console/providers",
     rules: [{ path: "/providers", status: 503 }],
     description: "Provider discovery fails and can be retried.",
+  },
+  providersLocal: {
+    group: "Pages/Providers",
+    name: "Local server",
+    path: "/console/providers",
+    actions: [{ selector: "#connection-provider", value: "ollama" }],
+    description:
+      "Configure a local endpoint without a credential. Runtime network access and a matching Agent model must be configured separately.",
+  },
+  providersVllm: {
+    group: "Pages/Providers",
+    name: "Self-hosted server",
+    path: "/console/providers",
+    actions: [{ selector: "#connection-provider", value: "vllm" }],
+    description:
+      "Configure a vLLM endpoint and API key. Saving does not test server access or change network rules.",
   },
   namespaces: {
     group: "Pages/Namespaces",
@@ -232,7 +265,21 @@ export const scenarios = {
       { path: "/providers", status: 403 },
       { path: "/namespaces/ns_00000000-0000-4000-8000-000000000001/service-accounts", status: 403 },
     ],
-    description: "Unavailable Provider and service-account lists do not hide the Agent form.",
+    description:
+      "Denied control-plane Provider and service-account discovery remain visible without hiding model-provider setup.",
+  },
+  createDiscoveryUnavailable: {
+    group: "Pages/Create Agent",
+    name: "Control-plane discovery unavailable",
+    path: create,
+    actions: [
+      ...form,
+      { selector: "#harness-auth-method", value: "provider_connection" },
+      { selector: "#provider-connection-id", value: "pco_00000000-0000-4000-8000-000000000001" },
+    ],
+    rules: [{ path: "/providers", status: 503 }],
+    description:
+      "A saved model connection remains available while the optional Installation Provider directory returns 503. This story deliberately injects the discovery failure.",
   },
   createInvalid: {
     group: "Pages/Create Agent",

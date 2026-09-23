@@ -100,7 +100,12 @@ export function createHarnessAuthFields(context, binding = null) {
   const section = element(
     "fieldset",
     { className: "harness-auth-fields" },
-    element("legend", {}, "Harness authentication"),
+    element("legend", {}, "Model provider and authentication"),
+    element(
+      "p",
+      { className: "hint" },
+      "Choose Saved provider connection to use a model provider configured on the Providers page.",
+    ),
     element("label", { for: method.id }, "Authentication source"),
     method,
     secretField,
