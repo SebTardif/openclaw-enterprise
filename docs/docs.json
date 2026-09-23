@@ -716,6 +716,7 @@
               "flows/local-password-authentication",
               "flows/namespace-iam-policy",
               "flows/native-service-account-credential-delivery",
+              "flows/agent-oauth-custody",
               "flows/secret-storage-and-delivery",
               "flows/service-account-driver-credential-delivery",
               "flows/service-api-keys",

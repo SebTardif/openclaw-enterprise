@@ -29,6 +29,7 @@ export function createPlatformReadView(
       "listServiceAccounts",
       "findServiceAccountProviderBinding",
     ]),
+    agentOAuth: bindRepository(repositories.agentOAuth, lifetime, ["latest", "find", "list"]),
     workspaceSetups: bindRepository(repositories.workspaceSetups, lifetime, ["find"]),
     agents: bindRepository(repositories.agents, lifetime, ["findAgent", "listAgents"]),
     revisions: bindRepository(repositories.revisions, lifetime, ["findRevision", "listRevisions"]),

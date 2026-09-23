@@ -1,4 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { AgentOAuthCustody } from "./agent-oauth.ts";
+
+export type { AgentOAuthStatus, AgentOAuthMethod } from "./agent-oauth.ts";
+export { cleanupAgentOAuthForDeletion } from "./agent-oauth-cleanup.ts";
 import type {
   Agent,
   InitialWorkspaceFiles,
@@ -684,6 +688,7 @@ function normalizeAgentPlugins(
 
 export class OpenClawController {
   readonly installation: Readonly<Installation>;
+  readonly agentOAuth: AgentOAuthCustody;
 
   private readonly authorization?: ControllerOptions["authorize"];
   private readonly clock: () => Date;
@@ -722,6 +727,66 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+    this.agentOAuth = new AgentOAuthCustody({
+      transact: (work) => this.mutate(work),
+      authorize: (actorId, namespaceId, agentId) =>
+        this.authorize(actorId, "administer", {
+          kind: "agent",
+          id: agentId,
+          namespaceId,
+        }),
+      lockAgent: async (state, namespaceId, agentId) => {
+        const namespace = await this.lockNamespace(state, namespaceId);
+        const agent = await state.agents.lockAgent(namespace.id, agentId);
+        if (!agent) {
+          throw new ScopeViolationError("The Agent does not belong to the exact Namespace.");
+        }
+        if (agent.status !== "active") {
+          throw new AgentDeletingError();
+        }
+        if (namespace.status !== "ready") {
+          throw new NamespaceNotReadyError();
+        }
+        return agent;
+      },
+      resolveSelection: async (state, actorId, namespaceId, agentId) => {
+        await this.authorize(actorId, "operate", {
+          kind: "agent",
+          id: agentId,
+          namespaceId,
+        });
+        const agent = await state.agents.findAgent(namespaceId, agentId);
+        const binding = agent && this.harnessAuthBinding(agent.harnessAuth);
+        if (binding?.method !== "provider_connection") {
+          throw new ScopeViolationError("Select an OAuth provider connection on the Agent first.");
+        }
+        await this.authorize(actorId, "operate", {
+          kind: "provider_connection",
+          id: binding.connectionId,
+          namespaceId,
+        });
+        const connection = await state.providerConnections.lockProviderConnection(
+          namespaceId,
+          binding.connectionId,
+        );
+        if (!connection) {
+          throw new ScopeViolationError(
+            "The provider connection does not belong to the exact Namespace.",
+          );
+        }
+        const { method } = this.providerAuthMethod(connection.providerId, connection.authMethodId);
+        if (method.credentialKind !== "oauth") {
+          throw new ScopeViolationError("The Agent's provider connection does not use OAuth.");
+        }
+        return {
+          providerConnectionId: connection.id,
+          providerId: method.nativeProviderId,
+          methodId: method.nativeMethodId,
+        };
+      },
+      secretDriver: (expectedId) => this.secretDriver(expectedId),
+      now: this.clock,
+    });
   }
 
   registerProviderCatalog(catalog: readonly ModelAuthCatalogProvider[]): void {
@@ -2331,6 +2396,36 @@ export class OpenClawController {
         input.repositoryBindings === undefined
           ? undefined
           : (this.repositoryBindingSelections(namespace.id, input.repositoryBindings) ?? []);
+      if (requestedAuth !== undefined) {
+        const attempt = await state.agentOAuth.latest(namespace.id, agent.id);
+        if (
+          attempt &&
+          !(
+            requestedAuth?.method === "provider_connection" &&
+            requestedAuth.connectionId === attempt.providerConnectionId
+          ) &&
+          !["cancelled", "superseded"].includes(attempt.phase)
+        ) {
+          if (["handoff_pending", "ready"].includes(attempt.phase)) {
+            throw new ResourceConflictError(
+              "Retire the current OAuth runtime before changing its provider connection.",
+            );
+          }
+          // Persist invalidation with the draft change so switching A -> B -> A
+          // cannot restore authority to a retained consent handle for A.
+          const superseded = await state.agentOAuth.update({
+            namespaceId: namespace.id,
+            agentId: agent.id,
+            generation: attempt.generation,
+            expectedPhase: attempt.phase,
+            phase: "superseded",
+            updatedAt: this.clock().toISOString(),
+          });
+          if (!superseded) {
+            throw new ResourceConflictError("The OAuth attempt changed during its update.");
+          }
+        }
+      }
       const updated = await state.agents.updateConfiguration(
         namespace.id,
         agent.id,

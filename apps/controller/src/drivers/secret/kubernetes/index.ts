@@ -71,6 +71,10 @@ function kubernetesSecretName(identity: SecretIdentity): string {
   return `secret-${sha256Hex(identity.namespaceId, 12)}-${sha256Hex(identity.id, 12)}-${sha256Hex(randomUUID(), 12)}`;
 }
 
+function stagedSecretName(identity: SecretIdentity): string {
+  return `staged-secret-${sha256Hex(identity.namespaceId, 12)}-${sha256Hex(identity.id, 32)}`;
+}
+
 function validateIdentity(identity: SecretIdentity): void {
   const value = asRecord(identity);
   if (value === undefined) {
@@ -286,6 +290,57 @@ export class KubernetesSecretDriver implements SecretDriver {
     return this.checkedBackendRef(observed, identity, namespace);
   }
 
+  async stage(identity: SecretIdentity, value: string): Promise<SecretBackendRef> {
+    validateIdentity(identity);
+    validateValue(value);
+    const client = await this.core();
+    const namespace = await this.readyNamespace(client, identity.namespaceId);
+    const name = stagedSecretName(identity);
+    let observed: V1Secret;
+    try {
+      observed = await this.request(
+        () =>
+          client.createNamespacedSecret({
+            namespace,
+            body: { ...this.manifest(identity, namespace, name, value), immutable: true },
+          }),
+        "stage",
+        { mutating: true },
+      );
+    } catch (error) {
+      if (!(error instanceof SecretConflictError)) {
+        throw error;
+      }
+      // A stable identity recovers a committed write whose acknowledgment was lost.
+      // Immutable material may be reused only when the original bytes still match.
+      observed = await this.request(() => client.readNamespacedSecret({ namespace, name }), "read");
+    }
+    const backendRef = this.checkedStagedBackendRef(observed, identity, namespace);
+    if (observed.data?.[SECRET_KEY] !== Buffer.from(value, "utf8").toString("base64")) {
+      throw new SecretConflictError("The staged Secret value does not match the original write.");
+    }
+    return backendRef;
+  }
+
+  async findStaged(identity: SecretIdentity): Promise<SecretBackendRef | undefined> {
+    validateIdentity(identity);
+    const client = await this.core();
+    const namespace = await this.readyNamespace(client, identity.namespaceId);
+    let observed: V1Secret;
+    try {
+      observed = await this.request(
+        () => client.readNamespacedSecret({ namespace, name: stagedSecretName(identity) }),
+        "read",
+      );
+    } catch (error) {
+      if (error instanceof SecretBackendMissingError) {
+        return undefined;
+      }
+      throw error;
+    }
+    return this.checkedStagedBackendRef(observed, identity, namespace);
+  }
+
   async update(secret: Secret, value: string): Promise<void> {
     validateIdentity(secret);
     validateBackendRef(secret.backendRef);
@@ -300,6 +355,9 @@ export class KubernetesSecretDriver implements SecretDriver {
       "read",
     );
     this.checkedBackendRef(existing, secret, namespace, secret.backendRef);
+    if (existing.immutable === true) {
+      throw new SecretOwnershipError("Staged Secret values cannot be updated.");
+    }
     const desired: V1Secret = {
       apiVersion: "v1",
       kind: "Secret",
@@ -445,7 +503,7 @@ export class KubernetesSecretDriver implements SecretDriver {
     const uid = required(metadata?.uid, "Secret backend UID");
     if (
       observed.type !== "Opaque" ||
-      observed.immutable === true ||
+      (observed.immutable === true) !== (name === stagedSecretName(identity)) ||
       metadata?.namespace !== namespace ||
       labels?.["app.kubernetes.io/managed-by"] !== MANAGER ||
       labels[NAMESPACE_LABEL] !== identity.namespaceId ||
@@ -469,6 +527,22 @@ export class KubernetesSecretDriver implements SecretDriver {
       throw new SecretOwnershipError("Secret backend identity changed.");
     }
     return resolved;
+  }
+
+  private checkedStagedBackendRef(
+    observed: V1Secret,
+    identity: SecretIdentity,
+    namespace: string,
+  ): SecretBackendRef {
+    const backendRef = this.checkedBackendRef(observed, identity, namespace);
+    if (
+      backendRef.name !== stagedSecretName(identity) ||
+      observed.metadata?.annotations?.[SECRET_NAME_ANNOTATION] !== identity.name ||
+      Object.keys(observed.data ?? {}).length !== 1
+    ) {
+      throw new SecretOwnershipError("The staged Secret does not match its immutable identity.");
+    }
+    return backendRef;
   }
 
   private async readyNamespace(client: CoreV1Api, namespaceId: string): Promise<string> {

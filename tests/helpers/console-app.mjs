@@ -71,7 +71,7 @@ async function availableLoopbackPort() {
 }
 
 export async function createConsoleAppFixture(t, options = {}) {
-  const installationId = `ins_${randomUUID()}`;
+  const installationId = options.installation?.id ?? `ins_${randomUUID()}`;
   const port = await availableLoopbackPort();
   const originHost = options.originHost ?? "127.0.0.1";
   const browserPort = options.https === true ? await availableLoopbackPort() : port;
@@ -113,7 +113,7 @@ export async function createConsoleAppFixture(t, options = {}) {
     bindings: seed.bindings.map((binding) => ({ ...binding })),
     restrictions: [],
   };
-  const auditSink = new InMemoryAuditSink();
+  const auditSink = options.auditSink ?? new InMemoryAuditSink();
   const iamDriver = new NativeIAMDriver(
     { loadNativeIAMState: async () => policy },
     { id: "console-native-iam" },
@@ -138,6 +138,9 @@ export async function createConsoleAppFixture(t, options = {}) {
     configurationDriver: createTestConfigurationDriver({ id: "console-configuration" }),
     ...(secretDriver === undefined || secretDriver === null ? {} : { secretDriver }),
     ...(publicOrigin === undefined ? {} : { publicOrigin }),
+    ...(options.agentOAuthMethods === undefined
+      ? {}
+      : { agentOAuthMethods: options.agentOAuthMethods }),
     ...(options.nativeAdmin === undefined ? {} : { nativeAdmin: options.nativeAdmin }),
     ...(options.nativeAdminGatewayApiKey === undefined
       ? {}
@@ -170,6 +173,20 @@ export async function createConsoleAppFixture(t, options = {}) {
   };
   if (providerSummaries !== undefined) {
     appOptions.providerSummaries = providerSummaries;
+  }
+  if (options.installation !== undefined) {
+    appOptions.controller = appOptions.createController(options.installation);
+    for (const driver of [
+      iamDriver,
+      appOptions.computeDriver,
+      appOptions.configurationDriver,
+      secretDriver,
+    ]) {
+      if (driver) {
+        controller.registerDriver(driver);
+        controller.selectDriver(driver.capability, driver.id);
+      }
+    }
   }
   const app = createFastifyApp(appOptions);
   await app.listen({ host: "127.0.0.1", port });

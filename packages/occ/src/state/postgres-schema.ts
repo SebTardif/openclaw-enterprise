@@ -1,4 +1,5 @@
 import type {
+  AgentOAuthAttempt,
   InitialWorkspaceFiles,
   AgentDesiredRuntimeState,
   AgentStatus,
@@ -21,6 +22,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -361,6 +363,86 @@ export const agents = occSchema.table(
     })
       .onUpdate("restrict")
       .onDelete("no action"),
+  ],
+);
+
+export const agentOAuthAttempts = occSchema.table(
+  "agent_oauth_attempts",
+  {
+    namespaceId: text("namespace_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    providerConnectionId: text("provider_connection_id").notNull(),
+    connectionId: text("connection_id").notNull(),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    attemptId: text("attempt_id").notNull().unique(),
+    actorId: text("actor_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    methodId: text("method_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    phase: text("phase").$type<AgentOAuthAttempt["phase"]>().notNull(),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }).notNull(),
+    secretDriverId: text("secret_driver_id").notNull(),
+    secretIdentity: jsonb("secret_identity").$type<AgentOAuthAttempt["secretIdentity"]>().notNull(),
+    stagedSecret: jsonb("staged_secret").$type<AgentOAuthAttempt["stagedSecret"]>(),
+    storageUid: text("storage_uid"),
+    failureCode: text("failure_code").$type<AgentOAuthAttempt["failureCode"]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "agent_oauth_attempts_pkey",
+      columns: [table.namespaceId, table.agentId, table.generation],
+    }),
+    unique("agent_oauth_connection_generation_unique").on(table.connectionId, table.generation),
+    uniqueIndex("agent_oauth_secret_identity_unique").on(sql`(${table.secretIdentity}->>'id')`),
+    check(
+      "agent_oauth_provider_connection_valid",
+      sql`${table.providerConnectionId} ~ '^pco_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`,
+    ),
+    foreignKey({
+      name: "agent_oauth_agent_owner",
+      columns: [table.namespaceId, table.agentId],
+      foreignColumns: [agents.namespaceId, agents.id],
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    check("agent_oauth_generation_valid", sql`${table.generation} BETWEEN 1 AND 9007199254740991`),
+    check(
+      "agent_oauth_connection_valid",
+      sql`${table.connectionId} ~ '^aoc_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`,
+    ),
+    check(
+      "agent_oauth_strings_valid",
+      sql`
+      char_length(${table.attemptId}) BETWEEN 1 AND 512 AND ${table.attemptId} !~ '[[:cntrl:]]'
+      AND char_length(${table.actorId}) BETWEEN 1 AND 512 AND ${table.actorId} !~ '[[:cntrl:]]'
+      AND char_length(${table.providerId}) BETWEEN 1 AND 512 AND ${table.providerId} !~ '[[:cntrl:]]'
+      AND char_length(${table.methodId}) BETWEEN 1 AND 512 AND ${table.methodId} !~ '[[:cntrl:]]'
+      AND char_length(${table.profileId}) BETWEEN 1 AND 512 AND ${table.profileId} !~ '[[:cntrl:]]'
+      AND char_length(${table.secretDriverId}) BETWEEN 1 AND 512 AND ${table.secretDriverId} !~ '[[:cntrl:]]'
+      AND (${table.storageUid} IS NULL OR (char_length(${table.storageUid}) BETWEEN 1 AND 512 AND ${table.storageUid} !~ '[[:cntrl:]]'))`,
+    ),
+    check(
+      "agent_oauth_phase_valid",
+      sql`${table.phase} IN ('authorizing','staging','authenticated','handoff_pending','ready','reconnect_required','cancelled','superseded')`,
+    ),
+    check(
+      "agent_oauth_failure_valid",
+      sql`${table.failureCode} IN ('OAUTH_FAILED','OAUTH_EXPIRED','OAUTH_CANCELLED','CREDENTIAL_STAGING_FAILED','NATIVE_STORE_MISSING','NATIVE_IMPORT_FAILED','MODEL_ACCESS_DENIED','RUNTIME_UNSUPPORTED')`,
+    ),
+    check(
+      "agent_oauth_timestamps_valid",
+      sql`isfinite(${table.createdAt}) AND isfinite(${table.updatedAt}) AND isfinite(${table.deadlineAt}) AND ${table.deadlineAt} > ${table.createdAt} AND ${table.updatedAt} >= ${table.createdAt}`,
+    ),
+    check(
+      "agent_oauth_metadata_valid",
+      sql`occ.agent_oauth_secret_metadata_valid(${table.secretIdentity}, ${table.stagedSecret}, ${table.namespaceId}, ${table.secretDriverId})`,
+    ),
+    check(
+      "agent_oauth_custody_valid",
+      sql`(${table.phase} NOT IN ('authenticated','handoff_pending') OR ${table.stagedSecret} IS NOT NULL) AND (${table.phase} NOT IN ('handoff_pending','ready') OR ${table.storageUid} IS NOT NULL)`,
+    ),
   ],
 );
 

@@ -35,6 +35,9 @@ import {
 } from "./common.ts";
 import {
   AgentListResponse,
+  AgentOAuthConnectionId,
+  AgentOAuthStatusResponse,
+  AgentOAuthCancelResponse,
   PresetResponse,
   PresetListResponse,
   AgentDeploymentStatusResponse,
@@ -822,6 +825,48 @@ export const occApiRoutes = [
       querystring: EmptyQuery,
       params: AgentParams,
       response: { 200: AgentRuntimeCredentialResponse, ...readErrors },
+    },
+  },
+  {
+    operationId: "getAgentOAuthStatus",
+    method: "GET",
+    path: "/namespaces/:namespaceId/agents/:agentId/oauth",
+    action: "openclaw.agents.oauth.read",
+    iamAction: "administer",
+    resourceKind: "agent",
+    authorizationTarget: "agent",
+    summary: "Get redacted OAuth status for one Agent, or null before its first attempt",
+    tags: ["Agents"],
+    schema: {
+      querystring: EmptyQuery,
+      params: AgentParams,
+      response: { 200: AgentOAuthStatusResponse, ...mutationErrors },
+    },
+  },
+  {
+    operationId: "cancelAgentOAuthAttempt",
+    method: "POST",
+    path: "/namespaces/:namespaceId/agents/:agentId/oauth/attempts/:attemptId/cancel",
+    action: "openclaw.agents.oauth.cancel",
+    iamAction: "administer",
+    resourceKind: "agent",
+    authorizationTarget: "agent",
+    summary: "Cancel the initiating actor's exact current OAuth attempt",
+    tags: ["Agents"],
+    schema: {
+      querystring: EmptyQuery,
+      params: Type.Object(
+        { ...AgentParams.properties, attemptId: Type.String({ format: "uuid" }) },
+        { additionalProperties: false },
+      ),
+      body: Type.Object(
+        {
+          connectionId: AgentOAuthConnectionId,
+          generation: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        },
+        { additionalProperties: false },
+      ),
+      response: { 200: AgentOAuthCancelResponse, ...mutationErrors },
     },
   },
   {

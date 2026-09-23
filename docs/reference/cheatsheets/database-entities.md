@@ -56,6 +56,19 @@ Stores Agent drafts, their desired runtime state, and the active revision refere
 - `status`
 - `created_at`
 
+### `agent_oauth_attempts`
+
+Stores private [Agent OAuth custody](../../flows/agent-oauth-custody.md) metadata
+for each connection generation. Credential bytes live only in the Secret backend.
+
+- `namespace_id`, `agent_id`, `connection_id`, `generation`, `attempt_id`, `actor_id`
+- `provider_id`, `method_id`, `profile_id`, `phase`, `deadline_at`
+- `secret_driver_id`, `secret_identity`, `staged_secret`
+- `storage_uid`, `failure_code`, `created_at`, `updated_at`
+
+Agent deletion must finish external Secret cleanup before deleting these rows.
+Identity and generation history remain available while a backend result is unknown.
+
 ### `agent_revisions`
 
 Stores numbered, immutable snapshots of Agent settings accepted for deployment.

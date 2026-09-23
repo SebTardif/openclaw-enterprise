@@ -794,6 +794,9 @@ export interface ServiceAccountDriver extends Driver {
 export interface SecretDriver extends Driver {
   readonly capability: "secret";
   create(identity: SecretIdentity, value: string): Promise<SecretBackendRef>;
+  /** Immutable, idempotent private custody; recover an uncertain create by its exact identity. */
+  stage?(identity: SecretIdentity, value: string): Promise<SecretBackendRef>;
+  findStaged?(identity: SecretIdentity): Promise<SecretBackendRef | undefined>;
   update(secret: Secret, value: string): Promise<void>;
   delete(secret: Secret): Promise<void>;
   /** Verify live exact ownership and return only safe projection identity. */
@@ -955,6 +958,7 @@ export {
 } from "./preset-variables.mjs";
 
 export type { InitialWorkspaceFiles, WorkspaceSetup } from "./workspace-setup.ts";
+export type { AgentOAuthAttempt, AgentOAuthPhase, AgentOAuthFailureCode } from "./agent-oauth.ts";
 export { normalizeInitialWorkspaceFiles, normalizeWorkspaceDefaultsId } from "./workspace-setup.ts";
 export {
   WORKSPACE_DEFAULTS,
