@@ -143,13 +143,64 @@ export function createPluginRuntimeTranslator() {
     return enabled(selection) && pluginApprovalMode(selection) !== "never";
   }
 
-  function assertNoToolPolicy(selection: Record<string, unknown>): void {
-    if (selection.destructiveActions !== undefined || selection.writes !== undefined) {
-      throw new Error("Codex plugin category policy is unavailable at startup.");
+  function codexToolPolicies(selection: Record<string, unknown>): Record<string, unknown> {
+    const tools = selection.tools ?? {};
+    if (!isRecord(tools)) {
+      throw new Error("Codex plugin tool policy must be an object.");
     }
-    if (selection.tools !== undefined) {
-      throw new Error("Codex plugin tool policy is unavailable at startup.");
+    for (const policy of Object.values(tools)) {
+      if (!isRecord(policy)) {
+        throw new Error("Codex plugin tool policy must be an object.");
+      }
+      enabled(policy);
+      if (policy.approvalMode !== undefined) {
+        pluginApprovalMode(policy);
+      }
     }
+    for (const mode of [selection.writes, selection.destructiveActions]) {
+      if (mode !== undefined) {
+        pluginApprovalMode({ approvalMode: mode });
+      }
+    }
+    return tools;
+  }
+
+  function codexNeedsToolInventory(selections: unknown): boolean {
+    return selectionEntries(selections).some(
+      ([, selection]) =>
+        codexSelectionEnabled(selection) &&
+        (selection.tools !== undefined ||
+          selection.writes !== undefined ||
+          selection.destructiveActions !== undefined),
+    );
+  }
+
+  function codexApprovalMode(mode: unknown): unknown {
+    if (mode === "always") {
+      return "approve";
+    }
+    return mode === "never" ? "auto" : mode;
+  }
+
+  function codexSelectionEnabled(selection: Record<string, unknown>): boolean {
+    if (!enabled(selection)) {
+      return false;
+    }
+    if (pluginApprovalMode(selection) !== "never") {
+      return true;
+    }
+    // A default denial does not disable a plugin with explicit tool/category exceptions.
+    const categoryModes = [selection.writes, selection.destructiveActions];
+    return (
+      categoryModes.some((mode) => mode !== undefined && mode !== "never") ||
+      Object.values(codexToolPolicies(selection)).some(
+        (policy) =>
+          isRecord(policy) &&
+          enabled(policy) &&
+          policy.approvalMode !== undefined &&
+          policy.approvalMode !== "never",
+      )
+    );
   }
 
   function codexPluginId(nativeId: string): string {
@@ -300,14 +351,9 @@ export function createPluginRuntimeTranslator() {
     selection: Record<string, unknown>,
     detail: Record<string, unknown>,
   ): void {
-    const mode = pluginApprovalMode(selection);
-    if (!["always", "auto", "never"].includes(mode)) {
-      throw new Error("Codex plugin approval policy is unavailable at startup.");
-    }
-    if (mode === "always" && reviewer(selection) === "auto_review") {
-      throw new Error("Codex AutoReview cannot represent always-approved plugin calls.");
-    }
-    assertNoToolPolicy(selection);
+    pluginApprovalMode(selection);
+    reviewer(selection);
+    codexToolPolicies(selection);
     detailVersion(detail);
     if (requiredArray(detail.apps, "Codex plugin detail apps").length === 0) {
       throw new Error("Codex plugin detail does not expose an app mapping.");
@@ -333,6 +379,113 @@ export function createPluginRuntimeTranslator() {
       }
       return requiredString(app.id, "Codex plugin app ID");
     });
+  }
+
+  function codexInstallPlan(selections: unknown, pluginReadResponses: readonly unknown[]) {
+    const details = detailsByNativeId(pluginReadResponses);
+    return selectionEntries(selections).map(([pluginId, selection]) => {
+      const nativeId = codexNativeIdFromPluginId(pluginId);
+      const detail = details.get(nativeId);
+      if (detail === undefined) {
+        throw new Error("Codex plugin detail did not contain the selected plugin.");
+      }
+      assertCodexDetailRepresentable(selection, detail);
+      appIds(detail);
+      return {
+        pluginId,
+        nativeId,
+        remotePluginId: detailRemotePluginId(detail),
+        version: detailVersion(detail),
+        registry: CODEX_MARKETPLACE,
+      };
+    });
+  }
+
+  function codexAppToolSettings(
+    selection: Record<string, unknown>,
+    ownedAppIds: readonly string[],
+    toolStatuses: readonly unknown[],
+  ): ReadonlyMap<string, Record<string, unknown>> {
+    const servers = toolStatuses.filter(
+      (status) => isRecord(status) && status.name === "codex_apps",
+    );
+    const server = servers[0];
+    if (
+      servers.length !== 1 ||
+      !isRecord(server) ||
+      !isRecord(server.tools) ||
+      server.toolsError != null
+    ) {
+      throw new Error("Codex plugin tool inventory is unavailable.");
+    }
+    const overrides = codexToolPolicies(selection);
+    const toolsByApp = new Map<string, [string, Record<string, unknown>][]>();
+    const toolOwners = new Map<string, string>();
+    for (const [key, tool] of Object.entries(server.tools).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      if (!isRecord(tool) || !isRecord(tool._meta)) {
+        continue;
+      }
+      const appId = optionalString(tool._meta.connector_id);
+      if (appId === undefined || !ownedAppIds.includes(appId)) {
+        continue;
+      }
+      const name = requiredString(tool.name, "Codex native tool name");
+      if (key !== name || toolOwners.has(name)) {
+        throw new Error("Codex plugin tool identities are ambiguous.");
+      }
+      toolOwners.set(name, appId);
+      const override = Object.hasOwn(overrides, name)
+        ? (overrides[name] as Record<string, unknown>)
+        : {};
+      const annotations = isRecord(tool.annotations) ? tool.annotations : {};
+      // Missing annotation values are conservative. Names and display titles are not classifications.
+      const categoryModes = [
+        ...(annotations.readOnlyHint !== true && selection.writes !== undefined
+          ? [selection.writes]
+          : []),
+        ...(annotations.destructiveHint !== false && selection.destructiveActions !== undefined
+          ? [selection.destructiveActions]
+          : []),
+      ];
+      const strictness = ["always", "auto", "prompt", "never"];
+      const categoryMode = categoryModes.sort(
+        (left, right) => strictness.indexOf(right as string) - strictness.indexOf(left as string),
+      )[0];
+      const mode = override.approvalMode ?? categoryMode ?? pluginApprovalMode(selection);
+      const entries = toolsByApp.get(appId) ?? [];
+      entries.push([
+        name,
+        {
+          enabled: enabled(override) && mode !== "never",
+          approval_mode: codexApprovalMode(mode),
+        },
+      ]);
+      toolsByApp.set(appId, entries);
+    }
+    for (const name of Object.keys(overrides)) {
+      if (!toolOwners.has(name)) {
+        throw new Error("Codex plugin tool policy references an unknown native tool.");
+      }
+    }
+    return new Map(
+      ownedAppIds.map((appId) => {
+        const tools = toolsByApp.get(appId);
+        if (tools === undefined) {
+          throw new Error("Codex plugin app has no authenticated tool inventory.");
+        }
+        return [
+          appId,
+          {
+            // Restrict the app to this inventory. Codex still permits title-key fallback;
+            // policy-support.md records that limit for tools discovered after startup.
+            default_tools_enabled: false,
+            tools: Object.fromEntries(tools),
+          },
+        ];
+      }),
+    );
   }
 
   function failedPluginIdSet(failures: unknown): ReadonlySet<string> {
@@ -363,10 +516,14 @@ export function createPluginRuntimeTranslator() {
     failures: ReadonlySet<string>,
   ): Record<string, unknown> {
     return {
-      enabled: selectionEnabledAfterFailures(pluginId, selection, failures),
+      enabled: codexSelectionEnabled(selection) && !failures.has(pluginId),
       marketplaceName: CODEX_MARKETPLACE,
       pluginName: slug,
-      allow_destructive_actions: pluginApprovalMode(selection) === "always" ? true : "auto",
+      allow_destructive_actions:
+        pluginApprovalMode(selection) === "always" ||
+        codexNeedsToolInventory({ [pluginId]: selection })
+          ? true
+          : "auto",
     };
   }
 
@@ -409,6 +566,7 @@ export function createPluginRuntimeTranslator() {
     selections: unknown,
     pluginReadResponses: readonly unknown[],
     failures: unknown = [],
+    toolStatuses: readonly unknown[] = [],
   ): Record<string, unknown> {
     const selected = selectionEntries(selections);
     if (selected.length === 0) {
@@ -418,48 +576,38 @@ export function createPluginRuntimeTranslator() {
     const failedPluginIds = failedPluginIdSet(failures);
     const appEntries = new Map<string, Record<string, unknown>>();
     const disabledAppIds = new Set<string>();
-    const installs: Record<string, unknown>[] = [];
+    const installs = codexInstallPlan(selections, pluginReadResponses);
     for (const [pluginId, selection] of selected) {
       const nativeId = codexNativeIdFromPluginId(pluginId);
       const detail = byNativeId.get(nativeId);
       if (detail === undefined) {
         throw new Error("Codex plugin detail did not contain the selected plugin.");
       }
-      assertCodexDetailRepresentable(selection, detail);
-      const pluginVersion = detailVersion(detail);
-      const remotePluginId = detailRemotePluginId(detail);
-      if (selectionEnabledAfterFailures(pluginId, selection, failedPluginIds)) {
+      if (codexSelectionEnabled(selection) && !failedPluginIds.has(pluginId)) {
         const reviewerValue = reviewer(selection);
-        const defaultApprovalMode = pluginApprovalMode(selection) === "always" ? "approve" : "auto";
+        const mode = pluginApprovalMode(selection);
+        const defaultApprovalMode = codexApprovalMode(mode);
+        const toolSettings = codexNeedsToolInventory({ [pluginId]: selection })
+          ? codexAppToolSettings(selection, appIds(detail), toolStatuses)
+          : new Map<string, Record<string, unknown>>();
         for (const appId of appIds(detail)) {
           const existing = appEntries.get(appId);
           const requested = {
             enabled: true,
             default_tools_approval_mode: defaultApprovalMode,
             ...(reviewerValue === undefined ? {} : { approvals_reviewer: reviewerValue }),
+            ...toolSettings.get(appId),
           };
-          const existingReviewer = existing?.approvals_reviewer;
-          if (
-            existing !== undefined &&
-            (existingReviewer !== requested.approvals_reviewer ||
-              existing.default_tools_approval_mode !== requested.default_tools_approval_mode)
-          ) {
+          if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(requested)) {
             throw new Error("Codex plugin app mappings require conflicting approval policy.");
           }
           appEntries.set(appId, requested);
         }
-      } else if (failedPluginIds.has(pluginId) && enabledByPolicy(selection)) {
+      } else if (failedPluginIds.has(pluginId) && codexSelectionEnabled(selection)) {
         for (const appId of appIds(detail)) {
           disabledAppIds.add(appId);
         }
       }
-      installs.push({
-        pluginId,
-        nativeId,
-        remotePluginId,
-        version: pluginVersion,
-        registry: CODEX_MARKETPLACE,
-      });
     }
     return {
       kind: "codex",
@@ -546,6 +694,8 @@ export function createPluginRuntimeTranslator() {
     codexCatalogEntry,
     codexCatalogEntries,
     codexOpenClawConfiguration,
+    codexInstallPlan,
+    codexNeedsToolInventory,
     codexReadParamsForSelections,
     codexRuntimeArtifact,
     openClawCatalogEntries,
@@ -563,11 +713,13 @@ export function codexRuntimeArtifact(
   selections: PluginDesiredState,
   pluginReadResponses: readonly unknown[],
   failures: PluginRuntimeFailureInput = [],
+  toolStatuses: readonly unknown[] = [],
 ): PluginRuntimeResolvedArtifacts {
   return pluginRuntimeTranslator.codexRuntimeArtifact(
     selections,
     pluginReadResponses,
     failures,
+    toolStatuses,
   ) as PluginRuntimeResolvedArtifacts;
 }
 

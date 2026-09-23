@@ -8,7 +8,10 @@ import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AuthAccountRoleNotFoundError } from "../../apps/controller/src/auth/index.ts";
-import { OCCPluginDriver } from "../../apps/controller/src/drivers/plugin/index.ts";
+import {
+  CodexPluginDriver,
+  OCCPluginDriver,
+} from "../../apps/controller/src/drivers/plugin/index.ts";
 import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../../apps/controller/src/composition/production-harness.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import { createControllerApp, createFastifyApp } from "../../apps/controller/src/index.ts";
@@ -1482,25 +1485,33 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   const controller = await configuredController();
   await bootstrap(controller);
   const namespace = await createNamespace(controller, "plugin-api");
-  const configuration = await createConfiguration(controller, namespace.id);
+  const values = createHarnessConfiguration("codex", "gpt-6-astra");
+  const configuration = await createConfiguration(controller, namespace.id, values);
   const replacementConfiguration = await createConfiguration(controller, namespace.id, {
+    ...values,
     runtime: { revision: "replacement" },
   });
-  const pluginDriver = new OCCPluginDriver();
+  const pluginDriver = new CodexPluginDriver();
   controller.fixture.controller.registerDriver(pluginDriver);
   controller.fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const initialPlugins = { [diffsPluginId]: pluginPolicy() };
+  const githubPluginId = "codex-plugin:github@openai-curated-remote";
+  // Raw native tool names must survive admission and immutable revision snapshots.
+  const initialPlugins = {
+    [githubPluginId]: pluginPolicy({ tools: { "repos/list": { enabled: false } } }),
+    [linearPluginId]: pluginPolicy(),
+  };
 
   const created = await controller.request("POST", `/namespaces/${namespace.id}/agents`, {
     body: {
       name: "plugin-agent",
+      executionMode: "dedicated",
       configurationId: configuration.id,
       plugins: initialPlugins,
     },
   });
   assert.equal(created.status, 201);
   assert.deepEqual(created.data.plugins, initialPlugins);
-  assertPolicyOnlyPlugin(created.data.plugins[diffsPluginId]);
+  assertPolicyOnlyPlugin(created.data.plugins[githubPluginId]);
 
   const saved = await controller.request(
     "GET",
@@ -1521,7 +1532,7 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   );
   assert.equal(deployment.status, 202);
   assert.deepEqual(deployment.data.plugins, {
-    driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
+    driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
     plugins: initialPlugins,
   });
   assert.equal(Object.hasOwn(deployment.data.plugins, "artifacts"), false);
@@ -1536,7 +1547,11 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   assert.deepEqual(omittedPlugins.data.plugins, initialPlugins);
 
   const replacementPlugins = {
-    [linearPluginId]: pluginPolicy({ approvalMode: "auto", approvalsReviewer: "auto_review" }),
+    [githubPluginId]: pluginPolicy({
+      approvalMode: "auto",
+      approvalsReviewer: "auto_review",
+      tools: { "repos/list": { enabled: true, approvalMode: "always" } },
+    }),
   };
   const replacedPlugins = await controller.request(
     "PATCH",
@@ -1545,8 +1560,14 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   );
   assert.equal(replacedPlugins.status, 200);
   assert.deepEqual(replacedPlugins.data.plugins, replacementPlugins);
-  assert.equal(Object.hasOwn(replacedPlugins.data.plugins, diffsPluginId), false);
-  assertPolicyOnlyPlugin(replacedPlugins.data.plugins[linearPluginId]);
+  assert.equal(Object.hasOwn(replacedPlugins.data.plugins, linearPluginId), false);
+  assertPolicyOnlyPlugin(replacedPlugins.data.plugins[githubPluginId]);
+  const readReplacement = await controller.request(
+    "GET",
+    `/namespaces/${namespace.id}/agents/${created.data.id}`,
+  );
+  assert.equal(readReplacement.status, 200);
+  assert.deepEqual(readReplacement.data.plugins, replacementPlugins);
 
   const clearedPlugins = await controller.request(
     "PATCH",
@@ -1622,7 +1643,7 @@ test("Agent plugin maps reject structural errors and preserve exact authorizatio
 
   for (const plugins of [
     { "codex-plugin:bad/plugin@openai-curated-remote": pluginPolicy({ approvalMode: "auto" }) },
-    { [linearPluginId]: pluginPolicy({ tools: { "bad/tool": { enabled: true } } }) },
+    { [linearPluginId]: pluginPolicy({ tools: { "bad tool": { enabled: true } } }) },
     { [linearPluginId]: pluginPolicy({ tools: { search: {} } }) },
   ]) {
     const invalid = await controller.request("PATCH", agentPath, {

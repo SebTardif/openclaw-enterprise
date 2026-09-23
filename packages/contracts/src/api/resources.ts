@@ -115,14 +115,15 @@ export const PluginToolPolicySchema = Type.Object(
 );
 
 const PluginIdPattern = "^[A-Za-z0-9._~:@-]{1,253}$";
+const PluginToolIdPattern = "^[A-Za-z0-9._~:@/-]{1,253}$";
 const PluginToolPolicyMapSchema = Type.Unsafe({
   type: "object",
   description:
-    "Plugin tool policy map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@-]{1,253}$.",
-  propertyNames: { pattern: PluginIdPattern },
+    "Plugin tool policy map. Keys must be 1-253 characters matching ^[A-Za-z0-9._~:@/-]{1,253}$.",
+  propertyNames: { pattern: PluginToolIdPattern },
   additionalProperties: false,
   patternProperties: {
-    [PluginIdPattern]: Type.Ref("PluginToolPolicy"),
+    [PluginToolIdPattern]: Type.Ref("PluginToolPolicy"),
   },
 });
 

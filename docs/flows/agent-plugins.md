@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
-updated: 2026-09-21
-last_updated_session: codex/01a0b632-4907-7362-9c51-28129db5a3b9
+updated: 2026-09-23
+last_updated_session: codex/01a0cc4c-0ab7-7692-babf-f9cd9031ec5c
 ---
 
 # Agent Plugin Deployment Flow
@@ -35,8 +35,10 @@ graph TD
   A["Save authorized plugin selections"] --> B["Snapshot requested revision"]
   B --> C["Resolve native metadata and policy"]
   C --> D["Attempt selected installs"]
+  D -->|Codex tool/category policy| T["Discover authenticated tools; compile policy"]
+  T --> F
   D -->|install rejection or auth required| E["Disable failed selections; collect warnings"]
-  D -->|success| F["Verify native identity and effective policy"]
+  D -->|no Codex tool policy| F["Verify native identity and effective policy"]
   E --> F
   F -->|invalid or unsafe| X["Keep runtime unready"]
   F -->|verified| G["Publish current startup status"]
@@ -123,24 +125,41 @@ Dedicated Codex uses one of two fixed bootstrap configurations in its isolated
 nonempty selections enable those features. Both set `apps._default.enabled:false`.
 For nonempty selections, Compute applies the shared selected-only OpenClaw
 bridge renderer during gateway configuration construction: `codexPlugins.enabled:true`,
-`allow_all_plugins:false`, and one entry per selected plugin. Disabled or `never`
-entries remain selected but cannot execute through that bridge.
+`allow_all_plugins:false`, and one entry per selected plugin. Explicitly disabled
+entries remain selected but cannot execute through that bridge. A Codex `never` default can retain an allowed tool/category exception.
 
 At startup, native `plugin/list` discovers the `openai-curated-remote` marketplace;
 `plugin/read` resolves each selection using the summary's opaque remote identity.
 `runtime-translator.ts:codexRuntimeArtifact` derives policy only from concrete
 `detail.apps` and ignores `appTemplates`; template-only IDs do not receive an
 app grant. See the [bundled Driver limits](../reference/drivers/plugin-bundled.md#selection-and-catalogs).
-The shared translator validates the entire selection set before Compute writes
-native app configuration with `config/batchWrite`, including optional
-`approvals_reviewer`. Compute then calls `plugin/install` for each enabled selection, collecting confirmed
-install rejections and missing app authentication as warnings. It rereads native
-metadata for successful selections and checks installed/enabled identity, release
-version, and app mapping against the resolved selection. Failed-only app bindings
-are explicitly disabled; shared bindings needed by successful selections retain
-their admitted policy. Disabled selections remain denied in configuration and
-do not contribute install attempts or startup results. Finally,
-`config/read` verifies the effective configuration overlay before readiness.
+The shared translator validates install identities and supported plugin metadata
+for the entire selection set before Compute calls `plugin/install` for each
+enabled selection. Confirmed install rejections and missing app authentication
+become warnings. Explicitly disabled selections skip installation; a `never`
+default with `enabled:true` can still install while its effective policy blocks calls.
+
+When a selection contains tool/category policy, startup calls authenticated,
+paginated `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` after installing
+plugins. `runtime-translator.ts:codexRuntimeArtifact` joins raw tool names to
+selected apps through `_meta.connector_id`. It rejects unknown requested tools,
+missing ownership, or invalid discovery responses. It resolves explicit tool
+mode before the stricter applicable category and plugin default, treating
+missing action annotations conservatively. Explicit disablement and failed
+installation remain terminal.
+
+The resulting app configuration disables the default and gives each observed
+selected-app tool its effective enablement and approval mode.
+Tool policies inherit the plugin's app-level reviewer. Startup writes the final
+configuration, rereads installed metadata to verify identity and app mappings,
+and verifies effective settings with `config/read` before readiness. Failed-only
+app bindings are disabled; shared bindings needed by successful selections
+retain their admitted policy. Disabled selections do not contribute install
+attempts or startup results. Codex can match a future tool's display title to
+an existing policy key, so the disabled default cannot guarantee future-tool
+denial. Exact protection requires a native Codex change. The next startup
+rediscovers inventory. A compatible OpenClaw bridge must preserve the compiled
+settings in the native Agent thread.
 Codex owns its private cache layout and integrity; Enterprise does not inspect
 private cache files. The Driver does not install packages in OCC. The normal
 Codex readiness path remains responsible for runtime health.
@@ -241,6 +260,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 21:52: Documented authenticated Codex tool discovery, effective per-tool policy compilation, and deferred native OpenClaw tool policies; runtime preservation and live proof remain pending (codex/01a0cc4c-0ab7-7692-babf-f9cd9031ec5c - 7b60db6c)
 
 - 2026-09-21 21:23: Reconciled policy composition and installation without enablement changes with optional-plugin warnings and the bundled Driver reference; runtime release and Kubernetes proof remain pending (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 9405e20)
 

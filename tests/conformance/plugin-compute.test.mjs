@@ -621,8 +621,138 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
   );
 });
 
-test("Codex runtime helper reports plugin install warnings without retrying", async () => {
-  const state = codexLinearPluginState({ approvalsReviewer: "auto_review" });
+test("Codex runtime helper discovers tool policy after installation and before readiness", async () => {
+  const state = codexLinearPluginState({
+    approvalsReviewer: "user",
+    writes: "never",
+    tools: { list_issues: { approvalMode: "always" } },
+  });
+  const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
+  const apps = {};
+  let installed = false;
+  const { requests } = await runCodexRuntimeHelper(runtime, (method, params) => {
+    if (method === "initialize") {
+      return { serverInfo: { name: "codex", version: "0.156.0" } };
+    }
+    if (method === "plugin/list") {
+      return codexListResponse();
+    }
+    if (method === "plugin/read") {
+      return codexReadResponse({ installed, enabled: installed });
+    }
+    if (method === "plugin/install") {
+      installed = true;
+      return { authPolicy: "ON_USE", appsNeedingAuth: [] };
+    }
+    if (method === "mcpServerStatus/list") {
+      assert.equal(installed, true, "tool discovery follows native installation");
+      assert.equal(params.detail, "toolsAndAuthOnly");
+      if (params.cursor === undefined) {
+        return { data: [{ name: "unrelated", tools: {} }], nextCursor: "apps-page" };
+      }
+      assert.equal(params.cursor, "apps-page");
+      return {
+        data: [
+          {
+            name: "codex_apps",
+            toolsError: null,
+            tools: {
+              list_issues: {
+                name: "list_issues",
+                inputSchema: { type: "object" },
+                _meta: { connector_id: CODEX_LINEAR_APP_ID },
+                annotations: { readOnlyHint: true, destructiveHint: false },
+              },
+              create_issue: {
+                name: "create_issue",
+                inputSchema: { type: "object" },
+                _meta: { connector_id: CODEX_LINEAR_APP_ID },
+                annotations: { readOnlyHint: false, destructiveHint: false },
+              },
+            },
+          },
+        ],
+        nextCursor: null,
+      };
+    }
+    if (method === "config/batchWrite") {
+      for (const edit of params.edits) {
+        if (edit.keyPath === 'apps."_default"') {
+          apps._default = edit.value;
+        }
+        if (edit.keyPath === `apps.${CODEX_LINEAR_APP_ID}`) {
+          apps[CODEX_LINEAR_APP_ID] = edit.value;
+        }
+      }
+      assert.equal(apps._default.enabled, false, "discovery must not grant unselected apps");
+      assert.equal(apps[CODEX_LINEAR_APP_ID].tools.list_issues.enabled, true);
+      assert.equal(apps[CODEX_LINEAR_APP_ID].tools.list_issues.approval_mode, "approve");
+      assert.equal(apps[CODEX_LINEAR_APP_ID].tools.create_issue.enabled, false);
+      return { status: "ok", version: "tool-policy" };
+    }
+    if (method === "config/read") {
+      return { config: { ...codexConfigReadResponse().config, apps } };
+    }
+    throw new Error(`unexpected request ${method}`);
+  });
+  assert.deepEqual(
+    requests.filter(({ method }) => method === "mcpServerStatus/list").map(({ params }) => params),
+    [{ detail: "toolsAndAuthOnly" }, { detail: "toolsAndAuthOnly", cursor: "apps-page" }],
+  );
+});
+
+test("Codex runtime helper rejects incomplete or unbounded tool discovery before writing policy", async (t) => {
+  for (const [name, response, expected] of [
+    ["invalid data", () => ({ data: {}, nextCursor: null }), /invalid pagination data/],
+    ["invalid cursor", () => ({ data: [], nextCursor: 1 }), /invalid pagination data/],
+    ["repeated cursor", () => ({ data: [], nextCursor: "repeat" }), /repeated cursor/],
+    ["page limit", (page) => ({ data: [], nextCursor: String(page) }), /page limit/],
+    [
+      "native discovery error",
+      () => ({
+        data: [{ name: "codex_apps", tools: {}, toolsError: "tool listing failed" }],
+        nextCursor: null,
+      }),
+      /tool inventory is unavailable/,
+    ],
+  ]) {
+    await t.test(name, async () => {
+      const state = codexLinearPluginState({ tools: { list_issues: { enabled: false } } });
+      const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
+      let page = 0;
+      const result = await runCodexRuntimeHelper(
+        runtime,
+        (method) => {
+          if (method === "initialize") {
+            return { serverInfo: { name: "codex", version: "0.156.0" } };
+          }
+          if (method === "plugin/list") {
+            return codexListResponse();
+          }
+          if (method === "plugin/read") {
+            return codexReadResponse();
+          }
+          if (method === "plugin/install") {
+            return { authPolicy: "ON_USE", appsNeedingAuth: [] };
+          }
+          if (method === "mcpServerStatus/list") {
+            return response(page++);
+          }
+          throw new Error(`unexpected request ${method}`);
+        },
+        { captureError: true },
+      );
+      assert.match(result.error?.message ?? "", expected);
+      assert.equal(
+        result.requests.some(({ method }) => method === "config/batchWrite"),
+        false,
+      );
+    });
+  }
+});
+
+test("Codex runtime helper reports plugin install warnings without retrying or tool discovery", async () => {
+  const state = codexLinearPluginState({ approvalsReviewer: "auto_review", writes: "never" });
   const runtime = {
     manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })),
   };
@@ -825,9 +955,14 @@ test("Codex runtime helper keeps pre-install native uncertainty generic", async 
 });
 
 test("Codex runtime keeps disabled selected plugins default-denied while preserving install identity", async () => {
-  for (const [name, selectionOverride] of [
-    ["disabled", { enabled: false }],
-    ["never-approved", { approvalMode: "never" }],
+  for (const [name, selectionOverride, allowDestructiveActions] of [
+    ["disabled", { enabled: false, tools: { list_issues: { enabled: true } } }, "auto"],
+    ["never-approved", { approvalMode: "never" }, "auto"],
+    [
+      "never-approved tool",
+      { approvalMode: "never", tools: { list_issues: { approvalMode: "never" } } },
+      "auto",
+    ],
   ]) {
     const state = codexLinearPluginState(selectionOverride);
     const runtime = {
@@ -912,7 +1047,7 @@ test("Codex runtime keeps disabled selected plugins default-denied while preserv
       enabled: false,
       marketplaceName: "openai-curated-remote",
       pluginName: "linear",
-      allow_destructive_actions: "auto",
+      allow_destructive_actions: allowDestructiveActions,
     });
   }
 });

@@ -10,8 +10,8 @@ behavior; this page owns contributor setup, fixture inputs, and proof notes.
 | Check                          | Command or file                                                                                                                                                                          | Covers                                                                                                                                                          |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Contract and API behavior      | `pnpm test:conformance` and `node --test tests/integration/occ-api.test.mjs`                                                                                                             | Plugin map schemas, exact-Agent authorization, omission/replacement/clear semantics, audit, deployment-status polling, and immutable requested-state snapshots. |
-| Driver translation and startup | `node --test tests/conformance/plugin-driver.test.mjs tests/integration/plugin-driver-startup.test.mjs`                                                                                  | Curated catalog projection, selected-only Codex defaults, unsupported-policy startup failure, and native configuration rendering.                               |
-| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/ssh-compute.test.mjs`                                                                                           | Native install classification, verified failed-plugin exclusion, current startup status, and SSH rejection before host effects.                                 |
+| Driver translation and startup | `node --test tests/conformance/plugin-driver.test.mjs tests/integration/plugin-driver-startup.test.mjs`                                                                                  | Curated catalog projection, category/tool precedence, selected-only defaults, and native configuration rendering.                                               |
+| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/ssh-compute.test.mjs`                                                                                           | Authenticated tool discovery, native install classification, failed-plugin exclusion, startup status, and SSH rejection before host effects.                    |
 | PostgreSQL persistence         | `node --test --test-concurrency=1 tests/integration/postgres-restart-recovery.test.mjs tests/integration/postgres-worker-agent-revision.test.mjs` with [PostgreSQL setup](postgresql.md) | Successful deployment warnings, exact status authorization, claim fencing, and recovery.                                                                        |
 | Controlled status boundary     | `node --test tests/integration/kubernetes-plugin-status-real.test.mjs`                                                                                                                   | Real Kubernetes Compute status transport, workload identity, safe readiness and runtime restart behavior with controlled producers.                             |
 | Native runtime proof           | `node --test tests/integration/plugin-driver-real.test.mjs`                                                                                                                              | Opt-in Kubernetes proof against real OpenClaw or Codex, including continued operation after a selected Codex install/auth failure.                              |
@@ -89,7 +89,13 @@ the test starts without a useful `HOME`. Set `OCC_TEST_OPENAI_MODEL` to a model
 supported by that Codex path; the current source default is `gpt-6-astra`.
 The Calendar proof also needs `OCC_TEST_CODEX_CALENDAR_TOOL_NAME` and
 `OCC_TEST_CODEX_CALENDAR_RESULT_EXPECT`, and must show a model-chosen
-`list_calendars(max_results:1)` read during a normal Agent turn.
+`list_calendars(max_results:1)` read during a normal Agent turn. The extended
+scenario discovers that read's exact native identity, redeploys with a tool
+exception to a `never` default, and proves the read still works. A later
+deployment disables that same tool and proves a fresh turn cannot invoke it.
+Write/destructive denials are checked in configuration; the test does not execute
+those operations or prove a human/model review interaction. It requires sibling
+tools and native write annotations in the authenticated Calendar inventory.
 
 The Codex failure proof uses
 `--test-name-pattern 'curated Codex plugin failure'`. It selects plugin A
@@ -123,10 +129,22 @@ identifiers.
 
 ## Current proof notes
 
-The policy-composition and installation changes have not been verified in a real
-Kubernetes Agent deployment. The extended scenario requires the prerequisite
-OpenClaw release plus the cluster, database, image, and credentials above. The
-proofs below predate these changes and do not cover them.
+The policy-composition, installation, and Codex tool/category translation changes
+have not been verified in a real Kubernetes Agent deployment. Translator and
+startup fixture tests establish emitted configuration, including terminal
+exclusion, category precedence, and disabled tool defaults; they do not prove
+policy preservation in the effective Agent thread or a reviewed native tool call.
+Pinned Codex can grant a future tool through a display-title match to an enabled
+policy key, despite the disabled default. Tests do not establish unconditional
+future-tool denial; that guarantee requires a Codex runtime change.
+
+Codex proof requires the OpenClaw bridge changes in
+[OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and a compatible
+image. Native OpenClaw installation also requires the `--no-enable` release
+above. The cluster, database, image, and credentials must be explicitly selected.
+Native OpenClaw per-tool slices #312/#313 remain deferred; this change keeps
+that Driver at plugin-level policy. The older proofs below cover none of these
+new policy paths.
 
 Best-effort installation verification for
 [PR #228](https://github.com/openclaw/openclaw-enterprise/pull/228) uses an isolated

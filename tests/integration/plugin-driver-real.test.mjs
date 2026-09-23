@@ -349,6 +349,100 @@ test(
       toolName,
       resultPattern,
     });
+
+    // Bind the existing transcript selector to the real raw MCP name and owner.
+    // Only the harmless read is executed; other tool policy is inspected in config.
+    const [entry] = await fixture.listCodexNativeCatalog(agent, [pluginId]);
+    assert.ok(entry?.detailAvailable && entry.appCount > 0);
+    const inventory = await fixture.codexPluginToolInventory(agent, entry);
+    const selectedTools = inventory.filter((tool) => tool.transcriptName === toolName);
+    assert.equal(selectedTools.length, 1, "the live read must identify one owned native tool.");
+    const selectedTool = selectedTools[0];
+    assert.equal(selectedTool.annotations.readOnlyHint, true, "the selected tool must be a read.");
+    assert.notEqual(selectedTool.annotations.destructiveHint, true);
+    assert.ok(inventory.length > 1, "the default-deny proof requires sibling app tools.");
+
+    // An explicit tool mode overrides a plugin default denial. Keep write and
+    // destructive categories denied and require every unspecified sibling to stay denied.
+    const exceptionPolicy = await fixture.updatePluginPolicy(agent.id, pluginId, {
+      approvalMode: "never",
+      approvalsReviewer: "user",
+      writes: "never",
+      destructiveActions: "never",
+      tools: { [selectedTool.name]: { enabled: true, approvalMode: "always" } },
+    });
+    const exceptionDeployment = await fixture.deployAndWait(agent);
+    assert.deepEqual(exceptionDeployment.revision.plugins.plugins[pluginId], exceptionPolicy);
+    assert.deepEqual(exceptionDeployment.status.warnings, []);
+    const exceptionConfig = await fixture.codexAppConfiguration(agent);
+    for (const tool of inventory) {
+      const app = exceptionConfig.apps[tool.appId];
+      assert.equal(app?.enabled, true, "default denial must not disable the selected app.");
+      assert.equal(app.default_tools_enabled, false, "the native default must remain disabled.");
+      assert.equal(app.approvals_reviewer, "user");
+      assert.equal(
+        app.tools?.[tool.name]?.enabled,
+        tool.name === selectedTool.name,
+        "only the explicit read exception may be enabled.",
+      );
+    }
+    assert.equal(
+      exceptionConfig.apps[selectedTool.appId].tools[selectedTool.name].approval_mode,
+      "approve",
+    );
+    const exceptionMarker = `CODEX_CALENDAR_TOOL_EXCEPTION_${randomUUID()}`;
+    const exceptionSessionKey = `agent:main:codex-calendar-exception-${randomUUID()}`;
+    await fixture.normalGatewayTurn({
+      agent,
+      gatewayPassword: exceptionDeployment.gatewayPassword,
+      sessionKey: exceptionSessionKey,
+      prompt: `${prompt}\nInclude this marker in the final answer: ${exceptionMarker}`,
+      expectedPatterns: [exceptionMarker],
+      secrets: [credential.accessToken, credential.workspaceId],
+    });
+    await fixture.assertSessionToolCallEvidence(agent, {
+      sessionKey: exceptionSessionKey,
+      turnMarker: exceptionMarker,
+      toolName,
+      resultPattern,
+    });
+
+    // Disabling that same tool is terminal even with its always-approved mode.
+    // A fresh native turn must complete without calling the previously working read.
+    const deniedPolicy = await fixture.updatePluginPolicy(agent.id, pluginId, {
+      approvalMode: "always",
+      tools: { [selectedTool.name]: { enabled: false, approvalMode: "always" } },
+    });
+    const deniedDeployment = await fixture.deployAndWait(agent);
+    assert.deepEqual(deniedDeployment.revision.plugins.plugins[pluginId], deniedPolicy);
+    assert.deepEqual(deniedDeployment.status.warnings, []);
+    const deniedConfig = await fixture.codexAppConfiguration(agent);
+    assert.equal(deniedConfig.apps[selectedTool.appId]?.enabled, true);
+    assert.equal(deniedConfig.apps[selectedTool.appId]?.tools?.[selectedTool.name]?.enabled, false);
+    const writeTools = inventory.filter((tool) => tool.annotations.readOnlyHint !== true);
+    assert.ok(writeTools.length > 0, "the category-deny proof requires native write tools.");
+    for (const tool of writeTools) {
+      assert.equal(
+        deniedConfig.apps[tool.appId]?.tools?.[tool.name]?.enabled,
+        false,
+        "write-category denial must override the always-approved plugin default.",
+      );
+    }
+    const deniedMarker = `CODEX_CALENDAR_TOOL_DENIED_${randomUUID()}`;
+    const deniedSessionKey = `agent:main:codex-calendar-denied-${randomUUID()}`;
+    await fixture.normalGatewayTurn({
+      agent,
+      gatewayPassword: deniedDeployment.gatewayPassword,
+      sessionKey: deniedSessionKey,
+      prompt: `${prompt}\nIf the requested tool is unavailable, do not substitute another tool. Include ${deniedMarker} in the final answer.`,
+      expectedPatterns: [deniedMarker],
+      secrets: [credential.accessToken, credential.workspaceId],
+    });
+    await fixture.assertNoSessionToolCallEvidence(agent, {
+      sessionKey: deniedSessionKey,
+      turnMarker: deniedMarker,
+      toolName,
+    });
   },
 );
 

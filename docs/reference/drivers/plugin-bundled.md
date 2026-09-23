@@ -82,38 +82,56 @@ installation errors. Runtime versions and the OpenClaw-to-Codex projection also
 constrain support: a native Codex setting alone does not prove the effective
 Agent thread retains it.
 
-| Surface                                       | Current behavior                                                                                                                                                        |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenClaw `always` and enable/disable          | Set `plugins.entries.<id>.enabled`; extend a nonempty `tools.allow`, otherwise `tools.alsoAllow`, while preserving other native restrictions.                           |
-| OpenClaw `never`                              | Disable the selected plugin, blocking its owned execution surfaces.                                                                                                     |
-| OpenClaw `prompt`, `auto`, reviewer           | Startup failure; no equivalent generic native plugin approval control is implemented.                                                                                   |
-| Tool/category policy on catalog entries       | Startup failure when current curated entries do not expose reliable per-tool metadata to Enterprise.                                                                    |
-| Codex internal `listCatalog`                  | Reads native `openai-curated-remote` entries when the optional catalog reader is configured; saved selections remain on Agent reads. No HTTP inventory endpoint exists. |
-| Codex selected-app `auto`                     | Render native Codex apps/plugins enablement with the selected app `enabled:true`, plus a selected-only OpenClaw Codex bridge entry.                                     |
-| Codex selected-app `never` or `enabled:false` | Render the resolved install identity while omitting the native app entry and disabling the selected bridge entry so execution remains blocked.                          |
-| Codex selected-app `approvalsReviewer`        | Render native app reviewer configuration for the selected app ID with `user` or `auto_review`.                                                                          |
-| Codex `always`                                | Set per-plugin `allow_destructive_actions:true`; the bridge accepts supported approvals without prompting. Explicit `auto_review` is unsupported for this mode.         |
-| Codex `prompt`, category/tool modes           | Startup failure when every-call prompting or reliable tool metadata is unavailable.                                                                                     |
-| Codex empty desired set                       | Apply a plugin-free native configuration; no remote install RPC runs.                                                                                                   |
+| Surface                                                             | Translation and limits                                                                                                                                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native OpenClaw plugin `always`, `never`, enable/disable            | Set plugin enablement and compose tool grants with existing restrictions. `never` disables the plugin.                                                                           |
+| Native OpenClaw `prompt`, `auto`, reviewer, tool/category overrides | Rejected at startup; this Driver remains plugin-level only.                                                                                                                      |
+| Codex plugin and per-tool `always`                                  | Emit native `approval_mode: "approve"`; no added approval, including when the app reviewer is `auto_review`.                                                                     |
+| Codex plugin and per-tool `auto` / `prompt`                         | Emit native `auto` / `prompt`: annotation and remembered-approval behavior, or review of every call. Requires policy preservation through the OpenClaw bridge.                   |
+| Codex `never`                                                       | Deny by default; an explicit allowed tool/category exception can remain enabled. Explicit plugin disablement and installation failure remain terminal.                           |
+| Codex `approvalsReviewer`                                           | Emit app-level `user` or `auto_review`; per-tool policies inherit it. Omission inherits native reviewer settings.                                                                |
+| Codex tool/category overrides                                       | Discover authenticated tool metadata after install; compile effective modes into native per-tool enablement and approval settings. Missing or ambiguous identities fail startup. |
+| Codex empty desired set                                             | Apply a plugin-free native configuration; no remote install RPC runs.                                                                                                            |
 
-The Codex boundary is separate from approval-mode translation. Marketplace
-visibility does not prove Agent support. The inspected `rust-v0.149.0` native
-runtime does not provide a general selected-only gate for all remote plugin
-skills and MCP surfaces, so this release does not enable arbitrary account
-plugins or unsupported policy modes. Supported curated Codex apps are handled
-through the existing OpenClaw Codex bridge: the bridge keeps
-`allow_all_plugins:false`, sets `codexPlugins.enabled:true`, and writes one entry per selected plugin. The Codex `app_mcp_routing` path strips raw app
-MCP tools from ChatGPT auth; Enterprise applies the selected bridge configuration
-before readiness. Configuration and fixture checks do not establish effective
-native Agent execution; see the [runtime proof notes](../../testing/plugins.md#current-proof-notes).
+Codex tool discovery reads paginated `mcpServerStatus/list` with
+`detail: "toolsAndAuthOnly"`. Each raw `tool.name` must belong to a concrete
+selected app through `_meta.connector_id`; display names and inferred prefixes
+are not tool identities. The public controller catalog remains `tools:null`.
+This authenticated inventory belongs to the Agent runtime, not OCC.
 
-The [API policy vocabulary](../agent-plugins.md#approval-policy) retains independent
-trigger and reviewer semantics for representable implementations. Native Codex
-`auto` and app reviewer settings are used for supported curated Codex apps.
-`always` uses the bridge's existing automatic acceptance with the default or
-`user` reviewer. Explicit `auto_review` with `always`, `prompt`, category
-overrides, and tool overrides remain unsupported at startup. Unsafe approval
-schemas and ambiguous ownership continue to be declined.
+Explicit tool mode wins over the stricter applicable category, then the plugin
+default. A tool is a write unless `readOnlyHint` is explicitly true; it is
+potentially destructive unless `destructiveHint` is explicitly false. Missing
+annotations are conservative. Explicit plugin/tool disablement and failed
+installation cannot be undone by a mode override. Native managed policy and
+other runtime restrictions still apply.
+
+For a selection with tool/category overrides, the translator sets
+`default_tools_enabled:false` and writes an effective entry for every observed
+tool in its selected apps. This is the authenticated inventory available at
+startup, not a complete provider inventory. Requests for tools outside the
+observed app mapping fail startup. Codex also falls back to a tool's display
+title when looking up app policy: a new tool with a title equal to an enabled
+policy key can inherit that grant. The disabled default therefore does not
+guarantee denial of every unobserved tool. Exact future-tool protection requires
+a Codex runtime change; the next startup only recompiles the then-observed
+inventory.
+
+The Codex boundary remains concrete hosted apps. Marketplace visibility does
+not admit arbitrary skills, hooks, standalone MCP servers, scheduled tasks, or
+template-only app identities. The bridge keeps `allow_all_plugins:false`, sets
+`codexPlugins.enabled:true`, and writes one entry per selected plugin.
+
+The [API policy vocabulary](../agent-plugins.md#approval-policy) separates when
+review is required from who reviews it. Native Codex `approve` skips the review
+step; an app-level `auto_review` reviewer does not add one. `prompt` requires an
+effective approval posture that cannot bypass review through full access.
+The OpenClaw bridge must preserve the compiled app/tool settings:
+[OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and a
+compatible runtime image remain prerequisites. The overlapping plugin-level
+prompt work in [OCE #227](https://github.com/openclaw/openclaw-enterprise/pull/227)
+is pending. Emitted configuration and fixture checks do not establish normal
+Agent execution; see the [runtime proof notes](../../testing/plugins.md#current-proof-notes).
 
 Dedicated Codex starts without user plugins/apps, including when no PluginDriver
 is selected. Compute writes the safe baseline into the Agent's isolated
@@ -205,4 +223,8 @@ not write the shared native registry while the prior gateway is running.
 Source and contract tests do not establish compatibility with every runtime
 image. Native proof requires the testing guide's opt-in real-runtime lane.
 
-Disabled and `never` selections remain installed. Native remote installation can enable a plugin on the credential’s account; Agent-local app configuration and the OpenClaw bridge still block its execution. Agent enablement does not manage account-wide installation state.
+Explicitly disabled Codex selections skip installation; existing installations
+are not uninstalled. A `never` default with `enabled:true` can still install the
+selection, while its effective policy blocks calls without an allowed exception.
+Native remote installation can enable a plugin on the credential’s account.
+Agent enablement governs local execution, not account-wide installation state.

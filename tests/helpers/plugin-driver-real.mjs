@@ -748,6 +748,48 @@ ${codexLocalAppServerTokenScript}
 });
 `;
 
+// Inspect owner metadata from the authenticated runtime, independently of the
+// translator, and preserve the server-qualified name used by transcript mirrors.
+const codexPluginToolInventoryScript = String.raw`
+${PLUGIN_RUNTIME_HELPERS}
+${codexLocalAppServerTokenScript}
+(async () => {
+  await useLocalPluginRuntimeAppServerToken();
+  const appIds = new Set(JSON.parse(process.argv[1]));
+  const tools = [];
+  const cursors = new Set();
+  let cursor;
+  do {
+    const page = await codexAppServerRequest("mcpServerStatus/list", {
+      detail: "toolsAndAuthOnly", ...(cursor === undefined ? {} : { cursor }),
+    });
+    if (!Array.isArray(page?.data)) throw new Error("Native MCP inventory is incomplete.");
+    for (const server of page.data) {
+      if (server.name !== "codex_apps") continue;
+      if (!isPlainObject(server.tools)) throw new Error("Native app tools are missing.");
+      for (const tool of Object.values(server.tools)) {
+        const appId = tool?._meta?.connector_id;
+        if (!appIds.has(appId)) continue;
+        if (typeof tool.name !== "string" || !tool.name) throw new Error("Native tool name is missing.");
+        tools.push({
+          appId, name: tool.name, transcriptName: server.name + "." + tool.name,
+          annotations: tool.annotations ?? {},
+        });
+      }
+    }
+    cursor = page.nextCursor;
+    if (cursor !== null && cursor !== undefined) {
+      if (typeof cursor !== "string" || cursors.has(cursor)) throw new Error("Native MCP cursor is invalid.");
+      cursors.add(cursor);
+    }
+  } while (cursor !== null && cursor !== undefined);
+  process.stdout.write(JSON.stringify(tools));
+})().catch(() => {
+  process.stderr.write("Native Codex tool inventory query failed.");
+  process.exitCode = 1;
+});
+`;
+
 const codexAppConfigurationScript = String.raw`
 ${PLUGIN_RUNTIME_HELPERS}
 ${codexLocalAppServerTokenScript}
@@ -1065,20 +1107,29 @@ function createNativePluginAssertions({
       false,
       `${options.sessionKey} assistant turn must succeed.`,
     );
-    assert.ok(
-      Array.isArray(evidence.promptToolNames),
-      `${options.sessionKey} must have a run-sourced systemPromptReport.tools.entries snapshot.`,
-    );
-    assert.equal(
-      evidence.promptToolNames.includes(options.toolName),
-      false,
-      `${options.sessionKey} prompt tools still advertised ${options.toolName}: ${JSON.stringify({
-        runtime: evidence.runtime,
-        sessionId: evidence.sessionId,
-        promptReportSource: evidence.promptReportSource,
-        promptToolNames: evidence.promptToolNames,
-      })}`,
-    );
+    if (proofMode === "openclaw") {
+      assert.ok(
+        Array.isArray(evidence.promptToolNames),
+        `${options.sessionKey} must have a run-sourced systemPromptReport.tools.entries snapshot.`,
+      );
+      assert.equal(
+        evidence.promptToolNames.includes(options.toolName),
+        false,
+        `${options.sessionKey} prompt tools still advertised ${options.toolName}: ${JSON.stringify({
+          runtime: evidence.runtime,
+          sessionId: evidence.sessionId,
+          promptReportSource: evidence.promptReportSource,
+          promptToolNames: evidence.promptToolNames,
+        })}`,
+      );
+    } else {
+      // Native Codex tools are not represented by the gateway's prompt inventory.
+      // Require one completed native mirror so an absent call is not an absent run.
+      assert.ok(
+        evidence.codexTurns.some((turn) => turn.promptSeen && turn.terminalAssistantSeen),
+        `${options.sessionKey} must include a completed marker-bearing native Codex turn.`,
+      );
+    }
     assert.equal(
       evidence.calls.length,
       0,
@@ -1121,6 +1172,19 @@ function createNativePluginAssertions({
       entry.remotePluginId,
     ]);
     return { runtime: execution.label, ...JSON.parse(execution.stdout) };
+  }
+
+  async function codexPluginToolInventory(agent, entry) {
+    assert.equal(proofMode, "codex", "native tool inventory requires Codex proof mode.");
+    const execution = await execCodex(agent, [
+      "node",
+      "-e",
+      codexPluginToolInventoryScript,
+      JSON.stringify(entry.appIds),
+    ]);
+    const tools = JSON.parse(execution.stdout);
+    assert.ok(Array.isArray(tools) && tools.length > 0, "selected app tool inventory is empty.");
+    return tools;
   }
 
   async function codexAppConfiguration(agent) {
@@ -1199,6 +1263,8 @@ function createNativePluginAssertions({
     readOpenClawPluginPolicy,
     listCodexNativeCatalog,
     codexNativePluginDetail,
+    codexPluginToolInventory,
+    codexAppConfiguration,
     codexEffectivePluginConfiguration,
     writeWorkspaceSentinel,
     readWorkspaceSentinel,
@@ -1957,6 +2023,8 @@ export async function createPluginDriverRealFixture(
     readOpenClawPluginPolicy: nativeAssertions.readOpenClawPluginPolicy,
     listCodexNativeCatalog: nativeAssertions.listCodexNativeCatalog,
     codexNativePluginDetail: nativeAssertions.codexNativePluginDetail,
+    codexPluginToolInventory: nativeAssertions.codexPluginToolInventory,
+    codexAppConfiguration: nativeAssertions.codexAppConfiguration,
     codexEffectivePluginConfiguration: nativeAssertions.codexEffectivePluginConfiguration,
     writeWorkspaceSentinel: nativeAssertions.writeWorkspaceSentinel,
     readWorkspaceSentinel: nativeAssertions.readWorkspaceSentinel,

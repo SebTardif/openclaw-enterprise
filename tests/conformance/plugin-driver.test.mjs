@@ -349,7 +349,7 @@ test("Codex startup translation renders selected marketplace app plugins", () =>
 });
 
 test("Codex startup translation preserves native approval semantics", () => {
-  for (const approvalsReviewer of [undefined, "user"]) {
+  for (const approvalsReviewer of [undefined, "user", "auto_review"]) {
     const artifact = codexRuntimeArtifact(
       codexSelection(linearPluginId, { approvalMode: "always", approvalsReviewer }),
       codexDetails,
@@ -391,16 +391,7 @@ test("Codex startup translation preserves native approval semantics", () => {
 
 test("Codex startup translation fails selected-only policy gaps at startup", () => {
   for (const [selection, details, pattern] of [
-    [
-      codexSelection(linearPluginId, {
-        approvalMode: "always",
-        approvalsReviewer: "auto_review",
-      }),
-      codexDetails,
-      /AutoReview/i,
-    ],
-    [codexSelection(linearPluginId, { approvalMode: "prompt" }), codexDetails, /approval/i],
-    [codexSelection(linearPluginId, { writes: "prompt" }), codexDetails, /category/i],
+    [codexSelection(linearPluginId, { writes: "prompt" }), codexDetails, /inventory/i],
     [codexSelection(linearPluginId, { tools: { search: {} } }), codexDetails, /tool/i],
     [codexSelection(linearPluginId), [], /detail/i],
     [codexSelection(linearPluginId), [codexDetail("linear", [])], /app mapping/i],
@@ -477,6 +468,172 @@ test("Codex startup translation rejects malformed native plugin detail metadata"
   ]) {
     assert.throws(() => codexRuntimeArtifact(codexSelection(linearPluginId), [detail]), pattern);
   }
+});
+
+function codexToolInventory(appId, tools) {
+  return [
+    {
+      name: "codex_apps",
+      toolsError: null,
+      tools: Object.fromEntries(
+        Object.entries(tools).map(([name, annotations]) => [
+          name,
+          {
+            name,
+            title: `Display ${name}`,
+            inputSchema: { type: "object" },
+            _meta: { connector_id: appId },
+            ...(annotations === undefined ? {} : { annotations }),
+          },
+        ]),
+      ),
+    },
+  ];
+}
+
+test("Codex compiles tool modes and conservative category precedence with either reviewer", () => {
+  const appId = "linear_app";
+  const inventory = codexToolInventory(appId, {
+    read: { readOnlyHint: true, destructiveHint: false },
+    write: { readOnlyHint: false, destructiveHint: false },
+    delete: { readOnlyHint: false, destructiveHint: true },
+    unknown: undefined,
+    exception: { readOnlyHint: false, destructiveHint: true },
+    off: { readOnlyHint: true, destructiveHint: false },
+    automatic: { readOnlyHint: false, destructiveHint: true },
+  });
+  for (const approvalsReviewer of ["user", "auto_review"]) {
+    const selection = codexSelection(linearPluginId, {
+      approvalMode: "prompt",
+      approvalsReviewer,
+      writes: "auto",
+      destructiveActions: "never",
+      tools: {
+        write: { approvalMode: "prompt" },
+        exception: { approvalMode: "always" },
+        off: { enabled: false, approvalMode: "always" },
+        automatic: { approvalMode: "auto" },
+      },
+    });
+    const artifact = codexRuntimeArtifact(
+      selection,
+      [codexDetail("linear", [appId])],
+      [],
+      inventory,
+    );
+    assert.deepEqual(artifact.configuration.apps[appId], {
+      enabled: true,
+      default_tools_approval_mode: "prompt",
+      approvals_reviewer: approvalsReviewer,
+      default_tools_enabled: false,
+      tools: {
+        automatic: { enabled: true, approval_mode: "auto" },
+        delete: { enabled: false, approval_mode: "auto" },
+        exception: { enabled: true, approval_mode: "approve" },
+        off: { enabled: false, approval_mode: "approve" },
+        read: { enabled: true, approval_mode: "prompt" },
+        unknown: { enabled: false, approval_mode: "auto" },
+        write: { enabled: true, approval_mode: "prompt" },
+      },
+    });
+  }
+});
+
+test("Codex tool and category exceptions override default never while disablement remains terminal", () => {
+  const appId = "linear_app";
+  const details = [codexDetail("linear", [appId])];
+  const inventory = codexToolInventory(appId, {
+    read: { readOnlyHint: true, destructiveHint: false },
+    write: { readOnlyHint: false, destructiveHint: false },
+    delete: { readOnlyHint: false, destructiveHint: true },
+  });
+  const selection = codexSelection(linearPluginId, {
+    approvalMode: "never",
+    writes: "always",
+    destructiveActions: "prompt",
+    tools: { read: { enabled: true, approvalMode: "always" }, delete: { approvalMode: "never" } },
+  });
+  const translated = codexRuntimeArtifact(selection, details, [], inventory);
+  assert.deepEqual(translated.configuration.apps[appId].tools, {
+    delete: { enabled: false, approval_mode: "auto" },
+    read: { enabled: true, approval_mode: "approve" },
+    write: { enabled: true, approval_mode: "approve" },
+  });
+  const bridge = codexOpenClawConfiguration(selection).plugins.entries.codex.config.codexPlugins;
+  assert.equal(bridge.plugins.linear.enabled, true);
+  assert.equal(bridge.plugins.linear.allow_destructive_actions, true);
+
+  const disabled = codexSelection(linearPluginId, { ...selection[linearPluginId], enabled: false });
+  assert.deepEqual(codexRuntimeArtifact(disabled, details).configuration.apps, {
+    _default: { enabled: false },
+  });
+  assert.equal(
+    codexOpenClawConfiguration(disabled).plugins.entries.codex.config.codexPlugins.plugins.linear
+      .enabled,
+    false,
+  );
+  const failures = [{ pluginId: linearPluginId }];
+  assert.deepEqual(codexRuntimeArtifact(selection, details, failures).configuration.apps[appId], {
+    enabled: false,
+  });
+  assert.equal(
+    codexOpenClawConfiguration(selection, failures).plugins.entries.codex.config.codexPlugins
+      .plugins.linear.enabled,
+    false,
+  );
+});
+
+test("Codex tool policies require authenticated exact ownership and reject conflicting shared-app policy", () => {
+  const appId = "linear_app";
+  const details = [codexDetail("linear", [appId])];
+  const inventory = codexToolInventory(appId, {
+    "repos/list": { readOnlyHint: true, destructiveHint: false },
+  });
+  const selection = codexSelection(linearPluginId, { tools: { "repos/list": { enabled: false } } });
+  assert.equal(
+    codexRuntimeArtifact(selection, details, [], inventory).configuration.apps[appId].tools[
+      "repos/list"
+    ].enabled,
+    false,
+  );
+  for (const unavailable of [
+    [],
+    [{ ...inventory[0], toolsError: "unavailable" }],
+    [{ ...inventory[0], name: "unrelated_server" }],
+    codexToolInventory("unrelated_app", { "repos/list": { readOnlyHint: true } }),
+  ]) {
+    assert.throws(
+      () => codexRuntimeArtifact(selection, details, [], unavailable),
+      /inventory|unknown native tool/,
+    );
+  }
+  assert.throws(
+    () =>
+      codexRuntimeArtifact(
+        codexSelection(linearPluginId, { tools: { "Display repos/list": { enabled: true } } }),
+        details,
+        [],
+        inventory,
+      ),
+    /unknown native tool/,
+  );
+  const sharedDetails = [
+    ...details,
+    codexDetail(thirdRemotePluginId, [appId], { summaryId: "third-plugin@openai-curated-remote" }),
+  ];
+  assert.throws(
+    () =>
+      codexRuntimeArtifact(
+        {
+          ...selection,
+          ...codexSelection(thirdPluginId, { tools: { "repos/list": { enabled: true } } }),
+        },
+        sharedDetails,
+        [],
+        inventory,
+      ),
+    /conflicting approval policy/,
+  );
 });
 
 test("bundled Plugin Drivers enforce Harness identity", async () => {

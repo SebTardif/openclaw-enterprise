@@ -19,17 +19,18 @@ and the `always` and `never` approval policies. Its curated entries currently
 return `tools: null`. A saved tool or category policy therefore prevents the
 new deployment from becoming ready.
 
-Dedicated Codex Agents can enable selected apps from the
-`openai-curated-remote` catalog when the Codex runtime can apply the requested
-policy. Nothing is enabled by default. `approvalMode: "auto"` uses native Codex
-approval behavior; `approvalMode: "never"` or `enabled: false` blocks the app.
-`always` accepts supported requests without prompting and maps to native
-`allow_destructive_actions: true`. Combining `always` with
-`approvalsReviewer: "auto_review"` fails startup: native AutoReview can run
-before the bridge receives the request. `prompt`, category overrides, and tool
-overrides also fail startup when the runtime cannot apply them exactly.
-`approvalsReviewer` maps to the native Codex app reviewer. Linear and Google
-Calendar are test fixtures, not a production allowlist.
+Dedicated Codex Agents translate all four approval modes, plugin-level reviewer
+selection, and per-tool or write/destructive category overrides for selected
+apps in `openai-curated-remote`. Tool/category policies require authenticated
+runtime discovery inside the Agent; the controller catalog still returns
+`tools: null`. Unknown tool IDs or missing app ownership keep startup unready.
+Nothing is enabled by default. Linear and Google Calendar are test fixtures,
+not a production allowlist.
+
+Translation requires an OpenClaw Codex bridge that preserves native app/tool
+policy. The runtime image and normal Agent flow still need verification; see
+[native mappings and limits](drivers/plugin-bundled.md#native-mappings-and-limits)
+and [current proof notes](../testing/plugins.md#current-proof-notes).
 
 ## Lifecycle
 
@@ -106,9 +107,11 @@ checks apply.
 ### Request fields
 
 Use a Driver-qualified curated plugin ID that matches the identifier grammar.
-Catalog membership is resolved at Agent startup. Plugin and tool IDs are 1-253
-characters matching `^[A-Za-z0-9._~:@-]+$`. Callers cannot submit a native
-identity, Driver identity, source, version, or arbitrary settings. Request
+Catalog membership is resolved at Agent startup. Plugin IDs are 1-253
+characters matching `^[A-Za-z0-9._~:@-]+$`. Tool IDs use the same length and
+characters, with `/` also allowed for exact native tool names. Callers cannot
+submit a plugin's native identity, Driver identity, source, version, or arbitrary
+settings. Request
 objects reject unknown fields. `plugins:null` is invalid.
 
 On Agent create, an absent `plugins` field and `{}` both mean no desired user
@@ -254,15 +257,23 @@ call. An absent reviewer inherits the native setting.
 For enabled tools, requested precedence is explicit tool mode, then the
 stricter applicable category override, then the plugin default. Category
 strictness is `never > prompt > auto > always`. Disabled plugins/tools cannot be
-re-enabled by a mode override. Destructive means native `destructiveHint=true`;
-missing destructive metadata is conservative. Writes means native
-`readOnlyHint` is not true. Classification never uses a tool's name.
+re-enabled by a mode override. Destructive means native `destructiveHint` is
+not explicitly false; missing metadata is conservative. Writes means native
+`readOnlyHint` is not explicitly true. Classification never uses a tool's name.
 
 The API saves structurally valid policy without proving that the selected
 Driver can represent it exactly. Startup performs that validation. See
-[native mappings and current limits](drivers/plugin.md#native-mappings-and-limits).
-Unknown tool metadata produces `tools:null`; tool/category selections then fail
-the deployment/startup candidate when the selected Driver cannot represent them.
+[native mappings and current limits](drivers/plugin-bundled.md#native-mappings-and-limits).
+The controller catalog returns `tools:null` for both bundled Drivers. Native
+OpenClaw remains plugin-level only. Codex obtains tool identities and annotations
+inside the authenticated Agent after installation; controller catalog metadata
+is not required for this runtime translation. Tool policies inherit the plugin
+reviewer; there is no separate per-tool reviewer field. Startup writes explicit
+settings for observed tools and disables the default. Codex can still match a
+new tool by its display title to an existing enabled policy key, so this does
+not guarantee denial of every future tool. Exact future-tool protection requires
+a Codex runtime change. The next runtime preparation rediscovers and reapplies
+policy to the observed inventory.
 
 ## Failures and boundaries
 

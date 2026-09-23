@@ -1,6 +1,6 @@
 {
-  "baseline": "c4ecf32727aef09a6b4caeec16870bf391f7a505",
-  "reviewedAt": "2026-09-17",
+  "baseline": "dev/stevenlee/codex-plugin-tool-policies",
+  "reviewedAt": "2026-09-23",
   "drivers": [
     {
       "id": "occ-plugin",
@@ -33,11 +33,6 @@
               "path": "apps/controller/src/drivers/plugin/index.ts",
               "start": 144,
               "end": 147
-            },
-            {
-              "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
             }
           ],
           "tests": [
@@ -56,11 +51,6 @@
               "path": "apps/controller/src/drivers/plugin/index.ts",
               "start": 150,
               "end": 178
-            },
-            {
-              "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
             }
           ],
           "tests": [
@@ -81,9 +71,9 @@
       "requirement": "Run without a plugin approval prompt.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "path": "docs/reference/agent-plugins.md",
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -93,43 +83,33 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 437
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 165,
-              "end": 181
+              "end": 182
             }
           ]
         },
         "codex-plugin": {
-          "status": "partial",
-          "detail": "Native app mode approve plus bridge allow_destructive_actions=true; explicit auto_review is rejected.",
+          "status": "supported",
+          "detail": "Translate to native approve, including with auto_review; approval mode decides whether review is needed. Other runtime restrictions still apply.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 290
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 351,
-              "end": 365
+              "end": 391
             }
           ]
         }
@@ -143,9 +123,9 @@
       "requirement": "Use native automatic approval semantics.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "path": "docs/reference/agent-plugins.md",
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -155,31 +135,26 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 416,
-              "end": 421
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 184,
-              "end": 193
+              "end": 195
             }
           ]
         },
         "codex-plugin": {
           "status": "supported",
-          "detail": "Supported app-only selections use native auto approval and bridge allow_destructive_actions=auto.",
+          "detail": "Translate to native auto. Codex annotations and remembered approvals decide whether review is needed; plugin reviewer selection is inherited by tools.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
@@ -200,9 +175,9 @@
       "requirement": "Block selected-plugin execution.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "path": "docs/reference/agent-plugins.md",
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -212,43 +187,38 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 407,
-              "end": 445
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 179,
-              "end": 181
+              "start": 165,
+              "end": 182
             }
           ]
         },
         "codex-plugin": {
           "status": "supported",
-          "detail": "No selected native app entry and bridge disabled; install identity remains and installation still runs.",
+          "detail": "Default-deny calls while allowing explicit tool/category exceptions. Explicit enabled:false remains terminal. enabled:true can still install the plugin; Agent policy governs execution.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 344,
-              "end": 404
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 379,
-              "end": 389
+              "start": 351,
+              "end": 391
+            },
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 542,
+              "end": 585
             }
           ]
         }
@@ -262,14 +232,9 @@
       "requirement": "Review every plugin call using a human user.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
-        },
-        {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -279,38 +244,33 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 184,
-              "end": 193
+              "end": 195
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Startup rejects prompt, including with user. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "status": "partial",
+          "detail": "Translate native prompt with app reviewer user, inherited by tool policies. Final Agent enforcement requires a compatible OpenClaw bridge and image; real reviewed-call proof is pending.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 280
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 494,
+              "end": 541
             }
           ]
         }
@@ -324,14 +284,9 @@
       "requirement": "Review every plugin call using the native automatic reviewer.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
-        },
-        {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -341,38 +296,33 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 184,
-              "end": 193
+              "end": 195
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Startup rejects prompt, including with auto_review. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "status": "partial",
+          "detail": "Translate native prompt with app reviewer auto_review, inherited by tool policies. Final Agent enforcement requires a compatible OpenClaw bridge and image; real reviewed-call proof is pending.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 280
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 494,
+              "end": 541
             }
           ]
         }
@@ -386,9 +336,9 @@
       "requirement": "Override write/destructive-action policy.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "path": "docs/reference/agent-plugins.md",
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -398,33 +348,43 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 425
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 184,
-              "end": 193
+              "end": 195
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Category overrides are rejected; reliable tool metadata is unavailable.",
+          "status": "partial",
+          "detail": "Compile categories for observed authenticated tools; missing annotations are conservative. Requires bridge preservation. Native title fallback prevents an unconditional future-tool denial guarantee; real Agent proof is pending.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 130,
-              "end": 136
+              "start": 404,
+              "end": 490
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
+              "start": 912,
+              "end": 939
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 494,
+              "end": 541
+            },
+            {
+              "path": "tests/conformance/plugin-compute.test.mjs",
+              "start": 624,
+              "end": 695
             }
           ]
         }
@@ -438,9 +398,9 @@
       "requirement": "Override individual tool policy.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "path": "docs/reference/agent-plugins.md",
+          "start": 244,
+          "end": 277
         }
       ],
       "cells": {
@@ -450,33 +410,48 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 457
+              "start": 630,
+              "end": 681
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
               "start": 184,
-              "end": 193
+              "end": 195
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Any tools map is rejected; curated catalog projection reports tools:null.",
+          "status": "partial",
+          "detail": "Translate raw tool enablement and all modes; explicit mode overrides categories/default. Requires authenticated ownership and bridge preservation. Native title fallback limits future-tool isolation; real Agent proof is pending.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 130,
-              "end": 136
+              "start": 404,
+              "end": 490
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 565,
+              "end": 629
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 494,
+              "end": 541
+            },
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 542,
+              "end": 585
+            },
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 586,
+              "end": 638
             }
           ]
         }
