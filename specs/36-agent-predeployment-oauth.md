@@ -150,11 +150,11 @@ runtime image, and genuine provider lifecycle proof. SIWC and bare dedicated
 Codex remain gated pending their own native contracts, custody, and image proof.
 Catalog labels or current source support do not qualify a deployed image.
 
-| Provider/method            | Placement               | Current qualification                                                                         |
-| -------------------------- | ----------------------- | --------------------------------------------------------------------------------------------- |
-| OpenAI browser/device-code | Embedded OC, Kubernetes | Acquisition adapter and native-store tests only; deployment fence and immutable image pending |
-| OpenAI SIWC                | Embedded OC             | Native owner's source contract only; hosted callback and image qualification pending          |
-| OpenAI OAuth               | Dedicated Codex         | Unsupported: current native OC refresh/store ownership is not established in this topology    |
+| Provider/method            | Placement               | Current qualification                                                                      |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| OpenAI browser/device-code | Embedded OC, Kubernetes | Acquisition adapter only; native-store integration, deployment fence, and image pending    |
+| OpenAI SIWC                | Embedded OC             | Native owner's source contract only; hosted callback and image qualification pending       |
+| OpenAI OAuth               | Dedicated Codex         | Unsupported: current native OC refresh/store ownership is not established in this topology |
 
 OCE's baseline runtime image pins OC/plugins `2026.9.1` and Codex `0.156.0`.
 These are not OAuth-qualified versions for this flow. The native prerequisite
@@ -173,9 +173,10 @@ for consent-before-deploy, handoff, uncertain acknowledgments, stale attempts,
 Namespace/actor isolation, redaction, refresh rotation, restart, PVC loss, and
 exclusive refresh during replacement. Genuine consent, model access, refresh,
 and revocation need separately reported provider evidence. No provider/Harness
-combination is enabled yet. The acquisition adapter, custody owner, PostgreSQL
-repository, and conditional native initializer are implemented locally; the
-[custody flow](../docs/flows/agent-oauth-custody.md) records their current boundary.
+combination is enabled yet. The acquisition adapter, custody owner, and PostgreSQL repository are integrated;
+the [custody flow](../docs/flows/agent-oauth-custody.md) records their current
+boundary. The conditional native initializer and native-store tests remain in
+the runtime workstream until their production handoff caller is integrated.
 Deployment import still needs an execution-owner fence. Existing Pod status
 transport is read-only, and current Compute has no import/exec capability. A
 restartable Secret projection alone cannot reject a superseded import. Runtime

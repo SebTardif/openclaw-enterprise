@@ -46,60 +46,27 @@ records an endpoint without a credential. vLLM's pinned native setup requires a
 nonempty API key, represented by a Secret reference. Neither local choice
 provisions a server, changes egress, or adds an inference adapter.
 
-## API, ownership, and persistence
+## Implemented contracts
 
-`GET /provider-catalog` requires Installation `read`. Connection operations are:
+The [provider reference](../docs/reference/providers.md#model-authentication-catalog-and-saved-connections)
+owns API routes, permissions, immutable connection fields, Secret ownership,
+endpoint validation, and deletion guards. The
+[Console workflow](../docs/reference/console.md#save-a-provider-connection)
+owns credential entry, uncertain-save recovery, and Agent selection.
 
-- `GET` and `POST /namespaces/:namespaceId/provider-connections`.
-- `GET` and `DELETE /namespaces/:namespaceId/provider-connections/:connectionId`.
+Key design decisions remain:
 
-Creation requires a ready Namespace and collection `provider_connection:create`.
-List and detail reads require exact connection `read`; list results are filtered
-per row. Deletion requires exact connection `delete`. Connection names are unique
-within a Namespace.
-
-A connection contains its ID, Namespace, name, provider, authentication method,
-creation time, optional same-Namespace Secret reference, and optional endpoint.
-These fields are immutable; a changed setup gets a new connection. Credential
-values stay in the selected Secret Driver. OAuth records contain no token bytes,
-refresh state, or authentication success claim. Endpoint input is restricted to
-HTTP or HTTPS without embedded credentials, query, or fragment. Creation checks
-catalog-required inputs and source permissions but contacts no upstream provider.
-
-The PostgreSQL `provider_connections` table stores this metadata. Source ownership
-and Agent references retain the existing Namespace boundaries. A referenced
-connection blocks Namespace deletion; a connection referencing a Secret protects
-that source from deletion. Removing a connection does not delete its Secret or
-revoke an upstream credential.
-
-## Agent and console workflow
-
-In **Providers**, the operator selects the Namespace, connection name, provider,
-and authentication method. Secret-backed choices accept a credential value or
-an existing Secret ID; local choices require a base URL. Entering a credential
-creates its Secret and connection atomically with separate permissions and audit.
-Credential inputs are cleared after submission, and uncertain outcomes require
-refresh before another creation. Pending methods retain explicit limits. Saving an OAuth selection starts no consent flow. Installation Providers
-remain a separate read-only inventory on the same page.
-
-An Agent selects `{ "method": "provider_connection", "connectionId": "..." }`
-through `harnessAuth`. Binding requires the actor's exact connection `operate`
-and source Secret `operate`. Deployment checks both grants for the actor and the
-Agent service principal, then checks the catalog's deployment capability.
-Unavailable methods fail admission with an explicit reason.
-
-Admission preserves a `provider_connection` snapshot with the connection ID,
-provider, method, optional endpoint, and optional Secret reference/Driver identity.
-The worker repeats authorization and ownership checks before Compute effects.
-Compute owns native provider configuration and Secret projection; the deployed
-OpenClaw process performs the model probe. Local connections require separately
-configured network access and do not create egress grants. This work adds no
-inference broker or InferenceDriver requirement.
-
-Draft Agents, active revisions, and pending deployments block connection deletion.
-Inactive historical revisions retain their snapshots after an unused connection
-is removed. Updating a source Secret follows the existing explicit redeployment
-workflow and cannot restore historical key values.
+- `Agent.harnessAuth` stores `{method: "provider_connection", connectionId}`;
+  the connection is reusable metadata, while Secret bytes stay with its Driver.
+- Admission snapshots safe connection metadata; dispatch rechecks actor, Agent,
+  connection, and Secret authority before Compute projects credentials.
+- Compute owns native configuration and credential delivery. The deployed
+  OpenClaw process probes the selected model. No inference broker is introduced.
+- Local endpoints require separately configured network access. Saving setup
+  neither contacts the endpoint nor grants egress.
+- Drafts, active revisions, and pending deployments protect connection references.
+  Historical snapshots do not retain old credential values; changing a Secret
+  uses the existing explicit redeployment workflow.
 
 ## Remaining integration and proof
 
@@ -110,8 +77,7 @@ Cross-Agent OAuth sharing and a credential broker are outside this implementatio
 The Console consumes an authenticated, exact-Agent socket for login and private
 redirect input, with HTTP status and cancellation. Acquisition/custody endpoints
 are integrated, but production acquisition composition remains unqualified.
-Runtime enablement
-requires qualified generation, PVC, execution ownership, and refresh behavior.
+Runtime enablement requires qualified generation, PVC, execution ownership, and refresh behavior.
 SIWC additionally requires a qualified native image pin. Pending catalog methods
 must become functional before the completion target is met.
 

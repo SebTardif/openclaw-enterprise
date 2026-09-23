@@ -135,20 +135,19 @@ Expired, cancelled, superseded, or unauthorized completions cannot stage materia
 Backend errors return stable, material-free errors. Database rollback cannot undo
 external creation, so the committed identity remains available for recovery.
 
-The native initializer conditionally inserts under the public SDK transaction,
-reopens the profile, and preserves existing rotated credentials. Its caller must
-provide current generation/PVC/execution authority at each import. That runtime
-fence and the single-refresh-owner deployment flow are not implemented yet.
+Runtime handoff must conditionally insert through the native SDK, preserve
+rotated credentials, and verify current generation/PVC/execution authority. The
+initializer and its native-store proof remain with the pending runtime work;
+this acquisition checkpoint does not deliver credentials to a workload.
 
 ## Debugging and Verification
 
 Controller conformance covers identity isolation, stale callbacks, redaction,
 uncertain creation, and authority loss during backend lookup. PostgreSQL tests
 cover constraints and concurrent generation allocation. Child-process tests use
-fixture SDK modules; separate native-store tests use the actual locally selected
-SDK and simulate persisted rotation. None proves live provider consent, refresh,
-model access, or a qualified deployed image. The `native-oauth-store` test lane
-requires an explicit native executable until image qualification is complete.
+fixture SDK modules. These acquisition tests do not prove live provider consent,
+refresh, model access, or a qualified deployed image. Native-store verification
+belongs to the pending runtime handoff integration.
 
 ## Related docs
 

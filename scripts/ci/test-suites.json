@@ -1,10 +1,6 @@
 {
   "version": 1,
   "lanes": {
-    "native-oauth-store": {
-      "requiredEnv": ["OCC_TEST_WORKSPACE_OPENCLAW_PATH"],
-      "files": [{ "path": "tests/integration/native-agent-oauth-profile.test.mjs" }]
-    },
     "checks-baseline": {
       "files": [
         { "path": "tests/conformance/agent-oauth-memory.test.mjs" },
