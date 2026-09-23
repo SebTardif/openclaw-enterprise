@@ -156,9 +156,12 @@ For a selected Sandbox Driver, stopping or retiring a revision always runs its
 required cleanup after stopping a Compute-owned ordinary Harness, or delegates
 provider-owned Harness removal to that cleanup. An absent ordinary Deployment
 does not skip cleanup, so a cleanup failure remains retryable.
-Predecessor retirement retains the current gateway and both owned claims; final
-gateway teardown deletes the exact-owned private and shared claims by UID before
-deleting the gateway. The [storage contract](../reference/drivers/kubernetes-compute/storage-and-credentials.md#gateway-storage)
+Revision retirement retains both owned claims even after stop removed the
+gateway. `apps/controller/src/worker.ts:ControllerWorker.processAgentDeletion`
+retires every revision before calling
+`apps/controller/src/drivers/compute/kubernetes/index.ts:KubernetesComputeDriver.deleteAgentRuntimeCredentials`
+to delete exact-owned private and shared claims by UID. Cleanup failures retry
+before the worker removes the Agent's database identity. The [storage contract](../reference/drivers/kubernetes-compute/storage-and-credentials.md#gateway-storage)
 owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 
 ## Debugging and Verification
@@ -204,6 +207,7 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 - 2026-09-23 04:16: Describe native provider connection snapshots and embedded-only compatibility for Anthropic/local methods. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 30547beeda9e413de5b7c4bf6c9f3b10f58c5fcb)
 
 - 2026-09-23 03:20: Link provider-connection admission to existing API-key execution in the accompanying implementation. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 762c0e1361c63bf925768977fb0d9fde7e6719b3)
+- 2026-09-23 03:24: Move durable claim cleanup from revision retirement to Agent deletion. (01a0cc43-d13b-7cb2-ae15-1fd56e61bbf4 - 43776d25c5007e017f7d0ffdca6b06f063afcd37)
 
 - 2026-09-17 19:14: Distinguish SSH operator credentials from Kubernetes managed authentication. (01a0acbf-4d5a-7413-9411-dce911f3ad23 - b8cabaf9a49e069a7668ccf88b9e71a7484227b7)
 
