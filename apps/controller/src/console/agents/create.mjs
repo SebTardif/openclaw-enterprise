@@ -106,7 +106,10 @@ function renderAgentForm(context, rendered) {
   if (
     binding != null &&
     (!isObject(binding) ||
-      !["runtime", "api_key", "chatgpt_service_account"].includes(binding.method) ||
+      !["runtime", "api_key", "chatgpt_service_account", "provider_connection"].includes(
+        binding.method,
+      ) ||
+      (binding.method === "provider_connection" && typeof binding.connectionId !== "string") ||
       (binding.method === "chatgpt_service_account" &&
         typeof binding.serviceAccountId !== "string") ||
       (binding.method === "api_key" &&

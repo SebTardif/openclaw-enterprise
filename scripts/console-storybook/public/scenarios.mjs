@@ -20,7 +20,7 @@ export const scenarios = {
     path: "/console/agents",
     description:
       "Browse pages, component states, and guided Agent workflows. Every preview mounts the production console modules and styles in its own frame. Reset story discards all local changes.",
-    gap: "There is no Stop button; the stop API is available and deployment resumes an Agent. General Configuration JSON editing after creation, model-Secret creation, Namespace provisioning, Preset management, and Provider setup require an API, CLI, or operator workflow. Serving health and model responses require separate runtime verification.",
+    gap: "There is no Stop button; the stop API is available and deployment resumes an Agent. General Configuration JSON editing after creation, model-Secret creation, Namespace provisioning, Preset management, and Installation Provider setup require an API, CLI, or operator workflow. OAuth connections save setup metadata only. Serving health and model responses require separate runtime verification.",
   },
   login: {
     group: "Pages/Sign in",
@@ -125,15 +125,26 @@ export const scenarios = {
     group: "Pages/Providers",
     name: "Configured",
     path: "/console/providers",
-    description: "Installation-wide Provider discovery.",
-    gap: "This is a read-only page; configure Providers through installation configuration.",
+    description: "Namespace provider connections and separate Installation Provider discovery.",
+    gap: "Use an existing Secret ID. OAuth login and additional provider deployment methods are not implemented yet.",
   },
   providersEmpty: {
     group: "Pages/Providers",
     name: "Empty",
     path: "/console/providers",
     emptyProviders: true,
-    description: "No Providers are configured.",
+    emptyConnections: true,
+    description:
+      "Add the first Namespace provider connection. No Installation Providers are configured.",
+  },
+  providersOAuth: {
+    group: "Pages/Providers",
+    name: "OAuth setup pending",
+    path: "/console/providers",
+    oauthConnection: true,
+    description: "A saved OAuth connection remains unauthenticated and cannot be deployed.",
+    actions: [{ selector: "#connection-auth", value: "oauth" }],
+    gap: "Authentication not implemented yet. There is no functional Connect action.",
   },
   providersError: {
     group: "Pages/Providers",
@@ -514,6 +525,22 @@ export const scenarios = {
     auth: "service",
     description: "Select an existing issued service account.",
     gap: "Service-account issuance is outside the console.",
+  },
+  authConnection: {
+    group: "Components/Credentials",
+    name: "Saved provider connection",
+    path: `${draft}&tab=credentials`,
+    auth: "connection",
+    description: "Select a connection configured on the Providers page.",
+  },
+  authOAuthConnection: {
+    group: "Components/Credentials",
+    name: "OAuth connection pending",
+    path: `${draft}&tab=credentials`,
+    auth: "connection",
+    oauthConnection: true,
+    description:
+      "The draft can retain a pending OAuth connection, with an explicit deployment warning.",
   },
   nativeAdmin: {
     group: "Components/Native admin",

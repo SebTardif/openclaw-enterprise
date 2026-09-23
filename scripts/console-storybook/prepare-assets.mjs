@@ -6,8 +6,10 @@ await mkdir(assets, { recursive: true });
 await cp(new URL("../../apps/controller/src/console/", import.meta.url), assets, {
   recursive: true,
 });
-// The controller serves this shared contract module as a console asset.
-await copyFile(
-  new URL("../../packages/contracts/src/preset-variables.mjs", import.meta.url),
-  new URL("preset-variables.mjs", assets),
-);
+// Match the shared contract modules served by the controller's console asset map.
+for (const name of ["preset-variables.mjs", "workspace-defaults.mjs"]) {
+  await copyFile(
+    new URL(`../../packages/contracts/src/${name}`, import.meta.url),
+    new URL(name, assets),
+  );
+}

@@ -1,7 +1,7 @@
 ---
 created: 2026-08-21
-updated: 2026-09-17
-last_updated_session: codex/01a0acbf-4d5a-7413-9411-dce911f3ad23
+updated: 2026-09-23
+last_updated_session: codex/01a0cb30-109d-7520-b27c-ace1d03ac751
 ---
 
 # Harness Execution Topology Flow
@@ -60,6 +60,10 @@ selection, and Agent ServicePrincipal. Production admits both approved
 `openclaw`/`embedded` and `codex`/`dedicated` combinations. An associated
 `access_token` additionally requires dedicated Codex; the frozen account
 contains only its OCC identity, credential kind, and opaque Secret reference.
+An Agent may select a saved provider connection. Admission checks its method's
+deployment capability and resolves supported OpenAI API-key connections to the
+existing Secret snapshot, retaining safe connection metadata. This adds no
+Harness or inference transport; see the [binding flow](native-service-account-credential-delivery.md).
 
 ### 2. Claim work and realize the approved topology
 
@@ -195,6 +199,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 03:20: Link provider-connection admission to existing API-key execution in the accompanying implementation. (01a0cb30-109d-7520-b27c-ace1d03ac751 - 762c0e1361c63bf925768977fb0d9fde7e6719b3)
 
 - 2026-09-17 19:14: Distinguish SSH operator credentials from Kubernetes managed authentication. (01a0acbf-4d5a-7413-9411-dce911f3ad23 - b8cabaf9a49e069a7668ccf88b9e71a7484227b7)
 

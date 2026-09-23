@@ -7,6 +7,7 @@ export const NamespaceId = Type.String({ pattern: `^ns_${UUID_V4}$` });
 export const PresetId = Type.String({ pattern: `^pre_${UUID_V4}$` });
 export const ConfigurationId = Type.String({ pattern: `^cfg_${UUID_V4}$` });
 export const ServiceAccountId = Type.String({ pattern: `^sa_${UUID_V4}$` });
+export const ProviderConnectionId = Type.String({ pattern: `^pco_${UUID_V4}$` });
 export const SecretId = Type.String({ pattern: `^sec_${UUID_V4}$` });
 export const IAMRoleId = Type.String({ minLength: 1, maxLength: 200 });
 export const IAMAccessBindingId = Type.String({ minLength: 1, maxLength: 200 });
@@ -151,6 +152,10 @@ export const SecretReference = Type.Object(
 );
 
 export const HarnessAuthBindingSchema = Type.Union([
+  Type.Object(
+    { method: Type.Literal("provider_connection"), connectionId: ProviderConnectionId },
+    { additionalProperties: false },
+  ),
   Type.Object({ method: Type.Literal("runtime") }, { additionalProperties: false }),
   Type.Object(
     { method: Type.Literal("api_key"), source: SecretReference },
@@ -228,6 +233,7 @@ export const ResourceKindSchema = Type.Union([
   Type.Literal("namespace"),
   Type.Literal("configuration"),
   Type.Literal("preset"),
+  Type.Literal("provider_connection"),
   Type.Literal("service_account"),
   Type.Literal("secret"),
   Type.Literal("agent"),
@@ -239,6 +245,7 @@ export const NamespacePolicyResourceKindSchema = Type.Union([
   Type.Literal("agent_revision"),
   Type.Literal("configuration"),
   Type.Literal("preset"),
+  Type.Literal("provider_connection"),
   Type.Literal("secret"),
   Type.Literal("service_account"),
 ]);
@@ -604,4 +611,19 @@ export const CreatePresetBody = Type.Object(
 export const UpdatePresetBody = Type.Object(
   { name: Type.Optional(Name), template: Type.Optional(PresetTemplateSchema) },
   { additionalProperties: false, minProperties: 1 },
+);
+
+export const ProviderConnectionParams = Type.Object(
+  { namespaceId: NamespaceId, connectionId: ProviderConnectionId },
+  { additionalProperties: false },
+);
+export const CreateProviderConnectionBody = Type.Object(
+  {
+    name: Name,
+    providerId: ProviderId,
+    authMethodId: ProviderId,
+    source: Type.Optional(SecretReference),
+    baseUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+  },
+  { additionalProperties: false },
 );

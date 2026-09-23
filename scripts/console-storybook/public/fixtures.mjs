@@ -2,6 +2,69 @@ const createdAt = "2026-09-01T12:00:00.000Z";
 const namespaceId = "ns_00000000-0000-4000-8000-000000000001";
 const secretRef = (id) => ({ kind: "secret", namespaceId, id });
 const auth = { method: "api_key", source: secretRef("sec_demo_model") };
+const providerCatalog = [
+  {
+    id: "openai",
+    label: "OpenAI",
+    requiresBaseUrl: false,
+    authMethods: [
+      {
+        id: "api-key",
+        label: "API key",
+        credentialKind: "secret",
+        nativeProviderId: "openai",
+        nativeMethodId: "api-key",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: "api_key",
+        unavailableReason: null,
+      },
+      {
+        id: "oauth",
+        label: "ChatGPT / Codex login",
+        credentialKind: "oauth",
+        nativeProviderId: "openai",
+        nativeMethodId: "oauth",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: null,
+        unavailableReason: "OAuth login and credential deployment are not available yet.",
+      },
+    ],
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    requiresBaseUrl: false,
+    authMethods: [
+      {
+        id: "api-key",
+        label: "API key",
+        credentialKind: "secret",
+        nativeProviderId: "anthropic",
+        nativeMethodId: "api-key",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: null,
+        unavailableReason: "Anthropic credential deployment is not available yet.",
+      },
+    ],
+  },
+  {
+    id: "ollama",
+    label: "Ollama",
+    requiresBaseUrl: true,
+    authMethods: [
+      {
+        id: "local",
+        label: "Local server",
+        credentialKind: "none",
+        nativeProviderId: "ollama",
+        nativeMethodId: "local",
+        nativeVersion: "2026.9.1",
+        deploymentAuthMethod: null,
+        unavailableReason: "Ollama endpoint deployment is not available yet.",
+      },
+    ],
+  },
+];
 
 function configurationValues(scenario) {
   const values = {
@@ -56,6 +119,19 @@ export function installFixture(scenario, evidence) {
   const providers = scenario.emptyProviders
     ? []
     : [{ id: "chatgpt-demo", name: "ChatGPT", type: "chatgpt" }];
+  const connections = scenario.emptyConnections
+    ? []
+    : [
+        {
+          id: "pco_00000000-0000-4000-8000-000000000001",
+          namespaceId,
+          name: "Team OpenAI",
+          providerId: "openai",
+          authMethodId: scenario.oauthConnection ? "oauth" : "api-key",
+          ...(scenario.oauthConnection ? {} : { source: secretRef("sec_demo_model") }),
+          createdAt,
+        },
+      ];
   const accounts = [
     {
       id: "sa_demo",
@@ -90,7 +166,9 @@ export function installFixture(scenario, evidence) {
         ? { method: "runtime" }
         : scenario.auth === "service"
           ? { method: "chatgpt_service_account", serviceAccountId: "sa_demo" }
-          : auth;
+          : scenario.auth === "connection"
+            ? { method: "provider_connection", connectionId: connections[0].id }
+            : auth;
   const agent = {
     id: "agt_00000000-0000-4000-8000-000000000001",
     namespaceId,
@@ -227,6 +305,9 @@ export function installFixture(scenario, evidence) {
     if (path === "/providers" && method === "GET") {
       return response(providers);
     }
+    if (path === "/provider-catalog" && method === "GET") {
+      return response(providerCatalog);
+    }
     const match = path.match(/^\/namespaces\/([^/]+)\/(.*)$/);
     if (match) {
       const [, ns, resource] = match;
@@ -235,6 +316,31 @@ export function installFixture(scenario, evidence) {
       }
       if (resource === "service-accounts" && method === "GET") {
         return response(accounts);
+      }
+      if (resource === "provider-connections") {
+        if (method === "GET") {
+          return response(connections);
+        }
+        if (method === "POST") {
+          const saved = { ...body, id: nextId("pco"), namespaceId, createdAt };
+          connections.push(saved);
+          return response(saved, 201);
+        }
+      }
+      if (resource.startsWith("provider-connections/") && method === "DELETE") {
+        const index = connections.findIndex((item) => item.id === resource.split("/")[1]);
+        if (index === -1) {
+          return error(404);
+        }
+        if (
+          [...agents.values(), ...revisions.values()].some(
+            (item) => item.harnessAuth?.connectionId === connections[index].id,
+          )
+        ) {
+          return error(409);
+        }
+        connections.splice(index, 1);
+        return new Response(null, { status: 204 });
       }
       if (resource === "presets" && method === "GET") {
         return response(scenario.emptyPresets ? [] : [preset]);
@@ -325,6 +431,18 @@ export function installFixture(scenario, evidence) {
           }
         }
         if (suffix === "/deploy" && method === "POST") {
+          const connection = connections.find(
+            (item) => item.id === saved.harnessAuth?.connectionId,
+          );
+          const authMethod = providerCatalog
+            .find((item) => item.id === connection?.providerId)
+            ?.authMethods.find((item) => item.id === connection?.authMethodId);
+          if (
+            saved.harnessAuth?.method === "provider_connection" &&
+            !authMethod?.deploymentAuthMethod
+          ) {
+            return error(400);
+          }
           const next = snapshot(
             saved,
             nextId("rev"),

@@ -1891,6 +1891,36 @@ export class ControllerWorker {
     }
     const refs = uniqueSecretRefs(secretBindings.bindings);
     const auth = revision.harnessAuth;
+    if (auth.method === "api_key" && auth.providerConnection) {
+      const admitted = auth.providerConnection;
+      const connection = await this.state.read((view) =>
+        view.providerConnections.findProviderConnection(revision.namespaceId, admitted.id),
+      );
+      if (
+        !connection ||
+        connection.providerId !== admitted.providerId ||
+        connection.authMethodId !== admitted.authMethodId ||
+        connection.source?.id !== auth.source.id ||
+        connection.source.namespaceId !== auth.source.namespaceId
+      ) {
+        return { outcome: "permanent", code: "HARNESS_AUTH_SOURCE_CHANGED" };
+      }
+      for (const principalId of [claim.actorId, revision.servicePrincipalId]) {
+        const authorization: AuthorizationRequest = {
+          principalId,
+          action: "operate",
+          resource: {
+            kind: "provider_connection",
+            id: admitted.id,
+            namespaceId: revision.namespaceId,
+          },
+        };
+        const decision = await this.iamDecision(driver, authorization);
+        if (!decision.allowed) {
+          return { outcome: "permanent", code: "AUTHORIZATION_DENIED", authorization, decision };
+        }
+      }
+    }
     if (auth.method === "api_key") {
       if (auth.source?.kind !== "secret" || auth.source.namespaceId !== revision.namespaceId) {
         return { outcome: "permanent", code: "INVALID_HARNESS_AUTH" };

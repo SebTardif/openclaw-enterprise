@@ -133,6 +133,15 @@ A managed source must belong to the Agent's exact Namespace:
 }
 ```
 
+To reuse a [saved provider connection](providers.md#model-authentication-catalog-and-saved-connections),
+use `{ "method": "provider_connection", "connectionId": "pco_123e4567-e89b-42d3-a456-426614174000" }`.
+The connection must belong to this Namespace. Binding requires the actor's
+`operate` on the exact connection and its Secret; deployment also checks both
+grants for the Agent service principal. Currently only OpenAI API-key connections
+can deploy. Saved OAuth, Anthropic, and local-server choices remain unavailable.
+The connection does not change the Agent's model, Harness, or Installation
+`providerId` association.
+
 For an already issued ChatGPT account credential, use
 `{ "method": "chatgpt_service_account", "serviceAccountId": "sa_123e4567-e89b-42d3-a456-426614174000" }`.
 This requires dedicated Codex and the account's matching `providerId`. Binding
@@ -152,6 +161,10 @@ replacing or clearing a binding. There is no implied account grant for the Agent
 principal. Each consumer of a shared source is authorized independently.
 
 A deployment freezes the binding and, for managed methods, resolved reference metadata.
+A provider-connection snapshot also retains the connection ID, model provider,
+and authentication method alongside the resolved API-key source. Connection
+deletion is blocked while a draft, active revision, or pending deployment uses it;
+inactive revision history keeps its metadata without retaining the connection.
 A `runtime` snapshot contains only its method. Operator changes to host credentials
 can affect an existing revision without redeployment; readiness does not prove model access. Dispatch
 reauthorizes the admitted actor and required Agent grants, and checks source

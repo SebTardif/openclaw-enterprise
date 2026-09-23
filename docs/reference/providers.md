@@ -6,11 +6,64 @@ accounts. Its nullable Agent `providerId` association neither grants permissions
 nor changes model or Harness selection. The GitHub Provider owns repository
 credential configuration for the selected `RepoDriver` and uses the separate
 Agent `repositoryBindings` selection.
-Providers have no OCC resource or write API. Installation administrators can
+Installation Providers have no OCC resource or write API. Installation administrators can
 discover nonsecret configured IDs and types through `GET /providers`.
 
 [Configure the ChatGPT Provider](../guides/integrations/chatgpt.md) for the
-operator workflow. ChatGPT is the only bundled Provider.
+operator workflow. The bundled Installation Provider types are ChatGPT and GitHub.
+
+For Agent model authentication, use a **ProviderConnection** saved in a Namespace.
+It records a model provider, authentication method, and credential reference or
+endpoint. It does not create or change an Installation Provider.
+
+## Model authentication catalog and saved connections
+
+`GET /provider-catalog` requires Installation `read` and returns the bundled
+model-provider choices. Each method reports its native OpenClaw mapping,
+`nativeVersion`, `credentialKind`, `deploymentAuthMethod`, and `unavailableReason`.
+The version identifies the source checked for the mapping, not a minimum runtime
+version or live verification result. A null deployment method means setup can be
+saved but cannot be used to deploy an Agent.
+
+| Model provider | Saved authentication choices                                         | Deployment through a connection |
+| -------------- | -------------------------------------------------------------------- | ------------------------------- |
+| OpenAI         | API key, ChatGPT/Codex OAuth, device pairing, SIWC through Responses | API key only                    |
+| Anthropic      | API key, Claude setup token                                          | Unavailable                     |
+| Ollama         | Local server without a credential                                    | Unavailable                     |
+| vLLM           | Server endpoint and API-key Secret                                   | Unavailable                     |
+
+Native mappings are checked against OpenClaw `2026.9.1`; SIWC has no supported
+bundled release recorded yet. Saving an OAuth choice records setup metadata only:
+it starts no login and stores no access or refresh token. Anthropic setup tokens
+are static credentials, not an OAuth login method. Local endpoint setup neither
+starts a model server nor changes network policy or inference transport.
+
+Use `GET` or `POST /namespaces/:namespaceId/provider-connections` to list or create
+connections, and `GET` or `DELETE` the same path with `/:connectionId` for one
+connection. Creation requires a ready Namespace and `provider_connection:create`
+in that Namespace. Reads filter by exact connection `read`; deletion requires
+exact connection `delete`. Connections are immutable: create a replacement to
+change the name, provider, method, source, or endpoint.
+
+The creation body contains `name`, `providerId`, `authMethodId`, and, where the
+catalog requires them, `source` and `baseUrl`. `source` is an existing
+same-Namespace Secret reference and requires the creator's exact Secret
+`operate`; credential values stay in the selected Secret Driver. Endpoint URLs
+must use HTTP or HTTPS and contain no credentials, query, or fragment. OpenAI
+and Anthropic do not accept an endpoint override through this API. Responses
+contain safe metadata and references only, and make no upstream request.
+
+Select a saved connection with [Agent `harnessAuth`](agents.md#harness-authentication).
+Binding requires the actor's exact connection and source Secret `operate`.
+Deployment requires those grants for both the actor and Agent service principal;
+the worker repeats the checks. OpenAI API-key connections resolve to the existing
+Secret-backed deployment path and do not change model or Harness selection.
+
+Draft, active-revision, and pending-deployment references block deletion. Inactive
+historical revisions retain their saved metadata after an unused connection is
+removed. Removing a connection deletes neither its Secret nor the upstream key;
+referenced Secrets and Namespaces remain protected from deletion. Rotate keys
+through the existing [Secret update and redeploy workflow](drivers/kubernetes-secret.md#update-and-redeploy).
 
 ## Read configured Providers
 
@@ -223,9 +276,9 @@ verification requirements.
 ## Deferred behavior
 
 Optional member Drivers, per-Agent Driver selection, automatic account creation,
-clientless Providers, installed Provider loading/injection, Provider detail,
-creation, and management UI, OAuth/refresh, renewal, and a common inference API
-remain out of scope.
+clientless Providers, installed Provider loading/injection, and Installation
+Provider mutation remain out of scope. Saved connections do not yet implement
+OAuth login, refresh, revocation, or additional inference transports.
 
 ## Related
 

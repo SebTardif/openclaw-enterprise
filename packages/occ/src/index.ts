@@ -33,6 +33,9 @@ import type {
   PluginRevisionState,
   ProviderDefinition,
   ProviderRef,
+  ProviderConnection,
+  CreateProviderConnectionInput,
+  ModelAuthCatalogProvider,
   RepositoryBindingRequest,
   RepositoryBindingSelection,
   RepoDriver,
@@ -693,6 +696,7 @@ export class OpenClawController {
   private readonly providers: readonly ProviderDefinition[];
   private readonly loggingLevel: LoggingLevel;
   private readonly providerMap: ReadonlyMap<string, ProviderDefinition>;
+  private providerCatalog: readonly ModelAuthCatalogProvider[] = [];
 
   constructor(installation: Installation, options: ControllerOptions = {}) {
     if (!isNonEmptyString(installation.id) || !validName(installation.name)) {
@@ -717,6 +721,21 @@ export class OpenClawController {
     this.providers = validateProviderDefinitions(options.providers ?? []);
     this.loggingLevel = normalizeLoggingLevel(options.loggingLevel);
     this.providerMap = providerDefinitionMap(this.providers);
+  }
+
+  registerProviderCatalog(catalog: readonly ModelAuthCatalogProvider[]): void {
+    this.providerCatalog = immutableCopy(catalog);
+  }
+
+  private providerAuthMethod(providerId: string, authMethodId: string) {
+    const provider = this.providerCatalog.find((item) => item.id === providerId);
+    const method = provider?.authMethods.find((item) => item.id === authMethodId);
+    if (!provider || !method) {
+      throw new ScopeViolationError(
+        "Select a provider and authentication method from the catalog.",
+      );
+    }
+    return { provider, method };
   }
 
   registerDriver(driver: Driver): Driver {
@@ -1560,6 +1579,152 @@ export class OpenClawController {
       await driver.validateValues(values);
     }
     return template;
+  }
+
+  async createProviderConnection(
+    principalId: string,
+    input: CreateProviderConnectionInput,
+  ): Promise<Readonly<ProviderConnection>> {
+    if (!validName(input.name)) {
+      throw new ScopeViolationError("The provider connection name is invalid.");
+    }
+    const { provider, method } = this.providerAuthMethod(input.providerId, input.authMethodId);
+    if ((method.credentialKind === "secret") !== (input.source !== undefined)) {
+      throw new ScopeViolationError(
+        "This authentication method requires its exact credential source.",
+      );
+    }
+    if (provider.requiresBaseUrl !== (input.baseUrl !== undefined)) {
+      throw new ScopeViolationError("An endpoint is required only for a local provider.");
+    }
+    if (input.baseUrl !== undefined) {
+      let endpoint: URL;
+      try {
+        endpoint = new URL(input.baseUrl);
+      } catch {
+        throw new ScopeViolationError("The provider endpoint must be an HTTP or HTTPS URL.");
+      }
+      if (
+        !["http:", "https:"].includes(endpoint.protocol) ||
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.search ||
+        endpoint.hash
+      ) {
+        throw new ScopeViolationError(
+          "The provider endpoint cannot contain credentials, a query, or a fragment.",
+        );
+      }
+    }
+    return this.mutate(async (state) => {
+      const namespace = await this.lockNamespace(state, input.namespaceId);
+      await this.authorize(principalId, "create", {
+        kind: "provider_connection",
+        id: namespace.id,
+        namespaceId: namespace.id,
+      });
+      if (namespace.status !== "ready") {
+        throw new NamespaceNotReadyError();
+      }
+      if (input.source !== undefined) {
+        await this.authorizeHarnessAuthSource(state, principalId, namespace.id, {
+          method: "api_key",
+          source: input.source,
+        });
+      }
+      const connection: ProviderConnection = {
+        id: this.nextIdentifier("provider_connection"),
+        namespaceId: namespace.id,
+        name: input.name,
+        providerId: input.providerId,
+        authMethodId: input.authMethodId,
+        ...(input.source === undefined ? {} : { source: input.source }),
+        ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
+        createdAt: this.timestamp(),
+      };
+      await state.providerConnections.createProviderConnection(connection);
+      return immutableCopy(connection);
+    });
+  }
+
+  async listProviderConnections(
+    principalId: string,
+    namespaceId: string,
+  ): Promise<readonly Readonly<ProviderConnection>[]> {
+    return this.read(async (state) => {
+      await this.exactNamespace(state, namespaceId);
+      const visible: Readonly<ProviderConnection>[] = [];
+      for (const connection of await state.providerConnections.listProviderConnections(
+        namespaceId,
+      )) {
+        if (
+          await this.canRead(principalId, {
+            kind: "provider_connection",
+            id: connection.id,
+            namespaceId,
+          })
+        ) {
+          visible.push(connection);
+        }
+      }
+      return Object.freeze(visible);
+    });
+  }
+
+  async getProviderConnection(
+    principalId: string,
+    namespaceId: string,
+    connectionId: string,
+  ): Promise<Readonly<ProviderConnection>> {
+    await this.authorize(principalId, "read", {
+      kind: "provider_connection",
+      id: connectionId,
+      namespaceId,
+    });
+    return this.read(async (state) => {
+      await this.exactNamespace(state, namespaceId);
+      const connection = await state.providerConnections.findProviderConnection(
+        namespaceId,
+        connectionId,
+      );
+      if (!connection) {
+        throw new ScopeViolationError(
+          "The provider connection does not belong to the exact Namespace.",
+        );
+      }
+      return connection;
+    });
+  }
+
+  async deleteProviderConnection(
+    principalId: string,
+    namespaceId: string,
+    connectionId: string,
+  ): Promise<void> {
+    return this.mutate(async (state) => {
+      await this.lockNamespace(state, namespaceId);
+      await this.authorize(principalId, "delete", {
+        kind: "provider_connection",
+        id: connectionId,
+        namespaceId,
+      });
+      if (!(await state.providerConnections.lockProviderConnection(namespaceId, connectionId))) {
+        throw new ScopeViolationError(
+          "The provider connection does not belong to the exact Namespace.",
+        );
+      }
+      if (await state.providerConnections.hasReferences(namespaceId, connectionId)) {
+        throw new ResourceConflictError(
+          "An Agent or deployment still references this provider connection.",
+        );
+      }
+      for (const binding of await state.iamPolicy.listAccessBindings(namespaceId)) {
+        if (binding.resourceKind === "provider_connection" && binding.resourceId === connectionId) {
+          await state.iamPolicy.deleteAccessBinding(namespaceId, binding.id);
+        }
+      }
+      await state.providerConnections.deleteProviderConnection(namespaceId, connectionId);
+    });
   }
 
   async createSecret(
@@ -2453,6 +2618,9 @@ export class OpenClawController {
       if (await state.namespaces.hasAgents(namespace.id)) {
         throw new NamespaceNotEmptyError();
       }
+      if (await state.namespaces.hasProviderConnections(namespace.id)) {
+        throw new NamespaceNotEmptyError();
+      }
       if (await state.namespaces.hasPresets(namespace.id)) {
         throw new NamespaceNotEmptyError();
       }
@@ -2920,6 +3088,29 @@ export class OpenClawController {
     if (binding === null || binding.method === "runtime") {
       return;
     }
+    if (binding.method === "provider_connection") {
+      await this.authorize(principalId, "operate", {
+        kind: "provider_connection",
+        id: binding.connectionId,
+        namespaceId,
+      });
+      const connection = await state.providerConnections.lockProviderConnection(
+        namespaceId,
+        binding.connectionId,
+      );
+      if (!connection) {
+        throw new ScopeViolationError(
+          "The provider connection does not belong to the exact Namespace.",
+        );
+      }
+      if (connection.source) {
+        await this.authorizeHarnessAuthSource(state, principalId, namespaceId, {
+          method: "api_key",
+          source: connection.source,
+        });
+      }
+      return;
+    }
     if (binding.method === "api_key") {
       if (binding.source.namespaceId !== namespaceId) {
         throw new ScopeViolationError("Harness authentication sources cannot cross Namespaces.");
@@ -2945,13 +3136,42 @@ export class OpenClawController {
     principalId: string,
     agent: Readonly<Agent>,
   ): Promise<HarnessAuthSnapshot> {
-    const binding = this.harnessAuthBinding(agent.harnessAuth);
+    let binding = this.harnessAuthBinding(agent.harnessAuth);
     if (binding === null) {
       throw new ResourceConflictError(
         "Deployment requires an explicit Harness authentication binding.",
       );
     }
     await this.authorizeHarnessAuthSource(state, principalId, agent.namespaceId, binding);
+    let providerConnection: { id: string; providerId: string; authMethodId: string } | undefined;
+    if (binding.method === "provider_connection") {
+      await this.authorizeHarnessAuthSource(
+        state,
+        agent.servicePrincipalId,
+        agent.namespaceId,
+        binding,
+      );
+      const connection = await state.providerConnections.lockProviderConnection(
+        agent.namespaceId,
+        binding.connectionId,
+      );
+      if (!connection) {
+        throw new ScopeViolationError("The provider connection is unavailable.");
+      }
+      const { method } = this.providerAuthMethod(connection.providerId, connection.authMethodId);
+      // Configuration-only methods remain selectable in drafts; admission must not imply login.
+      if (method.deploymentAuthMethod !== "api_key" || !connection.source) {
+        throw new ResourceConflictError(
+          method.unavailableReason ?? "This provider authentication method cannot be deployed yet.",
+        );
+      }
+      providerConnection = {
+        id: connection.id,
+        providerId: connection.providerId,
+        authMethodId: connection.authMethodId,
+      };
+      binding = { method: "api_key", source: connection.source };
+    }
     if (binding.method === "runtime") {
       return immutableCopy(binding);
     }
@@ -2972,7 +3192,11 @@ export class OpenClawController {
       ) {
         throw new DependencyUnavailableError("The Harness Secret backend identity changed.");
       }
-      return immutableCopy({ ...binding, secretDriverId: driver.id });
+      return immutableCopy({
+        ...binding,
+        secretDriverId: driver.id,
+        ...(providerConnection === undefined ? {} : { providerConnection }),
+      });
     }
     const account = await state.serviceAccounts.lockServiceAccount(
       agent.namespaceId,
@@ -3211,6 +3435,14 @@ export class OpenClawController {
         throw new ScopeViolationError(
           "The IAM target AgentRevision does not belong to the Namespace.",
         );
+      }
+      if (resourceKind === "provider_connection") {
+        if (!(await state.providerConnections.findProviderConnection(namespaceId, resourceId))) {
+          throw new ScopeViolationError(
+            "The IAM target provider connection does not belong to the Namespace.",
+          );
+        }
+        return;
       }
       if (resourceKind === "preset") {
         if ((await state.presets.findPreset(namespaceId, resourceId)) === undefined) {
@@ -3552,6 +3784,7 @@ export class OpenClawController {
       namespace: "ns",
       configuration: "cfg",
       preset: "pre",
+      provider_connection: "pco",
       service_account: "sa",
       secret: "sec",
       agent: "agt",

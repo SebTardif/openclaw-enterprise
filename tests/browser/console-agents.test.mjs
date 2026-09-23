@@ -527,6 +527,111 @@ test("Agent creation renders provider and service account choices and saves sele
   );
 });
 
+test("Providers setup saves reusable connections and keeps OAuth visibly unauthenticated in Agent drafts", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Provider setup", { ready: true });
+  const secret = await fixture.createSecret(
+    namespace.id,
+    "Model key",
+    "provider-setup-secret-value",
+  );
+  const { page } = await newPage(t, fixture);
+  const path = `/namespaces/${namespace.id}/provider-connections`;
+  await login(page, fixture, `/console/providers?namespace=${namespace.id}`);
+  await page.getByRole("heading", { name: "Add provider" }).waitFor();
+  await page.getByLabel("Connection name").fill("Team API key");
+  await page.getByLabel("Provider", { exact: true }).selectOption("openai");
+  await page.getByLabel("Authentication method").selectOption("api-key");
+  await page.getByLabel("Secret ID", { exact: true }).fill(secret.id);
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page.getByText("OpenAI / API key / Team API key", { exact: true }).waitFor();
+
+  // OAuth setup stores only the chosen method. It must never look like a completed login.
+  await page.getByLabel("Connection name").fill("Personal login");
+  await page.getByLabel("Authentication method").selectOption("oauth");
+  assert.equal(await page.getByLabel("Secret ID", { exact: true }).isVisible(), false);
+  await page.getByText(/Authentication not implemented yet/).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0);
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page
+    .getByText("OpenAI / ChatGPT / Codex login / Personal login", { exact: true })
+    .waitFor();
+
+  // Selecting a local provider changes the required inputs, without carrying over a Secret.
+  await page.getByLabel("Connection name").fill("Local models");
+  await page.getByLabel("Provider", { exact: true }).selectOption("ollama");
+  assert.equal(await page.getByLabel("Secret ID", { exact: true }).isVisible(), false);
+  assert.equal(await page.getByLabel("Base URL").getAttribute("required"), "");
+  await page.getByLabel("Base URL").fill("http://model-server:11434");
+  await page.getByRole("button", { name: "Save provider connection" }).click();
+  await page.getByText("Ollama / Local server / Local models", { exact: true }).waitFor();
+  const saved = await fixture.request("GET", path);
+  assert.equal(saved.status, 200);
+  const keyConnection = saved.data.find((item) => item.name === "Team API key");
+  const oauthConnection = saved.data.find((item) => item.name === "Personal login");
+  const localConnection = saved.data.find((item) => item.name === "Local models");
+  assert.deepEqual(keyConnection.source, secret.ref);
+  assert.equal(oauthConnection.source, undefined);
+  assert.equal(localConnection.source, undefined);
+  assert.equal(localConnection.baseUrl, "http://model-server:11434");
+  await page.reload();
+  await page.getByText("OpenAI / API key / Team API key", { exact: true }).waitFor();
+  await expectNoText(page, /provider-setup-secret-value/);
+  await page.getByRole("button", { name: "Remove Local models" }).click();
+  await page
+    .getByText("Ollama / Local server / Local models", { exact: true })
+    .waitFor({ state: "detached" });
+  assert.equal((await fixture.request("GET", path)).data.length, 2);
+
+  await page.goto(`${fixture.origin}/console/agents/new?namespace=${namespace.id}`);
+  await page.getByRole("button", { name: "Start without Preset" }).click();
+  await page.getByLabel("Agent name").fill("Connected Agent");
+  await page.getByLabel("Authentication source").selectOption("provider_connection");
+  await page
+    .getByLabel("Provider connection", { exact: true })
+    .selectOption({ label: "OpenAI / API key / Team API key" });
+  await page
+    .getByLabel("Configuration JSON")
+    .fill(JSON.stringify(nativeValues("provider-connection", { harnessId: "codex" })));
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents` &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Create Agent", exact: true }).click();
+  const created = await (await createdResponse).json();
+  assert.deepEqual(created.data.harnessAuth, {
+    method: "provider_connection",
+    connectionId: keyConnection.id,
+  });
+
+  await page.getByRole("button", { name: "Credentials", exact: true }).click();
+  await page.getByLabel("Provider connection", { exact: true }).selectOption(oauthConnection.id);
+  await page.getByText(/Authentication not implemented yet/).waitFor();
+  const savedResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents/${created.data.id}` &&
+      response.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "Save authentication source" }).click();
+  assert.equal((await savedResponse).status(), 200);
+  await page.reload();
+  await page.getByText(/Authentication not implemented yet/).waitFor();
+  assert.equal(
+    await page.getByLabel("Provider connection", { exact: true }).inputValue(),
+    oauthConnection.id,
+  );
+  const agent = await fixture.request(
+    "GET",
+    `/namespaces/${namespace.id}/agents/${created.data.id}`,
+  );
+  assert.deepEqual(agent.data.harnessAuth, {
+    method: "provider_connection",
+    connectionId: oauthConnection.id,
+  });
+});
+
 test("Agent creation leaves optional lists disabled when discovery is inaccessible", async (t) => {
   const fixture = await createConsoleAppFixture(t, { providerSummaries: undefined });
   await fixture.bootstrap();

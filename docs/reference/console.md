@@ -29,14 +29,14 @@ missing or expired session clears private content and asks you to sign in again.
 ## Browse and select a Namespace
 
 The sidebar opens **Agents**, **Providers**, or **Namespaces**. **Refresh**
-repeats the current read. Provider and Namespace rows remain read-only collection
-entries.
+repeats the current read. The Providers page contains saved model connections
+for the selected Namespace and a separate read-only Installation inventory.
 
-| Page       | Scope and permission                                                     |
-| ---------- | ------------------------------------------------------------------------ |
-| Agents     | Selected Namespace; Namespace `read`, then exact Agent `read` filtering. |
-| Namespaces | Installation-wide collection filtered by exact Namespace `read`.         |
-| Providers  | Installation-wide configured inventory; Installation `administer`.       |
+| Page       | Scope and permission                                                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Agents     | Selected Namespace; Namespace `read`, then exact Agent `read` filtering.                                                          |
+| Namespaces | Installation-wide collection filtered by exact Namespace `read`.                                                                  |
+| Providers  | Catalog: Installation `read`; saved connections: exact connection permissions; Installation inventory: Installation `administer`. |
 
 Use the bottom **OpenClaw Enterprise** menu for **Namespace**, **Settings**, or
 **Logout**. Settings shows the signed-in account and no configurable settings.
@@ -47,9 +47,27 @@ selection. With no readable Namespaces, Agents explains that provisioning or
 access is needed; global pages remain available.
 
 Switching Namespace from Agent detail or creation returns to the Agents list in
-the new scope. Global pages stay open because Providers and Namespaces remain
-Installation-wide. The API makes all authorization decisions; the selector does
-not broaden access.
+the new scope. The Providers page reloads connections for the selected Namespace;
+its Installation inventory stays Installation-wide. The API makes all
+authorization decisions; the selector does not broaden access.
+
+## Save a provider connection
+
+In **Providers**, select a Namespace and fill **Add provider** with a connection
+name, provider, and authentication method. For a key or setup token, enter an
+existing Secret ID from that Namespace. Local-server choices also require a
+base URL. Select **Save provider connection** to record the setup.
+
+Saving does not test credentials or model access. OAuth choices show that login
+is not implemented; they save metadata without starting consent or storing
+tokens. Anthropic and local-server connections also show their deployment
+limitation. Only OpenAI API-key connections currently support Agent deployment.
+Choose an available saved connection in the Agent authentication controls to
+reuse it. See [connection permissions and limits](providers.md#model-authentication-catalog-and-saved-connections).
+
+Connections have no edit action. **Remove** deletes unused connection metadata;
+an Agent draft, active revision, or pending deployment prevents removal. The
+underlying Secret and upstream credential remain owned by their existing stores.
 
 ## Agent creation and deployment
 

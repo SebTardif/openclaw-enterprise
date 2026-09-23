@@ -178,7 +178,24 @@ async function setup(context, { leaseDurationMs = 30_000, onHealthy, metrics, re
     plugins,
   ) {
     let harnessAuth;
-    if (owner.harnessAuth.method === "runtime") {
+    if (owner.harnessAuth.method === "provider_connection") {
+      const connection = await state.read((view) =>
+        view.providerConnections.findProviderConnection(
+          namespace.id,
+          owner.harnessAuth.connectionId,
+        ),
+      );
+      harnessAuth = {
+        method: "api_key",
+        source: connection.source,
+        secretDriverId: secretDriver.id,
+        providerConnection: {
+          id: connection.id,
+          providerId: connection.providerId,
+          authMethodId: connection.authMethodId,
+        },
+      };
+    } else if (owner.harnessAuth.method === "runtime") {
       harnessAuth = owner.harnessAuth;
     } else if (owner.harnessAuth.method === "chatgpt_service_account") {
       const account = await state.read((view) =>
@@ -3536,6 +3553,114 @@ test(
       { resource_id: first.id, previous: null },
       { resource_id: second.id, previous: first.id },
     ]);
+  },
+);
+
+test(
+  "the revision worker rechecks operator and Agent connection permissions while retaining Secret access",
+  requiresPostgres,
+  async (context) => {
+    for (const revokedPrincipal of ["operator", "agent"]) {
+      await context.test(revokedPrincipal, async (child) => {
+        const fixture = await setup(child);
+        const owner = await fixture.agent(`connection-${revokedPrincipal}`);
+        const connection = {
+          id: `pco_${randomUUID()}`,
+          namespaceId: fixture.namespace.id,
+          name: "Worker connection",
+          providerId: "openai",
+          authMethodId: "api-key",
+          source: owner.harnessAuth.source,
+          createdAt: new Date().toISOString(),
+        };
+        const boundOwner = await fixture.state.transact(async (unit) => {
+          await unit.providerConnections.createProviderConnection(connection);
+          return unit.agents.updateConfiguration(
+            fixture.namespace.id,
+            owner.id,
+            owner.configurationId,
+            undefined,
+            { method: "provider_connection", connectionId: connection.id },
+          );
+        });
+        const roleId = `role-${randomUUID()}`;
+        const bindingId = `binding-${randomUUID()}`;
+        await fixture.observerPool.query(
+          `INSERT INTO occ.iam_roles (id, namespace_id, name, permissions)
+          VALUES ($1, $2, 'Use connection', '[{"action":"operate","resourceKind":"provider_connection"}]'::jsonb)`,
+          [roleId, fixture.namespace.id],
+        );
+        await fixture.observerPool.query(
+          `INSERT INTO occ.iam_access_bindings
+          (id, namespace_id, identity_subject_id, role_id, resource_kind, resource_id)
+          VALUES ($1, $2, $3, $4, 'provider_connection', $5)`,
+          [bindingId, fixture.namespace.id, owner.servicePrincipalId, roleId, connection.id],
+        );
+        const iam = createProviderWorkerDrivers(fixture.compute, []).createIAMDriver(fixture.state);
+        const resource = {
+          kind: "provider_connection",
+          id: connection.id,
+          namespaceId: fixture.namespace.id,
+        };
+        for (const principalId of [fixture.actor.id, owner.servicePrincipalId]) {
+          assert.equal(
+            (await iam.authorize({ principalId, action: "operate", resource })).allowed,
+            true,
+          );
+        }
+        const candidate = await fixture.revision(boundOwner, 1);
+        // Revoke only connection use after queuing; Secret authority remains independently valid.
+        if (revokedPrincipal === "operator") {
+          await fixture.observerPool.query(
+            `INSERT INTO occ.iam_restrictions
+            (id, namespace_id, action, resource_kind, resource_id, effect)
+            VALUES ($1, $2, 'operate', 'provider_connection', $3, 'deny')`,
+            [`restriction-${randomUUID()}`, fixture.namespace.id, connection.id],
+          );
+        } else {
+          await fixture.state.transact((unit) =>
+            unit.iamPolicy.deleteAccessBinding(fixture.namespace.id, bindingId),
+          );
+        }
+        for (const principalId of [fixture.actor.id, owner.servicePrincipalId]) {
+          assert.equal(
+            (await iam.authorize({ principalId, action: "operate", resource: connection.source }))
+              .allowed,
+            true,
+          );
+        }
+        const effects = [];
+        await fixture.start({
+          ...fixture.compute,
+          async prepareRevision(revision) {
+            effects.push(revision.id);
+            return fixture.compute.prepareRevision(revision);
+          },
+        });
+        await fixture.work(candidate, "failed_permanent");
+        assert.deepEqual(effects, []);
+        const result = await fixture.observerPool.query(
+          "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+          [candidate.idempotencyKey],
+        );
+        assert.equal(result.rows[0].reason_code, "AUTHORIZATION_DENIED");
+        const denials = await fixture.observerPool.query(
+          `SELECT details->'__occAuditMetadata'->'authorization' AS authorization
+          FROM occ.audit_events WHERE resource_id = $1 AND kind = 'authorization_denial'`,
+          [owner.id],
+        );
+        assert.deepEqual(denials.rows, [
+          {
+            authorization: {
+              principalId:
+                revokedPrincipal === "operator" ? fixture.actor.id : owner.servicePrincipalId,
+              action: "operate",
+              resource,
+            },
+          },
+        ]);
+      });
+    }
   },
 );
 

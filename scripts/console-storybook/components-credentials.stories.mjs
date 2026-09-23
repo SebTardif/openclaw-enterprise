@@ -16,3 +16,8 @@ export const CredentialsError = { ...story("credentialsError"), name: "Metadata 
 export const AuthMissing = { ...story("authMissing"), name: "No authentication source" };
 export const AuthRuntime = { ...story("authRuntime"), name: "Operator-managed authentication" };
 export const AuthService = { ...story("authService"), name: "ChatGPT service account" };
+export const AuthConnection = { ...story("authConnection"), name: "Saved provider connection" };
+export const AuthOAuthConnection = {
+  ...story("authOAuthConnection"),
+  name: "OAuth connection pending",
+};
