@@ -1,32 +1,38 @@
 # OpenShell runtime integration
 
-## Problem and decision
+## Decision
 
-Finish the existing OpenShell integration so one dedicated Codex Agent, deployed through ordinary OpenClaw Enterprise (OCE) APIs and workers, can use a protected model, native Git and `gh`. This RFC proposes the composition; the complete runtime is not yet supported.
+Offer one optional dedicated Codex runtime managed by OpenClaw Enterprise (OCE), using stock OpenShell, the existing Git/`gh` credential gateway and a protected model. The missing work connects ordinary API/worker deployment to persistent workspace, private session, provider readiness, credential delivery and replacement. This is a proposal, not a supported runtime.
 
-**Agent access (Plan 1)** independently owns human enrollment, grants, discovery and native access. Human identity, Agent ServicePrincipal and runtime assignment remain distinct. Repository grants require explicit admission, never inheritance from login or conversation.
+[Agent access (Plan 1, PR #320)](https://github.com/openclaw/openclaw-enterprise/pull/320) ships independently. Human identity, Agent ServicePrincipal and runtime assignment remain distinct; repository grants require explicit admission, never inheritance from login or conversation.
 
-## Specification
+## Reuse and ownership
 
-| Contract   | Required behavior                                                                                                                                                                                                                                                                                                 |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime    | Existing Kubernetes Compute and OpenShell Sandbox Driver, dedicated Codex, stock OpenShell v0.1.0-pre.5. Pin exact images, models and tools. [PR #301](https://github.com/openclaw/openclaw-enterprise/pull/301)'s pre.7 work is separate, not an accepted substitute.                                            |
-| Repository | Exact OCE HTTPS gateway through OpenShell `tls: skip`: skip interception while the client verifies the OCE certificate. Authorize every effective request. Preserve `git-read`, `git-write`, `git-full` and token-bounded GraphQL. No direct GitHub or OpenShell GitHub provider bypass.                          |
-| Model      | Explicit authorized Secret reference through `ResolvedHarnessAuth`, Secret `operate`, exact UID/resourceVersion checks and attached provider identity. The trusted provider retains the real OpenAI API key.                                                                                                      |
-| Custody    | GitHub App keys and provider tokens stay outside execution. Scoped capabilities occupy a private read-only volume separate from writable workspace, with fresh material per replacement.                                                                                                                          |
-| Authority  | Original State supplies admitted revision, finite deadline and stop ordering. Work supplies responsibility and fencing. Bind observed Sandbox/Pod/revision/generation. Consumer timestamps and heartbeats cannot renew authority.                                                                                 |
-| Assurance  | Explicit compatibility uses current IAM, ServicePrincipal and scoped bearer checks; internal bearer replay remains possible. Protected writes require trusted association with each authorized invocation and proven predecessor withdrawal. Unsupported enforced configurations refuse. Outages never downgrade. |
-| Withdrawal | Git/model request owners deny new traffic and close active exchanges within 30 seconds of renewal connectivity loss, preserving selected stricter five-second consumers. Closing the app-server alone is insufficient.                                                                                            |
+Upstream [OpenClaw OpenShell support](https://docs.openclaw.ai/gateway/openshell) already supplies tool-sandbox lifecycle, SSH and filesystem bridging through `@openclaw/openshell-sandbox`. Evaluate this supported mechanism before adding equivalent helpers. It confines tool execution; the host OpenClaw Gateway, plugins and control RPC remain outside. It does not establish whole-Codex containment or OCE lifecycle integration.
 
-## Contract
+| Owner                      | Reuse and remaining responsibility                                                                                                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OCE IAM, State and Work    | Existing grants, admitted revisions, finite deadlines, worker responsibility and fencing. Connect these to runtime readiness and retirement.                                                        |
+| OCE Compute / Sandbox      | Existing deployment contracts. Join persistent workspace, workload identity, private material and cleanup; choose one lifecycle owner per sandbox, never simultaneous native-plugin/OCE management. |
+| OpenClaw Gateway / harness | Native transport, configuration, tool policy and execution approvals. Retain the original authenticated OpenShell session privately in the trusted Gateway, outside Codex.                          |
+| OpenShell                  | Sandbox execution, destination policy and trusted model provider. Qualify the selected runtime placement and active-request cancellation.                                                           |
+| Credential owner           | Existing repository gateway and receiver; authorize requests and retain GitHub App keys/provider tokens outside execution.                                                                          |
 
-Configure Kubernetes/OpenShell, persistent workspace, an explicit repository grant and an authorized model Secret. Deploy the saved Agent draft through the existing bodyless interface; this illustrative request is unexecuted:
+No new human IAM, policy engine/store, credential custodian, issuer, proxy or lease supervisor. Preserve existing Console and Control UI authorization boundaries.
 
-```http
-POST /namespaces/{namespaceId}/agents/{agentId}/deploy
-```
+## Selected contract
 
-Exact-Agent `deploy` permission freezes the draft. Missing authorization rejects admission. HTTP 202 acknowledges admission, not readiness. The worker calls Compute, which passes `HarnessWorkloadRequirements` to `SandboxDriver.provisionHarness`.
+| Area              | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Versions          | OCE's source baseline packages OpenClaw `2026.9.1`; current upstream capabilities are not installed-OCE proof. OpenShell pre.5 remains this proposal's reference. Main includes the pre.7 successor from [PR #301](https://github.com/openclaw/openclaw-enterprise/pull/301), but receiving integration and runtime equivalence remain unqualified. Explicitly choose and pin image/model/tool versions before acceptance. |
+| Repository        | Only the exact OCE HTTPS gateway through OpenShell `tls: skip`; clients still verify its certificate. Authorize every effective request, preserving `git-read`, `git-write`, `git-full` and token-bounded GraphQL. No direct GitHub or OpenShell GitHub-provider bypass.                                                                                                                                                   |
+| Model and custody | Explicit authorized Secret through `ResolvedHarnessAuth`, Secret `operate`, exact UID/resourceVersion and attached provider identity. The trusted provider retains the real OpenAI key. Scoped capabilities use a private read-only volume separate from writable workspace, refreshed on replacement.                                                                                                                     |
+| Authority         | Original State owns admitted revision, deadline and stop ordering; Work owns responsibility/fencing. Bind observed Sandbox, Pod, revision and generation. Heartbeats or consumer timestamps cannot renew authority.                                                                                                                                                                                                        |
+| Withdrawal        | Git/model owners must deny new traffic and close active exchanges within 30 seconds, including renewal-connectivity loss; preserve selected stricter five-second consumers. Include observation age and scheduling delay. App-server closure alone is insufficient.                                                                                                                                                        |
+
+## Deployment and lifecycle
+
+The existing bodyless `POST /namespaces/{namespaceId}/agents/{agentId}/deploy` requires exact-Agent `deploy`, freezes the saved draft and returns 202 for admission, not readiness. Missing authorization rejects admission. Workers pass harness requirements through Compute to the Sandbox Driver.
 
 ```mermaid
 ---
@@ -40,65 +46,47 @@ config:
     edgeLabelBackground: "#FFFFFF"
   flowchart:
     curve: linear
-    nodeSpacing: 16
-    rankSpacing: 16
-    padding: 6
+    nodeSpacing: 20
+    rankSpacing: 20
+    padding: 10
 ---
 flowchart TB
-  C["<b>State / Work / Compute</b><br/>Authority and worker"]
-  G["<b>Native Gateway</b><br/>Trusted transport"]
-  C -. prepare .-> O["<b>OpenShell</b><br/>Sandbox / provider"]
-  G -. native route .-> O
-  O -. supervise .-> A["<b>Codex Agent</b><br/>Tool execution"]
-  A -. Git / gh .-> O
-  O -. OCE TLS .-> R["<b>Credential service</b><br/>Repository gateway"]
+  C["<b>OCE worker</b><br/>State / Work / Compute"]
+  G["<b>OpenClaw Gateway</b><br/>Private original session"]
+  S["<b>OpenShell sandbox</b><br/>Dedicated Codex / workspace"]
+  R["<b>Repository gateway</b><br/>Authorize Git / gh"]
+  M["<b>Model provider</b><br/>Retain OpenAI key"]
+  C -. prepare and bind .-> S
+  G -. native route .-> S
+  S -. Git / gh .-> R
+  S -. model .-> M
   classDef authority fill:#EDF2F7,stroke:#879AB0,color:#25364A,stroke-width:1px
   classDef trusted fill:#EBF3F0,stroke:#7F9D93,color:#2B4038,stroke-width:1px
-  classDef workload fill:#F1EEF5,stroke:#A091AD,color:#3A3243,stroke-width:1px
+  classDef pending fill:#F3F4F6,stroke:#98A2AE,color:#44505F,stroke-width:1px,stroke-dasharray:4 4
   class C authority
-  class O,G,R trusted
-  class A workload
+  class G,R,M trusted
+  class S pending
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Five owner groups, with dashed proposed handoffs. Compute and Driver are worker libraries. Kubernetes runs separate native Gateway and OpenShell-owned Codex Pods. The repository gateway authorizes requests and substitutes credentials toward GitHub; OpenShell's trusted provider connects to OpenAI.
+Dashed handoffs are proposed. Compute/Driver are worker libraries; the native Gateway and OpenShell-owned Codex occupy separate Kubernetes Pods.
 
-Current Kubernetes Gateway ingress uses trusted-proxy authentication. This proposal separately requires private custody of the original authenticated OpenShell session in the trusted Gateway, outside Codex. Trusted-proxy headers cannot replace that session or prove invocation authority. Preserve current Console configuration and Control UI defaults with their existing authorization boundaries.
+Initialize workspace before revision-scoped enrollment. Route only when exact workload binding, native readiness and provider readiness agree. Trusted-proxy headers cannot replace the original session or prove invocation authority. Qualify turns through authorized native Gateway ingress; [deployment status](../docs/reference/agents.md#deployment-status) requires revision read and reports completion/failure, not live health.
 
-Initialize workspace before revision-scoped enrollment. Withhold routing until exact workload binding, native readiness and provider readiness agree. Submit qualification turns through authorized native Gateway ingress. Poll [deployment status](../docs/reference/agents.md#deployment-status) with revision read permission for completion or failure; it does not report live health.
+State transactions cannot atomically settle external effects. Retain the original operation, its commit outcome (including unknown outcomes), and independently recorded original-session completion. Restart verifies completion. Unknown issuance, missing completion or unavailable currentness blocks routing: no blind replay, one-time-secret re-export or deadline extension.
 
-![Proposed lifecycle from admission to withdrawal and disposal](37-openshell-runtime/request-lifecycle.svg)
+Retire the predecessor before successor effects. Preserve workspace edits; create fresh Sandbox/private material. Revoke or expire capabilities independently of file deletion. CLOSED, stopped traffic, termination and DISPOSED are distinct; PVC deletion proves no physical erasure. Independent process stopping during controller outage remains later work.
 
-[Editable lifecycle source](37-openshell-runtime/request-lifecycle.mmd). Lifelines group owners, not services. Git/model owners enforce expiry locally within the selected bound.
+## Delivery checkpoints
 
-State transactions cannot atomically settle external effects. Retain the original operation, COMMIT/unknown disposition and independently recorded original-session completion. Restart verifies completion. Unknown issuance, missing completion or unavailable currentness leaves routing unavailable without blind replay, re-exporting one-time secrets or extending deadlines.
+1. **Compatibility:** connect ordinary deployment, workspace/session preparation, readiness and existing credential receivers using genuine IAM/State, restricted PostgreSQL, production tools and controlled providers. This explicitly selected mode uses ServicePrincipal/scoped bearer checks; internal bearer replay remains possible. Resolve pre.5's unsupported token/Secret projection with existing owners; never omit required identity or copy supervisor tokens.
+2. **Installed/live:** qualify pinned images, real PVCs and authorized GitHub/OpenAI: model turns, clone/fetch, remote-ref-verified pushes, and `gh` REST/GraphQL/PR creation. Historical pre.4 or embedded evidence does not qualify this runtime.
+3. **Protected:** prove trusted association with each authorized invocation for writes, predecessor withdrawal and timed new/active Git/model closure after real renewal loss. Bearer possession does not establish per-write identity. Unsupported enforced configurations refuse; outages never silently downgrade.
 
-Replacement retires the predecessor before successor effects, preserving workspace edits and creating fresh Sandbox/private material. Revoke or expire capabilities independently of file deletion. CLOSED, stopped traffic, termination and DISPOSED are separate outcomes; PVC deletion proves no physical erasure.
+Each checkpoint needs read-only push denial, exact-grant refusal, sibling isolation, Secret rotation, startup failure, restart/replacement, delayed/unknown effects and owned-cleanup checks. Source acceptance, composition, installation, live operation and release remain separate. Preparation helpers alone do not complete receiving integration.
 
-## Implementation
-
-1. **Agree the contract.** Preserve existing supplier and independent Plan 1 ownership. Resolve pre.5's unsupported workload-token projection with the shared-contract, Compute and identity owners; this RFC does not approve omission or copying supervisor tokens.
-2. **Finish preparation.** Compute/OpenShell join workspace initialization, enrollment and cleanup. Original State/Work supplies finite currentness and uncertain settlement in parallel.
-3. **Connect readiness.** Compute and Gateway deliver original session and retained completion, bind the workload and verify native/provider readiness. Restart verifies without replay.
-4. **Activate callers.** Repository/model owners connect production adapters through ordinary controlled-provider compatibility. Lift refusals only for completed consumers.
-5. **Qualify protection.** Prove installed/live behavior, invocation association, withdrawal and recovery. Complete independent security review and polish before release.
-
-Reuse existing owners and cancellation mechanisms. Add no backend, proxy, IAM evaluator, policy store, issuer or lease supervisor. Additional authentication profiles, SSH/LFS, stronger isolation and independent process killing during controller outage remain later work.
-
-## Verification
-
-Main still refuses repository-enabled Sandbox/workspace startup and unsupported Secret projections. Preparation/session components do not establish accepted ordinary session, currentness or workspace composition. Historical pre.4 controlled-provider and embedded live-provider evidence does not qualify pre.5.
-
-Acceptance has three levels:
-
-- **Compatibility:** ordinary API/worker journey, genuine IAM/State, restricted PostgreSQL role, production tools and controlled providers.
-- **Installed/live:** pinned images, real PVCs, authorized GitHub/OpenAI, model turns, clone/fetch, remote-ref-verified pushes and `gh` REST/GraphQL/PR creation.
-- **Protected:** trusted per-write invocation association, predecessor withdrawal, and measured new/active Git/model closure after real renewal loss, including observation age and scheduling delay.
-
-Exercise read-only push denial, exact-grant refusal, sibling isolation, Secret rotation, startup failure, restart/replacement, delayed/unknown effects and owned cleanup. Source, composed, installed, live and release evidence remain distinct.
-
-Before release, pin the image/model/tool matrix and prove stock OpenShell closes active model requests within the bound. If it cannot, separately review a minimal upstream patch or fork. The bound cannot be waived.
+Before release, complete independent security review and prove stock OpenShell meets the active-model closure bound; otherwise separately review a minimal upstream patch/fork. The bound cannot be waived. Additional authentication profiles, SSH/LFS and stronger isolation remain deferred.
 
 ## References
 
-Maintained owners: [OpenShell Driver](../docs/reference/drivers/openshell-sandbox.md), [provisioning](../docs/flows/openshell-sandbox-provisioning.md), [repository credentials](../docs/reference/repository-credentials.md), [deployment](../docs/reference/agents/deployment.md), and [OpenShell testing](../docs/testing/openshell.md).
+Existing contracts: [OpenShell Driver](../docs/reference/drivers/openshell-sandbox.md), [provisioning](../docs/flows/openshell-sandbox-provisioning.md), [repository credentials](../docs/reference/repository-credentials.md), [deployment](../docs/reference/agents/deployment.md), [qualification](../docs/testing/openshell.md). Upstream reuse evidence: [pinned OpenClaw source](https://github.com/openclaw/openclaw/blob/3bbaf039b5ae920554fbd51b3398faaae16ac70b/docs/gateway/openshell.md).
