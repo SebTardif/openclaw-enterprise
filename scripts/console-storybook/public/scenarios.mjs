@@ -880,12 +880,13 @@ export const scenarios = {
   },
   stopRequested: {
     group: "Components/Stop Agent",
-    name: "Stop requested",
+    name: "Repeat request",
     path: revision,
     deployed: true,
     stopped: true,
+    actions: [click("Request stop again")],
     description:
-      "The requested state is stopped. Deployment resumes the Agent; shutdown completion is not exposed here.",
+      "A stopped Agent retains an explicit, confirmed recovery request because selected revision metadata does not prove runtime cleanup completed.",
   },
   stopDenied: {
     group: "Components/Stop Agent",
@@ -917,9 +918,10 @@ export const scenarios = {
     steps: [
       "Open Stop Agent and review the confirmation copy.",
       "Confirm Stop Agent. The page reports Stop requested and keeps revision/workspace inspection available.",
+      "If cleanup may be incomplete, use Request stop again to queue another explicit reconciliation; Console never retries automatically.",
       "Return to New revision and Deploy new revision to request running again.",
     ],
-    gap: "Stop Agent confirms OCC accepted the stopped desired state and selected revision metadata only. Verify live gateway shutdown outside Console if required. Disabling a channel does not stop the Agent; deletion is destructive.",
+    gap: "Stop Agent and Request stop again confirm that OCC accepted stopped intent and queued reconciliation; selected revision metadata still does not prove live gateway shutdown. Verify shutdown outside Console if required. Disabling a channel does not stop the Agent; deletion is destructive.",
   },
   deleteFlow: {
     group: "Flows",

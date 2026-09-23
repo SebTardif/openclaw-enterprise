@@ -1110,7 +1110,7 @@ test("Agent detail blocks repeat Configuration saves after an uncertain draft up
   assert.equal(interceptedPatches, 1);
 });
 
-test("Agent stop confirmation uses the real API, preserves Agent state, and deploy resumes", async (t) => {
+test("Agent stop confirmation preserves state, repeat stop recovers cleanup, and deploy resumes", async (t) => {
   const { fixture, namespace, state } = await createRuntimeAuthFixture(t, "Stop success");
   const agent = await fixture.createAgent(namespace.id, "Stop Candidate", nativeValues("stop"), {
     harnessAuth: { method: "runtime" },
@@ -1161,7 +1161,10 @@ test("Agent stop confirmation uses the real API, preserves Agent state, and depl
       `Selected revision ${active.revision.id.slice(0, 12)}…${active.revision.id.slice(-6)}`,
     )
     .waitFor();
-  assert.equal(await page.getByRole("button", { name: "Stop Agent" }).isDisabled(), true);
+  assert.equal(
+    await page.getByRole("button", { name: "Request stop again", exact: true }).isDisabled(),
+    false,
+  );
   assert.deepEqual(
     agentStopRequests(requests, namespace.id, agent.id).map((request) => [
       request.method,
@@ -1203,6 +1206,29 @@ test("Agent stop confirmation uses the real API, preserves Agent state, and depl
     .getByRole("region", { name: "Stop Agent", exact: true })
     .getByText("No selected revision", { exact: true })
     .waitFor();
+
+  // A cleared selected-revision pointer does not prove runtime cleanup completed,
+  // so the stopped Agent must retain an explicit reconciliation recovery action.
+  const stopRegion = page.getByRole("region", { name: "Stop Agent", exact: true });
+  await stopRegion.getByRole("button", { name: "Request stop again", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Request stop again for Stop Candidate?" });
+  await dialog.getByText(/runtime cleanup may still need reconciliation/i).waitFor();
+  const repeatStopResponse = page.waitForResponse(
+    (repeatResponse) =>
+      repeatResponse.url() ===
+        `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}/stop` &&
+      repeatResponse.request().method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "Request stop again", exact: true }).click();
+  const repeatResponse = await repeatStopResponse;
+  assert.equal(repeatResponse.status(), 202);
+  const repeatStoppedBody = await repeatResponse.json();
+  assert.equal(repeatStoppedBody.data.desiredRuntimeState, "stopped");
+  assert.equal(repeatStoppedBody.data.activeRevisionId, undefined);
+  assert.deepEqual(
+    agentStopRequests(requests, namespace.id, agent.id).map((request) => request.body),
+    [null, null],
+  );
 
   await page.getByRole("button", { name: "Configuration", exact: true }).click();
   await page.getByRole("button", { name: "New revision", exact: true }).click();

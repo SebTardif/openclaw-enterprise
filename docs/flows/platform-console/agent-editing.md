@@ -1,7 +1,7 @@
 ---
 created: 2026-09-09
 updated: 2026-09-23
-last_updated_session: 01a0cd92-fd3f-7d83-a51e-f6264ef6be09
+last_updated_session: 182f3309-31b4-4082-a5e5-24b1fa97e7bb
 ---
 
 # Console Agent editing and runtime requests
@@ -203,12 +203,14 @@ admission, not completed Compute shutdown.
 
 **Refresh stop status** reads the exact Agent again. The control displays its
 desired runtime state and selected revision without inferring live health or
-completion from a missing revision. A permission denial stays inline. A
-change to desired state or selected revision reloads the surrounding detail
-view so native-admin and workspace controls refresh too. An uncertain write
-blocks another stop until a successful read; the browser never
-retries the mutation automatically. Deployment remains the resume operation,
-admitting a new revision. The
+completion from a missing revision. While stopped, **Request stop again** lets
+an operator explicitly queue another exact-Agent reconciliation, even when no
+revision is selected; the console never submits this recovery request
+automatically. A permission denial stays inline. A change to desired state or
+selected revision reloads the surrounding detail view so native-admin and
+workspace controls refresh too. An uncertain write blocks another stop until a
+successful read. Deployment remains the resume operation, admitting a new
+revision. The
 [stop lifecycle](../../reference/agents/deployment.md#stop-and-resume) owns worker
 shutdown and preservation of existing revisions, credentials, and state.
 
@@ -261,6 +263,8 @@ subsequent worker cleanup and the Namespace-owned resources it preserves.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 11:06: Trace explicit repeat-stop recovery after stopped intent, including Agents without a selected revision. (182f3309-31b4-4082-a5e5-24b1fa97e7bb - b141ba1157c2f28276717d35c8c63028f209a479)
 
 - 2026-09-23 08:30: Trace Slack Secret menus, immediate creation, staged bindings, and explicit IAM grants before Configuration save. (01a0cd92-fd3f-7d83-a51e-f6264ef6be09 - 941edc9f6971a24ae29a74a6ca749b6375e6ec01)
 

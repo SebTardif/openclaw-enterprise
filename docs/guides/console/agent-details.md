@@ -236,9 +236,12 @@ permission on this Agent, regardless of the revision or tab you are viewing.
 
 An accepted stop requests shutdown; it does not prove that the runtime has
 finished. **Refresh stop status** reads the desired state and selected revision.
-An uncertain result blocks another stop until a successful refresh. To resume,
-open **New revision** and select **Deploy new revision**, which creates a new
-revision. See [Stop and resume](../../reference/agents/deployment.md#stop-and-resume).
+While the Agent remains stopped, **Request stop again** explicitly queues another
+reconciliation. Use it when cleanup may be incomplete, even if no revision is
+selected. An uncertain result blocks another stop until a successful refresh.
+To resume, open **New revision** and select **Deploy new revision**, which creates
+a new revision. See
+[Stop and resume](../../reference/agents/deployment.md#stop-and-resume).
 
 ## Delete Agent and error recovery
 

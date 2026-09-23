@@ -71,7 +71,8 @@ export function createAgentStop(context, path, agent, onDeleting, onAgentChanged
           ]
         : []),
     );
-    stop.disabled = requested || state.pending || state.needsRefresh;
+    stop.textContent = requested ? "Request stop again" : "Stop Agent";
+    stop.disabled = state.pending || state.needsRefresh;
     refresh.disabled = state.pending;
     refresh.textContent = state.pending ? "Checking…" : "Refresh stop status";
     if (requested || state.needsRefresh) {
@@ -142,7 +143,7 @@ export function createAgentStop(context, path, agent, onDeleting, onAgentChanged
   }
 
   async function stopAgent(dialog, cancel, confirm) {
-    if (state.pending || state.needsRefresh || state.agent.desiredRuntimeState === "stopped") {
+    if (state.pending || state.needsRefresh) {
       return;
     }
     state.pending = true;
@@ -209,24 +210,33 @@ export function createAgentStop(context, path, agent, onDeleting, onAgentChanged
   }
 
   function openConfirmation() {
-    if (state.pending || state.needsRefresh || state.agent.desiredRuntimeState === "stopped") {
+    if (state.pending || state.needsRefresh) {
       return;
     }
+    const repeat = state.agent.desiredRuntimeState === "stopped";
     const dialog = element("dialog", {
       className: "agent-stop-dialog",
       "aria-labelledby": "agent-stop-confirm-title",
       "aria-describedby": "agent-stop-confirm-description",
     });
     const cancel = button("Cancel", () => dialog.close());
-    const confirm = button("Stop Agent", () => void stopAgent(dialog, cancel, confirm), {
-      className: "danger",
-    });
+    const confirm = button(
+      repeat ? "Request stop again" : "Stop Agent",
+      () => void stopAgent(dialog, cancel, confirm),
+      { className: "danger" },
+    );
     dialog.append(
-      element("h2", { id: "agent-stop-confirm-title" }, `Stop ${state.agent.name}?`),
+      element(
+        "h2",
+        { id: "agent-stop-confirm-title" },
+        repeat ? `Request stop again for ${state.agent.name}?` : `Stop ${state.agent.name}?`,
+      ),
       element(
         "p",
         { id: "agent-stop-confirm-description" },
-        "This interrupts the current runtime gateway. Configuration, AgentRevisions, Credentials, and workspace data are retained. Deploy the new revision to start the Agent again.",
+        repeat
+          ? "Stopped intent is already saved, but runtime cleanup may still need reconciliation. Another request safely queues exact-Agent stop reconciliation. Configuration, AgentRevisions, Credentials, and workspace data are retained."
+          : "This interrupts the current runtime gateway. Configuration, AgentRevisions, Credentials, and workspace data are retained. Deploy the new revision to start the Agent again.",
       ),
       element("div", { className: "form-actions" }, cancel, confirm),
     );

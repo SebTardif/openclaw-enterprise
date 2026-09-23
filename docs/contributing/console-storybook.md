@@ -50,7 +50,7 @@ those states by interacting with the real controls after loading fixture data.
 | Credentials             | Stored and missing metadata, masked Slack tokens, one-token replacement, partially missing tokens, generated credentials locked after admission, metadata failure, missing authentication, operator-managed credentials, issued ChatGPT account. |
 | Native admin            | Available launch, stopped or unsupported runtime, denied panel hidden. The launch target is an explanatory fixture page.                                                                                                                         |
 | Workspace               | Four editable deployed files, undeployed Agent, denied reads, missing file, unknown write outcome.                                                                                                                                               |
-| Stop Agent              | Confirmation, stopped requested state, permission denial, unknown outcome requiring refresh.                                                                                                                                                     |
+| Stop Agent              | Confirmation, explicit repeat request while stopped, permission denial, unknown outcome requiring refresh.                                                                                                                                       |
 | Deletion                | Confirmation, pending cleanup, permission denial, conflict, unknown outcome.                                                                                                                                                                     |
 
 The production UI supplies buttons, forms, tables, badges, notices, JSON views,
@@ -97,8 +97,10 @@ does not provide a policy selector. See [Agent revisions](../guides/topics/agent
 
 Open **Stop Agent**, inspect or cancel the confirmation, and confirm the stop.
 The fixture records the requested stopped state. **Refresh stop status** rereads
-that metadata. The story demonstrates the controls and request handling; it does
-not run a Compute Driver or prove live shutdown.
+that metadata. **Request stop again** demonstrates explicit recovery when cleanup
+may still need reconciliation; the console does not submit it automatically. The
+story demonstrates the controls and request handling; it does not run a Compute
+Driver or prove live shutdown.
 
 Resume with **New revision** → **Deploy new revision**, creating a new revision.
 Disabling Slack does not stop an Agent. See

@@ -156,8 +156,11 @@ workspace files.
 
 An accepted request means shutdown was queued. **Refresh stop status** rereads
 the Agent's desired state and selected revision; it does not probe the runtime.
-If the result is uncertain, refresh before retrying. Permission denials remain
-visible, and the console never automatically repeats a stop request.
+While the desired state is stopped, **Request stop again** lets an operator
+manually queue another reconciliation, even without a selected revision; a
+missing revision does not prove that cleanup completed. If the result is
+uncertain, refresh before retrying. Permission denials remain visible, and the
+console never automatically repeats a stop request.
 
 To resume, open **New revision** and select **Deploy new revision**. This creates a
 new revision. See [Stop and resume](agents/deployment.md#stop-and-resume) for the
