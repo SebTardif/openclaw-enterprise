@@ -2,59 +2,147 @@
 
 [Overview](../basic-agent-identity-mvp.md) · [Architecture](architecture.md) · [Security](security.md) · [Interfaces](interfaces.md)
 
-The [seven release requirements](../basic-agent-identity-mvp.md#minimum-release-requirements)
-remain the completion criteria for ordinary contributions in both personal and
-team authority contexts, with protected identity, credentials, model access, and
-replies. Each cut has its own
-source, tests, and review. An interface definition, passing fixture, or first Git
-read retains its checkpoint limits and does not finish the complete release.
+The initial policy milestone and the complete protected-identity profile have
+different acceptance criteria. The [seven profile requirements](../basic-agent-identity-mvp.md#minimum-release-requirements)
+still govern protected contributions in personal and team contexts. Each cut
+retains its source, tests and review. A first Git read does not finish the profile.
+
+## Current source and proof status
+
+As of 2026-09-22, [public main `311bc230`](https://github.com/openclaw/openclaw-enterprise/tree/311bc23012d0fd269483168b865adf79df630542)
+contains credential core [#221](https://github.com/openclaw/openclaw-enterprise/pull/221)
+and platform integration [#235](https://github.com/openclaw/openclaw-enterprise/pull/235).
+The earlier RFC baseline described that supplier as unmerged. Its current
+contract is [RepoDriver](interfaces.md#repository-session-binding), capability
+`repo`, with bundled `GitHubRepoDriver`. The maintained path supports embedded
+OpenClaw, API-key Harness authentication and no Sandbox. Dedicated
+repository-bearing revisions still refuse. Existing source or provider evidence
+does not qualify the new execution-bound, dedicated identity composition.
+
+The selected policy cut has unmerged source connecting Installation configuration,
+immutable State, actual API admission and saved-revision worker refusal. It is
+policy groundwork, not positive workload authentication, a demonstrated
+current-main configuration bypass fix, or customer-write readiness. Original State
+must reconcile its migration with current shipping history, where workspace
+migration `0028` is already allocated. Final composed database/worker qualification
+remains required. The separate [runtime-authority supplier](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/occ/src/runtime-authority/service.ts#L309-L352)
+still lacks a positive current-serving producer.
+
+This RFC revision supplies no new installed SPIRE/CNI/runtime, live-provider,
+timing, customer-write or release proof. Missing proof does not imply absent code.
 
 ## Depend on interfaces, not entire lanes
 
 | Existing owner                       | Exact input identity consumes                                                                                                                                                                                                                    | What this does not require                                                                                                                                |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | State / selected IAM                 | Original guarded transaction, authenticated service and current intent/policy admission, assignment repository attachment, acknowledged commit/readback, and durable withdrawal. Serialize schema and shipping history with this owner.          | All RBAC administration screens, every Role/resource policy, or a second identity-owned transaction/policy system.                                        |
-| Compute / Harness                    | Independently observed assignment/incarnation/create-effect facts; protected preparation, private ingress, delivery/readiness and exact stop/replace observations. The selected dedicated consumer must retain the repository material contract. | Retained workspaces, advanced recovery, every runtime, or exact-container caller proof. Qualified gVisor remains part of the complete selected profile.   |
+| Compute / Harness                    | Independently observed assignment/incarnation/create-effect facts. Protected preparation, private ingress, delivery/readiness and exact stop/replace observations. The selected dedicated consumer must retain the repository material contract. | Retained workspaces, advanced recovery, every runtime, or exact-container caller proof. Qualified gVisor remains part of the complete selected profile.   |
 | Repository credentials               | Existing session/grant/profile authority with immutable expected execution, verified receiving admission before acquisition/dispatch, and existing renewal/recovery/cleanup.                                                                     | A replacement credential service or another provider. Personal GitHub delegation is a distinct service capability described below.                        |
 | Egress                               | One protected Go transport per assignment, authenticated receiving bridge, mandatory routing and protected model mediation, independently progressing expiry/cancellation.                                                                       | A second proxy, every protocol/service adapter, or general enterprise network-policy tooling.                                                             |
 | RBAC / invocation and account owners | Original requester, selected personal/team authority, exact operation/audience, authentic runtime-turn association, and current account/session/grant facts.                                                                                     | Every OIDC provider, new login UI, or identity owning connector implementations. Use one supported real ingress for the first checkpoint.                 |
-| Audit / observability                | Existing safe operation/lifecycle event contract; actual verifier/currentness observations identify executor assurance separately from requester.                                                                                                | History UI, retention administration or the complete observability product. Required durable authority/dispatch fences remain with their existing owners. |
+| Audit / observability                | Existing safe operation/lifecycle event contract. Actual verifier/currentness observations identify executor assurance separately from requester.                                                                                                | History UI, retention administration or the complete observability product. Required durable authority/dispatch fences remain with their existing owners. |
 
 An interface declaration is not a producer. A consumer needs the owner's real
 implementation and a test through its supported entry. Shared files retain their
-owner; use genuine source joins or a specifically allocated narrow change.
+owner. Use genuine source joins or a specifically allocated narrow change.
 
 ## Deliverable cuts
 
-| Cut                                        | Useful result and acceptance                                                                                                                                                                            | Prerequisite                                                                                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| A. Compatibility and immutable requirement | Existing tools keep working; startup/deploy/recovery reject unsupported enforcement before protected preparation. Preserve current IAM, claim fencing and authorized cleanup.                           | Existing platform and repository supplier; independent of positive SPIRE runtime support.                      |
-| B. Durable execution assignment            | Allocate, bind, select and retire through original State. Real limited-role PostgreSQL tests cover ownership, concurrent changes, rollback and uncertain-commit readback.                               | State/IAM's guarded admission and assigned repository/constraint window.                                       |
-| C. Observed, registered workload           | The ordinary worker binds actual Compute observation, performs constrained SPIRE registration, reads it back and obtains rotating identity with protected custody.                                      | B; authentic Compute observations and selected transport/ingress; operator SPIRE fixture.                      |
-| D. First protected Git read                | A real team Agent with explicit `git-read` uses its current execution; another or retired execution cannot reuse the session. Currentness is enforced at the real receiver.                             | C; repository session extension, receiving bridge, current-serving resolver and original invocation authority. |
-| E. Complete protected contribution         | Dedicated Agent performs the Git/PR workflow using protected model access; personal and team authority are correctly bound and replies reach only the authorized audience.                              | D; dedicated Harness delivery, protected model route, selected runtime and required provider authorization.    |
-| F. Failure qualification and review stack  | Installed rotation, replacement, outage, replay-denial and measured-withdrawal cases pass. Fix independent security findings, polish, and extract a buildable RFC-first stack with final-tree equality. | E and accepted shipping composition; actual disposable runtime/provider fixtures.                              |
+1. **A. Compatibility and immutable requirement.** Trusted policy persists in
+   revisions. Compatibility works, malformed settings fail startup, and unsupported
+   deployment or recovery refuses before protected preparation. Preserve IAM,
+   claim fencing and authorized cleanup. This uses the existing platform and
+   repository contract without requiring positive SPIRE runtime support.
+2. **B. Durable execution assignment.** Allocate, bind, select and retire through
+   original State. Real limited-role PostgreSQL proves ownership, concurrent
+   changes, rollback and uncertain-commit readback. This requires State/IAM's
+   guarded admission and the assigned repository/constraint window.
+3. **C. Observed, registered workload.** The ordinary worker binds authentic
+   Compute observation, registers through constrained SPIRE, reads the result back,
+   and obtains rotating identity with protected custody. This requires B, selected
+   transport and ingress, and an operator SPIRE fixture.
+4. **D. First protected Git read.** A real team Agent with explicit `git-read`
+   uses its current execution. Another or retired execution cannot reuse the
+   session. The real receiver enforces currentness. This requires C, execution-bound
+   sessions, receiving bridge, current-serving resolver and original invocation authority.
+5. **E. Complete protected contribution.** A dedicated Agent performs Git/PR work
+   with protected model access, correctly bound personal/team authority, and an
+   authorized reply. This requires D, dedicated Harness delivery, selected runtime,
+   protected model route and provider authorization.
+6. **F. Failure qualification and review stack.** Installed rotation, replacement,
+   outage, replay denial and measured withdrawal pass. Resolve independent security
+   findings, polish, and extract a buildable RFC-first stack with final-tree
+   equality. This requires E, accepted shipping composition and actual disposable
+   runtime/provider fixtures.
 
-A is a useful source checkpoint. D is the first usable identity checkpoint. E and
-F satisfy the selected complete release. Each cut can contain smaller owner-scoped
-PRs; a SQL adapter or TLS library alone must retain its component-only label.
-Apply withdrawal/cleanup behavior while building each consumer, then measure the
-composed guarantee in F; it is not a security layer added after enabling traffic.
+A is the first independently useful policy milestone. D is the first positive
+identity checkpoint. E and F complete the selected profile. Each may contain
+smaller owner-scoped PRs. SQL adapters and TLS libraries retain component-only
+evidence. Build withdrawal and cleanup with each consumer, then measure their
+composed guarantee in F.
 
-B and trusted Compute/transport work can progress in parallel once their narrow
-contracts and source allocations exist. Before those producers are ready, identity
-can preserve and review A and the native transport, specify exact integration
-cases, and prepare operator configuration. Do not invent an allow callback,
-workload observation or unused abstraction to make a blocked join appear complete.
-Once C is available, the current-serving resolver and receiving bridge can proceed
-in parallel before D. Shipping upgrades are a release prerequisite, not a reason
-to block every component check.
+B and trusted Compute/transport work can proceed in parallel once their contracts
+and allocations exist. Before the genuine producers are ready, review A and
+native transport, prepare operator configuration, and specify integration cases.
+Do not invent allow callbacks, workload observations or unused abstractions.
+After C, the serving resolver and receiving bridge can proceed in parallel
+before D. Shipping upgrades remain a release prerequisite, not a prerequisite for
+every component check.
+
+## Policy milestone acceptance
+
+Use the actual authenticated API, original State and worker. The
+[policy interface](interfaces.md#operator-policy-and-revision-admission) owns the
+selected input and result shapes. Required evidence is:
+
+1. Omitted and explicit compatibility permit ordinary deployment, return `202`,
+   and expose the immutable requirement through existing revision reads.
+2. Malformed present startup policy and tenant overrides refuse. Exact-Agent
+   authorization precedes unsupported SPIFFE refusal. No Configuration/Secret
+   preparation, revision or durable reconcile Work is created by that refusal.
+3. Real limited-role PostgreSQL preserves the detached requirement across restart,
+   immutable round-trip and recovery. Legacy omission means compatibility.
+   Malformed saved state fails closed.
+4. The real worker preserves the original reconcile Work prerequisite, current
+   authorization, Provider checks, live-claim settlement and authorized stopped
+   cleanup. Unsupported running recovery reports `IDENTITY_RUNTIME_UNSUPPORTED`
+   before repository, Secret, workspace or Compute preparation. Since ordinary
+   enforced deployment refuses, identify the valid State-level admitted-state
+   preparation used for this negative recovery case.
+5. Original State reconciles the identity migration with occupied workspace
+   migration `0028`, preserving current admission predicates, immutable snapshots,
+   privileged-function safeguards and canonical history. Qualify the final history
+   on fresh and populated databases, with the limited application role and repeat
+   execution. Earlier component checks do not establish this shipping composition.
+
+## Before customer-repository writes
+
+The complete identity profile does not universally block initial 0.x. Customer
+writes require a separate connected proof: replacement withdraws predecessor
+access even when it retains credential material, and every effective write belongs
+to an authentically associated, currently authorized request.
+
+Apply that requirement to every mutating Git/HTTP or API dispatch, including
+additional requests native Git initiates and GraphQL POSTs. Authorization at the
+start of a shell command is insufficient. Sessions, profile checks and bearer
+lookup fences are foundations, not proof of either guarantee.
+
+Product, repository credentials, invocation/RBAC, State/Compute and identity must
+select the mechanism and qualify real Agent-to-provider replacement, concurrent
+requests, stale authority and per-dispatch behavior. No narrower mechanism is
+selected here. If product defers writes, an explicitly admitted `git-read` rollout
+is an open choice. The bundled default remains `git-write` until an authorized
+product decision changes it.
 
 ## Personal authority and connector scope
 
 Workload identity answers which execution is calling. It does not answer whether
-a human granted GitHub access. The current repository supplier uses team GitHub
-App installation authority; a direct message does not change that authority.
+a human granted GitHub access. Explicit admission selects one connected human's
+personal integration or the team's service integration for authorized channel
+members. A personal Agent may use that connection's existing full permissions,
+never more. Missing personal authority denies access instead of choosing team
+credentials. The current repository supplier uses team GitHub
+App installation authority. A direct message does not change that authority.
 The selected personal GitHub direction requires the credential owner to bind
 explicit user consent to the OCE account/requester and retain, renew and revoke
 GitHub App user credentials in the trusted service. OIDC login alone supplies none
@@ -63,14 +151,14 @@ of those repository permissions.
 D can use team authority without waiting for personal GitHub delegation. Complete
 release acceptance must separately exercise both authority contexts through real
 admitted integrations. The first human connection and its invocation producer
-still need to be named; until then, personal-authority acceptance remains open.
+still need to be named. Until then, personal-authority acceptance remains open.
 If that journey uses personal GitHub access, it also needs the credential owner’s
 user-consent and token capability. This does not allocate a new provider, consent
 flow, token store or PAT import to identity. A private conversation using team App
 authority cannot qualify the personal context.
 
 Use an existing supported connector for the first real requester/Agent proof.
-Slack and Teams implementations retain their connector owner's acceptance; this
+Slack and Teams implementations retain their connector owner's acceptance. This
 RFC does not allocate two new connector implementations to identity. A fixture
 submitter, deployer identity or copied invocation ID cannot replace the original
 requester and actual runtime turn.
@@ -124,9 +212,11 @@ The authority cases are independent:
 | Context  | Required association                                                                                                                                                                                                           |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Team     | The actual requester may invoke the Agent, the configured team integration authorizes the operation, and the result audience remains permitted. Git author metadata provides attribution only.                                 |
-| Personal | The actual requester is the human whose admitted connection authorizes the operation. Exercise a real allowed operation and deny connection substitution or loss of authority; a team credential used in a DM is insufficient. |
+| Personal | The actual requester is the human whose admitted connection authorizes the operation. Exercise a real allowed operation and deny connection substitution or loss of authority. A team credential used in a DM is insufficient. |
 
 A registration, receiver or policy outage must not silently choose compatibility.
+Loss of requester eligibility, connection authority or audience access withdraws
+further use. Results reach only the currently authorized complete audience.
 Retain exact source and runtime/profile identities with each result. Preserve the
 existing distinction among requested stop, observed process stop, connection
 closure, session closure, provider cleanup and unknown upstream effects.
@@ -137,6 +227,8 @@ Before implementation acceptance, pin a compatible SPIRE release, attestors,
 trust bundle, Workload API delivery profile, runtime images, and runtime/CNI tuple
 in a reproducible fixture. Capture exact source revisions and deployment artifact
 identities so later results cannot silently substitute a different composition.
+Existing IAM maintenance intervals and constants do not prove outage withdrawal.
+Independent security review and fixes are required before declaring support.
 
 Exercise ordinary request paths through the actual Harness, not only direct
 receiver calls. Verify material delivery, shim/PATH invocation, readiness,

@@ -6,65 +6,110 @@ These internal contracts distinguish pinned main, separate suppliers, and propos
 extensions. Their definitions establish neither connected producers nor installed
 enforcement. They introduce no HTTP endpoints.
 
+## Operator policy and revision admission
+
+This selected extension has unmerged implementation source. The following
+Installation example is illustrative and was not executed for this RFC.
+The operator supplies the existing startup YAML through an absolute
+`OCC_CONFIG_PATH`, after arranging the migrated database, selected Drivers,
+ready Namespace, saved Agent and Configuration, supported Harness-auth source,
+and exact IAM permissions.
+
+```yaml
+occ:
+  agent_identity:
+    mode: spiffe
+    profileRef: enterprise/workload-v1
+    profileVersion: 1
+    profileDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+The closed `AgentIdentityRequirementV1` union is
+`{mode: "compatibility"}` or
+`{mode: "spiffe", profileRef, profileVersion, profileDigest}`.
+Only omission defaults to compatibility. A profile reference is 1–200 characters
+matching `[A-Za-z0-9._:/-]+`, its version is a positive safe integer, and its
+digest is `sha256:` plus 64 lowercase hexadecimal digits. Null, extra members
+and malformed present settings fail startup before Driver resolution or
+construction. The loader gives OCC a detached, frozen selection. Valid SPIFFE
+configuration can load even though this cut cannot execute it.
+
+The caller sends the existing bodyless
+[`POST /namespaces/:namespaceId/agents/:agentId/deploy`](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/packages/contracts/src/api/routes.ts#L762-L774).
+After exact-Agent `deploy` authorization, compatibility continues ordinary
+admission and returns the existing `202` revision response with explicit
+`identityRequirement`. The existing revision GET/list and
+[deployment-status GET](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/packages/contracts/src/api/routes.ts#L850-L878)
+expose the saved result and durable progress. Unsupported SPIFFE returns
+`503 DEPENDENCY_UNAVAILABLE` before Configuration or Secret preparation, revision
+creation, or durable reconcile Work. Agent create, PATCH and deploy inputs cannot
+select or weaken trusted policy.
+
+Original State persists `admitted_spec.identity_requirement` with the immutable
+revision. Only historical omission decodes as compatibility, without rewriting
+history. Malformed present values refuse. Recovery uses the saved requirement,
+not mutable startup policy. The actual worker preserves ownership, original
+reconcile Work, live-claim fencing, current IAM and Provider checks, and separately
+authorized stopped cleanup. Unsupported running recovery permanently reports
+`IDENTITY_RUNTIME_UNSUPPORTED` before repository, Secret, workspace or Compute
+preparation. The operation/session owner must also retain the admitted enforcement
+selection. Request input, stale evidence and dependency outages cannot downgrade it.
+
+Compatibility preserves existing tool authentication, IAM and repository-session
+checks without verified-execution assurance. Later identity
+[limits](#verified-workload-evidence) remain mandatory without defaults. Repository
+omission still means `git-write`. The first protected read selects `git-read`,
+and contribution selects `git-full`. No replacement defaults are selected.
+
 ## Execution and registration
 
-**Pinned-main source:** [Agent, AgentRevision, ServicePrincipal, and IAMDriver](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/contracts/src/index.ts)
-retain existing ownership. The Agent's immutable Namespace-scoped ServicePrincipal
-survives revisions. `IAMDriver.lookupIdentity(input: IdentityLookup)` returns
-`Promise<Identity | undefined>`, and `authorize(request: AuthorizationRequest)`
-returns `Promise<AuthorizationDecision>`. An identity lookup is not permission.
-`IdentityLookup` carries scope and either `issuer`/`subject` or a mutually
-exclusive `servicePrincipalId`. The latter requires prior credential verification
-or authorized credential management. `AuthorizationRequest` carries `principalId`,
-`action`, and the exact `ResourceRef`. The decision contains `allowed`, `reason`,
-`driverId`, and evidence with optional `identityId` and arrays of group, binding,
-role, and restriction IDs. These source methods are internal IAM boundaries.
-Actual OCC admission and identity resolution must be extended for verified Agent
-execution. The [historical admission path](https://github.com/openclaw/openclaw-enterprise/blob/724dcb5cb80b5e76a62e8267a21185a2e91a85c2/apps/controller/src/index.ts#L1257-L1325)
+**Pinned-main source:** [Agent, AgentRevision, ServicePrincipal, IAM and Compute](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/packages/contracts/src/index.ts)
+retain their existing owners. The immutable Namespace-scoped Agent
+ServicePrincipal survives revisions. `IAMDriver.lookupIdentity(input: IdentityLookup)`
+returns `Promise<Identity | undefined>`. Its mutually exclusive identity forms
+are scoped issuer/subject or `servicePrincipalId`, the latter requiring prior
+credential verification or authorized credential management.
+`authorize(request: AuthorizationRequest): Promise<AuthorizationDecision>`
+checks `principalId`, `action` and exact `ResourceRef`. The complete linked
+decision retains `allowed`, `reason`, `driverId` and identity/group/binding/role/
+restriction evidence. Lookup is not permission. Actual OCC admission and identity
+resolution must consume verified execution. The [current API admission](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/apps/controller/src/index.ts#L1830-L1898)
 accepts human sessions and non-Agent API keys.
 
-[ComputeDriver](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/contracts/src/index.ts#L714-L745)
-owns `prepareRevision(revision, context?)`, optional `activateRevision(revision,
-context?)` and `deactivateRevision(revision)`, plus `stopRevision(revision)` and
-`retireRevision(revision)`. Preparation returns `ComputeReadiness`, containing
-scope, Namespace, Agent, revision, and `ready`. [Newer main](https://github.com/openclaw/openclaw-enterprise/blob/12fddc4805a1b090331af363ad10bf3b58ea5897/packages/contracts/src/index.ts#L680-L691)
-adds `warnings?: readonly PluginDeploymentWarning[]`, containing only admitted
-`pluginId` and `code: "PLUGIN_INSTALL_FAILED" | "PLUGIN_AUTH_REQUIRED"`.
-[Warnings accompany `ready: true`](https://github.com/openclaw/openclaw-enterprise/blob/12fddc4805a1b090331af363ad10bf3b58ea5897/docs/reference/drivers/compute.md#L66-L80)
-only after failed selections are safely disabled and remaining readiness checks
-pass. Required protected capabilities cannot degrade into optional warnings.
-Other lifecycle methods return `Promise<void>`. `ComputeRevisionContext` contains
-resolved Harness authentication and secret-environment projections. Readiness,
-warnings, and void stop results establish neither verified execution,
-current-serving authority, nor physical termination.
+`ComputeDriver.prepareRevision(revision, context?)` returns
+`Promise<ComputeReadiness>`. Optional `activateRevision(revision, context?)`
+and `deactivateRevision(revision)`, plus `stopRevision(revision)` and
+`retireRevision(revision)`, return `Promise<void>`. Readiness retains scope,
+Namespace, Agent, revision, `ready`, optional plugin warnings, runtime failure
+evidence and missing repository-material references. `ComputeRevisionContext`
+carries resolved Harness authentication, Secret projections, optional workspace
+setup and repository runtime bindings. [Plugin warnings](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/docs/reference/drivers/compute.md)
+name only admitted `pluginId` and `PLUGIN_INSTALL_FAILED | PLUGIN_AUTH_REQUIRED`.
+A ready result requires failed optional selections to be safely disabled and all
+remaining checks to pass. Required protection cannot become an optional warning.
+Readiness and void stop results prove neither serving authority nor termination.
 
-**Proposed execution contract:** State/Compute retain an opaque assignment
-reference, generation, exact Agent/revision/principal/component, observed
-incarnation, original lifetime, and current/retired state. Only independent Compute
-observation can bind it. Retirement is terminal. The separately defined
-[RuntimeAssignmentRecordV1 and target](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/contracts/src/runtime-authority-v1.ts)
-retain Installation/Namespace/Agent IDs, assignment and create-effect references,
-lifecycle/runtime generations, revision, component, profile references, binding,
-and assignment-record version. Their source states are `allocated`, `bound`,
-`identity-ready`, `active`, `retiring`, `retired`, and `abandoned`. These supplier
-labels do not replace authoritative serving selection. The supplier component
-union is `gateway | harness`. It does not select the proposed relay's exact peer
-mapping, which remains an identity/egress owner decision. API resource IDs retain
-their [existing prefixed UUID schemas](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/contracts/src/api/common.ts).
+**Separate supplier:** [RuntimeAssignmentRecordV1 and target](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/contracts/src/runtime-authority-v1.ts)
+retain exact scope, assignment/create-effect references, lifecycle/runtime
+generations, revision, component, profiles, binding and record version.
+States are `allocated | bound | identity-ready | active | retiring | retired | abandoned`.
+The component union is `gateway | harness`. These labels do not select the
+relay's peer mapping or replace authoritative serving selection. Resource IDs
+keep their [prefixed UUID schemas](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/packages/contracts/src/api/common.ts).
+State/Compute must independently bind the observed incarnation and retain the
+[execution lifecycle](architecture.md#assignment-and-serving).
 
-Registrar create/readback/delete remains a required owner contract without a
-selected OCE wire schema. The registrar authenticates separately and may create
-only the assigned identity under the operator-selected trust domain and SPIRE
-parent. Derive selectors from trusted observation. Reject broad or caller-authored
-registrations. Retain exact registration cleanup ownership and original operation
-identity. Uncertain create/delete requires exact readback, without duplicate create
-or unrelated deletion.
+Registrar create/readback/delete is required, but its OCE wire schema is unselected.
+The separately authenticated registrar may create only the assigned identity under
+the operator's trust domain and SPIRE parent. Trusted observation supplies selectors.
+Refuse broad or caller-authored registrations. Retain original operation identity
+and exact registration cleanup ownership. Uncertain create/delete requires exact
+readback, without duplicate create or unrelated deletion.
 
-Observation must distinguish an observed bound incarnation, observed termination
-of that exact incarnation, and unavailable or termination-unverified evidence.
-A missing Pod or deletion acknowledgment is insufficient. This semantic distinction
-does not prescribe new serialized result tags. State commit and concurrency rules
-remain in [withdrawal and recovery](architecture.md#withdrawal-and-recovery).
+Observation distinguishes the exact bound incarnation, observed termination of that
+incarnation, and unavailable or termination-unverified evidence. A missing Pod or
+delete acknowledgment is insufficient. No new serialized result tags are selected.
+[State owns commit and concurrency](architecture.md#withdrawal-and-recovery).
 
 ## Verified workload evidence
 
@@ -120,13 +165,12 @@ registration/bound-instance checks. `inspect` freshly checks the same owned proo
 recipient, connection incarnation, certificate, source/trust, registration,
 profile, bundle, and original expiry. Inspection never renews proof by delivery.
 
-The diagnostic projection has `schemaVersion: 1`, `spiffeId`, `component`,
-`assignmentRef`, `bindingVersion: 1`, `identityProfileRef`, registration and bundle
-versions, `registrationId`, `verifiedAt`, `expiresAt`, `peerEvidenceRef`, `recipientRef`, and
-`connectionRef`. Reference strings are bounded, versions are positive safe
-integers, and timestamps use canonical millisecond UTC. The diagnostic decoder
-limits input to 4,096 bytes, depth 8, 256 nodes, and 2,048 bytes per string.
-Decoding establishes shape only.
+The linked `RuntimeWorkloadDiagnosticV1` preserves schema/binding version `1`,
+workload and assignment identity, profile/registration/bundle versions, original
+verification/expiry times, and peer/recipient/connection references. Versions are
+positive safe integers and timestamps are canonical millisecond UTC. The decoder
+allows 4,096 bytes, depth 8, 256 nodes and 2,048 bytes per string. Decoding proves
+shape only.
 
 Failures carry `schemaVersion: 1`, `requestRef`, a `kind` of
 `verification-failure` or `transport-failure`, and a closed `reasonCode` from the
@@ -169,97 +213,64 @@ Identity-purpose currentness remains separate from operation authorization.
 
 ## Repository session binding
 
-**Separate supplier source:** [repository-credentials.ts at `eb52cc4`](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/packages/contracts/src/repository-credentials.ts)
-defines the complete existing Driver and material shapes:
+**Pinned-main source:** [repo.ts](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/packages/contracts/src/repo.ts)
+owns the complete `RepoDriver extends Driver` contract. Its capability is `repo`,
+and the bundled implementation is `GitHubRepoDriver`. Its operations are:
 
-```ts
-export interface RepositoryCredentialDriver extends Driver {
-  readonly capability: "repository_credentials";
-  readonly maintenanceIntervalMs: number;
-  resolve(input: {
-    readonly namespaceId: string;
-    readonly bindings: readonly RepositoryBindingRequest[];
-  }): RepositoryCredentialResolution;
-  open(
-    input: OpenRepositorySessionInput,
-    signal: AbortSignal,
-  ): Promise<OpenRepositorySessionResult>;
-  status(
-    sessionId: string,
-    signal: AbortSignal,
-  ): Promise<RepositoryCredentialSessionStatus | undefined>;
-  close(
-    sessionId: string,
-    signal: AbortSignal,
-  ): Promise<RepositoryCredentialSessionStatus | undefined>;
-}
+```text
+resolve(input: {
+  readonly namespaceId: string;
+  readonly bindings: readonly RepositoryBindingRequest[];
+}): RepositoryCredentialResolution;
+open(input: OpenRepositorySessionInput, signal: AbortSignal): Promise<OpenRepositorySessionResult>;
+status(sessionId: string, signal: AbortSignal): Promise<RepositoryCredentialSessionStatus | undefined>;
+close(sessionId: string, signal: AbortSignal): Promise<RepositoryCredentialSessionStatus | undefined>;
 ```
 
-Each binding request contains `repositoryRef` and optional `profile`. Resolution
-returns `bindings` and `sessionDurationSeconds`. Each admitted binding contains
-`repositoryRef`, resolved `profile`, `providerId`, and `grant`. The grant contains
-`providerInstanceId`, `repositoryId`, and `grantId`, each nonempty, at most 512 UTF-8
-bytes, and without ASCII controls. `RepositoryRevisionState` stores the Driver's
-`id`/`implementation`, `deadlineWallMs`, and admitted bindings.
+The Driver also exposes `maintenanceIntervalMs`. Each binding request has
+`repositoryRef` and optional `profile`. Resolution returns admitted `bindings`
+and `sessionDurationSeconds`. Each admitted binding has `repositoryRef`,
+`profile`, `providerId` and `grant`. Grant members `providerInstanceId`,
+`repositoryId` and `grantId` are nonempty opaque strings, at most 512 UTF-8 bytes
+without ASCII controls. Immutable `RepositoryRevisionState` retains Driver
+`id`/`implementation`, `deadlineWallMs` and admitted bindings.
 
 `OpenRepositorySessionInput` requires `namespaceId`, `admissionId`, `binding`,
-`durationSeconds`, and `deadlineWallMs`. Optional `recoverOnly: true` restricts
-lookup to recovered/missing results without creating authority. The complete result
-union is:
+`durationSeconds` and `deadlineWallMs`. Its optional `recoverOnly: true`
+cannot create authority. Results are `created` with `session` and `files`,
+`recovered` with `status` only, or `missing`. Public status contains only
+`sessionId`, `state: "OPEN" | "CLOSED" | "DISPOSED"`, `deadlineWallMs` and
+grant `binding`. Undefined status does not prove provider revocation.
 
-```ts
-export type OpenRepositorySessionResult =
-  | {
-      readonly kind: "created";
-      readonly session: RepositoryCredentialSessionStatus;
-      readonly files: RepositoryCredentialSessionFiles;
-    }
-  | { readonly kind: "recovered"; readonly status: RepositoryCredentialSessionStatus }
-  | { readonly kind: "missing" };
-export type RepositoryCredentialSessionFiles = Readonly<{
-  bearer: string;
-  "client.json": string;
-  gitconfig: string;
-  "gh/hosts.yml": string;
-  "gh/config.yml": string;
-  "ca.pem"?: string;
-}>;
-export type RepositoryCredentialRuntimeBinding = RepositoryCredentialMaterialRef & {
-  readonly deadlineWallMs: number;
-} & (
-    | { readonly kind: "new"; readonly files: RepositoryCredentialSessionFiles }
-    | { readonly kind: "retained" }
-  );
-```
+The unchanged `RepositoryCredentialSessionFiles` has `bearer`, `client.json`,
+`gitconfig`, `gh/hosts.yml`, `gh/config.yml` and optional `ca.pem`.
+Its client configuration names `gatewayOrigin`, `gitRemote`, `gitUsername`,
+`canonicalApiHost`, `apiHost` and `repository`.
+`RepositoryCredentialRuntimeBinding` combines `repositoryRef`, `sessionId`
+and `deadlineWallMs` with `{kind: "new", files}` or `{kind: "retained"}`.
+Compute owns paths, modes and runtime objects.
 
-`RepositoryCredentialMaterialRef` contains `repositoryRef` and `sessionId`.
-Compute owns material paths, modes, and runtime objects. The client configuration
-contains `gatewayOrigin`, `gitRemote`, `gitUsername`, `canonicalApiHost`, `apiHost`,
-and `repository`. Session status contains `sessionId`, state `OPEN | CLOSED |
-DISPOSED`, `deadlineWallMs`, grant `binding`, `activeUses`, and cleanup counts
-`active`, `pending`, `revoked`, `expired`, `uncertain`, plus `auxiliaryPending`.
-Undefined status is not proof of provider revocation.
+[Current configuration and profiles](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/docs/reference/repository-credentials.md#configuration)
+remain authoritative. Admission permits up to 16 distinct 1–128-character
+repository selectors and defaults omission to `git-write`. Registry drift denies
+admission. The first read explicitly selects `git-read`, and contribution selects
+`git-full`, preserving its full token-bounded GraphQL meaning. Original revision
+deadlines survive renewal and recovery.
 
-The supplier's [configuration and profiles](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/docs/reference/repository-credentials.md#L26-L125)
-remain authoritative. It permits up to 16 distinct 1–128-character repository
-selectors and defaults an omitted profile to `git-write`. This proposal's first
-read explicitly selects `git-read`, and contribution explicitly selects `git-full`.
-Registry drift denies admission. Revision deadlines survive renewal and recovery.
+**Proposed extension:** persist the immutable expected execution before opening
+the session. Open, status, recovery and material delivery must retain that identical
+expectation. Unsupported binding capability denies enforcement. A successor needs
+fresh admission and closure of the previous attempt. An open session cannot be
+rebound. Before an ordinary Agent uses an enforced session, the real receiver
+checks current verified execution and operation authority, before credential
+acquisition or dispatch. No new extension field or wire format is selected.
 
-**Proposed extension:** persist the execution expectation before opening the
-session and preserve it identically through open, status, recovery, and material
-delivery. Unsupported binding capability denies enforcement. A successor requires
-fresh admission and closure of the old attempt, never rebinding an open session.
-The receiver must check current verified evidence before credential acquisition
-or dispatch. No extension field or wire format is selected here.
-
-For example, `created` supplies files through the actual Harness after exact
-admission. `recovered` carries status without files. The [existing worker](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/apps/controller/src/worker/repository-credentials.ts#L354-L402)
-closes that admission rather than rediscovering its lost bearer. Recovery must
-retain the original deadline and identical execution expectation. A `recoverOnly`
-missing result creates no session. Retained status cannot authorize a replacement.
-Preserve existing grants, profiles, Git semantics, renewal,
-recovery, durable cleanup, and uncertain outcomes.
+In the [existing worker](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/apps/controller/src/worker/repository-credentials.ts),
+`created` delivers files to the actual Harness. `recovered` cannot rediscover a
+lost bearer, and that admission closes when material cannot be retained.
+A `recoverOnly` missing result creates no session. Retained status cannot authorize
+replacement. Preserve grants, profiles, Git semantics, original deadlines, renewal,
+recovery, durable cleanup and uncertain outcomes.
 
 ## Currentness and expiry
 
@@ -269,6 +280,11 @@ scope, complete audience, authority generation, and absolute deadline. Before
 acquisition or dispatch, require current assignment and exact Agent
 `use_repository`, profile, resource, and operation permission. A legacy
 `operate`/`read` mapping cannot broaden access.
+
+Retired execution or withdrawn authority denies admission, renewal, acquisition
+and dispatch. Missing, stale or unavailable evidence refuses. Rotation, reconnect,
+retry and delayed positive results cannot extend the original source, authority
+generation or deadline.
 
 After authority/acquisition waits, inspect the same proof within its original
 budget. A current original waiter must still authorize shared acquisition.
@@ -326,16 +342,10 @@ requires every positive observation to carry `schemaVersion: 1`, `evaluatedAt`,
   and `deploymentUid`. It proves retained create-effect ownership without a Pod.
 - Restore returns `candidate-eligible` / `restore-operation-eligible`,
   `purposeContract: "completed-context-restore-v1"`, `allowedSuboperation`,
-  `binding`, `currentPolicyEvidence`, and `pairingEvidence`. Its complete
+  `binding`, `currentPolicyEvidence`, and `pairingEvidence`. The complete unchanged
   [restore binding](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/contracts/src/runtime-authority-v1.ts#L468-L493)
-  contains scope IDs, `conversationRef`, `preparationRef`, `restoreRef`,
-  `responsibilityVersion`, `lifecycleGeneration`, `gatewayAssignmentRef`,
-  `harnessAssignmentRef`, `gatewayBindingVersion`, `harnessBindingVersion`,
-  `pairingRecordRef`, `pairingRecordVersion`, `checkpointId`, `checkpointHeadVersion`,
-  `completionSequence`, `contextDigest`, `gatewayStoreBindingRef`,
-  `workspaceStoreBindingRef`, `admittedRevisionRef`, `admittedConfigurationDigest`,
-  `producerTupleRef`, `currentPolicyEvidenceRef`, `restoreFenceEpoch`, and
-  `nativeEffectRef`. This retained-consumer contract does not gate disposable delivery.
+  retains the exact scope, producer, checkpoint, pairing, store, policy and
+  effect-fence tuple. It does not gate disposable delivery.
 
 `snapshot` and `peer` contain `target`, [binding: RuntimeBindingV1](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/contracts/src/runtime-authority-v1.ts#L174-L221),
 `assignmentRecordVersion`, `providerProfileRef`, `runtimeProfileRef`,
@@ -362,6 +372,9 @@ The supplier `RuntimeIdentityStreamV1` exposes `signal`,
 observation: ResolveAssignmentResultV1}` or identity failure.
 The [supplier resolver](https://github.com/openclaw/openclaw-enterprise/blob/f6f47f967a3c480dd7c7770072cd8a806978596d/packages/occ/src/runtime-authority/service.ts#L309-L352)
 does not yet produce current-serving results.
+The completed resolver must combine authoritative serving selection, bound
+incarnation, fresh Compute/registration/profile evidence, original deadline and
+current IAM.
 
 Invalidation reasons are authority/identity change, watch loss/gap, stale evidence,
 deadline, cancellation, exhausted buffer, and closed connection. Invalidation and
@@ -381,53 +394,11 @@ Retain applicable **five-second** dependency-call, operation-start, model-rechec
 and model-closure ceilings. They do not establish global five-second revocation.
 Maintenance intervals and constants are not installed timing evidence.
 
-For a repository-serving illustration, `owner` below denotes an authentic current
-resolver observation for `repository-issuance`, with the complete nested source
-types above. These are structural request/result examples, not proof construction:
-
-```ts
-type Current = Extract<ResolveAssignmentResultV1, { result: "current" }>;
-declare const owner: Current & { purpose: "repository-issuance" };
-const request: ResolveAssignmentRequestV1 = {
-  schemaVersion: 1,
-  installationId: owner.snapshot.target.installationId,
-  namespaceId: owner.snapshot.target.namespaceId,
-  agentId: owner.snapshot.target.agentId,
-  assignmentRef: owner.snapshot.target.assignmentRef,
-  requestRef: owner.requestRef,
-  purpose: "repository-issuance",
-};
-const success: RuntimeIdentityCheckResultV1 = {
-  kind: "resolved",
-  observation: {
-    schemaVersion: 1,
-    result: "current",
-    purpose: "repository-issuance",
-    reasonCode: "conditions-satisfied",
-    requestRef: owner.requestRef,
-    evaluatedAt: owner.evaluatedAt,
-    validUntil: owner.validUntil,
-    snapshot: owner.snapshot,
-    runtimeEvidence: owner.runtimeEvidence,
-    policyEvidence: owner.policyEvidence,
-    lifecycleGeneration: owner.lifecycleGeneration,
-    selectionVersion: owner.selectionVersion,
-    identityEvidence: owner.identityEvidence,
-    servingEvidence: owner.servingEvidence,
-    mutationEligibilityEvidence: owner.mutationEligibilityEvidence,
-  },
-};
-const failure: RuntimeIdentityCheckResultV1 = {
-  schemaVersion: 1,
-  kind: "transport-failure",
-  reasonCode: "connection-closed",
-  requestRef: request.requestRef,
-};
-```
-
-Success still requires exact operation authorization and final synchronous fencing
-on the actual verified request. The failure forbids dispatch and buffered output.
-Reconnection needs new evidence within the original authority horizon.
+In this unexecuted example, the receiver checks a trusted `repository-issuance`
+request and its actual connection proof. Even `current` needs exact operation
+authorization and final fencing. `transport-failure` with `connection-closed`
+denies dispatch and buffered output. Reconnection requires fresh evidence within
+the original horizon.
 
 ## Observations and owner decisions
 

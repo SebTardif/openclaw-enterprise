@@ -27,6 +27,7 @@ owner remain separate actors. Login, creator Roles, and unselected provider
 sessions confer no Agent authority. Login alone grants neither connector nor
 repository access. Explicit admission selects the personal or team integration.
 Callers cannot substitute a person, team, connection, grant, or audience.
+Git author metadata supplies attribution only.
 
 ## Receiving and custody controls
 
@@ -123,7 +124,7 @@ request, missing Pod, or timeout is not exact-incarnation termination evidence.
 Independent outage-time physical expiry remains later Compute/runtime hardening.
 Already accepted upstream effects may complete after local traffic closes.
 
-The [repository supplier](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/docs/reference/repository-credentials.md#L17-L24)
+The [current repository credential service](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/docs/reference/repository-credentials.md#sessions-and-closure)
 loses provider-token cleanup inventory on service restart. Local session loss
 cannot prove revocation, and issued tokens may survive until their original
 expiry. Durable recovery needs protected recovered custody and provider-observed
@@ -132,7 +133,7 @@ settlement before the credential owner can claim closure.
 Explicit `git-full` also carries a broader ceiling than one PR. It admits selected
 Git, REST, GraphQL, PR, issue, and comment operations. GraphQL uses the exact
 installation-token grant without per-field authorization. Identity must preserve
-that [supplier profile meaning](https://github.com/openclaw/openclaw-enterprise/blob/eb52cc4cfe68f08017e7ece6585fe7e937e0747a/docs/reference/repository-credentials.md#L102-L125)
+that [current profile meaning](https://github.com/openclaw/openclaw-enterprise/blob/311bc23012d0fd269483168b865adf79df630542/docs/reference/repository-credentials.md#profiles)
 rather than imply a narrower capability.
 
 Bootstrap admission, peer selection and bridge custody, concurrent operation
