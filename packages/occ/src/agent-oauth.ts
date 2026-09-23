@@ -364,43 +364,70 @@ export class AgentOAuthCustody {
     agentId: string,
     attemptId: string,
     generation: number,
+    signal?: AbortSignal,
+    assertSession?: () => Promise<void>,
   ): Promise<AgentOAuthStatus> {
-    return this.owner.transact(async (state) => {
-      const attempt = await this.exact(state, actorId, {
-        namespaceId,
-        agentId,
-        attemptId,
-        generation,
-      });
+    const expected = { namespaceId, agentId, attemptId, generation };
+    const assertLive = () => {
+      if (signal?.aborted) {
+        stale();
+      }
+    };
+    assertLive();
+    const found = await this.owner.transact(async (state) => {
+      const attempt = await this.exact(state, actorId, expected);
+      assertLive();
       if (attempt.phase !== "staging") {
-        return status(attempt);
+        return { status: status(attempt) };
       }
       if (this.owner.now().getTime() >= Date.parse(attempt.deadlineAt)) {
-        return status(
-          await this.transition(state, attempt, "reconnect_required", {
-            failureCode: "OAUTH_EXPIRED",
-          }),
-        );
+        return {
+          status: status(
+            await this.transition(state, attempt, "reconnect_required", {
+              failureCode: "OAUTH_EXPIRED",
+            }),
+          ),
+        };
       }
-      await this.assertSelection(state, actorId, attempt);
-      const driver = this.driver(attempt.secretDriverId);
-      const backendRef = await this.backend(() => driver.findStaged!(attempt.secretIdentity));
-      await this.owner.authorize(actorId, namespaceId, agentId);
       await this.assertSelection(state, actorId, attempt);
       this.assertPending(attempt, ["staging"]);
+      assertLive();
+      const driver = this.driver(attempt.secretDriverId);
+      const backendRef = await this.backend(() => driver.findStaged!(attempt.secretIdentity));
+      this.assertPending(await this.current(state, actorId, expected), ["staging"]);
+      assertLive();
       if (!backendRef) {
-        return status(
-          await this.transition(state, attempt, "reconnect_required", {
-            failureCode: "CREDENTIAL_STAGING_FAILED",
-          }),
-        );
+        return {
+          status: status(
+            await this.transition(state, attempt, "reconnect_required", {
+              failureCode: "CREDENTIAL_STAGING_FAILED",
+            }),
+          ),
+        };
       }
+      return { backendRef };
+    });
+    if (found.status !== undefined) {
+      return found.status;
+    }
+    // As during staging, external session verification runs after releasing the
+    // Agent transaction; finding bytes alone does not authorize their admission.
+    try {
+      await assertSession?.();
+    } catch {
+      stale();
+    }
+    return this.owner.transact(async (state) => {
+      const attempt = await this.current(state, actorId, expected);
+      this.assertPending(attempt, ["staging"]);
+      assertLive();
+      const driver = this.driver(attempt.secretDriverId);
       return status(
         await this.transition(state, attempt, "authenticated", {
           stagedSecret: {
             ...attempt.secretIdentity,
             driverId: driver.id,
-            backendRef,
+            backendRef: found.backendRef,
             createdAt: attempt.createdAt,
           },
         }),

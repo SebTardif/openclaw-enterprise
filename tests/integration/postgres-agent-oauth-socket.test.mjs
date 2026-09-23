@@ -17,7 +17,7 @@ const { WebSocket } = createRequire(new URL("../../apps/controller/package.json"
 const databaseUrl = process.env.OCC_TEST_DATABASE_URL;
 
 test(
-  "PostgreSQL OAuth socket and HTTP cancellation commit audit with one pool connection",
+  "PostgreSQL OAuth socket recovers a lost staging acknowledgment and commits audit with one pool connection",
   {
     skip: databaseUrl ? false : "Set OCC_TEST_DATABASE_URL to a disposable migrated database.",
     timeout: 20_000,
@@ -34,6 +34,10 @@ test(
     const installation = await ensureInstallation(state, "oauth-socket");
     const storage = createTestSecretDriver();
     const references = new Map();
+    const acquisitions = [];
+    let loseStageAcknowledgment = true;
+    // Native auth/IAM use the fixture backing; custody and mutation auditing
+    // share the real PostgreSQL pool, including the lost-ack recovery branch.
     const fixture = await createConsoleAppFixture(t, {
       installation,
       state,
@@ -45,6 +49,12 @@ test(
         async stage(identity, value) {
           const reference = await storage.create(identity, value);
           references.set(identity.id, reference);
+          // The backend write commits, but its response is lost. The same live
+          // consent must recover its identity without another provider login.
+          if (loseStageAcknowledgment) {
+            loseStageAcknowledgment = false;
+            throw new Error("private-pg-backend-acknowledgment-lost");
+          }
           return reference;
         },
         async findStaged(identity) {
@@ -56,6 +66,7 @@ test(
           providerId: "openai",
           methodId: "oauth",
           async acquire({ binding, onInstructions, requestRedirect, stage }) {
+            acquisitions.push(binding.generation);
             await onInstructions({
               kind: "browser",
               authorizationUrl: "https://auth.openai.com/oauth/authorize?state=private-pg-state",
@@ -165,8 +176,12 @@ test(
         url: "http://localhost:1455/auth/callback?code=private-pg-code&state=private-pg-state",
       }),
     );
-    assert.equal((await second.next()).status.phase, "authenticated");
+    const recovered = await second.next();
+    assert.equal(recovered.type, "status", JSON.stringify(recovered));
+    assert.deepEqual(recovered.status, { ...second.status, phase: "authenticated" });
     await completed;
+    assert.deepEqual((await fixture.request("GET", path)).data, recovered.status);
+    assert.deepEqual(acquisitions, [1, 2], "recovery must not start consent again");
     const response = await fixture.request(
       "POST",
       `${path}/attempts/${second.status.attemptId}/cancel`,
@@ -183,6 +198,10 @@ test(
       ["cancelled", "cancelled"],
     );
     assert.equal(storage.calls.filter((call) => call.operation === "create").length, 1);
+    assert.deepEqual(
+      attempts[1].stagedSecret.backendRef,
+      references.get(attempts[1].secretIdentity.id),
+    );
     const audit = await pool.query(
       "SELECT action, details FROM occ.audit_events WHERE resource_id=$1 AND action LIKE 'openclaw.agents.oauth.%' ORDER BY occurred_at, id",
       [agent.id],

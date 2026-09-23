@@ -115,9 +115,13 @@ and material. `authenticated` means acquired consent; model access is unverified
 
 `packages/occ/src/agent-oauth.ts:AgentOAuthCustody.recover`
 
-After an uncertain create or database commit, `recover` discovers the exact
-immutable Secret and rechecks authority after that lookup. It never reacquires
-credentials or returns their bytes. Missing material requires reconnect.
+If staging loses its acknowledgment, `acquireAgentOAuth` invokes `recover` for
+the same attempt while its initiating socket remains live and authorized. The
+owner discovers the exact immutable Secret, releases the transaction for session
+verification, then rechecks the current selection, generation, deadline, and
+abort signal under a fresh Agent lock before admitting it. It never repeats
+consent or returns credential bytes. Cancellation, disconnect, and authority loss
+remain terminal; missing material requires reconnect.
 Cancellation and supersession reject retained acquisition handles. Cleanup
 discovers even unacknowledged Secrets and retains metadata on deletion failure.
 Final Agent deletion calls `cleanupAgentOAuthForDeletion` after runtime retirement.
@@ -158,5 +162,6 @@ requires an explicit native executable until image qualification is complete.
 
 ## Changelog
 
+- 2026-09-23 16:00: Connect lost-ack recovery to the live acquisition owner and preserve cancellation fences. (01a0cc43-d13b-7cb2-ae15-1fd56e61bbf4 - 214d9d41)
 - 2026-09-23 12:00: Document exact provider selection, authenticated socket, and replica-independent management. (01a0cc43-d13b-7cb2-ae15-1fd56e61bbf4 - 3c167162)
 - 2026-09-23 04:10: Document acquisition and custody boundaries and pending delivery qualification. (01a0cc43-d13b-7cb2-ae15-1fd56e61bbf4 - 2d19d17d)

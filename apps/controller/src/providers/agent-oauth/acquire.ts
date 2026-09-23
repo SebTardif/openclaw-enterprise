@@ -1,4 +1,9 @@
-import type { OpenClawController, AgentOAuthStatus } from "@openclaw-enterprise/occ";
+import {
+  AuthorizationDeniedError,
+  DependencyUnavailableError,
+  type OpenClawController,
+  type AgentOAuthStatus,
+} from "@openclaw-enterprise/occ";
 import type {
   createNativeOAuthAcquisition,
   NativeOAuthInstructions,
@@ -56,8 +61,47 @@ export async function acquireAgentOAuth(options: {
       throw new Error("OAuth custody was not confirmed.");
     }
     return result;
-  } catch {
+  } catch (error) {
+    let denied =
+      error instanceof AuthorizationDeniedError && !(error instanceof DependencyUnavailableError)
+        ? error
+        : undefined;
+    if (!denied) {
+      try {
+        handle.signal.throwIfAborted();
+        await options.assertSession?.();
+        await handle.assertCurrent();
+        // A failed acknowledgement can follow a committed private write. Recover
+        // only this live attempt; never repeat provider acquisition to find out.
+        const recovered = await controller.agentOAuth.recover(
+          actorId,
+          namespaceId,
+          agentId,
+          selected.attemptId,
+          selected.generation,
+          handle.signal,
+          options.assertSession,
+        );
+        await options.assertSession?.();
+        await handle.assertCurrent();
+        if (recovered.phase === "authenticated") {
+          return recovered;
+        }
+      } catch (recoveryError) {
+        // Preserve exact IAM evidence for the caller's audit after transactions
+        // unwind. Provider/backend errors remain sanitized below.
+        if (
+          recoveryError instanceof AuthorizationDeniedError &&
+          !(recoveryError instanceof DependencyUnavailableError)
+        ) {
+          denied = recoveryError;
+        }
+      }
+    }
     await handle.fail().catch(() => undefined);
-    throw new Error("OAuth did not complete. Check the connection status before retrying.");
+    if (denied) {
+      throw denied;
+    }
   }
+  throw new Error("OAuth did not complete. Check the connection status before retrying.");
 }

@@ -477,14 +477,21 @@ test("OAuth recovery finds committed Secret material after an ambiguous create w
   assert.equal(pending.phase, "staging");
   assert.equal(pending.stagedSecret, null);
   assert.equal(f.storage.valueFor(pending.secretIdentity), envelope(selected));
+  let sessionChecks = 0;
   const recovered = await f.custody.recover(
     actor,
     f.namespace.id,
     f.agent.id,
     selected.attemptId,
     selected.generation,
+    undefined,
+    async () => {
+      assert.equal((await f.latest()).phase, "staging");
+      sessionChecks += 1;
+    },
   );
   assert.equal(recovered.phase, "authenticated");
+  assert.equal(sessionChecks, 1);
   assert.equal(f.stageCalls(), 1);
   assert.equal(f.lookupCalls(), 1);
   assert.equal((await f.latest()).stagedSecret.id, pending.secretIdentity.id);
@@ -494,7 +501,13 @@ test("OAuth recovery finds committed Secret material after an ambiguous create w
   );
 });
 
-for (const closure of ["IAM revocation", "provider operate revocation", "consent expiry"]) {
+for (const closure of [
+  "IAM revocation",
+  "provider operate revocation",
+  "consent expiry",
+  "caller abort",
+  "session revocation",
+]) {
   test(`OAuth recovery revalidates ${closure} after its backend lookup`, async () => {
     const entered = Promise.withResolvers();
     const resumed = Promise.withResolvers();
@@ -510,12 +523,23 @@ for (const closure of ["IAM revocation", "provider operate revocation", "consent
       (await f.acquire(selected)).stage(envelope(selected)),
       DependencyUnavailableError,
     );
+    const abort = new AbortController();
+    let sessionCurrent = true;
     const recovery = f.custody.recover(
       actor,
       f.namespace.id,
       f.agent.id,
       selected.attemptId,
       selected.generation,
+      abort.signal,
+      async () => {
+        // Session lookup must be outside the Agent transaction, including when
+        // recovering a successful Secret write whose acknowledgment was lost.
+        assert.equal((await f.latest()).phase, "staging");
+        if (!sessionCurrent) {
+          throw new Error("Session revoked.");
+        }
+      },
     );
     await entered.promise;
     // Complete the external lookup only after the live authority has closed.
@@ -523,19 +547,57 @@ for (const closure of ["IAM revocation", "provider operate revocation", "consent
       f.iamState.bindings = f.iamState.bindings.filter(({ subjectId }) => subjectId !== actor);
     } else if (closure === "provider operate revocation") {
       revokeOperate(f);
+    } else if (closure === "caller abort") {
+      abort.abort();
+    } else if (closure === "session revocation") {
+      sessionCurrent = false;
     } else {
       f.advanceTo(selected.deadlineAt);
     }
     resumed.resolve();
     await assert.rejects(
       recovery,
-      closure === "consent expiry" ? ResourceConflictError : AuthorizationDeniedError,
+      closure === "IAM revocation" || closure === "provider operate revocation"
+        ? AuthorizationDeniedError
+        : ResourceConflictError,
     );
     assert.equal((await f.latest()).phase, "staging");
     assert.equal((await f.latest()).stagedSecret, null);
     assert.equal(f.stageCalls(), 1);
   });
 }
+
+test("OAuth recovery rechecks cancellation after session verification", async () => {
+  const f = await fixture({ stageOutcome: "lost-acknowledgment" });
+  const selected = await f.begin();
+  await assert.rejects(
+    (await f.acquire(selected)).stage(envelope(selected)),
+    DependencyUnavailableError,
+  );
+  await assert.rejects(
+    f.custody.recover(
+      actor,
+      f.namespace.id,
+      f.agent.id,
+      selected.attemptId,
+      selected.generation,
+      undefined,
+      async () => {
+        await f.custody.cancel(
+          actor,
+          f.namespace.id,
+          f.agent.id,
+          selected.attemptId,
+          selected.generation,
+        );
+      },
+    ),
+    ResourceConflictError,
+  );
+  const attempt = await f.latest();
+  assert.equal(attempt.phase, "cancelled");
+  assert.equal(attempt.stagedSecret, null);
+});
 
 test("OAuth cancellation cleans an unknown create outcome and cleanup is retryable", async () => {
   const f = await fixture({ stageOutcome: "lost-acknowledgment" });
