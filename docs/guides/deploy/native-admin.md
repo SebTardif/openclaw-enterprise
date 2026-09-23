@@ -170,6 +170,130 @@ Full runtime proof still requires a real browser test that loads native assets t
 | Native tab cannot load                              | Browser wildcard DNS/TLS to API, shared session cookie scope, host-to-Agent resolution, native `controlUi.allowedOrigins`, and private gateway routing.       |
 | Browser reports service-worker registration failure | Expected for the pilot. OCC blocks native service-worker script requests and adds `worker-src 'none'` to proxied responses.                                   |
 
+## Local HTTPS hostnames with k3d
+
+The [local k3d helper](../../testing/kubernetes.md#develop-with-local-containers-and-k3d)
+uses separate loopback ports for the console and direct Control UI access.
+The following is an optional, manually configured native-admin setup for a
+persistent local installation. k3d does not create it, and exporting these
+settings does not reconfigure the helper's generated demo deployment.
+
+Use these browser names:
+
+| Purpose               | Local name                                            |
+| --------------------- | ----------------------------------------------------- |
+| Console               | `https://console.oce.localhost/console/agents`        |
+| Agent native UI       | `https://<derived-agent-label>.agents.oce.localhost/` |
+| Session cookie parent | `oce.localhost`                                       |
+
+Chrome resolves `.localhost` names to loopback without public DNS registration
+or an `/etc/hosts` entry. This is the special-use behavior described in
+[RFC 6761](https://www.rfc-editor.org/rfc/rfc6761.html#section-6.3).
+It does not configure Kubernetes DNS or private gateway routing. Clients that
+do not implement this behavior need explicit local resolution; `/etc/hosts`
+can map individual hostnames but cannot express a wildcard.
+
+### Configure the API and certificates
+
+Start with a persistent installation whose private workspace routing already
+works. Run the controller in production mode: development mode accepts only
+its explicit loopback hostnames, not `console.oce.localhost`. Retain the
+installation's database, auth secret, gateway routing key, and private CA mounts.
+Apply these values to the API process or its Compose service:
+
+```text
+NODE_ENV=production
+OCC_AUTH_BASE_URL=https://console.oce.localhost
+OCC_AGENT_NATIVE_ADMIN_ENABLED=true
+OCC_AGENT_NATIVE_ADMIN_DOMAIN=agents.oce.localhost
+OCC_AUTH_COOKIE_DOMAIN=oce.localhost
+```
+
+For Helm, set the corresponding `agentNativeAdmin` values from the production
+steps above to these local domains. Recreate or roll out the API after changing
+its environment; do not reset the database or delete persistent volumes.
+
+Install [mkcert](https://github.com/FiloSottile/mkcert), then create browser-facing
+certificates in a private directory outside the repository. `mkcert -install`
+adds its development CA to your local trust stores and may ask for OS permission.
+
+```sh
+OCE_TLS_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/openclaw-enterprise/browser-tls"
+mkdir -p "$OCE_TLS_DIR"
+chmod 700 "$OCE_TLS_DIR"
+mkcert -install
+mkcert -cert-file "$OCE_TLS_DIR/cert.pem" -key-file "$OCE_TLS_DIR/key.pem" \
+  console.oce.localhost '*.agents.oce.localhost'
+chmod 600 "$OCE_TLS_DIR/key.pem"
+```
+
+Mount only the leaf certificate and key into the browser proxy. Keep the mkcert
+CA private key on the host. This browser certificate is separate from the
+private gateway-routing CA trusted by OCC.
+
+### Route browser traffic to OCC
+
+Run an HTTPS reverse proxy on the controller's container network. Publish only
+`127.0.0.1:443:8443`, mount the certificate directory read-only at `/etc/oce-tls`,
+and mount an Nginx configuration containing the following `http` block. Here
+`controller:3000` is the API service address on that network; replace it with
+your actual reachable OCC endpoint. Do not point this proxy directly at Envoy
+or an Agent gateway.
+
+```nginx
+events {}
+http {
+  map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+  server {
+    listen 8443 ssl;
+    server_name console.oce.localhost *.agents.oce.localhost;
+    ssl_certificate /etc/oce-tls/cert.pem;
+    ssl_certificate_key /etc/oce-tls/key.pem;
+    location / {
+      proxy_pass http://controller:3000;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header Forwarded "";
+      proxy_set_header X-Real-IP "";
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_read_timeout 3600s;
+      proxy_buffering off;
+    }
+  }
+}
+```
+
+Preserving `Host` lets OCC distinguish the console from each Agent. WebSocket
+upgrades carry native UI connections. Clear the forwarding headers shown above
+because OCC rejects those headers at this boundary. If port 443 is occupied,
+choose another local TLS port and include it in `OCC_AUTH_BASE_URL`; OCC derives
+Agent origins with the same port.
+
+### Verify login and Agent access
+
+Open `https://console.oce.localhost/console/agents` and sign in again. A session
+created at `127.0.0.1` or `localhost` does not transfer to the new hostname.
+Check the shared cookie properties described above, reload the console, and
+confirm the Agents list remains available. Then use the Agent's **Open native
+admin UI** link and verify its connection. The Agent still needs the trusted
+proxy, allowed-origin, and device-approval settings in this guide; the local
+browser proxy does not configure them.
+
+- A 404 at `https://console.oce.localhost/` means the console path is missing;
+  use `/console/agents`.
+- A certificate warning means local CA trust or the certificate's hostnames
+  need correction. Do not disable certificate verification as the setup.
+- The console can say **Your session has expired** when an unauthenticated user
+  opens `/console/agents`, even before a first sign-in. Sign in on the HTTPS
+  hostname and verify a reload before treating this as timeout evidence.
+- Login succeeds but immediately returns to login: inspect the browser's cookie
+  rejection reason, HTTPS usage, shared domain, and any API 401. A 200 response
+  for the static console page alone does not prove authentication.
+
 ## Related
 
 - [Agent native admin UI](../../reference/agent-native-admin.md)

@@ -75,6 +75,11 @@ status read does not establish that an earlier Driver observation was ready.
 
 ### Develop with local containers and k3d
 
+The default helper uses `127.0.0.1` and separate ports. It does not install
+browser DNS, a trusted HTTPS certificate, or shared-domain login for native
+Agent UIs. For that optional setup, follow
+[Local HTTPS hostnames with k3d](../guides/deploy/native-admin.md#local-https-hostnames-with-k3d).
+
 The repository can prepare a disposable k3d cluster, an isolated PostgreSQL
 database, and the current gateway and Codex runtime images. Start Docker or a
 Podman API socket. On macOS, start Podman Machine. Then start the helper:
