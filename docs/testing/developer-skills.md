@@ -4,6 +4,7 @@ Use the repository-local skills for the relevant development task:
 
 | Task                             | Skill                                                                                                                                                              |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Assess a design or refactor      | [design-review](../../.agents/skills/design-review/SKILL.md) traces callers, interfaces, state ownership, and evidence to recommend scoped improvements.           |
 | Develop a repository change      | [local-dev](../../.agents/skills/local-dev/SKILL.md) requires proportional verification and flow docs for non-trivial runtime changes.                             |
 | Write or review technical docs   | [technical-writing](../../.agents/skills/technical-writing/SKILL.md) covers source-backed prose, runnable instructions, page selection, and specification clarity. |
 | Write or audit tests             | [test-audit](../../.agents/skills/test-audit/SKILL.md) checks observable behavior, credible regressions, distinct coverage, and production seams.                  |
@@ -17,6 +18,12 @@ Testing setup and real-runtime requirements remain owned by the
 [testing guides](README.md). Each skill describes its scope and prerequisites.
 
 ## Provenance and updates
+
+`design-review` is maintained in this repository. The
+[design philosophy](../contributing/design-philosophy.md) owns its rationale;
+[Readable code](../contributing/readable-code.md) owns the examples. Keep the skill
+focused on the review procedure. When changing it, check those references and
+try a bounded review task against real source and callers.
 
 `technical-writing` adapts Docy's `references/core/main.md` (document lifecycle
 and universal technical writing), `references/ref/developer-docs.md`,
@@ -50,7 +57,7 @@ The upstream [MIT license](../../.agents/skills/LICENSE.openclaw) is retained.
 | Upstream source                                                                                                                                 | Intentional Enterprise adaptation                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [test-audit](https://github.com/openclaw/openclaw/blob/4490500902033a1673aed8f42299c232d4b5696f/.agents/skills/test-audit/SKILL.md)             | Retains the four authoring gates and evidence required before deletion. Uses Node conformance/integration tests and Enterprise database/runtime guides; removes OpenClaw wrappers, remote infrastructure, and PR tooling. Independent review follows the requested workflow. |
-| [deslop](https://github.com/openclaw/openclaw/blob/4490500902033a1673aed8f42299c232d4b5696f/.agents/skills/deslop/SKILL.md)                     | Preserves diff-only, behavior-neutral cleanup before review. Omits the Oxlint claim and explicitly retains fail-closed checks, deferred-work TODOs, and integration-test intent comments.                                                                                    |
+| [deslop](https://github.com/openclaw/openclaw/blob/4490500902033a1673aed8f42299c232d4b5696f/.agents/skills/deslop/SKILL.md)                     | Preserves diff-only, behavior-neutral cleanup before review; links the readable-code guide for relevant examples. Omits the Oxlint claim and explicitly retains fail-closed checks, deferred-work TODOs, and integration-test intent comments.                               |
 | [openclaw-testing](https://github.com/openclaw/openclaw/blob/4490500902033a1673aed8f42299c232d4b5696f/.agents/skills/openclaw-testing/SKILL.md) | Renamed `enterprise-testing`; replaces commands and specialized routes with Enterprise guides. Retains proportional proof and exact CI diagnosis without importing OpenClaw release, package, or remote infrastructure.                                                      |
 
 Update adaptations by comparing the pinned upstream files with a newly selected

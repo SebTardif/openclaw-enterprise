@@ -128,6 +128,7 @@ export function installFixture(scenario, evidence) {
   const deployments = new Map();
   const credentials = new Map();
   const files = new Map();
+  const stagedWorkspaceFiles = new Map();
   const roles = [];
   const bindings = [];
   const deleted = new Set();
@@ -178,7 +179,11 @@ export function installFixture(scenario, evidence) {
     secretBindings: {},
   };
   if (scenario.slack && scenario.slackBindings !== false) {
-    for (const key of ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"]) {
+    const keys =
+      scenario.slackBindings === "app"
+        ? ["SLACK_APP_TOKEN"]
+        : ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"];
+    for (const key of keys) {
       config.secretBindings[key] = {
         source: secretRef(`sec_demo_${key.toLowerCase()}`),
         delivery: { type: "env" },
@@ -201,6 +206,7 @@ export function installFixture(scenario, evidence) {
     namespaceId,
     name: "Research assistant",
     status: scenario.deleting ? "deleting" : "active",
+    desiredRuntimeState: scenario.stopped ? "stopped" : scenario.deployed ? "running" : "stopped",
     configurationId: config.id,
     executionMode: "dedicated",
     harnessAuth: selectedAuth,
@@ -217,11 +223,16 @@ export function installFixture(scenario, evidence) {
       namespaceId,
       agentId: owner.id,
       revision,
+      providerId: owner.providerId ?? null,
+      configurationId: configuration.id,
+      configurationKind: configuration.kind,
+      configurationGeneration: configuration.generation,
       createdAt,
       configuration: structuredClone(configuration.values),
       harnessAuth: structuredClone(owner.harnessAuth),
       harness: { id: "codex", version: "demo", mode: owner.executionMode },
       compute: { id: "kubernetes-demo", implementation: "kubernetes" },
+      servicePrincipalId: owner.servicePrincipalId,
     };
   }
   if (scenario.deployed) {
@@ -411,16 +422,23 @@ export function installFixture(scenario, evidence) {
           return response([...agents.values()]);
         }
         if (method === "POST") {
+          const {
+            initialWorkspaceFiles = {},
+            workspaceDefaultsId: _workspaceDefaultsId,
+            ...agentBody
+          } = body;
           const saved = {
-            ...body,
+            ...agentBody,
             id: nextId("agt"),
             namespaceId,
             status: "active",
+            desiredRuntimeState: "stopped",
             createdAt,
             activeRevisionId: null,
             servicePrincipalId: "identity_demo_created",
           };
           agents.set(saved.id, saved);
+          stagedWorkspaceFiles.set(saved.id, initialWorkspaceFiles);
           credentials.set(saved.id, { transportConfigured: false });
           return response(saved, 201);
         }
@@ -446,6 +464,7 @@ export function installFixture(scenario, evidence) {
           }
           if (method === "DELETE") {
             saved.status = "deleting";
+            saved.desiredRuntimeState = "stopped";
             deleted.add(id);
             return response(saved, 202);
           }
@@ -467,6 +486,10 @@ export function installFixture(scenario, evidence) {
                 }
               : null,
           );
+        }
+        if (suffix === "/stop" && method === "POST") {
+          saved.desiredRuntimeState = "stopped";
+          return response(saved, 202);
         }
         if (suffix === "/native-admin" && method === "GET") {
           return response({
@@ -501,6 +524,11 @@ export function installFixture(scenario, evidence) {
             [...revisions.values()].filter((item) => item.agentId === id).length + 1,
           );
           revisions.set(next.id, next);
+          const stagedFiles = stagedWorkspaceFiles.get(id);
+          for (const [filename, content] of Object.entries(stagedFiles ?? {})) {
+            files.set(`${id}/${filename}`, content);
+          }
+          stagedWorkspaceFiles.delete(id);
           saved.desiredRuntimeState = "running";
           deployments.set(next.id, {
             deploymentId: `dep_${next.id}`,
@@ -526,6 +554,7 @@ export function installFixture(scenario, evidence) {
           }
           if (deployment.reads !== undefined && ++deployment.reads > 1) {
             deployment.status = "succeeded";
+            saved.desiredRuntimeState = "running";
             saved.activeRevisionId = deployment.revisionId;
           }
           return response(deployment);
