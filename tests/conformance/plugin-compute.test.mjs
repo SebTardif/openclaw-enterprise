@@ -623,9 +623,10 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
 
 test("Codex runtime helper discovers tool policy after installation and before readiness", async () => {
   const state = codexLinearPluginState({
+    approvalMode: "never",
     approvalsReviewer: "user",
     writes: "never",
-    tools: { list_issues: { approvalMode: "always" } },
+    tools: { list_issues: { enabled: true } },
   });
   const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
   const apps = {};
@@ -685,8 +686,13 @@ test("Codex runtime helper discovers tool policy after installation and before r
         }
       }
       assert.equal(apps._default.enabled, false, "discovery must not grant unselected apps");
+      assert.equal(
+        apps[CODEX_LINEAR_APP_ID]?.enabled,
+        true,
+        "the tool exception keeps the app enabled",
+      );
       assert.equal(apps[CODEX_LINEAR_APP_ID].tools.list_issues.enabled, true);
-      assert.equal(apps[CODEX_LINEAR_APP_ID].tools.list_issues.approval_mode, "approve");
+      assert.equal(apps[CODEX_LINEAR_APP_ID].tools.list_issues.approval_mode, "auto");
       assert.equal(apps[CODEX_LINEAR_APP_ID].tools.create_issue.enabled, false);
       return { status: "ok", version: "tool-policy" };
     }

@@ -197,8 +197,8 @@ export function createPluginRuntimeTranslator() {
         (policy) =>
           isRecord(policy) &&
           enabled(policy) &&
-          policy.approvalMode !== undefined &&
-          policy.approvalMode !== "never",
+          policy.approvalMode !== "never" &&
+          (policy.enabled === true || policy.approvalMode !== undefined),
       )
     );
   }
@@ -450,15 +450,21 @@ export function createPluginRuntimeTranslator() {
           : []),
       ];
       const strictness = ["always", "auto", "prompt", "never"];
-      const categoryMode = categoryModes.sort(
-        (left, right) => strictness.indexOf(right as string) - strictness.indexOf(left as string),
-      )[0];
+      // Explicit enablement overrides inherited denials, but retains other review defaults.
+      const categoryMode = categoryModes
+        .sort(
+          (left, right) => strictness.indexOf(right as string) - strictness.indexOf(left as string),
+        )
+        .find((mode) => override.enabled !== true || mode !== "never");
       const mode = override.approvalMode ?? categoryMode ?? pluginApprovalMode(selection);
       const entries = toolsByApp.get(appId) ?? [];
       entries.push([
         name,
         {
-          enabled: enabled(override) && mode !== "never",
+          enabled:
+            enabled(override) &&
+            override.approvalMode !== "never" &&
+            (override.enabled === true || mode !== "never"),
           approval_mode: codexApprovalMode(mode),
         },
       ]);

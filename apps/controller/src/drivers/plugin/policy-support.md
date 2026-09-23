@@ -46,17 +46,18 @@ These fields control the plugin and provide defaults for its tools.
 `writes` and `destructiveActions` belong here: each selects an approval mode
 for a category of tools within this plugin.
 
-| Policy                                               | Meaning                                      | Codex translation                                             | Native OpenClaw translation             |
-| ---------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------- | --------------------------------------- |
-| `enabled: true / false`                              | Enable or disable the plugin                 | Translated; `false` blocks every tool                         | Translated; `false` disables the plugin |
-| `approvalMode: always`                               | Default to no added approval                 | Translated to `approve`                                       | Translated                              |
-| `approvalMode: never`                                | Default to denying calls                     | Translated; explicit tool/category exceptions can allow calls | Translated by disabling the plugin      |
-| `approvalMode: auto`                                 | Let the runtime decide when review is needed | Translated                                                    | Rejected                                |
-| `approvalMode: prompt`                               | Request review for every call                | Translated; bridge preservation required                      | Rejected                                |
-| `approvalsReviewer: user`                            | Use human review when review is required     | Translated; inherited by tools                                | Rejected                                |
-| `approvalsReviewer: auto_review`                     | Use automatic review when review is required | Translated; inherited by tools                                | Rejected                                |
-| `writes: always / never / auto / prompt`             | Set the mode for write tools                 | Translated from tool annotations                              | Rejected; classifications unavailable   |
-| `destructiveActions: always / never / auto / prompt` | Set the mode for destructive tools           | Translated from tool annotations                              | Rejected; classifications unavailable   |
+| Policy                                               | Meaning                                      | Fallback / precedence                                             | Codex translation                        | Native OpenClaw translation           |
+| ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- | ------------------------------------- |
+| `enabled: true / false`                              | Enable or disable the plugin                 | Required; `false` blocks every tool override                      | Translated                               | Translated                            |
+| `approvalMode: always`                               | Default to no added approval                 | Required default; tool/category overrides take precedence         | Translated to `approve`                  | Translated                            |
+| `approvalMode: never`                                | Default to denying calls                     | Tool enablement/mode or category exceptions can override in Codex | Translated                               | Translated by disabling the plugin    |
+| `approvalMode: auto`                                 | Let the runtime decide when review is needed | Required default; tool/category overrides take precedence         | Translated                               | Rejected                              |
+| `approvalMode: prompt`                               | Request review for every call                | Required default; tool/category overrides take precedence         | Translated; bridge preservation required | Rejected                              |
+| `approvalsReviewer: user`                            | Use human review when needed                 | Omission inherits native settings; tools inherit this reviewer    | Translated                               | Rejected                              |
+| `approvalsReviewer: auto_review`                     | Use automatic review when needed             | Omission inherits native settings; tools inherit this reviewer    | Translated                               | Rejected                              |
+| `writes: always / never / auto / prompt`             | Set the mode for write tools                 | Omission uses another applicable category, then plugin mode       | Translated from annotations              | Rejected; classifications unavailable |
+| `destructiveActions: always / never / auto / prompt` | Set the mode for destructive tools           | Omission uses another applicable category, then plugin mode       | Translated from annotations              | Rejected; classifications unavailable |
+| `tools`                                              | Optional map of tool overrides               | Omission uses category and plugin policy                          | Translated from discovered identities    | Rejected; deferred                    |
 
 `auto` selects **when** review is needed; `auto_review` selects **who** reviews.
 Codex accepts `always` with either reviewer: native `approve` skips the added
@@ -69,27 +70,29 @@ A tool entry overrides policy for one tool in its parent plugin. It contains
 `enabled`, `approvalMode`, or both. Native OpenClaw tool-level translation is
 deferred; its translator currently rejects any `tools` map.
 
-| Policy                 | Meaning                                                       | Codex translation                          | Native OpenClaw translation            |
-| ---------------------- | ------------------------------------------------------------- | ------------------------------------------ | -------------------------------------- |
-| `enabled: false`       | Disable this tool regardless of its approval mode             | Translated                                 | Rejected; deferred                     |
-| `enabled: true`        | Permit availability subject to the effective approval policy  | Translated; effective `never` still blocks | Rejected; deferred                     |
-| `approvalMode: always` | Override category/default mode with no added approval         | Translated to `approve`                    | Rejected; deferred                     |
-| `approvalMode: never`  | Deny this tool                                                | Translated by disabling the tool           | Rejected; deferred                     |
-| `approvalMode: auto`   | Override category/default mode with runtime-selected review   | Translated                                 | Rejected; deferred                     |
-| `approvalMode: prompt` | Override category/default mode with every-call review         | Translated; bridge preservation required   | Rejected; deferred                     |
-| `approvalMode` omitted | Use the stricter applicable category, then the plugin default | Inherited; resolved by the translator      | Rejected when a tool entry is supplied |
+| Policy                 | Meaning                    | Fallback / precedence                                                          | Codex translation                        | Native OpenClaw translation            |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------- | -------------------------------------- |
+| `enabled: false`       | Disable this tool          | Blocks every approval mode                                                     | Translated                               | Rejected; deferred                     |
+| `enabled: true`        | Override inherited denial  | Preserve non-denying review fallback; explicit tool `never` still blocks       | Translated                               | Rejected; deferred                     |
+| `enabled` omitted      | Add no enablement override | Effective tool/category/plugin mode can deny                                   | Inherited                                | Rejected when a tool entry is supplied |
+| `approvalMode: always` | No added approval          | Overrides category/plugin mode; explicit disablement still blocks              | Translated to `approve`                  | Rejected; deferred                     |
+| `approvalMode: never`  | Deny this tool             | Blocks even with tool `enabled:true`                                           | Translated by disabling the tool         | Rejected; deferred                     |
+| `approvalMode: auto`   | Runtime-selected review    | Overrides category/plugin mode; explicit disablement still blocks              | Translated                               | Rejected; deferred                     |
+| `approvalMode: prompt` | Review every call          | Overrides category/plugin mode; explicit disablement still blocks              | Translated; bridge preservation required | Rejected; deferred                     |
+| `approvalMode` omitted | Inherit review policy      | Stricter applicable category, then plugin mode; see enablement exception below | Inherited                                | Rejected when a tool entry is supplied |
 
 Tools inherit the plugin reviewer. There is no tool-level `approvalsReviewer`,
-`writes`, or `destructiveActions` field. An omitted tool `enabled` does not
-add a disable, but inherited `never` still denies the tool. A tool override
+`writes`, or `destructiveActions` field. Without an explicit tool enablement or
+approval-mode exception, inherited `never` denies the tool. A tool override
 cannot re-enable an explicitly disabled plugin or bypass installation failure.
 
-OCE resolves approval policy before emitting native tool enablement. For example,
-`destructiveActions: never` plus tool `enabled: true` still blocks a destructive
-tool; adding tool `approvalMode: prompt` permits it with review. The same rule
-applies to plugin `approvalMode: never`. Native Codex's `destructive_enabled: false`
-is a different setting: its tool `enabled: true` overrides that category Boolean.
-OCE does not pass requested tool enablement through unchanged.
+Tool fields fall back independently. With `enabled:true`, OCE skips inherited
+category `never` values when choosing review policy and preserves the remaining
+category/plugin fallback. If that fallback is plugin `never`, OCE uses native
+`auto`. For example, tool `enabled:true` overrides `destructiveActions:never`
+while retaining applicable `writes:prompt`; explicit tool `approvalMode:never`
+still denies. OCE compiles these modes into native tool settings; it does not
+pass category modes through as native Booleans.
 
 [OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and a
 compatible runtime image remain prerequisites for preserving the translated
@@ -110,10 +113,13 @@ app without authenticated tool inventory prevent readiness.
 
 For each observed tool, compilation applies:
 
-1. Explicit plugin/tool disablement and installation failure block execution.
+1. Explicit plugin/tool disablement, explicit tool `never`, and installation
+   failure block execution.
 2. An explicit tool approval mode overrides category and plugin defaults.
 3. Otherwise the stricter applicable category wins: `never > prompt > auto > always`.
-4. Otherwise the plugin approval mode applies.
+   With tool `enabled:true`, skip denying categories when choosing review fallback.
+4. Otherwise the plugin approval mode applies. Tool `enabled:true` converts
+   inherited plugin `never` to native `auto`.
 
 A tool belongs to `writes` unless `readOnlyHint` is exactly `true`, and to
 `destructiveActions` unless `destructiveHint` is exactly `false`. Missing

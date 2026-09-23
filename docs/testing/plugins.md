@@ -132,7 +132,8 @@ identifiers.
 The policy-composition, installation, and Codex tool/category translation changes
 have not been verified in a real Kubernetes Agent deployment. Translator and
 startup fixture tests establish emitted configuration, including terminal
-exclusion, category precedence, and disabled tool defaults; they do not prove
+exclusion, explicit tool enablement over inherited denial, review fallback,
+category precedence, and disabled tool defaults; they do not prove
 policy preservation in the effective Agent thread or a reviewed native tool call.
 Pinned Codex can grant a future tool through a display-title match to an enabled
 policy key, despite the disabled default. Tests do not establish unconditional

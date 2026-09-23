@@ -501,6 +501,7 @@ test("Codex compiles tool modes and conservative category precedence with either
     exception: { readOnlyHint: false, destructiveHint: true },
     off: { readOnlyHint: true, destructiveHint: false },
     automatic: { readOnlyHint: false, destructiveHint: true },
+    denied: { readOnlyHint: false, destructiveHint: true },
   });
   for (const approvalsReviewer of ["user", "auto_review"]) {
     const selection = codexSelection(linearPluginId, {
@@ -513,6 +514,7 @@ test("Codex compiles tool modes and conservative category precedence with either
         exception: { approvalMode: "always" },
         off: { enabled: false, approvalMode: "always" },
         automatic: { approvalMode: "auto" },
+        denied: { enabled: true, approvalMode: "never" },
       },
     });
     const artifact = codexRuntimeArtifact(
@@ -529,12 +531,52 @@ test("Codex compiles tool modes and conservative category precedence with either
       tools: {
         automatic: { enabled: true, approval_mode: "auto" },
         delete: { enabled: false, approval_mode: "auto" },
+        denied: { enabled: false, approval_mode: "auto" },
         exception: { enabled: true, approval_mode: "approve" },
         off: { enabled: false, approval_mode: "approve" },
         read: { enabled: true, approval_mode: "prompt" },
         unknown: { enabled: false, approval_mode: "auto" },
         write: { enabled: true, approval_mode: "prompt" },
       },
+    });
+  }
+});
+
+test("Codex explicit tool enablement overrides inherited denial while retaining review defaults", async (t) => {
+  const appId = "linear_app";
+  const details = [codexDetail("linear", [appId])];
+  const inventory = codexToolInventory(appId, {
+    delete: { readOnlyHint: false, destructiveHint: true },
+    sibling: { readOnlyHint: false, destructiveHint: true },
+  });
+  for (const [name, policy, approvalMode] of [
+    ["destructive denial", { approvalMode: "auto", destructiveActions: "never" }, "auto"],
+    ["plugin review", { approvalMode: "prompt", destructiveActions: "never" }, "prompt"],
+    ["write denial", { approvalMode: "always", writes: "never" }, "approve"],
+    ["plugin denial", { approvalMode: "never" }, "auto"],
+    [
+      "overlapping categories",
+      { approvalMode: "always", writes: "prompt", destructiveActions: "never" },
+      "prompt",
+    ],
+  ]) {
+    await t.test(name, () => {
+      const selection = codexSelection(linearPluginId, {
+        ...policy,
+        tools: { delete: { enabled: true } },
+      });
+      // Enablement creates an exception without discarding inherited review requirements.
+      const app = codexRuntimeArtifact(selection, details, [], inventory).configuration.apps[appId];
+      assert.equal(app?.enabled, true);
+      assert.equal(app.default_tools_enabled, false);
+      assert.deepEqual(app.tools.delete, { enabled: true, approval_mode: approvalMode });
+      assert.equal(app.tools.sibling.enabled, false, "the exception must not enable sibling tools");
+      assert.equal(
+        codexOpenClawConfiguration(selection).plugins.entries.codex.config.codexPlugins.plugins
+          .linear.enabled,
+        true,
+        "the gateway bridge must keep the explicit exception available",
+      );
     });
   }
 });

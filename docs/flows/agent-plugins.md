@@ -145,8 +145,13 @@ plugins. `runtime-translator.ts:codexRuntimeArtifact` joins raw tool names to
 selected apps through `_meta.connector_id`. It rejects unknown requested tools,
 missing ownership, or invalid discovery responses. It resolves explicit tool
 mode before the stricter applicable category and plugin default, treating
-missing action annotations conservatively. Explicit disablement and failed
-installation remain terminal.
+missing action annotations conservatively. Tool `enabled:true` overrides
+inherited denial: the compiler skips category `never` values when choosing
+review fallback, then uses the remaining category or plugin mode. If only
+plugin `never` remains, it emits `auto`. Explicit plugin/tool disablement,
+explicit tool `never`, and failed installation remain terminal. The
+[policy reference](../reference/agent-plugins.md#approval-policy) owns the field
+fallback contract.
 
 The resulting app configuration disables the default and gives each observed
 selected-app tool its effective enablement and approval mode.
@@ -260,6 +265,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-23 23:27: Documented independent tool enablement and review fallback, including explicit enablement over inherited denial; deployment proof remains pending (codex/01a0cc4c-0ab7-7692-babf-f9cd9031ec5c - 540bcce4)
 
 - 2026-09-23 21:52: Documented authenticated Codex tool discovery, effective per-tool policy compilation, and deferred native OpenClaw tool policies; runtime preservation and live proof remain pending (codex/01a0cc4c-0ab7-7692-babf-f9cd9031ec5c - 7b60db6c)
 

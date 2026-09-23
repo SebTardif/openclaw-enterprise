@@ -362,14 +362,14 @@ test(
     assert.notEqual(selectedTool.annotations.destructiveHint, true);
     assert.ok(inventory.length > 1, "the default-deny proof requires sibling app tools.");
 
-    // An explicit tool mode overrides a plugin default denial. Keep write and
+    // Explicit tool enablement overrides a plugin default denial. Keep write and
     // destructive categories denied and require every unspecified sibling to stay denied.
     const exceptionPolicy = await fixture.updatePluginPolicy(agent.id, pluginId, {
       approvalMode: "never",
       approvalsReviewer: "user",
       writes: "never",
       destructiveActions: "never",
-      tools: { [selectedTool.name]: { enabled: true, approvalMode: "always" } },
+      tools: { [selectedTool.name]: { enabled: true } },
     });
     const exceptionDeployment = await fixture.deployAndWait(agent);
     assert.deepEqual(exceptionDeployment.revision.plugins.plugins[pluginId], exceptionPolicy);
@@ -388,7 +388,7 @@ test(
     }
     assert.equal(
       exceptionConfig.apps[selectedTool.appId].tools[selectedTool.name].approval_mode,
-      "approve",
+      "auto",
     );
     const exceptionMarker = `CODEX_CALENDAR_TOOL_EXCEPTION_${randomUUID()}`;
     const exceptionSessionKey = `agent:main:codex-calendar-exception-${randomUUID()}`;

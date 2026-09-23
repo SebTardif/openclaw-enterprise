@@ -89,6 +89,8 @@ Agent thread retains it.
 | Codex plugin and per-tool `always`                                  | Emit native `approval_mode: "approve"`; no added approval, including when the app reviewer is `auto_review`.                                                                     |
 | Codex plugin and per-tool `auto` / `prompt`                         | Emit native `auto` / `prompt`: annotation and remembered-approval behavior, or review of every call. Requires policy preservation through the OpenClaw bridge.                   |
 | Codex `never`                                                       | Deny by default; an explicit allowed tool/category exception can remain enabled. Explicit plugin disablement and installation failure remain terminal.                           |
+| Codex tool `enabled:true`                                           | Override inherited category/plugin `never`; retain non-denying review fallback, or use `auto` when only plugin `never` remains. Explicit tool `never` still denies.              |
+| Codex tool `enabled:false`                                          | Disable the tool regardless of approval mode.                                                                                                                                    |
 | Codex `approvalsReviewer`                                           | Emit app-level `user` or `auto_review`; per-tool policies inherit it. Omission inherits native reviewer settings.                                                                |
 | Codex tool/category overrides                                       | Discover authenticated tool metadata after install; compile effective modes into native per-tool enablement and approval settings. Missing or ambiguous identities fail startup. |
 | Codex empty desired set                                             | Apply a plugin-free native configuration; no remote install RPC runs.                                                                                                            |
@@ -99,8 +101,12 @@ selected app through `_meta.connector_id`; display names and inferred prefixes
 are not tool identities. The public controller catalog remains `tools:null`.
 This authenticated inventory belongs to the Agent runtime, not OCC.
 
-Explicit tool mode wins over the stricter applicable category, then the plugin
-default. A tool is a write unless `readOnlyHint` is explicitly true; it is
+The [field fallback contract](../agent-plugins.md#approval-policy) separates
+tool availability from review. Explicit tool mode wins over category/plugin
+defaults; tool `enabled:true` also overrides inherited denial while preserving
+applicable non-denying review policy. This is compiled into native tool settings,
+not passed through as native category Booleans. A tool is a write unless
+`readOnlyHint` is explicitly true; it is
 potentially destructive unless `destructiveHint` is explicitly false. Missing
 annotations are conservative. Explicit plugin/tool disablement and failed
 installation cannot be undone by a mode override. Native managed policy and

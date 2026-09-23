@@ -123,19 +123,19 @@ In the tables below, **mode** means `always`, `never`, `prompt`, or `auto`.
 Structural validity does not imply native support; startup validates the
 complete requested selection against the selected Driver and native runtime.
 
-| Plugin map value field        | Type                             | Behavior                                                                   |
-| ----------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
-| `enabled`                     | Boolean                          | Required plugin enablement intent.                                         |
-| `approvalMode`                | Mode                             | Required plugin default.                                                   |
-| `approvalsReviewer`           | Optional `user` or `auto_review` | Omission inherits native review settings.                                  |
-| `destructiveActions`          | Optional mode                    | Category override applied at startup when native metadata supports it.     |
-| `writes`                      | Optional mode                    | Category override applied at startup when native metadata supports it.     |
-| `tools`                       | Optional object keyed by tool ID | Tool overrides applied at startup when authoritative metadata supports it. |
-| `tools.<toolId>.enabled`      | Optional Boolean                 | Tool availability; `true` still requires a non-`never` effective mode.     |
-| `tools.<toolId>.approvalMode` | Optional mode                    | Explicit tool approval override.                                           |
+| Plugin map value field        | Type                             | Behavior                                                                              | When omitted                                             |
+| ----------------------------- | -------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `enabled`                     | Boolean                          | Enable the plugin; `false` blocks every tool.                                         | Required; no fallback.                                   |
+| `approvalMode`                | Mode                             | Default for tools without a more specific policy.                                     | Required; no fallback.                                   |
+| `approvalsReviewer`           | Optional `user` or `auto_review` | Reviewer for the plugin and its tools.                                                | Inherit native review settings.                          |
+| `destructiveActions`          | Optional mode                    | Override the default for destructive tools.                                           | Use another applicable category, then the plugin mode.   |
+| `writes`                      | Optional mode                    | Override the default for write tools.                                                 | Use another applicable category, then the plugin mode.   |
+| `tools`                       | Optional object keyed by tool ID | Per-tool overrides, translated from authenticated metadata.                           | Use category and plugin policy.                          |
+| `tools.<toolId>.enabled`      | Optional Boolean                 | `false` disables; `true` overrides inherited `never` without removing review.         | Add no enablement override; the effective mode can deny. |
+| `tools.<toolId>.approvalMode` | Optional mode                    | Override category and plugin modes; explicit `never` denies even with `enabled:true`. | Use category/plugin review fallback as described below.  |
 
 Each supplied tool override must contain `enabled`, `approvalMode`, or both.
-Omitted optional fields inherit the plugin/category/native policy. To remove an
+Tool enablement and approval mode fall back independently. To remove an
 optional override, replace the plugin entry without that field. To remove one
 tool override, replace the `tools` map without that tool ID. To remove all
 plugin selections, update the Agent with `"plugins": {}`.
@@ -254,12 +254,28 @@ executable definitions.
 force review: `auto` can skip review, while `prompt` requests review for every
 call. An absent reviewer inherits the native setting.
 
-For enabled tools, requested precedence is explicit tool mode, then the
-stricter applicable category override, then the plugin default. Category
-strictness is `never > prompt > auto > always`. Disabled plugins/tools cannot be
-re-enabled by a mode override. Destructive means native `destructiveHint` is
-not explicitly false; missing metadata is conservative. Writes means native
-`readOnlyHint` is not explicitly true. Classification never uses a tool's name.
+Codex resolves tool policy in this order:
+
+1. Plugin `enabled:false`, installation failure, tool `enabled:false`, or explicit
+   tool `approvalMode:never` blocks execution. Other tool fields cannot undo them.
+2. An explicit non-`never` tool mode overrides category and plugin modes.
+3. Otherwise use the stricter applicable category, then the plugin mode.
+   Category strictness is `never > prompt > auto > always`.
+4. Tool `enabled:true` overrides inherited denial: skip category `never` values
+   when choosing review fallback. Preserve remaining `prompt`, `auto`, or
+   `always` policy. If the fallback is plugin `never`, use Codex `auto`.
+
+For example, `destructiveActions:never` with tool `enabled:true` allows that
+tool while retaining an applicable `writes:prompt` or plugin `prompt` policy.
+With only plugin `approvalMode:never` to fall back to, the enabled tool uses
+`auto`, because Codex has no native `never` review mode. Adding explicit tool
+`approvalMode:never` still denies it. Omitting `enabled` leaves inherited denial
+in effect unless an explicit non-`never` tool mode overrides it.
+
+Destructive means native `destructiveHint` is not explicitly false; writes means
+native `readOnlyHint` is not explicitly true. Missing annotations are conservative.
+Classification never uses a tool's name. There are no tool-level reviewer,
+`writes`, or `destructiveActions` fields; tools inherit the plugin reviewer.
 
 The API saves structurally valid policy without proving that the selected
 Driver can represent it exactly. Startup performs that validation. See
@@ -267,8 +283,7 @@ Driver can represent it exactly. Startup performs that validation. See
 The controller catalog returns `tools:null` for both bundled Drivers. Native
 OpenClaw remains plugin-level only. Codex obtains tool identities and annotations
 inside the authenticated Agent after installation; controller catalog metadata
-is not required for this runtime translation. Tool policies inherit the plugin
-reviewer; there is no separate per-tool reviewer field. Startup writes explicit
+is not required for this runtime translation. Startup writes explicit
 settings for observed tools and disables the default. Codex can still match a
 new tool by its display title to an existing enabled policy key, so this does
 not guarantee denial of every future tool. Exact future-tool protection requires
