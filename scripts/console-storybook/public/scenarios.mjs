@@ -380,10 +380,10 @@ export const scenarios = {
     description:
       "The actual form lists the first catalog page, places enableable plugins first, and retains unavailable entries with their reason. Selecting a plugin loads its tools before Add becomes available.",
     steps: [
-      "Review Calendar before the unavailable Archive entry. Next page and Previous page navigate distinct catalog pages.",
+      "Review the ChatGPT workspace access guidance. Available and Configured share a compact sidebar; page controls stay below the scrolling list. Next page and Previous page navigate server pages.",
       "Choose Calendar to load its tools, then Add Calendar. Configure its plugin defaults and expand a tool to override them.",
       "Filter this page matches plugins on the current page; Filter tools matches the selected plugin’s tools.",
-      "Click Done to inspect Plugin selections JSON. Replacing the dummy token or authentication method clears discovery results and preserves selections.",
+      "Click Done and expand Plugin selections JSON: one heading labels a bounded monospace editor. Replacing the dummy token or authentication method clears discovery results and preserves selections.",
     ],
     gap: pluginDiscoveryGap,
   },
@@ -634,7 +634,10 @@ export const scenarios = {
     group: "Components/Plugins",
     name: "Catalog access denied",
     component: "plugins",
-    actions: [click("Configure plugins"), click("Available plugins")],
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Available plugins"]', click: true },
+    ],
     pluginCapabilities,
     pluginCatalog: {
       status: "error",

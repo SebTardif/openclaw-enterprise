@@ -49,13 +49,16 @@ export function createPluginFields({
   const pagination = element("div", { className: "plugin-pagination" }, previous, next);
   const available = button("Available plugins", () => showConfigured(false));
   const configured = button("Configured plugins", () => showConfigured(true));
+  available.setAttribute("aria-label", "Available plugins");
+  available.textContent = "Available";
+  configured.setAttribute("aria-label", "Configured plugins");
+  configured.textContent = "Configured";
   const browser = element(
     "div",
     { className: "plugin-browser" },
     element("div", { className: "plugin-tabs" }, available, configured),
     element("div", { className: "form-field" }, searchLabel, search),
-    status,
-    loadPlugins,
+    element("div", { className: "plugin-browser-status" }, status, loadPlugins),
     list,
     pagination,
   );
@@ -86,6 +89,20 @@ export function createPluginFields({
       button("Done", () => dialog.close()),
     ),
     element("p", { className: "hint" }, "Changes are saved when you create the Agent."),
+    element(
+      "p",
+      { className: "hint plugin-access-help" },
+      "For Codex and ChatGPT plugins, manage plugin and app access in ChatGPT workspace settings. Apps must be enabled for the user or service account behind the PAT or token. OCE policies do not grant that access. ",
+      element(
+        "a",
+        {
+          href: "https://help.openai.com/en/articles/11509118",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Manage workspace access",
+      ),
+    ),
     policyStatus,
     feedback,
     workspace,
@@ -100,10 +117,10 @@ export function createPluginFields({
   const json = element(
     "details",
     { className: "plugin-json" },
-    element("summary", {}, "Plugin selections JSON"),
-    element("label", { for: input.id }, "Plugin selections JSON"),
+    element("summary", { id: `${input.id}-label` }, "Plugin selections JSON"),
     input,
   );
+  input.setAttribute("aria-labelledby", `${input.id}-label`);
   const section = element(
     "section",
     { className: "plugin-fields", "aria-labelledby": "plugin-heading" },
